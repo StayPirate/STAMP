@@ -52,7 +52,19 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  email           │
 │  role            │
 │  active          │
-└──────────────────┘
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐     ┌──────────────────┐
+│     Ticket       │────▶│   TicketEvent    │
+│                  │     │                  │
+│  cve_id (FK,UQ)  │     │  ticket_id (FK)  │
+│  status          │     │  user_id (FK)    │
+│  assignee_id(FK) │     │  event_type      │
+│  duplicate_of_id │     │  old_value       │
+│  (FK, self-ref)  │     │  new_value       │
+└──────────────────┘     │  comment         │
+                         └──────────────────┘
 ```
 
 ## Tables
@@ -71,7 +83,7 @@ Represents a Common Vulnerability and Exposure entry.
 | cvss_vector    | VARCHAR(100) |                      | CVSS v3 vector string          |
 | published_date | TIMESTAMP    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMP    |                      | Date CVE was last modified     |
-| status         | ENUM         | NOT NULL, DEFAULT    | New, Analyzing, Fixed, Ignored |
+| status         | ENUM         | NOT NULL, DEFAULT    | Workflow status — tracked on the associated Ticket (see Ticket table). This field is kept for quick queries but is always derived from the Ticket status. |
 | created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp        |
 
@@ -168,6 +180,48 @@ Platform users with role-based access.
 | active     | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active    |
 | created_at | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
 | updated_at | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
+
+### Ticket
+
+Represents the internal workflow unit for a CVE. Each CVE has exactly one
+ticket. Tickets track the triage and resolution lifecycle managed by incident
+managers (IMs).
+
+| Column          | Type        | Constraints                  | Description                          |
+|-----------------|-------------|------------------------------|--------------------------------------|
+| id              | UUID        | PK                           | Internal identifier                  |
+| cve_id          | UUID        | FK(cve.id), UNIQUE, NOT NULL | Associated CVE (1:1 relationship)    |
+| status          | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
+| assignee_id     | UUID        | FK(user.id), nullable        | IM currently assigned to this ticket |
+| duplicate_of_id | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
+| previous_status | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
+| created_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp            |
+| updated_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp              |
+
+**Status transitions**:
+- New → Analysis (assignment)
+- New → Ignored
+- Analysis → Analyzed (all affectedness data complete)
+- Analysis → Ignored
+- Analyzed → Resolved (all updates released)
+- Any → Duplicated (reversible)
+- Duplicated → previous_status (revert, reassigns to the reverting IM)
+
+### TicketEvent
+
+Audit log of all changes to a ticket. Each event represents a discrete
+action (status change, assignment, duplicate operation).
+
+| Column      | Type        | Constraints            | Description                                |
+|-------------|-------------|------------------------|--------------------------------------------|
+| id          | UUID        | PK                     | Internal identifier                        |
+| ticket_id   | UUID        | FK(ticket.id), NOT NULL| Related ticket                             |
+| user_id     | UUID        | FK(user.id), NOT NULL  | User who performed the action              |
+| event_type  | ENUM        | NOT NULL               | status_change, assignment, duplicate_set, duplicate_removed |
+| old_value   | VARCHAR     | nullable               | Previous value (e.g., old status, old assignee username) |
+| new_value   | VARCHAR     | nullable               | New value (e.g., new status, new assignee username) |
+| comment     | TEXT        | nullable               | Optional note from the IM                  |
+| created_at  | TIMESTAMP   | NOT NULL, DEFAULT      | Event timestamp                            |
 
 ## Indexes
 
