@@ -1,0 +1,49 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy (e.g., v1.0.0 or sha-abc1234)"
+        required: true
+        type: string
+  push:
+    tags: ["v*"]
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Display deployment info
+        run: |
+          echo "Deploying image tag: ${{ steps.tag.outputs.tag }}"
+          echo "Triggered by: ${{ github.event_name }}"
+
+      # TODO: Add deployment steps when infrastructure target is decided.
+      # Options:
+      # - Kubernetes: kubectl apply / helm upgrade
+      # - Docker Compose on VM: SSH + docker compose pull && up
+      # - AWS ECS: aws ecs update-service
+      # - Cloud Run: gcloud run deploy
+
+      - name: Placeholder
+        run: echo "Production deployment - infrastructure target TBD"
+
+      # Smoke test after deployment
+      # - name: Smoke Test
+      #   run: |
+      #     curl --fail --retry 5 --retry-delay 10 \
+      #       https://app.example.com/health

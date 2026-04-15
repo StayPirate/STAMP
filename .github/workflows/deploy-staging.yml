@@ -1,0 +1,32 @@
+name: Deploy to Staging
+
+on:
+  workflow_run:
+    workflows: ["Build Docker Images"]
+    branches: [main]
+    types: [completed]
+
+jobs:
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO: Add deployment steps when infrastructure target is decided.
+      # Options:
+      # - Kubernetes: kubectl apply / helm upgrade
+      # - Docker Compose on VM: SSH + docker compose pull && up
+      # - AWS ECS: aws ecs update-service
+      # - Cloud Run: gcloud run deploy
+
+      - name: Placeholder
+        run: echo "Staging deployment - infrastructure target TBD"
+
+      # Smoke test after deployment
+      # - name: Smoke Test
+      #   run: |
+      #     curl --fail --retry 5 --retry-delay 10 \
+      #       https://staging.example.com/health
