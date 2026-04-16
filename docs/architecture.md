@@ -111,21 +111,34 @@ coordination across multiple maintained distribution versions.
 
 #### SMELT
 
-- Internal SUSE aggregator service (HTTP API)
-- Given a source package name, returns the list of codestreams where the
-  package is maintained and the products that receive it
+- Internal SUSE aggregator service (REST API at `smelt.suse.de/api`)
 - SMELT internally reads from IBS, channel files, and other sources
-- STAMP uses SMELT to resolve package → codestream → product mappings
-- Periodic sync keeps local Codestream, Product, and CodestreamProduct
-  tables up to date
+- STAMP uses two SMELT endpoints:
+  - `GET /api/v1/basic/products/` (paginated): periodic sync of the Product
+    table with name, version, CPE, and repository project names
+  - `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
+    (paginated): on-demand query when adding a package to a ticket. Returns
+    codestreams and target repositories for the package. The
+    `include_reactive=1` parameter MUST always be used to include products
+    in Reactive LTSS phase. All pages MUST be fetched.
+- Target repository names from `maintainedpackage` are matched to local
+  Product records via the ProductRepository table
+- See `docs/features/package-tracking.md` for full integration details
 
 #### AIMAAS
 
-- Internal SUSE service (HTTP API) for product lifecycle data
-- Provides the CVSS threshold for each product — the minimum CVSS score
-  for which a product is eligible to receive a security update
-- STAMP periodically syncs product thresholds from AIMAAS
-- When thresholds change, STAMP re-evaluates eligibility for open tickets
+- Internal SUSE service (REST API at `aimaas.suse.de/api`) for product
+  lifecycle data and CVSS thresholds
+- STAMP uses two AIMAAS endpoints:
+  - `GET /api/entity/products/{slug}`: product lifecycle dates (`fcs`,
+    `end_of_gs`, `end_of_ltss`, `end_of_espos`, `end_of_reactive_ltss`).
+    Matched to local Product records via CPE (identical between SMELT and
+    AIMAAS).
+  - `GET /api/entity/cvss-threshold`: CVSS threshold for products in
+    LTSS/ESPOS phases (~24 entries). Each entry references an AIMAAS
+    product ID; STAMP resolves this to a CPE to match locally.
+- When thresholds or lifecycle dates change, STAMP re-evaluates eligibility
+  for open tickets referencing the affected products
 
 #### Open Build Service (OBS)
 
@@ -154,8 +167,10 @@ coordination across multiple maintained distribution versions.
 3. Products not eligible that inherit AFFECTED status receive
    AFFECTED_RESOLVED (green) automatically — other inherited statuses are
    not modified by eligibility
-4. IM can override individual product statuses when needed
-5. See `docs/features/package-tracking.md` for full status propagation rules
+4. Products in Reactive LTSS phase that inherit AFFECTED status receive
+   AFFECTED_RESOLVED (green) automatically — regardless of CVSS score
+5. IM can override individual product statuses when needed
+6. See `docs/features/package-tracking.md` for full status propagation rules
 
 ### Release Tracking Flow
 

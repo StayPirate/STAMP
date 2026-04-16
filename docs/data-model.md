@@ -29,28 +29,29 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                 └──────────────────┘
        │
        ▼ (1:N)
-┌────────────────────────────┐     ┌──────────────┐
-│  TicketPackageCodestream   │────▶│  Codestream  │
-│                            │     │              │
-│  ticket_id (FK)            │     │  name        │
-│  package_name              │     │  active      │
-│  codestream_id (FK)        │     └──────┬───────┘
-│  status                    │            │
-└──────────┬─────────────────┘            │
-           │                              │ (N:M via CodestreamProduct)
-           ▼ (1:N)                        │
-┌────────────────────────────┐     ┌──────▼───────┐
-│   TicketPackageProduct     │────▶│   Product    │
-│                            │     │              │
-│  tkt_pkg_cs_id (FK)        │     │  name        │
-│  product_id (FK)           │     │  cpe         │
-│  status                    │     │  cvss_threshold │
-│  is_override               │     │  active      │
-│  released_at               │     └──────────────┘
-└────────────────────────────┘
-
-┌──────────────────┐
-│      User        │
+┌────────────────────────────┐
+│  TicketPackageCodestream   │     ┌─────────────────────┐
+│                            │     │      Product        │
+│  ticket_id (FK)            │     │                     │
+│  package_name              │     │  name               │
+│  codestream_name           │     │  version            │
+│  status                    │     │  display_name       │
+│                            │     │  cpe                │
+└──────────┬─────────────────┘     │  cvss_threshold     │
+           │                       │  fcs                │
+           ▼ (1:N)                 │  end_of_gs          │
+┌────────────────────────────┐     │  end_of_ltss        │
+│   TicketPackageProduct     │────▶│  end_of_espos       │
+│                            │     │  end_of_reactive_ltss│
+│  tkt_pkg_cs_id (FK)        │     └──────┬──────────────┘
+│  product_id (FK)           │            │
+│  status                    │            ▼ (1:N)
+│  is_override               │     ┌─────────────────────┐
+│  released_at               │     │ ProductRepository   │
+└────────────────────────────┘     │                     │
+                                   │  product_id (FK)    │
+┌──────────────────┐               │  repo_name          │
+│      User        │               └─────────────────────┘
 │                  │
 │  username        │
 │  email           │
@@ -92,49 +93,48 @@ Tracks the origin of CVE data from different sources.
 | raw_data    | JSONB       |                  | Original data from the source      |
 | fetched_at  | TIMESTAMP   | NOT NULL         | When the data was fetched          |
 
-### Codestream
-
-Represents an IBS codestream project where source packages are maintained
-and built. See `docs/features/package-tracking.md` for full details.
-
-| Column     | Type      | Constraints          | Description                        |
-|------------|-----------|----------------------|------------------------------------|
-| id         | UUID      | PK                   | Internal identifier                |
-| name       | VARCHAR   | UNIQUE, NOT NULL     | IBS project name (e.g., `SUSE:SLE-15-SP6:Update`) |
-| active     | BOOLEAN   | NOT NULL, DEFAULT true | False when SMELT no longer reports this codestream |
-| synced_at  | TIMESTAMP |                      | Last sync from SMELT               |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at | TIMESTAMP | NOT NULL, DEFAULT    | Record update timestamp            |
-
 ### Product
 
-Represents a SUSE commercial product. See
-`docs/features/package-tracking.md` for full details.
+Represents a SUSE product (base products, LTSS variants, ESPOS variants,
+etc.). Each variant is a separate product with its own CPE. Synced
+periodically from SMELT (product list and repositories) and enriched with
+lifecycle data from AIMAAS. See `docs/features/package-tracking.md` for
+full details.
 
-| Column         | Type         | Constraints          | Description                        |
-|----------------|--------------|----------------------|------------------------------------|
-| id             | UUID         | PK                   | Internal identifier                |
-| name           | VARCHAR      | UNIQUE, NOT NULL     | Product name (e.g., `SLES 15 SP6`) |
-| cpe            | VARCHAR      | UNIQUE, nullable     | CPE identifier for this product    |
-| cvss_threshold | DECIMAL(3,1) | NOT NULL, DEFAULT 0  | Minimum CVSS score for eligibility (from AIMAAS) |
-| active         | BOOLEAN      | NOT NULL, DEFAULT true | False when product is EOL        |
-| synced_at      | TIMESTAMP    |                      | Last sync from AIMAAS              |
-| created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp            |
+| Column               | Type         | Constraints          | Description                        |
+|----------------------|--------------|----------------------|------------------------------------|
+| id                   | UUID         | PK                   | Internal identifier                |
+| smelt_id             | INTEGER      | UNIQUE, NOT NULL     | Product ID in SMELT                |
+| name                 | VARCHAR      | NOT NULL             | Short product name from SMELT (e.g., `SLES-LTSS`) |
+| version              | VARCHAR      | NOT NULL             | Product version from SMELT (e.g., `15-SP4`) |
+| display_name         | VARCHAR      | NOT NULL             | Human-readable full name from AIMAAS, used in the UI (e.g., `SUSE Linux Enterprise Server LTSS 15 SP4`) |
+| cpe                  | VARCHAR      | UNIQUE, NOT NULL     | CPE identifier — primary join key between SMELT and AIMAAS |
+| cvss_threshold       | DECIMAL(3,1) | nullable             | Minimum CVSS score for eligibility (from AIMAAS `cvss-threshold` endpoint). NULL means threshold is 0 (all CVEs eligible). |
+| fcs                  | DATE         | nullable             | First Customer Shipment date (from AIMAAS) |
+| end_of_gs            | DATE         | nullable             | End of General Support (from AIMAAS) |
+| end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
+| end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
+| end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, Affected status is always green (AFFECTED_RESOLVED) regardless of CVSS. |
+| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is EOL or no longer reported by SMELT |
+| smelt_synced_at      | TIMESTAMP    |                      | Last sync from SMELT               |
+| aimaas_synced_at     | TIMESTAMP    |                      | Last sync from AIMAAS              |
+| created_at           | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at           | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp            |
 
-### CodestreamProduct
+**Unique constraint**: (name, version)
 
-Mapping table recording which products receive packages from which
-codestreams. Synced from SMELT.
+### ProductRepository
 
-| Column        | Type      | Constraints                  | Description             |
-|---------------|-----------|------------------------------|-------------------------|
-| id            | UUID      | PK                           | Internal identifier     |
-| codestream_id | UUID      | FK(codestream.id), NOT NULL  | Related codestream      |
-| product_id    | UUID      | FK(product.id), NOT NULL     | Related product         |
-| created_at    | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp |
+Maps SMELT repository project names to products. Used to resolve the
+`target` values returned by SMELT's `maintainedpackage` endpoint to local
+Product records. Synced from SMELT alongside products.
 
-**Unique constraint**: (codestream_id, product_id)
+| Column     | Type      | Constraints                  | Description                        |
+|------------|-----------|------------------------------|------------------------------------|
+| id         | UUID      | PK                           | Internal identifier                |
+| product_id | UUID      | FK(product.id), NOT NULL     | Related product                    |
+| repo_name  | VARCHAR   | UNIQUE, NOT NULL             | SMELT repository project name (e.g., `SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64`) |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
 
 ### TicketPackageCodestream
 
@@ -142,17 +142,17 @@ Records the affectedness status of a source package in a specific codestream
 within the context of a ticket. See `docs/features/package-tracking.md` for
 status propagation rules.
 
-| Column        | Type      | Constraints                  | Description                        |
-|---------------|-----------|------------------------------|------------------------------------|
-| id            | UUID      | PK                           | Internal identifier                |
-| ticket_id     | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
-| package_name  | VARCHAR   | NOT NULL                     | Source package name                |
-| codestream_id | UUID      | FK(codestream.id), NOT NULL  | Related codestream                 |
-| status        | ENUM      | NOT NULL, DEFAULT ANALYSIS   | PackageStatus enum                 |
-| created_at    | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at    | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
+| Column          | Type      | Constraints                  | Description                        |
+|-----------------|-----------|------------------------------|------------------------------------|
+| id              | UUID      | PK                           | Internal identifier                |
+| ticket_id       | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
+| package_name    | VARCHAR   | NOT NULL                     | Source package name                |
+| codestream_name | VARCHAR   | NOT NULL                     | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`). Stored as a string — codestreams are not maintained as a separate table because SMELT does not provide an independent codestream listing. |
+| status          | ENUM      | NOT NULL, DEFAULT ANALYSIS   | PackageStatus enum                 |
+| created_at      | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at      | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
 
-**Unique constraint**: (ticket_id, package_name, codestream_id)
+**Unique constraint**: (ticket_id, package_name, codestream_name)
 
 ### TicketPackageProduct
 
@@ -220,13 +220,13 @@ managers (IMs).
 | updated_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp              |
 
 **Status transitions**:
-- New → Analysis (assignment)
-- New → Ignored
-- Analysis → Analyzed (all affectedness data complete)
-- Analysis → Ignored
-- Analyzed → Resolved (all updates released)
-- Any → Duplicated (reversible)
-- Duplicated → previous_status (revert, reassigns to the reverting IM)
+- New -> Analysis (assignment)
+- New -> Ignored
+- Analysis -> Analyzed (all affectedness data complete)
+- Analysis -> Ignored
+- Analyzed -> Resolved (all updates released)
+- Any -> Duplicated (reversible)
+- Duplicated -> previous_status (revert, reassigns to the reverting IM)
 
 ### TicketEvent
 
@@ -257,5 +257,12 @@ TBD — will be defined based on query patterns during implementation.
 - The schema will evolve as features are implemented; this document must be
   updated before any schema changes
 - The previous Distribution, Package, and AffectedPackage tables have been
-  replaced by Codestream, Product, CodestreamProduct, TicketPackageCodestream,
-  and TicketPackageProduct — see `docs/features/package-tracking.md`
+  replaced by Product, ProductRepository, TicketPackageCodestream, and
+  TicketPackageProduct — see `docs/features/package-tracking.md`
+- The previous Codestream and CodestreamProduct tables have been removed.
+  Codestream names are stored as strings directly in
+  TicketPackageCodestream because SMELT does not expose an endpoint to list
+  codestreams independently — they are discovered per-package via the
+  `maintainedpackage` endpoint. Product-to-codestream mappings are
+  per-package and already captured by the TicketPackageCodestream to
+  TicketPackageProduct hierarchy.
