@@ -100,11 +100,38 @@ coordination across multiple maintained distribution versions.
 - **MITRE**: CVE feed for early CVE information
 - Additional sources can be added via the pluggable ingestion architecture
 
+#### IBS (Internal Build Service)
+
+- Internal OBS instance at build.suse.de for SUSE commercial products
+- Source packages are maintained in codestream projects (e.g.,
+  `SUSE:SLE-15-SP6:Update`)
+- STAMP queries IBS to detect when security fixes have been released to
+  codestream and product repositories
+- See `docs/features/package-tracking.md` for codestream/product concepts
+
+#### SMELT
+
+- Internal SUSE aggregator service (HTTP API)
+- Given a source package name, returns the list of codestreams where the
+  package is maintained and the products that receive it
+- SMELT internally reads from IBS, channel files, and other sources
+- STAMP uses SMELT to resolve package → codestream → product mappings
+- Periodic sync keeps local Codestream, Product, and CodestreamProduct
+  tables up to date
+
+#### AIMAAS
+
+- Internal SUSE service (HTTP API) for product lifecycle data
+- Provides the CVSS threshold for each product — the minimum CVSS score
+  for which a product is eligible to receive a security update
+- STAMP periodically syncs product thresholds from AIMAAS
+- When thresholds change, STAMP re-evaluates eligibility for open tickets
+
 #### Open Build Service (OBS)
 
-- REST API for package metadata and build status
-- Source management for some distributions
-- Build triggering and monitoring
+- Public instance at build.opensuse.org for openSUSE distributions
+- Future: will be used for tracking openSUSE Tumbleweed and Leap packages
+- Not currently integrated — see `docs/features/package-tracking.md`
 
 ## Data Flow
 
@@ -113,16 +140,32 @@ coordination across multiple maintained distribution versions.
 1. Celery Beat triggers periodic CVE sync tasks
 2. Workers fetch CVE data from configured sources
 3. New/updated CVEs are stored in PostgreSQL
-4. Impact analysis runs to determine affected distributions/packages
-5. Notifications are generated for high-severity CVEs
+4. A Ticket is created automatically for each new CVE
+5. STAMP attempts to map CPE data to source package names
+6. For mapped packages, SMELT is queried to resolve codestreams and products
+7. TicketPackageCodestream and TicketPackageProduct records are created
+   automatically with status ANALYSIS
 
-### Update Coordination Flow
+### Package Affectedness Flow
 
-1. Security team reviews CVE impact assessment
-2. Patches are prepared and linked to CVEs
-3. Updates are submitted to OBS for building
-4. Build status is monitored via OBS API
-5. Completed updates are released to repositories
+1. IM analyzes a ticket and sets affectedness status per codestream
+2. STAMP propagates codestream status to products, adjusting for eligibility
+   (CVSS score vs product threshold from AIMAAS)
+3. Products not eligible that inherit AFFECTED status receive
+   AFFECTED_RESOLVED (green) automatically — other inherited statuses are
+   not modified by eligibility
+4. IM can override individual product statuses when needed
+5. See `docs/features/package-tracking.md` for full status propagation rules
+
+### Release Tracking Flow
+
+1. Celery Beat triggers periodic release status checks
+2. Workers query IBS to detect if fixes have landed in codestream repositories
+3. Workers check if fixes have been copied to product repositories
+4. TicketPackageCodestream and TicketPackageProduct statuses are updated to
+   RELEASED when fixes are detected (unless status is WONT_FIX or IGNORED)
+5. When all packages in a ticket reach a final status, the ticket can
+   transition to Resolved
 
 ## Environments
 

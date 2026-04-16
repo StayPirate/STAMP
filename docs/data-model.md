@@ -6,55 +6,17 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 ## Entity Relationship Overview
 
 ```
-┌──────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│     CVE      │────▶│   CVESource      │     │   Distribution   │
-│              │     │                  │     │                  │
-│  cve_id      │     │  source_type     │     │  name            │
-│  description │     │  source_url      │     │  version         │
-│  severity    │     │  raw_data        │     │  codename        │
-│  cvss_score  │     └──────────────────┘     │  active          │
-│  published   │                              └────────┬─────────┘
-└──────┬───────┘                                       │
-       │              ┌──────────────────┐             │
-       │              │     Package      │             │
-       │              │                  │◀────────────┘
-       │              │  name            │  (DistributionPackage)
-       │              │  obs_project     │
-       │              │  obs_package     │
-       │              └────────┬─────────┘
-       │                       │
-       ▼                       ▼
-┌──────────────────────────────────────┐
-│          AffectedPackage             │
-│                                      │
-│  cve_id (FK)                         │
-│  package_id (FK)                     │
-│  distribution_id (FK)                │
-│  status (affected/not_affected/      │
-│          investigating/fixed)        │
-│  fixed_version                       │
-└──────────────────────────────────────┘
-
-┌──────────────────┐     ┌──────────────────┐
-│  SecurityUpdate  │────▶│  UpdatePackage   │
-│                  │     │                  │
-│  title           │     │  update_id (FK)  │
-│  status          │     │  package_id (FK) │
-│  severity        │     │  dist_id (FK)    │
-│  release_date    │     │  version         │
-│  cves (M2M)      │     └──────────────────┘
-└──────────────────┘
-
-┌──────────────────┐
-│      User        │
-│                  │
-│  username        │
-│  email           │
-│  role            │
-│  active          │
-└────────┬─────────┘
-         │
-         ▼
+┌──────────────┐     ┌──────────────────┐
+│     CVE      │────▶│   CVESource      │
+│              │     │                  │
+│  cve_id      │     │  source_type     │
+│  description │     │  source_url      │
+│  severity    │     │  raw_data        │
+│  cvss_score  │     └──────────────────┘
+│  published   │
+└──────┬───────┘
+       │
+       ▼ (1:1)
 ┌──────────────────┐     ┌──────────────────┐
 │     Ticket       │────▶│   TicketEvent    │
 │                  │     │                  │
@@ -63,8 +25,38 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  assignee_id(FK) │     │  event_type      │
 │  duplicate_of_id │     │  old_value       │
 │  (FK, self-ref)  │     │  new_value       │
-└──────────────────┘     │  comment         │
-                         └──────────────────┘
+└──────┬───────────┘     │  comment         │
+       │                 └──────────────────┘
+       │
+       ▼ (1:N)
+┌────────────────────────────┐     ┌──────────────┐
+│  TicketPackageCodestream   │────▶│  Codestream  │
+│                            │     │              │
+│  ticket_id (FK)            │     │  name        │
+│  package_name              │     │  active      │
+│  codestream_id (FK)        │     └──────┬───────┘
+│  status                    │            │
+└──────────┬─────────────────┘            │
+           │                              │ (N:M via CodestreamProduct)
+           ▼ (1:N)                        │
+┌────────────────────────────┐     ┌──────▼───────┐
+│   TicketPackageProduct     │────▶│   Product    │
+│                            │     │              │
+│  tkt_pkg_cs_id (FK)        │     │  name        │
+│  product_id (FK)           │     │  cpe         │
+│  status                    │     │  cvss_threshold │
+│  is_override               │     │  active      │
+│  released_at               │     └──────────────┘
+└────────────────────────────┘
+
+┌──────────────────┐
+│      User        │
+│                  │
+│  username        │
+│  email           │
+│  role            │
+│  active          │
+└──────────────────┘
 ```
 
 ## Tables
@@ -100,71 +92,100 @@ Tracks the origin of CVE data from different sources.
 | raw_data    | JSONB       |                  | Original data from the source      |
 | fetched_at  | TIMESTAMP   | NOT NULL         | When the data was fetched          |
 
-### Distribution
+### Codestream
 
-Represents a maintained Linux distribution version.
+Represents an IBS codestream project where source packages are maintained
+and built. See `docs/features/package-tracking.md` for full details.
 
-| Column      | Type        | Constraints      | Description                        |
-|-------------|-------------|------------------|------------------------------------|
-| id          | UUID        | PK               | Internal identifier                |
-| name        | VARCHAR     | NOT NULL         | Distribution name (e.g., SLES, openSUSE Leap) |
-| version     | VARCHAR     | NOT NULL         | Version string (e.g., 15.5)       |
-| codename    | VARCHAR     |                  | Optional codename                  |
-| active      | BOOLEAN     | NOT NULL, DEFAULT| Whether this distro is maintained  |
-| obs_project | VARCHAR     |                  | OBS project name                   |
-| created_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record creation timestamp          |
-| updated_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record update timestamp            |
+| Column     | Type      | Constraints          | Description                        |
+|------------|-----------|----------------------|------------------------------------|
+| id         | UUID      | PK                   | Internal identifier                |
+| name       | VARCHAR   | UNIQUE, NOT NULL     | IBS project name (e.g., `SUSE:SLE-15-SP6:Update`) |
+| active     | BOOLEAN   | NOT NULL, DEFAULT true | False when SMELT no longer reports this codestream |
+| synced_at  | TIMESTAMP |                      | Last sync from SMELT               |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at | TIMESTAMP | NOT NULL, DEFAULT    | Record update timestamp            |
 
-**Unique constraint**: (name, version)
+### Product
 
-### Package
+Represents a SUSE commercial product. See
+`docs/features/package-tracking.md` for full details.
 
-Represents a software package tracked across distributions.
+| Column         | Type         | Constraints          | Description                        |
+|----------------|--------------|----------------------|------------------------------------|
+| id             | UUID         | PK                   | Internal identifier                |
+| name           | VARCHAR      | UNIQUE, NOT NULL     | Product name (e.g., `SLES 15 SP6`) |
+| cpe            | VARCHAR      | UNIQUE, nullable     | CPE identifier for this product    |
+| cvss_threshold | DECIMAL(3,1) | NOT NULL, DEFAULT 0  | Minimum CVSS score for eligibility (from AIMAAS) |
+| active         | BOOLEAN      | NOT NULL, DEFAULT true | False when product is EOL        |
+| synced_at      | TIMESTAMP    |                      | Last sync from AIMAAS              |
+| created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp            |
 
-| Column      | Type        | Constraints      | Description                        |
-|-------------|-------------|------------------|------------------------------------|
-| id          | UUID        | PK               | Internal identifier                |
-| name        | VARCHAR     | NOT NULL, UNIQUE | Package name                       |
-| obs_project | VARCHAR     |                  | OBS project containing this package|
-| obs_package | VARCHAR     |                  | OBS package name (if different)    |
-| git_url     | VARCHAR     |                  | Git repository URL (if applicable) |
-| created_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record creation timestamp          |
-| updated_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record update timestamp            |
+### CodestreamProduct
 
-### AffectedPackage
+Mapping table recording which products receive packages from which
+codestreams. Synced from SMELT.
 
-Junction table tracking which packages in which distributions are affected
-by which CVEs.
+| Column        | Type      | Constraints                  | Description             |
+|---------------|-----------|------------------------------|-------------------------|
+| id            | UUID      | PK                           | Internal identifier     |
+| codestream_id | UUID      | FK(codestream.id), NOT NULL  | Related codestream      |
+| product_id    | UUID      | FK(product.id), NOT NULL     | Related product         |
+| created_at    | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp |
 
-| Column          | Type        | Constraints                | Description               |
-|-----------------|-------------|----------------------------|---------------------------|
-| id              | UUID        | PK                         | Internal identifier       |
-| cve_id          | UUID        | FK(cve.id), NOT NULL       | Related CVE               |
-| package_id      | UUID        | FK(package.id), NOT NULL   | Related package           |
-| distribution_id | UUID        | FK(distribution.id), NOT NULL | Related distribution   |
-| status          | ENUM        | NOT NULL, DEFAULT          | Affected, Not Affected, Investigating, Fixed |
-| fixed_version   | VARCHAR     |                            | Version that fixes the CVE|
-| notes           | TEXT        |                            | Additional notes          |
-| created_at      | TIMESTAMP   | NOT NULL, DEFAULT          | Record creation timestamp |
-| updated_at      | TIMESTAMP   | NOT NULL, DEFAULT          | Record update timestamp   |
+**Unique constraint**: (codestream_id, product_id)
 
-**Unique constraint**: (cve_id, package_id, distribution_id)
+### TicketPackageCodestream
 
-### SecurityUpdate
+Records the affectedness status of a source package in a specific codestream
+within the context of a ticket. See `docs/features/package-tracking.md` for
+status propagation rules.
 
-Represents a security update that addresses one or more CVEs.
+| Column        | Type      | Constraints                  | Description                        |
+|---------------|-----------|------------------------------|------------------------------------|
+| id            | UUID      | PK                           | Internal identifier                |
+| ticket_id     | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
+| package_name  | VARCHAR   | NOT NULL                     | Source package name                |
+| codestream_id | UUID      | FK(codestream.id), NOT NULL  | Related codestream                 |
+| status        | ENUM      | NOT NULL, DEFAULT ANALYSIS   | PackageStatus enum                 |
+| created_at    | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at    | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
 
-| Column       | Type        | Constraints      | Description                       |
-|--------------|-------------|------------------|-----------------------------------|
-| id           | UUID        | PK               | Internal identifier               |
-| title        | VARCHAR     | NOT NULL         | Update title                      |
-| description  | TEXT        |                  | Update description                |
-| severity     | ENUM        | NOT NULL         | Critical, Important, Moderate, Low|
-| status       | ENUM        | NOT NULL, DEFAULT| Draft, In Progress, Testing, Released |
-| release_date | TIMESTAMP   |                  | When the update was released      |
-| created_by   | UUID        | FK(user.id)      | User who created the update       |
-| created_at   | TIMESTAMP   | NOT NULL, DEFAULT| Record creation timestamp         |
-| updated_at   | TIMESTAMP   | NOT NULL, DEFAULT| Record update timestamp           |
+**Unique constraint**: (ticket_id, package_name, codestream_id)
+
+### TicketPackageProduct
+
+Records the affectedness status of a source package for a specific product
+within the context of a ticket and codestream. See
+`docs/features/package-tracking.md` for status inheritance and override rules.
+
+| Column                        | Type      | Constraints                                | Description                        |
+|-------------------------------|-----------|--------------------------------------------|------------------------------------|
+| id                            | UUID      | PK                                         | Internal identifier                |
+| ticket_package_codestream_id  | UUID      | FK(ticket_package_codestream.id), NOT NULL | Parent codestream record           |
+| product_id                    | UUID      | FK(product.id), NOT NULL                   | Related product                    |
+| status                        | ENUM      | NOT NULL, DEFAULT ANALYSIS                 | PackageStatus enum                 |
+| is_override                   | BOOLEAN   | NOT NULL, DEFAULT false                    | True if IM manually overrode the inherited status |
+| released_at                   | TIMESTAMP | nullable                                  | When STAMP detected the fix in the product's repository |
+| created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
+| updated_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record update timestamp            |
+
+**Unique constraint**: (ticket_package_codestream_id, product_id)
+
+### PackageStatus Enum
+
+Used by both TicketPackageCodestream and TicketPackageProduct.
+
+| Value             | UI Label      | Color      | Type       |
+|-------------------|---------------|------------|------------|
+| ANALYSIS          | Analysis      | Neutral    | Non-final  |
+| AFFECTED          | Affected      | Red        | Non-final  |
+| AFFECTED_RESOLVED | Affected      | Green      | Final      |
+| NOT_AFFECTED      | Not Affected  | Green      | Final      |
+| WONT_FIX          | Won't Fix     | Green      | Final      |
+| IGNORED           | Ignored       | Greyed-out | Final      |
+| RELEASED          | Released      | Green      | Final      |
 
 ### User
 
@@ -235,3 +256,6 @@ TBD — will be defined based on query patterns during implementation.
 - JSONB is used for flexible storage of source-specific data
 - The schema will evolve as features are implemented; this document must be
   updated before any schema changes
+- The previous Distribution, Package, and AffectedPackage tables have been
+  replaced by Codestream, Product, CodestreamProduct, TicketPackageCodestream,
+  and TicketPackageProduct — see `docs/features/package-tracking.md`
