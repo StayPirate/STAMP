@@ -208,3 +208,21 @@ CRITICAL: Before creating or modifying any frontend component:
    - New reusable component in `components/ui/`: invoke `@ui-reviewer`
    - Minor text or data change to existing page: skip review
    - When in doubt, invoke `@ui-reviewer`
+
+### 8. Data model simplicity
+
+CRITICAL: Before considering any data model change complete (new or modified
+SQLAlchemy models, new Alembic migrations, or changes to `docs/data-model.md`):
+
+1. Ensure `docs/data-model.md` is updated BEFORE implementing model changes
+2. After implementation, invoke `@data-model-reviewer` to verify:
+   - The schema remains as simple as possible
+   - No unnecessary tables, columns, or relationships were introduced
+   - Naming conventions and structural conventions are followed
+   - The implementation matches the specification
+3. If the reviewer identifies complexity concerns or issues rated as
+   "Needs revision", address them before considering the task complete
+4. Minor issues flagged by the reviewer should be fixed in the same PR
+
+The goal is to keep the database schema lean and comprehensible. Every table
+and column must justify its existence.
