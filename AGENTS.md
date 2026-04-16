@@ -135,6 +135,9 @@ When modifying code that changes the behavior of a feature, verify whether the
 corresponding specification needs to be updated. If it does, propose the
 specification update BEFORE modifying the code.
 
+After significant documentation or code changes, evaluate whether a docs review
+is needed — see Guardrail 9 for details.
+
 ### 4. Language: English only
 
 CRITICAL: ALL content written to files in this repository MUST be in English,
@@ -226,3 +229,26 @@ SQLAlchemy models, new Alembic migrations, or changes to `docs/data-model.md`):
 
 The goal is to keep the database schema lean and comprehensible. Every table
 and column must justify its existence.
+
+### 9. Documentation completeness
+
+After any significant code or documentation change, evaluate whether a docs
+review is needed:
+
+1. Invoke `@docs-reviewer` when:
+   - New API endpoints are added or existing ones are modified
+   - New feature specifications are created or existing ones are updated
+   - Models or services are added/changed in ways that affect documented
+     behavior
+   - Architecture or integration changes are made
+   - Multiple documentation files are modified in the same PR
+2. Skip the review when:
+   - The change is purely cosmetic (typo fixes, formatting)
+   - Only test files are modified with no behavioral changes
+   - A single inline comment or docstring is added
+3. If the reviewer identifies issues rated as "Needs revision", address them
+   before considering the task complete
+4. Minor issues flagged by the reviewer should be fixed in the same PR
+
+The goal is to keep documentation accurate, complete, and in sync with the
+codebase at all times.
