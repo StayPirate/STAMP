@@ -27,8 +27,8 @@ coordination across multiple maintained distribution versions.
 
 ┌──────────────────┐     ┌──────────────────────────────────┐
 │   CVE Sources    │────▶│        Celery Workers            │
-│  NVD, SUSE OVAL, │     │                                  │
-│  MITRE, others   │     │  ┌────────────┐ ┌────────────┐  │
+│  NVD, MITRE,     │     │                                  │
+│  others          │     │  ┌────────────┐ ┌────────────┐  │
 └──────────────────┘     │  │  CVE Sync  │ │  OBS Sync  │  │
                         │  └────────────┘ └────────────┘  │
 ┌──────────────────┐     │                                  │
@@ -96,7 +96,6 @@ coordination across multiple maintained distribution versions.
 #### CVE Sources
 
 - **NVD (NIST)**: REST API v2 for CVE data
-- **SUSE Security OVAL**: XML feeds for SUSE-specific vulnerability data
 - **MITRE**: CVE feed for early CVE information
 - Additional sources can be added via the pluggable ingestion architecture
 

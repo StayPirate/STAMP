@@ -234,7 +234,7 @@ The page is divided into the following sections:
 - **Published date**: when the CVE was published
 - **Modified date**: when the CVE was last modified at source
 - **References**: links to external references (NVD, advisories, etc.)
-- **Sources**: which data sources provided this CVE (NVD, SUSE OVAL, MITRE)
+- **Sources**: which data sources provided this CVE (NVD, MITRE)
   with fetch timestamps
 
 #### Affectedness Table

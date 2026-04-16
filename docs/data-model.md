@@ -88,7 +88,7 @@ Tracks the origin of CVE data from different sources.
 |-------------|-------------|------------------|------------------------------------|
 | id          | UUID        | PK               | Internal identifier                |
 | cve_id      | UUID        | FK(cve.id)       | Related CVE                        |
-| source_type | ENUM        | NOT NULL         | NVD, SUSE_OVAL, MITRE, etc.       |
+| source_type | ENUM        | NOT NULL         | NVD, MITRE, etc.       |
 | source_url  | VARCHAR     |                  | URL to the source entry            |
 | raw_data    | JSONB       |                  | Original data from the source      |
 | fetched_at  | TIMESTAMP   | NOT NULL         | When the data was fetched          |
