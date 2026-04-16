@@ -252,3 +252,32 @@ review is needed:
 
 The goal is to keep documentation accurate, complete, and in sync with the
 codebase at all times.
+
+### 10. Code security
+
+After any code change that touches security-sensitive areas, evaluate whether
+a security review is needed:
+
+1. Invoke `@security-reviewer` when:
+   - New API endpoints are added or existing ones are modified
+   - Authentication or authorization logic is added or changed
+     (`app/core/`, `Depends()` for auth/permissions)
+   - Secret keys, tokens, credentials, or session handling are involved
+   - Input handling changes (new request schemas, file uploads, query
+     parameters with user-controlled data)
+   - New external service integrations are added (API calls, webhooks)
+   - New dependencies are added that process user input (parsers,
+     serializers, template engines)
+   - CORS, CSP, or other HTTP security headers are modified
+2. Skip the review when:
+   - The change is purely cosmetic (typo fixes, formatting, comments)
+   - Only test files are modified
+   - Only documentation is updated
+   - Frontend-only changes that do not handle auth tokens or user input
+3. If the reviewer identifies vulnerabilities rated as "Needs revision",
+   address them before considering the task complete
+4. Issues rated as Critical or High severity MUST be fixed before merging
+
+The goal is to prevent security vulnerabilities from being introduced into
+the codebase. The `@security-reviewer` agent complements the automated
+security scanning in the CI pipeline (`bandit`, `pip-audit`, `npm audit`).

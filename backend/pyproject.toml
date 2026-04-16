@@ -53,6 +53,10 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]  # skip assert warnings (used in tests/app code)
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
