@@ -35,7 +35,7 @@ You are the CI/CD specialist for the STAMP project.
 - All workflows must use pinned action versions (e.g., `actions/checkout@v4`,
   NOT `actions/checkout@main`)
 - Docker images are pushed to ghcr.io
-- Staging deploys automatically on main merge
+- Staging deploys automatically on master merge
 - Production deploys require manual trigger and approval
 - Always use GitHub Actions service containers for test databases, never
   external services
@@ -45,7 +45,7 @@ You are the CI/CD specialist for the STAMP project.
 ## Environments
 
 - **dev**: local docker-compose only
-- **staging**: auto-deploy from main
+- **staging**: auto-deploy from master
 - **prod**: manual deploy from tags `v*`
 
 ## Before making changes

@@ -185,7 +185,7 @@ coordination across multiple maintained distribution versions.
 ## Environments
 
 - **Development**: `docker-compose.yml` provides PostgreSQL + Redis locally
-- **Staging**: auto-deployed from `main` branch
+- **Staging**: auto-deployed from `master` branch
 - **Production**: manually deployed from version tags (`v*`)
 
 ## Security Considerations
