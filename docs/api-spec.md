@@ -103,6 +103,13 @@ See `docs/features/update-coordination.md` for detailed endpoint specifications.
 - `PUT /api/v1/updates/{id}` — Update security update
 - `POST /api/v1/updates/{id}/release` — Release an update
 
+### Ticket Events
+
+See `docs/features/ticket-history.md` for detailed endpoint specification.
+
+- `GET /api/v1/tickets/{ticket_id}/events` — List ticket events with filters
+  (event type, actor, text search) and pagination
+
 ### Users and Auth
 
 See `docs/features/rbac.md` for detailed endpoint specifications.

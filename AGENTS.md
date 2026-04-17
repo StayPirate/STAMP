@@ -281,3 +281,32 @@ a security review is needed:
 The goal is to prevent security vulnerabilities from being introduced into
 the codebase. The `@security-reviewer` agent complements the automated
 security scanning in the CI pipeline (`bandit`, `pip-audit`, `npm audit`).
+
+### 11. Ticket event logging
+
+CRITICAL: Every service operation that modifies a Ticket or its related
+data (status, assignee, duplicate links, packages, codestreams, products)
+MUST create a `TicketEvent` record with the appropriate `event_type`.
+
+Before considering any ticket-related code change complete:
+
+1. Identify which ticket mutations the code performs
+2. Verify that a `TicketEvent` is created for each mutation, with:
+   - Correct `event_type` per the contract in `docs/features/ticket-history.md`
+   - `old_value` and `new_value` populated where applicable
+   - `user_id` set for user-initiated actions, `NULL` for system actions
+   - `comment` populated for automated events with a system description
+3. Verify that the `TicketEvent` is created in the same database transaction
+   as the ticket mutation (atomicity guarantee)
+4. Verify that tests assert `TicketEvent` creation:
+   - Correct event count after each operation
+   - Correct `event_type`, `old_value`, `new_value`
+   - Correct `user_id` (user vs `NULL` for system)
+5. If the change introduces a new type of ticket mutation not covered by
+   an existing `TicketEventType`, STOP and propose an update to
+   `docs/data-model.md` and `docs/features/ticket-history.md` before
+   proceeding with the implementation
+
+The goal is to maintain a complete and reliable audit trail for every
+ticket. An operation that mutates a ticket without creating a corresponding
+`TicketEvent` is a bug.

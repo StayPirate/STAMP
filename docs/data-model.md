@@ -251,15 +251,20 @@ system action).
 
 ### TicketEventType Enum
 
-| Value               | Description                                        |
-|---------------------|----------------------------------------------------|
-| status_change       | Ticket status was changed                          |
-| assignment          | Ticket was assigned or reassigned                  |
-| duplicate_set       | Ticket was marked as duplicate of another           |
-| duplicate_removed   | Duplicate mark was reverted                         |
-| codestream_released | Codestream release detected by CodestreamReleaseDetector (Case A) |
-| package_auto_added  | Package auto-added to ticket after CVE fix detected in an untracked package (Case B) |
-| ticket_auto_created | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
+| Value                      | Description                                        |
+|----------------------------|----------------------------------------------------|
+| status_change              | Ticket status was changed                          |
+| assignment                 | Ticket was assigned or reassigned                  |
+| duplicate_set              | Ticket was marked as duplicate of another          |
+| duplicate_removed          | Duplicate mark was reverted                        |
+| package_added              | IM manually added a package to the ticket          |
+| package_removed            | IM removed a package from the ticket               |
+| codestream_status_changed  | IM changed codestream affectedness status           |
+| product_status_overridden  | IM overrode product affectedness status             |
+| codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
+| product_released           | Product release detected via updateinfo.xml advisory |
+| package_auto_added         | Package auto-added to ticket after CVE fix detected in an untracked package (Case B) |
+| ticket_auto_created        | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
 
 ### CodestreamPackageChecksum
 
@@ -288,7 +293,9 @@ TBD — will be defined based on query patterns during implementation.
 ## Notes
 
 - All tables use UUID primary keys
-- All tables include `created_at` and `updated_at` timestamps
+- All tables include `created_at` and `updated_at` timestamps (exception:
+  `TicketEvent` and `CodestreamPackageChecksum` only have `created_at`
+  because they are immutable write-once records)
 - ENUM types are defined as PostgreSQL enums
 - JSONB is used for flexible storage of source-specific data
 - The schema will evolve as features are implemented; this document must be

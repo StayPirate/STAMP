@@ -268,14 +268,18 @@ Shown on the original ticket when other tickets reference it as duplicate:
 
 - "Duplicates: [CVE-XXXX-AAAA], [CVE-XXXX-BBBB]" with links
 
-#### Event History
+#### Event History (Tab)
 
-Chronological timeline (newest first) of all ticket events:
+A dedicated **"History" tab** in the Ticket Detail page provides a complete
+audit trail with search and filtering capabilities.
 
-- Status changes (old status → new status)
-- Assignments and reassignments
-- Duplicate set / duplicate removed
-- Each event shows: timestamp, user who performed the action, optional comment
+- Chronological timeline (newest first) of all ticket events
+- Filter bar: filter by event type (multi-select), by actor (user or system),
+  and text search on comments
+- Paginated results
+
+See `docs/features/ticket-history.md` for the full specification, including
+API endpoint, filter parameters, event type contract, and UI details.
 
 ## Security
 

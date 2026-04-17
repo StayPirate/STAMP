@@ -32,6 +32,12 @@ You review tests for completeness and quality. You do NOT write or modify code.
 - Is there a regression test for bug fixes?
 - Backend: are API endpoints tested for auth, validation, and permissions?
 - Backend: are database constraints and relationships tested?
+- Backend: for any code that modifies tickets or their related data (status,
+  assignee, duplicate links, packages, codestreams, products), do the tests
+  assert that a `TicketEvent` is created with the correct `event_type`,
+  `old_value`, `new_value`, and `user_id`? Missing `TicketEvent` assertions
+  for ticket-mutating operations MUST be flagged as a coverage gap. See
+  `docs/features/ticket-history.md` for the event type contract.
 - Frontend: are components tested for rendering, user interaction, and edge cases?
 
 ## Output
