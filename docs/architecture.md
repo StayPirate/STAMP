@@ -179,9 +179,11 @@ product — through different mechanisms. See
 authoritative details.
 
 1. Celery Beat triggers periodic release status checks (`check_release_status`).
-2. **Codestream level**: workers query an IBS endpoint (TBD, see
-   `docs/features/obs-integration.md`) to detect whether the fix for the
-   ticket's CVE has landed in the codestream IBS project. When detected,
+2. **Codestream level**: workers query IBS source info and diff endpoints
+   (see `docs/features/obs-integration.md` and
+   `docs/features/package-tracking.md`, section "Codestream-level
+   Detection") to detect whether the fix for the ticket's CVE has landed
+   in the codestream IBS project. When detected,
    `TicketPackageCodestream.status` is set to `RELEASED`.
 3. **Product level**: workers fetch `updateinfo.xml` from each product's
    update repository and look for advisories that reference the ticket's

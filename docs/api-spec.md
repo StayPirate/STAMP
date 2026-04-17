@@ -77,31 +77,25 @@ See `docs/features/cve-tracking.md` for detailed endpoint specifications.
 - `POST /api/v1/cves/sync` — Trigger manual CVE sync
 - `GET /api/v1/cves/{cve_id}/impact` — Get impact analysis
 
-### Distributions
+### Tickets
 
-See `docs/features/distro-management.md` for detailed endpoint specifications.
+See `docs/features/pages.md` for ticket lifecycle and page specifications.
+See `docs/features/package-tracking.md` for package management endpoints.
 
-- `GET /api/v1/distributions` — List distributions
-- `POST /api/v1/distributions` — Create distribution
-- `GET /api/v1/distributions/{id}` — Get distribution details
-- `PUT /api/v1/distributions/{id}` — Update distribution
-- `GET /api/v1/distributions/{id}/packages` — List packages in distribution
+- `GET /api/v1/tickets` — List tickets with filters
+- `GET /api/v1/tickets/{ticket_id}` — Get ticket details
+- `POST /api/v1/tickets/{ticket_id}/assign` — Assign or reassign a ticket
+- `POST /api/v1/tickets/{ticket_id}/ignore` — Mark ticket as ignored
+- `POST /api/v1/tickets/{ticket_id}/duplicate` — Mark ticket as duplicate
+- `POST /api/v1/tickets/{ticket_id}/revert-duplicate` — Revert duplicate status
+- `POST /api/v1/tickets/{ticket_id}/packages` — Add a package to a ticket
+- `DELETE /api/v1/tickets/{ticket_id}/packages/{package_name}` — Remove a package
 
-### Packages
+### Products
 
-- `GET /api/v1/packages` — List packages
-- `GET /api/v1/packages/{id}` — Get package details
-- `GET /api/v1/packages/{id}/cves` — List CVEs affecting a package
+See `docs/features/package-tracking.md` for detailed specifications.
 
-### Security Updates
-
-See `docs/features/update-coordination.md` for detailed endpoint specifications.
-
-- `GET /api/v1/updates` — List security updates
-- `POST /api/v1/updates` — Create security update
-- `GET /api/v1/updates/{id}` — Get update details
-- `PUT /api/v1/updates/{id}` — Update security update
-- `POST /api/v1/updates/{id}/release` — Release an update
+- `GET /api/v1/products` — List products (synced from SMELT)
 
 ### Ticket Events
 
