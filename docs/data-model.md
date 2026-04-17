@@ -53,11 +53,15 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 ┌──────────────────┐               │  repo_name          │
 │      User        │               └─────────────────────┘
 │                  │
-│  username        │
-│  email           │
-│  role            │
-│  active          │
-└──────────────────┘
+│  username        │       ┌─────────────────────────────────┐
+│  email           │       │ CodestreamPackageChecksum        │
+│  role            │       │ (operational cache)              │
+│  active          │       │                                 │
+└──────────────────┘       │  codestream_name                │
+                           │  package_name                   │
+                           │  srcmd5                         │
+                           │  last_seen_at                   │
+                           └─────────────────────────────────┘
 ```
 
 ## Tables
@@ -231,18 +235,51 @@ managers (IMs).
 ### TicketEvent
 
 Audit log of all changes to a ticket. Each event represents a discrete
-action (status change, assignment, duplicate operation).
+action (status change, assignment, duplicate operation, or automated
+system action).
 
 | Column      | Type        | Constraints            | Description                                |
 |-------------|-------------|------------------------|--------------------------------------------|
 | id          | UUID        | PK                     | Internal identifier                        |
 | ticket_id   | UUID        | FK(ticket.id), NOT NULL| Related ticket                             |
-| user_id     | UUID        | FK(user.id), NOT NULL  | User who performed the action              |
-| event_type  | ENUM        | NOT NULL               | status_change, assignment, duplicate_set, duplicate_removed |
+| user_id     | UUID        | FK(user.id), nullable  | User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
+| event_type  | ENUM        | NOT NULL               | See TicketEventType enum below             |
 | old_value   | VARCHAR     | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | VARCHAR     | nullable               | New value (e.g., new status, new assignee username) |
-| comment     | TEXT        | nullable               | Optional note from the IM                  |
+| comment     | TEXT        | nullable               | Optional note from the IM, or system-generated description for automated events |
 | created_at  | TIMESTAMP   | NOT NULL, DEFAULT      | Event timestamp                            |
+
+### TicketEventType Enum
+
+| Value               | Description                                        |
+|---------------------|----------------------------------------------------|
+| status_change       | Ticket status was changed                          |
+| assignment          | Ticket was assigned or reassigned                  |
+| duplicate_set       | Ticket was marked as duplicate of another           |
+| duplicate_removed   | Duplicate mark was reverted                         |
+| codestream_released | Codestream release detected by CodestreamReleaseDetector (Case A) |
+| package_auto_added  | Package auto-added to ticket after CVE fix detected in an untracked package (Case B) |
+| ticket_auto_created | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
+
+### CodestreamPackageChecksum
+
+Operational cache table used by the `CodestreamReleaseDetector` to track
+source MD5 checksums of packages in IBS codestream projects. By comparing
+the current `srcmd5` from IBS with the cached value, the detector
+identifies which packages have changed since the last run.
+
+This table contains no domain data — it is purely an operational artifact
+of the release detection mechanism.
+
+| Column          | Type        | Constraints          | Description                        |
+|-----------------|-------------|----------------------|------------------------------------|
+| id              | UUID        | PK                   | Internal identifier                |
+| codestream_name | VARCHAR     | NOT NULL             | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) |
+| package_name    | VARCHAR     | NOT NULL             | Source package name                |
+| srcmd5          | VARCHAR     | NOT NULL             | MD5 checksum of the package source revision from IBS |
+| last_seen_at    | TIMESTAMP   | NOT NULL, DEFAULT    | When this checksum was last observed |
+
+**Unique constraint**: (codestream_name, package_name)
 
 ## Indexes
 

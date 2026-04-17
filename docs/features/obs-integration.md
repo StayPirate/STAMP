@@ -1,145 +1,165 @@
-# OBS Integration
+# OBS / IBS Integration
 
 ## Purpose
 
-Integration with Open Build Service (OBS) for package source management, build
-triggering, and build status monitoring. OBS is used both as a source hosting
-platform and as the build system for security updates.
+Integration with Open Build Service instances for package source monitoring
+and release detection. STAMP interacts with two separate OBS instances:
 
-## Integration Modes
+- **IBS** (Internal Build Service, `build.suse.de`): used for SUSE commercial
+  products. This is the primary integration for codestream-level release
+  detection.
+- **OBS** (public, `build.opensuse.org`): used for openSUSE distributions.
+  Not currently integrated — see Future Considerations.
 
-### Mode 1: OBS-hosted sources
-
-Some distributions host their package sources entirely in OBS. For these:
-- Package metadata is fetched from OBS
-- Patches are submitted directly to OBS
-- Builds are triggered via OBS API
-
-### Mode 2: Git-hosted sources with OBS builds
-
-Some distributions host sources in Git repositories with CI/CD pipelines that
-submit to OBS for building. For these:
-- Package metadata may come from Git or OBS
-- Source changes happen in Git
-- OBS is used only for building
-- Build status is monitored via OBS API
-
-## OBS API Integration
+## IBS Integration
 
 ### Authentication
 
-- OBS API uses HTTP Basic Auth or API tokens
+- IBS API uses HTTP Basic Auth or API tokens
 - Credentials are stored as environment variables, never in code
-- Configuration: `OBS_API_URL`, `OBS_USERNAME`, `OBS_PASSWORD`
+- Configuration:
+  - `IBS_API_URL`: IBS API base URL (default: `https://api.suse.de`)
+  - `IBS_USERNAME`: IBS API username
+  - `IBS_PASSWORD`: IBS API password
+  - `IBS_DOWNLOAD_BASE_URL`: HTTP download base URL for repository data
+    (default: `https://download.suse.de/ibs`). Used by the
+    `ProductReleaseDetector` — see `docs/features/package-tracking.md`.
 
 ### Key API Operations
 
-#### Package Metadata
+The following IBS API endpoints are used by STAMP for codestream-level
+release detection (see `docs/features/package-tracking.md`, section
+"Codestream-level Detection"):
+
+#### Project Source Info
 
 ```
-GET /source/{project}/{package}/_meta
+GET /source/{project}?view=info
 ```
 
-Fetch package metadata including description, maintainers, and build targets.
+Returns an XML document with a `<sourceinfo>` element per package in the
+project. Each element contains:
+- `package` — the source package name
+- `srcmd5` — the MD5 checksum of the current source revision
 
-#### Package Source Files
+Example response:
 
-```
-GET /source/{project}/{package}
-```
-
-List source files for a package.
-
-#### Build Status
-
-```
-GET /build/{project}/{repository}/{arch}/{package}/_status
-```
-
-Get build status for a specific package in a specific repository/architecture.
-
-#### Build Results
-
-```
-GET /build/{project}/_result
+```xml
+<sourceinfolist>
+  <sourceinfo package="containerd" srcmd5="abc123def456..."/>
+  <sourceinfo package="podman" srcmd5="789ghi012jkl..."/>
+  ...
+</sourceinfolist>
 ```
 
-Get build results for all packages in a project.
+This endpoint is called once per codestream project and returns all
+packages in a single response, making it efficient for change detection
+across large projects.
 
-#### Trigger Rebuild
-
-```
-POST /build/{project}?cmd=rebuild&package={package}
-```
-
-Trigger a rebuild of a specific package.
-
-## Data Model
-
-Package and Distribution tables include OBS-related fields:
-- `Distribution.obs_project`: OBS project name for this distribution
-- `Package.obs_project`: OBS project containing the package
-- `Package.obs_package`: OBS package name (if different from package name)
-
-## Service Layer
-
-### OBSClient (`backend/app/services/obs_client.py`)
-
-Encapsulates all OBS API communication:
-- `get_package_meta(project, package)`: fetch package metadata
-- `get_build_status(project, package, repo, arch)`: get build status
-- `get_project_results(project)`: get all build results for a project
-- `trigger_rebuild(project, package)`: trigger a package rebuild
-- `list_packages(project)`: list all packages in a project
-
-### OBSSyncService
-
-- Syncs package lists from OBS projects to the local database
-- Updates build status for packages with active security updates
-
-## Background Tasks
-
-- `sync_obs_packages`: periodic sync of package lists from OBS projects
-- `monitor_obs_builds`: checks build status for active security updates
-- `trigger_obs_build`: triggers a build in OBS for a security update
-
-## API Endpoints
-
-### Get OBS Build Status
+#### Source Diff with Issue Extraction
 
 ```
-GET /api/v1/obs/builds/{project}/{package}
+POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}
 ```
 
-Response: build status across all repositories and architectures.
+Returns an XML document listing references (CVE, Bugzilla) that were added
+between the two source revisions. The `onlyissues=1` parameter instructs
+IBS to parse the changelog and spec diff internally and return only the
+structured issue references.
 
-### Trigger Build
+Example response:
 
+```xml
+<sourcediff>
+  <issues>
+    <issue tracker="cve" name="CVE-2025-1234" state="added"/>
+    <issue tracker="bnc" name="1234567" state="added"/>
+    <issue tracker="cve" name="CVE-2024-9999" state="changed"/>
+  </issues>
+</sourcediff>
 ```
-POST /api/v1/obs/builds/{project}/{package}/rebuild
-```
 
-Triggers a rebuild. Requires Security Team or Admin role.
+Parameters:
+- `orev` — the old source MD5 (baseline revision)
+- `rev` — the new source MD5 (current revision)
 
-### Sync Packages from OBS
+The `CodestreamReleaseDetector` filters for issues with `state="added"`
+and `tracker` equal to `cve` or `bnc`.
 
-```
-POST /api/v1/obs/sync/{project}
-```
+### Data Model
 
-Triggers a package list sync from an OBS project. Requires Admin role.
+IBS-related data is stored in the following tables (see `docs/data-model.md`):
 
-## Business Rules
+- `CodestreamPackageChecksum`: operational cache storing the last known
+  `srcmd5` for each `(codestream_name, package_name)` pair. Used by the
+  `CodestreamReleaseDetector` to detect source changes between runs.
+- `TicketPackageCodestream.codestream_name`: stores the IBS project name
+  (e.g., `SUSE:SLE-15-SP6:Update`) as a string. Codestreams are not
+  maintained as a separate table.
+- `ProductRepository.repo_name`: stores SMELT repository project names
+  that map to IBS download URLs. Used by the `ProductReleaseDetector`.
 
-1. OBS credentials are validated at startup; warn if not configured
-2. OBS API calls use retry logic with exponential backoff
-3. Build status is cached in Redis with a short TTL (5 minutes)
-4. Failed builds generate notifications to the update owner
-5. All OBS operations are logged for audit purposes
+### Service Layer
+
+#### IBSClient (`backend/app/services/ibs_client.py`)
+
+Dedicated client for IBS API communication. Separate from any future
+`OBSClient` for the public OBS instance, since they have independent
+credentials and may diverge in API behavior.
+
+Methods:
+- `get_source_info(project: str) -> dict[str, str]`: calls
+  `GET /source/{project}?view=info`, parses the XML response, and returns
+  a dictionary mapping package names to their `srcmd5` checksums.
+- `get_diff_issues(project: str, package: str, old_md5: str, new_md5: str) -> list[DiffIssue]`:
+  calls `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`,
+  parses the XML response, and returns a list of issue references with
+  `state="added"` filtered to `tracker` values `cve` and `bnc`.
+
+Configuration is injected via the application settings (`IBS_API_URL`,
+`IBS_USERNAME`, `IBS_PASSWORD`).
+
+#### CodestreamReleaseDetector (`backend/app/services/codestream_release_detector.py`)
+
+Orchestrates codestream-level release detection using the `IBSClient`.
+Full procedure is documented in `docs/features/package-tracking.md`,
+section "Codestream-level Detection".
+
+### Background Tasks
+
+- `check_codestream_releases`: periodic task (every 8 hours via Celery
+  Beat) that invokes `CodestreamReleaseDetector.run()`.
+- `create_ticket_from_detection`: on-demand task enqueued when a CVE fix
+  is detected for a CVE with no existing ticket. Fetches CVE data from
+  NVD, creates the ticket, and resolves packages via SMELT.
+
+### Business Rules
+
+1. IBS credentials are validated at startup; warn if not configured
+2. IBS API calls use retry logic with exponential backoff
+3. All IBS operations are logged for audit purposes
+4. The `CodestreamReleaseDetector` never modifies records with protected
+   status (`WONT_FIX`, `IGNORED`)
+
+## OBS Public Integration
+
+### Status
+
+Not currently integrated. Future integration with `build.opensuse.org` for
+tracking openSUSE Tumbleweed and Leap packages will be addressed in a
+separate specification.
+
+### Planned Service
+
+A future `OBSClient` (`backend/app/services/obs_client.py`) will
+encapsulate public OBS API communication with its own credentials and
+configuration (`OBS_API_URL`, `OBS_USERNAME`, `OBS_PASSWORD`). The public
+OBS API is compatible with IBS but uses separate authentication.
 
 ## Security
 
-- OBS credentials are managed via environment variables
-- OBS API calls are made server-side only; credentials are never exposed
-  to the frontend
-- OBS operations require Security Team or Admin role
+- IBS and OBS credentials are managed via environment variables
+- API calls are made server-side only; credentials are never exposed to
+  the frontend
+- Operations that modify IBS/OBS state (future: rebuild triggers) require
+  Security Team or Admin role

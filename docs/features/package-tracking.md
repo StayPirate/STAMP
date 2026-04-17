@@ -305,20 +305,147 @@ current status is `WONT_FIX` or `IGNORED` (these states are protected, see
 
 ### Codestream-level Detection
 
-STAMP uses an internal abstraction `CodestreamReleaseDetector` that, given a
-`TicketPackageCodestream` record (ticket CVE, package name, codestream name),
-determines whether the fix for the CVE has been released into the codestream
-IBS project.
+STAMP uses a `CodestreamReleaseDetector` service that monitors IBS codestream
+projects for package source changes and detects CVE fixes by analyzing diffs.
+The mechanism is based on MD5 checksum comparison (inspired by SMASH's
+`TrackedReleaseFetcher`).
 
-When a release is detected:
+#### IBS Endpoints
 
-- `TicketPackageCodestream.status` is set to `RELEASED` (unless current
+The detector uses two IBS API calls (see `docs/features/obs-integration.md`
+for full endpoint documentation):
+
+1. **Source info** — `GET /source/{project}?view=info` — returns a
+   `<sourceinfo>` element per package containing the `srcmd5` checksum of
+   the current source revision. One call per codestream project retrieves
+   all packages at once.
+
+2. **Diff with issues** —
+   `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
+   — returns `<issues><issue>` elements listing CVE and BNC references
+   added between the two revisions. IBS extracts these from the changelog
+   and spec changes internally.
+
+#### MD5 Checksum Cache
+
+The detector maintains a `CodestreamPackageChecksum` table in PostgreSQL
+(see `docs/data-model.md`) that stores the last known `srcmd5` for each
+`(codestream_name, package_name)` pair. This cache enables efficient
+change detection: only packages whose MD5 has changed since the last run
+need to be diffed.
+
+#### Procedure
+
+The `CodestreamReleaseDetector` runs on a periodic schedule (every 8 hours
+via Celery Beat) and executes the following steps:
+
+1. **Identify active codestreams**: query the distinct `codestream_name`
+   values from `TicketPackageCodestream` records with a non-final,
+   non-protected status (`ANALYSIS` or `AFFECTED`). Only codestreams with
+   at least one active ticket package are scanned.
+
+2. **Fetch current MD5 checksums**: for each active codestream, call
+   `GET /source/{codestream}?view=info` via the `IBSClient` service. This
+   returns `{package_name: srcmd5}` for all packages in the project.
+
+3. **Compare against cached MD5s**: for each package returned by IBS,
+   compare the `srcmd5` with the value stored in
+   `CodestreamPackageChecksum`. Packages with unchanged MD5 are skipped.
+
+4. **First-run behavior**: when no cached MD5 exists for a codestream
+   (first time the detector processes it), the current MD5 values are
+   saved to `CodestreamPackageChecksum` without performing any diffs. CVE
+   detection begins from the second run onward. This avoids spurious
+   matches from the entire package history.
+
+5. **Diff changed packages**: for each package with a changed MD5, call
+   `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
+   via the `IBSClient`. Extract references with `state="added"` and
+   `tracker` equal to `cve` or `bnc`.
+
+6. **Process extracted CVEs**: for each CVE-ID found in the diff, apply
+   the match logic described in
+   [Codestream Match Outcomes](#codestream-match-outcomes) below.
+
+7. **Update cache**: write the new MD5 to `CodestreamPackageChecksum` for
+   each processed package. The cache is updated even if an error occurs
+   during CVE processing, so already-processed packages are not
+   reprocessed on the next run.
+
+#### Codestream Match Outcomes
+
+For each CVE-ID extracted from the diff of a changed package P in
+codestream C, the detector evaluates three cases:
+
+##### Case A — Ticket exists, package tracked in that codestream
+
+A `TicketPackageCodestream` record exists for the ticket's CVE with
+`package_name = P` and `codestream_name = C`.
+
+- Set `TicketPackageCodestream.status` to `RELEASED` (unless current
   status is `WONT_FIX` or `IGNORED`).
+- Create a `TicketEvent` with `event_type = codestream_released`,
+  `user_id = NULL` (system action).
 
-**TBD**: the concrete IBS endpoint and query procedure used by
-`CodestreamReleaseDetector` are not yet specified. They will be detailed in
-`docs/features/obs-integration.md` before implementation. See
-[Open Items](#open-items) below.
+##### Case B — Ticket exists, package NOT tracked in the ticket
+
+A ticket exists for the CVE, but no `TicketPackageCodestream` record
+exists for package P (in any codestream).
+
+- Query SMELT `maintainedpackage` endpoint for package P to resolve all
+  codestreams and products where P is maintained.
+- Create `TicketPackageCodestream` records for all resolved codestreams
+  with status `ANALYSIS`.
+- Create `TicketPackageProduct` records for all active products with
+  status `ANALYSIS` (applying eligibility rules: CVSS threshold,
+  Reactive LTSS override).
+- Set the `TicketPackageCodestream` for codestream C to `RELEASED`
+  (the specific codestream where the fix was detected).
+- Create a `TicketEvent` with `event_type = package_auto_added`,
+  `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
+  detected in `{C}`".
+- Notify the ticket's assignee.
+- Add the ticket to the "Revisit" list.
+
+##### Case C — No ticket exists for the CVE
+
+No ticket exists in STAMP for the extracted CVE-ID.
+
+- Enqueue a `create_ticket_from_detection` Celery task with parameters:
+  `cve_id` (string), `package_name`, `codestream_name`.
+- The task performs:
+  1. Fetch CVE data from NVD API v2
+     (`GET /rest/json/cves/2.0?cveId={cve_id}`). If NVD is unreachable
+     or the CVE is not yet published, create a minimal CVE record with
+     only the CVE-ID and `severity = None`.
+  2. Create the CVE record.
+  3. Create a Ticket with status `New`, no assignee.
+  4. Query SMELT `maintainedpackage` endpoint for the package to resolve
+     codestreams and products.
+  5. Create `TicketPackageCodestream` records for all resolved codestreams
+     with status `ANALYSIS`.
+  6. Create `TicketPackageProduct` records for all active products with
+     status `ANALYSIS` (applying eligibility rules).
+  7. Set the `TicketPackageCodestream` for the originating codestream to
+     `RELEASED`.
+  8. Create a `TicketEvent` with `event_type = ticket_auto_created`,
+     `user_id = NULL`, comment: "Ticket auto-created: CVE fix detected
+     in `{package}` (`{codestream}`)".
+
+#### Error Handling
+
+- **IBS unreachable / timeout**: skip the codestream with ERROR-level log,
+  retry on the next scheduled run.
+- **IBS returns error for a specific package diff**: log ERROR, update the
+  MD5 cache to avoid re-processing, continue with remaining packages.
+- **SMELT unreachable** (during Case B/C package resolution): log ERROR,
+  the package addition is skipped. The next run will not re-trigger it
+  (MD5 already cached), so the condition should be surfaced to operators
+  via monitoring.
+- **Deduplication** (Case C): if multiple packages in the same run yield
+  the same CVE-ID without a ticket, only one `create_ticket_from_detection`
+  task is enqueued. Subsequent packages with the same CVE-ID in the same
+  run are handled as Case B once the ticket is created.
 
 ### Product-level Detection
 
@@ -442,11 +569,13 @@ gracefully:
 
 ### Advisory ↔ Source Package Match
 
-This match procedure is defined once and applies to both detection levels.
-At the product level it operates on `<update>` entries from `updateinfo.xml`;
-at the codestream level it may be reused by `CodestreamReleaseDetector` or
-bypassed if the chosen IBS endpoint already exposes the explicit link
-`CVE → source package` (TBD, see [Open Items](#open-items)).
+This match procedure is defined once and applies to the **product-level**
+detection only. It operates on `<update>` entries from `updateinfo.xml`.
+
+The codestream-level detector does not use this match chain — the IBS diff
+endpoint (`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
+already provides an explicit `CVE → source package` link via the `<issues>`
+response, so the package that received the fix is known directly.
 
 **Why this matters**: a single CVE can affect multiple distinct source
 packages, typically when a vulnerable library is statically linked into
@@ -518,17 +647,17 @@ Then:
 
 ### Match Outcomes
 
-#### Positive match (source package S of the ticket on product/codestream X)
+#### Positive match (source package S of the ticket on product P)
 
-- Product level: `TicketPackageProduct(S, X).status` → `RELEASED`,
-  `released_at` = advisory's `<issued date>`.
-- Codestream level: `TicketPackageCodestream(S, X).status` → `RELEASED`
-  (codestream-specific transition details depend on the
-  `CodestreamReleaseDetector` implementation, TBD).
+- `TicketPackageProduct(S, P).status` → `RELEASED`.
+- `TicketPackageProduct(S, P).released_at` = advisory's `<issued date>`.
 - The transition is suppressed when the current status is `WONT_FIX` or
   `IGNORED` (protected states, see "Status Behavior").
 
-#### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
+Note: codestream-level match outcomes are described separately in the
+[Codestream Match Outcomes](#codestream-match-outcomes) section above.
+
+#### No-match (product level: advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
 
 - Create a `TicketEvent` of informational type recording: `advisory_id`,
   the source name derived from `primary.xml` if available, and a note that
@@ -537,6 +666,11 @@ Then:
   level, see [Open Items](#open-items)).
 - Add the ticket to the **"Revisit" list** (separate feature spec, TBD).
 - **No automatic modification** is made to the ticket's package records.
+
+Note: codestream-level no-match behavior (CVE found in diff but package
+not tracked in ticket, or no ticket exists at all) is described in
+[Codestream Match Outcomes](#codestream-match-outcomes) above — Cases B
+and C.
 
 ### Open Items
 
@@ -560,37 +694,23 @@ agent) can see at a glance what is missing.
 
 #### Codestream-level detection
 
-- **IBS endpoint** — The specific IBS endpoint and query procedure used by
-  `CodestreamReleaseDetector`. To be documented in
-  `docs/features/obs-integration.md`.
-- **Match strategy** — Whether the codestream detector reuses the
-  Advisory ↔ Source Package Match chain defined above, or whether the
-  chosen IBS endpoint exposes an explicit `CVE → source package` link
-  that makes the chain unnecessary.
+All codestream-level open items have been resolved:
+
+- **IBS endpoint** — Resolved: `GET /source/{project}?view=info` for
+  change detection, `POST /source/{project}/{package}?cmd=diff` for CVE
+  extraction. See [Codestream-level Detection](#codestream-level-detection)
+  and `docs/features/obs-integration.md`.
+- **Match strategy** — Resolved: the IBS diff endpoint provides an
+  explicit `CVE → source package` link, so the Advisory ↔ Source Package
+  Match chain is not needed at the codestream level.
 
 #### Cross-cutting
 
-- **Task scheduling** — Frequency and scope of the `check_release_status`
-  background task (which tickets/products to scan, how often).
-- **Code structure** — Whether to introduce a dedicated `IBSClient`
-  service or extend the existing `OBSClient` described in
-  `docs/features/obs-integration.md`.
 - **Released advisory persistence** — Whether to store a reference to the
   advisory that caused the automatic `RELEASED` transition (e.g., a
   `released_advisory_id` field on `TicketPackageProduct` holding the
   `SUSE-SU-YYYY:NNNN` identifier) for traceability and UI display, or to
   rely solely on `released_at` plus the audit log.
-- **Audit events on automatic transitions** — Whether successful automatic
-  `RELEASED` transitions emit a `TicketEvent` (for timeline
-  traceability), in addition to the `TicketEvent` already specified for
-  the no-match flow.
-- **New `TicketEvent.event_type` value** — The no-match flow specifies
-  the creation of an informational `TicketEvent`, but `event_type` in
-  `docs/data-model.md` is an ENUM whose current values
-  (`status_change`, `assignment`, `duplicate_set`, `duplicate_removed`)
-  do not cover this case. A new enum value (name TBD, e.g.
-  `release_no_match`) will need to be added to the data model when this
-  spec is implemented.
 
 #### Dependencies on separate features
 
@@ -746,14 +866,23 @@ The ticket transitions that depend on affectedness data are updated as follows:
 - `sync_aimaas_thresholds`: periodic task to sync CVSS thresholds from
   AIMAAS `GET /api/entity/cvss-threshold`. When thresholds change,
   re-evaluates eligibility for open tickets.
-- `check_release_status`: periodic task that drives release detection at
-  both levels. Internally it invokes the `CodestreamReleaseDetector`
-  (IBS-based, TBD endpoint) for `TicketPackageCodestream` records and the
+- `check_codestream_releases`: periodic task (every 8 hours via Celery
+  Beat) that invokes the `CodestreamReleaseDetector` service. Scans all
+  codestreams that have at least one `TicketPackageCodestream` record in
+  a non-final, non-protected status. See
+  [Codestream-level Detection](#codestream-level-detection) for the full
+  procedure.
+- `check_product_releases`: periodic task that invokes the
   `ProductReleaseDetector` (`updateinfo.xml`-based) for
-  `TicketPackageProduct` records, and applies the automatic transitions to
+  `TicketPackageProduct` records and applies the automatic transitions to
   `RELEASED` described in the [Release Tracking](#release-tracking) section.
-  Frequency and scope (which tickets/products to scan, how often) are TBD,
-  see [Open Items](#open-items).
+  Frequency and scope are TBD, see [Open Items](#open-items).
+- `create_ticket_from_detection`: on-demand task enqueued by the
+  `CodestreamReleaseDetector` when a CVE fix is detected for a CVE that
+  has no ticket in STAMP. Fetches CVE data from NVD, creates the ticket,
+  resolves packages via SMELT, and sets the originating codestream to
+  `RELEASED`. See [Case C](#case-c--no-ticket-exists-for-the-cve) for
+  details.
 
 ## Security
 
@@ -789,8 +918,9 @@ This feature replaces the following concepts from earlier specifications:
   openSUSE Tumbleweed and Leap will be addressed in a separate spec.
 - **Channel file parsing**: direct parsing of channel files from
   `SUSE:Channels` may be added if SMELT data is insufficient.
-- **IBS release tracking details**: the product-level detection mechanism
-  is now described in the [Release Tracking](#release-tracking) section
-  (based on `updateinfo.xml`). The codestream-level detection mechanism
-  still needs to be detailed in `docs/features/obs-integration.md` once
-  the specific IBS endpoint is chosen — see [Open Items](#open-items).
+- **IBS release tracking details**: both detection levels are now fully
+  specified. The product-level mechanism uses `updateinfo.xml` (see
+  [Product-level Detection](#product-level-detection)). The codestream-level
+  mechanism uses IBS source info and diff endpoints (see
+  [Codestream-level Detection](#codestream-level-detection) and
+  `docs/features/obs-integration.md`).
