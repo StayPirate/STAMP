@@ -310,3 +310,32 @@ Before considering any ticket-related code change complete:
 The goal is to maintain a complete and reliable audit trail for every
 ticket. An operation that mutates a ticket without creating a corresponding
 `TicketEvent` is a bug.
+
+### 12. API-UI parity
+
+The REST API is the primary interface of the platform. The web UI is a
+consumer of the API. Every operation available through the UI MUST be
+achievable through the API alone, with equivalent filtering, pagination,
+and sorting capabilities. The API may expose additional capabilities not
+present in the UI, but the reverse is a defect.
+
+After adding or modifying API endpoints or UI pages, evaluate whether an
+API-UI parity review is needed:
+
+1. Invoke `@api-parity-reviewer` when:
+   - New API endpoints are added or existing ones are modified
+   - New UI pages or interactive components are created or modified
+   - Feature specs are updated with new UI actions or API endpoints
+   - `docs/api-spec.md` is modified
+2. Skip the review when:
+   - The change is purely cosmetic (typo fixes, formatting, styling)
+   - Only test files or documentation prose is modified
+   - Only backend-internal changes (services, models) with no API surface
+     change
+3. If the reviewer identifies issues rated as "Needs revision" (core
+   operations available in UI but missing from API), address them before
+   considering the task complete
+4. Issues rated as High impact MUST be resolved before merging
+
+The goal is to ensure that API-only consumers (scripts, integrations,
+third-party tools) are never at a disadvantage compared to UI users.

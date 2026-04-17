@@ -6,6 +6,11 @@
 - Follow the principle of least surprise: code should do what a reader expects
 - Prefer explicit over implicit
 - Keep functions short and focused on a single responsibility
+- **API-first**: the REST API is the primary interface of the platform. The
+  web UI is a consumer of the API. Every operation available through the UI
+  must be achievable through the API alone, with equivalent filtering,
+  pagination, and sorting capabilities. The API may expose additional
+  capabilities not present in the UI, but the reverse is a defect
 
 ## Python (Backend)
 
