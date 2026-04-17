@@ -172,7 +172,7 @@ TicketPackageProduct.
 | NOT_AFFECTED      | Not Affected  | Green      | Final      | IM                 |
 | WONT_FIX          | Won't Fix     | Green      | Final      | IM only            |
 | IGNORED           | Ignored       | Greyed-out | Final      | IM only            |
-| RELEASED          | Released      | Green      | Final      | Automatic or IM    |
+| RELEASED          | Released      | Green      | Final      | Automatic (release detector) or IM |
 
 **UI note**: The IM dropdown shows the following options: Analysis, Affected,
 Not Affected, Won't Fix, Ignored, Released. The distinction between AFFECTED
@@ -207,17 +207,21 @@ eligibility.
 
 #### Automatic transitions
 
-The following transitions can be performed automatically by STAMP (e.g., when
-detecting a release in IBS):
+The following transitions can be performed automatically by STAMP (see the
+[Release Tracking](#release-tracking) section for the full detection
+mechanism):
 
-| From              | To                | Trigger                                |
-|-------------------|-------------------|----------------------------------------|
-| AFFECTED          | RELEASED          | STAMP detects fix in repository        |
-| NOT_AFFECTED      | RELEASED          | STAMP detects fix in repository        |
-| ANALYSIS          | RELEASED          | STAMP detects fix in repository        |
-| AFFECTED          | AFFECTED_RESOLVED | Product not eligible (CVSS < threshold)|
-| AFFECTED          | AFFECTED_RESOLVED | Product enters Reactive LTSS phase     |
-| AFFECTED_RESOLVED | AFFECTED          | Product becomes eligible (threshold change or lifecycle phase change) |
+| From              | To                | Applies to             | Trigger                                |
+|-------------------|-------------------|------------------------|----------------------------------------|
+| AFFECTED          | RELEASED          | TicketPackageCodestream | `CodestreamReleaseDetector` detects fix in codestream IBS project |
+| NOT_AFFECTED      | RELEASED          | TicketPackageCodestream | `CodestreamReleaseDetector` detects fix in codestream IBS project |
+| ANALYSIS          | RELEASED          | TicketPackageCodestream | `CodestreamReleaseDetector` detects fix in codestream IBS project |
+| AFFECTED          | RELEASED          | TicketPackageProduct   | `ProductReleaseDetector` detects fix in product update repository (`updateinfo.xml`) |
+| NOT_AFFECTED      | RELEASED          | TicketPackageProduct   | `ProductReleaseDetector` detects fix in product update repository (`updateinfo.xml`) |
+| ANALYSIS          | RELEASED          | TicketPackageProduct   | `ProductReleaseDetector` detects fix in product update repository (`updateinfo.xml`) |
+| AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product not eligible (CVSS < threshold)|
+| AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product enters Reactive LTSS phase     |
+| AFFECTED_RESOLVED | AFFECTED          | TicketPackageProduct   | Product becomes eligible (threshold change or lifecycle phase change) |
 
 **Protected states**: `WONT_FIX` and `IGNORED` are never modified by automatic
 transitions.
@@ -277,20 +281,326 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
 
 ## Release Tracking
 
-STAMP monitors two levels of release for each affected package:
+STAMP monitors two **independent** levels of release for each affected
+package:
 
-1. **Codestream level**: the fix has been added to the codestream's repository
-   (e.g., `SUSE:SLE-15-SP6:Update`).
-2. **Product level**: the fix has been copied to the product's repository
-   (e.g., the SLES 15 SP6 update repository).
+1. **Codestream level**: the fix has been added to the codestream's IBS
+   project (e.g., `SUSE:SLE-15-SP6:Update`).
+2. **Product level**: the fix has been published to the product's update
+   repository (e.g., the SLES 15 SP6 update repository consumed by `zypper`).
 
-Both levels must be confirmed before the package is considered fully released
-for a given product. STAMP detects releases by periodically querying IBS.
+The two levels are detected through different mechanisms and update different
+records:
+
+- The codestream level updates `TicketPackageCodestream.status` to `RELEASED`
+  as soon as the fix appears in the codestream IBS project, **regardless of
+  the status of the products under it**.
+- The product level updates `TicketPackageProduct.status` to `RELEASED` and
+  sets `released_at` as soon as the fix appears in that specific product's
+  update repository.
+
+In both cases, the automatic transition to `RELEASED` is suppressed when the
+current status is `WONT_FIX` or `IGNORED` (these states are protected, see
+"Status Behavior" above).
+
+### Codestream-level Detection
+
+STAMP uses an internal abstraction `CodestreamReleaseDetector` that, given a
+`TicketPackageCodestream` record (ticket CVE, package name, codestream name),
+determines whether the fix for the CVE has been released into the codestream
+IBS project.
 
 When a release is detected:
-- The corresponding TicketPackageCodestream or TicketPackageProduct status is
-  set to `RELEASED` (unless status is `WONT_FIX` or `IGNORED`)
-- The `released_at` timestamp is set on TicketPackageProduct
+
+- `TicketPackageCodestream.status` is set to `RELEASED` (unless current
+  status is `WONT_FIX` or `IGNORED`).
+
+**TBD**: the concrete IBS endpoint and query procedure used by
+`CodestreamReleaseDetector` are not yet specified. They will be detailed in
+`docs/features/obs-integration.md` before implementation. See
+[Open Items](#open-items) below.
+
+### Product-level Detection
+
+STAMP uses an internal abstraction `ProductReleaseDetector` based on the
+standard `updateinfo.xml` metadata file published in every product update
+repository (the same metadata file consumed by `zypper`). This is the
+ground-truth source: an advisory present in `updateinfo.xml` is, by
+definition, available to end users of that product.
+
+#### Procedure
+
+For each product P with an associated update repository URL `<repo_url>`
+(see [Update Repository URL Resolution](#update-repository-url-resolution)
+below for how `<repo_url>` is constructed):
+
+1. Download `<repo_url>/repodata/repomd.xml`.
+2. Locate the `<data type="updateinfo">` element and extract the location
+   of the `updateinfo.xml.gz` file (path relative to `<repo_url>`).
+3. Download and parse `updateinfo.xml`.
+4. Iterate the `<update>` elements. For each `<update>` U, check whether its
+   `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
+   matching the CVE-ID of any open ticket whose `TicketPackageProduct`
+   records reference P and are in a non-final, non-protected status.
+5. For each such advisory, apply the
+   [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
+   below to identify which specific source package of the ticket received
+   the fix.
+
+#### Outcome per matched (ticket, product, package)
+
+- `TicketPackageProduct.status` is set to `RELEASED` (unless current status
+  is `WONT_FIX` or `IGNORED`).
+- `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
+  of the advisory.
+
+#### Update Repository URL Resolution
+
+STAMP does not store a separate URL field for update repositories. The HTTP
+URL is constructed at runtime from each `ProductRepository.repo_name` using
+the pattern:
+
+```
+{IBS_DOWNLOAD_BASE_URL}/{repo_name.replace(':', '/')}/update/
+```
+
+where `IBS_DOWNLOAD_BASE_URL` is an environment variable (default:
+`https://download.suse.de/ibs`). For example, repo name
+`SUSE:Updates:SLE-Module-Basesystem:15-SP7:x86_64` produces the URL
+`https://download.suse.de/ibs/SUSE/Updates/SLE-Module-Basesystem/15-SP7/x86_64/update/`.
+
+Only `ProductRepository` entries with prefix `SUSE:Updates:` are relevant
+for release tracking. Other repository types are excluded:
+
+- `SUSE:Products:*` — base product/pool repos, never contain
+  `updateinfo.xml`.
+- Repos whose last segment is `debug` or `src` — companion repos for
+  debuginfo and source packages, never contain advisory metadata.
+- Repos targeting non-RPM distributions (Debian, Ubuntu, or
+  `MultiLinuxManagerTools` targeting Debian/Ubuntu) — these use apt
+  format, not RPM repodata.
+
+If a product has no eligible `SUSE:Updates:*` entries in
+`ProductRepository`, it is skipped during release tracking with a
+WARNING-level log. This is expected for products that are not yet released
+(e.g., SLE 16.x) or deprecated.
+
+#### Multi-architecture Handling
+
+SMELT repository names fall into two categories:
+
+- **Single-arch repos**: name ends with a known architecture segment.
+  Known architectures: `x86_64`, `aarch64`, `s390x`, `ppc64le`, `i586`,
+  `i686`, `ia64`, `ppc64`.
+  Example: `SUSE:Updates:SLE-Module-Basesystem:15-SP7:x86_64`.
+- **Multi-arch repos**: name does NOT end with an architecture segment.
+  These repos contain packages for all architectures in a single
+  repository.
+  Example: `SUSE:Updates:openSUSE-SLE:15.6`.
+
+STAMP does NOT track release status per architecture — a match on any
+architecture is sufficient to set the status to `RELEASED`.
+
+**Scanning strategy per product**:
+
+1. From the product's `ProductRepository` entries, select those eligible
+   for release tracking (prefix `SUSE:Updates:`, excluding `debug`,
+   `src`, and non-RPM repos as described above).
+2. If a multi-arch repo exists, scan it first (it covers all
+   architectures in a single repository).
+3. If no match was found (or no multi-arch repo exists), scan single-arch
+   repos: `x86_64` first (primary architecture), then remaining
+   architectures in alphabetical order.
+4. As soon as a match is found on any repo, set status to `RELEASED` and
+   stop — do not scan remaining repos.
+
+This approach handles the common case efficiently (most advisories land on
+x86_64) while also covering arch-specific packages like `s390-tools` that
+are only released for `s390x`.
+
+#### Error Handling
+
+The `ProductReleaseDetector` handles the following error conditions
+gracefully:
+
+- **HTTP 404** (repository does not exist on `download.suse.de`): skip
+  with WARNING-level log. This is expected for brand-new products whose
+  repos have not yet been created (e.g., SLE 16.x, SL-Micro 6.x).
+- **HTTP 403** (access restricted): skip with WARNING-level log. Some
+  partner repos may have access restrictions.
+- **`repomd.xml` exists but has no `<data type="updateinfo">`**: skip
+  silently. This means the repository exists but has had zero security
+  updates published to it. This is normal for newly launched or niche
+  products.
+- **Network errors / timeouts**: skip with ERROR-level log, retry on the
+  next scheduled run of `check_release_status`.
+
+**TBD** (see [Open Items](#open-items)):
+
+- Caching of repodata metadata (ETag/Last-Modified, incremental parsing).
+- Backfill semantics for advisories that pre-date the ticket.
+
+### Advisory ↔ Source Package Match
+
+This match procedure is defined once and applies to both detection levels.
+At the product level it operates on `<update>` entries from `updateinfo.xml`;
+at the codestream level it may be reused by `CodestreamReleaseDetector` or
+bypassed if the chosen IBS endpoint already exposes the explicit link
+`CVE → source package` (TBD, see [Open Items](#open-items)).
+
+**Why this matters**: a single CVE can affect multiple distinct source
+packages, typically when a vulnerable library is statically linked into
+binding packages (e.g., a CVE in a Go or Rust library that impacts
+`containerd`, `podman`, `golang-1.21`, and others — each requiring its own
+independent fix). STAMP must identify **which specific source package** of
+the ticket has been fixed by a given advisory, so that only the
+corresponding `TicketPackageProduct` record is transitioned to `RELEASED`,
+leaving the others untouched until their own fixes land.
+
+The match is a cascade — the first step that produces a positive match
+wins; on failure, processing falls through to the next step.
+
+#### Step 1 — Title pattern match
+
+- Apply the regular expression
+  `^(Security|Recommended|Optional|Feature) update for (\S+)$` to the
+  advisory's `<title>`.
+- **Pattern not recognized** (no match for the regex above): emit a
+  WARNING-level application log including `advisory_id`, `repo`, and the
+  raw `title`, then fall through to Step 2. These warnings will feed the
+  future admin "Sync diagnostics" page (separate spec).
+- **Pattern recognized and the captured group `<X>` exactly equals one of
+  the ticket's `package_name` values**: MATCH on that package.
+- **Pattern recognized but `<X>` does not equal any ticket package**: fall
+  through silently to Step 2 (this is the normal case for advisories that
+  legitimately use a title package name distinct from the source name).
+
+#### Step 2 — Heuristic prefix match
+
+For each `package_name` PT of the ticket, PT is a candidate match if it
+appears either:
+
+- in the package name `<X>` extracted from the title (rule:
+  `X == PT` OR `X.startswith(PT + "-")`), **or**
+- in at least one `<package name="B">` of the `<pkglist>` (rule:
+  `B == PT` OR `B.startswith(PT + "-")`).
+
+Then:
+
+- **No candidate** → fall through to Step 3.
+- **Exactly one candidate** → MATCH on that package.
+- **Multiple candidates**: the longest PT wins (most specific match).
+  Example: a ticket containing both `openssl` and `openssl-3` against an
+  advisory whose pkglist includes `libopenssl-3-devel` resolves to
+  `openssl-3`.
+- **Ambiguity not resolved by length** (two or more PT of the same length
+  matching) → fall through to Step 3.
+
+#### Step 3 — `primary.xml` exact source match
+
+- Download `primary.xml` of the repository (also referenced from
+  `repomd.xml`).
+- For each binary RPM listed in the advisory's `<pkglist>`, read its
+  `<rpm:sourcerpm>` element (e.g.,
+  `openssl-3-3.1.4-150600.5.9.1.src.rpm`) and derive the source package
+  name by stripping the trailing `-version-release.arch.src.rpm`
+  components (yielding e.g. `openssl-3`).
+- Compare the resulting source names against the ticket's `package_name`
+  values (exact equality).
+- **No match** → proceed with the no-match flow below.
+- **Exactly one ticket package matches** → MATCH on that package.
+- **Multiple ticket packages match** (e.g., the advisory ships SRPMs for
+  several source packages that are all in the ticket): apply the same
+  tie-breaker as Step 2 — the longest `package_name` wins. If two or more
+  matching packages have the same length, fall through to the no-match
+  flow (this is conservative: better to surface the case for IM review
+  than to risk flipping the wrong record).
+
+### Match Outcomes
+
+#### Positive match (source package S of the ticket on product/codestream X)
+
+- Product level: `TicketPackageProduct(S, X).status` → `RELEASED`,
+  `released_at` = advisory's `<issued date>`.
+- Codestream level: `TicketPackageCodestream(S, X).status` → `RELEASED`
+  (codestream-specific transition details depend on the
+  `CodestreamReleaseDetector` implementation, TBD).
+- The transition is suppressed when the current status is `WONT_FIX` or
+  `IGNORED` (protected states, see "Status Behavior").
+
+#### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
+
+- Create a `TicketEvent` of informational type recording: `advisory_id`,
+  the source name derived from `primary.xml` if available, and a note that
+  no ticket package matched.
+- Notify the ticket's assignee (notification mechanism is TBD at the system
+  level, see [Open Items](#open-items)).
+- Add the ticket to the **"Revisit" list** (separate feature spec, TBD).
+- **No automatic modification** is made to the ticket's package records.
+
+### Open Items
+
+The following aspects of release tracking are intentionally left open in
+this revision of the spec. They will be closed in subsequent sessions
+before implementation begins. They are listed here so any reader (human or
+agent) can see at a glance what is missing.
+
+#### Product-level detection
+
+- **Repodata caching** — Strategy for caching `repomd.xml` /
+  `updateinfo.xml` / `primary.xml` (ETag, Last-Modified, incremental
+  parsing) to avoid redundant downloads.
+- **Backfill of pre-existing advisories** — Behavior when a new ticket is
+  opened for a CVE for which an advisory already exists in the product
+  repository (mark `RELEASED` retroactively with a historical
+  `released_at`, or ignore advisories older than the ticket).
+- **Formal definition of "relevant advisory"** — Edge cases (e.g.,
+  `<update status>` values other than `stable`, advisories with empty
+  `<pkglist>`, retracted advisories) need formalization.
+
+#### Codestream-level detection
+
+- **IBS endpoint** — The specific IBS endpoint and query procedure used by
+  `CodestreamReleaseDetector`. To be documented in
+  `docs/features/obs-integration.md`.
+- **Match strategy** — Whether the codestream detector reuses the
+  Advisory ↔ Source Package Match chain defined above, or whether the
+  chosen IBS endpoint exposes an explicit `CVE → source package` link
+  that makes the chain unnecessary.
+
+#### Cross-cutting
+
+- **Task scheduling** — Frequency and scope of the `check_release_status`
+  background task (which tickets/products to scan, how often).
+- **Code structure** — Whether to introduce a dedicated `IBSClient`
+  service or extend the existing `OBSClient` described in
+  `docs/features/obs-integration.md`.
+- **Released advisory persistence** — Whether to store a reference to the
+  advisory that caused the automatic `RELEASED` transition (e.g., a
+  `released_advisory_id` field on `TicketPackageProduct` holding the
+  `SUSE-SU-YYYY:NNNN` identifier) for traceability and UI display, or to
+  rely solely on `released_at` plus the audit log.
+- **Audit events on automatic transitions** — Whether successful automatic
+  `RELEASED` transitions emit a `TicketEvent` (for timeline
+  traceability), in addition to the `TicketEvent` already specified for
+  the no-match flow.
+- **New `TicketEvent.event_type` value** — The no-match flow specifies
+  the creation of an informational `TicketEvent`, but `event_type` in
+  `docs/data-model.md` is an ENUM whose current values
+  (`status_change`, `assignment`, `duplicate_set`, `duplicate_removed`)
+  do not cover this case. A new enum value (name TBD, e.g.
+  `release_no_match`) will need to be added to the data model when this
+  spec is implemented.
+
+#### Dependencies on separate features
+
+- **"Revisit" list** — Destination for tickets in the no-match flow.
+  Separate feature spec.
+- **Notifications** — Mechanism (in-app, email) for notifying the
+  assignee in the no-match flow. Separate feature spec.
+- **Admin "Sync diagnostics" page** — Destination for unrecognized title
+  warnings (and, potentially, products without a configured update
+  repository URL). Separate feature spec.
 
 ## External Data Sources
 
@@ -436,8 +746,14 @@ The ticket transitions that depend on affectedness data are updated as follows:
 - `sync_aimaas_thresholds`: periodic task to sync CVSS thresholds from
   AIMAAS `GET /api/entity/cvss-threshold`. When thresholds change,
   re-evaluates eligibility for open tickets.
-- `check_release_status`: periodic task to check IBS for released packages
-  and update TicketPackageCodestream / TicketPackageProduct statuses.
+- `check_release_status`: periodic task that drives release detection at
+  both levels. Internally it invokes the `CodestreamReleaseDetector`
+  (IBS-based, TBD endpoint) for `TicketPackageCodestream` records and the
+  `ProductReleaseDetector` (`updateinfo.xml`-based) for
+  `TicketPackageProduct` records, and applies the automatic transitions to
+  `RELEASED` described in the [Release Tracking](#release-tracking) section.
+  Frequency and scope (which tickets/products to scan, how often) are TBD,
+  see [Open Items](#open-items).
 
 ## Security
 
@@ -473,5 +789,8 @@ This feature replaces the following concepts from earlier specifications:
   openSUSE Tumbleweed and Leap will be addressed in a separate spec.
 - **Channel file parsing**: direct parsing of channel files from
   `SUSE:Channels` may be added if SMELT data is insufficient.
-- **IBS release tracking details**: technical implementation of how STAMP
-  queries IBS to detect releases will be detailed during implementation.
+- **IBS release tracking details**: the product-level detection mechanism
+  is now described in the [Release Tracking](#release-tracking) section
+  (based on `updateinfo.xml`). The codestream-level detection mechanism
+  still needs to be detailed in `docs/features/obs-integration.md` once
+  the specific IBS endpoint is chosen — see [Open Items](#open-items).

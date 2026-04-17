@@ -173,13 +173,26 @@ coordination across multiple maintained distribution versions.
 
 ### Release Tracking Flow
 
-1. Celery Beat triggers periodic release status checks
-2. Workers query IBS to detect if fixes have landed in codestream repositories
-3. Workers check if fixes have been copied to product repositories
-4. TicketPackageCodestream and TicketPackageProduct statuses are updated to
-   RELEASED when fixes are detected (unless status is WONT_FIX or IGNORED)
+Release detection runs on two **independent** levels — codestream and
+product — through different mechanisms. See
+`docs/features/package-tracking.md` (section "Release Tracking") for the
+authoritative details.
+
+1. Celery Beat triggers periodic release status checks (`check_release_status`).
+2. **Codestream level**: workers query an IBS endpoint (TBD, see
+   `docs/features/obs-integration.md`) to detect whether the fix for the
+   ticket's CVE has landed in the codestream IBS project. When detected,
+   `TicketPackageCodestream.status` is set to `RELEASED`.
+3. **Product level**: workers fetch `updateinfo.xml` from each product's
+   update repository and look for advisories that reference the ticket's
+   CVE. A package match cascade (title → heuristic → `primary.xml`)
+   identifies the specific source package fixed by the advisory. When
+   matched, `TicketPackageProduct.status` is set to `RELEASED` and
+   `released_at` is set to the advisory's `<issued date>`.
+4. Both levels honor the protected states `WONT_FIX` and `IGNORED`, which
+   are never modified automatically.
 5. When all packages in a ticket reach a final status, the ticket can
-   transition to Resolved
+   transition to Resolved.
 
 ## Environments
 

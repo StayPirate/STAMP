@@ -31,10 +31,11 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    # OBS Integration
+    # OBS / IBS Integration
     obs_api_url: str = ""
     obs_username: str = ""
     obs_password: str = ""
+    ibs_download_base_url: str = "https://download.suse.de/ibs"
 
     # NVD API
     nvd_api_key: str = ""
