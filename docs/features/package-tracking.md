@@ -232,22 +232,114 @@ The IM can manually change any status to any other status without restriction.
 
 ## Adding Packages to a Ticket
 
-### Automatic (CPE mapping)
+### Centralized Function: `add_package_to_ticket`
 
-When a CVE is ingested, STAMP attempts to map the CPE data from the CVE record
-to source package names. For each mapped package name, STAMP queries SMELT to
-get the list of codestreams and products, and automatically creates the
-TicketPackageCodestream and TicketPackageProduct records with status `ANALYSIS`.
+All package additions — regardless of the trigger — MUST go through a single
+centralized service function. This function is the only place where SMELT is
+queried to resolve codestreams and products, and where
+`TicketPackageCodestream` and `TicketPackageProduct` records are created.
 
-### Manual
+**Signature** (conceptual):
 
-The IM can manually add a package by name to a ticket. STAMP queries SMELT to
-resolve the codestreams and products, and creates the records with status
-`ANALYSIS`.
+```python
+add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
+```
+
+**Behavior**:
+
+1. Query SMELT to resolve all currently maintained codestreams and products
+   for the given package (see [SMELT Query](#smelt-query-for-package-resolution)
+   below).
+2. For each resolved codestream, create a `TicketPackageCodestream` record
+   with status `ANALYSIS` (skip if one already exists for this ticket +
+   package + codestream combination).
+3. For each resolved product under each codestream, create a
+   `TicketPackageProduct` record with status `ANALYSIS` (skip if one
+   already exists). Apply eligibility rules (CVSS threshold, Reactive LTSS
+   override) to adjust the initial status where applicable.
+4. Return a result indicating which records were created and which were
+   skipped (already existed).
+
+**Idempotency**: the function is safe to call multiple times for the same
+package. Existing records are never modified — only missing records are
+created. This means that if SMELT adds new codestreams or products for a
+package after the initial addition, calling the function again will add only
+the new records.
+
+### Triggers
+
+The following scenarios invoke `add_package_to_ticket`:
+
+1. **Automatic (CPE mapping)**: when a CVE is ingested, STAMP maps the CPE
+   data from the CVE record to source package names. For each mapped
+   package name, `add_package_to_ticket` is called.
+2. **Manual**: the IM manually adds a package by name via the UI.
+   `add_package_to_ticket` is called with the entered name.
+3. **Codestream release detection (Case B)**: the `CodestreamReleaseDetector`
+   finds a CVE fix in a package that is not tracked in the ticket. It calls
+   `add_package_to_ticket` to add all codestreams and products, then sets
+   the specific codestream where the fix was detected to `RELEASED`. See
+   [Case B](#case-b--ticket-exists-package-not-tracked-in-the-ticket).
+4. **Ticket auto-creation (Case C)**: a CVE fix is detected for a CVE with
+   no existing ticket. After creating the ticket,
+   `add_package_to_ticket` is called, then the originating codestream is
+   set to `RELEASED`. See
+   [Case C](#case-c--no-ticket-exists-for-the-cve).
+
+### Package Management Constraints
+
+The IM manages packages at the **package level only**:
+
+- The IM can **add** or **remove** entire packages from a ticket.
+- The IM **cannot** add or remove individual codestreams or products —
+  these are determined exclusively by SMELT when a package is added via
+  `add_package_to_ticket`.
+- The IM **can** change the status of individual codestreams (via the
+  status dropdown) and override the status of individual products (which
+  sets `is_override = true`).
+
+### Removing a Package from a Ticket
+
+When an IM removes a package from a ticket, STAMP deletes **all**
+`TicketPackageCodestream` and `TicketPackageProduct` records associated
+with that package in the ticket.
+
+**UI confirmation**: if any of the records being removed are in a final
+status (`RELEASED`, `WONT_FIX`, `IGNORED`, `NOT_AFFECTED`, or
+`AFFECTED_RESOLVED`), the UI must display a confirmation dialog before
+proceeding (e.g., "This package has N codestreams/products in a final
+status. Are you sure you want to remove it?"). The backend API does not
+enforce this check — it is a UI-only safeguard.
+
+A `TicketEvent` with `event_type = package_removed` is created to record
+the removal (see
+[Ticket Events for Package Changes](#ticket-events-for-package-changes)).
+
+### Ticket Events for Package Changes
+
+Every modification to a ticket's package data MUST produce a `TicketEvent`
+record for audit and traceability. The following event types are defined:
+
+| Action | `event_type` | `user_id` | Details recorded |
+|--------|-------------|-----------|------------------|
+| IM adds package | `package_added` | IM user | `package_name` |
+| IM removes package | `package_removed` | IM user | `package_name` |
+| IM changes codestream status | `codestream_status_changed` | IM user | `package_name`, `codestream_name`, `old_status`, `new_status` |
+| IM overrides product status | `product_status_overridden` | IM user | `package_name`, `product_id`, `old_status`, `new_status` |
+| Auto-added (Case B) | `package_auto_added` | `NULL` | `package_name`, `codestream_name` |
+| Auto-created ticket (Case C) | `ticket_auto_created` | `NULL` | `package_name`, `codestream_name` |
+| Codestream release detected | `codestream_released` | `NULL` | `package_name`, `codestream_name` |
+| Product release detected | `product_released` | `NULL` | `package_name`, `product_id`, `advisory_id` |
+
+- `user_id = NULL` indicates an automatic system action.
+- All events include an implicit `created_at` timestamp.
+- The "Details recorded" column lists the fields stored in the event's
+  structured data payload (the exact storage format — JSON column, separate
+  fields, etc. — is defined in `docs/data-model.md`).
 
 ### SMELT Query for Package Resolution
 
-When adding a package to a ticket (automatic or manual), STAMP calls:
+When `add_package_to_ticket` resolves a package, it calls:
 
 ```
 GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
@@ -392,13 +484,8 @@ A `TicketPackageCodestream` record exists for the ticket's CVE with
 A ticket exists for the CVE, but no `TicketPackageCodestream` record
 exists for package P (in any codestream).
 
-- Query SMELT `maintainedpackage` endpoint for package P to resolve all
-  codestreams and products where P is maintained.
-- Create `TicketPackageCodestream` records for all resolved codestreams
-  with status `ANALYSIS`.
-- Create `TicketPackageProduct` records for all active products with
-  status `ANALYSIS` (applying eligibility rules: CVSS threshold,
-  Reactive LTSS override).
+- Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
+  and products via SMELT and create the records with status `ANALYSIS`.
 - Set the `TicketPackageCodestream` for codestream C to `RELEASED`
   (the specific codestream where the fix was detected).
 - Create a `TicketEvent` with `event_type = package_auto_added`,
@@ -414,23 +501,20 @@ No ticket exists in STAMP for the extracted CVE-ID.
 - Enqueue a `create_ticket_from_detection` Celery task with parameters:
   `cve_id` (string), `package_name`, `codestream_name`.
 - The task performs:
-  1. Fetch CVE data from NVD API v2
-     (`GET /rest/json/cves/2.0?cveId={cve_id}`). If NVD is unreachable
-     or the CVE is not yet published, create a minimal CVE record with
-     only the CVE-ID and `severity = None`.
-  2. Create the CVE record.
-  3. Create a Ticket with status `New`, no assignee.
-  4. Query SMELT `maintainedpackage` endpoint for the package to resolve
-     codestreams and products.
-  5. Create `TicketPackageCodestream` records for all resolved codestreams
-     with status `ANALYSIS`.
-  6. Create `TicketPackageProduct` records for all active products with
-     status `ANALYSIS` (applying eligibility rules).
-  7. Set the `TicketPackageCodestream` for the originating codestream to
-     `RELEASED`.
-  8. Create a `TicketEvent` with `event_type = ticket_auto_created`,
-     `user_id = NULL`, comment: "Ticket auto-created: CVE fix detected
-     in `{package}` (`{codestream}`)".
+   1. Fetch CVE data from NVD API v2
+      (`GET /rest/json/cves/2.0?cveId={cve_id}`). If NVD is unreachable
+      or the CVE is not yet published, create a minimal CVE record with
+      only the CVE-ID and `severity = None`.
+   2. Create the CVE record.
+   3. Create a Ticket with status `New`, no assignee.
+   4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
+      all codestreams and products via SMELT and create the records with
+      status `ANALYSIS`.
+   5. Set the `TicketPackageCodestream` for the originating codestream to
+      `RELEASED`.
+   6. Create a `TicketEvent` with `event_type = ticket_auto_created`,
+      `user_id = NULL`, comment: "Ticket auto-created: CVE fix detected
+      in `{package}` (`{codestream}`)".
 
 #### Error Handling
 
