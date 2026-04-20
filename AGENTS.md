@@ -414,3 +414,6 @@ after modifying cross-cutting documents (`docs/data-model.md`,
    rules or incompatible flows between specs), resolve them before considering
    the task complete
 4. Issues rated as "Minor issues" should be fixed in the same PR
+5. When performing a full review across all specs (e.g., triggered manually
+   by the user), invoke `@spec-coherence-reviewer` **once per spec** in
+   independent sessions. Do not combine multiple specs into a single review
