@@ -81,9 +81,16 @@ coordination across multiple maintained distribution versions.
 
 - **Broker**: Redis
 - **Result backend**: Redis
-- **Periodic tasks**: Celery Beat for scheduled CVE synchronization
+- **Periodic tasks**: Celery Beat with dynamic scheduling (`celery-redbeat`)
 - **Workers**: Separate worker processes for CVE ingestion, OBS interaction,
   and impact analysis
+- **Fetcher infrastructure**: all background tasks that fetch data from
+  external sources inherit from `BaseFetcher`
+  (`app/services/base_fetcher.py`), which provides automatic execution
+  tracking, metric collection, and registry. The fetcher registry feeds
+  a dashboard that shows execution history, performance charts, and
+  operational controls. See `docs/features/fetcher-dashboard.md` for
+  details.
 
 ### Database (PostgreSQL)
 

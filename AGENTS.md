@@ -358,3 +358,28 @@ notifications, or any future logic) MUST:
    NOT fall back to a different CVSS version
 
 See `docs/features/cvss-scoring.md` for the full specification.
+
+### 14. Fetcher base class compliance
+
+CRITICAL: Every background task that fetches data from an external source
+(CVE sync, CVSS sync, product sync, release detection, or any future data
+ingestion) MUST:
+
+1. Inherit from `BaseFetcher` (`backend/app/services/base_fetcher.py`)
+2. Define `name`, `description`, and `default_schedule` class attributes
+3. Implement the `execute()` method with proper metric reporting via
+   `self.record_created()`, `self.record_updated()`, and
+   `self.record_failed()`
+4. NOT bypass `BaseFetcher` with a raw `@celery_app.task` decorator for
+   fetching logic
+
+If there is a compelling reason to bypass `BaseFetcher` for a specific
+case, STOP and inform the user with a detailed explanation of why the
+bypass is advantageous, so the decision can be made together. Do NOT
+proceed with a bypass without explicit user approval.
+
+After creating or modifying any fetcher, invoke
+`@fetcher-dashboard-reviewer` to verify correct integration with the
+dashboard.
+
+See `docs/features/fetcher-dashboard.md` for the full specification.

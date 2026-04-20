@@ -58,8 +58,17 @@ Read-only access. Can:
 | Trigger OBS builds              | Yes   | Yes           | No       | No     |
 | Manage users                    | Yes   | No            | No       | No     |
 | View system settings            | Yes   | No            | No       | No     |
+| View fetcher dashboard          | Yes   | Yes           | Yes      | Yes    |
+| View fetcher error tracebacks   | Yes   | No            | No       | No     |
+| Trigger manual fetcher run      | Yes   | No            | No       | No     |
+| Enable/disable fetchers         | Yes   | No            | No       | No     |
+| Modify fetcher config           | Yes   | No            | No       | No     |
+| View fetcher audit log          | Yes   | No            | No       | No     |
 
 *Security Team can change status except for the Released transition.
+
+See `docs/features/fetcher-dashboard.md` for detailed fetcher dashboard
+access control.
 
 ## API Endpoints
 

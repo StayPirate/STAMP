@@ -73,8 +73,29 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  SystemSetting   │       │  last_seen_at                   │
 │                  │       └─────────────────────────────────┘
 │  key             │
-│  value           │
-└──────────────────┘
+│  value           │       ┌─────────────────────────────────┐
+└──────────────────┘       │ FetcherRun                       │
+                           │                                 │
+┌──────────────────────┐   │  fetcher_name                   │
+│  FetcherConfig       │   │  started_at / finished_at       │
+│                      │   │  duration_seconds               │
+│  fetcher_name (PK)   │   │  status                         │
+│  enabled             │   │  items_created/updated/failed   │
+│  schedule_override   │   │  error_message                  │
+│  timeout_seconds     │   │  error_traceback                │
+│  rate_limit          │   │  triggered_by                   │
+└──────────────────────┘   │  triggered_by_user_id (FK)      │
+                           └─────────────────────────────────┘
+┌──────────────────────┐
+│  FetcherAuditLog     │   ┌─────────────────────────────────┐
+│                      │   │ FetcherRunWeeklyAggregate        │
+│  fetcher_name        │   │                                 │
+│  action              │   │  fetcher_name                   │
+│  performed_by (FK)   │   │  week_start                     │
+│  details             │   │  run_count                      │
+└──────────────────────┘   │  avg/min/max_duration_seconds   │
+                           │  total_items_created/updated    │
+                           └─────────────────────────────────┘
 ```
 
 ## Tables
@@ -346,16 +367,91 @@ of the release detection mechanism.
 
 **Unique constraint**: (codestream_name, package_name)
 
+### FetcherRun
+
+Records every execution of a fetcher. Primary data source for the fetcher
+dashboard charts. See `docs/features/fetcher-dashboard.md` for full
+specification.
+
+| Column               | Type        | Constraints              | Description                        |
+|----------------------|-------------|--------------------------|-------------------------------------|
+| id                   | UUID        | PK                       | Internal identifier                |
+| fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier (matches `BaseFetcher.name`) |
+| started_at           | TIMESTAMP   | NOT NULL                 | When the run started               |
+| finished_at          | TIMESTAMP   | nullable                 | When the run ended (NULL while running) |
+| duration_seconds     | FLOAT       | nullable                 | `finished_at - started_at` in seconds |
+| status               | ENUM        | NOT NULL                 | FetcherRunStatus: `running`, `success`, `failure`, `partial` |
+| items_created        | INTEGER     | NOT NULL, DEFAULT 0      | New records created                |
+| items_updated        | INTEGER     | NOT NULL, DEFAULT 0      | Existing records updated           |
+| items_failed         | INTEGER     | NOT NULL, DEFAULT 0      | Items that failed processing       |
+| error_message        | TEXT        | nullable                 | Short error description            |
+| error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
+| triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
+| triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
+| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | Record creation timestamp          |
+
+### FetcherConfig
+
+Per-fetcher configuration managed by admins. Auto-created on worker
+startup if not present.
+
+| Column            | Type        | Constraints        | Description                        |
+|-------------------|-------------|--------------------|------------------------------------|
+| fetcher_name      | VARCHAR     | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
+| enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
+| schedule_override | VARCHAR     | nullable           | Cron expression to override the default schedule |
+| timeout_seconds   | INTEGER     | nullable           | Max execution time in seconds      |
+| rate_limit        | VARCHAR     | nullable           | Rate limit (e.g., `"2/s"`, `"100/m"`) |
+| updated_at        | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp        |
+
+### FetcherAuditLog
+
+Audit trail for administrative actions on fetchers.
+
+| Column               | Type        | Constraints              | Description                        |
+|----------------------|-------------|--------------------------|-------------------------------------|
+| id                   | UUID        | PK                       | Internal identifier                |
+| fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier                 |
+| action               | ENUM        | NOT NULL                 | FetcherAuditAction: `disabled`, `enabled`, `triggered`, `config_changed` |
+| performed_by_user_id | UUID        | FK(user.id), NOT NULL    | Admin who performed the action     |
+| details              | JSONB       | nullable                 | Additional context (e.g., old/new config values) |
+| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | When the action occurred           |
+
+### FetcherRunWeeklyAggregate
+
+Weekly summaries of fetcher runs, created by the `aggregate_fetcher_runs`
+retention task after the 90-day individual retention window.
+
+| Column               | Type        | Constraints              | Description                        |
+|----------------------|-------------|--------------------------|-------------------------------------|
+| id                   | UUID        | PK                       | Internal identifier                |
+| fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier                 |
+| week_start           | DATE        | NOT NULL                 | Monday of the aggregation week     |
+| run_count            | INTEGER     | NOT NULL                 | Total runs in the week             |
+| success_count        | INTEGER     | NOT NULL                 | Runs with status `success`         |
+| failure_count        | INTEGER     | NOT NULL                 | Runs with status `failure`         |
+| partial_count        | INTEGER     | NOT NULL                 | Runs with status `partial`         |
+| avg_duration_seconds | FLOAT       | NOT NULL                 | Average duration across all runs   |
+| min_duration_seconds | FLOAT       | NOT NULL                 | Minimum duration                   |
+| max_duration_seconds | FLOAT       | NOT NULL                 | Maximum duration                   |
+| total_items_created  | INTEGER     | NOT NULL                 | Sum of `items_created`             |
+| total_items_updated  | INTEGER     | NOT NULL                 | Sum of `items_updated`             |
+| total_items_failed   | INTEGER     | NOT NULL                 | Sum of `items_failed`              |
+| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | When this aggregate was created    |
+
+**Unique constraint**: (fetcher_name, week_start)
+
 ## Indexes
 
 TBD — will be defined based on query patterns during implementation.
 
 ## Notes
 
-- All tables use UUID primary keys (exception: `SystemSetting` uses a
-  VARCHAR `key` as PK)
-- All tables include `created_at` and `updated_at` timestamps (exception:
-  `TicketEvent` and `CodestreamPackageChecksum` only have `created_at`
+- All tables use UUID primary keys (exceptions: `SystemSetting` uses a
+  VARCHAR `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR as PK)
+- All tables include `created_at` and `updated_at` timestamps (exceptions:
+  `TicketEvent`, `CodestreamPackageChecksum`, `FetcherRun`,
+  `FetcherAuditLog`, and `FetcherRunWeeklyAggregate` only have `created_at`
   because they are immutable write-once records)
 - ENUM types are defined as PostgreSQL enums
 - JSONB is used for flexible storage of source-specific data

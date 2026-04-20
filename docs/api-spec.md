@@ -124,6 +124,28 @@ See `docs/features/admin.md` for detailed endpoint specifications.
   Changing `default_cvss_version` triggers recalculation for all active
   tickets.
 
+### Fetchers
+
+See `docs/features/fetcher-dashboard.md` for detailed endpoint
+specifications.
+
+- `GET /api/v1/fetchers` — List all registered fetchers with status and
+  config
+- `GET /api/v1/fetchers/{fetcher_name}/runs` — List run history
+  (paginated, filterable by status and date range)
+- `GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}` — Get run detail
+  (admin sees error traceback)
+- `GET /api/v1/fetchers/{fetcher_name}/timeline` — Time-series data for
+  charts (auto-selects individual or aggregate data)
+- `POST /api/v1/fetchers/{fetcher_name}/trigger` — Trigger manual run
+  (admin only)
+- `GET /api/v1/fetchers/{fetcher_name}/config` — Get fetcher config
+  (admin only)
+- `PATCH /api/v1/fetchers/{fetcher_name}/config` — Update fetcher config:
+  enable/disable, schedule, timeout, rate limit (admin only)
+- `GET /api/v1/fetchers/{fetcher_name}/audit-log` — Admin action history
+  (admin only)
+
 ### Users and Auth
 
 See `docs/features/rbac.md` for detailed endpoint specifications.
