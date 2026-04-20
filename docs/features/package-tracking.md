@@ -109,14 +109,28 @@ given CVE. The rules are:
 1. **Check for CVSS threshold**: look up the product in AIMAAS
    `cvss-threshold` endpoint. If an entry exists, use its `threshold` value.
    If no entry exists, the threshold is implicitly 0 (all CVEs eligible).
-2. **Apply threshold**: if the CVE's CVSS score is below the product's
+2. **Resolve the CVSS score**: the score used for threshold comparison is
+   determined by the CVSS resolution cascade (see
+   `docs/features/cvss-scoring.md`):
+   - SUSE assessment of the system-wide default CVSS version → if present,
+     use this score
+   - Highest score among all providers for the default CVSS version → if
+     at least one exists, use the highest
+   - No score available → treat as **10.0** (worst-case; the product is
+     always eligible — a CVE without CVSS data is never excluded)
+3. **Apply threshold**: if the resolved CVSS score is below the product's
    threshold, the product is not eligible — status is set to
    `AFFECTED_RESOLVED` (green "Affected") indicating the product is affected
    but no action is required.
-3. **Reactive LTSS override**: if the product is currently in the Reactive
+4. **Reactive LTSS override**: if the product is currently in the Reactive
    LTSS phase (`end_of_ltss < today < end_of_reactive_ltss`), status is
    always `AFFECTED_RESOLVED` regardless of the CVSS score. The IM can still
    perform the assessment, but the result is always green.
+
+**Important**: the CVSS version used for threshold comparison MUST always
+be resolved from the system-wide default CVSS version configuration — never
+hardcoded. See `docs/features/cvss-scoring.md` and
+`docs/features/admin.md`.
 
 ## Data Model
 
@@ -187,8 +201,9 @@ eligibility.
 1. Codestream status is set to `AFFECTED`
 2. STAMP propagates to all products under that codestream:
    - Product in Reactive LTSS phase → `AFFECTED_RESOLVED`
-   - Product has `cvss_threshold` and CVE CVSS < threshold →
-     `AFFECTED_RESOLVED`
+   - Product has `cvss_threshold` and resolved CVSS score < threshold →
+     `AFFECTED_RESOLVED` (score resolved via the CVSS resolution cascade,
+     see `docs/features/cvss-scoring.md`)
    - Otherwise → `AFFECTED`
 3. Products with `is_override = true` are not modified
 
@@ -219,9 +234,9 @@ mechanism):
 | AFFECTED          | RELEASED          | TicketPackageProduct   | `ProductReleaseDetector` detects fix in product update repository (`updateinfo.xml`) |
 | NOT_AFFECTED      | RELEASED          | TicketPackageProduct   | `ProductReleaseDetector` detects fix in product update repository (`updateinfo.xml`) |
 | ANALYSIS          | RELEASED          | TicketPackageProduct   | `ProductReleaseDetector` detects fix in product update repository (`updateinfo.xml`) |
-| AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product not eligible (CVSS < threshold)|
+| AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product not eligible (resolved CVSS score < threshold) |
 | AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product enters Reactive LTSS phase     |
-| AFFECTED_RESOLVED | AFFECTED          | TicketPackageProduct   | Product becomes eligible (threshold change or lifecycle phase change) |
+| AFFECTED_RESOLVED | AFFECTED          | TicketPackageProduct   | Product becomes eligible (CVSS score change, threshold change, or lifecycle phase change) |
 
 **Protected states**: `WONT_FIX` and `IGNORED` are never modified by automatic
 transitions.

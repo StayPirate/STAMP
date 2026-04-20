@@ -104,6 +104,26 @@ See `docs/features/ticket-history.md` for detailed endpoint specification.
 - `GET /api/v1/tickets/{ticket_id}/events` — List ticket events with filters
   (event type, actor, text search) and pagination
 
+### CVSS Assessments
+
+See `docs/features/cvss-scoring.md` for detailed endpoint specifications.
+
+- `GET /api/v1/tickets/{ticket_id}/cvss` — Get all CVSS assessments for a
+  ticket's CVE, grouped by version, including resolved score/severity
+- `POST /api/v1/tickets/{ticket_id}/cvss/suse` — Set or update SUSE CVSS
+  assessment (upsert by version). Requires Security Team or Admin role.
+- `DELETE /api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` — Remove
+  SUSE CVSS assessment. Requires Security Team or Admin role.
+
+### Administration
+
+See `docs/features/admin.md` for detailed endpoint specifications.
+
+- `GET /api/v1/admin/settings` — Get system settings (Admin only)
+- `PATCH /api/v1/admin/settings` — Update system settings (Admin only).
+  Changing `default_cvss_version` triggers recalculation for all active
+  tickets.
+
 ### Users and Auth
 
 See `docs/features/rbac.md` for detailed endpoint specifications.

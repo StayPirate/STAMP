@@ -12,9 +12,19 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  cve_id      │     │  source_type     │
 │  description │     │  source_url      │
 │  severity    │     │  raw_data        │
-│  cvss_score  │     └──────────────────┘
-│  published   │
-└──────┬───────┘
+│  published   │     └──────────────────┘
+└──────┬───┬───┘
+       │   │
+       │   ▼ (1:N)
+       │  ┌──────────────────────┐
+       │  │ CVECVSSAssessment    │
+       │  │                      │
+       │  │  cve_id (FK)         │
+       │  │  provider_name       │
+       │  │  cvss_version        │
+       │  │  score               │
+       │  │  vector              │
+       │  └──────────────────────┘
        │
        ▼ (1:1)
 ┌──────────────────┐     ┌──────────────────┐
@@ -59,9 +69,12 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  active          │       │                                 │
 └──────────────────┘       │  codestream_name                │
                            │  package_name                   │
-                           │  srcmd5                         │
-                           │  last_seen_at                   │
-                           └─────────────────────────────────┘
+┌──────────────────┐       │  srcmd5                         │
+│  SystemSetting   │       │  last_seen_at                   │
+│                  │       └─────────────────────────────────┘
+│  key             │
+│  value           │
+└──────────────────┘
 ```
 
 ## Tables
@@ -75,9 +88,7 @@ Represents a Common Vulnerability and Exposure entry.
 | id             | UUID         | PK                   | Internal identifier             |
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
 | description    | TEXT         |                      | Vulnerability description       |
-| severity       | ENUM         | NOT NULL             | Critical, High, Medium, Low, None |
-| cvss_score     | DECIMAL(3,1) |                      | CVSS v3 score (0.0-10.0)       |
-| cvss_vector    | VARCHAR(100) |                      | CVSS v3 vector string          |
+| severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMP    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMP    |                      | Date CVE was last modified     |
 | status         | ENUM         | NOT NULL, DEFAULT    | Workflow status — tracked on the associated Ticket (see Ticket table). This field is kept for quick queries but is always derived from the Ticket status. |
@@ -96,6 +107,52 @@ Tracks the origin of CVE data from different sources.
 | source_url  | VARCHAR     |                  | URL to the source entry            |
 | raw_data    | JSONB       |                  | Original data from the source      |
 | fetched_at  | TIMESTAMP   | NOT NULL         | When the data was fetched          |
+
+### CVECVSSAssessment
+
+Stores individual CVSS assessments from multiple providers for each CVE.
+A CVE can have assessments from NVD, CNA vendors, Red Hat, and SUSE (IM
+input). Each provider may supply assessments for multiple CVSS versions.
+See `docs/features/cvss-scoring.md` for the full specification.
+
+| Column        | Type          | Constraints                            | Description                        |
+|---------------|---------------|----------------------------------------|------------------------------------|
+| id            | UUID          | PK                                     | Internal identifier                |
+| cve_id        | UUID          | FK(cve.id), NOT NULL                   | Related CVE                        |
+| provider_name | VARCHAR       | NOT NULL                               | Human-readable provider name (e.g., `"NVD"`, `"Intel Corporation"`, `"Red Hat"`, `"SUSE"`) |
+| cvss_version  | VARCHAR(10)   | NOT NULL                               | CVSS version (e.g., `"3.1"`, `"4.0"`, `"2.0"`) |
+| score         | DECIMAL(3,1)  | NOT NULL                               | Calculated base score (0.0-10.0)   |
+| vector        | VARCHAR(200)  | NOT NULL                               | Full CVSS vector string            |
+| created_at    | TIMESTAMP     | NOT NULL, DEFAULT                      | Record creation timestamp          |
+| updated_at    | TIMESTAMP     | NOT NULL, DEFAULT                      | Record update timestamp            |
+
+**Unique constraint**: (cve_id, provider_name, cvss_version)
+
+**Notes**:
+- `provider_name` for NVD Primary assessments is always `"NVD"`
+- `provider_name` for NVD Secondary (CNA) assessments is resolved from the
+  NVD Source API to a human-readable name (e.g., `"Intel Corporation"`)
+- `provider_name` for the SUSE internal assessment is always `"SUSE"`
+- When a direct source (e.g., Red Hat API) provides data that also exists
+  as an NVD Secondary, the direct source takes priority and overwrites the
+  NVD Secondary record for the same `provider_name` and `cvss_version`
+
+### SystemSetting
+
+Key-value store for system-wide configuration. See
+`docs/features/admin.md` for details.
+
+| Column     | Type        | Constraints        | Description                      |
+|------------|-------------|--------------------|----------------------------------|
+| key        | VARCHAR     | PK                 | Setting identifier (e.g., `default_cvss_version`) |
+| value      | VARCHAR     | NOT NULL           | Setting value                    |
+| updated_at | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp      |
+
+**Initial data**:
+
+| Key                    | Initial Value |
+|------------------------|---------------|
+| `default_cvss_version` | `3.1`         |
 
 ### Product
 
@@ -265,6 +322,9 @@ system action).
 | product_released           | Product release detected via updateinfo.xml advisory |
 | package_auto_added         | Package auto-added to ticket after CVE fix detected in an untracked package (Case B) |
 | ticket_auto_created        | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
+| severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is NULL for system-triggered changes, set for IM-initiated SUSE CVSS changes. |
+| cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name version score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `user_id` set for SUSE changes, NULL for external sync. |
+| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). |
 
 ### CodestreamPackageChecksum
 
@@ -292,7 +352,8 @@ TBD — will be defined based on query patterns during implementation.
 
 ## Notes
 
-- All tables use UUID primary keys
+- All tables use UUID primary keys (exception: `SystemSetting` uses a
+  VARCHAR `key` as PK)
 - All tables include `created_at` and `updated_at` timestamps (exception:
   `TicketEvent` and `CodestreamPackageChecksum` only have `created_at`
   because they are immutable write-once records)
@@ -310,3 +371,6 @@ TBD — will be defined based on query patterns during implementation.
   `maintainedpackage` endpoint. Product-to-codestream mappings are
   per-package and already captured by the TicketPackageCodestream to
   TicketPackageProduct hierarchy.
+- The previous `cvss_score` and `cvss_vector` fields on the CVE table have
+  been replaced by the `CVECVSSAssessment` table, which supports multiple
+  providers and CVSS versions — see `docs/features/cvss-scoring.md`

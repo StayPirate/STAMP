@@ -339,3 +339,22 @@ API-UI parity review is needed:
 
 The goal is to ensure that API-only consumers (scripts, integrations,
 third-party tools) are never at a disadvantage compared to UI users.
+
+### 13. CVSS score resolution
+
+CRITICAL: Every component of the system that needs a CVSS score to make a
+decision (severity calculation, eligibility threshold comparison, sorting,
+notifications, or any future logic) MUST:
+
+1. Resolve the CVSS version from the system-wide configuration
+   (`default_cvss_version` setting) — never hardcode `"3.1"` or `"4.0"`
+2. Select the score following the resolution cascade:
+   - SUSE assessment of the default version → if present, use this score
+   - Highest score among all providers for the default version → if at
+     least one exists, use the highest
+   - No score available → treat as absent (or as 10.0 for threshold
+     comparisons, per the conservative fallback rule)
+3. If no assessment of the default version exists from any provider, do
+   NOT fall back to a different CVSS version
+
+See `docs/features/cvss-scoring.md` for the full specification.

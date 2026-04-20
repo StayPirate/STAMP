@@ -211,7 +211,9 @@ The page is divided into the following sections:
 
 - **CVE ID**: prominent display, monospace
 - **Status badge**: color-coded current status
-- **Severity badge**: color-coded severity level
+- **Severity badge**: color-coded severity level, always read-only
+  (derived from CVSS assessments via the resolution cascade — see
+  `docs/features/cvss-scoring.md`)
 - **Assignee**: current assignee with option to reassign
 - **Action buttons**: context-dependent based on current status (see below)
 
@@ -220,22 +222,55 @@ The page is divided into the following sections:
 | Current Status | Available Actions                                    |
 |----------------|------------------------------------------------------|
 | New            | Assign to me, Ignore, Mark as Duplicate              |
-| Analysis       | Mark as Analyzed (if data complete), Ignore, Reassign, Mark as Duplicate |
+| Analysis       | Mark as Analyzed (if gates met), Ignore, Reassign, Mark as Duplicate |
 | Analyzed       | Mark as Resolved (if all updates released), Reassign, Mark as Duplicate |
 | Resolved       | Mark as Duplicate                                    |
 | Ignored        | Mark as Duplicate                                    |
 | Duplicated     | Revert duplicate (restores previous state, reassigns to current IM) |
 
+**Analysis → Analyzed gates**: the "Mark as Analyzed" action is available
+only when ALL of the following conditions are met:
+
+1. All affectedness data is complete (no codestreams in Analysis status)
+2. SUSE CVSS v3.1 assessment has been provided by the IM
+3. SUSE CVSS v4.0 assessment has been provided by the IM
+
+If any gate is not met, the button is disabled with a tooltip explaining
+which requirement is missing.
+
 #### CVE Information Card
 
 - **Description**: full CVE description text
-- **CVSS Score**: numeric score with visual indicator
-- **CVSS Vector**: full CVSS v3 vector string
 - **Published date**: when the CVE was published
 - **Modified date**: when the CVE was last modified at source
 - **References**: links to external references (NVD, advisories, etc.)
 - **Sources**: which data sources provided this CVE (NVD, MITRE)
   with fetch timestamps
+
+#### CVSS Card
+
+A dedicated card displaying CVSS assessments from multiple providers,
+organized by CVSS version in tabs. See `docs/features/cvss-scoring.md`
+for the full specification.
+
+- **Tabs**: one per CVSS version, ordered by version ascending (e.g.,
+  v2.0 → v3.1 → v4.0). Tabs for v3.1 and v4.0 are always visible. Tabs
+  for other versions appear only when at least one assessment exists.
+  The active tab on page load is the system-wide default CVSS version.
+- **Tab content**: table with columns `Provider | Score | [metrics]`, one
+  row per provider. Metric columns are version-specific (8 for v3.1, 11
+  for v4.0), showing human-readable values parsed from the vector string.
+- **SUSE assessment** (v3.1 and v4.0 tabs only):
+  - If absent: "Add SUSE CVSS" button below the table
+  - If present: "Edit SUSE CVSS" button below the table
+  - Both open a modal with a vector string input field. The backend
+    validates the vector and calculates the score automatically.
+- **Empty state**: "No CVSS data available for this version" with the
+  SUSE action button (if v3.1 or v4.0 tab)
+
+**Note**: the severity badge in the header is always read-only and
+calculated from the CVSS resolution cascade (SUSE default version →
+highest default version). See `docs/features/cvss-scoring.md`.
 
 #### Affectedness Table
 
