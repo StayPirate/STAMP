@@ -391,3 +391,26 @@ After creating or modifying any fetcher, invoke
 dashboard.
 
 See `docs/features/fetcher-dashboard.md` for the full specification.
+
+### 15. Specification coherence
+
+After creating or modifying a feature specification in `docs/features/`, or
+after modifying cross-cutting documents (`docs/data-model.md`,
+`docs/api-spec.md`), evaluate whether a spec coherence review is needed:
+
+1. Invoke `@spec-coherence-reviewer` when:
+   - A new feature specification is created in `docs/features/`
+   - An existing feature specification is modified with changes to business
+     rules, data flows, statuses, or entity definitions
+   - `docs/data-model.md` is modified with changes to entities, relationships,
+     or constraints referenced by multiple feature specs
+   - `docs/api-spec.md` is modified with changes to endpoints that span
+     multiple features
+2. Skip the review when:
+   - The change is purely cosmetic (typo fixes, formatting, rewording without
+     semantic change)
+   - Only a single spec is affected and it does not reference other specs
+3. If the reviewer identifies issues rated as "Needs revision" (contradictory
+   rules or incompatible flows between specs), resolve them before considering
+   the task complete
+4. Issues rated as "Minor issues" should be fixed in the same PR
