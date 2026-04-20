@@ -271,7 +271,9 @@ Used by both TicketPackageCodestream and TicketPackageProduct.
 
 ### User
 
-Platform users with role-based access.
+Platform users with role-based access. Users can hold zero, one, or
+multiple roles via the UserRole junction table. A user with no roles has
+the same access as an unauthenticated user (read-only on public data).
 
 | Column     | Type        | Constraints        | Description                      |
 |------------|-------------|--------------------|----------------------------------|
@@ -279,10 +281,30 @@ Platform users with role-based access.
 | username   | VARCHAR     | UNIQUE, NOT NULL   | Login username                   |
 | email      | VARCHAR     | UNIQUE, NOT NULL   | Email address                    |
 | full_name  | VARCHAR     |                    | Display name                     |
-| role       | ENUM        | NOT NULL, DEFAULT  | Admin, Security Team, Packager, Viewer |
 | active     | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active    |
 | created_at | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
 | updated_at | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
+
+### UserRole
+
+Junction table linking users to roles. A user may have zero, one, or
+multiple roles assigned.
+
+| Column     | Type        | Constraints                  | Description                      |
+|------------|-------------|------------------------------|----------------------------------|
+| id         | UUID        | PK                           | Internal identifier              |
+| user_id    | UUID        | FK(user.id), NOT NULL        | Associated user                  |
+| role       | ENUM        | NOT NULL                     | Role: Admin, Incident Manager    |
+| created_at | TIMESTAMP   | NOT NULL, DEFAULT            | When the role was assigned       |
+
+**Unique constraint**: (user_id, role)
+
+**Role enum values**:
+
+| Value             | Description                                      |
+|-------------------|--------------------------------------------------|
+| Admin             | Platform administration (users, settings, fetchers) |
+| Incident Manager  | CVE triage and assessment (tickets, packages, CVSS) |
 
 ### Ticket
 
@@ -450,23 +472,12 @@ TBD — will be defined based on query patterns during implementation.
 - All tables use UUID primary keys (exceptions: `SystemSetting` uses a
   VARCHAR `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR as PK)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
-  `TicketEvent`, `CodestreamPackageChecksum`, `FetcherRun`,
+  `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `FetcherRun`,
   `FetcherAuditLog`, and `FetcherRunWeeklyAggregate` only have `created_at`
   because they are immutable write-once records)
 - ENUM types are defined as PostgreSQL enums
 - JSONB is used for flexible storage of source-specific data
 - The schema will evolve as features are implemented; this document must be
   updated before any schema changes
-- The previous Distribution, Package, and AffectedPackage tables have been
-  replaced by Product, ProductRepository, TicketPackageCodestream, and
-  TicketPackageProduct — see `docs/features/package-tracking.md`
-- The previous Codestream and CodestreamProduct tables have been removed.
-  Codestream names are stored as strings directly in
-  TicketPackageCodestream because SMELT does not expose an endpoint to list
-  codestreams independently — they are discovered per-package via the
-  `maintainedpackage` endpoint. Product-to-codestream mappings are
-  per-package and already captured by the TicketPackageCodestream to
-  TicketPackageProduct hierarchy.
-- The previous `cvss_score` and `cvss_vector` fields on the CVE table have
-  been replaced by the `CVECVSSAssessment` table, which supports multiple
-  providers and CVSS versions — see `docs/features/cvss-scoring.md`
+- The `CVECVSSAssessment` table supports multiple providers and CVSS
+  versions — see `docs/features/cvss-scoring.md`

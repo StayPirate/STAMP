@@ -33,6 +33,9 @@ fields populated according to this table:
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |
 | `package_auto_added` | CVE fix detected in untracked package (Case B) | `NULL` | `NULL` | Package name | `codestream_name` |
 | `ticket_auto_created` | CVE fix detected with no existing ticket (Case C) | `NULL` | `NULL` | Package name | `codestream_name` |
+| `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
+| `cvss_assessment_changed` | SUSE CVSS assessment added, edited, or deleted | Incident Manager user | Old score or `NULL` | New score or `NULL` | CVSS version (e.g., `3.1`) |
+| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
 
 **Rules**:
 
@@ -162,6 +165,9 @@ At the top of the History tab, a horizontal filter bar provides:
    | `product_released`         | Product released           |
    | `package_auto_added`       | Package auto-added         |
    | `ticket_auto_created`      | Ticket auto-created        |
+   | `severity_changed`         | Severity changed           |
+   | `cvss_assessment_changed`  | CVSS assessment changed    |
+   | `product_eligibility_changed` | Product eligibility changed |
 
 2. **Actor filter**: single-select dropdown with options:
    - "All" (default — no filter applied)
@@ -193,8 +199,9 @@ first). Each event entry displays:
    | Assignment | user | `assignment` |
    | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
    | Package | package | `package_added`, `package_removed`, `package_auto_added`, `ticket_auto_created` |
-   | Affectedness | shield | `codestream_status_changed`, `product_status_overridden` |
+   | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
    | Release | check-circle | `codestream_released`, `product_released` |
+   | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
 
 2. **Timestamp**: relative time (e.g., "2 hours ago", "3 days ago") with a
    tooltip showing the absolute datetime in the user's locale.
@@ -220,6 +227,9 @@ first). Each event entry displays:
    | `product_released` | Product release detected for **{comment}** |
    | `package_auto_added` | Package **{new_value}** auto-added (detected in **{comment}**) |
    | `ticket_auto_created` | Ticket auto-created for package **{new_value}** (detected in **{comment}**) |
+   | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
+   | `cvss_assessment_changed` | CVSS **{comment}** assessment changed from **{old_value}** to **{new_value}** |
+   | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
 
 5. **Comment**: if present, displayed below the description in a muted style.
 

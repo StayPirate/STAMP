@@ -332,10 +332,11 @@ with an active ticket, STAMP performs the following recalculation:
 4. **Audit trail**: create `TicketEvent` records for each change:
    - Severity change: `event_type = "severity_changed"`, `old_value` and
      `new_value` with severity labels
-   - Product status change: `event_type = "product_status_overridden"` (or
-     a dedicated type for system-initiated eligibility changes)
-   - Ticket state change: `event_type = "status_change"` with
-     `user_id = NULL` (system action)
+   - Product eligibility change: `event_type = "product_eligibility_changed"`,
+     `old_value` and `new_value` with status labels
+   - Ticket state rollback (if ticket was `Resolved` and products became
+     `AFFECTED`): `event_type = "status_change"`, `old_value = "Resolved"`,
+     `new_value = "Analyzed"`, `user_id = NULL` (system action)
 
 ## UI — CVSS Card
 
@@ -474,7 +475,7 @@ is updated (upsert). Triggers recalculation cascade.
 
 Response: the created or updated assessment object.
 
-Requires: Security Team or Admin role.
+Requires the Incident Manager role.
 
 ### Delete SUSE CVSS Assessment
 
@@ -486,7 +487,7 @@ Removes the SUSE CVSS assessment for the specified version. Triggers
 recalculation cascade. The ticket may no longer meet the progression gate
 requirements.
 
-Requires: Security Team or Admin role.
+Requires the Incident Manager role.
 
 ## Background Tasks
 
@@ -503,8 +504,8 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 
 ## Security
 
-- Viewing CVSS data: all authenticated users
-- Adding/editing/deleting SUSE CVSS: Security Team or Admin role
+- Viewing CVSS data: publicly accessible (no authentication required)
+- Adding/editing/deleting SUSE CVSS: Incident Manager role
 - Changing default CVSS version: Admin role only (see
   `docs/features/admin.md`)
 - External CVSS data is read-only — cannot be modified through STAMP

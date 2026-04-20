@@ -953,6 +953,16 @@ The ticket transitions that depend on affectedness data are updated as follows:
 - **Analyzed -> Resolved**: all TicketPackageCodestream and
   TicketPackageProduct records must have status `RELEASED`, `NOT_AFFECTED`,
   `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.
+- **Resolved -> Analysis**: if a package is added to a Resolved ticket
+  (new codestreams in `ANALYSIS` status), or if an Incident Manager resets
+  a codestream status to `ANALYSIS`, the ticket is moved back to `Analysis`.
+- **Analyzed -> Analysis**: if a package is added to an Analyzed ticket
+  (new codestreams in `ANALYSIS` status), or if an Incident Manager resets
+  a codestream status to `ANALYSIS`, the ticket is moved back to `Analysis`.
+- **Resolved -> Analyzed**: if a CVSS recalculation causes products to
+  transition from `AFFECTED_RESOLVED` to `AFFECTED`, the ticket is moved
+  back to `Analyzed`. See `docs/features/cvss-scoring.md` (Recalculation
+  Cascade).
 
 ## Background Tasks
 
@@ -985,31 +995,12 @@ The ticket transitions that depend on affectedness data are updated as follows:
 
 ## Security
 
-- Adding/removing packages on a ticket requires IM role (Security Team or
-  Admin)
-- Changing codestream/product status requires IM role
-- Viewing affectedness data is available to all authenticated users
+- Adding/removing packages on a ticket requires the Incident Manager role
+- Changing codestream/product status requires the Incident Manager role
+- Viewing affectedness data is publicly accessible (no authentication
+  required)
 - SMELT and AIMAAS credentials are stored as environment variables, never in
   code
-
-## Superseded Specifications
-
-This feature replaces the following concepts from earlier specifications:
-
-- **Distribution** table and **distro-management.md**: replaced by Product
-  and ProductRepository. The `docs/features/distro-management.md` spec is
-  superseded.
-- **Package** table (as defined in data-model.md): package names are now
-  stored inline in TicketPackageCodestream (`package_name` field) rather than
-  as a separate entity with its own table.
-- **AffectedPackage** table: replaced by TicketPackageCodestream and
-  TicketPackageProduct.
-- **Codestream** table: codestream names are now stored as strings in
-  TicketPackageCodestream. SMELT does not provide an independent listing of
-  codestreams.
-- **CodestreamProduct** table: the codestream-to-product mapping is
-  per-package and is already captured by the TicketPackageCodestream to
-  TicketPackageProduct hierarchy.
 
 ## Future Considerations
 

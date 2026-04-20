@@ -93,8 +93,8 @@ Tables are used extensively throughout the platform. All tables must:
 
 ### Status Badges
 
-Status indicators appear throughout the platform (CVE severity, update status,
-distribution active/inactive). All status badges must:
+Status indicators appear throughout the platform (CVE severity, ticket status,
+product active/inactive). All status badges must:
 
 - Use the project's Badge component
 - Use consistent colors as defined in the color palette above

@@ -4,7 +4,7 @@
 
 Define the main pages of the STAMP platform. The platform is designed around
 a ticket-based workflow where incident managers (IMs) triage, analyze, and
-resolve CVEs that affect maintained distributions.
+resolve CVEs that affect maintained products.
 
 Each CVE ingested into the system automatically generates a **Ticket** — the
 primary work unit for IMs. Tickets track the full lifecycle from initial
@@ -36,13 +36,13 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 - **New**: ticket created automatically when a CVE is ingested. Not yet
   assigned to any IM.
 - **Analysis**: assigned to an IM who is actively analyzing the CVE — filling
-  in affectedness data for each package/distribution combination.
+  in affectedness data for each package/codestream/product combination.
 - **Analyzed**: all required data has been filled in (affectedness status for
-  every relevant package × distribution). Ready for updates to be prepared.
+  every relevant package × codestream). Ready for updates to be prepared.
 - **Resolved**: security updates have been released for all affected packages
-  across all affected distributions.
+  across all affected products.
 - **Ignored**: the CVE affects software that is not supported in our
-  distributions. Can only be set from New or Analysis.
+  products. Can only be set from New or Analysis.
 - **Duplicated**: the CVE is a duplicate of another CVE (e.g., a CNA later
   merges two CVE IDs for the same vulnerability). Links to the original
   ticket. Reversible: when reverted, the ticket returns to its previous state
@@ -52,17 +52,20 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 
 | From       | To         | Trigger                                    | Who            |
 |------------|------------|--------------------------------------------|----------------|
-| New        | Analysis   | IM clicks "Assign to me" or is assigned    | Any IM         |
-| New        | Ignored    | IM clicks "Ignore" action                  | Any IM         |
-| Analysis   | Analyzed   | All affectedness data is complete           | Assignee / Admin |
-| Analysis   | Ignored    | IM determines CVE is not relevant           | Assignee / Admin |
-| Analyzed   | Resolved   | All updates for affected packages released  | Assignee / Admin |
-| Any        | Duplicated | IM marks ticket as duplicate of another     | Any IM         |
-| Duplicated | (previous) | IM reverts duplicate status                 | Any IM (becomes new assignee) |
+| New        | Analysis   | Incident Manager clicks "Assign to me" or is assigned | Any Incident Manager |
+| New        | Ignored    | Incident Manager clicks "Ignore" action    | Any Incident Manager |
+| Analysis   | Analyzed   | All affectedness data is complete           | Assignee        |
+| Analysis   | Ignored    | Incident Manager determines CVE is not relevant | Assignee    |
+| Analyzed   | Resolved   | All packages in final status               | Assignee        |
+| Any        | Duplicated | Incident Manager marks ticket as duplicate  | Any Incident Manager |
+| Duplicated | (previous) | Incident Manager reverts duplicate status   | Any Incident Manager (becomes new assignee) |
+| Resolved   | Analyzed   | CVSS recalculation causes products to become AFFECTED | System |
+| Resolved   | Analysis   | Package added or codestream reset to ANALYSIS | Incident Manager |
+| Analyzed   | Analysis   | Package added or codestream reset to ANALYSIS | Incident Manager |
 
 ### Reassignment
 
-A ticket can be reassigned to a different IM at any time, regardless of its
+A ticket can be reassigned to a different Incident Manager at any time, regardless of its
 current state. Reassignment does not change the ticket status. All
 reassignments are logged in the ticket event history.
 
@@ -85,7 +88,7 @@ external sources but not yet picked up by any IM.
 |-------------------|-----------------------------------------------------|
 | CVE ID            | CVE identifier (e.g., CVE-2025-1234), monospace     |
 | Severity          | Color-coded severity badge (Critical/High/Medium/Low/None). Shown only if available from sources |
-| CVSS Score        | Numeric CVSS v3 score. Shown only if available      |
+| CVSS Score        | Numeric CVSS score (resolved via the default CVSS version). Shown only if available |
 | Affected Packages | Package names resolved automatically via CPE mapping during CVE ingestion (see `docs/features/package-tracking.md`). Comma-separated, truncated if many |
 | Summary           | First ~120 characters of the CVE description         |
 | Published         | Date the CVE was published                           |
@@ -184,7 +187,7 @@ Free-text search across:
 | Status         | Multi-select| New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | Severity       | Multi-select| Critical, High, Medium, Low, None             |
 | Assignee       | Select      | List of IMs + "Unassigned"                    |
-| Distribution   | Select      | List of active distributions                  |
+| Product        | Select      | List of active products                       |
 | Published from | Date        | CVE published date range start                |
 | Published to   | Date        | CVE published date range end                  |
 
@@ -272,22 +275,16 @@ for the full specification.
 calculated from the CVSS resolution cascade (SUSE default version →
 highest default version). See `docs/features/cvss-scoring.md`.
 
-#### Affectedness Table
+#### Affectedness Section
 
-Matrix showing the impact status for each package × distribution combination.
+Tree structure showing packages, codestreams, and products with their
+affectedness status. See `docs/features/package-tracking.md` (UI
+Requirements section) for the full specification of the tree layout,
+status dropdowns, eligibility indicators, and color coding.
 
-| Column          | Description                                          |
-|-----------------|------------------------------------------------------|
-| Package         | Package name, monospace                              |
-| Distribution    | Distribution name and version                        |
-| Status          | Affected, Not Affected, Investigating, Fixed — editable dropdown |
-| Fixed Version   | Version that fixes the CVE — editable text field (shown when status is Fixed) |
-| Notes           | Optional notes — editable text field                 |
-
-- Only active distributions are shown
-- IMs can edit the status, fixed version, and notes inline
-- The ticket can transition to Analyzed only when all rows have a definitive
-  status (Affected, Not Affected, or Fixed — not Investigating)
+The ticket can transition to Analyzed only when all codestreams have a
+status other than Analysis (see `docs/features/package-tracking.md`,
+Ticket Lifecycle Integration).
 
 #### Duplicate Information
 
@@ -318,11 +315,12 @@ API endpoint, filter parameters, event type contract, and UI details.
 
 ## Security
 
-- All pages require authentication
-- Inbox: viewable by all authenticated users, actions (assign, ignore) require
-  IM role (Security Team or Admin)
-- My Tickets: shows only tickets assigned to the current user
-- All Tickets: viewable by all authenticated users
-- Ticket Detail: viewable by all authenticated users; edit actions (change
-  status, edit affectedness, reassign) require IM role (Security Team or Admin)
-- Reassignment is available to any IM, not just the current assignee
+- Ticket list pages (Inbox, All Tickets) and Ticket Detail are publicly
+  accessible (no authentication required)
+- My Tickets requires authentication (shows tickets assigned to the current
+  user)
+- Edit actions (assign, change status, edit affectedness, reassign, mark as
+  duplicate) require the Incident Manager role
+- Reassignment is available to any Incident Manager, not just the current
+  assignee
+- See `docs/features/rbac.md` for the full permission model

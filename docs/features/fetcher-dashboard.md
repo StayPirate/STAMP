@@ -817,17 +817,17 @@ A simple chronological list of admin actions from `FetcherAuditLog`:
 
 ## Access Control
 
-| Action | Viewer | Security Team | Packager | Admin |
-|---|---|---|---|---|
-| View fetcher list | Yes | Yes | Yes | Yes |
-| View fetcher detail + charts | Yes | Yes | Yes | Yes |
-| View run history | Yes | Yes | Yes | Yes |
-| View error messages | Yes | Yes | Yes | Yes |
-| View error tracebacks | No | No | No | Yes |
-| Trigger manual run | No | No | No | Yes |
-| Enable/disable fetcher | No | No | No | Yes |
-| Modify fetcher config | No | No | No | Yes |
-| View audit log | No | No | No | Yes |
+| Action | Admin | IM | Unauth |
+|---|---|---|---|
+| View fetcher list | Yes | Yes | Yes |
+| View fetcher detail + charts | Yes | Yes | Yes |
+| View run history | Yes | Yes | Yes |
+| View error messages | Yes | Yes | Yes |
+| View error tracebacks | Yes | No | No |
+| Trigger manual run | Yes | No | No |
+| Enable/disable fetcher | Yes | No | No |
+| Modify fetcher config | Yes | No | No |
+| View audit log | Yes | No | No |
 
 ## Background Tasks
 

@@ -72,9 +72,8 @@ Each feature specification in `docs/features/` defines its own API endpoints.
 
 See `docs/features/cve-tracking.md` for detailed endpoint specifications.
 
-- `GET /api/v1/cves` — List CVEs with filters
-- `GET /api/v1/cves/{cve_id}` — Get CVE details
-- `POST /api/v1/cves/sync` — Trigger manual CVE sync
+- `POST /api/v1/cves/sync` — Trigger manual CVE sync (Incident Manager role).
+  CVE data is accessed through the ticket endpoints below.
 ### Tickets
 
 See `docs/features/pages.md` for ticket lifecycle and page specifications.
@@ -109,9 +108,9 @@ See `docs/features/cvss-scoring.md` for detailed endpoint specifications.
 - `GET /api/v1/tickets/{ticket_id}/cvss` — Get all CVSS assessments for a
   ticket's CVE, grouped by version, including resolved score/severity
 - `POST /api/v1/tickets/{ticket_id}/cvss/suse` — Set or update SUSE CVSS
-  assessment (upsert by version). Requires Security Team or Admin role.
+  assessment (upsert by version). Requires the Incident Manager role.
 - `DELETE /api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` — Remove
-  SUSE CVSS assessment. Requires Security Team or Admin role.
+  SUSE CVSS assessment. Requires the Incident Manager role.
 
 ### Administration
 

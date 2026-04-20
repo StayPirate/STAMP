@@ -145,5 +145,5 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
 - Examples:
   - `feat: add CVE severity filtering to dashboard`
   - `fix: correct CVSS score parsing for NVD API v2`
-  - `docs: update data model with SecurityUpdate table`
+  - `docs: update data model with Product table`
   - `test: add integration tests for CVE sync service`
