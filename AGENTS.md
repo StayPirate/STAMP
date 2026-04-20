@@ -373,10 +373,18 @@ ingestion) MUST:
 4. NOT bypass `BaseFetcher` with a raw `@celery_app.task` decorator for
    fetching logic
 
+**Exception — sub-operation tasks**: background tasks that fetch from
+external sources as a sub-operation of an existing fetcher are exempt.
+These are on-demand tasks triggered by a parent fetcher (not by Celery
+Beat), with no independent schedule or dashboard presence. Example:
+`create_ticket_from_detection` is enqueued by `check_codestream_releases`
+and fetches from NVD/SMELT, but is not a `BaseFetcher` subclass.
+
 If there is a compelling reason to bypass `BaseFetcher` for a specific
-case, STOP and inform the user with a detailed explanation of why the
-bypass is advantageous, so the decision can be made together. Do NOT
-proceed with a bypass without explicit user approval.
+case beyond this exception, STOP and inform the user with a detailed
+explanation of why the bypass is advantageous, so the decision can be
+made together. Do NOT proceed with a bypass without explicit user
+approval.
 
 After creating or modifying any fetcher, invoke
 `@fetcher-dashboard-reviewer` to verify correct integration with the

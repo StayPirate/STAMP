@@ -33,7 +33,7 @@ coordination across multiple maintained distribution versions.
                         │  └────────────┘ └────────────┘  │
 ┌──────────────────┐     │                                  │
 │   Open Build     │◀──▶│  ┌────────────────────────────┐  │
-│   Service (OBS)  │     │  │     Impact Analysis        │  │
+│   Service (OBS)  │     │  │  Package Resolution  │  │
 └──────────────────┘     │  └────────────────────────────┘  │
                         └──────────────────────────────────┘
                                         │
@@ -185,7 +185,7 @@ product — through different mechanisms. See
 `docs/features/package-tracking.md` (section "Release Tracking") for the
 authoritative details.
 
-1. Celery Beat triggers periodic release status checks (`check_release_status`).
+1. Celery Beat triggers periodic release status checks (`check_codestream_releases` and `check_product_releases`).
 2. **Codestream level**: workers query IBS source info and diff endpoints
    (see `docs/features/obs-integration.md` and
    `docs/features/package-tracking.md`, section "Codestream-level

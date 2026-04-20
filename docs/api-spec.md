@@ -75,8 +75,6 @@ See `docs/features/cve-tracking.md` for detailed endpoint specifications.
 - `GET /api/v1/cves` — List CVEs with filters
 - `GET /api/v1/cves/{cve_id}` — Get CVE details
 - `POST /api/v1/cves/sync` — Trigger manual CVE sync
-- `GET /api/v1/cves/{cve_id}/impact` — Get impact analysis
-
 ### Tickets
 
 See `docs/features/pages.md` for ticket lifecycle and page specifications.

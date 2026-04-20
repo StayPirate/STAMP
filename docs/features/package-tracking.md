@@ -659,7 +659,7 @@ gracefully:
   updates published to it. This is normal for newly launched or niche
   products.
 - **Network errors / timeouts**: skip with ERROR-level log, retry on the
-  next scheduled run of `check_release_status`.
+  next scheduled run of `check_product_releases`.
 
 **TBD** (see [Open Items](#open-items)):
 

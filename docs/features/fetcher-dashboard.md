@@ -925,10 +925,25 @@ from an external source MUST:
 3. Implement `execute()` with proper metric reporting
 4. NOT bypass the base class with a raw Celery task
 
+**Exception — sub-operation tasks**: background tasks that fetch from
+external sources as a sub-operation of an existing fetcher (not as an
+independent periodic sync) are exempt from `BaseFetcher`. These tasks:
+
+- Are triggered on-demand by a parent fetcher, not by Celery Beat
+- Do not have their own schedule
+- Do not appear as separate cards in the dashboard
+- Their metrics are not tracked independently
+
+Example: `create_ticket_from_detection` is enqueued by the
+`check_codestream_releases` fetcher (Case C) and fetches CVE data from
+NVD and package data from SMELT. It is a standalone Celery task, not a
+`BaseFetcher` subclass, because it is a reaction to a discovery made by
+the parent fetcher, not an independent sync process.
+
 If there is a compelling reason to bypass `BaseFetcher` for a specific
-fetcher, the agent MUST stop and inform the user with a detailed
-explanation of why the bypass is advantageous, so the decision can be
-made together.
+case beyond this exception, the agent MUST stop and inform the user with
+a detailed explanation of why the bypass is advantageous, so the decision
+can be made together.
 
 After creating or modifying a fetcher, the `@fetcher-dashboard-reviewer`
 agent MUST be invoked.

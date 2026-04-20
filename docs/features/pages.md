@@ -86,7 +86,7 @@ external sources but not yet picked up by any IM.
 | CVE ID            | CVE identifier (e.g., CVE-2025-1234), monospace     |
 | Severity          | Color-coded severity badge (Critical/High/Medium/Low/None). Shown only if available from sources |
 | CVSS Score        | Numeric CVSS v3 score. Shown only if available      |
-| Affected Packages | Package names identified by automatic impact analysis. Comma-separated, truncated if many |
+| Affected Packages | Package names resolved automatically via CPE mapping during CVE ingestion (see `docs/features/package-tracking.md`). Comma-separated, truncated if many |
 | Summary           | First ~120 characters of the CVE description         |
 | Published         | Date the CVE was published                           |
 | Actions           | Quick action buttons                                 |
