@@ -113,8 +113,10 @@ Methods:
   a dictionary mapping package names to their `srcmd5` checksums.
 - `get_diff_issues(project: str, package: str, old_md5: str, new_md5: str) -> list[DiffIssue]`:
   calls `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`,
-  parses the XML response, and returns a list of issue references with
-  `state="added"` filtered to `tracker` values `cve` and `bnc`.
+  parses the XML response, filters for issues with `state="added"` and
+  `tracker` equal to `cve` or `bnc`, and returns the filtered list. The
+  filtering is performed here in the client so the
+  `CodestreamReleaseDetector` receives pre-filtered results.
 
 Configuration is injected via the application settings (`IBS_API_URL`,
 `IBS_USERNAME`, `IBS_PASSWORD`).
@@ -128,7 +130,10 @@ section "Codestream-level Detection".
 ### Background Tasks
 
 - `check_codestream_releases`: periodic task (every 8 hours via Celery
-  Beat) that invokes `CodestreamReleaseDetector.run()`.
+  Beat) that invokes `CodestreamReleaseDetector.run()`. This task is a
+  `BaseFetcher` subclass with `name`, `description`, and
+  `default_schedule` attributes. See `docs/features/fetcher-dashboard.md`
+  for the BaseFetcher infrastructure.
 - `create_ticket_from_detection`: on-demand task enqueued when a CVE fix
   is detected for a CVE with no existing ticket. Fetches CVE data from
   NVD, creates the ticket, and resolves packages via SMELT.
