@@ -91,7 +91,7 @@ Returns a paginated list of events for a specific ticket, ordered by
       "actor": {
         "id": "uuid",
         "username": "jdoe",
-        "display_name": "John Doe"
+        "full_name": "John Doe"
       }
     },
     {
@@ -116,7 +116,7 @@ Returns a paginated list of events for a specific ticket, ordered by
 **Notes**:
 
 - `actor` is `null` for system-generated events (where `user_id IS NULL`).
-- `actor` contains `id`, `username`, and `display_name` for user-initiated
+- `actor` contains `id`, `username`, and `full_name` for user-initiated
   events.
 - The `event_type` filter accepts multiple values separated by commas. Invalid
   values are ignored (no error). If all provided values are invalid, the
