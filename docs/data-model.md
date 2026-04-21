@@ -6,18 +6,19 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 ## Entity Relationship Overview
 
 ```
-┌──────────────┐     ┌──────────────────┐
-│     CVE      │────▶│   CVESource      │
-│              │     │                  │
-│  cve_id      │     │  source_type     │
-│  description │     │  source_url      │
-│  severity    │     │  raw_data        │
-│  published   │     └──────────────────┘
-└──────┬───┬───┘
+┌──────────────────┐ (1:N) ┌──────────────────┐
+│       CVE        │──────▶│    CVESource     │
+│                  │       │                  │
+│  cve_id          │       │  cve_id (FK)     │
+│  description     │       │  source_type     │
+│  severity        │       │  source_url      │
+│  published_date  │       │  raw_data        │
+│  status          │       └──────────────────┘
+└──────┬───┬───────┘
        │   │
        │   ▼ (1:N)
        │  ┌──────────────────────┐
-       │  │ CVECVSSAssessment    │
+       │  │  CVECVSSAssessment   │
        │  │                      │
        │  │  cve_id (FK)         │
        │  │  provider_name       │
@@ -27,75 +28,98 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │  └──────────────────────┘
        │
        ▼ (1:1)
-┌──────────────────┐     ┌──────────────────┐
-│     Ticket       │────▶│   TicketEvent    │
-│                  │     │                  │
-│  cve_id (FK,UQ)  │     │  ticket_id (FK)  │
-│  status          │     │  user_id (FK)    │
-│  assignee_id(FK) │     │  event_type      │
-│  duplicate_of_id │     │  old_value       │
-│  (FK, self-ref)  │     │  new_value       │
-└──────┬───────────┘     │  comment         │
-       │                 └──────────────────┘
+┌──────────────────┐ (1:N) ┌──────────────────┐
+│     Ticket       │──────▶│   TicketEvent    │
+│                  │       │                  │
+│  cve_id (FK,UQ)  │       │  ticket_id (FK)  │
+│  status          │       │  user_id (FK) ──────┐
+│  assignee_id (FK)──┐     │  event_type      │  │
+│  duplicate_of_id │  │    │  old_value       │  │
+│  (FK, self-ref)  │  │    │  new_value       │  │
+│  previous_status │  │    │  comment         │  │
+└──────┬───────────┘  │    └──────────────────┘  │
+       │              │                          │
+       │              │    ┌──────────────────┐   │
+       │              └───▶│      User        │◀──┘
+       │                   │                  │
+       │                   │  username        │
+       │                   │  email           │
+       │                   │  full_name       │
+       │                   │  active          │
+       │                   └────────┬─────────┘
+       │                            │
+       │                            ▼ (1:N)
+       │                   ┌──────────────────┐
+       │                   │    UserRole      │
+       │                   │                  │
+       │                   │  user_id (FK)    │
+       │                   │  role            │
+       │                   └──────────────────┘
        │
        ▼ (1:N)
 ┌────────────────────────────┐
-│  TicketPackageCodestream   │     ┌─────────────────────┐
-│                            │     │      Product        │
-│  ticket_id (FK)            │     │                     │
-│  package_name              │     │  name               │
-│  codestream_name           │     │  version            │
-│  status                    │     │  display_name       │
-│                            │     │  cpe                │
-└──────────┬─────────────────┘     │  cvss_threshold     │
-           │                       │  fcs                │
-           ▼ (1:N)                 │  end_of_gs          │
-┌────────────────────────────┐     │  end_of_ltss        │
-│   TicketPackageProduct     │────▶│  end_of_espos       │
-│                            │     │  end_of_reactive_ltss│
-│  tkt_pkg_cs_id (FK)        │     └──────┬──────────────┘
-│  product_id (FK)           │            │
-│  status                    │            ▼ (1:N)
-│  is_override               │     ┌─────────────────────┐
-│  released_at               │     │ ProductRepository   │
-└────────────────────────────┘     │                     │
-                                   │  product_id (FK)    │
-┌──────────────────┐               │  repo_name          │
-│      User        │               └─────────────────────┘
-│                  │
-│  username        │       ┌─────────────────────────────────┐
-│  email           │       │ CodestreamPackageChecksum        │
-│  role            │       │ (operational cache)              │
-│  active          │       │                                 │
-└──────────────────┘       │  codestream_name                │
-                           │  package_name                   │
-┌──────────────────┐       │  srcmd5                         │
-│  SystemSetting   │       │  last_seen_at                   │
-│                  │       └─────────────────────────────────┘
-│  key             │
-│  value           │       ┌─────────────────────────────────┐
-└──────────────────┘       │ FetcherRun                       │
+│  TicketPackageCodestream   │     ┌─────────────────────────┐
+│                            │     │        Product          │
+│  ticket_id (FK)            │     │                         │
+│  package_name              │     │  smelt_id               │
+│  codestream_name           │     │  name                   │
+│  status                    │     │  version                │
+│                            │     │  display_name           │
+└──────────┬─────────────────┘     │  cpe                    │
+           │                       │  cvss_threshold         │
+           ▼ (1:N)                 │  active                 │
+┌────────────────────────────┐     │  fcs                    │
+│   TicketPackageProduct     │────▶│  end_of_gs              │
+│                            │     │  end_of_ltss            │
+│  tpc_id (FK) *             │     │  end_of_espos           │
+│  product_id (FK)           │     │  end_of_reactive_ltss   │
+│  status                    │     └──────┬──────────────────┘
+│  is_override               │            │
+│  released_at               │            ▼ (1:N)
+└────────────────────────────┘     ┌─────────────────────────┐
+                                   │   ProductRepository     │
+┌──────────────────┐               │                         │
+│  SystemSetting   │               │  product_id (FK)        │
+│                  │               │  repo_name              │
+│  key (PK)        │               └─────────────────────────┘
+│  value           │
+└──────────────────┘       ┌─────────────────────────────────┐
+                           │ CodestreamPackageChecksum        │
+                           │ (operational cache)              │
                            │                                 │
-┌──────────────────────┐   │  fetcher_name                   │
-│  FetcherConfig       │   │  started_at / finished_at       │
-│                      │   │  duration_seconds               │
-│  fetcher_name (PK)   │   │  status                         │
-│  enabled             │   │  items_created/updated/failed   │
-│  schedule_override   │   │  error_message                  │
-│  timeout_seconds     │   │  error_traceback                │
-│  rate_limit          │   │  triggered_by                   │
-└──────────────────────┘   │  triggered_by_user_id (FK)      │
+                           │  codestream_name                │
+                           │  package_name                   │
+                           │  srcmd5                         │
+                           │  last_seen_at                   │
                            └─────────────────────────────────┘
-┌──────────────────────┐
-│  FetcherAuditLog     │   ┌─────────────────────────────────┐
-│                      │   │ FetcherRunWeeklyAggregate        │
-│  fetcher_name        │   │                                 │
-│  action              │   │  fetcher_name                   │
-│  performed_by (FK)   │   │  week_start                     │
-│  details             │   │  run_count                      │
-└──────────────────────┘   │  avg/min/max_duration_seconds   │
+
+┌──────────────────────┐   ┌─────────────────────────────────┐
+│  FetcherConfig       │   │ FetcherRun                       │
+│                      │   │                                 │
+│  fetcher_name (PK)   │   │  fetcher_name                   │
+│  enabled             │   │  started_at / finished_at       │
+│  schedule_override   │   │  duration_seconds               │
+│  timeout_seconds     │   │  status                         │
+│  rate_limit          │   │  items_created/updated/failed   │
+└──────────────────────┘   │  error_message                  │
+                           │  error_traceback                │
+┌──────────────────────┐   │  triggered_by                   │
+│  FetcherAuditLog     │   │  triggered_by_user_id (FK)      │
+│                      │   └─────────────────────────────────┘
+│  fetcher_name        │
+│  action              │   ┌─────────────────────────────────┐
+│  performed_by_user_id│   │ FetcherRunWeeklyAggregate        │
+│  (FK)                │   │                                 │
+│  details             │   │  fetcher_name                   │
+└──────────────────────┘   │  week_start                     │
+                           │  run_count                      │
+                           │  success/failure/partial_count  │
+                           │  avg/min/max_duration_seconds   │
                            │  total_items_created/updated    │
+                           │  total_items_failed             │
                            └─────────────────────────────────┘
+
+* tpc_id = ticket_package_codestream_id (abbreviated for diagram readability)
 ```
 
 ## Tables
@@ -371,7 +395,6 @@ system action).
 | product_status_overridden  | IM overrode product affectedness status             |
 | codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
 | product_released           | Product release detected via updateinfo.xml advisory |
-
 | ticket_auto_created        | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
