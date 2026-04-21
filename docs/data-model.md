@@ -365,13 +365,13 @@ system action).
 | assignment                 | Ticket was assigned or reassigned                  |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
-| package_added              | IM manually added a package to the ticket          |
+| package_added              | Package added to the ticket (manual by IM or automatic via CPE match / codestream detection). `user_id` is set for IM actions, NULL for automatic. `comment` provides context for automatic additions. |
 | package_removed            | IM removed a package from the ticket               |
 | codestream_status_changed  | IM changed codestream affectedness status           |
 | product_status_overridden  | IM overrode product affectedness status             |
 | codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
 | product_released           | Product release detected via updateinfo.xml advisory |
-| package_auto_added         | Package auto-added to ticket after CVE fix detected in an untracked package (Case B) |
+
 | ticket_auto_created        | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |

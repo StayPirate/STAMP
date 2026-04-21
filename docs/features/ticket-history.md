@@ -25,13 +25,12 @@ fields populated according to this table:
 | `assignment` | Ticket assigned or reassigned | IM user | Previous assignee username or `NULL` | New assignee username | Optional IM note |
 | `duplicate_set` | Ticket marked as duplicate | IM user | `NULL` | CVE ID of the original ticket | Optional IM note |
 | `duplicate_removed` | Duplicate mark reverted | IM user | CVE ID of the original ticket | `NULL` | Optional IM note |
-| `package_added` | IM adds package to ticket | IM user | `NULL` | Package name | `NULL` |
+| `package_added` | Package added to ticket (manual or automatic) | IM user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
 | `package_removed` | IM removes package from ticket | IM user | Package name | `NULL` | `NULL` |
 | `codestream_status_changed` | IM changes codestream status | IM user | Old status | New status | `package_name:codestream_name` |
 | `product_status_overridden` | IM overrides product status | IM user | Old status | New status | `package_name:product_id` |
 | `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |
-| `package_auto_added` | CVE fix detected in untracked package (Case B) | `NULL` | `NULL` | Package name | `codestream_name` |
 | `ticket_auto_created` | CVE fix detected with no existing ticket (Case C) | `NULL` | `NULL` | Package name | `codestream_name` |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | IM user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
@@ -162,7 +161,6 @@ At the top of the History tab, a horizontal filter bar provides:
    | `product_status_overridden`| Product status overridden  |
    | `codestream_released`      | Codestream released        |
    | `product_released`         | Product released           |
-   | `package_auto_added`       | Package auto-added         |
    | `ticket_auto_created`      | Ticket auto-created        |
    | `severity_changed`         | Severity changed           |
    | `cvss_assessment_changed`  | CVSS assessment changed    |
@@ -197,7 +195,7 @@ first). Each event entry displays:
    | Status change | arrow-right-left | `status_change` |
    | Assignment | user | `assignment` |
    | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
-   | Package | package | `package_added`, `package_removed`, `package_auto_added`, `ticket_auto_created` |
+   | Package | package | `package_added`, `package_removed`, `ticket_auto_created` |
    | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
    | Release | check-circle | `codestream_released`, `product_released` |
    | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
@@ -218,13 +216,12 @@ first). Each event entry displays:
    | `assignment` | Assigned to **{new_value}** (if `old_value` is null: "Assigned to **{new_value}**"; if reassignment: "Reassigned from **{old_value}** to **{new_value}**") |
    | `duplicate_set` | Marked as duplicate of **{new_value}** |
    | `duplicate_removed` | Duplicate mark removed (was duplicate of **{old_value}**) |
-   | `package_added` | Added package **{new_value}** |
+   | `package_added` | Added package **{new_value}** (if `comment` present: "Added package **{new_value}** — **{comment}**") |
    | `package_removed` | Removed package **{old_value}** |
    | `codestream_status_changed` | Changed codestream status from **{old_value}** to **{new_value}** for **{comment}** |
    | `product_status_overridden` | Overrode product status from **{old_value}** to **{new_value}** for **{comment}** |
    | `codestream_released` | Codestream release detected for **{comment}** |
    | `product_released` | Product release detected for **{comment}** |
-   | `package_auto_added` | Package **{new_value}** auto-added (detected in **{comment}**) |
    | `ticket_auto_created` | Ticket auto-created for package **{new_value}** (detected in **{comment}**) |
    | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
    | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |

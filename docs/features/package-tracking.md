@@ -338,19 +338,23 @@ record for audit and traceability. The following event types are defined:
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
 | IM adds package | `package_added` | IM user | `package_name` |
+| Package auto-added (CPE match or Case B) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | IM removes package | `package_removed` | IM user | `package_name` |
 | IM changes codestream status | `codestream_status_changed` | IM user | `package_name`, `codestream_name`, `old_status`, `new_status` |
 | IM overrides product status | `product_status_overridden` | IM user | `package_name`, `product_id`, `old_status`, `new_status` |
-| Auto-added (Case B) | `package_auto_added` | `NULL` | `package_name`, `codestream_name` |
 | Auto-created ticket (Case C) | `ticket_auto_created` | `NULL` | `package_name`, `codestream_name` |
 | Codestream release detected | `codestream_released` | `NULL` | `package_name`, `codestream_name` |
 | Product release detected | `product_released` | `NULL` | `package_name`, `product_id`, `advisory_id` |
 
-- `user_id = NULL` indicates an automatic system action.
+- `user_id = NULL` indicates an automatic system action. For `package_added`,
+  this distinguishes manual additions (IM user) from automatic ones (CPE
+  match, codestream detection). The `comment` field provides context for
+  automatic additions.
 - All events include an implicit `created_at` timestamp.
-- The "Details recorded" column lists the fields stored in the event's
-  structured data payload (the exact storage format — JSON column, separate
-  fields, etc. — is defined in `docs/data-model.md`).
+- The "Details recorded" column lists the values stored in the event's
+  `old_value`, `new_value`, and `comment` fields as strings. See
+  `docs/features/ticket-history.md` for the exact field mapping and
+  `docs/data-model.md` for the schema.
 
 ### SMELT Query for Package Resolution
 
