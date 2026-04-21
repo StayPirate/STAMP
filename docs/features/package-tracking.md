@@ -340,7 +340,7 @@ record for audit and traceability. The following event types are defined:
 | IM removes package | `package_removed` | IM user | `package_name` |
 | IM changes codestream status | `codestream_status_changed` | IM user | `package_name`, `codestream_name`, `old_status`, `new_status` |
 | IM overrides product status | `product_status_overridden` | IM user | `package_name`, `product_id`, `old_status`, `new_status` |
-| Auto-created ticket (Case C) | `ticket_auto_created` | `NULL` | `package_name`, `codestream_name` |
+| Ticket created | `ticket_created` | `NULL` | Creation source description |
 | Codestream release detected | `codestream_released` | `NULL` | `package_name`, `codestream_name` |
 | Product release detected | `product_released` | `NULL` | `package_name`, `product_id`, `advisory_id` |
 
@@ -529,9 +529,9 @@ No ticket exists in STAMP for the extracted CVE-ID.
       status `ANALYSIS`.
    5. Set the `TicketPackageCodestream` for the originating codestream to
       `RELEASED`.
-   6. Create a `TicketEvent` with `event_type = ticket_auto_created`,
-      `user_id = NULL`, comment: "Ticket auto-created: CVE fix detected
-      in `{package}` (`{codestream}`)".
+   6. Create a `TicketEvent` with `event_type = ticket_created`,
+       `user_id = NULL`, comment: `"CVE fix detected in {package}
+       ({codestream})"`.
 
 #### Error Handling
 

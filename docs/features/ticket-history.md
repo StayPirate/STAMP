@@ -31,7 +31,7 @@ fields populated according to this table:
 | `product_status_overridden` | IM overrides product status | IM user | Old status | New status | `package_name:product_id` |
 | `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |
-| `ticket_auto_created` | CVE fix detected with no existing ticket (Case C) | `NULL` | `NULL` | Package name | `codestream_name` |
+| `ticket_created` | Ticket created (CVE ingestion or codestream detection) | `NULL` | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`) |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | IM user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
@@ -161,7 +161,7 @@ At the top of the History tab, a horizontal filter bar provides:
    | `product_status_overridden`| Product status overridden  |
    | `codestream_released`      | Codestream released        |
    | `product_released`         | Product released           |
-   | `ticket_auto_created`      | Ticket auto-created        |
+   | `ticket_created`           | Ticket created             |
    | `severity_changed`         | Severity changed           |
    | `cvss_assessment_changed`  | CVSS assessment changed    |
    | `product_eligibility_changed` | Product eligibility changed |
@@ -195,7 +195,8 @@ first). Each event entry displays:
    | Status change | arrow-right-left | `status_change` |
    | Assignment | user | `assignment` |
    | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
-   | Package | package | `package_added`, `package_removed`, `ticket_auto_created` |
+   | Creation | plus-circle | `ticket_created` |
+   | Package | package | `package_added`, `package_removed` |
    | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
    | Release | check-circle | `codestream_released`, `product_released` |
    | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
@@ -222,7 +223,7 @@ first). Each event entry displays:
    | `product_status_overridden` | Overrode product status from **{old_value}** to **{new_value}** for **{comment}** |
    | `codestream_released` | Codestream release detected for **{comment}** |
    | `product_released` | Product release detected for **{comment}** |
-   | `ticket_auto_created` | Ticket auto-created for package **{new_value}** (detected in **{comment}**) |
+   | `ticket_created` | Ticket created — **{comment}** |
    | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
    | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
    | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
