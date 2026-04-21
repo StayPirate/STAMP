@@ -56,9 +56,22 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  role            │
        │                   └──────────────────┘
        │
+       │
        ▼ (1:N)
-┌────────────────────────────┐
-│  TicketPackageCodestream   │     ┌─────────────────────────┐
+┌──────────────────┐
+│ TicketReference  │
+│                  │
+│  ticket_id (FK)  │
+│  url             │
+│  title           │
+│  source          │
+│  tags            │
+│  created_by (FK)─────────────────────────┐
+└──────────────────┘                       │
+       │                                   │
+       ▼ (1:N)                             │
+┌────────────────────────────┐             │
+│  TicketPackageCodestream   │     ┌───────┴─────────────────┐
 │                            │     │        Product          │
 │  ticket_id (FK)            │     │                         │
 │  package_name              │     │  smelt_id               │
@@ -365,6 +378,30 @@ managers (IMs).
 - **Inactive tickets**: tickets in status `Resolved`, `Ignored`, or
   `Duplicated`. These are no longer monitored: CVSS sync and
   recalculation cascades skip inactive tickets.
+
+### TicketReference
+
+Stores external links associated with a ticket. References are created
+automatically by CVE fetchers during ingestion and can also be added
+manually by Incident Managers. See `docs/features/references.md` for
+the full specification.
+
+| Column     | Type           | Constraints                  | Description                        |
+|------------|----------------|------------------------------|------------------------------------|
+| id         | UUID           | PK                           | Internal identifier                |
+| ticket_id  | UUID           | FK(ticket.id), NOT NULL      | Related ticket                     |
+| url        | VARCHAR        | NOT NULL                     | URL of the external resource       |
+| title      | VARCHAR        | nullable                     | Optional human-readable label      |
+| source     | VARCHAR        | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`, `"sync_cves_mitre"`) or `"manual"` for user-added references |
+| tags       | ARRAY(VARCHAR) | nullable                     | Descriptive tags from CVE data (e.g., `"Patch"`, `"Vendor Advisory"`) |
+| created_by | UUID           | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
+| created_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record update timestamp            |
+
+**Unique constraint**: (ticket_id, url)
+
+**Cascade delete**: when a ticket is deleted, all its references are
+deleted.
 
 ### TicketEvent
 

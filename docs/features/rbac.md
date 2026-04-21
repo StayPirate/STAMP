@@ -24,6 +24,7 @@ Operates the triage and assessment workflow:
 - Add and remove packages from tickets
 - Change codestream and product affectedness status
 - Add, edit, and delete SUSE CVSS assessments
+- Add, edit, and delete ticket references
 - Trigger CVE synchronization
 
 ### Admin
@@ -52,6 +53,7 @@ capabilities must hold both roles.
 | Add/remove packages              | No    | Yes | No     |
 | Change codestream/product status | No    | Yes | No     |
 | Add/edit/delete SUSE CVSS        | No    | Yes | No     |
+| Add/edit/delete references       | No    | Yes | No     |
 | Trigger CVE sync                 | No    | Yes | No     |
 
 ### Admin Operations
@@ -72,6 +74,7 @@ capabilities must hold both roles.
 |----------------------------------|-------|-----|--------|
 | View tickets / CVEs              | Yes   | Yes | Yes    |
 | View products                    | Yes   | Yes | Yes    |
+| View ticket references           | Yes   | Yes | Yes    |
 | View fetcher dashboard           | Yes   | Yes | Yes    |
 
 ## API Endpoints

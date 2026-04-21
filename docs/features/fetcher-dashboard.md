@@ -60,6 +60,13 @@ class MyConcreteFetcher(BaseFetcher):
     description: str = "Human-readable description"
     default_schedule: str = "0 */6 * * *"  # cron expression (every 6h)
 
+    # Optional: URL pattern for human-readable CVE page.
+    # Only applicable to CVE fetchers. When set, a TicketReference
+    # is automatically created with this URL for each processed CVE.
+    # Uses {cve_id} as placeholder (e.g., "CVE-2026-3317").
+    # See docs/features/references.md for details.
+    source_reference_url_pattern: str | None = None
+
     async def execute(self, session: AsyncSession) -> None:
         """Fetch data from the external source.
 
@@ -891,7 +898,9 @@ Invoke `@fetcher-dashboard-reviewer` when:
 1. **Base class inheritance**: the fetcher class inherits from
    `BaseFetcher` (not bypassing it with a raw Celery task)
 2. **Required attributes**: `name`, `description`, and `default_schedule`
-   are defined on the class
+   are defined on the class. For CVE fetchers,
+   `source_reference_url_pattern` should be set if the source has a
+   human-readable web page (see `docs/features/references.md`)
 3. **Unique name**: the fetcher's `name` does not conflict with any
    existing registered fetcher
 4. **Metric reporting**: the `execute()` method calls

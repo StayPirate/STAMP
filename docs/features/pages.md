@@ -247,7 +247,6 @@ which requirement is missing.
 - **Description**: full CVE description text
 - **Published date**: when the CVE was published
 - **Modified date**: when the CVE was last modified at source
-- **References**: links to external references (NVD, advisories, etc.)
 - **Sources**: which data sources provided this CVE (NVD, MITRE)
   with fetch timestamps
 
@@ -275,6 +274,21 @@ for the full specification.
 **Note**: the severity badge in the header is always read-only and
 calculated from the CVSS resolution cascade (SUSE default version →
 highest default version). See `docs/features/cvss-scoring.md`.
+
+#### References Section
+
+Dedicated section displaying all external links associated with the
+ticket. See `docs/features/references.md` for the full specification.
+
+- References are displayed as clickable links grouped by source (e.g.,
+  NVD, MITRE, Manual)
+- Each reference shows its title (or URL if no title), source badge, and
+  tags (if any)
+- "Add Reference" button visible to Incident Managers
+- Each reference has an edit/delete action menu for Incident Managers
+- All references are editable/deletable regardless of their origin
+  (automatic or manual)
+- Empty state: "No references yet."
 
 #### Affectedness Section
 

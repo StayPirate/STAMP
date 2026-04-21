@@ -98,6 +98,19 @@ See `docs/features/package-tracking.md` for detailed specifications.
 
 - `GET /api/v1/products` — List products (synced from SMELT)
 
+### Ticket References
+
+See `docs/features/references.md` for detailed endpoint specifications.
+
+- `GET /api/v1/tickets/{ticket_id}/references` — List references (public,
+  filterable by `source`)
+- `POST /api/v1/tickets/{ticket_id}/references` — Add a manual reference
+  (Incident Manager role)
+- `PUT /api/v1/tickets/{ticket_id}/references/{reference_id}` — Update a
+  reference (Incident Manager role)
+- `DELETE /api/v1/tickets/{ticket_id}/references/{reference_id}` — Delete
+  a reference (Incident Manager role)
+
 ### Ticket Events
 
 See `docs/features/ticket-history.md` for detailed endpoint specification.
