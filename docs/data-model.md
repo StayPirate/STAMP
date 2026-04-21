@@ -365,8 +365,8 @@ system action).
 | product_released           | Product release detected via updateinfo.xml advisory |
 | package_auto_added         | Package auto-added to ticket after CVE fix detected in an untracked package (Case B) |
 | ticket_auto_created        | Ticket auto-created after CVE fix detected with no existing ticket (Case C) |
-| severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is NULL for system-triggered changes, set for IM-initiated SUSE CVSS changes. |
-| cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name version score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `user_id` set for SUSE changes, NULL for external sync. |
+| severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
+| cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). |
 
 ### CodestreamPackageChecksum
