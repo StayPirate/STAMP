@@ -34,7 +34,7 @@ fields populated according to this table:
 | `package_auto_added` | CVE fix detected in untracked package (Case B) | `NULL` | `NULL` | Package name | `codestream_name` |
 | `ticket_auto_created` | CVE fix detected with no existing ticket (Case C) | `NULL` | `NULL` | Package name | `codestream_name` |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
-| `cvss_assessment_changed` | SUSE CVSS assessment added, edited, or deleted | Incident Manager user | Old score or `NULL` | New score or `NULL` | CVSS version (e.g., `3.1`) |
+| `cvss_assessment_changed` | CVSS assessment added, modified, or removed | IM user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
 
 **Rules**:
@@ -228,7 +228,7 @@ first). Each event entry displays:
    | `package_auto_added` | Package **{new_value}** auto-added (detected in **{comment}**) |
    | `ticket_auto_created` | Ticket auto-created for package **{new_value}** (detected in **{comment}**) |
    | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
-   | `cvss_assessment_changed` | CVSS **{comment}** assessment changed from **{old_value}** to **{new_value}** |
+   | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
    | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
 
 5. **Comment**: if present, displayed below the description in a muted style.

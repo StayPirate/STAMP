@@ -126,6 +126,21 @@ product active/inactive). All status badges must:
 - Inline spinners for actions (button loading states)
 - Never show a blank page while loading
 
+## Data Formatting Conventions
+
+### CVSS Version Display
+
+When displaying CVSS version numbers in the UI (tabs, labels, dropdowns,
+tooltips, timeline events), always prefix with "v" to distinguish versions
+from scores:
+
+- Correct: `v3.1`, `v4.0`, `v2.0`
+- Incorrect: `3.1`, `4.0`, `2.0`
+
+Internal storage and API fields use the raw number without prefix (e.g.,
+`cvss_version = "3.1"`). The "v" prefix is a display-only convention applied
+at the rendering layer.
+
 ## Icons
 
 - Use a single icon library consistently (Lucide React, included with shadcn)

@@ -96,7 +96,7 @@ Requires: Admin role.
 
 A simple settings page containing:
 
-1. **Default CVSS Version**: dropdown with options `"3.1"` and `"4.0"`,
+1. **Default CVSS Version**: dropdown with options `"v3.1"` and `"v4.0"`,
    showing the current value. On change, a confirmation dialog:
    - "Changing the default CVSS version will recalculate severity and
      product eligibility for all active tickets. This operation may take
