@@ -5,8 +5,8 @@
 Provide a centralized dashboard for monitoring all data fetchers in STAMP.
 Fetchers are background tasks that periodically pull data from external
 sources (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS) and update the local
-database. The dashboard gives all authenticated users visibility into
-fetcher health and performance, while giving admins operational control
+database. The dashboard gives all users visibility into fetcher health and
+performance (no authentication required), while giving admins operational control
 (manual trigger, enable/disable, configuration).
 
 This feature also defines the `BaseFetcher` infrastructure — a mandatory
@@ -337,7 +337,7 @@ configuration.
   Does NOT include `error_traceback` (admin-only, available on the detail
   endpoint).
 
-**Permissions**: any authenticated user.
+**Permissions**: publicly accessible (no authentication required).
 
 ### List Fetcher Runs
 
@@ -396,7 +396,7 @@ Returns paginated run history for a specific fetcher.
 - `triggered_by_user` is an object `{"id": "uuid", "username": "admin1"}`
   when `triggered_by` is `manual`, otherwise `null`
 
-**Permissions**: any authenticated user.
+**Permissions**: publicly accessible (no authentication required).
 
 **Error responses**:
 
@@ -418,7 +418,8 @@ Same fields as the list response, plus:
 - `error_traceback`: included ONLY if the requesting user has the Admin
   role. Omitted (or `null`) for non-admin users.
 
-**Permissions**: any authenticated user (admin sees additional fields).
+**Permissions**: publicly accessible (no authentication required). Admin
+users see additional fields (`error_traceback`).
 
 **Error responses**:
 
@@ -502,7 +503,7 @@ individual runs for the last 90 days, weekly aggregates for older data.
   bands on the chart. If the fetcher is currently disabled, `enabled_at`
   and `enabled_by` are `null`.
 
-**Permissions**: any authenticated user.
+**Permissions**: publicly accessible (no authentication required).
 
 **Error responses**:
 
@@ -681,7 +682,7 @@ Returns the audit trail of admin actions for a fetcher.
 
 **Route**: `/fetchers`
 
-**Access**: all authenticated users.
+**Access**: publicly accessible (no authentication required).
 
 The page displays a grid of fetcher cards, one per registered fetcher.
 Each card shows a summary of the fetcher's current state.
@@ -720,7 +721,7 @@ Each card contains:
 
 **Route**: `/fetchers/:name`
 
-**Access**: all authenticated users.
+**Access**: publicly accessible (no authentication required).
 
 ##### Timeline Charts
 
