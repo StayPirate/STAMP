@@ -328,7 +328,12 @@ with an active ticket, STAMP performs the following recalculation:
 3. **Ticket state adjustment**: if the ticket is in `Resolved` state and
    any product has transitioned to a non-final state (`AFFECTED`), the
    ticket is moved back to `Analyzed` (not `Analysis`, because all
-   codestream statuses were already set by the IM)
+   codestream statuses were already set by the IM).
+   **Note**: this rollback can only occur when an IM manually modifies a
+   SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
+   Hat) and default CVSS version changes only process active tickets
+   (New, Analysis, Analyzed) — Resolved tickets are excluded from those
+   scopes.
 4. **Audit trail**: create `TicketEvent` records for each change:
    - Severity change: `event_type = "severity_changed"`, `old_value` and
      `new_value` with severity labels
@@ -489,13 +494,25 @@ requirements.
 
 Requires the Incident Manager role.
 
+## Cascade Execution Model
+
+The recalculation cascade is a **synchronous service-layer operation**
+executed within the same database transaction as the CVSS change that
+triggered it. This guarantees atomicity: if the CVSS change is committed,
+the severity, eligibility, and ticket state adjustments are committed
+together.
+
+**Exception**: when the Admin changes the default CVSS version (see
+`docs/features/admin.md`), the cascade must run for all active tickets.
+This batch operation is executed as an asynchronous Celery task to avoid
+blocking the API response.
+
 ## Background Tasks
 
 | Task                     | Schedule    | Description                                  |
 |--------------------------|-------------|----------------------------------------------|
 | `sync_cves_nvd`          | Every 6h    | Incremental NVD CVE sync. Extracts all CVSS assessments (Primary + Secondary). Resolves CNA names via NVD Source API. |
 | `sync_cvss_redhat`       | Daily       | Re-fetches Red Hat CVSS for all CVEs with active tickets. Configurable delay between requests (default: 2s). |
-| `recalculate_cvss_cascade` | On-demand | Triggered after any CVSS change. Recalculates severity, eligibility, and ticket state. |
 
 ## Data Model
 
