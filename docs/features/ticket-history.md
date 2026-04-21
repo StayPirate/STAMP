@@ -130,10 +130,9 @@ Returns a paginated list of events for a specific ticket, ordered by
 | Status | Condition |
 |--------|-----------|
 | 404    | Ticket not found |
-| 401    | Not authenticated |
 
-**Permissions**: any authenticated user can read the event history of any
-ticket. No special role is required.
+**Permissions**: publicly accessible (no authentication required). The
+event history is part of the ticket data, which is public.
 
 ## Frontend
 
