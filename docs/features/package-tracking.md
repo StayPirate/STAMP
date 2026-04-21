@@ -3,9 +3,7 @@
 ## Purpose
 
 Track the affectedness of source packages across IBS codestreams and SUSE
-products in the context of CVE tickets. This feature replaces the previous
-Distribution/Package/AffectedPackage model with a structure that reflects how
-SUSE actually organizes packages, codestreams, and products.
+products in the context of CVE tickets.
 
 ## Domain Concepts
 
