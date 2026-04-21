@@ -41,9 +41,6 @@ See `docs/data-model.md` for the full schema. Key table:
 **Unique constraint**: `(ticket_id, url)` — a URL cannot be referenced
 twice on the same ticket.
 
-**Cascade delete**: when a ticket is deleted, all its references are
-deleted.
-
 ## Fetcher Integration
 
 ### source_reference_url_pattern
@@ -201,13 +198,16 @@ response.
 }
 ```
 
-**Permissions**: publicly accessible (no authentication required).
+**Permissions**: publicly accessible for active tickets (no authentication
+required). If the ticket is soft-deleted, only Admin users can access its
+references; non-admin callers receive 410 Gone.
 
 **Error responses**:
 
 | Status | Condition           |
 |--------|---------------------|
 | 404    | Ticket not found    |
+| 410    | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
 
 ### Add Reference
 
@@ -269,6 +269,7 @@ Adds a manual reference to a ticket.
 |--------|--------------------------------------------------|
 | 404    | Ticket not found                                 |
 | 409    | URL already exists for this ticket               |
+| 410    | Ticket is soft-deleted and the caller is not an Admin |
 | 422    | Invalid URL format or missing required fields    |
 
 ### Update Reference
@@ -312,6 +313,7 @@ create response).
 |--------|--------------------------------------------------|
 | 404    | Ticket or reference not found                    |
 | 409    | URL already exists for this ticket (if changed)  |
+| 410    | Ticket is soft-deleted and the caller is not an Admin |
 | 422    | Invalid URL format or missing required fields    |
 
 ### Delete Reference
@@ -332,6 +334,7 @@ source (automatic or manual).
 | Status | Condition                          |
 |--------|------------------------------------|
 | 404    | Ticket or reference not found      |
+| 410    | Ticket is soft-deleted and the caller is not an Admin |
 
 ## UI Requirements
 

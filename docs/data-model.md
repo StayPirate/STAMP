@@ -361,6 +361,14 @@ managers (IMs).
 | previous_status | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
 | created_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp              |
+| deleted_at      | TIMESTAMP   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
+
+**Deletion policy**: tickets MUST NOT be hard-deleted from the database.
+Soft-delete is performed by setting `deleted_at` to the current timestamp.
+Only users with the Admin role may soft-delete or restore tickets.
+Soft-deleted tickets are excluded from all default queries. All sub-resources
+of a soft-deleted ticket (references, events, packages, codestreams, products)
+remain intact in the database but are inaccessible to non-admin users.
 
 **Status transitions**:
 - New -> Analysis (assignment)
@@ -372,12 +380,19 @@ managers (IMs).
 - Duplicated -> previous_status (revert, reassigns to the reverting IM)
 
 **Status categories**:
-- **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`.
-  These are actively monitored: CVSS sync, release detection, and
-  recalculation cascades apply to active tickets.
+- **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`
+  **and** with `deleted_at IS NULL`. These are actively monitored: CVSS
+  sync, release detection, and recalculation cascades apply to active
+  tickets. Soft-deleted tickets are never considered active, regardless
+  of their status.
 - **Inactive tickets**: tickets in status `Resolved`, `Ignored`, or
   `Duplicated`. These are no longer monitored: CVSS sync and
   recalculation cascades skip inactive tickets.
+- **Soft-deleted tickets**: tickets with `deleted_at IS NOT NULL`. These
+  are excluded from all background processing (CVSS sync, release
+  detection, NVD rejection handling, recalculation cascades) regardless
+  of their status. They are also excluded from all default API queries
+  and UI views.
 
 ### TicketReference
 
@@ -399,9 +414,6 @@ the full specification.
 | updated_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record update timestamp            |
 
 **Unique constraint**: (ticket_id, url)
-
-**Cascade delete**: when a ticket is deleted, all its references are
-deleted.
 
 ### TicketEvent
 
@@ -438,6 +450,8 @@ system action).
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). |
+| ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
+| ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 
 ### CodestreamPackageChecksum
 

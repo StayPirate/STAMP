@@ -35,6 +35,8 @@ fields populated according to this table:
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | IM user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
+| `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note |
+| `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 
 **Rules**:
 
@@ -129,9 +131,11 @@ Returns a paginated list of events for a specific ticket, ordered by
 | Status | Condition |
 |--------|-----------|
 | 404    | Ticket not found |
+| 410    | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
 
-**Permissions**: publicly accessible (no authentication required). The
-event history is part of the ticket data, which is public.
+**Permissions**: publicly accessible for active tickets (no authentication
+required). If the ticket is soft-deleted, only Admin users can access its
+event history; non-admin callers receive 410 Gone.
 
 ## Frontend
 
@@ -165,6 +169,8 @@ At the top of the History tab, a horizontal filter bar provides:
    | `severity_changed`         | Severity changed           |
    | `cvss_assessment_changed`  | CVSS assessment changed    |
    | `product_eligibility_changed` | Product eligibility changed |
+   | `ticket_deleted`           | Ticket deleted              |
+   | `ticket_restored`          | Ticket restored             |
 
 2. **Actor filter**: single-select dropdown with options:
    - "All" (default — no filter applied)
@@ -200,6 +206,7 @@ first). Each event entry displays:
    | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
    | Release | check-circle | `codestream_released`, `product_released` |
    | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
+   | Deletion | trash | `ticket_deleted`, `ticket_restored` |
 
 2. **Timestamp**: relative time (e.g., "2 hours ago", "3 days ago") with a
    tooltip showing the absolute datetime in the user's locale.
@@ -227,6 +234,8 @@ first). Each event entry displays:
    | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
    | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
    | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
+   | `ticket_deleted` | Ticket deleted (if `comment` present: "Ticket deleted — **{comment}**") |
+   | `ticket_restored` | Ticket restored (if `comment` present: "Ticket restored — **{comment}**") |
 
 5. **Comment**: if present, displayed below the description in a muted style.
 

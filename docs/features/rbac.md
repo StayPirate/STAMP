@@ -32,6 +32,8 @@ Operates the triage and assessment workflow:
 Administers the platform:
 - Manage users (create, update roles, deactivate)
 - View and update system settings (e.g., default CVSS version)
+- Soft-delete and restore tickets
+- View soft-deleted tickets
 - Trigger manual fetcher runs
 - Enable and disable fetchers
 - Modify fetcher configuration (schedule, parameters)
@@ -62,6 +64,9 @@ capabilities must hold both roles.
 |----------------------------------|-------|-----|--------|
 | Manage users                     | Yes   | No  | No     |
 | View/update system settings      | Yes   | No  | No     |
+| Soft-delete ticket               | Yes   | No  | No     |
+| Restore deleted ticket           | Yes   | No  | No     |
+| View deleted tickets             | Yes   | No  | No     |
 | Trigger manual fetcher run       | Yes   | No  | No     |
 | Enable/disable fetchers          | Yes   | No  | No     |
 | Modify fetcher config            | Yes   | No  | No     |
@@ -72,7 +77,7 @@ capabilities must hold both roles.
 
 | Action                           | Admin | IM  | Unauth |
 |----------------------------------|-------|-----|--------|
-| View tickets / CVEs              | Yes   | Yes | Yes    |
+| View tickets / CVEs (active)     | Yes   | Yes | Yes    |
 | View products                    | Yes   | Yes | Yes    |
 | View ticket references           | Yes   | Yes | Yes    |
 | View fetcher dashboard           | Yes   | Yes | Yes    |

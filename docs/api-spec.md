@@ -79,18 +79,45 @@ See `docs/features/cve-tracking.md` for detailed endpoint specifications.
 See `docs/features/pages.md` for ticket lifecycle and page specifications.
 See `docs/features/package-tracking.md` for package management endpoints.
 
-- `GET /api/v1/tickets` — List tickets with filters
-- `GET /api/v1/tickets/{ticket_id}` — Get ticket details
+- `GET /api/v1/tickets` — List tickets with filters. Accepts an optional
+  `include_deleted` query parameter (`true` or `only`). The parameter is
+  accepted from any caller, but soft-deleted tickets are included in the
+  response only if the caller holds the Admin role. For non-admin callers
+  the parameter is silently ignored. Values: `true` (include active and
+  deleted tickets), `only` (return only deleted tickets). Default behavior
+  (parameter absent or `false`): return only active tickets.
+- `GET /api/v1/tickets/{ticket_id}` — Get ticket details. If the ticket is
+  soft-deleted and the caller is not an Admin, returns 410 Gone with body
+  `{"detail": "This ticket has been deleted. Contact an admin if you think
+  this is an error."}`. Admin callers receive the full ticket data with the
+  `deleted_at` field populated.
 - `POST /api/v1/tickets/{ticket_id}/assign` — Assign or reassign a ticket
 - `POST /api/v1/tickets/{ticket_id}/ignore` — Mark ticket as ignored
 - `POST /api/v1/tickets/{ticket_id}/duplicate` — Mark ticket as duplicate
 - `POST /api/v1/tickets/{ticket_id}/revert-duplicate` — Revert duplicate status
+- `DELETE /api/v1/tickets/{ticket_id}` — Soft-delete a ticket (Admin role
+  required). Sets `deleted_at` to the current timestamp. Creates a
+  `ticket_deleted` TicketEvent. Returns 204 No Content. Returns 404 if the
+  ticket does not exist. Returns 409 Conflict if the ticket is already
+  soft-deleted.
+- `POST /api/v1/tickets/{ticket_id}/restore` — Restore a soft-deleted
+  ticket (Admin role required). Clears `deleted_at`. Creates a
+  `ticket_restored` TicketEvent. Returns 200 OK with the restored ticket
+  data. Returns 404 if the ticket does not exist. Returns 409 Conflict if
+  the ticket is not soft-deleted.
 - `POST /api/v1/tickets/{ticket_id}/packages` — Add a package to a ticket
 - `DELETE /api/v1/tickets/{ticket_id}/packages/{package_name}` — Remove a package
 - `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/codestreams/{codestream_name}`
   — Change codestream affectedness status (Incident Manager role)
 - `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}`
   — Override product affectedness status (Incident Manager role)
+
+**Soft-delete protection on sub-resources**: all endpoints under
+`/api/v1/tickets/{ticket_id}/...` (events, references, packages,
+codestreams, products) return 410 Gone for non-admin callers when the
+parent ticket is soft-deleted. Admin callers can access sub-resources
+normally. This is enforced by a shared ticket resolution dependency
+that checks `deleted_at` and the caller's role.
 
 ### Products
 

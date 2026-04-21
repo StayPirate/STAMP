@@ -289,7 +289,8 @@ only.
 **Strategy — periodic re-fetch**:
 
 1. Once per day, a Celery task iterates over all CVEs with active tickets
-   (status: New, Analysis, Analyzed)
+   (status: New, Analysis, Analyzed; `deleted_at IS NULL` — see
+   `docs/data-model.md` for the authoritative definition)
 2. For each CVE, fetch the Red Hat CVSS:
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
@@ -307,7 +308,8 @@ only.
 
 CVSS sync (both NVD incremental and Red Hat re-fetch) is performed only
 for CVEs with **active tickets** — tickets in status `New`, `Analysis`, or
-`Analyzed`.
+`Analyzed` with `deleted_at IS NULL` (see `docs/data-model.md` for the
+authoritative definition of active tickets).
 
 When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, STAMP
 stops monitoring CVSS updates for that CVE. The existing CVSS data remains

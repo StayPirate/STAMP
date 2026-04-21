@@ -192,6 +192,22 @@ Free-text search across:
 | Published from | Date        | CVE published date range start                |
 | Published to   | Date        | CVE published date range end                  |
 
+#### Deleted Tickets Filter (Admin only)
+
+This filter is **visible only to users with the Admin role**. Non-admin
+users (Incident Managers, unauthenticated users) do not see this filter
+and are not aware that tickets can be deleted.
+
+| Filter            | Type     | Options                                    |
+|-------------------|----------|--------------------------------------------|
+| Deleted tickets   | Select   | Hidden (default), Include deleted, Only deleted |
+
+- **Hidden** (default): only active tickets are shown (standard behavior)
+- **Include deleted**: soft-deleted tickets are included alongside active
+  tickets. Deleted tickets are visually distinguished with a "Deleted"
+  badge and a muted row style
+- **Only deleted**: only soft-deleted tickets are shown
+
 ### Default Sort
 
 By `published` date descending.
@@ -231,6 +247,37 @@ The page is divided into the following sections:
 | Resolved       | Mark as Duplicate                                    |
 | Ignored        | Mark as Duplicate                                    |
 | Duplicated     | Revert duplicate (restores previous state, reassigns to current IM) |
+
+#### Delete Ticket (Admin only)
+
+A "Delete ticket" button is displayed in the header actions area,
+**visible only to users with the Admin role**. It is available from any
+ticket status. Clicking it opens a confirmation dialog. The Admin may
+optionally provide a note (stored in the `TicketEvent.comment` field).
+Upon confirmation, the ticket is soft-deleted and the Admin is redirected
+to the All Tickets page.
+
+Non-admin users (Incident Managers, unauthenticated users) never see the
+"Delete ticket" button and are not aware that ticket deletion is possible.
+
+#### Soft-Deleted Ticket View
+
+When an **Admin** opens a soft-deleted ticket, the ticket detail page is
+displayed normally with the following additions:
+
+- A prominent warning banner at the top of the page indicating that the
+  ticket has been soft-deleted, including the deletion timestamp
+- A "Restore ticket" button in the header actions area. Clicking it
+  opens a confirmation dialog. The Admin may optionally provide a note.
+  Upon confirmation, `deleted_at` is cleared and the page refreshes to
+  show the ticket in its normal state
+- All other ticket data (CVE info, packages, references, history) is
+  displayed as usual
+
+When a **non-admin user** (Incident Manager or unauthenticated) accesses
+the URL of a soft-deleted ticket, the ticket detail page displays only a
+message: **"This ticket has been deleted. Contact an admin if you think
+this is an error."** No ticket data is shown. The API returns 410 Gone.
 
 **Analysis → Analyzed gates**: the "Mark as Analyzed" action is available
 only when ALL of the following conditions are met:
@@ -338,4 +385,9 @@ API endpoint, filter parameters, event type contract, and UI details.
   duplicate) require the Incident Manager role
 - Reassignment is available to any Incident Manager, not just the current
   assignee
+- Soft-deleting and restoring tickets requires the Admin role. The delete
+  and restore buttons are only visible to Admin users
+- Viewing soft-deleted tickets (via the "Deleted tickets" filter or by
+  direct URL) requires the Admin role. Non-admin users receive a 410 Gone
+  message instead of ticket data
 - See `docs/features/rbac.md` for the full permission model
