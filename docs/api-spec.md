@@ -87,6 +87,10 @@ See `docs/features/package-tracking.md` for package management endpoints.
 - `POST /api/v1/tickets/{ticket_id}/revert-duplicate` — Revert duplicate status
 - `POST /api/v1/tickets/{ticket_id}/packages` — Add a package to a ticket
 - `DELETE /api/v1/tickets/{ticket_id}/packages/{package_name}` — Remove a package
+- `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/codestreams/{codestream_name}`
+  — Change codestream affectedness status (Incident Manager role)
+- `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}`
+  — Override product affectedness status (Incident Manager role)
 
 ### Products
 
@@ -151,3 +155,6 @@ See `docs/features/rbac.md` for detailed endpoint specifications.
 - `POST /api/v1/auth/logout` — End session
 - `GET /api/v1/users/me` — Get current user
 - `GET /api/v1/users` — List users (admin only)
+- `POST /api/v1/users` — Create a new user (admin only)
+- `PUT /api/v1/users/{id}` — Update user details and roles (admin only)
+- `DELETE /api/v1/users/{id}` — Deactivate a user (admin only)
