@@ -54,6 +54,7 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 |------------|------------|--------------------------------------------|----------------|
 | New        | Analysis   | Incident Manager clicks "Assign to me" or is assigned | Any Incident Manager |
 | New        | Ignored    | Incident Manager clicks "Ignore" action    | Any Incident Manager |
+| New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`) | System         |
 | Analysis   | Analyzed   | All affectedness data is complete           | Assignee        |
 | Analysis   | Ignored    | Incident Manager determines CVE is not relevant | Assignee    |
 | Analyzed   | Resolved   | All packages in final status               | Assignee        |

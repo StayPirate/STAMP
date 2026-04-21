@@ -240,7 +240,10 @@ changes.
 
 **Strategy**:
 
-1. STAMP stores `last_nvd_sync_at` (timestamp of the last successful sync)
+1. `last_nvd_sync_at` is derived from the `started_at` timestamp of the
+   most recent successful `FetcherRun` for the `sync_cves_nvd` fetcher.
+   If no successful run exists, the fetcher bootstraps with the last 7
+   days (see `docs/features/cve-tracking.md`, "First Run Strategy")
 2. Every 6 hours, a Celery task fetches CVEs modified since
    `last_nvd_sync_at`:
    ```
@@ -258,7 +261,6 @@ changes.
      already has data for the same `provider_name` and `cvss_version`
 4. If any CVSS assessment changed for a CVE with an active ticket →
    trigger recalculation (see Recalculation Cascade)
-5. Update `last_nvd_sync_at`
 
 **NVD Source API caching**: during each sync run, the service fetches the
 full NVD Source API dataset (`GET /rest/json/source/2.0`) into an
@@ -296,7 +298,10 @@ only.
    overloading the Red Hat API. Speed is not important.
 4. Compare the fetched score and vector with the stored values
 5. If different → update the assessment and trigger recalculation
-6. STAMP stores `last_redhat_sync_at` for operational monitoring
+6. `last_redhat_sync_at` is derived from the `started_at` timestamp of
+   the most recent successful `FetcherRun` for the `sync_cvss_redhat`
+   fetcher. Used for operational monitoring only (Red Hat sync is not
+   incremental)
 
 ### Sync Scope
 

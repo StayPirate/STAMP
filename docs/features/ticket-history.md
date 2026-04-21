@@ -21,7 +21,7 @@ fields populated according to this table:
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` |
 |---|---|---|---|---|---|
-| `status_change` | Ticket status transitions | IM user | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional IM note |
+| `status_change` | Ticket status transitions (manual or system-initiated) | IM user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional IM note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) |
 | `assignment` | Ticket assigned or reassigned | IM user | Previous assignee username or `NULL` | New assignee username | Optional IM note |
 | `duplicate_set` | Ticket marked as duplicate | IM user | `NULL` | CVE ID of the original ticket | Optional IM note |
 | `duplicate_removed` | Duplicate mark reverted | IM user | CVE ID of the original ticket | `NULL` | Optional IM note |

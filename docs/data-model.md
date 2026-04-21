@@ -13,7 +13,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  description     │       │  source_type     │
 │  severity        │       │  source_url      │
 │  published_date  │       │  raw_data        │
-│                  │       └──────────────────┘
+│  nvd_status      │       └──────────────────┘
 └──────┬───┬───────┘
        │   │
        │   ▼ (1:N)
@@ -136,6 +136,7 @@ Represents a Common Vulnerability and Exposure entry.
 | severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMP    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMP    |                      | Date CVE was last modified     |
+| nvd_status     | VARCHAR      |                      | NVD vulnerability status (e.g., `Analyzed`, `Rejected`, `Modified`). Updated during NVD sync. See `docs/features/cve-tracking.md` for handling rules. |
 | created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp        |
 
