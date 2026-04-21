@@ -13,7 +13,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  description     │       │  source_type     │
 │  severity        │       │  source_url      │
 │  published_date  │       │  raw_data        │
-│  status          │       └──────────────────┘
+│                  │       └──────────────────┘
 └──────┬───┬───────┘
        │   │
        │   ▼ (1:N)
@@ -136,7 +136,6 @@ Represents a Common Vulnerability and Exposure entry.
 | severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMP    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMP    |                      | Date CVE was last modified     |
-| status         | ENUM         | NOT NULL, DEFAULT    | Workflow status — tracked on the associated Ticket (see Ticket table). This field is kept for quick queries but is always derived from the Ticket status. |
 | created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp        |
 
@@ -152,6 +151,8 @@ Tracks the origin of CVE data from different sources.
 | source_url  | VARCHAR     |                  | URL to the source entry            |
 | raw_data    | JSONB       |                  | Original data from the source      |
 | fetched_at  | TIMESTAMP   | NOT NULL         | When the data was fetched          |
+| created_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record creation timestamp          |
+| updated_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record update timestamp            |
 
 ### CVECVSSAssessment
 
@@ -503,9 +504,11 @@ TBD — will be defined based on query patterns during implementation.
 - All tables use UUID primary keys (exceptions: `SystemSetting` uses a
   VARCHAR `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR as PK)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
-  `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `FetcherRun`,
-  `FetcherAuditLog`, and `FetcherRunWeeklyAggregate` only have `created_at`
-  because they are immutable write-once records)
+  `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
+  `FetcherRun`, `FetcherAuditLog`, and `FetcherRunWeeklyAggregate` only have
+  `created_at` because they are immutable write-once records —
+  `ProductRepository` records are replaced during SMELT sync, never updated
+  in place)
 - ENUM types are defined as PostgreSQL enums
 - JSONB is used for flexible storage of source-specific data
 - The schema will evolve as features are implemented; this document must be

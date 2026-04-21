@@ -505,7 +505,7 @@ exists for package P (in any codestream).
   and products via SMELT and create the records with status `ANALYSIS`.
 - Set the `TicketPackageCodestream` for codestream C to `RELEASED`
   (the specific codestream where the fix was detected).
-- Create a `TicketEvent` with `event_type = package_auto_added`,
+- Create a `TicketEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
   detected in `{C}`".
 - Notify the ticket's assignee.

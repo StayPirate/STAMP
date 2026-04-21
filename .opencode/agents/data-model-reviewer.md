@@ -81,6 +81,30 @@ consistent. You do NOT write or modify code.
 - If the implementation diverges from the spec, is there a justification?
 - Are new tables/columns documented in the spec before being implemented?
 
+### Diagram-table coherence
+
+- Does every entity in the ER diagram (the overview section at the top of
+  `docs/data-model.md`) have a corresponding detailed table definition
+  later in the file?
+- Does every table defined in the file appear as an entity in the ER
+  diagram?
+- Do the relationships (foreign keys, cardinality) shown in the diagram
+  match the FK columns defined in the table definitions?
+- Are entity names identical between the diagram and the table definitions?
+
+### Diagram readability
+
+- The ER diagram must remain lean and easy to read — it should show
+  entities, relationships, and key columns (PK/FK) only, not replicate
+  every column from the table definitions
+- If entity or key names are too long for the diagram, abbreviate them
+  in the diagram and add an explanatory note directly below the diagram
+- Avoid letting the diagram grow into a detailed duplicate of the table
+  definitions
+- If the diagram has been reviewed and approved with its current level of
+  detail, do not re-flag the same entities for simplification — only flag
+  readability concerns for newly added or modified entities
+
 ### Migration quality
 
 - Does the migration only contain the intended changes?
@@ -98,7 +122,10 @@ Provide a structured summary with these sections:
 3. **Redundancy**: any duplicated or derivable data found
 4. **Convention issues**: naming, style, or structural convention violations
 5. **Spec coherence**: whether code and `docs/data-model.md` are in sync
-6. **Verdict**: one of:
+6. **Diagram coherence**: whether the ER diagram and table definitions in
+   `docs/data-model.md` are aligned, and whether the diagram is lean and
+   readable
+7. **Verdict**: one of:
    - **Clean** — no issues found, the change maintains schema simplicity
    - **Minor issues** — small problems that should be fixed but don't block
    - **Needs revision** — significant complexity or consistency problems that
