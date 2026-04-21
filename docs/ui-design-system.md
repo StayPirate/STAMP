@@ -23,8 +23,8 @@ across the platform.
 
 ## Layout
 
-- **Sidebar navigation**: main sections (Dashboard, CVEs, Distributions,
-  Updates, Settings)
+- **Sidebar navigation**: main sections (Inbox, My Tickets, All Tickets,
+  Fetchers, Admin Settings)
 - **Top bar**: user info, notifications, environment indicator
 - **Content area**: consistent padding and max-width
 - **Breadcrumbs**: for navigation context on detail pages
@@ -54,14 +54,28 @@ values will be defined during implementation, but the semantic usage is:
 | Low        | `success`      | Green-toned, low visual prominence |
 | None       | `muted`        | Gray, minimal visual weight        |
 
-### Update Status Colors
+### Ticket Status Colors
 
 | Status      | Color Intent   |
 |-------------|---------------|
-| Draft       | `muted`       |
-| In Progress | `primary`     |
-| Testing     | `warning`     |
-| Released    | `success`     |
+| New         | `muted`       |
+| Analysis    | `primary`     |
+| Analyzed    | `accent`      |
+| Resolved    | `success`     |
+| Ignored     | `muted`       |
+| Duplicated  | `muted`       |
+
+### Package Status Colors
+
+| Status           | Color Intent   |
+|------------------|---------------|
+| Analysis         | `muted`       |
+| Affected (red)   | `destructive` |
+| Affected (green) | `success`     |
+| Not Affected     | `success`     |
+| Won't Fix        | `success`     |
+| Ignored          | `muted`       |
+| Released         | `success`     |
 
 ## Typography
 
