@@ -566,7 +566,7 @@ below for how `<repo_url>` is constructed):
 3. Download and parse `updateinfo.xml`.
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
-   matching the CVE-ID of any open ticket whose `TicketPackageProduct`
+   matching the CVE-ID of any active ticket whose `TicketPackageProduct`
    records reference P and are in a non-final, non-protected status.
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
@@ -974,7 +974,7 @@ The ticket transitions that depend on affectedness data are updated as follows:
   `end_of_reactive_ltss`) from AIMAAS. Matches to local products via CPE.
 - `sync_aimaas_thresholds`: periodic task to sync CVSS thresholds from
   AIMAAS `GET /api/entity/cvss-threshold`. When thresholds change,
-  re-evaluates eligibility for open tickets.
+  re-evaluates eligibility for active tickets.
 - `check_codestream_releases`: periodic task (every 8 hours via Celery
   Beat) that invokes the `CodestreamReleaseDetector` service. Scans all
   codestreams that have at least one `TicketPackageCodestream` record in

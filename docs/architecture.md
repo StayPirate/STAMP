@@ -144,7 +144,7 @@ coordination across multiple maintained distribution versions.
     LTSS/ESPOS phases (~24 entries). Each entry references an AIMAAS
     product ID; STAMP resolves this to a CPE to match locally.
 - When thresholds or lifecycle dates change, STAMP re-evaluates eligibility
-  for open tickets referencing the affected products
+  for active tickets referencing the affected products
 
 #### Open Build Service (OBS)
 

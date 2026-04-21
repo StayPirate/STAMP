@@ -332,6 +332,14 @@ managers (IMs).
 - Any -> Duplicated (reversible)
 - Duplicated -> previous_status (revert, reassigns to the reverting IM)
 
+**Status categories**:
+- **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`.
+  These are actively monitored: CVSS sync, release detection, and
+  recalculation cascades apply to active tickets.
+- **Inactive tickets**: tickets in status `Resolved`, `Ignored`, or
+  `Duplicated`. These are no longer monitored: CVSS sync and
+  recalculation cascades skip inactive tickets.
+
 ### TicketEvent
 
 Audit log of all changes to a ticket. Each event represents a discrete
