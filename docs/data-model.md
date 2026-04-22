@@ -396,7 +396,7 @@ Summary:
   reverting IM)
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
-are handled automatically by `evaluate_ticket_status` — see
+are handled automatically by the `ticket_mutations` module — see
 `docs/features/tickets.md` (Centralized Status Evaluation).
 
 **Status categories**:

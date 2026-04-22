@@ -195,9 +195,14 @@ eligibility.
 
 ### Status Behavior
 
+All codestream and product status changes described in this section MUST
+go through the `ticket_mutations` module (see `docs/features/tickets.md`,
+Ticket Mutations Module), which ensures automatic ticket status
+re-evaluation after each change.
+
 #### IM sets "Affected" on a codestream
 
-1. Codestream status is set to `AFFECTED`
+1. Codestream status is set to `AFFECTED` (via `ticket_mutations`)
 2. STAMP propagates to all products under that codestream:
    - Product in Reactive LTSS phase → `AFFECTED_RESOLVED`
    - Product has `cvss_threshold` and resolved CVSS score < threshold →
@@ -492,8 +497,9 @@ codestream C, the detector evaluates three cases:
 A `TicketPackageCodestream` record exists for the ticket's CVE with
 `package_name = P` and `codestream_name = C`.
 
-- Set `TicketPackageCodestream.status` to `RELEASED` (unless current
-  status is `WONT_FIX` or `IGNORED`).
+- Set `TicketPackageCodestream.status` to `RELEASED` through the
+  `ticket_mutations` module (unless current status is `WONT_FIX` or
+  `IGNORED`).
 - Create a `TicketEvent` with `event_type = codestream_released`,
   `user_id = NULL` (system action).
 
@@ -503,9 +509,11 @@ A ticket exists for the CVE, but no `TicketPackageCodestream` record
 exists for package P (in any codestream).
 
 - Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
-  and products via SMELT and create the records with status `ANALYSIS`.
+  and products via SMELT and create the records with status `ANALYSIS`
+  (record creation goes through `ticket_mutations`).
 - Set the `TicketPackageCodestream` for codestream C to `RELEASED`
-  (the specific codestream where the fix was detected).
+  through `ticket_mutations` (the specific codestream where the fix
+  was detected).
 - Create a `TicketEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
   detected in `{C}`".
@@ -527,9 +535,9 @@ No ticket exists in STAMP for the extracted CVE-ID.
    3. Create a Ticket with status `New`, no assignee.
    4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
       all codestreams and products via SMELT and create the records with
-      status `ANALYSIS`.
+      status `ANALYSIS` (record creation goes through `ticket_mutations`).
    5. Set the `TicketPackageCodestream` for the originating codestream to
-      `RELEASED`.
+      `RELEASED` through `ticket_mutations`.
    6. Create a `TicketEvent` with `event_type = ticket_created`,
        `user_id = NULL`, comment: `"CVE fix detected in {package}
        ({codestream})"`.
@@ -578,8 +586,9 @@ below for how `<repo_url>` is constructed):
 
 #### Outcome per matched (ticket, product, package)
 
-- `TicketPackageProduct.status` is set to `RELEASED` (unless current status
-  is `WONT_FIX` or `IGNORED`).
+- `TicketPackageProduct.status` is set to `RELEASED` through the
+  `ticket_mutations` module (unless current status is `WONT_FIX` or
+  `IGNORED`).
 - `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
   of the advisory.
 
@@ -949,28 +958,31 @@ Package: curl                                   [Remove]
 ### Ticket Lifecycle Integration
 
 See `docs/features/tickets.md` (Ticket Lifecycle) for the authoritative
-gate conditions and status transition rules. The affectedness-related
-conditions are summarized here for context:
+gate conditions and status transition rules. All codestream and product
+status changes go through the `ticket_mutations` module, which
+automatically re-evaluates ticket status after each change (see
+`docs/features/tickets.md`, Centralized Status Evaluation). The
+affectedness-related conditions are summarized here for context:
 
-- **Analysis -> Analyzed**: at least one package must be added, all
-  TicketPackageCodestream records must have a non-ANALYSIS status, and all
-  TicketPackageProduct records must be in a final status. Note: `AFFECTED`
-  is non-final but is allowed at the codestream level since it indicates
-  the IM has made a decision. Additional gate conditions (severity, CVSS)
-  are defined in `docs/features/tickets.md`.
-- **Analyzed -> Resolved**: all TicketPackageCodestream and
-  TicketPackageProduct records must have status `RELEASED`, `NOT_AFFECTED`,
-  `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.
-- **Resolved -> Analysis**: if a package is added to a Resolved ticket
-  (new codestreams in `ANALYSIS` status), or if an Incident Manager resets
-  a codestream status to `ANALYSIS`, the ticket is moved back to `Analysis`.
-- **Analyzed -> Analysis**: if a package is added to an Analyzed ticket
-  (new codestreams in `ANALYSIS` status), or if an Incident Manager resets
-  a codestream status to `ANALYSIS`, the ticket is moved back to `Analysis`.
-- **Resolved -> Analyzed**: if a CVSS recalculation causes products to
-  transition from `AFFECTED_RESOLVED` to `AFFECTED`, the ticket is moved
-  back to `Analyzed`. See `docs/features/cvss-scoring.md` (Recalculation
-  Cascade).
+- **Analysis → Analyzed** (automatic): at least one package must be
+  added, all TicketPackageCodestream records must have a non-ANALYSIS
+  status, and all TicketPackageProduct records must be in a final status.
+  Note: `AFFECTED` is non-final but is allowed at the codestream level
+  since it indicates the IM has made a decision. Additional gate
+  conditions (severity, CVSS) are defined in `docs/features/tickets.md`.
+- **Analyzed → Resolved** (automatic): all TicketPackageCodestream and
+  TicketPackageProduct records must have status `RELEASED`,
+  `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.
+- **Analyzed → Analysis** (automatic): gate conditions for Analyzed no
+  longer met (e.g., package added with codestreams in `ANALYSIS`, or IM
+  resets a codestream status to `ANALYSIS`).
+- **Resolved → Analyzed** (automatic): resolved gate conditions no
+  longer met but analyzed gates still met (e.g., CVSS recalculation
+  causes products to transition from `AFFECTED_RESOLVED` to `AFFECTED`).
+  See `docs/features/cvss-scoring.md` (Recalculation Cascade).
+- **Resolved → Analysis** (automatic): both resolved and analyzed gate
+  conditions no longer met (e.g., package added with codestreams in
+  `ANALYSIS`).
 
 ## Background Tasks
 

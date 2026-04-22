@@ -345,8 +345,9 @@ with an active ticket, STAMP performs the following recalculation:
    - Products with `is_override = true` are not modified
    - Products in protected states (`WONT_FIX`, `IGNORED`) are not modified
    - Products in Reactive LTSS phase remain `AFFECTED_RESOLVED` regardless
-3. **Ticket status re-evaluation**: after applying product status
-   changes, call `evaluate_ticket_status` to re-evaluate the ticket
+3. **Ticket status re-evaluation**: product status changes in step 2
+   MUST be applied through the `ticket_mutations` module, which
+   internally calls `evaluate_ticket_status` to re-evaluate the ticket
    status (see `docs/features/tickets.md`, Centralized Status
    Evaluation). In practice, a CVSS recalculation that moves products
    from `AFFECTED_RESOLVED` to `AFFECTED` typically results in
@@ -362,8 +363,8 @@ with an active ticket, STAMP performs the following recalculation:
      `new_value` with severity labels
    - Product eligibility change: `event_type = "product_eligibility_changed"`,
      `old_value` and `new_value` with status labels
-   - Ticket status change (if `evaluate_ticket_status` changed the
-     status): `event_type = "status_change"`, with `old_value` and
+   - Ticket status change (if the ticket status changed as a result
+     of re-evaluation): `event_type = "status_change"`, with `old_value` and
      `new_value` reflecting the actual transition, `user_id = NULL`
      (system action)
 

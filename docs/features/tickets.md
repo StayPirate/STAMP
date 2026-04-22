@@ -341,7 +341,7 @@ an IM.
 ### Centralized Status Evaluation
 
 All automatic status transitions between Analysis, Analyzed, and
-Resolved are handled by a single service-layer function:
+Resolved are handled by a single **internal** service-layer function:
 `evaluate_ticket_status`. This function is the **sole authority** for
 determining a ticket's status based on its current data.
 
@@ -367,11 +367,49 @@ The function only evaluates tickets in `Analysis`, `Analyzed`, or
 excluded — these statuses are governed by explicit user actions or
 specific system events (e.g., NVD rejection), not by gate evaluation.
 
+#### Ticket Mutations Module
+
+`evaluate_ticket_status` is an **internal implementation detail** — it
+is not called directly by other services. Instead, all operations that
+modify data relevant to ticket status gates are centralized in a
+dedicated service module (`ticket_mutations`). This module exposes
+functions for every type of ticket-relevant mutation:
+
+- Codestream status changes
+- Product status changes (including eligibility overrides)
+- CVSS assessment creation, update, and deletion
+- Severity changes (`severity_override`)
+- Package addition and removal
+
+Each function in the module calls `evaluate_ticket_status` internally
+at the end of the operation, within the same database transaction.
+External services (CVSS sync, release detection, package tracking,
+API endpoints) MUST use these functions instead of modifying
+ticket-related models directly.
+
+**Relationship with `add_package_to_ticket`**: the centralized package
+addition function defined in `docs/features/package-tracking.md` handles
+SMELT resolution and external I/O. It delegates the actual creation of
+`TicketPackageCodestream` and `TicketPackageProduct` records to
+`ticket_mutations` functions. Similarly, package removal delegates
+record deletion to the module. The SMELT query logic does not belong
+in `ticket_mutations` — only the record mutations do.
+
+Operations that do NOT modify gate-relevant data (assignment, duplicate
+set/remove, CVE association/removal, soft-delete, restore) are NOT
+required to go through this module — they create `TicketEvent` records
+in their own services.
+
 #### Contract
 
 Every service-layer operation that modifies data relevant to ticket
-status gates MUST call `evaluate_ticket_status` at the end of the
-operation, within the same transaction. Relevant data includes:
+status gates MUST go through the `ticket_mutations` module. Direct
+modification of `TicketPackageCodestream`, `TicketPackageProduct`,
+or `CVECVSSAssessment` records outside this module is a bug — it
+bypasses status re-evaluation and may leave the ticket in an
+inconsistent state.
+
+Relevant data includes:
 
 - `TicketPackageCodestream` records (creation, deletion, status change)
 - `TicketPackageProduct` records (creation, deletion, status change,
@@ -383,8 +421,8 @@ operation, within the same transaction. Relevant data includes:
 #### Architectural Test Requirement
 
 A parametrized integration test MUST be implemented to verify that
-`evaluate_ticket_status` produces the correct ticket status after every
-type of relevant mutation. The test must cover:
+the `ticket_mutations` module produces the correct ticket status after
+every type of relevant mutation. The test must cover:
 
 - **Forward transitions**: each gate condition being satisfied one by
   one until the ticket advances (Analysis → Analyzed → Resolved)
@@ -396,9 +434,9 @@ type of relevant mutation. The test must cover:
   CVSS gate), all codestreams in final status but severity not set
 
 This test serves as a permanent architectural fitness function: if a
-new service operation modifies gate-relevant data without calling
-`evaluate_ticket_status`, the test will fail because the ticket status
-will not match the expected state.
+new service operation modifies gate-relevant data without going through
+the `ticket_mutations` module, the test will fail because the ticket
+status will not match the expected state.
 
 ### Reassignment
 

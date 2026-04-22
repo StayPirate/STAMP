@@ -306,13 +306,13 @@ Before considering any ticket-related code change complete:
    an existing `TicketEventType`, STOP and propose an update to
    `docs/data-model.md` and `docs/features/ticket-history.md` before
    proceeding with the implementation
-6. After implementation, invoke `@ticket-event-reviewer` to verify:
+6. After implementation, invoke `@ticket-integrity-reviewer` to verify:
    - All mutations are covered by `TicketEvent` records
    - Field values comply with the contract in
      `docs/features/ticket-history.md`
    - Events share the same database transaction as the mutation
 7. When creating or modifying a feature spec in `docs/features/` that
-   describes ticket operations, invoke `@ticket-event-reviewer` to verify
+   describes ticket operations, invoke `@ticket-integrity-reviewer` to verify
    that all described mutations have corresponding `TicketEventType`
    entries in the contract — missing entries must be added before
    proceeding with implementation
@@ -431,8 +431,10 @@ after modifying cross-cutting documents (`docs/data-model.md`,
 ### 16. Centralized ticket status evaluation
 
 CRITICAL: Every service-layer function that modifies data relevant to
-ticket status gates MUST call `evaluate_ticket_status` at the end of
-the operation, within the same database transaction.
+ticket status gates MUST go through the `ticket_mutations` module.
+Direct modification of `TicketPackageCodestream`,
+`TicketPackageProduct`, `CVECVSSAssessment` records, or ticket
+severity outside this module is a bug.
 
 Relevant data includes: `TicketPackageCodestream` records,
 `TicketPackageProduct` records, `CVECVSSAssessment` records, ticket
@@ -441,13 +443,14 @@ severity, and package addition/removal.
 Before considering any ticket-related code change complete:
 
 1. Identify whether the code modifies any gate-relevant data
-2. If it does, verify that `evaluate_ticket_status` is called at the
-   end of the operation, within the same transaction
-3. If the call is missing, add it before proceeding
+2. If it does, verify that the modification goes through a
+   `ticket_mutations` function (not direct model attribute assignment)
+3. If there is no suitable function in `ticket_mutations`, add one
+   before proceeding
 4. Verify that the architectural integration tests (see
    `docs/features/tickets.md`, Architectural Test Requirement) cover
    the new or modified operation
 
 The goal is to ensure that ticket status is always consistent with its
 underlying data. A service operation that modifies gate-relevant data
-without calling `evaluate_ticket_status` is a bug.
+without going through `ticket_mutations` is a bug.
