@@ -72,22 +72,49 @@ An IM can associate a CVE with a ticket that does not yet have one, via
 **Rules**:
 
 - The ticket must not already have a CVE associated (`cve_id IS NULL`)
-- The CVE must exist in the STAMP database (identified by CVE-ID string,
-  e.g., `CVE-2024-1234`)
-- The CVE must not already be associated with another ticket (UNIQUE
-  constraint)
+- The CVE-ID string must be provided (e.g., `CVE-2024-1234`)
+- If the CVE exists in the STAMP database and is already associated with
+  another ticket, the API returns 409 Conflict with
+  `existing_ticket_id` in the response body (see
+  [Associate CVE endpoint](#associate-cve) for details)
+- If the CVE does not exist in the STAMP database, STAMP creates a
+  minimal CVE record (only `cve_id` set) and triggers on-demand
+  single-CVE fetch in the background (see
+  `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch"). The
+  association proceeds immediately with the minimal CVE record. The API
+  response includes `cve_data_pending: true`
 - When a CVE is associated:
   - `Ticket.cve_id` is set
   - The automatic severity from CVSS takes over (see
-    [Severity Resolution](#severity-resolution))
+    [Severity Resolution](#severity-resolution)) — initially `None` if
+    the CVE data has not been fetched yet; updated automatically once
+    CVSS data arrives from the on-demand fetch
   - A `TicketEvent` with `event_type = cve_associated` is created
   - CVSS sync and release tracking begin applying to the ticket
 
 ### Dissociating a CVE
 
-Dissociating a CVE from a ticket is not supported. If a CVE was
-associated in error, the ticket should be marked as Duplicated or
-Ignored.
+Dissociating a CVE from a ticket is restricted to the **Admin role**.
+Incident Managers cannot remove a CVE from a ticket. If an IM believes
+a CVE was associated in error, they should request an Admin to remove it.
+
+An Admin can remove a CVE from a ticket via
+`DELETE /api/v1/tickets/{ticket_id}/cve`.
+
+**Effects**:
+
+- `Ticket.cve_id` is set to `NULL`
+- Severity resolution falls back to `severity_override` (see
+  [Severity Resolution](#severity-resolution)). If `severity_override`
+  is also `NULL`, the ticket severity becomes `None`
+- A `TicketEvent` with `event_type = cve_removed` is created (see
+  `docs/features/ticket-history.md`)
+- CVSS sync and release tracking cease applying to the ticket
+- The CVE record itself is not deleted — it remains in the database.
+  Note: a subsequent scheduled CVE sync may re-create a ticket for this
+  CVE if no other ticket references it
+
+**Required role**: Admin.
 
 ## Ticket Creation
 
@@ -121,16 +148,31 @@ for the full flow.
 An Incident Manager can create a ticket manually via
 `POST /api/v1/tickets` or through the UI.
 
-- `cve_id`: `NULL` (no CVE required; can be associated later)
+- `cve_id`: optionally, the IM may specify a CVE-ID string (e.g.,
+  `"CVE-2024-1234"`) at creation time. If omitted, the ticket is
+  created without a CVE (can be associated later)
+- When a CVE-ID is provided:
+  - If the CVE exists in the database and is already associated with
+    another ticket, the creation fails with 409 Conflict and
+    `existing_ticket_id` in the response body
+  - If the CVE does not exist in the database, STAMP creates a minimal
+    CVE record (only `cve_id` set) and triggers on-demand single-CVE
+    fetch in the background (see `docs/features/cve-tracking.md`,
+    "On-demand Single-CVE Fetch"). The ticket is created immediately.
+    The API response includes `cve_data_pending: true`
+  - If the CVE exists in the database and is not associated with any
+    ticket, the ticket is created with that CVE
 - `status`: `Analysis` (direct, bypasses `New` — the creating user is
   automatically assigned)
 - `assignee_id`: set to the creating user
 - Two `TicketEvent` records are created atomically in the same
-  transaction:
+  transaction (three if a CVE-ID is provided):
   1. `event_type = ticket_created`, `user_id = creating user`,
      `comment = "Ticket created manually"`
   2. `event_type = assignment`, `user_id = creating user`,
      `new_value = creating user's username`
+  3. (if CVE-ID provided) `event_type = cve_associated`,
+     `user_id = creating user`, `new_value = CVE-ID string`
 
 **Required role**: Incident Manager.
 
@@ -362,15 +404,29 @@ Request body:
 
 ```json
 {
+  "cve_id": "CVE-2024-1234",
   "severity": "High"
 }
 ```
 
+- `cve_id` (string, optional): CVE identifier string to associate with
+  the ticket. If the CVE is not in the database, a minimal CVE record
+  is created and on-demand fetch is triggered (see
+  `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch")
 - `severity` (string, optional): initial severity override (Critical,
   High, Medium, Low, None). If omitted, severity is `None` until set
-  by the IM.
+  by the IM. Ignored if `cve_id` is provided (severity is derived from
+  CVSS)
 
-Response: the created ticket object (201 Created).
+Response: the created ticket object (201 Created). Includes
+`cve_data_pending: true` when a CVE-ID was provided and the CVE data
+is being fetched in the background.
+
+Error responses:
+
+- 409: CVE is already associated with another ticket. Response body
+  includes `existing_ticket_id` (UUID) to allow the frontend to link
+  to the existing ticket
 
 Requires the Incident Manager role.
 
@@ -380,7 +436,10 @@ Requires the Incident Manager role.
 POST /api/v1/tickets/{ticket_id}/associate-cve
 ```
 
-Associates an existing CVE with a ticket that does not have one.
+Associates a CVE with a ticket that does not have one. If the CVE is not
+yet in the STAMP database, a minimal CVE record is created and on-demand
+fetch is triggered automatically (see `docs/features/cve-tracking.md`,
+"On-demand Single-CVE Fetch").
 
 Request body:
 
@@ -392,15 +451,37 @@ Request body:
 
 - `cve_id` (string, required): CVE identifier string
 
-Response: the updated ticket object (200 OK).
+Response: the updated ticket object (200 OK). Includes
+`cve_data_pending: true` when the CVE data is being fetched in the
+background.
 
 Error responses:
 
 - 400: ticket already has a CVE associated
-- 404: CVE not found in STAMP database
-- 409: CVE is already associated with another ticket
+- 409: CVE is already associated with another ticket. Response body
+  includes `existing_ticket_id` (UUID) to allow the frontend to link
+  to the existing ticket
 
 Requires the Incident Manager role.
+
+### Remove CVE from Ticket (Admin Only)
+
+```
+DELETE /api/v1/tickets/{ticket_id}/cve
+```
+
+Removes the CVE association from a ticket. The CVE record itself is not
+deleted. After removal, severity resolution falls back to
+`severity_override`.
+
+Response: 204 No Content.
+
+Error responses:
+
+- 400: ticket does not have a CVE associated
+- 404: ticket not found
+
+Requires the Admin role.
 
 ### Update Severity Override
 
@@ -463,5 +544,6 @@ table:
   authentication required)
 - Creating tickets, assigning, changing status, associating CVE,
   managing packages, setting severity override: Incident Manager role
+- Removing a CVE from a ticket: Admin role
 - Soft-deleting and restoring tickets: Admin role
 - See `docs/features/rbac.md` for the full permission model

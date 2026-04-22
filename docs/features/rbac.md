@@ -28,13 +28,13 @@ Operates the triage and assessment workflow:
 - Change codestream and product affectedness status
 - Add, edit, and delete SUSE CVSS assessments
 - Add, edit, and delete ticket references
-- Trigger CVE synchronization
 
 ### Admin
 
 Administers the platform:
 - Manage users (create, update roles, deactivate)
 - View and update system settings (e.g., default CVSS version)
+- Remove CVE from ticket
 - Soft-delete and restore tickets
 - View soft-deleted tickets
 - Trigger manual fetcher runs
@@ -62,12 +62,12 @@ capabilities must hold both roles.
 | Change codestream/product status | No    | Yes | No     |
 | Add/edit/delete SUSE CVSS        | No    | Yes | No     |
 | Add/edit/delete references       | No    | Yes | No     |
-| Trigger CVE sync                 | No    | Yes | No     |
 
 ### Admin Operations
 
 | Action                           | Admin | IM  | Unauth |
 |----------------------------------|-------|-----|--------|
+| Remove CVE from ticket           | Yes   | No  | No     |
 | Manage users                     | Yes   | No  | No     |
 | View/update system settings      | Yes   | No  | No     |
 | Soft-delete ticket               | Yes   | No  | No     |

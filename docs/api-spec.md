@@ -72,8 +72,11 @@ Each feature specification in `docs/features/` defines its own API endpoints.
 
 See `docs/features/cve-tracking.md` for detailed endpoint specifications.
 
-- `POST /api/v1/cves/sync` — Trigger manual CVE sync (Incident Manager role).
-  CVE data is accessed through the ticket endpoints below.
+CVE data is accessed through the ticket endpoints below. On-demand
+single-CVE fetch is triggered automatically when STAMP encounters an
+unknown CVE-ID during ticket creation or CVE association (see
+  `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch").
+
 ### Tickets
 
 See `docs/features/tickets.md` for the central ticket specification
@@ -101,12 +104,25 @@ automatically.
   this is an error."}`. Admin callers receive the full ticket data with the
   `deleted_at` field populated.
 - `POST /api/v1/tickets` — Create a ticket manually (Incident Manager
-  role). The creating user is automatically assigned. See
+  role). The creating user is automatically assigned. Optionally accepts
+  a `cve_id` to associate a CVE at creation time. If the CVE is not in
+  the database, a minimal CVE record is created and on-demand fetch is
+  triggered. Returns 409 if CVE is already associated with another ticket
+  (response includes `existing_ticket_id`). Response includes
+  `cve_data_pending: true` when CVE data is being fetched. See
   `docs/features/tickets.md` for details.
 - `POST /api/v1/tickets/{ticket_id}/associate-cve` — Associate a CVE with
-  a ticket that does not have one (Incident Manager role). Returns 400 if
-  ticket already has a CVE, 404 if CVE not found, 409 if CVE already
-  associated with another ticket. See `docs/features/tickets.md`.
+  a ticket that does not have one (Incident Manager role). If the CVE is
+  not in the database, a minimal CVE record is created and on-demand fetch
+  is triggered. Returns 400 if ticket already has a CVE, 409 if CVE
+  already associated with another ticket (response includes
+  `existing_ticket_id`). Response includes `cve_data_pending: true` when
+  CVE data is being fetched. See `docs/features/tickets.md`.
+- `DELETE /api/v1/tickets/{ticket_id}/cve` — Remove the CVE association
+  from a ticket (Admin role). Sets `cve_id` to NULL. Creates a
+  `cve_removed` TicketEvent. Returns 204 No Content. Returns 400 if the
+  ticket has no CVE associated. Returns 404 if the ticket does not exist.
+  See `docs/features/tickets.md`.
 - `PATCH /api/v1/tickets/{ticket_id}/severity` — Update severity override
   for a ticket without a CVE (Incident Manager role). Returns 400 if the
   ticket has an associated CVE. See `docs/features/tickets.md`.

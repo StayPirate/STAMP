@@ -76,6 +76,34 @@ class MyConcreteFetcher(BaseFetcher):
         ...
 ```
 
+### Optional: On-demand Single-Item Fetch
+
+CVE fetchers MUST additionally implement the `fetch_single` method:
+
+```python
+async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
+    """Fetch a single CVE from the external source.
+
+    Called on-demand when STAMP encounters an unknown CVE-ID during
+    ticket creation or CVE association. Writes data to the standard
+    models (CVE, CVESource, CVECVSSAssessment, TicketReference).
+
+    If the CVE is not found in the external source (e.g., reserved or
+    not yet published), this method should return without error.
+    """
+    ...
+```
+
+This method is **optional** for non-CVE fetchers and **required** for
+CVE fetchers. The system discovers all fetchers that implement
+`fetch_single` via the registry and invokes them in parallel when an
+on-demand fetch is needed (see `docs/features/cve-tracking.md`,
+"On-demand Single-CVE Fetch").
+
+The `fetch_single` method does NOT create a `FetcherRun` record. It is
+a sub-operation invoked as a standalone Celery task, not a full fetcher
+execution. Metric reporting (`record_created`, etc.) is not used.
+
 ### Registry
 
 The global registry is a module-level dictionary in
@@ -91,6 +119,8 @@ is used by:
 - The API endpoints to list all known fetchers
 - The Celery Beat schedule to register periodic tasks
 - The dashboard frontend (indirectly, via the list endpoint)
+- The on-demand single-CVE fetch system to discover fetchers that
+  implement `fetch_single`
 
 A fetcher class that is imported but should NOT be registered (e.g., an
 intermediate abstract subclass) can set `abstract = True` as a class
@@ -563,28 +593,13 @@ Enqueues a manual run of the specified fetcher.
   `BaseFetcher.run()` method detects the existing `FetcherRun` record
   (matched by `run_id`) and updates it rather than creating a new one
 
-**Note on existing trigger endpoints**: some feature specs define
-domain-specific trigger endpoints (e.g., `POST /api/v1/cves/sync` in
-`docs/features/cve-tracking.md`). These endpoints are **convenience
-aliases** that internally delegate to the same `run_fetcher` Celery task.
-They remain valid for backward compatibility and domain-specific
-permissions (e.g., `POST /api/v1/cves/sync` requires the Incident
-Manager role, while this generic endpoint requires Admin). The generic
-`/fetchers/{name}/trigger` endpoint is the canonical way to trigger any
-fetcher from the dashboard.
-
-Convenience alias endpoints MUST:
-
-- Apply the same concurrency check (reject with 409 if the fetcher is
-  already running)
-- Apply the same enabled check (reject with 409 if the fetcher is
-  disabled)
-- Create a `FetcherAuditLog` record with action `triggered` and the
-  acting user's ID
-- Create the `FetcherRun` record with `triggered_by = manual`
-
-This ensures consistent behavior regardless of which entry point is
-used to trigger the fetcher.
+**Note on on-demand CVE fetch**: when STAMP encounters an unknown CVE-ID
+during ticket creation or CVE association, it triggers on-demand
+single-CVE fetches via standalone Celery tasks (not through this trigger
+endpoint). These on-demand fetches are sub-operations that do not create
+`FetcherRun` records, do not check concurrency, and do not appear in the
+dashboard. See `docs/features/cve-tracking.md`, "On-demand Single-CVE
+Fetch" for details.
 
 ### Get Fetcher Config (Admin Only)
 
@@ -927,7 +942,9 @@ Invoke `@fetcher-dashboard-reviewer` when:
 2. **Required attributes**: `name`, `description`, and `default_schedule`
    are defined on the class. For CVE fetchers,
    `source_reference_url_pattern` should be set if the source has a
-   human-readable web page (see `docs/features/references.md`)
+   human-readable web page (see `docs/features/references.md`), and
+   `fetch_single()` must be implemented (see "Optional: On-demand
+   Single-Item Fetch" above)
 3. **Unique name**: the fetcher's `name` does not conflict with any
    existing registered fetcher
 4. **Metric reporting**: the `execute()` method calls
