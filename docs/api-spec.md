@@ -131,6 +131,15 @@ automatically.
 - `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}`
   — Override product affectedness status (Incident Manager role)
 
+**Auto-assignment**: any endpoint that modifies a ticket with no current
+assignee (`assignee_id = NULL`) will automatically assign the ticket to
+the authenticated IM. The response will reflect the updated
+`assignee_id`. A `TicketEvent` of type `assignment` is created
+atomically. If the ticket was in `New` status and the operation does not
+include an explicit status change, the ticket also transitions to
+`Analysis`. See `docs/features/tickets.md` (Auto-Assignment on
+Unassigned Tickets) for full rules.
+
 **Soft-delete protection on sub-resources**: all endpoints under
 `/api/v1/tickets/{ticket_id}/...` (events, references, packages,
 codestreams, products) return 410 Gone for non-admin callers when the

@@ -210,7 +210,7 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 
 | From       | To         | Trigger                                    | Who            |
 |------------|------------|--------------------------------------------|----------------|
-| New        | Analysis   | IM clicks "Assign to me" or is assigned    | Any IM         |
+| New        | Analysis   | IM clicks "Assign to me", is assigned, or performs any modifying operation on the ticket | Any IM         |
 | New        | Ignored    | IM clicks "Ignore" action                  | Any IM         |
 | New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`) | System      |
 | Analysis   | Analyzed   | All gates met (see below)                  | Assignee       |
@@ -265,6 +265,26 @@ A ticket can be reassigned to a different IM at any time, regardless of
 its current status. Reassignment does not change the ticket status. All
 reassignments are logged in the ticket event history.
 
+### Auto-Assignment on Unassigned Tickets
+
+When an IM performs any modifying operation on a ticket with
+`assignee_id = NULL`, the ticket is automatically assigned to the acting
+IM. A `TicketEvent` with `event_type = assignment` is created atomically
+in the same transaction as the modifying operation.
+
+If the ticket is in `New` status and the operation does not include an
+explicit status change (e.g., marking as duplicate or ignored), the
+ticket also transitions to `Analysis`.
+
+If the operation includes an explicit status change (e.g.,
+`New → Duplicated` or `New → Ignored`), the status follows the explicit
+transition and the assignee is set, but the ticket does not transition
+to `Analysis` first.
+
+This rule does not apply to system operations (background tasks,
+automated ingestion). Only IM-initiated actions trigger
+auto-assignment.
+
 ### Duplicate Handling
 
 - Any ticket can be marked as a duplicate of another ticket, from any
@@ -273,6 +293,9 @@ reassignments are logged in the ticket event history.
   - `status` is set to `Duplicated`
   - `duplicate_of_id` is set to the original ticket's ID
   - `previous_status` stores the status before duplication
+  - If the ticket had no assignee (`assignee_id = NULL`), the acting IM
+    becomes the assignee (see
+    [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
 - When reverted:
   - `status` is restored to `previous_status`
   - `duplicate_of_id` is cleared
