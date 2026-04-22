@@ -306,6 +306,16 @@ Before considering any ticket-related code change complete:
    an existing `TicketEventType`, STOP and propose an update to
    `docs/data-model.md` and `docs/features/ticket-history.md` before
    proceeding with the implementation
+6. After implementation, invoke `@ticket-event-reviewer` to verify:
+   - All mutations are covered by `TicketEvent` records
+   - Field values comply with the contract in
+     `docs/features/ticket-history.md`
+   - Events share the same database transaction as the mutation
+7. When creating or modifying a feature spec in `docs/features/` that
+   describes ticket operations, invoke `@ticket-event-reviewer` to verify
+   that all described mutations have corresponding `TicketEventType`
+   entries in the contract — missing entries must be added before
+   proceeding with implementation
 
 The goal is to maintain a complete and reliable audit trail for every
 ticket. An operation that mutates a ticket without creating a corresponding
