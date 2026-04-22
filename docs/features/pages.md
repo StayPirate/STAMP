@@ -245,8 +245,8 @@ The page is divided into the following sections:
 | Current Status | Available Actions                                    |
 |----------------|------------------------------------------------------|
 | New            | Assign to me, Ignore, Mark as Duplicate              |
-| Analysis       | Mark as Analyzed (if gates met), Ignore, Reassign, Mark as Duplicate |
-| Analyzed       | Mark as Resolved (if all updates released), Reassign, Mark as Duplicate |
+| Analysis       | Ignore, Reassign, Mark as Duplicate                  |
+| Analyzed       | Reassign, Mark as Duplicate                          |
 | Resolved       | Mark as Duplicate                                    |
 | Ignored        | Mark as Duplicate                                    |
 | Duplicated     | Revert duplicate (restores previous state, reassigns to current IM) |
@@ -282,14 +282,10 @@ the URL of a soft-deleted ticket, the ticket detail page displays only a
 message: **"This ticket has been deleted. Contact an admin if you think
 this is an error."** No ticket data is shown. The API returns 410 Gone.
 
-**Analysis → Analyzed gates**: the "Mark as Analyzed" action is available
-only when ALL gate conditions are met. See `docs/features/tickets.md`
-(Gate: Analysis → Analyzed) for the full list of conditions, which
-includes: at least one package added, all affectedness data complete,
-severity set, and SUSE CVSS assessments provided (for tickets with CVE).
-
-If any gate is not met, the button is disabled with a tooltip explaining
-which requirement is missing.
+**Automatic status transitions**: transitions from Analysis to Analyzed
+and from Analyzed to Resolved happen automatically when gate conditions
+are met. There are no manual action buttons for these transitions. See
+`docs/features/tickets.md` (Centralized Status Evaluation) for details.
 
 #### CVE Information Card
 

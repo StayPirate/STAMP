@@ -427,3 +427,27 @@ after modifying cross-cutting documents (`docs/data-model.md`,
 5. When performing a full review across all specs (e.g., triggered manually
    by the user), invoke `@spec-coherence-reviewer` **once per spec** in
    independent sessions. Do not combine multiple specs into a single review
+
+### 16. Centralized ticket status evaluation
+
+CRITICAL: Every service-layer function that modifies data relevant to
+ticket status gates MUST call `evaluate_ticket_status` at the end of
+the operation, within the same database transaction.
+
+Relevant data includes: `TicketPackageCodestream` records,
+`TicketPackageProduct` records, `CVECVSSAssessment` records, ticket
+severity, and package addition/removal.
+
+Before considering any ticket-related code change complete:
+
+1. Identify whether the code modifies any gate-relevant data
+2. If it does, verify that `evaluate_ticket_status` is called at the
+   end of the operation, within the same transaction
+3. If the call is missing, add it before proceeding
+4. Verify that the architectural integration tests (see
+   `docs/features/tickets.md`, Architectural Test Requirement) cover
+   the new or modified operation
+
+The goal is to ensure that ticket status is always consistent with its
+underlying data. A service operation that modifies gate-relevant data
+without calling `evaluate_ticket_status` is a bug.

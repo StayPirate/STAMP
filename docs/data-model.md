@@ -379,14 +379,25 @@ remain intact in the database but are inaccessible to non-admin users.
 for the full transition diagram, gates, and rules.
 
 Summary:
-- New -> Analysis (assignment)
-- New -> Ignored
-- Analysis -> Analyzed (all gates met: at least one package, all
-  affectedness complete, severity set, SUSE CVSS provided if CVE present)
-- Analysis -> Ignored
-- Analyzed -> Resolved (all updates released)
-- Any -> Duplicated (reversible)
-- Duplicated -> previous_status (revert, reassigns to the reverting IM)
+- New -> Analysis (manual: assignment or any modifying operation)
+- New -> Ignored (manual or automatic: NVD rejection)
+- Analysis -> Analyzed (automatic: all gates met — at least one package,
+  all affectedness complete, severity set, SUSE CVSS provided if CVE
+  present)
+- Analysis -> Ignored (manual)
+- Analyzed -> Resolved (automatic: all packages in final status)
+- Analyzed -> Analysis (automatic: gate conditions no longer met)
+- Resolved -> Analyzed (automatic: resolved gates broken, analyzed gates
+  still met)
+- Resolved -> Analysis (automatic: both resolved and analyzed gates
+  broken)
+- Any -> Duplicated (manual, reversible)
+- Duplicated -> previous_status (manual: revert, reassigns to the
+  reverting IM)
+
+Forward and reverse transitions between Analysis, Analyzed, and Resolved
+are handled automatically by `evaluate_ticket_status` — see
+`docs/features/tickets.md` (Centralized Status Evaluation).
 
 **Status categories**:
 - **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`

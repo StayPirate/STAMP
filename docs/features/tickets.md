@@ -240,8 +240,10 @@ layer.
 ### Status Transition Diagram
 
 ```
-New ──→ Analysis ──→ Analyzed ──→ Resolved
- │         │
+                     automatic         automatic
+New ──→ Analysis ──────────→ Analyzed ──────────→ Resolved
+ │         │    ◄────────────    │    ◄────────────
+ │         │     automatic       │     automatic
  ├──→ Ignored (from New or Analysis only)
  │
  └──→ Duplicated (from any state, reversible)
@@ -250,24 +252,24 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 
 ### Status Transitions
 
-| From       | To         | Trigger                                    | Who            |
-|------------|------------|--------------------------------------------|----------------|
-| New        | Analysis   | IM clicks "Assign to me", is assigned, or performs any modifying operation on the ticket | Any IM         |
-| New        | Ignored    | IM clicks "Ignore" action                  | Any IM         |
-| New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`) | System      |
-| Analysis   | Analyzed   | All gates met (see below)                  | Assignee       |
-| Analysis   | Ignored    | IM determines issue is not relevant        | Assignee       |
-| Analyzed   | Resolved   | All packages in final status               | Assignee       |
-| Any        | Duplicated | IM marks ticket as duplicate               | Any IM         |
-| Duplicated | (previous) | IM reverts duplicate status                | Any IM (becomes new assignee) |
-| Resolved   | Analyzed   | CVSS recalculation causes products to become AFFECTED | System |
-| Resolved   | Analysis   | Package added or codestream reset to ANALYSIS | IM          |
-| Analyzed   | Analysis   | Package added or codestream reset to ANALYSIS | IM          |
+| From       | To         | Trigger                                                | Mode               | Who                                    |
+|------------|------------|--------------------------------------------------------|--------------------|----------------------------------------|
+| New        | Analysis   | IM assigned, or any modifying operation on unassigned ticket | Manual (implicit)  | Any IM                                 |
+| New        | Ignored    | IM clicks "Ignore" action                              | Manual             | Any IM                                 |
+| New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`)          | Automatic          | System                                 |
+| Analysis   | Analyzed   | All "Analyzed" gate conditions met                     | Automatic          | System                                 |
+| Analysis   | Ignored    | IM determines issue is not relevant                    | Manual             | Assignee                               |
+| Analyzed   | Resolved   | All "Resolved" gate conditions met                     | Automatic          | System                                 |
+| Analyzed   | Analysis   | "Analyzed" gate conditions no longer met               | Automatic          | System (triggered by IM or system action) |
+| Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by IM or system action) |
+| Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by IM or system action) |
+| Any        | Duplicated | IM marks ticket as duplicate                           | Manual             | Any IM                                 |
+| Duplicated | (previous) | IM reverts duplicate status                            | Manual             | Any IM (becomes new assignee)          |
 
 ### Gate: Analysis → Analyzed
 
-The "Mark as Analyzed" action is available only when ALL of the following
-conditions are met:
+The system automatically transitions a ticket from Analysis to Analyzed
+when ALL of the following conditions are met:
 
 1. **At least one package**: the ticket must have at least one package
    added (at least one `TicketPackageCodestream` record exists)
@@ -283,23 +285,120 @@ conditions are met:
    provided BOTH SUSE CVSS v3.1 AND v4.0 assessments (see
    `docs/features/cvss-scoring.md`)
 
-If any gate is not met, the button is disabled with a tooltip explaining
-which requirement is missing.
+This evaluation is performed automatically by the centralized status
+evaluation function (see "Centralized Status Evaluation" below) after
+every operation that modifies gate-relevant data. There is no manual
+"Mark as Analyzed" action — the transition happens as soon as all
+conditions are satisfied.
+
+Conversely, if any of these conditions ceases to be met (e.g., a package
+is added with codestreams in ANALYSIS, a SUSE CVSS assessment is deleted,
+or severity becomes undetermined), the ticket automatically transitions
+back from Analyzed to Analysis.
 
 ### Gate: Analyzed → Resolved
 
-All `TicketPackageCodestream` and `TicketPackageProduct` records must
+The system automatically transitions a ticket from Analyzed to Resolved
+when all `TicketPackageCodestream` and `TicketPackageProduct` records
 have a final status: `RELEASED`, `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`,
 or `AFFECTED_RESOLVED`.
 
-### Reverse Transitions
+This evaluation is performed by the centralized status evaluation
+function after every operation that modifies package or product statuses.
+There is no manual "Mark as Resolved" action.
 
-- **Resolved → Analyzed**: triggered by CVSS recalculation when products
-  transition from `AFFECTED_RESOLVED` to `AFFECTED` (see
-  `docs/features/cvss-scoring.md`, Recalculation Cascade)
-- **Resolved → Analysis**: triggered when a package is added (new
-  codestreams in `ANALYSIS`) or an IM resets a codestream to `ANALYSIS`
-- **Analyzed → Analysis**: same triggers as above
+Conversely, if any package or product transitions to a non-final status
+(e.g., CVSS recalculation causes a product to move from
+`AFFECTED_RESOLVED` to `AFFECTED`, or an IM resets a product status
+from a final state to `AFFECTED`), the ticket automatically transitions
+back from Resolved to Analyzed (or to Analysis, if the "Analyzed" gates
+are also no longer met).
+
+### Automatic Status Re-evaluation
+
+Forward and reverse transitions between Analysis, Analyzed, and Resolved
+are governed by a single mechanism: the centralized status evaluation
+function re-evaluates gate conditions after every relevant data change
+and sets the ticket to the highest valid status.
+
+This means reverse transitions are not special cases — they emerge
+naturally when gate conditions are no longer met:
+
+- **Analyzed → Analysis**: any "Analyzed" gate ceases to be met (e.g.,
+  package added with codestreams in ANALYSIS, SUSE CVSS assessment
+  deleted, codestream status reset to ANALYSIS, severity cleared)
+- **Resolved → Analyzed**: any package or product transitions to a
+  non-final status while "Analyzed" gates remain met (e.g., CVSS
+  recalculation moves a product from AFFECTED_RESOLVED to AFFECTED —
+  see `docs/features/cvss-scoring.md`, Recalculation Cascade)
+- **Resolved → Analysis**: both "Resolved" and "Analyzed" gates are
+  broken (e.g., a new package is added with codestreams in ANALYSIS)
+
+All automatic transitions create a `TicketEvent` with `user_id = NULL`
+(system action), even when the underlying data change was initiated by
+an IM.
+
+### Centralized Status Evaluation
+
+All automatic status transitions between Analysis, Analyzed, and
+Resolved are handled by a single service-layer function:
+`evaluate_ticket_status`. This function is the **sole authority** for
+determining a ticket's status based on its current data.
+
+#### Behavior
+
+1. The function receives a ticket and evaluates gate conditions top-down
+   (most advanced status first):
+   - If all "Resolved" gates AND all "Analyzed" gates are met → status
+     is Resolved
+   - If all "Analyzed" gates are met (but "Resolved" gates are not) →
+     status is Analyzed
+   - Otherwise → status is Analysis
+2. If the determined status differs from the current status, the function
+   updates the ticket and creates a `TicketEvent` with
+   `event_type = status_change`
+3. The function operates within the **same database transaction** as the
+   triggering operation (atomicity guarantee)
+
+#### Scope
+
+The function only evaluates tickets in `Analysis`, `Analyzed`, or
+`Resolved` status. Tickets in `New`, `Ignored`, or `Duplicated` are
+excluded — these statuses are governed by explicit user actions or
+specific system events (e.g., NVD rejection), not by gate evaluation.
+
+#### Contract
+
+Every service-layer operation that modifies data relevant to ticket
+status gates MUST call `evaluate_ticket_status` at the end of the
+operation, within the same transaction. Relevant data includes:
+
+- `TicketPackageCodestream` records (creation, deletion, status change)
+- `TicketPackageProduct` records (creation, deletion, status change,
+  eligibility change)
+- `CVECVSSAssessment` records (creation, update, deletion)
+- Ticket severity (`severity_override` or CVSS-derived severity)
+- Package addition or removal
+
+#### Architectural Test Requirement
+
+A parametrized integration test MUST be implemented to verify that
+`evaluate_ticket_status` produces the correct ticket status after every
+type of relevant mutation. The test must cover:
+
+- **Forward transitions**: each gate condition being satisfied one by
+  one until the ticket advances (Analysis → Analyzed → Resolved)
+- **Backward transitions**: each gate condition being broken after the
+  ticket has advanced (Analyzed → Analysis, Resolved → Analyzed,
+  Resolved → Analysis)
+- **No-op cases**: mutations that do not affect gate conditions
+- **Edge cases**: ticket with no packages, ticket without CVE (no SUSE
+  CVSS gate), all codestreams in final status but severity not set
+
+This test serves as a permanent architectural fitness function: if a
+new service operation modifies gate-relevant data without calling
+`evaluate_ticket_status`, the test will fail because the ticket status
+will not match the expected state.
 
 ### Reassignment
 

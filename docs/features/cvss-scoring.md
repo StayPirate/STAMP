@@ -345,10 +345,13 @@ with an active ticket, STAMP performs the following recalculation:
    - Products with `is_override = true` are not modified
    - Products in protected states (`WONT_FIX`, `IGNORED`) are not modified
    - Products in Reactive LTSS phase remain `AFFECTED_RESOLVED` regardless
-3. **Ticket state adjustment**: if the ticket is in `Resolved` state and
-   any product has transitioned to a non-final state (`AFFECTED`), the
-   ticket is moved back to `Analyzed` (not `Analysis`, because all
-   codestream statuses were already set by the IM).
+3. **Ticket status re-evaluation**: after applying product status
+   changes, call `evaluate_ticket_status` to re-evaluate the ticket
+   status (see `docs/features/tickets.md`, Centralized Status
+   Evaluation). In practice, a CVSS recalculation that moves products
+   from `AFFECTED_RESOLVED` to `AFFECTED` typically results in
+   Resolved → Analyzed (since codestream statuses remain set), but the
+   centralized evaluator determines the correct target status.
    **Note**: this rollback can only occur when an IM manually modifies a
    SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
    Hat) and default CVSS version changes only process active tickets
@@ -359,9 +362,10 @@ with an active ticket, STAMP performs the following recalculation:
      `new_value` with severity labels
    - Product eligibility change: `event_type = "product_eligibility_changed"`,
      `old_value` and `new_value` with status labels
-   - Ticket state rollback (if ticket was `Resolved` and products became
-     `AFFECTED`): `event_type = "status_change"`, `old_value = "Resolved"`,
-     `new_value = "Analyzed"`, `user_id = NULL` (system action)
+   - Ticket status change (if `evaluate_ticket_status` changed the
+     status): `event_type = "status_change"`, with `old_value` and
+     `new_value` reflecting the actual transition, `user_id = NULL`
+     (system action)
 
 ## UI — CVSS Card
 
