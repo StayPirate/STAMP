@@ -27,16 +27,18 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │  │  vector              │
        │  └──────────────────────┘
        │
-       ▼ (1:1)
+       ▼ (0..1:1)
 ┌──────────────────┐ (1:N) ┌──────────────────┐
 │     Ticket       │──────▶│   TicketEvent    │
 │                  │       │                  │
-│  cve_id (FK,UQ)  │       │  ticket_id (FK)  │
-│  status          │       │  user_id (FK) ──────┐
-│  assignee_id (FK)──┐     │  event_type      │  │
-│  duplicate_of_id │  │    │  old_value       │  │
-│  (FK, self-ref)  │  │    │  new_value       │  │
-│  previous_status │  │    │  comment         │  │
+│  sequence_id(UQ) │       │  ticket_id (FK)  │
+│  cve_id(FK,UQ,?) │       │  user_id (FK) ──────┐
+│  status          │       │  event_type      │  │
+│  severity_override│      │  old_value       │  │
+│  assignee_id (FK)──┐     │  new_value       │  │
+│  duplicate_of_id │  │    │  comment         │  │
+│  (FK, self-ref)  │  │    │                  │  │
+│  previous_status │  │    │                  │  │
 └──────┬───────────┘  │    └──────────────────┘  │
        │              │                          │
        │              │    ┌──────────────────┐   │
@@ -347,21 +349,24 @@ multiple roles assigned.
 
 ### Ticket
 
-Represents the internal workflow unit for a CVE. Each CVE has exactly one
-ticket. Tickets track the triage and resolution lifecycle managed by incident
-managers (IMs).
+Represents the internal workflow unit for a security issue. A ticket may
+optionally be associated with a CVE (0..1:1 relationship). Tickets track
+the triage and resolution lifecycle managed by incident managers (IMs).
+See `docs/features/tickets.md` for the full ticket specification.
 
-| Column          | Type        | Constraints                  | Description                          |
-|-----------------|-------------|------------------------------|--------------------------------------|
-| id              | UUID        | PK                           | Internal identifier                  |
-| cve_id          | UUID        | FK(cve.id), UNIQUE, NOT NULL | Associated CVE (1:1 relationship)    |
-| status          | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| assignee_id     | UUID        | FK(user.id), nullable        | IM currently assigned to this ticket |
-| duplicate_of_id | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
-| previous_status | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
-| created_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp            |
-| updated_at      | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp              |
-| deleted_at      | TIMESTAMP   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
+| Column            | Type        | Constraints                  | Description                          |
+|-------------------|-------------|------------------------------|--------------------------------------|
+| id                | UUID        | PK                           | Internal identifier                  |
+| sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `STAMP-{n}` (e.g., `STAMP-42`) |
+| cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
+| status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
+| severity_override | ENUM        | nullable                     | Manual severity set by the IM (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets.md` (Severity Resolution) |
+| assignee_id       | UUID        | FK(user.id), nullable        | IM currently assigned to this ticket |
+| duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
+| previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
+| created_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp            |
+| updated_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp              |
+| deleted_at        | TIMESTAMP   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
 
 **Deletion policy**: tickets MUST NOT be hard-deleted from the database.
 Soft-delete is performed by setting `deleted_at` to the current timestamp.
@@ -370,10 +375,14 @@ Soft-deleted tickets are excluded from all default queries. All sub-resources
 of a soft-deleted ticket (references, events, packages, codestreams, products)
 remain intact in the database but are inaccessible to non-admin users.
 
-**Status transitions**:
+**Status transitions**: see `docs/features/tickets.md` (Ticket Lifecycle)
+for the full transition diagram, gates, and rules.
+
+Summary:
 - New -> Analysis (assignment)
 - New -> Ignored
-- Analysis -> Analyzed (all affectedness data complete)
+- Analysis -> Analyzed (all gates met: at least one package, all
+  affectedness complete, severity set, SUSE CVSS provided if CVE present)
 - Analysis -> Ignored
 - Analyzed -> Resolved (all updates released)
 - Any -> Duplicated (reversible)
@@ -446,7 +455,8 @@ system action).
 | product_status_overridden  | IM overrode product affectedness status             |
 | codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
 | product_released           | Product release detected via updateinfo.xml advisory |
-| ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is always NULL (system event). `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`) |
+| ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
+| cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the IM who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). |

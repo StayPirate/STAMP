@@ -76,21 +76,40 @@ See `docs/features/cve-tracking.md` for detailed endpoint specifications.
   CVE data is accessed through the ticket endpoints below.
 ### Tickets
 
-See `docs/features/pages.md` for ticket lifecycle and page specifications.
+See `docs/features/tickets.md` for the central ticket specification
+(identification, creation, lifecycle, severity resolution).
+See `docs/features/pages.md` for UI page specifications.
 See `docs/features/package-tracking.md` for package management endpoints.
 
-- `GET /api/v1/tickets` — List tickets with filters. Accepts an optional
-  `include_deleted` query parameter (`true` or `only`). The parameter is
-  accepted from any caller, but soft-deleted tickets are included in the
-  response only if the caller holds the Admin role. For non-admin callers
-  the parameter is silently ignored. Values: `true` (include active and
-  deleted tickets), `only` (return only deleted tickets). Default behavior
-  (parameter absent or `false`): return only active tickets.
+**Dual lookup**: all endpoints that accept a `{ticket_id}` path parameter
+support both UUID and `STAMP-{n}` format (e.g.,
+`GET /api/v1/tickets/STAMP-42`). The backend detects the format
+automatically.
+
+- `GET /api/v1/tickets` — List tickets with filters. The `search` query
+  parameter searches across `STAMP-{n}` identifier, CVE ID, CVE
+  description, and package names. Accepts an optional `include_deleted`
+  query parameter (`true` or `only`). The parameter is accepted from any
+  caller, but soft-deleted tickets are included in the response only if
+  the caller holds the Admin role. For non-admin callers the parameter is
+  silently ignored. Values: `true` (include active and deleted tickets),
+  `only` (return only deleted tickets). Default behavior (parameter absent
+  or `false`): return only active tickets.
 - `GET /api/v1/tickets/{ticket_id}` — Get ticket details. If the ticket is
   soft-deleted and the caller is not an Admin, returns 410 Gone with body
   `{"detail": "This ticket has been deleted. Contact an admin if you think
   this is an error."}`. Admin callers receive the full ticket data with the
   `deleted_at` field populated.
+- `POST /api/v1/tickets` — Create a ticket manually (Incident Manager
+  role). The creating user is automatically assigned. See
+  `docs/features/tickets.md` for details.
+- `POST /api/v1/tickets/{ticket_id}/associate-cve` — Associate a CVE with
+  a ticket that does not have one (Incident Manager role). Returns 400 if
+  ticket already has a CVE, 404 if CVE not found, 409 if CVE already
+  associated with another ticket. See `docs/features/tickets.md`.
+- `PATCH /api/v1/tickets/{ticket_id}/severity` — Update severity override
+  for a ticket without a CVE (Incident Manager role). Returns 400 if the
+  ticket has an associated CVE. See `docs/features/tickets.md`.
 - `POST /api/v1/tickets/{ticket_id}/assign` — Assign or reassign a ticket
 - `POST /api/v1/tickets/{ticket_id}/ignore` — Mark ticket as ignored
 - `POST /api/v1/tickets/{ticket_id}/duplicate` — Mark ticket as duplicate

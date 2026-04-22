@@ -167,6 +167,12 @@ Both CVSS v3.1 and v4.0 use the same severity rating scale:
 The `severity` field on the CVE table is a denormalized field, always
 derived from CVSS assessments. It is never set manually.
 
+**Note**: for tickets without a CVE, severity is determined by the
+`severity_override` field on the Ticket, set manually by the IM. The
+CVE severity derivation described below applies only to tickets with an
+associated CVE. See `docs/features/tickets.md` (Severity Resolution)
+for the unified resolution logic.
+
 ### Calculation Rules
 
 1. Resolve the CVSS score using the resolution cascade (SUSE default
@@ -192,26 +198,33 @@ default version. There is no manual severity selection.
 
 ## Workflow Gates
 
-### SUSE CVSS Required for Ticket Progression
+### SUSE CVSS Required for Ticket Progression (Tickets with CVE)
 
-The ticket CANNOT transition from `Analysis` to `Analyzed` (or any
-subsequent state) unless the IM has provided BOTH:
+For tickets with an associated CVE, the ticket CANNOT transition from
+`Analysis` to `Analyzed` (or any subsequent state) unless the IM has
+provided BOTH:
 
 - SUSE CVSS v3.1 assessment (vector string → calculated score)
 - SUSE CVSS v4.0 assessment (vector string → calculated score)
 
 This ensures that:
 
-1. Every ticket that progresses beyond Analysis has a SUSE-determined
-   severity
+1. Every ticket with a CVE that progresses beyond Analysis has a
+   SUSE-determined severity
 2. The severity is always calculated (never manually selected)
 3. Both CVSS versions are available for current and future use
 
+**Tickets without CVE**: this gate does not apply. Instead, the IM must
+set `severity_override` before the ticket can progress. See
+`docs/features/tickets.md` (Gate: Analysis → Analyzed) for the full
+gate conditions applicable to all ticket types.
+
 ### Severity Required
 
-Since the SUSE CVSS is mandatory and severity is derived from it, severity
-is always determined for any ticket that passes the Analysis gate. A ticket
-with `severity = None` (no CVSS data) cannot progress.
+Severity is always required for the Analysis → Analyzed transition. For
+tickets with a CVE, severity is derived from SUSE CVSS (which is
+mandatory). For tickets without a CVE, severity must be set via
+`severity_override`. A ticket with no severity (`None`) cannot progress.
 
 ## Eligibility Threshold
 
@@ -423,6 +436,11 @@ When the IM clicks "Add SUSE CVSS" or "Edit SUSE CVSS":
 ```
 GET /api/v1/tickets/{ticket_id}/cvss
 ```
+
+**Tickets without CVE**: returns 400 Bad Request with
+`{"detail": "This ticket has no associated CVE. CVSS assessments are not available."}`.
+The same 400 response applies to `POST .../cvss/suse` and
+`DELETE .../cvss/suse/{version}` when called on a ticket without a CVE.
 
 Response: list of all CVSS assessments for the ticket's CVE, grouped by
 version.

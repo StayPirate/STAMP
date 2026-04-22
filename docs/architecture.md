@@ -165,6 +165,14 @@ coordination across multiple maintained distribution versions.
 7. TicketPackageCodestream and TicketPackageProduct records are created
    automatically with status ANALYSIS
 
+### Manual Ticket Creation
+
+Tickets can also be created manually by Incident Managers without an
+associated CVE — for example, to track security issues reported through
+internal bug trackers before a CVE-ID is assigned. A CVE can be
+associated with the ticket later. See `docs/features/tickets.md` for
+the full ticket specification.
+
 ### Package Affectedness Flow
 
 1. IM analyzes a ticket and sets affectedness status per codestream

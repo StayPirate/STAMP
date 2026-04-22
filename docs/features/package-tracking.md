@@ -3,7 +3,8 @@
 ## Purpose
 
 Track the affectedness of source packages across IBS codestreams and SUSE
-products in the context of CVE tickets.
+products in the context of tickets. See `docs/features/tickets.md` for
+the ticket specification (identification, creation, lifecycle).
 
 ## Domain Concepts
 
@@ -947,11 +948,16 @@ Package: curl                                   [Remove]
 
 ### Ticket Lifecycle Integration
 
-The ticket transitions that depend on affectedness data are updated as follows:
+See `docs/features/tickets.md` (Ticket Lifecycle) for the authoritative
+gate conditions and status transition rules. The affectedness-related
+conditions are summarized here for context:
 
-- **Analysis -> Analyzed**: all TicketPackageCodestream records must have a
-  final status (not `ANALYSIS`). Note: `AFFECTED` is non-final but is allowed
-  for this transition since it indicates the IM has made a decision.
+- **Analysis -> Analyzed**: at least one package must be added, all
+  TicketPackageCodestream records must have a non-ANALYSIS status, and all
+  TicketPackageProduct records must be in a final status. Note: `AFFECTED`
+  is non-final but is allowed at the codestream level since it indicates
+  the IM has made a decision. Additional gate conditions (severity, CVSS)
+  are defined in `docs/features/tickets.md`.
 - **Analyzed -> Resolved**: all TicketPackageCodestream and
   TicketPackageProduct records must have status `RELEASED`, `NOT_AFFECTED`,
   `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.

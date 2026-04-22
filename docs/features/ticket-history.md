@@ -23,15 +23,16 @@ fields populated according to this table:
 |---|---|---|---|---|---|
 | `status_change` | Ticket status transitions (manual or system-initiated) | IM user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional IM note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) |
 | `assignment` | Ticket assigned or reassigned | IM user | Previous assignee username or `NULL` | New assignee username | Optional IM note |
-| `duplicate_set` | Ticket marked as duplicate | IM user | `NULL` | CVE ID of the original ticket | Optional IM note |
-| `duplicate_removed` | Duplicate mark reverted | IM user | CVE ID of the original ticket | `NULL` | Optional IM note |
+| `duplicate_set` | Ticket marked as duplicate | IM user | `NULL` | `STAMP-{n}` identifier of the original ticket | Optional IM note |
+| `duplicate_removed` | Duplicate mark reverted | IM user | `STAMP-{n}` identifier of the original ticket | `NULL` | Optional IM note |
 | `package_added` | Package added to ticket (manual or automatic) | IM user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
 | `package_removed` | IM removes package from ticket | IM user | Package name | `NULL` | `NULL` |
 | `codestream_status_changed` | IM changes codestream status | IM user | Old status | New status | `package_name:codestream_name` |
 | `product_status_overridden` | IM overrides product status | IM user | Old status | New status | `package_name:product_id` |
 | `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |
-| `ticket_created` | Ticket created (CVE ingestion or codestream detection) | `NULL` | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`) |
+| `ticket_created` | Ticket created (CVE ingestion, codestream detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) |
+| `cve_associated` | CVE associated with a ticket that previously had no CVE | IM user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | IM user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
@@ -65,7 +66,7 @@ Returns a paginated list of events for a specific ticket, ordered by
 
 | Parameter   | Type | Description          |
 |-------------|------|----------------------|
-| `ticket_id` | UUID | The ticket identifier |
+| `ticket_id` | UUID or `STAMP-{n}` | The ticket identifier (supports dual lookup) |
 
 **Query parameters**:
 
@@ -166,6 +167,7 @@ At the top of the History tab, a horizontal filter bar provides:
    | `codestream_released`      | Codestream released        |
    | `product_released`         | Product released           |
    | `ticket_created`           | Ticket created             |
+   | `cve_associated`           | CVE associated             |
    | `severity_changed`         | Severity changed           |
    | `cvss_assessment_changed`  | CVSS assessment changed    |
    | `product_eligibility_changed` | Product eligibility changed |
@@ -201,7 +203,7 @@ first). Each event entry displays:
    | Status change | arrow-right-left | `status_change` |
    | Assignment | user | `assignment` |
    | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
-   | Creation | plus-circle | `ticket_created` |
+   | Creation | plus-circle | `ticket_created`, `cve_associated` |
    | Package | package | `package_added`, `package_removed` |
    | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
    | Release | check-circle | `codestream_released`, `product_released` |
@@ -231,6 +233,7 @@ first). Each event entry displays:
    | `codestream_released` | Codestream release detected for **{comment}** |
    | `product_released` | Product release detected for **{comment}** |
    | `ticket_created` | Ticket created — **{comment}** |
+   | `cve_associated` | CVE **{new_value}** associated with this ticket |
    | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
    | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
    | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |

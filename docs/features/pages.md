@@ -4,11 +4,12 @@
 
 Define the main pages of the STAMP platform. The platform is designed around
 a ticket-based workflow where incident managers (IMs) triage, analyze, and
-resolve CVEs that affect maintained products.
+resolve security issues that affect maintained products.
 
-Each CVE ingested into the system automatically generates a **Ticket** — the
-primary work unit for IMs. Tickets track the full lifecycle from initial
-triage to resolution.
+A **Ticket** is the primary work unit for IMs. Tickets may or may not be
+associated with a CVE. See `docs/features/tickets.md` for the full ticket
+specification (identification, creation pathways, lifecycle, severity
+resolution, and status transition rules).
 
 ## Pages Overview
 
@@ -22,6 +23,10 @@ triage to resolution.
 
 ## Ticket Lifecycle
 
+See `docs/features/tickets.md` for the authoritative specification of
+ticket statuses, transitions, gates, and rules. A summary is provided
+here for context.
+
 ```
 New ──→ Analysis ──→ Analyzed ──→ Resolved
  │         │
@@ -33,42 +38,22 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 
 ### States
 
-- **New**: ticket created automatically when a CVE is ingested. Not yet
-  assigned to any IM.
-- **Analysis**: assigned to an IM who is actively analyzing the CVE — filling
+- **New**: ticket created automatically (CVE ingestion, codestream
+  detection, or external source). Not yet assigned to any IM. Note:
+  manually created tickets skip this state and start directly in Analysis
+  (see `docs/features/tickets.md`, Manual Creation).
+- **Analysis**: assigned to an IM who is actively analyzing — filling
   in affectedness data for each package/codestream/product combination.
-- **Analyzed**: all required data has been filled in (affectedness status for
-  every relevant package × codestream). Ready for updates to be prepared.
+- **Analyzed**: all required data has been filled in. Ready for updates
+  to be prepared. See `docs/features/tickets.md` (Gate: Analysis →
+  Analyzed) for the full gate conditions.
 - **Resolved**: security updates have been released for all affected packages
   across all affected products.
-- **Ignored**: the CVE affects software that is not supported in our
-  products. Can only be set from New or Analysis.
-- **Duplicated**: the CVE is a duplicate of another CVE (e.g., a CNA later
-  merges two CVE IDs for the same vulnerability). Links to the original
-  ticket. Reversible: when reverted, the ticket returns to its previous state
-  and is reassigned to the IM who performed the revert.
-
-### State Transitions
-
-| From       | To         | Trigger                                    | Who            |
-|------------|------------|--------------------------------------------|----------------|
-| New        | Analysis   | Incident Manager clicks "Assign to me" or is assigned | Any Incident Manager |
-| New        | Ignored    | Incident Manager clicks "Ignore" action    | Any Incident Manager |
-| New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`) | System         |
-| Analysis   | Analyzed   | All affectedness data is complete           | Assignee        |
-| Analysis   | Ignored    | Incident Manager determines CVE is not relevant | Assignee    |
-| Analyzed   | Resolved   | All packages in final status               | Assignee        |
-| Any        | Duplicated | Incident Manager marks ticket as duplicate  | Any Incident Manager |
-| Duplicated | (previous) | Incident Manager reverts duplicate status   | Any Incident Manager (becomes new assignee) |
-| Resolved   | Analyzed   | CVSS recalculation causes products to become AFFECTED | System |
-| Resolved   | Analysis   | Package added or codestream reset to ANALYSIS | Incident Manager |
-| Analyzed   | Analysis   | Package added or codestream reset to ANALYSIS | Incident Manager |
-
-### Reassignment
-
-A ticket can be reassigned to a different Incident Manager at any time, regardless of its
-current state. Reassignment does not change the ticket status. All
-reassignments are logged in the ticket event history.
+- **Ignored**: the issue does not require action. Can only be set from
+  New or Analysis.
+- **Duplicated**: the ticket is a duplicate of another ticket. Links to
+  the original ticket. Reversible: when reverted, the ticket returns to
+  its previous state and is reassigned to the IM who performed the revert.
 
 ## Inbox
 
@@ -87,12 +72,12 @@ external sources but not yet picked up by any IM.
 
 | Column            | Description                                         |
 |-------------------|-----------------------------------------------------|
-| CVE ID            | CVE identifier (e.g., CVE-2025-1234), monospace     |
-| Severity          | Color-coded severity badge (Critical/High/Medium/Low/None). Shown only if available from sources |
-| CVSS Score        | Numeric CVSS score (resolved via the default CVSS version). Shown only if available |
+| Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID (e.g., `STAMP-42 (CVE-2025-1234)`) |
+| Severity          | Color-coded severity badge (Critical/High/Medium/Low/None). Shown only if available (from CVSS or severity_override) |
+| CVSS Score        | Numeric CVSS score (resolved via the default CVSS version). Shown only for tickets with a CVE |
 | Affected Packages | Package names resolved automatically via CPE mapping during CVE ingestion (see `docs/features/package-tracking.md`). Comma-separated, truncated if many |
-| Summary           | First ~120 characters of the CVE description         |
-| Published         | Date the CVE was published                           |
+| Summary           | First ~120 characters of the CVE description (if CVE present), or empty |
+| Published         | Date the CVE was published (if CVE present)          |
 | Actions           | Quick action buttons                                 |
 
 ### Quick Actions
@@ -128,11 +113,11 @@ Displays all tickets assigned to the currently logged-in IM.
 
 | Column            | Description                                         |
 |-------------------|-----------------------------------------------------|
-| CVE ID            | CVE identifier, monospace                           |
+| Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
 | Severity          | Color-coded severity badge                          |
 | Status            | Current ticket status badge                         |
 | Affected Packages | Package names (comma-separated, truncated)          |
-| Summary           | First ~120 characters of the CVE description        |
+| Summary           | First ~120 characters of the CVE description (if CVE present) |
 | Updated           | Last update timestamp                               |
 
 ### Filters
@@ -165,19 +150,20 @@ Displays all tickets in the system with comprehensive search and filtering.
 
 | Column            | Description                                         |
 |-------------------|-----------------------------------------------------|
-| CVE ID            | CVE identifier, monospace                           |
+| Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
 | Severity          | Color-coded severity badge                          |
 | Status            | Current ticket status badge                         |
 | Assignee          | Username of assigned IM (or "Unassigned")           |
 | Affected Packages | Package names (comma-separated, truncated)          |
-| Summary           | First ~120 characters of the CVE description        |
-| Published         | CVE published date                                  |
+| Summary           | First ~120 characters of the CVE description (if CVE present) |
+| Published         | CVE published date (if CVE present)                 |
 | Updated           | Last update timestamp                               |
 
 ### Search
 
 Free-text search across:
-- CVE ID
+- `STAMP-{n}` identifier
+- CVE ID (if present)
 - CVE description
 - Package names
 
@@ -229,11 +215,15 @@ The page is divided into the following sections:
 
 #### Header
 
-- **CVE ID**: prominent display, monospace
+- **Ticket ID**: `STAMP-{n}` in prominent display, monospace. If the
+  ticket has an associated CVE, the CVE ID is shown alongside (e.g.,
+  `STAMP-42 — CVE-2024-1234`)
 - **Status badge**: color-coded current status
-- **Severity badge**: color-coded severity level, always read-only
-  (derived from CVSS assessments via the resolution cascade — see
-  `docs/features/cvss-scoring.md`)
+- **Severity badge**: color-coded severity level. For tickets with a CVE,
+  always read-only (derived from CVSS assessments via the resolution
+  cascade — see `docs/features/cvss-scoring.md`). For tickets without a
+  CVE, editable by the IM (sets `severity_override` — see
+  `docs/features/tickets.md`, Severity Resolution)
 - **Assignee**: current assignee with option to reassign
 - **Action buttons**: context-dependent based on current status (see below)
 
@@ -280,16 +270,18 @@ message: **"This ticket has been deleted. Contact an admin if you think
 this is an error."** No ticket data is shown. The API returns 410 Gone.
 
 **Analysis → Analyzed gates**: the "Mark as Analyzed" action is available
-only when ALL of the following conditions are met:
-
-1. All affectedness data is complete (no codestreams in Analysis status)
-2. SUSE CVSS v3.1 assessment has been provided by the IM
-3. SUSE CVSS v4.0 assessment has been provided by the IM
+only when ALL gate conditions are met. See `docs/features/tickets.md`
+(Gate: Analysis → Analyzed) for the full list of conditions, which
+includes: at least one package added, all affectedness data complete,
+severity set, and SUSE CVSS assessments provided (for tickets with CVE).
 
 If any gate is not met, the button is disabled with a tooltip explaining
 which requirement is missing.
 
 #### CVE Information Card
+
+Shown only when the ticket has an associated CVE. Hidden for tickets
+without a CVE.
 
 - **Description**: full CVE description text
 - **Published date**: when the CVE was published
@@ -298,6 +290,10 @@ which requirement is missing.
   with fetch timestamps
 
 #### CVSS Card
+
+Shown only when the ticket has an associated CVE. Hidden for tickets
+without a CVE (severity is set via `severity_override` instead — see
+`docs/features/tickets.md`, Severity Resolution).
 
 A dedicated card displaying CVSS assessments from multiple providers,
 organized by CVSS version in tabs. See `docs/features/cvss-scoring.md`
@@ -352,15 +348,15 @@ Ticket Lifecycle Integration).
 
 Shown only when the ticket is in Duplicated state:
 
-- "This ticket is a duplicate of [CVE-XXXX-YYYY]" with link to the original
-  ticket
+- "This ticket is a duplicate of [STAMP-{n}]" with link to the original
+  ticket. If the original has a CVE, also shows the CVE ID
 - Button: "Revert duplicate status" — restores the previous state and
   reassigns the ticket to the IM who clicks the button
 - Confirmation dialog before reverting
 
 Shown on the original ticket when other tickets reference it as duplicate:
 
-- "Duplicates: [CVE-XXXX-AAAA], [CVE-XXXX-BBBB]" with links
+- "Duplicates: [STAMP-{n1}], [STAMP-{n2}]" with links
 
 #### Event History (Tab)
 

@@ -17,10 +17,13 @@ Read-only access to public data:
 ### Incident Manager
 
 Operates the triage and assessment workflow:
+- Create tickets manually (see `docs/features/tickets.md`)
 - Assign and reassign tickets
 - Change ticket status (New, Analysis, Analyzed, Resolved, Ignored,
   Duplicated)
 - Mark tickets as duplicate and revert duplicate status
+- Associate a CVE with a ticket (see `docs/features/tickets.md`)
+- Set and update severity override for tickets without CVE
 - Add and remove packages from tickets
 - Change codestream and product affectedness status
 - Add, edit, and delete SUSE CVSS assessments
@@ -49,9 +52,12 @@ capabilities must hold both roles.
 
 | Action                           | Admin | IM  | Unauth |
 |----------------------------------|-------|-----|--------|
+| Create ticket manually           | No    | Yes | No     |
 | Assign/reassign ticket           | No    | Yes | No     |
 | Change ticket status             | No    | Yes | No     |
 | Mark as duplicate / revert       | No    | Yes | No     |
+| Associate CVE with ticket        | No    | Yes | No     |
+| Set/update severity override     | No    | Yes | No     |
 | Add/remove packages              | No    | Yes | No     |
 | Change codestream/product status | No    | Yes | No     |
 | Add/edit/delete SUSE CVSS        | No    | Yes | No     |
