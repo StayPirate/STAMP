@@ -349,9 +349,9 @@ affectedness status. See `docs/features/package-tracking.md` (UI
 Requirements section) for the full specification of the tree layout,
 status dropdowns, eligibility indicators, and color coding.
 
-The ticket can transition to Analyzed only when all codestreams have a
-status other than Analysis (see `docs/features/package-tracking.md`,
-Ticket Lifecycle Integration).
+The ticket can transition to Analyzed only when all codestreams and
+products have a status other than Analysis (see
+`docs/features/package-tracking.md`, Ticket Lifecycle Integration).
 
 #### Duplicate Information
 

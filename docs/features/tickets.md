@@ -273,11 +273,10 @@ when ALL of the following conditions are met:
 
 1. **At least one package**: the ticket must have at least one package
    added (at least one `TicketPackageCodestream` record exists)
-2. **All affectedness data complete**: no `TicketPackageCodestream`
-   records in `ANALYSIS` status. Note: `AFFECTED` is non-final but is
-   allowed — it indicates the IM has made a decision
-3. **All products in final status**: all `TicketPackageProduct` records
-   must be in a final status
+2. **All codestream affectedness decided**: no `TicketPackageCodestream`
+   records in `ANALYSIS` status
+3. **All product affectedness decided**: no `TicketPackageProduct`
+   records in `ANALYSIS` status
 4. **Severity set**: the ticket must have a determined severity (not
    `None`). For tickets with CVE, this is derived from CVSS. For tickets
    without CVE, `severity_override` must be set by the IM
@@ -292,9 +291,9 @@ every operation that modifies gate-relevant data. There is no manual
 conditions are satisfied.
 
 Conversely, if any of these conditions ceases to be met (e.g., a package
-is added with codestreams in ANALYSIS, a SUSE CVSS assessment is deleted,
-or severity becomes undetermined), the ticket automatically transitions
-back from Analyzed to Analysis.
+is added with codestreams or products in ANALYSIS, a SUSE CVSS assessment
+is deleted, or severity becomes undetermined), the ticket automatically
+transitions back from Analyzed to Analysis.
 
 ### Gate: Analyzed → Resolved
 

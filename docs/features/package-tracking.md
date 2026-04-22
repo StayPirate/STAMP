@@ -965,11 +965,9 @@ automatically re-evaluates ticket status after each change (see
 affectedness-related conditions are summarized here for context:
 
 - **Analysis → Analyzed** (automatic): at least one package must be
-  added, all TicketPackageCodestream records must have a non-ANALYSIS
-  status, and all TicketPackageProduct records must be in a final status.
-  Note: `AFFECTED` is non-final but is allowed at the codestream level
-  since it indicates the IM has made a decision. Additional gate
-  conditions (severity, CVSS) are defined in `docs/features/tickets.md`.
+  added, no TicketPackageCodestream or TicketPackageProduct records may
+  be in `ANALYSIS` status. Additional gate conditions (severity, CVSS)
+  are defined in `docs/features/tickets.md`.
 - **Analyzed → Resolved** (automatic): all TicketPackageCodestream and
   TicketPackageProduct records must have status `RELEASED`,
   `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.

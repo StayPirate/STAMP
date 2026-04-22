@@ -382,8 +382,8 @@ Summary:
 - New -> Analysis (manual: assignment or any modifying operation)
 - New -> Ignored (manual or automatic: NVD rejection)
 - Analysis -> Analyzed (automatic: all gates met — at least one package,
-  all affectedness complete, severity set, SUSE CVSS provided if CVE
-  present)
+  no codestream or product records in ANALYSIS, severity set, SUSE CVSS
+  provided if CVE present)
 - Analysis -> Ignored (manual)
 - Analyzed -> Resolved (automatic: all packages in final status)
 - Analyzed -> Analysis (automatic: gate conditions no longer met)
