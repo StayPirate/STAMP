@@ -19,6 +19,9 @@ resolution, and status transition rules).
 | My Tickets       | `/my-tickets`     | Tickets assigned to the current IM               |
 | All Tickets      | `/tickets`        | All tickets with search and filters              |
 | Ticket Detail    | `/tickets/:id`    | Full ticket view with CVE data and actions       |
+| Fetchers         | `/fetchers`       | Fetcher dashboard (see `docs/features/fetcher-dashboard.md`) |
+| Fetcher Detail   | `/fetchers/:name` | Individual fetcher detail (see `docs/features/fetcher-dashboard.md`) |
+| Admin Settings   | `/admin/settings` | System settings (see `docs/features/admin.md`)   |
 | Login            | `/login`          | Authentication page                              |
 
 ## Ticket Lifecycle
@@ -93,8 +96,8 @@ By `published` date descending (most recent first).
 
 ### Empty State
 
-When no new tickets are available, show a message: "No new CVEs to triage.
-Check back later or sync CVE sources manually."
+When no new tickets are available, show a message: "No new tickets to
+triage. Check back later or sync CVE sources manually."
 
 ## My Tickets
 
@@ -122,8 +125,9 @@ Displays all tickets assigned to the currently logged-in IM.
 
 ### Filters
 
-- **Status**: filter by ticket status (default: all active states — Analysis,
-  Analyzed)
+- **Status**: filter by ticket status (default: in-progress states —
+  Analysis, Analyzed). Note: tickets in `New` status never appear on this
+  page because they have no assignee
 
 ### Default Sort
 
@@ -143,6 +147,11 @@ Displays all tickets in the system with comprehensive search and filtering.
 
 - Page title: "All Tickets"
 - Total ticket count
+- "Create Ticket" button (visible only to Incident Managers). Opens a
+  dialog with an optional severity selector (Critical, High, Medium, Low,
+  None). On confirmation, calls `POST /api/v1/tickets` and redirects to
+  the newly created ticket's detail page. See `docs/features/tickets.md`
+  (Manual Creation) for the full creation flow
 - Search bar + filter controls
 - Sortable, paginated table
 
@@ -200,7 +209,9 @@ By `published` date descending.
 
 ### Pagination
 
-Default 25 tickets per page. Configurable: 25, 50, 100.
+Default 25 tickets per page. Configurable: 25, 50, 100. The UI always
+sends an explicit `per_page` parameter to the API (the API default of 20
+is not used).
 
 ## Ticket Detail
 
@@ -216,8 +227,10 @@ The page is divided into the following sections:
 #### Header
 
 - **Ticket ID**: `STAMP-{n}` in prominent display, monospace. If the
-  ticket has an associated CVE, the CVE ID is shown alongside (e.g.,
-  `STAMP-42 — CVE-2024-1234`)
+  ticket has an associated CVE, the CVE ID is shown alongside with an
+  em-dash separator (e.g., `STAMP-42 — CVE-2024-1234`). Note: ticket
+  list tables use parentheses instead (e.g., `STAMP-42 (CVE-2024-1234)`)
+  for compactness
 - **Status badge**: color-coded current status
 - **Severity badge**: color-coded severity level. For tickets with a CVE,
   always read-only (derived from CVSS assessments via the resolution

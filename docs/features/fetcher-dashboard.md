@@ -118,10 +118,18 @@ equivalent dynamic scheduler).
 
 ### Concurrency Control
 
-Only one instance of a given fetcher can run at a time. Before invoking
-`execute()`, the `run_fetcher` task MUST check whether a `FetcherRun`
-record with `status = running` already exists for the requested
-`fetcher_name`.
+Only one instance of a given fetcher can run at a time. The concurrency
+check is performed at **two levels**:
+
+1. **API level** (for manual triggers): the trigger endpoint checks for
+   an active `FetcherRun` **synchronously** before enqueuing the Celery
+   task. If a run is already active, the API returns 409 Conflict
+   immediately — no task is enqueued.
+2. **Task level** (for scheduled triggers): before invoking `execute()`,
+   the `run_fetcher` task checks whether a `FetcherRun` record with
+   `status = running` already exists for the requested `fetcher_name`.
+
+At the task level:
 
 - **If a run is already active**: the new attempt is discarded silently.
   No `FetcherRun` record is created. An application-level log message is
@@ -549,15 +557,34 @@ Enqueues a manual run of the specified fetcher.
 
 **Side effects**:
 - Creates a `FetcherAuditLog` record with action `triggered`
-- Creates a `FetcherRun` record with `triggered_by = manual`
+- Creates a `FetcherRun` record **synchronously** (before enqueuing the
+  Celery task) with `status = running` and `triggered_by = manual`. This
+  ensures the `run_id` is available in the API response. The
+  `BaseFetcher.run()` method detects the existing `FetcherRun` record
+  (matched by `run_id`) and updates it rather than creating a new one
 
 **Note on existing trigger endpoints**: some feature specs define
 domain-specific trigger endpoints (e.g., `POST /api/v1/cves/sync` in
 `docs/features/cve-tracking.md`). These endpoints are **convenience
 aliases** that internally delegate to the same `run_fetcher` Celery task.
 They remain valid for backward compatibility and domain-specific
-permissions but the generic `/fetchers/{name}/trigger` endpoint is the
-canonical way to trigger any fetcher from the dashboard.
+permissions (e.g., `POST /api/v1/cves/sync` requires the Incident
+Manager role, while this generic endpoint requires Admin). The generic
+`/fetchers/{name}/trigger` endpoint is the canonical way to trigger any
+fetcher from the dashboard.
+
+Convenience alias endpoints MUST:
+
+- Apply the same concurrency check (reject with 409 if the fetcher is
+  already running)
+- Apply the same enabled check (reject with 409 if the fetcher is
+  disabled)
+- Create a `FetcherAuditLog` record with action `triggered` and the
+  acting user's ID
+- Create the `FetcherRun` record with `triggered_by = manual`
+
+This ensures consistent behavior regardless of which entry point is
+used to trigger the fetcher.
 
 ### Get Fetcher Config (Admin Only)
 
