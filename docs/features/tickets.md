@@ -314,7 +314,8 @@ features behave differently:
 | Severity | Manual via `severity_override` (editable by IM) |
 | Release tracking (codestream) | Not applicable — codestream detection relies on CVE-ID in IBS diffs |
 | Release tracking (product) | Not applicable — product detection relies on CVE-ID in `updateinfo.xml` |
-| NVD rejection handling | Not applicable |
+| NVD rejection handling | Not applicable — no CVE means no `vulnStatus` changes |
+| NVD rejection revert handling | Not applicable |
 | CVE Information UI section | Hidden |
 | CVSS Card UI section | Hidden |
 | Gate: SUSE CVSS required | Not applicable — severity is set via `severity_override` instead |
