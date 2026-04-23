@@ -524,6 +524,61 @@ requirements.
 
 Requires the Incident Manager role.
 
+## Service Architecture
+
+CVSS logic is split across two service modules with distinct
+responsibilities:
+
+### `services/cvss.py` — Pure Resolution Logic
+
+This module contains **read-only, side-effect-free** functions that
+implement the CVSS resolution and scoring algorithms. These functions
+never mutate the database — they receive data and return results.
+
+| Function                | Input                                      | Output                          | Description                                              |
+|-------------------------|--------------------------------------------|---------------------------------|----------------------------------------------------------|
+| `resolve_cvss_score`    | CVE assessments, default CVSS version      | (score, provider) or None       | Implements the 3-step resolution cascade                 |
+| `calculate_severity`    | CVSS score (float)                         | Severity enum                   | Maps score to severity using the rating scale            |
+| `validate_cvss_vector`  | Vector string, CVSS version                | Parsed metrics + calculated score | Validates vector format and computes the base score     |
+
+These functions are used in two contexts:
+
+1. **Read path** (API `GET .../cvss`): to compute the `resolved_score`,
+   `resolved_provider`, and `resolved_severity` response fields without
+   any side effects
+2. **Write path** (via `ticket_mutations`): as building blocks for the
+   recalculation cascade — `ticket_mutations` calls these functions to
+   determine the new severity and eligibility, then persists the results
+
+### `services/ticket_mutations.py` — CVSS Mutations
+
+All operations that create, update, or delete `CVECVSSAssessment`
+records MUST go through the `ticket_mutations` module (see
+`docs/features/tickets.md`, Ticket Mutations Module). This module:
+
+1. Persists the `CVECVSSAssessment` record change
+2. Calls `cvss.resolve_cvss_score()` to determine the new resolved score
+3. Calls `cvss.calculate_severity()` to derive the new severity
+4. Updates `CVE.severity` if it changed
+5. Re-evaluates product eligibility using the new score
+6. Creates `TicketEvent` records for each change
+7. Calls `evaluate_ticket_status()` to re-evaluate the ticket status
+
+All steps execute within the **same database transaction** as the
+triggering change (atomicity guarantee).
+
+The resolution cascade logic is **never reimplemented** inside
+`ticket_mutations` — it always delegates to `services/cvss.py`.
+
+### `services/settings.py` — System Settings
+
+The default CVSS version is read from the `SystemSetting` table via a
+dedicated settings service module. `services/cvss.py` does not access
+`SystemSetting` directly — the caller (API endpoint or
+`ticket_mutations` function) resolves the default version and passes it
+as a parameter. This keeps `cvss.py` free of database dependencies and
+makes it straightforward to test with any CVSS version.
+
 ## Cascade Execution Model
 
 The recalculation cascade is a **synchronous service-layer operation**
@@ -532,10 +587,22 @@ triggered it. This guarantees atomicity: if the CVSS change is committed,
 the severity, eligibility, and ticket state adjustments are committed
 together.
 
-**Exception**: when the Admin changes the default CVSS version (see
-`docs/features/admin.md`), the cascade must run for all active tickets.
-This batch operation is executed as an asynchronous Celery task to avoid
-blocking the API response.
+**Exception — batch recalculation on default version change**: when the
+Admin changes the default CVSS version (see `docs/features/admin.md`),
+the cascade must run for all active tickets. This batch operation is
+executed as an asynchronous Celery task to avoid blocking the API
+response. The task:
+
+1. Iterates over all active tickets (New, Analysis, Analyzed;
+   `deleted_at IS NULL`)
+2. For each ticket, calls the same `ticket_mutations` functions used for
+   individual CVSS changes — no separate batch-optimized code path
+3. Each ticket is processed in an **independent database transaction**
+   (isolation: a failure on one ticket does not roll back others)
+4. On error for a single ticket, the task logs the error with the
+   ticket ID and continues with the remaining tickets
+5. On completion, the task reports the total number of tickets processed,
+   successes, and failures
 
 ## Background Tasks
 

@@ -386,6 +386,13 @@ External services (CVSS sync, release detection, package tracking,
 API endpoints) MUST use these functions instead of modifying
 ticket-related models directly.
 
+**Relationship with `services/cvss.py`**: the CVSS-related functions in
+`ticket_mutations` (assessment creation, update, deletion) delegate
+CVSS resolution and severity calculation to pure functions in
+`services/cvss.py`. The resolution cascade logic is never reimplemented
+inside `ticket_mutations`. See `docs/features/cvss-scoring.md` (Service
+Architecture) for the full responsibility split between the two modules.
+
 **Relationship with `add_package_to_ticket`**: the centralized package
 addition function defined in `docs/features/package-tracking.md` handles
 SMELT resolution and external I/O. It delegates the actual creation of

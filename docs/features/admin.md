@@ -40,8 +40,11 @@ When the Admin changes the default CVSS version, STAMP MUST:
 4. Create `TicketEvent` records for every severity or eligibility change
 
 This operation may take time for a large number of active tickets. It
-should be executed as a background task (Celery) with progress feedback
-to the Admin.
+is executed as a background task (Celery). The task reuses the same
+`ticket_mutations` functions used for individual CVSS changes — each
+ticket is processed in an independent database transaction. See
+`docs/features/cvss-scoring.md` (Cascade Execution Model) for the
+full batch execution specification.
 
 **Warning**: changing the default CVSS version is a significant operation.
 The Admin UI should display a confirmation dialog explaining the impact
