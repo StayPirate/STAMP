@@ -867,7 +867,7 @@ A simple chronological list of admin actions from `FetcherAuditLog`:
 
 ## Access Control
 
-| Action | Admin | IM | Unauth |
+| Action | Admin | VA | Unauth |
 |---|---|---|---|
 | View fetcher list | Yes | Yes | Yes |
 | View fetcher detail + charts | Yes | Yes | Yes |

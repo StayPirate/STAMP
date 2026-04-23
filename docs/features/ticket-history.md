@@ -21,21 +21,21 @@ fields populated according to this table:
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` |
 |---|---|---|---|---|---|
-| `status_change` | Ticket status transitions (manual or system-initiated) | IM user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional IM note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) |
-| `assignment` | Ticket assigned or reassigned | IM user | Previous assignee username or `NULL` | New assignee username | Optional IM note |
-| `duplicate_set` | Ticket marked as duplicate | IM user | `NULL` | `STAMP-{n}` identifier of the original ticket | Optional IM note |
-| `duplicate_removed` | Duplicate mark reverted | IM user | `STAMP-{n}` identifier of the original ticket | `NULL` | Optional IM note |
-| `package_added` | Package added to ticket (manual or automatic) | IM user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
-| `package_removed` | IM removes package from ticket | IM user | Package name | `NULL` | `NULL` |
-| `codestream_status_changed` | IM changes codestream status | IM user | Old status | New status | `package_name:codestream_name` |
-| `product_status_overridden` | IM overrides product status | IM user | Old status | New status | `package_name:product_id` |
+| `status_change` | Ticket status transitions (manual or system-initiated) | VA user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional VA note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) |
+| `assignment` | Ticket assigned or reassigned | VA user | Previous assignee username or `NULL` | New assignee username | Optional VA note |
+| `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `STAMP-{n}` identifier of the original ticket | Optional VA note |
+| `duplicate_removed` | Duplicate mark reverted | VA user | `STAMP-{n}` identifier of the original ticket | `NULL` | Optional VA note |
+| `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
+| `package_removed` | VA removes package from ticket | VA user | Package name | `NULL` | `NULL` |
+| `codestream_status_changed` | VA changes codestream status | VA user | Old status | New status | `package_name:codestream_name` |
+| `product_status_overridden` | VA overrides product status | VA user | Old status | New status | `package_name:product_id` |
 | `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |
 | `ticket_created` | Ticket created (CVE ingestion, codestream detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) |
-| `cve_associated` | CVE associated with a ticket that previously had no CVE | IM user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` |
+| `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` |
 | `cve_removed` | Admin removed CVE association from a ticket | Admin user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | Optional admin note |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
-| `cvss_assessment_changed` | CVSS assessment added, modified, or removed | IM user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
+| `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
 | `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 | `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note |
@@ -47,7 +47,7 @@ fields populated according to this table:
 - `old_value` and `new_value` store human-readable strings. For enum values,
   store the enum name (e.g., `AFFECTED`, `NOT_AFFECTED`). For user
   references, store the username.
-- `comment` is used for optional IM notes on user actions, and for structured
+- `comment` is used for optional VA notes on user actions, and for structured
   context on system actions (colon-separated identifiers as shown above).
 - All events include an implicit `created_at` timestamp set by the database
   default.

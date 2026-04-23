@@ -66,7 +66,7 @@ A ticket may optionally be associated with a CVE.
 
 ### Associating a CVE Later
 
-An IM can associate a CVE with a ticket that does not yet have one, via
+An VA can associate a CVE with a ticket that does not yet have one, via
 `POST /api/v1/tickets/{ticket_id}/associate-cve`.
 
 **Rules**:
@@ -95,7 +95,7 @@ An IM can associate a CVE with a ticket that does not yet have one, via
 ### Dissociating a CVE
 
 Dissociating a CVE from a ticket is restricted to the **Admin role**.
-Incident Managers cannot remove a CVE from a ticket. If an IM believes
+Vulnerability Analysts cannot remove a CVE from a ticket. If an VA believes
 a CVE was associated in error, they should request an Admin to remove it.
 
 An Admin can remove a CVE from a ticket via
@@ -145,10 +145,10 @@ for the full flow.
 
 ### Manual Creation
 
-An Incident Manager can create a ticket manually via
+An Vulnerability Analyst can create a ticket manually via
 `POST /api/v1/tickets` or through the UI.
 
-- `cve_id`: optionally, the IM may specify a CVE-ID string (e.g.,
+- `cve_id`: optionally, the VA may specify a CVE-ID string (e.g.,
   `"CVE-2024-1234"`) at creation time. If omitted, the ticket is
   created without a CVE (can be associated later)
 - When a CVE-ID is provided:
@@ -174,7 +174,7 @@ An Incident Manager can create a ticket manually via
   3. (if CVE-ID provided) `event_type = cve_associated`,
      `user_id = creating user`, `new_value = CVE-ID string`
 
-**Required role**: Incident Manager.
+**Required role**: Vulnerability Analyst.
 
 The UI must provide a mechanism to create tickets manually (button
 placement TBD in `docs/features/pages.md`).
@@ -210,16 +210,16 @@ layer.
 
 - `Ticket.severity_override`: ENUM (Critical, High, Medium, Low, None),
   nullable
-- Set manually by the IM via the API or UI
+- Set manually by the VA via the API or UI
 - Only used when `cve_id IS NULL`
 - When a CVE is associated later, the automatic severity from CVSS takes
   over and `severity_override` is ignored (but not deleted — it serves
-  as a historical record of the IM's initial assessment)
+  as a historical record of the VA's initial assessment)
 
 ### UI Behavior
 
 - **Ticket with CVE**: severity badge is read-only (derived from CVSS)
-- **Ticket without CVE**: severity is editable by the IM (sets
+- **Ticket without CVE**: severity is editable by the VA (sets
   `severity_override`)
 - In both cases, the UI shows a single severity badge — the user is not
   aware of the internal resolution mechanism
@@ -230,8 +230,8 @@ layer.
 
 | Status     | Description |
 |------------|-------------|
-| New        | Created automatically (CVE ingestion or external source). Not yet assigned to any IM. |
-| Analysis   | Assigned to an IM who is actively analyzing — filling in affectedness data. |
+| New        | Created automatically (CVE ingestion or external source). Not yet assigned to any VA. |
+| Analysis   | Assigned to an VA who is actively analyzing — filling in affectedness data. |
 | Analyzed   | All required data has been filled in. Ready for updates to be prepared. |
 | Resolved   | Security updates have been released for all affected packages across all products. |
 | Ignored    | The issue does not require action. Can only be set from New or Analysis. |
@@ -254,17 +254,17 @@ New ──→ Analysis ──────────→ Analyzed ────�
 
 | From       | To         | Trigger                                                | Mode               | Who                                    |
 |------------|------------|--------------------------------------------------------|--------------------|----------------------------------------|
-| New        | Analysis   | IM assigned, or any modifying operation on unassigned ticket | Manual (implicit)  | Any IM                                 |
-| New        | Ignored    | IM clicks "Ignore" action                              | Manual             | Any IM                                 |
+| New        | Analysis   | VA assigned, or any modifying operation on unassigned ticket | Manual (implicit)  | Any VA                                 |
+| New        | Ignored    | VA clicks "Ignore" action                              | Manual             | Any VA                                 |
 | New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`)          | Automatic          | System                                 |
 | Analysis   | Analyzed   | All "Analyzed" gate conditions met                     | Automatic          | System                                 |
-| Analysis   | Ignored    | IM determines issue is not relevant                    | Manual             | Assignee                               |
+| Analysis   | Ignored    | VA determines issue is not relevant                    | Manual             | Assignee                               |
 | Analyzed   | Resolved   | All "Resolved" gate conditions met                     | Automatic          | System                                 |
-| Analyzed   | Analysis   | "Analyzed" gate conditions no longer met               | Automatic          | System (triggered by IM or system action) |
-| Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by IM or system action) |
-| Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by IM or system action) |
-| Any        | Duplicated | IM marks ticket as duplicate                           | Manual             | Any IM                                 |
-| Duplicated | (previous) | IM reverts duplicate status                            | Manual             | Any IM (becomes new assignee)          |
+| Analyzed   | Analysis   | "Analyzed" gate conditions no longer met               | Automatic          | System (triggered by VA or system action) |
+| Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by VA or system action) |
+| Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
+| Any        | Duplicated | VA marks ticket as duplicate                           | Manual             | Any VA                                 |
+| Duplicated | (previous) | VA reverts duplicate status                            | Manual             | Any VA (becomes new assignee)          |
 
 ### Gate: Analysis → Analyzed
 
@@ -279,8 +279,8 @@ when ALL of the following conditions are met:
    records in `ANALYSIS` status
 4. **Severity set**: the ticket must have a determined severity (not
    `None`). For tickets with CVE, this is derived from CVSS. For tickets
-   without CVE, `severity_override` must be set by the IM
-5. **SUSE CVSS provided** (only for tickets with CVE): the IM must have
+   without CVE, `severity_override` must be set by the VA
+5. **SUSE CVSS provided** (only for tickets with CVE): the VA must have
    provided BOTH SUSE CVSS v3.1 AND v4.0 assessments (see
    `docs/features/cvss-scoring.md`)
 
@@ -308,7 +308,7 @@ There is no manual "Mark as Resolved" action.
 
 Conversely, if any package or product transitions to a non-final status
 (e.g., CVSS recalculation causes a product to move from
-`AFFECTED_RESOLVED` to `AFFECTED`, or an IM resets a product status
+`AFFECTED_RESOLVED` to `AFFECTED`, or an VA resets a product status
 from a final state to `AFFECTED`), the ticket automatically transitions
 back from Resolved to Analyzed (or to Analysis, if the "Analyzed" gates
 are also no longer met).
@@ -335,7 +335,7 @@ naturally when gate conditions are no longer met:
 
 All automatic transitions create a `TicketEvent` with `user_id = NULL`
 (system action), even when the underlying data change was initiated by
-an IM.
+an VA.
 
 ### Centralized Status Evaluation
 
@@ -446,15 +446,15 @@ status will not match the expected state.
 
 ### Reassignment
 
-A ticket can be reassigned to a different IM at any time, regardless of
+A ticket can be reassigned to a different VA at any time, regardless of
 its current status. Reassignment does not change the ticket status. All
 reassignments are logged in the ticket event history.
 
 ### Auto-Assignment on Unassigned Tickets
 
-When an IM performs any modifying operation on a ticket with
+When an VA performs any modifying operation on a ticket with
 `assignee_id = NULL`, the ticket is automatically assigned to the acting
-IM. A `TicketEvent` with `event_type = assignment` is created atomically
+VA. A `TicketEvent` with `event_type = assignment` is created atomically
 in the same transaction as the modifying operation.
 
 If the ticket is in `New` status and the operation does not include an
@@ -467,7 +467,7 @@ transition and the assignee is set, but the ticket does not transition
 to `Analysis` first.
 
 This rule does not apply to system operations (background tasks,
-automated ingestion). Only IM-initiated actions trigger
+automated ingestion). Only VA-initiated actions trigger
 auto-assignment.
 
 ### Duplicate Handling
@@ -478,14 +478,14 @@ auto-assignment.
   - `status` is set to `Duplicated`
   - `duplicate_of_id` is set to the original ticket's ID
   - `previous_status` stores the status before duplication
-  - If the ticket had no assignee (`assignee_id = NULL`), the acting IM
+  - If the ticket had no assignee (`assignee_id = NULL`), the acting VA
     becomes the assignee (see
     [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
 - When reverted:
   - `status` is restored to `previous_status`
   - `duplicate_of_id` is cleared
   - `previous_status` is cleared
-  - The ticket is reassigned to the IM who performed the revert
+  - The ticket is reassigned to the VA who performed the revert
 
 ## Soft-Delete
 
@@ -519,7 +519,7 @@ features behave differently:
 |---------|----------|
 | CVSS scoring | Not applicable — no CVE means no CVSS assessments |
 | CVSS sync (NVD, Red Hat) | Not applicable — ticket is skipped |
-| Severity | Manual via `severity_override` (editable by IM) |
+| Severity | Manual via `severity_override` (editable by VA) |
 | Release tracking (codestream) | Not applicable — codestream detection relies on CVE-ID in IBS diffs |
 | Release tracking (product) | Not applicable — product detection relies on CVE-ID in `updateinfo.xml` |
 | NVD rejection handling | Not applicable — no CVE means no `vulnStatus` changes |
@@ -530,7 +530,7 @@ features behave differently:
 | Critical CVE notification | Not applicable |
 
 Packages, codestreams, and products can still be added and managed
-normally. The IM can set affectedness statuses and the ticket can
+normally. The VA can set affectedness statuses and the ticket can
 progress through the full lifecycle.
 
 ## API Endpoints
@@ -558,7 +558,7 @@ Request body:
   `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch")
 - `severity` (string, optional): initial severity override (Critical,
   High, Medium, Low, None). If omitted, severity is `None` until set
-  by the IM. Ignored if `cve_id` is provided (severity is derived from
+  by the VA. Ignored if `cve_id` is provided (severity is derived from
   CVSS)
 
 Response: the created ticket object (201 Created). Includes
@@ -571,7 +571,7 @@ Error responses:
   includes `existing_ticket_id` (UUID) to allow the frontend to link
   to the existing ticket
 
-Requires the Incident Manager role.
+Requires the Vulnerability Analyst role.
 
 ### Associate CVE
 
@@ -605,7 +605,7 @@ Error responses:
   includes `existing_ticket_id` (UUID) to allow the frontend to link
   to the existing ticket
 
-Requires the Incident Manager role.
+Requires the Vulnerability Analyst role.
 
 ### Remove CVE from Ticket (Admin Only)
 
@@ -652,7 +652,7 @@ Error responses:
 - 400: ticket has an associated CVE (severity is derived from CVSS, not
   manually settable)
 
-Requires the Incident Manager role.
+Requires the Vulnerability Analyst role.
 
 ### Other Ticket Endpoints
 
@@ -673,7 +673,7 @@ table:
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ID, exposed as `STAMP-{n}` |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
 | status            | ENUM        | NOT NULL, DEFAULT New        | Ticket status |
-| assignee_id       | UUID        | FK(user.id), nullable        | Assigned IM |
+| assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |
 | severity_override | ENUM        | nullable                     | Manual severity (Critical, High, Medium, Low, None). Used when `cve_id IS NULL` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | previous_status   | ENUM        | nullable                     | Status before Duplicated |
@@ -686,7 +686,7 @@ table:
 - Viewing ticket lists and details: publicly accessible (no
   authentication required)
 - Creating tickets, assigning, changing status, associating CVE,
-  managing packages, setting severity override: Incident Manager role
+  managing packages, setting severity override: Vulnerability Analyst role
 - Removing a CVE from a ticket: Admin role
 - Soft-deleting and restoring tickets: Admin role
 - See `docs/features/rbac.md` for the full permission model

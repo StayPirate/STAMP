@@ -3,10 +3,10 @@
 ## Purpose
 
 Define the main pages of the STAMP platform. The platform is designed around
-a ticket-based workflow where incident managers (IMs) triage, analyze, and
+a ticket-based workflow where vulnerability analysts (VAs) triage, analyze, and
 resolve security issues that affect maintained products.
 
-A **Ticket** is the primary work unit for IMs. Tickets may or may not be
+A **Ticket** is the primary work unit for VAs. Tickets may or may not be
 associated with a CVE. See `docs/features/tickets.md` for the full ticket
 specification (identification, creation pathways, lifecycle, severity
 resolution, and status transition rules).
@@ -16,7 +16,7 @@ resolution, and status transition rules).
 | Page             | Route             | Description                                      |
 |------------------|-------------------|--------------------------------------------------|
 | Inbox            | `/inbox`          | New tickets awaiting triage                      |
-| My Tickets       | `/my-tickets`     | Tickets assigned to the current IM               |
+| My Tickets       | `/my-tickets`     | Tickets assigned to the current VA               |
 | All Tickets      | `/tickets`        | All tickets with search and filters              |
 | Ticket Detail    | `/tickets/:id`    | Full ticket view with CVE data and actions       |
 | Fetchers         | `/fetchers`       | Fetcher dashboard (see `docs/features/fetcher-dashboard.md`) |
@@ -42,10 +42,10 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
 ### States
 
 - **New**: ticket created automatically (CVE ingestion, codestream
-  detection, or external source). Not yet assigned to any IM. Note:
+  detection, or external source). Not yet assigned to any VA. Note:
   manually created tickets skip this state and start directly in Analysis
   (see `docs/features/tickets.md`, Manual Creation).
-- **Analysis**: assigned to an IM who is actively analyzing — filling
+- **Analysis**: assigned to an VA who is actively analyzing — filling
   in affectedness data for each package/codestream/product combination.
 - **Analyzed**: all required data has been filled in. Ready for updates
   to be prepared. See `docs/features/tickets.md` (Gate: Analysis →
@@ -56,14 +56,14 @@ New ──→ Analysis ──→ Analyzed ──→ Resolved
   New or Analysis.
 - **Duplicated**: the ticket is a duplicate of another ticket. Links to
   the original ticket. Reversible: when reverted, the ticket returns to
-  its previous state and is reassigned to the IM who performed the revert.
+  its previous state and is reassigned to the VA who performed the revert.
 
 ## Inbox
 
 **Route**: `/inbox`
 
 Displays all tickets in **New** state — CVEs that have been fetched from
-external sources but not yet picked up by any IM.
+external sources but not yet picked up by any VA.
 
 ### Layout
 
@@ -85,8 +85,8 @@ external sources but not yet picked up by any IM.
 
 ### Quick Actions
 
-- **Assign to me**: assigns the ticket to the current IM and transitions
-  status to Analysis. The IM is redirected to the ticket detail page.
+- **Assign to me**: assigns the ticket to the current VA and transitions
+  status to Analysis. The VA is redirected to the ticket detail page.
 - **Ignore**: transitions status to Ignored. The ticket disappears from the
   inbox. A confirmation dialog is shown before the action.
 
@@ -103,7 +103,7 @@ triage. Check back later or sync CVE sources manually."
 
 **Route**: `/my-tickets`
 
-Displays all tickets assigned to the currently logged-in IM.
+Displays all tickets assigned to the currently logged-in VA.
 
 ### Layout
 
@@ -147,7 +147,7 @@ Displays all tickets in the system with comprehensive search and filtering.
 
 - Page title: "All Tickets"
 - Total ticket count
-- "Create Ticket" button (visible only to Incident Managers). Opens a
+- "Create Ticket" button (visible only to Vulnerability Analysts). Opens a
   dialog with an optional severity selector (Critical, High, Medium, Low,
   None). On confirmation, calls `POST /api/v1/tickets` and redirects to
   the newly created ticket's detail page. See `docs/features/tickets.md`
@@ -162,7 +162,7 @@ Displays all tickets in the system with comprehensive search and filtering.
 | Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
 | Severity          | Color-coded severity badge                          |
 | Status            | Current ticket status badge                         |
-| Assignee          | Username of assigned IM (or "Unassigned")           |
+| Assignee          | Username of assigned VA (or "Unassigned")           |
 | Affected Packages | Package names (comma-separated, truncated)          |
 | Summary           | First ~120 characters of the CVE description (if CVE present) |
 | Published         | CVE published date (if CVE present)                 |
@@ -182,7 +182,7 @@ Free-text search across:
 |----------------|-------------|-----------------------------------------------|
 | Status         | Multi-select| New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | Severity       | Multi-select| Critical, High, Medium, Low, None             |
-| Assignee       | Select      | List of IMs + "Unassigned"                    |
+| Assignee       | Select      | List of VAs + "Unassigned"                    |
 | Product        | Select      | List of active products                       |
 | Published from | Date        | CVE published date range start                |
 | Published to   | Date        | CVE published date range end                  |
@@ -190,7 +190,7 @@ Free-text search across:
 #### Deleted Tickets Filter (Admin only)
 
 This filter is **visible only to users with the Admin role**. Non-admin
-users (Incident Managers, unauthenticated users) do not see this filter
+users (Vulnerability Analysts, unauthenticated users) do not see this filter
 and are not aware that tickets can be deleted.
 
 | Filter            | Type     | Options                                    |
@@ -235,7 +235,7 @@ The page is divided into the following sections:
 - **Severity badge**: color-coded severity level. For tickets with a CVE,
   always read-only (derived from CVSS assessments via the resolution
   cascade — see `docs/features/cvss-scoring.md`). For tickets without a
-  CVE, editable by the IM (sets `severity_override` — see
+  CVE, editable by the VA (sets `severity_override` — see
   `docs/features/tickets.md`, Severity Resolution)
 - **Assignee**: current assignee with option to reassign
 - **Action buttons**: context-dependent based on current status (see below)
@@ -249,7 +249,7 @@ The page is divided into the following sections:
 | Analyzed       | Reassign, Mark as Duplicate                          |
 | Resolved       | Mark as Duplicate                                    |
 | Ignored        | Mark as Duplicate                                    |
-| Duplicated     | Revert duplicate (restores previous state, reassigns to current IM) |
+| Duplicated     | Revert duplicate (restores previous state, reassigns to current VA) |
 
 #### Delete Ticket (Admin only)
 
@@ -260,7 +260,7 @@ optionally provide a note (stored in the `TicketEvent.comment` field).
 Upon confirmation, the ticket is soft-deleted and the Admin is redirected
 to the All Tickets page.
 
-Non-admin users (Incident Managers, unauthenticated users) never see the
+Non-admin users (Vulnerability Analysts, unauthenticated users) never see the
 "Delete ticket" button and are not aware that ticket deletion is possible.
 
 #### Soft-Deleted Ticket View
@@ -277,7 +277,7 @@ displayed normally with the following additions:
 - All other ticket data (CVE info, packages, references, history) is
   displayed as usual
 
-When a **non-admin user** (Incident Manager or unauthenticated) accesses
+When a **non-admin user** (Vulnerability Analyst or unauthenticated) accesses
 the URL of a soft-deleted ticket, the ticket detail page displays only a
 message: **"This ticket has been deleted. Contact an admin if you think
 this is an error."** No ticket data is shown. The API returns 410 Gone.
@@ -336,8 +336,8 @@ ticket. See `docs/features/references.md` for the full specification.
   NVD, MITRE, Manual)
 - Each reference shows its title (or URL if no title), source badge, and
   tags (if any)
-- "Add Reference" button visible to Incident Managers
-- Each reference has an edit/delete action menu for Incident Managers
+- "Add Reference" button visible to Vulnerability Analysts
+- Each reference has an edit/delete action menu for Vulnerability Analysts
 - All references are editable/deletable regardless of their origin
   (automatic or manual)
 - Empty state: "No references yet."
@@ -360,7 +360,7 @@ Shown only when the ticket is in Duplicated state:
 - "This ticket is a duplicate of [STAMP-{n}]" with link to the original
   ticket. If the original has a CVE, also shows the CVE ID
 - Button: "Revert duplicate status" — restores the previous state and
-  reassigns the ticket to the IM who clicks the button
+  reassigns the ticket to the VA who clicks the button
 - Confirmation dialog before reverting
 
 Shown on the original ticket when other tickets reference it as duplicate:
@@ -387,8 +387,8 @@ API endpoint, filter parameters, event type contract, and UI details.
 - My Tickets requires authentication (shows tickets assigned to the current
   user)
 - Edit actions (assign, change status, edit affectedness, reassign, mark as
-  duplicate) require the Incident Manager role
-- Reassignment is available to any Incident Manager, not just the current
+  duplicate) require the Vulnerability Analyst role
+- Reassignment is available to any Vulnerability Analyst, not just the current
   assignee
 - Soft-deleting and restoring tickets requires the Admin role. The delete
   and restore buttons are only visible to Admin users

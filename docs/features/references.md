@@ -12,7 +12,7 @@ References come from two sources:
 - **Automatic**: created by CVE fetchers during ingestion. Each fetcher
   adds its own source URL (if it has a human-readable page) plus all
   references extracted from the CVE data.
-- **Manual**: added by Incident Managers through the API or UI for any
+- **Manual**: added by Vulnerability Analysts through the API or UI for any
   purpose (e.g., linking a Bugzilla bug, an internal advisory, a patch).
 
 All references are stored in a single `TicketReference` table associated
@@ -261,7 +261,7 @@ Adds a manual reference to a ticket.
 - `created_by` is set to the authenticated user
 - `tags` is set to `NULL` (manual references do not use tags)
 
-**Permissions**: Incident Manager role required.
+**Permissions**: Vulnerability Analyst role required.
 
 **Error responses**:
 
@@ -305,7 +305,7 @@ coexists with the fetcher-managed one.
 **Response** (200 OK): the updated reference object (same format as
 create response).
 
-**Permissions**: Incident Manager role required.
+**Permissions**: Vulnerability Analyst role required.
 
 **Error responses**:
 
@@ -327,7 +327,7 @@ source (automatic or manual).
 
 **Response** (204 No Content)
 
-**Permissions**: Incident Manager role required.
+**Permissions**: Vulnerability Analyst role required.
 
 **Error responses**:
 
@@ -355,7 +355,7 @@ Ticket Detail page (see `docs/features/pages.md`).
     "Vendor Advisory")
 - References are grouped by `source` for visual clarity (using the
   human-readable display labels)
-- "Add Reference" button (visible only to Incident Managers)
+- "Add Reference" button (visible only to Vulnerability Analysts)
 
 #### Add Reference
 
@@ -366,7 +366,7 @@ Clicking "Add Reference" opens a simple form:
 
 #### Edit and Delete
 
-Each reference has an action menu (visible only to Incident Managers)
+Each reference has an action menu (visible only to Vulnerability Analysts)
 with:
 - "Edit" — opens the same form pre-filled with the current values
 - "Delete" — confirmation dialog before deletion
@@ -385,9 +385,9 @@ does not include reference-related event types.
 ## Security
 
 - Reference list is publicly accessible (no authentication required)
-- Adding, editing, and deleting references requires the Incident Manager
+- Adding, editing, and deleting references requires the Vulnerability Analyst
   role
-- All references are editable/deletable by any Incident Manager,
+- All references are editable/deletable by any Vulnerability Analyst,
   regardless of who created them or whether they were created
   automatically
 - See `docs/features/rbac.md` for the full permission model

@@ -123,7 +123,7 @@ given CVE. The rules are:
    but no action is required.
 4. **Reactive LTSS override**: if the product is currently in the Reactive
    LTSS phase (`end_of_ltss < today < end_of_reactive_ltss`), status is
-   always `AFFECTED_RESOLVED` regardless of the CVSS score. The IM can still
+   always `AFFECTED_RESOLVED` regardless of the CVSS score. The VA can still
    perform the assessment, but the result is always green.
 
 **Important**: the CVSS version used for threshold comparison MUST always
@@ -157,7 +157,7 @@ See `docs/data-model.md` for the full column listing.
 ### TicketPackageCodestream
 
 Records the affectedness status of a source package in a specific codestream
-within the context of a ticket. The IM sets the status at this level. The
+within the context of a ticket. The VA sets the status at this level. The
 codestream is identified by name (a string), not by a foreign key — see the
 Codestream section above for rationale.
 
@@ -168,7 +168,7 @@ See `docs/data-model.md` for the full column listing.
 Records the affectedness status of a source package for a specific product,
 within the context of a ticket and codestream. Status is inherited from the
 parent TicketPackageCodestream and adjusted for eligibility, but can be
-overridden by the IM.
+overridden by the VA.
 
 See `docs/data-model.md` for the full column listing.
 
@@ -180,16 +180,16 @@ TicketPackageProduct.
 | Value             | UI Label      | Color      | Type       | Set by             |
 |-------------------|---------------|------------|------------|--------------------|
 | ANALYSIS          | Analysis      | Neutral    | Non-final  | Automatic (default)|
-| AFFECTED          | Affected      | Red        | Non-final  | IM (as "Affected") |
-| AFFECTED_RESOLVED | Affected      | Green      | Final      | Automatic / IM override |
-| NOT_AFFECTED      | Not Affected  | Green      | Final      | IM                 |
-| WONT_FIX          | Won't Fix     | Green      | Final      | IM only            |
-| IGNORED           | Ignored       | Greyed-out | Final      | IM only            |
-| RELEASED          | Released      | Green      | Final      | Automatic (release detector) or IM |
+| AFFECTED          | Affected      | Red        | Non-final  | VA (as "Affected") |
+| AFFECTED_RESOLVED | Affected      | Green      | Final      | Automatic / VA override |
+| NOT_AFFECTED      | Not Affected  | Green      | Final      | VA                 |
+| WONT_FIX          | Won't Fix     | Green      | Final      | VA only            |
+| IGNORED           | Ignored       | Greyed-out | Final      | VA only            |
+| RELEASED          | Released      | Green      | Final      | Automatic (release detector) or VA |
 
-**UI note**: The IM dropdown shows the following options: Analysis, Affected,
+**UI note**: The VA dropdown shows the following options: Analysis, Affected,
 Not Affected, Won't Fix, Ignored, Released. The distinction between AFFECTED
-and AFFECTED_RESOLVED is never exposed to the IM — when the IM selects
+and AFFECTED_RESOLVED is never exposed to the VA — when the VA selects
 "Affected", STAMP internally decides which variant to use based on
 eligibility.
 
@@ -200,7 +200,7 @@ go through the `ticket_mutations` module (see `docs/features/tickets.md`,
 Ticket Mutations Module), which ensures automatic ticket status
 re-evaluation after each change.
 
-#### IM sets "Affected" on a codestream
+#### VA sets "Affected" on a codestream
 
 1. Codestream status is set to `AFFECTED` (via `ticket_mutations`)
 2. STAMP propagates to all products under that codestream:
@@ -211,13 +211,13 @@ re-evaluation after each change.
    - Otherwise → `AFFECTED`
 3. Products with `is_override = true` are not modified
 
-#### IM sets any other status on a codestream
+#### VA sets any other status on a codestream
 
 1. Codestream status is set to the chosen value
 2. STAMP propagates the same status to all products under that codestream
 3. Products with `is_override = true` are not modified
 
-#### IM overrides a product status
+#### VA overrides a product status
 
 1. Product status is set to the chosen value (with eligibility logic applied
    if "Affected" is chosen)
@@ -247,7 +247,7 @@ transitions.
 
 #### Manual transitions
 
-The IM can manually change any status to any other status without restriction.
+The VA can manually change any status to any other status without restriction.
 
 ## Adding Packages to a Ticket
 
@@ -292,7 +292,7 @@ The following scenarios invoke `add_package_to_ticket`:
 1. **Automatic (CPE mapping)**: when a CVE is ingested, STAMP maps the CPE
    data from the CVE record to source package names. For each mapped
    package name, `add_package_to_ticket` is called.
-2. **Manual**: the IM manually adds a package by name via the UI.
+2. **Manual**: the VA manually adds a package by name via the UI.
    `add_package_to_ticket` is called with the entered name.
 3. **Codestream release detection (Case B)**: the `CodestreamReleaseDetector`
    finds a CVE fix in a package that is not tracked in the ticket. It calls
@@ -307,19 +307,19 @@ The following scenarios invoke `add_package_to_ticket`:
 
 ### Package Management Constraints
 
-The IM manages packages at the **package level only**:
+The VA manages packages at the **package level only**:
 
-- The IM can **add** or **remove** entire packages from a ticket.
-- The IM **cannot** add or remove individual codestreams or products —
+- The VA can **add** or **remove** entire packages from a ticket.
+- The VA **cannot** add or remove individual codestreams or products —
   these are determined exclusively by SMELT when a package is added via
   `add_package_to_ticket`.
-- The IM **can** change the status of individual codestreams (via the
+- The VA **can** change the status of individual codestreams (via the
   status dropdown) and override the status of individual products (which
   sets `is_override = true`).
 
 ### Removing a Package from a Ticket
 
-When an IM removes a package from a ticket, STAMP deletes **all**
+When an VA removes a package from a ticket, STAMP deletes **all**
 `TicketPackageCodestream` and `TicketPackageProduct` records associated
 with that package in the ticket.
 
@@ -341,17 +341,17 @@ record for audit and traceability. The following event types are defined:
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
-| IM adds package | `package_added` | IM user | `package_name` |
+| VA adds package | `package_added` | VA user | `package_name` |
 | Package auto-added (CPE match or Case B) | `package_added` | `NULL` | `package_name`, contextual `comment` |
-| IM removes package | `package_removed` | IM user | `package_name` |
-| IM changes codestream status | `codestream_status_changed` | IM user | `package_name`, `codestream_name`, `old_status`, `new_status` |
-| IM overrides product status | `product_status_overridden` | IM user | `package_name`, `product_id`, `old_status`, `new_status` |
+| VA removes package | `package_removed` | VA user | `package_name` |
+| VA changes codestream status | `codestream_status_changed` | VA user | `package_name`, `codestream_name`, `old_status`, `new_status` |
+| VA overrides product status | `product_status_overridden` | VA user | `package_name`, `product_id`, `old_status`, `new_status` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
 | Codestream release detected | `codestream_released` | `NULL` | `package_name`, `codestream_name` |
 | Product release detected | `product_released` | `NULL` | `package_name`, `product_id`, `advisory_id` |
 
 - `user_id = NULL` indicates an automatic system action. For `package_added`,
-  this distinguishes manual additions (IM user) from automatic ones (CPE
+  this distinguishes manual additions (VA user) from automatic ones (CPE
   match, codestream detection). The `comment` field provides context for
   automatic additions.
 - All events include an implicit `created_at` timestamp.
@@ -753,7 +753,7 @@ Then:
   several source packages that are all in the ticket): apply the same
   tie-breaker as Step 2 — the longest `package_name` wins. If two or more
   matching packages have the same length, fall through to the no-match
-  flow (this is conservative: better to surface the case for IM review
+  flow (this is conservative: better to surface the case for VA review
   than to risk flipping the wrong record).
 
 ### Match Outcomes
@@ -951,7 +951,7 @@ Package: curl                                   [Remove]
   (which then shows a dropdown and marks `is_override = true`).
 - **Color coding**: Red-Affected = red, all final states = green (except
   Ignored = greyed-out), Analysis = neutral/no color.
-- **Add Package**: opens an input where the IM types a package name. STAMP
+- **Add Package**: opens an input where the VA types a package name. STAMP
   queries SMELT and populates the tree. If SMELT returns no results, an error
   is shown.
 
@@ -972,7 +972,7 @@ affectedness-related conditions are summarized here for context:
   TicketPackageProduct records must have status `RELEASED`,
   `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.
 - **Analyzed → Analysis** (automatic): gate conditions for Analyzed no
-  longer met (e.g., package added with codestreams in `ANALYSIS`, or IM
+  longer met (e.g., package added with codestreams in `ANALYSIS`, or VA
   resets a codestream status to `ANALYSIS`).
 - **Resolved → Analyzed** (automatic): resolved gate conditions no
   longer met but analyzed gates still met (e.g., CVSS recalculation
@@ -1013,8 +1013,8 @@ affectedness-related conditions are summarized here for context:
 
 ## Security
 
-- Adding/removing packages on a ticket requires the Incident Manager role
-- Changing codestream/product status requires the Incident Manager role
+- Adding/removing packages on a ticket requires the Vulnerability Analyst role
+- Changing codestream/product status requires the Vulnerability Analyst role
 - Viewing affectedness data is publicly accessible (no authentication
   required)
 - SMELT and AIMAAS credentials are stored as environment variables, never in

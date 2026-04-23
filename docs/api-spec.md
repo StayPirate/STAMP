@@ -103,7 +103,7 @@ automatically.
   `{"detail": "This ticket has been deleted. Contact an admin if you think
   this is an error."}`. Admin callers receive the full ticket data with the
   `deleted_at` field populated.
-- `POST /api/v1/tickets` — Create a ticket manually (Incident Manager
+- `POST /api/v1/tickets` — Create a ticket manually (Vulnerability Analyst
   role). The creating user is automatically assigned. Optionally accepts
   a `cve_id` to associate a CVE at creation time. If the CVE is not in
   the database, a minimal CVE record is created and on-demand fetch is
@@ -112,7 +112,7 @@ automatically.
   `cve_data_pending: true` when CVE data is being fetched. See
   `docs/features/tickets.md` for details.
 - `POST /api/v1/tickets/{ticket_id}/associate-cve` — Associate a CVE with
-  a ticket that does not have one (Incident Manager role). If the CVE is
+  a ticket that does not have one (Vulnerability Analyst role). If the CVE is
   not in the database, a minimal CVE record is created and on-demand fetch
   is triggered. Returns 400 if ticket already has a CVE, 409 if CVE
   already associated with another ticket (response includes
@@ -124,7 +124,7 @@ automatically.
   ticket has no CVE associated. Returns 404 if the ticket does not exist.
   See `docs/features/tickets.md`.
 - `PATCH /api/v1/tickets/{ticket_id}/severity` — Update severity override
-  for a ticket without a CVE (Incident Manager role). Returns 400 if the
+  for a ticket without a CVE (Vulnerability Analyst role). Returns 400 if the
   ticket has an associated CVE. See `docs/features/tickets.md`.
 - `POST /api/v1/tickets/{ticket_id}/assign` — Assign or reassign a ticket
 - `POST /api/v1/tickets/{ticket_id}/ignore` — Mark ticket as ignored
@@ -143,13 +143,13 @@ automatically.
 - `POST /api/v1/tickets/{ticket_id}/packages` — Add a package to a ticket
 - `DELETE /api/v1/tickets/{ticket_id}/packages/{package_name}` — Remove a package
 - `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/codestreams/{codestream_name}`
-  — Change codestream affectedness status (Incident Manager role)
+  — Change codestream affectedness status (Vulnerability Analyst role)
 - `PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}`
-  — Override product affectedness status (Incident Manager role)
+  — Override product affectedness status (Vulnerability Analyst role)
 
 **Auto-assignment**: any endpoint that modifies a ticket with no current
 assignee (`assignee_id = NULL`) will automatically assign the ticket to
-the authenticated IM. The response will reflect the updated
+the authenticated VA. The response will reflect the updated
 `assignee_id`. A `TicketEvent` of type `assignment` is created
 atomically. If the ticket was in `New` status and the operation does not
 include an explicit status change, the ticket also transitions to
@@ -176,11 +176,11 @@ See `docs/features/references.md` for detailed endpoint specifications.
 - `GET /api/v1/tickets/{ticket_id}/references` — List references (public,
   filterable by `source`)
 - `POST /api/v1/tickets/{ticket_id}/references` — Add a manual reference
-  (Incident Manager role)
+  (Vulnerability Analyst role)
 - `PUT /api/v1/tickets/{ticket_id}/references/{reference_id}` — Update a
-  reference (Incident Manager role)
+  reference (Vulnerability Analyst role)
 - `DELETE /api/v1/tickets/{ticket_id}/references/{reference_id}` — Delete
-  a reference (Incident Manager role)
+  a reference (Vulnerability Analyst role)
 
 ### Ticket Events
 
@@ -196,9 +196,9 @@ See `docs/features/cvss-scoring.md` for detailed endpoint specifications.
 - `GET /api/v1/tickets/{ticket_id}/cvss` — Get all CVSS assessments for a
   ticket's CVE, grouped by version, including resolved score/severity
 - `POST /api/v1/tickets/{ticket_id}/cvss/suse` — Set or update SUSE CVSS
-  assessment (upsert by version). Requires the Incident Manager role.
+  assessment (upsert by version). Requires the Vulnerability Analyst role.
 - `DELETE /api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` — Remove
-  SUSE CVSS assessment. Requires the Incident Manager role.
+  SUSE CVSS assessment. Requires the Vulnerability Analyst role.
 
 ### Administration
 

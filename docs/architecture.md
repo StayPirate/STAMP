@@ -167,7 +167,7 @@ coordination across multiple maintained distribution versions.
 
 ### Manual Ticket Creation
 
-Tickets can also be created manually by Incident Managers without an
+Tickets can also be created manually by Vulnerability Analysts without an
 associated CVE — for example, to track security issues reported through
 internal bug trackers before a CVE-ID is assigned. A CVE can be
 associated with the ticket later. See `docs/features/tickets.md` for
@@ -175,7 +175,7 @@ the full ticket specification.
 
 ### Package Affectedness Flow
 
-1. IM analyzes a ticket and sets affectedness status per codestream
+1. VA analyzes a ticket and sets affectedness status per codestream
 2. STAMP propagates codestream status to products, adjusting for eligibility
    (CVSS score vs product threshold from AIMAAS)
 3. Products not eligible that inherit AFFECTED status receive
@@ -183,7 +183,7 @@ the full ticket specification.
    not modified by eligibility
 4. Products in Reactive LTSS phase that inherit AFFECTED status receive
    AFFECTED_RESOLVED (green) automatically — regardless of CVSS score
-5. IM can override individual product statuses when needed
+5. VA can override individual product statuses when needed
 6. See `docs/features/package-tracking.md` for full status propagation rules
 
 ### Release Tracking Flow

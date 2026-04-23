@@ -173,7 +173,7 @@ Tracks the origin of CVE data from different sources.
 ### CVECVSSAssessment
 
 Stores individual CVSS assessments from multiple providers for each CVE.
-A CVE can have assessments from NVD, CNA vendors, Red Hat, and SUSE (IM
+A CVE can have assessments from NVD, CNA vendors, Red Hat, and SUSE (VA
 input). Each provider may supply assessments for multiple CVSS versions.
 See `docs/features/cvss-scoring.md` for the full specification.
 
@@ -289,7 +289,7 @@ within the context of a ticket and codestream. See
 | ticket_package_codestream_id  | UUID      | FK(ticket_package_codestream.id), NOT NULL | Parent codestream record           |
 | product_id                    | UUID      | FK(product.id), NOT NULL                   | Related product                    |
 | status                        | ENUM      | NOT NULL, DEFAULT ANALYSIS                 | PackageStatus enum                 |
-| is_override                   | BOOLEAN   | NOT NULL, DEFAULT false                    | True if IM manually overrode the inherited status |
+| is_override                   | BOOLEAN   | NOT NULL, DEFAULT false                    | True if VA manually overrode the inherited status |
 | released_at                   | TIMESTAMP | nullable                                  | When STAMP detected the fix in the product's repository |
 | created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
 | updated_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record update timestamp            |
@@ -335,7 +335,7 @@ multiple roles assigned.
 |------------|-------------|------------------------------|----------------------------------|
 | id         | UUID        | PK                           | Internal identifier              |
 | user_id    | UUID        | FK(user.id), NOT NULL        | Associated user                  |
-| role       | ENUM        | NOT NULL                     | Role: Admin, Incident Manager    |
+| role       | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst    |
 | created_at | TIMESTAMP   | NOT NULL, DEFAULT            | When the role was assigned       |
 
 **Unique constraint**: (user_id, role)
@@ -345,13 +345,13 @@ multiple roles assigned.
 | Value             | Description                                      |
 |-------------------|--------------------------------------------------|
 | Admin             | Platform administration (users, settings, fetchers) |
-| Incident Manager  | CVE triage and assessment (tickets, packages, CVSS) |
+| Vulnerability Analyst  | CVE triage and assessment (tickets, packages, CVSS) |
 
 ### Ticket
 
 Represents the internal workflow unit for a security issue. A ticket may
 optionally be associated with a CVE (0..1:1 relationship). Tickets track
-the triage and resolution lifecycle managed by incident managers (IMs).
+the triage and resolution lifecycle managed by vulnerability analysts (VAs).
 See `docs/features/tickets.md` for the full ticket specification.
 
 | Column            | Type        | Constraints                  | Description                          |
@@ -360,8 +360,8 @@ See `docs/features/tickets.md` for the full ticket specification.
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `STAMP-{n}` (e.g., `STAMP-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
 | status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| severity_override | ENUM        | nullable                     | Manual severity set by the IM (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets.md` (Severity Resolution) |
-| assignee_id       | UUID        | FK(user.id), nullable        | IM currently assigned to this ticket |
+| severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets.md` (Severity Resolution) |
+| assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
 | previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
 | created_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp            |
@@ -393,7 +393,7 @@ Summary:
   broken)
 - Any -> Duplicated (manual, reversible)
 - Duplicated -> previous_status (manual: revert, reassigns to the
-  reverting IM)
+  reverting VA)
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
 are handled automatically by the `ticket_mutations` module — see
@@ -418,7 +418,7 @@ are handled automatically by the `ticket_mutations` module — see
 
 Stores external links associated with a ticket. References are created
 automatically by CVE fetchers during ingestion and can also be added
-manually by Incident Managers. See `docs/features/references.md` for
+manually by Vulnerability Analysts. See `docs/features/references.md` for
 the full specification.
 
 | Column     | Type           | Constraints                  | Description                        |
@@ -449,7 +449,7 @@ system action).
 | event_type  | ENUM        | NOT NULL               | See TicketEventType enum below             |
 | old_value   | VARCHAR     | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | VARCHAR     | nullable               | New value (e.g., new status, new assignee username) |
-| comment     | TEXT        | nullable               | Optional note from the IM, or system-generated description for automated events |
+| comment     | TEXT        | nullable               | Optional note from the VA, or system-generated description for automated events |
 | created_at  | TIMESTAMP   | NOT NULL, DEFAULT      | Event timestamp                            |
 
 ### TicketEventType Enum
@@ -460,14 +460,14 @@ system action).
 | assignment                 | Ticket was assigned or reassigned                  |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
-| package_added              | Package added to the ticket (manual by IM or automatic via CPE match / codestream detection). `user_id` is set for IM actions, NULL for automatic. `comment` provides context for automatic additions. |
-| package_removed            | IM removed a package from the ticket               |
-| codestream_status_changed  | IM changed codestream affectedness status           |
-| product_status_overridden  | IM overrode product affectedness status             |
+| package_added              | Package added to the ticket (manual by VA or automatic via CPE match / codestream detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
+| package_removed            | VA removed a package from the ticket               |
+| codestream_status_changed  | VA changed codestream affectedness status           |
+| product_status_overridden  | VA overrode product affectedness status             |
 | codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
 | product_released           | Product release detected via updateinfo.xml advisory |
 | ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
-| cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the IM who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
+| cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the VA who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
 | cve_removed                | Admin removed the CVE association from a ticket. `user_id` is the Admin who performed the action. `old_value` is the CVE-ID string. `new_value` is NULL. `comment` is an optional admin note. |
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |

@@ -14,7 +14,7 @@ Read-only access to public data:
 - View tickets, CVEs, and products
 - View fetcher dashboard (list, detail, charts, run history, error messages)
 
-### Incident Manager
+### Vulnerability Analyst
 
 Operates the triage and assessment workflow:
 - Create tickets manually (see `docs/features/tickets.md`)
@@ -43,14 +43,14 @@ Administers the platform:
 - View fetcher audit log
 - View fetcher error tracebacks
 
-Admin does NOT inherit Incident Manager permissions. A user who needs both
+Admin does NOT inherit Vulnerability Analyst permissions. A user who needs both
 capabilities must hold both roles.
 
 ## Permission Matrix
 
-### Incident Manager Operations
+### Vulnerability Analyst Operations
 
-| Action                           | Admin | IM  | Unauth |
+| Action                           | Admin | VA  | Unauth |
 |----------------------------------|-------|-----|--------|
 | Create ticket manually           | No    | Yes | No     |
 | Assign/reassign ticket           | No    | Yes | No     |
@@ -65,7 +65,7 @@ capabilities must hold both roles.
 
 ### Admin Operations
 
-| Action                           | Admin | IM  | Unauth |
+| Action                           | Admin | VA  | Unauth |
 |----------------------------------|-------|-----|--------|
 | Remove CVE from ticket           | Yes   | No  | No     |
 | Manage users                     | Yes   | No  | No     |
@@ -81,7 +81,7 @@ capabilities must hold both roles.
 
 ### Public Operations
 
-| Action                           | Admin | IM  | Unauth |
+| Action                           | Admin | VA  | Unauth |
 |----------------------------------|-------|-----|--------|
 | View tickets / CVEs (active)     | Yes   | Yes | Yes    |
 | View products                    | Yes   | Yes | Yes    |
@@ -166,7 +166,7 @@ Decision will be made during implementation of this feature.
   dependencies
 - A `require_role()` dependency factory returns a dependency that checks
   whether the current user holds the required role
-- Example: `Depends(require_role(Role.INCIDENT_MANAGER))`
+- Example: `Depends(require_role(Role.VULNERABILITY_ANALYST))`
 - Public endpoints (ticket list, CVE list, product list, fetcher dashboard)
   do not require authentication
 - The `require_role()` check queries the `UserRole` junction table
@@ -183,7 +183,7 @@ See `docs/data-model.md`. Key tables:
 
 - **User**: username, email, active status
 - **UserRole**: junction table linking users to roles (M2M)
-- **Role** enum: `Admin`, `Incident Manager`
+- **Role** enum: `Admin`, `Vulnerability Analyst`
 
 ## UI Requirements
 

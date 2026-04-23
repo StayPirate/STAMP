@@ -167,4 +167,4 @@ OBS API is compatible with IBS but uses separate authentication.
 - API calls are made server-side only; credentials are never exposed to
   the frontend
 - Operations that modify IBS/OBS state (future: rebuild triggers) require
-  the Incident Manager or Admin role
+  the Vulnerability Analyst or Admin role

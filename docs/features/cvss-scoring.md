@@ -4,7 +4,7 @@
 
 Manage CVSS (Common Vulnerability Scoring System) assessments from multiple
 providers for each CVE. STAMP ingests CVSS data from external sources,
-allows incident managers (IMs) to provide SUSE's own assessment, and uses
+allows vulnerability analysts (VAs) to provide SUSE's own assessment, and uses
 the scores to derive severity, determine product eligibility, and control
 ticket workflow progression.
 
@@ -105,11 +105,11 @@ directly on the assessment record.
 
 #### SUSE
 
-- **Source**: manual input by IM via the Ticket Detail page
+- **Source**: manual input by VA via the Ticket Detail page
 - **Provider name in STAMP**: `"SUSE"`
-- **CVSS versions**: the IM MUST provide both v3.1 and v4.0 assessments
+- **CVSS versions**: the VA MUST provide both v3.1 and v4.0 assessments
   before the ticket can progress beyond Analysis (see Workflow Gates)
-- **Input method**: the IM enters a CVSS vector string; the backend
+- **Input method**: the VA enters a CVSS vector string; the backend
   validates the vector format and calculates the score automatically
 - **Editability**: the SUSE assessment can be modified at any time,
   regardless of ticket status. Changes trigger severity and eligibility
@@ -168,7 +168,7 @@ The `severity` field on the CVE table is a denormalized field, always
 derived from CVSS assessments. It is never set manually.
 
 **Note**: for tickets without a CVE, severity is determined by the
-`severity_override` field on the Ticket, set manually by the IM. The
+`severity_override` field on the Ticket, set manually by the VA. The
 CVE severity derivation described below applies only to tickets with an
 associated CVE. See `docs/features/tickets.md` (Severity Resolution)
 for the unified resolution logic.
@@ -187,7 +187,7 @@ Severity is recalculated whenever:
 
 - A CVSS assessment is added, modified, or removed for the CVE
 - The system-wide default CVSS version is changed by an Admin
-- The SUSE assessment is added or modified by an IM
+- The SUSE assessment is added or modified by an VA
 
 ### Severity Override by CVSS
 
@@ -201,7 +201,7 @@ default version. There is no manual severity selection.
 ### SUSE CVSS Required for Ticket Progression (Tickets with CVE)
 
 For tickets with an associated CVE, the ticket CANNOT transition from
-`Analysis` to `Analyzed` (or any subsequent state) unless the IM has
+`Analysis` to `Analyzed` (or any subsequent state) unless the VA has
 provided BOTH:
 
 - SUSE CVSS v3.1 assessment (vector string → calculated score)
@@ -214,7 +214,7 @@ This ensures that:
 2. The severity is always calculated (never manually selected)
 3. Both CVSS versions are available for current and future use
 
-**Tickets without CVE**: this gate does not apply. Instead, the IM must
+**Tickets without CVE**: this gate does not apply. Instead, the VA must
 set `severity_override` before the ticket can progress. See
 `docs/features/tickets.md` (Gate: Analysis → Analyzed) for the full
 gate conditions applicable to all ticket types.
@@ -353,7 +353,7 @@ with an active ticket, STAMP performs the following recalculation:
    from `AFFECTED_RESOLVED` to `AFFECTED` typically results in
    Resolved → Analyzed (since codestream statuses remain set), but the
    centralized evaluator determines the correct target status.
-   **Note**: this rollback can only occur when an IM manually modifies a
+   **Note**: this rollback can only occur when an VA manually modifies a
    SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
    Hat) and default CVSS version changes only process active tickets
    (New, Analysis, Analyzed) — Resolved tickets are excluded from those
@@ -420,7 +420,7 @@ Each tab displays a table with the following columns:
 
 ### SUSE CVSS Modal
 
-When the IM clicks "Add SUSE CVSS" or "Edit SUSE CVSS":
+When the VA clicks "Add SUSE CVSS" or "Edit SUSE CVSS":
 
 1. A modal opens with:
    - Title: "SUSE CVSS v{version}" (matching the active tab)
@@ -510,7 +510,7 @@ is updated (upsert). Triggers recalculation cascade.
 
 Response: the created or updated assessment object.
 
-Requires the Incident Manager role.
+Requires the Vulnerability Analyst role.
 
 ### Delete SUSE CVSS Assessment
 
@@ -522,7 +522,7 @@ Removes the SUSE CVSS assessment for the specified version. Triggers
 recalculation cascade. The ticket may no longer meet the progression gate
 requirements.
 
-Requires the Incident Manager role.
+Requires the Vulnerability Analyst role.
 
 ## Service Architecture
 
@@ -619,7 +619,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 ## Security
 
 - Viewing CVSS data: publicly accessible (no authentication required)
-- Adding/editing/deleting SUSE CVSS: Incident Manager role
+- Adding/editing/deleting SUSE CVSS: Vulnerability Analyst role
 - Changing default CVSS version: Admin role only (see
   `docs/features/admin.md`)
 - External CVSS data is read-only — cannot be modified through STAMP
