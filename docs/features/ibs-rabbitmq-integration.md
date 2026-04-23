@@ -241,28 +241,81 @@ The two mechanisms are fully independent:
 
 ## Monitoring and Observability
 
-The `IBSEventConsumer` reports the following metrics (integrated with the
-fetcher dashboard where applicable — see
-`docs/features/fetcher-dashboard.md`):
-
-- **Connection status**: connected / disconnected / reconnecting
-- **Events received**: total count of `package.commit` events received
-- **Events filtered**: count discarded by codestream filter (step 2)
-- **Events processed**: count that reached diff analysis (step 4)
-- **Diffs succeeded**: count of successful IBS diff requests
-- **Diffs failed**: count of failed IBS diff requests
-- **CVE matches**: count of CVE references matched to active tickets
-  (Case A, B, C breakdowns)
-
-These metrics are exposed via the application's logging and can be
-collected by monitoring systems.
-
-**Note**: the `IBSEventConsumer` is NOT a `BaseFetcher` subclass. It is
-a long-running consumer, not a periodic fetcher with discrete runs. It
+The `IBSEventConsumer` is NOT a `BaseFetcher` subclass. It is a
+long-running consumer, not a periodic fetcher with discrete runs. It
 does not have a Celery Beat schedule, and the `FetcherRun` model (which
 tracks individual runs with start/end timestamps and item counts) does
-not fit its continuous execution model. Monitoring is handled through
-connection status tracking and event counters instead.
+not fit its continuous execution model.
+
+Instead, the consumer reports its state via a **Redis heartbeat** and is
+displayed as a dedicated card in the fetcher dashboard (see
+`docs/features/fetcher-dashboard.md`, section "IBS RabbitMQ Consumer
+Card").
+
+### Redis Heartbeat
+
+The consumer writes its current state to a Redis key every **30 seconds**
+with a **TTL of 60 seconds**:
+
+- **Key**: `stamp:ibs_consumer_status`
+- **Value**: JSON object with the following fields:
+
+```json
+{
+  "status": "connected",
+  "status_since": "2026-04-20T02:08:00Z",
+  "events_received": 12847,
+  "events_relevant": 342,
+  "events_processed": 338,
+  "diffs_failed": 4,
+  "last_error": null,
+  "reconnect_attempts": 0,
+  "next_retry_seconds": null
+}
+```
+
+- **TTL behavior**: if the consumer process dies (crash, OOM kill, etc.),
+  it stops writing to Redis. After 60 seconds the key expires and is
+  automatically deleted. The API interprets a missing key as consumer
+  status `unreachable`.
+- **Counter reset**: all counters (`events_received`, `events_relevant`,
+  `events_processed`, `diffs_failed`) are reset to zero on each new
+  connection. They represent activity since the current connection was
+  established, not cumulative totals.
+- **Reconnection state**: when the consumer is in reconnecting state,
+  it continues writing the heartbeat (the process is alive, only the
+  broker connection is down). The `reconnect_attempts` and
+  `next_retry_seconds` fields are populated.
+
+### Consumer States
+
+| Status | Meaning | Heartbeat |
+|---|---|---|
+| `connected` | Consumer is connected to RabbitMQ and processing events | Written every 30s |
+| `disconnected` | Connection was just lost; set immediately on connection loss, before the first reconnection attempt begins | Written every 30s |
+| `reconnecting` | First reconnection attempt has started; consumer is actively retrying with exponential backoff (5s → 10s → ... → 300s, then every 300s indefinitely) | Written every 30s |
+| `unreachable` | Redis key expired — consumer process is presumed dead | Key absent |
+
+### Metrics
+
+The following counters are tracked in the heartbeat (reset on each new
+connection):
+
+- **Events received**: total `package.commit` events received from the
+  broker
+- **Events relevant**: events that passed the active codestream filter
+  (step 2)
+- **Events processed**: events where the IBS diff completed successfully
+  (step 4-6)
+- **Diffs failed**: events where the IBS diff request failed
+
+### Dashboard Integration
+
+The consumer state is displayed as a dedicated card in the fetcher
+dashboard, positioned above the fetcher card grid. The card is publicly
+accessible (no authentication required), consistent with the rest of the
+dashboard. See `docs/features/fetcher-dashboard.md`, section "IBS
+RabbitMQ Consumer Card" for the full UI specification.
 
 ## Known Limitations
 

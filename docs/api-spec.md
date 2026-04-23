@@ -209,6 +209,14 @@ See `docs/features/admin.md` for detailed endpoint specifications.
   Changing `default_cvss_version` triggers recalculation for all active
   tickets.
 
+### IBS RabbitMQ Consumer
+
+See `docs/features/fetcher-dashboard.md` for detailed endpoint
+specification.
+
+- `GET /api/v1/ibs-consumer/status` — Get real-time status of the IBS
+  event consumer (publicly accessible)
+
 ### Fetchers
 
 See `docs/features/fetcher-dashboard.md` for detailed endpoint

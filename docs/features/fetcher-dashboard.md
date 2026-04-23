@@ -335,6 +335,88 @@ is also tracked in the dashboard.
 
 ## API Endpoints
 
+### IBS RabbitMQ Consumer Status
+
+```
+GET /api/v1/ibs-consumer/status
+```
+
+Returns the current status of the `IBSEventConsumer` by reading the
+`stamp:ibs_consumer_status` key from Redis. See
+`docs/features/ibs-rabbitmq-integration.md`, section "Redis Heartbeat"
+for the key format and TTL behavior.
+
+**Response when consumer is alive** (200 OK):
+
+```json
+{
+  "status": "connected",
+  "status_since": "2026-04-20T02:08:00Z",
+  "events_received": 12847,
+  "events_relevant": 342,
+  "events_processed": 338,
+  "diffs_failed": 4,
+  "last_error": null,
+  "reconnect_attempts": 0,
+  "next_retry_seconds": null
+}
+```
+
+**Response when consumer is reconnecting** (200 OK):
+
+```json
+{
+  "status": "reconnecting",
+  "status_since": "2026-04-23T16:45:00Z",
+  "events_received": 12847,
+  "events_relevant": 342,
+  "events_processed": 338,
+  "diffs_failed": 4,
+  "last_error": "Connection refused",
+  "reconnect_attempts": 7,
+  "next_retry_seconds": 245
+}
+```
+
+Note: event counters retain the values from the last active connection
+(they are reset only when a new connection is successfully established,
+not on disconnection).
+
+**Response when Redis key is absent** (200 OK):
+
+```json
+{
+  "status": "unreachable",
+  "status_since": null,
+  "events_received": null,
+  "events_relevant": null,
+  "events_processed": null,
+  "diffs_failed": null,
+  "last_error": null,
+  "reconnect_attempts": null,
+  "next_retry_seconds": null
+}
+```
+
+**Fields**:
+- `status`: one of `connected`, `disconnected`, `reconnecting`,
+  `unreachable`
+- `status_since`: ISO 8601 timestamp of when the current status began.
+  `null` when `unreachable`.
+- `events_received`: total `package.commit` events received since the
+  current connection was established. Reset on each new connection.
+- `events_relevant`: events that passed the active codestream filter.
+- `events_processed`: events where the IBS diff completed successfully.
+- `diffs_failed`: events where the IBS diff request failed.
+- `last_error`: last error message (e.g., "Connection refused"). `null`
+  when connected.
+- `reconnect_attempts`: number of reconnection attempts since
+  disconnection. `0` when connected.
+- `next_retry_seconds`: seconds until the next reconnection attempt.
+  `null` when connected or unreachable.
+
+**Permissions**: publicly accessible (no authentication required).
+
 ### List Fetchers
 
 ```
@@ -733,8 +815,76 @@ Returns the audit trail of admin actions for a fetcher.
 
 **Access**: publicly accessible (no authentication required).
 
-The page displays a grid of fetcher cards, one per registered fetcher.
-Each card shows a summary of the fetcher's current state.
+The page is divided into two sections:
+
+1. **IBS RabbitMQ Consumer Card** — a dedicated card at the top of the
+   page showing the status of the real-time event consumer (see below)
+2. **Fetcher Card Grid** — a grid of fetcher cards, one per registered
+   fetcher, each showing a summary of the fetcher's current state
+
+#### IBS RabbitMQ Consumer Card
+
+A dedicated card displayed **above** the fetcher card grid. It shows the
+real-time status of the `IBSEventConsumer` (see
+`docs/features/ibs-rabbitmq-integration.md`). This card is visually
+distinct from the fetcher cards (different layout, no schedule info, no
+admin toggle) since the consumer is not a `BaseFetcher`.
+
+The card reads its data from the `GET /api/v1/ibs-consumer/status`
+endpoint (see [IBS RabbitMQ Consumer Status](#ibs-rabbitmq-consumer-status)
+above).
+
+**Access**: publicly accessible (no authentication required).
+
+##### When status is `connected`
+
+```
+IBS RabbitMQ Consumer
+Status: Connected
+Uptime: 3d 14h 22m
+Events received: 12,847
+Events relevant: 342
+Events processed: 338
+Diffs failed: 4
+```
+
+- **Uptime**: human-readable duration since `status_since`. On mouse
+  hover, a tooltip shows the absolute timestamp (e.g.,
+  "Since: 2026-04-20 02:08 UTC").
+- **Status indicator**: green dot next to the status text.
+
+##### When status is `reconnecting`
+
+```
+IBS RabbitMQ Consumer
+Status: Reconnecting
+Downtime: 2h 15m
+Last error: Connection refused
+Reconnect attempts: 7
+Next retry in: 245s
+```
+
+- **Downtime**: human-readable duration since `status_since`. On mouse
+  hover, a tooltip shows the absolute timestamp (e.g.,
+  "Since: 2026-04-23 16:45 UTC").
+- **Status indicator**: pulsing yellow dot.
+
+##### When status is `disconnected`
+
+Same layout as `reconnecting`, but with:
+- **Status indicator**: red dot.
+
+##### When status is `unreachable`
+
+```
+IBS RabbitMQ Consumer
+Status: Unreachable
+```
+
+- Displayed when the API returns `unreachable` (Redis key expired,
+  consumer process presumed dead).
+- **Status indicator**: grey dot.
+- No counters or timestamps are available.
 
 #### Fetcher Card
 
@@ -869,6 +1019,7 @@ A simple chronological list of admin actions from `FetcherAuditLog`:
 
 | Action | Admin | VA | Unauth |
 |---|---|---|---|
+| View IBS RabbitMQ consumer status | Yes | Yes | Yes |
 | View fetcher list | Yes | Yes | Yes |
 | View fetcher detail + charts | Yes | Yes | Yes |
 | View run history | Yes | Yes | Yes |
