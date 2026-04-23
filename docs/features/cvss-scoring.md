@@ -345,14 +345,17 @@ with an active ticket, STAMP performs the following recalculation:
    - Products with `is_override = true` are not modified
    - Products in protected states (`WONT_FIX`, `IGNORED`) are not modified
    - Products in Reactive LTSS phase remain `AFFECTED_RESOLVED` regardless
-3. **Ticket status re-evaluation**: product status changes in step 2
-   MUST be applied through the `ticket_mutations` module, which
-   internally calls `evaluate_ticket_status` to re-evaluate the ticket
-   status (see `docs/features/tickets.md`, Centralized Status
-   Evaluation). In practice, a CVSS recalculation that moves products
-   from `AFFECTED_RESOLVED` to `AFFECTED` typically results in
-   Resolved → Analyzed (since codestream statuses remain set), but the
-   centralized evaluator determines the correct target status.
+3. **Codestream and ticket status re-evaluation**: product status changes
+   in step 2 MUST be applied through the `ticket_mutations` module, which
+   evaluates the codestream eligibility rollup (see
+   `docs/features/package-tracking.md`, Automatic transitions) and then
+   calls `evaluate_ticket_status` to re-evaluate the ticket status (see
+   `docs/features/tickets.md`, Centralized Status Evaluation). In
+   practice, a CVSS recalculation that moves products from
+   `AFFECTED_RESOLVED` to `AFFECTED` may also move the parent codestream
+   from `AFFECTED_RESOLVED` back to `AFFECTED`, and the ticket from
+   Resolved to Analyzed. The centralized evaluator determines the correct
+   target status.
    **Note**: this rollback can only occur when an VA manually modifies a
    SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
    Hat) and default CVSS version changes only process active tickets

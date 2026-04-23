@@ -27,7 +27,7 @@ fields populated according to this table:
 | `duplicate_removed` | Duplicate mark reverted | VA user | `STAMP-{n}` identifier of the original ticket | `NULL` | Optional VA note |
 | `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
 | `package_removed` | VA removes package from ticket | VA user | Package name | `NULL` | `NULL` |
-| `codestream_status_changed` | VA changes codestream status | VA user | Old status | New status | `package_name:codestream_name` |
+| `codestream_status_changed` | Codestream status changed (VA action or eligibility rollup) | VA user for manual changes, `NULL` for automatic eligibility rollup | Old status | New status | `package_name:codestream_name` |
 | `product_status_overridden` | VA overrides product status | VA user | Old status | New status | `package_name:product_id` |
 | `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |

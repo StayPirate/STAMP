@@ -185,14 +185,19 @@ the full ticket specification.
 
 1. VA analyzes a ticket and sets affectedness status per codestream
 2. STAMP propagates codestream status to products, adjusting for eligibility
-   (CVSS score vs product threshold from AIMAAS)
+   only when the propagated status is AFFECTED (CVSS score vs product
+   threshold from AIMAAS)
 3. Products not eligible that inherit AFFECTED status receive
    AFFECTED_RESOLVED (green) automatically — other inherited statuses are
    not modified by eligibility
 4. Products in Reactive LTSS phase that inherit AFFECTED status receive
    AFFECTED_RESOLVED (green) automatically — regardless of CVSS score
-5. VA can override individual product statuses when needed
-6. See `docs/features/package-tracking.md` for full status propagation rules
+5. If all products under a codestream are AFFECTED_RESOLVED (no eligible
+   product), the codestream itself is set to AFFECTED_RESOLVED automatically;
+   if a product later becomes eligible again, the codestream reverts to
+   AFFECTED
+6. VA can override individual product statuses when needed
+7. See `docs/features/package-tracking.md` for full status propagation rules
 
 ### Release Tracking Flow
 

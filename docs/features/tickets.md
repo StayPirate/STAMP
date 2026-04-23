@@ -401,6 +401,33 @@ SMELT resolution and external I/O. It delegates the actual creation of
 record deletion to the module. The SMELT query logic does not belong
 in `ticket_mutations` — only the record mutations do.
 
+**Idempotency**: the record creation functions in `ticket_mutations` are
+idempotent. If a `TicketPackageCodestream` or `TicketPackageProduct`
+record already exists for the given combination, it is skipped without
+modification. Only missing records are created.
+
+**Record creation logic**: when `ticket_mutations` creates a new
+`TicketPackageCodestream` record, the initial status is always `ANALYSIS`.
+When it creates a new `TicketPackageProduct` record, it determines the
+initial status by inheriting from the parent `TicketPackageCodestream`:
+
+- Parent in `ANALYSIS` → `ANALYSIS`
+- Parent in `AFFECTED` → apply eligibility rules (CVSS threshold,
+  Reactive LTSS override): if the product is not eligible, set status
+  to `AFFECTED_RESOLVED`; otherwise set status to `AFFECTED`
+- Parent in any other status (`NOT_AFFECTED`, `WONT_FIX`, `IGNORED`,
+  `RELEASED`, `AFFECTED_RESOLVED`) → inherit the same status
+
+This logic is internal to `ticket_mutations` — callers (including
+`add_package_to_ticket`) do not specify the initial status.
+
+After creating a `TicketPackageProduct` with status `AFFECTED_RESOLVED`
+(inherited from an `AFFECTED` parent where the product is not eligible),
+the codestream eligibility rollup is evaluated: if all products under the
+parent codestream are now `AFFECTED_RESOLVED`, the codestream itself is
+set to `AFFECTED_RESOLVED` (see `docs/features/package-tracking.md`,
+Automatic transitions).
+
 Operations that do NOT modify gate-relevant data (assignment, duplicate
 set/remove, CVE association/removal, soft-delete, restore) are NOT
 required to go through this module — they create `TicketEvent` records

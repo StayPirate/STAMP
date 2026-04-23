@@ -462,7 +462,7 @@ system action).
 | duplicate_removed          | Duplicate mark was reverted                        |
 | package_added              | Package added to the ticket (manual by VA or automatic via CPE match / codestream detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
 | package_removed            | VA removed a package from the ticket               |
-| codestream_status_changed  | VA changed codestream affectedness status           |
+| codestream_status_changed  | Codestream affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic eligibility rollup (all products AFFECTED_RESOLVED or a product returns to AFFECTED). |
 | product_status_overridden  | VA overrode product affectedness status             |
 | codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
 | product_released           | Product release detected via updateinfo.xml advisory |

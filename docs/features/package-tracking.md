@@ -103,7 +103,13 @@ after their LTSS phase ends.
 ### Package Eligibility
 
 Eligibility determines whether a product will receive a security update for a
-given CVE. The rules are:
+given CVE. Eligibility is evaluated **only when a product's status would
+become `AFFECTED`** — either through VA-initiated codestream propagation,
+status inheritance during package addition, or CVSS/threshold/lifecycle
+recalculation. It is never applied at initial record creation time when the
+status is `ANALYSIS`.
+
+The rules are:
 
 1. **Check for CVSS threshold**: look up the product in AIMAAS
    `cvss-threshold` endpoint. If an entry exists, use its `threshold` value.
@@ -123,8 +129,7 @@ given CVE. The rules are:
    but no action is required.
 4. **Reactive LTSS override**: if the product is currently in the Reactive
    LTSS phase (`end_of_ltss < today < end_of_reactive_ltss`), status is
-   always `AFFECTED_RESOLVED` regardless of the CVSS score. The VA can still
-   perform the assessment, but the result is always green.
+   always `AFFECTED_RESOLVED` regardless of the CVSS score.
 
 **Important**: the CVSS version used for threshold comparison MUST always
 be resolved from the system-wide default CVSS version configuration — never
@@ -210,6 +215,10 @@ re-evaluation after each change.
      see `docs/features/cvss-scoring.md`)
    - Otherwise → `AFFECTED`
 3. Products with `is_override = true` are not modified
+4. After propagation, if **all** products under the codestream are in
+   `AFFECTED_RESOLVED`, the codestream itself is automatically set to
+   `AFFECTED_RESOLVED` (no eligible product requires a fix, so no work is
+   needed on this codestream)
 
 #### VA sets any other status on a codestream
 
@@ -241,6 +250,21 @@ mechanism):
 | AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product not eligible (resolved CVSS score < threshold) |
 | AFFECTED          | AFFECTED_RESOLVED | TicketPackageProduct   | Product enters Reactive LTSS phase     |
 | AFFECTED_RESOLVED | AFFECTED          | TicketPackageProduct   | Product becomes eligible (CVSS score change, threshold change, or lifecycle phase change) |
+| AFFECTED          | AFFECTED_RESOLVED | TicketPackageCodestream | All products under the codestream are `AFFECTED_RESOLVED` (no eligible product) |
+| AFFECTED_RESOLVED | AFFECTED          | TicketPackageCodestream | At least one product under the codestream returns to `AFFECTED` (product becomes eligible) |
+
+**Codestream eligibility rollup**: whenever a `TicketPackageProduct` status
+changes to or from `AFFECTED_RESOLVED`, the `ticket_mutations` module checks
+the aggregate status of all sibling products under the same codestream:
+
+- If the codestream is `AFFECTED` and **all** its products are now
+  `AFFECTED_RESOLVED` → the codestream is set to `AFFECTED_RESOLVED`.
+- If the codestream is `AFFECTED_RESOLVED` and **at least one** product
+  returns to `AFFECTED` (e.g., due to CVSS score change, threshold change,
+  or lifecycle phase change) → the codestream is set back to `AFFECTED`.
+
+This check is performed as part of the same `ticket_mutations` operation that
+changed the product status, before `evaluate_ticket_status` is called.
 
 **Protected states**: `WONT_FIX` and `IGNORED` are never modified by automatic
 transitions.
@@ -269,21 +293,21 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 1. Query SMELT to resolve all currently maintained codestreams and products
    for the given package (see [SMELT Query](#smelt-query-for-package-resolution)
    below).
-2. For each resolved codestream, create a `TicketPackageCodestream` record
-   with status `ANALYSIS` (skip if one already exists for this ticket +
-   package + codestream combination).
-3. For each resolved product under each codestream, create a
-   `TicketPackageProduct` record with status `ANALYSIS` (skip if one
-   already exists). Apply eligibility rules (CVSS threshold, Reactive LTSS
-   override) to adjust the initial status where applicable.
+2. For each resolved codestream, delegate `TicketPackageCodestream` record
+   creation to `ticket_mutations`.
+3. For each resolved product under each codestream, delegate
+   `TicketPackageProduct` record creation to `ticket_mutations`.
 4. Return a result indicating which records were created and which were
    skipped (already existed).
 
+`ticket_mutations` handles idempotency (skipping existing records),
+initial status determination, and eligibility logic internally — see
+`docs/features/tickets.md`, Ticket Mutations Module.
+
 **Idempotency**: the function is safe to call multiple times for the same
-package. Existing records are never modified — only missing records are
-created. This means that if SMELT adds new codestreams or products for a
-package after the initial addition, calling the function again will add only
-the new records.
+package. If SMELT adds new codestreams or products for a package after the
+initial addition, calling the function again will add only the new
+records.
 
 ### Triggers
 
@@ -483,9 +507,10 @@ via Celery Beat) and executes the following steps:
    [Codestream Match Outcomes](#codestream-match-outcomes) below.
 
 7. **Update cache**: write the new MD5 to `CodestreamPackageChecksum` for
-   each processed package. The cache is updated even if an error occurs
-   during CVE processing, so already-processed packages are not
-   reprocessed on the next run.
+   each successfully processed package. The cache is updated **only if the
+   IBS diff request succeeded** (HTTP 200). If IBS returned an error for
+   a specific package diff, the MD5 is NOT updated so the next run will
+   re-attempt the diff for that package.
 
 #### Codestream Match Outcomes
 
@@ -546,8 +571,9 @@ No ticket exists in STAMP for the extracted CVE-ID.
 
 - **IBS unreachable / timeout**: skip the codestream with ERROR-level log,
   retry on the next scheduled run.
-- **IBS returns error for a specific package diff**: log ERROR, update the
-  MD5 cache to avoid re-processing, continue with remaining packages.
+- **IBS returns error for a specific package diff**: log ERROR, do NOT
+  update the MD5 cache (the next run will re-attempt the diff), continue
+  with remaining packages.
 - **SMELT unreachable** (during Case B/C package resolution): log ERROR,
   the package addition is skipped. The next run will not re-trigger it
   (MD5 already cached), so the condition should be surfaced to operators
