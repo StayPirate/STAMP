@@ -16,7 +16,7 @@ preparation and release of security patches.
 - **Database**: PostgreSQL with Alembic migrations
 - **Task Queue**: Celery with Redis broker
 - **Build System Integration**: Open Build Service (OBS)
-- **CVE Sources**: NVD (NIST), SUSE Security OVAL, MITRE, and others
+- **CVE Sources**: NVD (NIST), MITRE, and others
 
 For full architecture details, read `docs/architecture.md`.
 
@@ -29,6 +29,7 @@ stamp/
 ├── docs/                        # Specifications and documentation
 │   ├── architecture.md          # System architecture
 │   ├── data-model.md            # Database schema and relationships
+│   ├── data-sources.md          # External data sources catalog
 │   ├── api-spec.md              # API specifications
 │   ├── conventions.md           # Code conventions
 │   ├── ui-design-system.md      # UI design system
@@ -106,6 +107,7 @@ the location is correct according to this map:
 | Feature specifications     | `docs/features/<feature-name>.md` |
 | General architecture       | `docs/architecture.md`            |
 | Data schema                | `docs/data-model.md`              |
+| External data sources      | `docs/data-sources.md`            |
 | API specifications         | `docs/api-spec.md`                |
 | Code conventions           | `docs/conventions.md`             |
 | UI design system           | `docs/ui-design-system.md`        |

@@ -100,6 +100,13 @@ coordination across multiple maintained distribution versions.
 
 ### External Integrations
 
+For a comprehensive catalog of all external data sources — including active
+integrations, planned sources, and potential future sources — with access
+details, protocols, and documentation links, see `docs/data-sources.md`.
+
+The sections below describe how STAMP architecturally integrates with each
+active source. See the data sources catalog for the full picture.
+
 #### CVE Sources
 
 - **NVD (NIST)**: REST API v2 for CVE data
@@ -149,8 +156,9 @@ coordination across multiple maintained distribution versions.
 #### Open Build Service (OBS)
 
 - Public instance at build.opensuse.org for openSUSE distributions
-- Future: will be used for tracking openSUSE Tumbleweed and Leap packages
-- Not currently integrated — see `docs/features/package-tracking.md`
+- Not currently integrated — there is no plan to integrate openSUSE
+  package tracking at this time, but it may be evaluated in the future
+- See `docs/data-sources.md` for details on OBS and its RabbitMQ event bus
 
 ## Data Flow
 

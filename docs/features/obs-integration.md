@@ -103,9 +103,9 @@ IBS-related data is stored in the following tables (see `docs/data-model.md`):
 
 #### IBSClient (`backend/app/services/ibs_client.py`)
 
-Dedicated client for IBS API communication. Separate from any future
-`OBSClient` for the public OBS instance, since they have independent
-credentials and may diverge in API behavior.
+Dedicated client for IBS API communication. Separate from any potential
+future `OBSClient` for the public OBS instance, since they would have
+independent credentials and may diverge in API behavior.
 
 Methods:
 - `get_source_info(project: str) -> dict[str, str]`: calls
@@ -150,16 +150,17 @@ section "Codestream-level Detection".
 
 ### Status
 
-Not currently integrated. Future integration with `build.opensuse.org` for
-tracking openSUSE Tumbleweed and Leap packages will be addressed in a
-separate specification.
+Not currently integrated. There is no plan to integrate openSUSE package
+tracking at this time. This may be evaluated in the future if there is
+demand for tracking security updates across openSUSE distributions. If
+pursued, it would be addressed in a separate specification.
 
-### Planned Service
-
-A future `OBSClient` (`backend/app/services/obs_client.py`) will
-encapsulate public OBS API communication with its own credentials and
-configuration (`OBS_API_URL`, `OBS_USERNAME`, `OBS_PASSWORD`). The public
-OBS API is compatible with IBS but uses separate authentication.
+The public OBS API at `api.opensuse.org` is compatible with IBS but uses
+separate authentication. A dedicated `OBSClient`
+(`backend/app/services/obs_client.py`) with its own credentials and
+configuration (`OBS_API_URL`, `OBS_USERNAME`, `OBS_PASSWORD`) would be
+needed. See `docs/data-sources.md` for details on OBS and its RabbitMQ
+event bus.
 
 ## Security
 
