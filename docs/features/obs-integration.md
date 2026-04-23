@@ -91,8 +91,10 @@ and `tracker` equal to `cve` or `bnc`.
 IBS-related data is stored in the following tables (see `docs/data-model.md`):
 
 - `CodestreamPackageChecksum`: operational cache storing the last known
-  `srcmd5` for each `(codestream_name, package_name)` pair. Used by the
-  `CodestreamReleaseDetector` to detect source changes between runs.
+  `srcmd5` for each `(codestream_name, package_name)` pair. Shared by the
+  `IBSEventConsumer` (real-time) and the `CodestreamReleaseDetector`
+  (periodic catch-up) to detect source changes. See
+  `docs/features/ibs-rabbitmq-integration.md`.
 - `TicketPackageCodestream.codestream_name`: stores the IBS project name
   (e.g., `SUSE:SLE-15-SP6:Update`) as a string. Codestreams are not
   maintained as a separate table.
@@ -129,13 +131,17 @@ section "Codestream-level Detection".
 
 ### Background Tasks
 
-- `check_codestream_releases`: periodic task (every 8 hours via Celery
-  Beat) that invokes `CodestreamReleaseDetector.run()`. This task is a
-  `BaseFetcher` subclass with `name`, `description`, and
-  `default_schedule` attributes. See `docs/features/fetcher-dashboard.md`
-  for the BaseFetcher infrastructure.
+- `check_codestream_releases`: periodic task (every 24 hours at 02:00
+  UTC via Celery Beat) that invokes `CodestreamReleaseDetector.run()`.
+  This task is a `BaseFetcher` subclass with `name`, `description`, and
+  `default_schedule` attributes. Serves as a catch-up mechanism for
+  events missed by the `IBSEventConsumer`. See
+  `docs/features/fetcher-dashboard.md` for the BaseFetcher
+  infrastructure and `docs/features/ibs-rabbitmq-integration.md` for the
+  real-time consumer that complements this periodic fetcher.
 - `create_ticket_from_detection`: on-demand task enqueued when a CVE fix
-  is detected for a CVE with no existing ticket. Fetches CVE data from
+  is detected for a CVE with no existing ticket (triggered by either the
+  periodic fetcher or the `IBSEventConsumer`). Fetches CVE data from
   NVD, creates the ticket, and resolves packages via SMELT.
 
 ### Business Rules

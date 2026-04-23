@@ -464,7 +464,7 @@ system action).
 | package_removed            | VA removed a package from the ticket               |
 | codestream_status_changed  | Codestream affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic eligibility rollup (all products AFFECTED_RESOLVED or a product returns to AFFECTED). |
 | product_status_overridden  | VA overrode product affectedness status             |
-| codestream_released        | Codestream release detected by CodestreamReleaseDetector (Case A) |
+| codestream_released        | Codestream release detected by `IBSEventConsumer` (real-time) or `CodestreamReleaseDetector` (periodic catch-up) — Case A |
 | product_released           | Product release detected via updateinfo.xml advisory |
 | ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
 | cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the VA who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
@@ -477,10 +477,13 @@ system action).
 
 ### CodestreamPackageChecksum
 
-Operational cache table used by the `CodestreamReleaseDetector` to track
-source MD5 checksums of packages in IBS codestream projects. By comparing
-the current `srcmd5` from IBS with the cached value, the detector
-identifies which packages have changed since the last run.
+Operational cache table shared by the `IBSEventConsumer` (real-time) and
+the `CodestreamReleaseDetector` (periodic catch-up) to track source MD5
+checksums of packages in IBS codestream projects. By comparing the
+current `srcmd5` from IBS with the cached value, both mechanisms
+identify which packages have changed and need a diff analysis. The shared
+cache prevents duplicate work between the two detection paths. See
+`docs/features/ibs-rabbitmq-integration.md`.
 
 This table contains no domain data — it is purely an operational artifact
 of the release detection mechanism.

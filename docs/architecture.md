@@ -29,16 +29,25 @@ coordination across multiple maintained distribution versions.
 │   CVE Sources    │────▶│        Celery Workers            │
 │  NVD, MITRE,     │     │                                  │
 │  others          │     │  ┌────────────┐ ┌────────────┐  │
-└──────────────────┘     │  │  CVE Sync  │ │  OBS Sync  │  │
+└──────────────────┘     │  │  CVE Sync  │ │  IBS Sync  │  │
                         │  └────────────┘ └────────────┘  │
 ┌──────────────────┐     │                                  │
-│   Open Build     │◀──▶│  ┌────────────────────────────┐  │
-│   Service (OBS)  │     │  │  Package Resolution  │  │
+│   IBS            │◀──▶│  ┌────────────────────────────┐  │
+│  (build.suse.de) │     │  │  Package Resolution  │  │
 └──────────────────┘     │  └────────────────────────────┘  │
                         └──────────────────────────────────┘
                                         │
                         ┌───────────────▼──────────────────┐
                         │       Redis (Broker/Cache)        │
+                        └──────────────────────────────────┘
+
+┌──────────────────┐     ┌──────────────────────────────────┐
+│  IBS RabbitMQ    │────▶│      IBSEventConsumer            │
+│ (rabbit.suse.de) │     │                                  │
+└──────────────────┘     │  Consumes suse.obs.package.commit│
+                        │  events for real-time codestream  │
+                        │  release detection. Shares MD5    │
+                        │  cache with periodic fetcher.     │
                         └──────────────────────────────────┘
 ```
 
@@ -120,6 +129,12 @@ active source. See the data sources catalog for the full picture.
   `SUSE:SLE-15-SP6:Update`)
 - STAMP queries IBS to detect when security fixes have been released to
   codestream and product repositories
+- **Real-time event consumer**: STAMP connects to the IBS RabbitMQ message
+  bus (`rabbit.suse.de`) and consumes `suse.obs.package.commit` events for
+  near-real-time codestream-level release detection. The periodic polling
+  fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
+  serves as a catch-up mechanism for events missed during downtime. See
+  `docs/features/ibs-rabbitmq-integration.md` for the full specification.
 - See `docs/features/package-tracking.md` for codestream/product concepts
 
 #### SMELT
@@ -206,8 +221,12 @@ product — through different mechanisms. See
 `docs/features/package-tracking.md` (section "Release Tracking") for the
 authoritative details.
 
-1. Celery Beat triggers periodic release status checks (`check_codestream_releases` and `check_product_releases`).
-2. **Codestream level**: workers query IBS source info and diff endpoints
+1. Codestream-level detection uses two complementary mechanisms:
+   the `IBSEventConsumer` (real-time via IBS RabbitMQ) and the periodic
+   `check_codestream_releases` fetcher (catch-up every 24 hours at
+   02:00 UTC). Both share the same MD5 cache to avoid duplicate work.
+   See `docs/features/ibs-rabbitmq-integration.md`.
+2. **Codestream level**: the consumer or fetcher queries IBS diff endpoints
    (see `docs/features/obs-integration.md` and
    `docs/features/package-tracking.md`, section "Codestream-level
    Detection") to detect whether the fix for the ticket's CVE has landed

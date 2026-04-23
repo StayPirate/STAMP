@@ -21,7 +21,7 @@ see `docs/architecture.md` and the relevant feature specifications in
 | Red Hat Security Data | Public | CVSS assessments | Active |
 | IBS | Internal | Source packages, builds, repos (SUSE commercial) | Active |
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
-| IBS/OBS RabbitMQ | Internal/Public | Real-time build and publish events | Not integrated |
+| IBS/OBS RabbitMQ | Internal/Public | Real-time build and publish events | Partially integrated |
 | SMELT | Internal | Product catalog, package-codestream mapping | Active |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
@@ -121,9 +121,11 @@ whether update advisories have been published to product repositories.
   - `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1` —
     source diff with CVE/Bugzilla tracker references
 - **Integration status**: **Active**. Codestream-level release detection
-  (`check_codestream_releases`, every 8 hours) and product-level release
-  detection (`check_product_releases`) are both implemented as
-  `BaseFetcher` subclasses
+  uses two complementary mechanisms: the `IBSEventConsumer` (real-time
+  via IBS RabbitMQ, see `docs/features/ibs-rabbitmq-integration.md`) and
+  the periodic `check_codestream_releases` fetcher (catch-up every 24
+  hours at 02:00 UTC). Product-level release detection
+  (`check_product_releases`) runs as a periodic `BaseFetcher` subclass
 - **Documentation**: https://build.suse.de (internal). The OBS API
   documentation at https://api.opensuse.org/apidocs/ applies to IBS as
   both run the same software
@@ -178,12 +180,14 @@ near-real-time reactivity.
     must declare an exclusive queue, bind it to the exchange with a
     routing key filter, and consume messages. The exchange must be declared
     with `passive=True` and `durable=True` (consumers cannot create it)
-- **Integration status**: **Not integrated**. The RabbitMQ event bus could
-  complement or partially replace the current polling-based release
-  detection, providing near-real-time notification when source packages
-  change or repositories are published. However, since queues are
-  exclusive and transient, messages sent during STAMP downtime would be
-  lost — polling would still be needed as a catch-up mechanism
+- **Integration status**: **Partially integrated**. STAMP consumes
+  `suse.obs.package.commit` events from IBS for near-real-time
+  codestream-level release detection. The periodic polling fetcher
+  (`check_codestream_releases`, every 24 hours at 02:00 UTC) serves as
+  a catch-up mechanism for events missed during consumer downtime, since
+  queues are exclusive and transient. Other events (`repo.published`,
+  `build_success`, etc.) are not consumed. See
+  `docs/features/ibs-rabbitmq-integration.md` for the full specification
 - **Documentation**: https://rabbit.opensuse.org (OBS),
   https://github.com/openSUSE/suse_msg/blob/master/amqp_infra.md,
   OBS event types: https://github.com/openSUSE/open-build-service/tree/master/src/api/app/models/event

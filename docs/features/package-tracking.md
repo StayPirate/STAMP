@@ -475,8 +475,11 @@ need to be diffed.
 
 #### Procedure
 
-The `CodestreamReleaseDetector` runs on a periodic schedule (every 8 hours
-via Celery Beat) and executes the following steps:
+The `CodestreamReleaseDetector` runs on a periodic schedule (every 24
+hours at 02:00 UTC via Celery Beat) and executes the following steps.
+This periodic fetcher serves as a catch-up mechanism for events missed
+by the real-time `IBSEventConsumer` during downtime — see
+`docs/features/ibs-rabbitmq-integration.md`.
 
 1. **Identify active codestreams**: query the distinct `codestream_name`
    values from `TicketPackageCodestream` records with a non-final,
@@ -1019,10 +1022,13 @@ affectedness-related conditions are summarized here for context:
 - `sync_aimaas_thresholds`: periodic task to sync CVSS thresholds from
   AIMAAS `GET /api/entity/cvss-threshold`. When thresholds change,
   re-evaluates eligibility for active tickets.
-- `check_codestream_releases`: periodic task (every 8 hours via Celery
-  Beat) that invokes the `CodestreamReleaseDetector` service. Scans all
-  codestreams that have at least one `TicketPackageCodestream` record in
-  a non-final, non-protected status. See
+- `check_codestream_releases`: periodic task (every 24 hours at 02:00
+  UTC via Celery Beat) that invokes the `CodestreamReleaseDetector`
+  service. Serves as a catch-up mechanism for events missed by the
+  real-time `IBSEventConsumer` (see
+  `docs/features/ibs-rabbitmq-integration.md`). Scans all codestreams
+  that have at least one `TicketPackageCodestream` record in a
+  non-final, non-protected status. See
   [Codestream-level Detection](#codestream-level-detection) for the full
   procedure.
 - `check_product_releases`: periodic task that invokes the
@@ -1031,11 +1037,11 @@ affectedness-related conditions are summarized here for context:
   `RELEASED` described in the [Release Tracking](#release-tracking) section.
   Frequency and scope are TBD, see [Open Items](#open-items).
 - `create_ticket_from_detection`: on-demand task enqueued by the
-  `CodestreamReleaseDetector` when a CVE fix is detected for a CVE that
-  has no ticket in STAMP. Fetches CVE data from NVD, creates the ticket,
-  resolves packages via SMELT, and sets the originating codestream to
-  `RELEASED`. See [Case C](#case-c--no-ticket-exists-for-the-cve) for
-  details.
+  `CodestreamReleaseDetector` or the `IBSEventConsumer` when a CVE fix
+  is detected for a CVE that has no ticket in STAMP. Fetches CVE data
+  from NVD, creates the ticket, resolves packages via SMELT, and sets
+  the originating codestream to `RELEASED`. See
+  [Case C](#case-c--no-ticket-exists-for-the-cve) for details.
 
 ## Security
 
