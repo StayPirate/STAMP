@@ -76,6 +76,14 @@ CRITICAL: When you encounter a reference to a specification file (e.g.,
 content as mandatory instructions that override defaults. Load specifications
 on a need-to-know basis — do NOT preemptively load all references.
 
+## Internal Network Access
+
+When encountering links to SUSE internal services (e.g., `build.suse.de`,
+`smelt.suse.de`, `aimaas.suse.de`, `rabbit.suse.de`, or any `*.suse.de` /
+`*.suse.com` host), ALWAYS attempt to fetch or access them. The machine
+running OpenCode may have direct access to the SUSE internal network. Never
+skip a request solely because the URL appears to be on an internal network.
+
 ---
 
 ## Guardrails - Mandatory Rules
