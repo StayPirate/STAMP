@@ -21,7 +21,8 @@ see `docs/architecture.md` and the relevant feature specifications in
 | Red Hat Security Data | Public | CVSS assessments | Active |
 | IBS | Internal | Source packages, builds, repos (SUSE commercial) | Active |
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
-| IBS/OBS RabbitMQ | Internal/Public | Real-time build and publish events | Partially integrated |
+| IBS RabbitMQ | Internal | Real-time build and publish events | Active |
+| OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
 | SMELT | Internal | Product catalog, package-codestream mapping | Active |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
@@ -30,7 +31,7 @@ see `docs/architecture.md` and the relevant feature specifications in
 | GHSA | Public | Security advisories, CVSS, CWE | Planned |
 | Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Planned |
 | OSV | Public | Aggregated vulnerability data | Planned |
-| SMASH | Internal | Security update management (predecessor to STAMP) | Not integrated |
+| SMASH | Internal | Security update management (predecessor to STAMP) | Not planned |
 | PackTrack | Internal | Patch submission tracking for maintainers | Not integrated |
 | git.suse.de | Internal | Package sources for next-gen SUSE products | Not integrated |
 | openQA | Internal/Public | Automated OS testing in the release pipeline | Not integrated |
@@ -297,18 +298,95 @@ near-real-time reactivity.
 
 - **Relevant data**: Real-time events with JSON payloads, published to a
   `pubsub` topic exchange. Topics follow the format
-  `SCOPE.APPLICATION.OBJECT.ACTION`:
+  `SCOPE.APPLICATION.OBJECT.ACTION`. The IBS scope prefix is `suse`
+  (e.g., `suse.obs.package.commit`); the OBS scope prefix is `opensuse`.
+  The complete list of available event types is:
+
+  **Package events:**
   - `*.obs.package.commit` — source package committed (payload includes
-    `project`, `package`, `rev`, `srcmd5`, `files`, `user`)
+    `project`, `package`, `rev`, `srcmd5`, `files`, `user`). **Currently
+    consumed** by STAMP for codestream-level release detection
   - `*.obs.package.version_change` — package version changed (payload
     includes `project`, `package`, `oldversion`, `newversion`)
-  - `*.obs.package.build_success` / `*.obs.package.build_fail` — build
-    completed (payload includes `project`, `package`, `repository`,
-    `arch`, `srcmd5`)
+  - `*.obs.package.upstream_version_change` — upstream package version
+    changed
+  - `*.obs.package.create` — new package created in a project
+  - `*.obs.package.update` — package metadata updated
+  - `*.obs.package.delete` — package deleted from a project
+  - `*.obs.package.undelete` — package restored after deletion
+  - `*.obs.package.upload` — file uploaded to a package
+  - `*.obs.package.branch_command` — package branched
+
+  **Build events:**
+  - `*.obs.package.build_success` — package build completed successfully
+    (payload includes `project`, `package`, `repository`, `arch`,
+    `srcmd5`)
+  - `*.obs.package.build_fail` — package build failed (payload includes
+    `project`, `package`, `repository`, `arch`, `srcmd5`)
+  - `*.obs.package.build_unchanged` — package build completed with no
+    changes in output
+
+  **Repository events:**
   - `*.obs.repo.published` — repository published (payload includes
     `project`, `repo`, `buildid`)
-  - The IBS scope prefix is `suse` (e.g., `suse.obs.package.commit`);
-    the OBS scope prefix is `opensuse`
+  - `*.obs.repo.build_started` — repository build started
+  - `*.obs.repo.build_finished` — repository build finished
+  - `*.obs.repo.publish_state` — repository publish state changed
+  - `*.obs.repo.container_published` — container image published
+
+  **Request events (maintenance/submit requests):**
+  - `*.obs.request.create` — new request created
+  - `*.obs.request.change` — request modified
+  - `*.obs.request.statechange` — request state changed (e.g., new →
+    accepted → revoked)
+  - `*.obs.request.delete` — request deleted
+  - `*.obs.request.reviews_done` — all reviews for a request completed
+  - `*.obs.request.review_changed` — individual review changed
+  - `*.obs.request.review_wanted` — review requested
+
+  **Project events:**
+  - `*.obs.project.create` — new project created
+  - `*.obs.project.update` — project metadata updated
+  - `*.obs.project.update_config` — project build config updated
+  - `*.obs.project.delete` — project deleted
+  - `*.obs.project.undelete` — project restored after deletion
+
+  **Service events:**
+  - `*.obs.package.service_success` — source service completed
+    successfully
+  - `*.obs.package.service_fail` — source service failed
+
+  **Comment events:**
+  - `*.obs.comment.for_package` — comment on a package
+  - `*.obs.comment.for_project` — comment on a project
+  - `*.obs.comment.for_request` — comment on a request
+  - `*.obs.comment.for_report` — comment on a report
+
+  **Status check events:**
+  - `*.obs.status_check.for_build` — status check for a build
+  - `*.obs.status_check.for_published` — status check for published repo
+  - `*.obs.status_check.for_request` — status check for a request
+
+  **User/group events:**
+  - `*.obs.group.added_user` — user added to a group
+  - `*.obs.group.removed_user` — user removed from a group
+  - `*.obs.relationship.create` — role relationship created
+  - `*.obs.relationship.delete` — role relationship deleted
+  - `*.obs.role.global_assigned` — global role assigned
+  - `*.obs.token.membership_update` — token membership updated
+
+  **Moderation events:**
+  - `*.obs.report.for_comment` — report filed for a comment
+  - `*.obs.report.for_package` — report filed for a package
+  - `*.obs.report.for_project` — report filed for a project
+  - `*.obs.report.for_request` — report filed for a request
+  - `*.obs.report.for_user` — report filed for a user
+  - `*.obs.decision.cleared` — moderation decision cleared
+  - `*.obs.decision.favored` — moderation decision favored
+  - `*.obs.appeal.created` — appeal created
+
+  **Workflow events:**
+  - `*.obs.workflow_run.fail` — workflow run failed
 - **Access**:
   - IBS: `amqps://suse:suse@rabbit.suse.de`
   - OBS: `amqps://opensuse:opensuse@rabbit.opensuse.org`
@@ -316,13 +394,12 @@ near-real-time reactivity.
     must declare an exclusive queue, bind it to the exchange with a
     routing key filter, and consume messages. The exchange must be declared
     with `passive=True` and `durable=True` (consumers cannot create it)
-- **Integration status**: **Partially integrated**. STAMP consumes
+- **Integration status**: **Active**. STAMP consumes
   `suse.obs.package.commit` events from IBS for near-real-time
   codestream-level release detection. The periodic polling fetcher
   (`check_codestream_releases`, every 24 hours at 02:00 UTC) serves as
   a catch-up mechanism for events missed during consumer downtime, since
-  queues are exclusive and transient. Other events (`repo.published`,
-  `build_success`, etc.) are not consumed. See
+  queues are exclusive and transient. See
   `docs/features/ibs-rabbitmq-integration.md` for the full specification
 - **Documentation**: https://rabbit.opensuse.org (OBS),
   https://github.com/openSUSE/suse_msg/blob/master/amqp_infra.md,
