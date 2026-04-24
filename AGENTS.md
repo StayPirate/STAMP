@@ -69,6 +69,24 @@ stamp/
 - **New migration**: `cd backend && alembic revision --autogenerate -m "description"`
 - **Local dev stack**: `./dev-env.sh up` (PostgreSQL + Redis, auto-detects Podman or Docker)
 
+## Local Environment
+
+### OBS/IBS CLI (`osc`)
+
+On this machine, the `osc` command-line tool (used to interact with OBS/IBS)
+MUST be invoked through `secbox`:
+
+- **Always use**: `secbox osc <subcommand>` (NEVER bare `osc <subcommand>`)
+- **Never pass credentials**: authentication is handled automatically by
+  `secbox`. Do not pass `--user`, `--pass`, or attempt to configure
+  `~/.oscrc`
+- The API URL (`-A`) must still be specified as usual when targeting a
+  specific OBS/IBS instance (e.g., `-A https://build.suse.de`)
+
+Examples:
+- `secbox osc -A https://build.suse.de ls SUSE:SLE-15-SP6:Update`
+- `secbox osc -A https://build.suse.de api /source/SUSE:SLE-15-SP6:Update/kernel-default`
+
 ## External File Loading
 
 CRITICAL: When you encounter a reference to a specification file (e.g.,
