@@ -11,6 +11,12 @@
   must be achievable through the API alone, with equivalent filtering,
   pagination, and sorting capabilities. The API may expose additional
   capabilities not present in the UI, but the reverse is a defect
+- **HTTP APIs over CLIs**: when integrating with external services (IBS/OBS,
+  SMELT, AIMAAS, Bugzilla, etc.), STAMP MUST use their HTTP/REST APIs
+  directly. Command-line tools (`osc`, `secbox`, etc.) are available on the
+  development machine for ad-hoc exploratory testing only (e.g., verifying an
+  API response format) and MUST NOT be used in application code or background
+  tasks
 
 ## Python (Backend)
 
