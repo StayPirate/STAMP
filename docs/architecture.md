@@ -243,6 +243,117 @@ authoritative details.
 5. When all packages in a ticket reach a final status, the ticket can
    transition to Resolved.
 
+## Deployment Portability
+
+STAMP must remain deployable with Docker or Podman for local and simple
+environments while preserving a clear path to Kubernetes deployment in the
+future. Kubernetes-specific manifests, Helm charts, or Kustomize overlays are
+intentionally deferred until the infrastructure target is known. Until then,
+runtime and packaging decisions must keep the application stateless,
+externally configured, and independently startable.
+
+### Deployment Target
+
+The deployment target is not fixed at this stage. STAMP must support:
+
+- Docker or Podman for local development and simple self-hosted deployments
+- Kubernetes as a future production-capable deployment target
+
+The application code must not depend on one runtime orchestrator. Runtime
+differences belong in deployment configuration, not in backend or frontend
+implementation code.
+
+### Container Images
+
+Backend and frontend builds produce standard OCI-compatible images. Docker,
+Podman, and Kubernetes must consume the same images without environment-specific
+image variants.
+
+The backend image must be able to run distinct process roles by command or
+entrypoint configuration:
+
+- FastAPI API server
+- Celery worker
+- Celery Beat scheduler
+- Alembic migration job
+- Long-running integration consumers, such as the IBS RabbitMQ consumer
+
+This keeps process separation explicit and avoids later refactoring when moving
+from Docker/Podman services to Kubernetes Deployments or Jobs.
+
+### Runtime State
+
+Application containers are stateless. They must not rely on local persistent
+filesystem state for correctness. Persistent state belongs in PostgreSQL,
+Redis, or external services.
+
+Local Docker/Podman environments may run PostgreSQL and Redis as containers.
+Production environments may instead use managed services or separately managed
+workloads. Application configuration must treat PostgreSQL and Redis as
+replaceable external dependencies addressed by connection settings.
+
+### Configuration And Secrets
+
+All runtime configuration must be provided through environment variables. This
+includes database and Redis connection strings, CORS settings, frontend API
+base configuration, authentication settings, and credentials or tokens for
+external integrations.
+
+Docker/Podman deployments can provide these values through compose files or
+`.env` files. Kubernetes deployments will provide the same values through
+ConfigMaps and Secrets. Secrets must not be baked into images or committed to
+the repository.
+
+### Database Migrations
+
+Database migrations are a separate operational step. API containers must not
+run Alembic migrations automatically during normal startup, because multiple
+replicas could start concurrently in Kubernetes.
+
+Migrations should be run through an explicit command or one-shot service in
+Docker/Podman environments, and through a dedicated Job or deployment hook in
+Kubernetes environments.
+
+### Singleton Processes
+
+Celery Beat is a singleton process. Local environments run a single scheduler
+service. Kubernetes deployments must also ensure only one active scheduler is
+running unless a future design introduces an explicit distributed locking or
+leader election mechanism.
+
+Other long-running integration consumers must document whether they are safe to
+scale horizontally before more than one replica is deployed.
+
+### Frontend And API Routing
+
+The frontend should use a stable API path, preferably `/api`, with routing to
+the backend handled by nginx, a reverse proxy, or a Kubernetes ingress. This
+keeps browser-facing configuration consistent across Docker/Podman and
+Kubernetes and avoids coupling the frontend bundle to an orchestrator-specific
+backend hostname.
+
+The current frontend container may provide a default nginx upstream suitable for
+local Docker/Podman deployments, such as a backend service named `backend` on
+port `8000`. This is a deployment default, not an application contract.
+Kubernetes deployments should normally route `/api` at the ingress or reverse
+proxy layer before requests reach the static frontend container. If the
+frontend container is responsible for proxying API requests in a given
+environment, its nginx upstream configuration must be provided by deployment
+configuration, such as a mounted config file, without rebuilding the image.
+
+### Health And Readiness
+
+Runtime services must expose health checks that work for both Docker/Podman
+healthchecks and Kubernetes probes. The API should expose lightweight liveness
+and readiness checks so orchestrators can distinguish between a running process
+and a service that is ready to handle traffic.
+
+`/health` is the liveness endpoint. It should confirm that the API process is
+running and able to serve HTTP requests without requiring downstream services.
+`/ready` is the readiness endpoint. It should verify required runtime
+dependencies, such as PostgreSQL and Redis, before the API receives traffic in
+an orchestrated deployment.
+
 ## Environments
 
 - **Development**: `docker-compose.yml` provides PostgreSQL + Redis locally
