@@ -349,6 +349,13 @@ affectedness status. See `docs/features/package-tracking.md` (UI
 Requirements section) for the full specification of the tree layout,
 status dropdowns, eligibility indicators, and color coding.
 
+Each package node in the tree displays the **bugowner** next to the
+package name. For group bugowners, the group name and collective email
+are shown, with a tooltip or expandable section listing group members.
+For person bugowners, the name and email are shown. If the bugowner is
+unknown, "Unknown" is displayed in a neutral/greyed-out style. See
+`docs/features/package-bugowner.md` for details.
+
 The ticket can transition to Analyzed only when all codestreams and
 products have a status other than Analysis (see
 `docs/features/package-tracking.md`, Ticket Lifecycle Integration).

@@ -86,6 +86,17 @@ Parameters:
 The `CodestreamReleaseDetector` filters for issues with `state="added"`
 and `tracker` equal to `cve` or `bnc`.
 
+#### Package Bugowner Resolution
+
+STAMP also uses IBS to resolve package bugowners. These endpoints are
+documented in `docs/features/package-bugowner.md` (IBS API Integration
+section):
+
+- `GET /search/owner?package={name}&filter=bugowner` — resolve effective
+  bugowner through the project hierarchy
+- `GET /person/{userid}` — user email and real name
+- `GET /group/{group_name}` — group email and member list
+
 ### Data Model
 
 IBS-related data is stored in the following tables (see `docs/data-model.md`):

@@ -297,7 +297,11 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
    creation to `ticket_mutations`.
 3. For each resolved product under each codestream, delegate
    `TicketPackageProduct` record creation to `ticket_mutations`.
-4. Return a result indicating which records were created and which were
+4. Resolve and cache the IBS bugowner for the package. If a
+   `PackageBugowner` record already exists for this `package_name`, update
+   it with fresh data from IBS. If it does not exist, create it. See
+   `docs/features/package-bugowner.md` for the resolution algorithm.
+5. Return a result indicating which records were created and which were
    skipped (already existed).
 
 `ticket_mutations` handles idempotency (skipping existing records),

@@ -135,6 +135,10 @@ active source. See the data sources catalog for the full picture.
   fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
   serves as a catch-up mechanism for events missed during downtime. See
   `docs/features/ibs-rabbitmq-integration.md` for the full specification.
+- **Package bugowner resolution**: STAMP queries IBS to resolve the
+  bugowner (maintainer) of each source package tracked in tickets. This
+  data is cached locally and maintained by a periodic fetcher. See
+  `docs/features/package-bugowner.md`.
 - See `docs/features/package-tracking.md` for codestream/product concepts
 
 #### SMELT

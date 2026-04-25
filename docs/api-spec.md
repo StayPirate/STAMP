@@ -91,7 +91,11 @@ automatically.
 
 - `GET /api/v1/tickets` — List tickets with filters. The `search` query
   parameter searches across `STAMP-{n}` identifier, CVE ID, CVE
-  description, and package names. Accepts an optional `include_deleted`
+  description, and package names. Accepts an optional `bugowner` query
+  parameter to filter tickets to those containing at least one package
+  whose bugowner matches the value (matches against bugowner email, name,
+  or group member email/userid — see `docs/features/package-bugowner.md`).
+  Accepts an optional `include_deleted`
   query parameter (`true` or `only`). The parameter is accepted from any
   caller, but soft-deleted tickets are included in the response only if
   the caller holds the Admin role. For non-admin callers the parameter is
@@ -102,7 +106,9 @@ automatically.
   soft-deleted and the caller is not an Admin, returns 410 Gone with body
   `{"detail": "This ticket has been deleted. Contact an admin if you think
   this is an error."}`. Admin callers receive the full ticket data with the
-  `deleted_at` field populated.
+  `deleted_at` field populated. The response includes bugowner information
+  for each package (type, name, email, and group members when applicable).
+  See `docs/features/package-bugowner.md` for the response format.
 - `POST /api/v1/tickets` — Create a ticket manually (Vulnerability Analyst
   role). The creating user is automatically assigned. Optionally accepts
   a `cve_id` to associate a CVE at creation time. If the CVE is not in

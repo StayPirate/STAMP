@@ -248,8 +248,10 @@ whether update advisories have been published to product repositories.
 - **Relevant data**: Source package revisions and MD5 checksums (for
   change detection), source diffs with embedded CVE and Bugzilla references
   (to confirm which vulnerabilities a commit addresses), build results,
-  and published repository metadata including `updateinfo.xml` (which
-  contains advisory details with CVE references and release dates)
+  published repository metadata including `updateinfo.xml` (which
+  contains advisory details with CVE references and release dates),
+  and package bugowner roles (person or group responsible for package
+  maintenance)
 - **Access**: REST API at `api.suse.de` (HTTP Basic Auth or API tokens).
   Download server at `download.suse.de/ibs` for repository data. Key
   endpoints:
@@ -257,17 +259,24 @@ whether update advisories have been published to product repositories.
     checksums
   - `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1` —
     source diff with CVE/Bugzilla tracker references
+  - `GET /search/owner?package={name}&filter=bugowner` — resolve
+    effective bugowner of a package through the project hierarchy
+  - `GET /person/{userid}` — user details (email, real name)
+  - `GET /group/{group_name}` — group details (email, member list)
 - **Integration status**: **Active**. Codestream-level release detection
   uses two complementary mechanisms: the `IBSEventConsumer` (real-time
   via IBS RabbitMQ, see `docs/features/ibs-rabbitmq-integration.md`) and
   the periodic `check_codestream_releases` fetcher (catch-up every 24
   hours at 02:00 UTC). Product-level release detection
-  (`check_product_releases`) runs as a periodic `BaseFetcher` subclass
+  (`check_product_releases`) runs as a periodic `BaseFetcher` subclass.
+  Package bugowner resolution uses the owner search, person, and group
+  endpoints — see `docs/features/package-bugowner.md`
 - **Documentation**: https://build.suse.de (internal). The OBS API
   documentation at https://api.opensuse.org/apidocs/ applies to IBS as
   both run the same software
 - **See also**: `docs/features/obs-integration.md`,
-  `docs/features/package-tracking.md`
+  `docs/features/package-tracking.md`,
+  `docs/features/package-bugowner.md`
 
 ### OBS (Open Build Service)
 
@@ -639,6 +648,7 @@ requirements, rate limits, and data ingested. See
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product |
 | `check_codestream_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) |
 | `check_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) |
+| `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) |
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
 | `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, CWE, affected versions (multi-ecosystem), references |

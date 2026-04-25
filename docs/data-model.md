@@ -108,6 +108,20 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
                            │  last_seen_at                   │
                            └─────────────────────────────────┘
 
+┌──────────────────────────────┐
+│  PackageBugowner             │ (1:N)
+│  (bugowner cache)            │──────┐
+│                              │      │
+│  package_name (UQ)           │      │
+│  bugowner_type               │      ▼
+│  bugowner_name               │  ┌──────────────────────────────┐
+│  bugowner_email              │  │  PackageBugownerMember       │
+└──────────────────────────────┘  │                              │
+                                  │  package_bugowner_id (FK)    │
+                                  │  userid                      │
+                                  │  email                       │
+                                  └──────────────────────────────┘
+
 ┌──────────────────────┐   ┌─────────────────────────────────┐
 │  FetcherConfig       │   │ FetcherRun                       │
 │                      │   │                                 │
@@ -498,6 +512,50 @@ of the release detection mechanism.
 
 **Unique constraint**: (codestream_name, package_name)
 
+### PackageBugowner
+
+Caches the current IBS bugowner for each source package actively tracked
+in STAMP tickets. Shared across all tickets — all `TicketPackageCodestream`
+records with the same `package_name` reference the same bugowner. Records
+are created on-demand when a package is first added to a ticket, maintained
+by the `sync_package_bugowners` fetcher, and removed when the package no
+longer appears in any active ticket. See
+`docs/features/package-bugowner.md` for the full specification.
+
+| Column         | Type        | Constraints          | Description                        |
+|----------------|-------------|----------------------|------------------------------------|
+| id             | UUID        | PK                   | Internal identifier                |
+| package_name   | VARCHAR     | UNIQUE, NOT NULL     | Source package name (matches `TicketPackageCodestream.package_name`) |
+| bugowner_type  | ENUM        | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
+| bugowner_name  | VARCHAR     | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
+| bugowner_email | VARCHAR     | nullable             | Email of the person or collective email of the group. NULL if unresolved |
+| created_at     | TIMESTAMP   | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at     | TIMESTAMP   | NOT NULL, DEFAULT    | Record update timestamp            |
+
+**BugownerType enum values**:
+
+| Value   | Description                                  |
+|---------|----------------------------------------------|
+| person  | Individual IBS user                          |
+| group   | IBS group with collective email and members  |
+
+### PackageBugownerMember
+
+Stores the individual members of group bugowners. Populated only when
+the parent `PackageBugowner.bugowner_type` is `group`. Each record
+represents one member of the IBS group. See
+`docs/features/package-bugowner.md` for the full specification.
+
+| Column               | Type        | Constraints                          | Description                        |
+|----------------------|-------------|--------------------------------------|------------------------------------|
+| id                   | UUID        | PK                                   | Internal identifier                |
+| package_bugowner_id  | UUID        | FK(package_bugowner.id), NOT NULL    | Parent bugowner record             |
+| userid               | VARCHAR     | NOT NULL                             | IBS username of the group member   |
+| email                | VARCHAR     | NOT NULL                             | Email of the group member          |
+| created_at           | TIMESTAMP   | NOT NULL, DEFAULT                    | Record creation timestamp          |
+
+**Unique constraint**: (package_bugowner_id, userid)
+
 ### FetcherRun
 
 Records every execution of a fetcher. Primary data source for the fetcher
@@ -582,10 +640,12 @@ TBD — will be defined based on query patterns during implementation.
   VARCHAR `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR as PK)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
-  `FetcherRun`, `FetcherAuditLog`, and `FetcherRunWeeklyAggregate` only have
-  `created_at` because they are immutable write-once records —
+  `PackageBugownerMember`, `FetcherRun`, `FetcherAuditLog`, and
+  `FetcherRunWeeklyAggregate` only have `created_at` because they are
+  immutable write-once records or are replaced rather than updated in place —
   `ProductRepository` records are replaced during SMELT sync, never updated
-  in place)
+  in place; `PackageBugownerMember` records are deleted and recreated when
+  group membership changes)
 - ENUM types are defined as PostgreSQL enums
 - JSONB is used for flexible storage of source-specific data
 - The schema will evolve as features are implemented; this document must be
