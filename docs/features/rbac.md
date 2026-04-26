@@ -32,7 +32,7 @@ Operates the triage and assessment workflow:
 ### Admin
 
 Administers the platform:
-- Manage users (create, update roles, deactivate)
+- Manage users (update roles, deactivate)
 - View and update system settings (e.g., default CVSS version)
 - Remove CVE from ticket
 - Soft-delete and restore tickets
@@ -68,7 +68,7 @@ capabilities must hold both roles.
 | Action                           | Admin | VA  | Unauth |
 |----------------------------------|-------|-----|--------|
 | Remove CVE from ticket           | Yes   | No  | No     |
-| Manage users                     | Yes   | No  | No     |
+| Manage user roles                | Yes   | No  | No     |
 | View/update system settings      | Yes   | No  | No     |
 | Soft-delete ticket               | Yes   | No  | No     |
 | Restore deleted ticket           | Yes   | No  | No     |
@@ -92,21 +92,9 @@ capabilities must hold both roles.
 
 ### Authentication
 
-```
-POST /api/v1/auth/login
-```
-
-Request body:
-- `username` (string, required)
-- `password` (string, required)
-
-Response: authentication token/session.
-
-```
-POST /api/v1/auth/logout
-```
-
-Ends the current session.
+Authentication is handled via SSO (see future
+`docs/features/sso-authentication.md`). There are no local login/logout
+endpoints. Any SUSE employee can authenticate via id.suse.com.
 
 ### Current User
 
@@ -114,7 +102,8 @@ Ends the current session.
 GET /api/v1/users/me
 ```
 
-Response: current user profile and roles. Requires authentication.
+Response: current user profile and roles (with source). Requires
+authentication.
 
 ### User Management (Admin only)
 
@@ -122,33 +111,32 @@ Response: current user profile and roles. Requires authentication.
 GET /api/v1/users
 ```
 
-List all users. Admin only.
+List/search all users. Public endpoint (read-only). Supports `search`,
+`active`, `role`, `has_role` query parameters. See
+`docs/features/ldap-directory.md` for details.
 
 ```
-POST /api/v1/users
+GET /api/v1/users/{id}
 ```
 
-Create a new user. Admin only. A new user may be created with zero, one,
-or multiple roles.
-
-Request body:
-- `username` (string, required)
-- `email` (string, required)
-- `full_name` (string, optional)
-- `roles` (list[enum], optional): list of roles to assign (default: none)
-- `password` (string, required)
+Get user detail including roles (with source) and resolved manager.
+Public endpoint (read-only).
 
 ```
-PUT /api/v1/users/{id}
+PUT /api/v1/users/{id}/roles
 ```
 
-Update user details and roles. Admin only.
+Add or remove manual roles for a user. Admin only. Cannot remove
+AD-derived roles. See `docs/features/ldap-directory.md` for details.
 
-```
-DELETE /api/v1/users/{id}
-```
+User creation is handled by the LDAP directory sync — there is no manual
+user creation endpoint. See `docs/features/ldap-directory.md`.
 
-Deactivate a user (soft delete). Admin only.
+### Role Mappings (Admin only)
+
+See `docs/features/ldap-directory.md` for detailed endpoint
+specifications. Admins configure mappings from AD groups to STAMP roles
+via `GET/POST/DELETE /api/v1/admin/role-mappings`.
 
 ## Implementation Details
 
@@ -173,47 +161,53 @@ Decision will be made during implementation of this feature.
 
 ### Password Security
 
-- Passwords are hashed using bcrypt
-- Minimum password length: 12 characters
-- Password requirements TBD
+Not applicable — STAMP does not store or manage passwords. Authentication
+is via SSO (see future `docs/features/sso-authentication.md`).
 
 ## Data Model
 
 See `docs/data-model.md`. Key tables:
 
-- **User**: username, email, active status
-- **UserRole**: junction table linking users to roles (M2M)
+- **User**: username, email, active status, LDAP fields (ldap_uid,
+  ldap_dn, manager_uid, ldap_synced_at)
+- **UserRole**: junction table linking users to roles with source
+  (`ad_group` or `manual`)
+- **RoleMapping**: maps AD group names to STAMP roles
 - **Role** enum: `Admin`, `Vulnerability Analyst`
+- **RoleSource** enum: `ad_group`, `manual`
 
 ## UI Requirements
 
 ### Login Page
 
-- Username and password form
-- Error messages for invalid credentials
-- No registration (users are created by admins)
+Login is handled via SSO redirect to id.suse.com — no local login form.
+See future `docs/features/sso-authentication.md`.
 
 ### User Management Page (Admin only)
 
-- Table of all users with their assigned roles
-- Create user form (with role multi-select)
-- Edit user details and roles
-- Activate/deactivate user
+- Table of all users with their assigned roles and role sources
+- Edit user roles (add/remove manual roles; AD-derived roles shown as
+  locked)
+- Activate/deactivate user (note: deactivation is normally automatic via
+  LDAP sync)
+- Users are created by the LDAP directory sync — no manual user creation
+  form. See `docs/features/ldap-directory.md`
 
 ### User Profile
 
-- View own profile and roles
-- Change own password
+- View own profile and roles (with source)
 
 ## Business Rules
 
 1. There must always be at least one active user with the Admin role
 2. Users cannot change their own roles
 3. Users cannot deactivate their own account
-4. Deactivated users cannot log in
+4. Deactivated users cannot authenticate (SSO session is valid but STAMP
+   rejects inactive users)
 5. All authentication events are logged (login, logout, failed attempts)
 6. Session timeout: TBD (configurable)
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
-8. Admin bootstrap mechanism: TBD (initial admin creation strategy will be
-   decided during implementation)
+8. Admin bootstrap: run `stamp ldap-sync` to populate users from AD, then
+   `stamp promote-admin <email>` to assign the first Admin role. See
+   `docs/features/ldap-directory.md`

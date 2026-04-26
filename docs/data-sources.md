@@ -25,6 +25,8 @@ see `docs/architecture.md` and the relevant feature specifications in
 | OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
 | SMELT | Internal | Product catalog, package-codestream mapping | Active |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
+| SUSE Active Directory | Internal | Employee identity, line manager, groups | Active |
+| SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Planned |
 | EPSS | Public | Exploit probability scores | Planned |
@@ -494,6 +496,73 @@ security update.
 
 ---
 
+## Identity and Directory Services
+
+### SUSE Active Directory (`pan.suse.de`)
+
+SUSE operates a corporate Active Directory instance at `pan.suse.de` that
+serves as the authoritative source for employee identity data across the
+organization. It contains records for all active SUSE employees with
+detailed profile information including organizational hierarchy, group
+memberships, and employment status.
+
+Active Directory is the only directory service that provides the correct
+**direct line manager** for each employee (single-value `manager`
+attribute pointing to the manager's DN). This makes it the preferred
+source for identity data in STAMP over the OpenLDAP instance.
+
+- **Relevant data**: Employee identity (`sAMAccountName`, `cn`, `mail`),
+  direct line manager (`manager` — single-value DN reference), employment
+  status (`EMPLOYEESTATUS`), AD group memberships (`MEMBEROF`), job title
+  (`title`), office location (`SITELOCATION`), country (`co`), employee
+  start date (`EMPLOYEESTARTDATE`), employee ID (`EMPLOYEEID`)
+- **Access**: LDAP protocol at `ldap://pan.suse.de` (port 389). Supports
+  anonymous bind — no credentials required for read access. Base DN:
+  `OU=User accounts,DC=corp,DC=suse,DC=com`. Approximately 913 active
+  employee records (as of 2026). Security groups are located under
+  `OU=Security Groups,OU=Groups,DC=corp,DC=suse,DC=com`
+- **Integration status**: **Active**. STAMP syncs employee data daily via
+  the `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
+  `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
+  role mapping). See `docs/features/ldap-directory.md` for the full
+  specification
+- **Documentation**: Internal — no public documentation available
+
+### SUSE OpenLDAP (`ldap.suse.de`)
+
+SUSE also operates an OpenLDAP instance at `ldap.suse.de` with a custom
+schema (`suseudbobject`). This directory contains employee identity data,
+POSIX account information, and department structures. It predates the
+Active Directory deployment and uses a different schema with
+SUSE-specific attributes.
+
+The OpenLDAP instance has a **multi-value `manager` attribute** that
+contains the entire managerial chain flattened into a list of DNs (from
+direct manager up to the CEO). This makes it impossible to determine the
+direct line manager from this field alone — all employees under the same
+organizational branch share the same `manager` values. For this reason,
+STAMP uses Active Directory instead.
+
+- **Relevant data**: Employee identity (`uid`, `cn`, `mail`,
+  `suseudbemailalias` for `.de` email), SUSE-specific identifiers
+  (`suseid`), managerial chain (`manager` — multi-value, entire hierarchy
+  flattened), employment type (`employeeType`), office location (`l`,
+  `roomNumber`, `postalAddress`), department structure
+  (`ou=departments`), POSIX accounts (`ou=accounts` — `uidNumber`,
+  `gidNumber`, `homeDirectory`, `loginShell`)
+- **Access**: LDAP protocol at `ldap://ldap.suse.de` (port 389). Supports
+  anonymous bind — no credentials required for read access. Base DN:
+  `dc=suse,dc=de`. Organization units: `ou=people` (employee profiles),
+  `ou=accounts` (POSIX accounts), `ou=departments` (department
+  structure), `ou=mounts`, `ou=Netgroup`
+- **Integration status**: **Not integrated**. Documented here for
+  reference. STAMP uses Active Directory (`pan.suse.de`) instead because
+  it provides the correct direct line manager relationship. The `.de`
+  email alias available on OpenLDAP (`suseudbemailalias`) is not imported
+- **Documentation**: Internal — no public documentation available
+
+---
+
 ## Related Internal Tools
 
 ### SMASH (SUSE Maintenance And Security Helper)
@@ -649,6 +718,7 @@ requirements, rate limits, and data ingested. See
 | `check_codestream_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) |
 | `check_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) |
 | `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) |
+| `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping |
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
 | `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, CWE, affected versions (multi-ecosystem), references |

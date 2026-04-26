@@ -247,12 +247,34 @@ specifications.
 
 ### Users and Auth
 
-See `docs/features/rbac.md` for detailed endpoint specifications.
+See `docs/features/rbac.md` for access control details and
+`docs/features/ldap-directory.md` for LDAP integration details.
 
-- `POST /api/v1/auth/login` — Authenticate
-- `POST /api/v1/auth/logout` — End session
-- `GET /api/v1/users/me` — Get current user
-- `GET /api/v1/users` — List users (admin only)
-- `POST /api/v1/users` — Create a new user (admin only)
-- `PUT /api/v1/users/{id}` — Update user details and roles (admin only)
-- `DELETE /api/v1/users/{id}` — Deactivate a user (admin only)
+Users are populated from SUSE Active Directory via the
+`sync_ldap_directory` fetcher. There is no manual user creation endpoint.
+Authentication mechanism TBD (SSO via id.suse.com — see future
+`docs/features/sso-authentication.md`).
+
+- `GET /api/v1/users` — List/search users (public). Supports `search`
+  (min 2 chars, searches username/email/full_name), `active` (boolean),
+  `role` (enum), `has_role` (boolean) query parameters. Standard
+  pagination and sorting
+- `GET /api/v1/users/{id}` — Get user detail including roles (with
+  source) and resolved manager (public)
+- `GET /api/v1/users/me` — Get current authenticated user profile
+- `PUT /api/v1/users/{id}/roles` — Add/remove manual roles (admin only).
+  Cannot remove AD-derived roles. Request body: `{ "add": [...],
+  "remove": [...] }`
+
+### Role Mappings
+
+See `docs/features/ldap-directory.md` for detailed specifications.
+
+- `GET /api/v1/admin/role-mappings` — List all AD group → role mappings
+  (admin only)
+- `POST /api/v1/admin/role-mappings/preview` — Preview which users would
+  be affected by a proposed mapping (admin only, queries AD live)
+- `POST /api/v1/admin/role-mappings` — Create a new mapping and apply
+  roles immediately (admin only)
+- `DELETE /api/v1/admin/role-mappings/{id}` — Delete a mapping and
+  revoke AD-derived roles (admin only)

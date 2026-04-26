@@ -48,6 +48,10 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  email           │
        │                   │  full_name       │
        │                   │  active          │
+       │                   │  ldap_uid        │
+       │                   │  ldap_dn         │
+       │                   │  manager_uid     │
+       │                   │  ldap_synced_at  │
        │                   └────────┬─────────┘
        │                            │
        │                            ▼ (1:N)
@@ -56,6 +60,15 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │                  │
        │                   │  user_id (FK)    │
        │                   │  role            │
+       │                   │  source          │
+       │                   └──────────────────┘
+       │
+       │                   ┌──────────────────┐
+       │                   │  RoleMapping     │
+       │                   │                  │
+       │                   │  ad_group_cn     │
+       │                   │  role            │
+       │                   │  created_by (FK) │
        │                   └──────────────────┘
        │
        │
@@ -326,30 +339,40 @@ Used by both TicketPackageCodestream and TicketPackageProduct.
 
 ### User
 
-Platform users with role-based access. Users can hold zero, one, or
+Platform users with role-based access. Users are populated from SUSE
+Active Directory via the `sync_ldap_directory` fetcher (see
+`docs/features/ldap-directory.md`). Users can hold zero, one, or
 multiple roles via the UserRole junction table. A user with no roles has
 the same access as an unauthenticated user (read-only on public data).
 
-| Column     | Type        | Constraints        | Description                      |
-|------------|-------------|--------------------|----------------------------------|
-| id         | UUID        | PK                 | Internal identifier              |
-| username   | VARCHAR     | UNIQUE, NOT NULL   | Login username                   |
-| email      | VARCHAR     | UNIQUE, NOT NULL   | Email address                    |
-| full_name  | VARCHAR     |                    | Display name                     |
-| active     | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active    |
-| created_at | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
-| updated_at | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
+| Column         | Type        | Constraints        | Description                      |
+|----------------|-------------|--------------------|----------------------------------|
+| id             | UUID        | PK                 | Internal identifier              |
+| username       | VARCHAR     | UNIQUE, NOT NULL   | Login username (from AD `sAMAccountName`) |
+| email          | VARCHAR     | UNIQUE, NOT NULL   | Email address (from AD `mail`)   |
+| full_name      | VARCHAR     |                    | Display name (from AD `cn`)      |
+| active         | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
+| ldap_uid       | VARCHAR     | UNIQUE, nullable   | AD `sAMAccountName`. NULL for non-LDAP users (e.g., future service accounts) |
+| ldap_dn        | VARCHAR     | nullable           | Full AD distinguished name       |
+| manager_uid    | VARCHAR     | nullable           | `ldap_uid` of the direct line manager (resolved from AD `manager` DN) |
+| ldap_synced_at | TIMESTAMP   | nullable           | When this record was last synced from AD |
+| created_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
+| updated_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
 
 ### UserRole
 
 Junction table linking users to roles. A user may have zero, one, or
-multiple roles assigned.
+multiple roles assigned. Each role has a `source` indicating whether it
+was derived from an AD group mapping or manually assigned by an admin.
+Roles with `source = ad_group` are managed by the LDAP sync process and
+cannot be removed manually. See `docs/features/ldap-directory.md`.
 
 | Column     | Type        | Constraints                  | Description                      |
 |------------|-------------|------------------------------|----------------------------------|
 | id         | UUID        | PK                           | Internal identifier              |
 | user_id    | UUID        | FK(user.id), NOT NULL        | Associated user                  |
 | role       | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst    |
+| source     | ENUM        | NOT NULL                     | RoleSource: `ad_group` (from AD group mapping), `manual` (assigned by admin or CLI) |
 | created_at | TIMESTAMP   | NOT NULL, DEFAULT            | When the role was assigned       |
 
 **Unique constraint**: (user_id, role)
@@ -360,6 +383,31 @@ multiple roles assigned.
 |-------------------|--------------------------------------------------|
 | Admin             | Platform administration (users, settings, fetchers) |
 | Vulnerability Analyst  | CVE triage and assessment (tickets, packages, CVSS) |
+
+**RoleSource enum values**:
+
+| Value     | Description                                                    |
+|-----------|----------------------------------------------------------------|
+| ad_group  | Derived from AD group membership via a RoleMapping rule        |
+| manual    | Assigned manually by an admin or via the `promote-admin` CLI   |
+
+### RoleMapping
+
+Stores the mapping rules between Active Directory groups and STAMP roles.
+Configured by admins via the UI or API. When a mapping is created or
+deleted, roles are applied or revoked immediately. During the daily LDAP
+sync, existing mappings are re-evaluated against current AD group
+membership. See `docs/features/ldap-directory.md`.
+
+| Column       | Type        | Constraints                  | Description                        |
+|--------------|-------------|------------------------------|------------------------------------|
+| id           | UUID        | PK                           | Internal identifier                |
+| ad_group_cn  | VARCHAR     | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
+| role         | ENUM        | NOT NULL                     | STAMP role to assign: `Admin` or `Vulnerability Analyst` |
+| created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
+| created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
+
+**Unique constraint**: (ad_group_cn, role)
 
 ### Ticket
 
@@ -640,9 +688,10 @@ TBD — will be defined based on query patterns during implementation.
   VARCHAR `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR as PK)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
-  `PackageBugownerMember`, `FetcherRun`, `FetcherAuditLog`, and
-  `FetcherRunWeeklyAggregate` only have `created_at` because they are
-  immutable write-once records or are replaced rather than updated in place —
+  `PackageBugownerMember`, `FetcherRun`, `FetcherAuditLog`,
+  `FetcherRunWeeklyAggregate`, and `RoleMapping` only have `created_at`
+  because they are immutable write-once records or are replaced rather
+  than updated in place —
   `ProductRepository` records are replaced during SMELT sync, never updated
   in place; `PackageBugownerMember` records are deleted and recreated when
   group membership changes)

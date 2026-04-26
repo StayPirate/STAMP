@@ -179,6 +179,21 @@ active source. See the data sources catalog for the full picture.
   package tracking at this time, but it may be evaluated in the future
 - See `docs/data-sources.md` for details on OBS and its RabbitMQ event bus
 
+#### SUSE Active Directory
+
+- Internal AD at `pan.suse.de` for SUSE employee identity data
+- STAMP syncs all active employees into its User table daily via the
+  `sync_ldap_directory` fetcher (BaseFetcher subclass)
+- Imported attributes: `sAMAccountName`, `cn`, `mail`, `manager` (DN),
+  `EMPLOYEESTATUS`, `MEMBEROF` (transient, not persisted)
+- AD group memberships (`MEMBEROF`) are used to derive STAMP roles via
+  admin-configurable RoleMapping rules
+- Direct line manager (`manager` DN) is resolved and stored for ticket
+  reassignment on employee deactivation
+- Connection: anonymous bind on port 389 (plaintext, no TLS — internal
+  network only, no credentials transmitted)
+- See `docs/features/ldap-directory.md` for the full specification
+
 ## Data Flow
 
 ### CVE Ingestion Flow
