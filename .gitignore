@@ -59,3 +59,6 @@ docker-compose.override.yml
 
 # Alembic
 backend/alembic/versions/__pycache__/
+
+# Local-only docs
+docs/system-map.md
