@@ -425,10 +425,10 @@ made together. Do NOT proceed with a bypass without explicit user
 approval.
 
 After creating or modifying any fetcher, invoke
-`@fetcher-dashboard-reviewer` to verify correct integration with the
-dashboard.
+`@fetcher-compliance-reviewer` to verify correct integration with the
+fetcher infrastructure.
 
-See `docs/features/fetcher-dashboard.md` for the full specification.
+See `docs/features/fetcher-infrastructure.md` for the full specification.
 
 ### 15. Specification coherence
 

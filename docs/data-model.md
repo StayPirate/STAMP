@@ -607,7 +607,7 @@ represents one member of the IBS group. See
 ### FetcherRun
 
 Records every execution of a fetcher. Primary data source for the fetcher
-dashboard charts. See `docs/features/fetcher-dashboard.md` for full
+dashboard charts. See `docs/features/fetcher-infrastructure.md` for full
 specification.
 
 | Column               | Type        | Constraints              | Description                        |

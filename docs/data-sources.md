@@ -705,7 +705,7 @@ All background tasks that fetch data from external sources inherit from
 automatically registered in the fetcher registry. The table below lists all
 fetchers — both active and planned — with their schedule, authentication
 requirements, rate limits, and data ingested. See
-`docs/features/fetcher-dashboard.md` for infrastructure details.
+`docs/features/fetcher-infrastructure.md` for infrastructure details.
 
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested |
 |---------|--------|----------|------|-------------|---------------|

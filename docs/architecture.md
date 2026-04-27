@@ -98,8 +98,9 @@ coordination across multiple maintained distribution versions.
   (`app/services/base_fetcher.py`), which provides automatic execution
   tracking, metric collection, and registry. The fetcher registry feeds
   a dashboard that shows execution history, performance charts, and
-  operational controls. See `docs/features/fetcher-dashboard.md` for
-  details.
+   operational controls. See `docs/features/fetcher-infrastructure.md`
+   for the base class contract and `docs/features/fetcher-dashboard.md`
+   for the monitoring dashboard.
 
 ### Database (PostgreSQL)
 

@@ -20,8 +20,8 @@ infrastructure. You do NOT write or modify code.
 
 ## Before reviewing
 
-1. Read `docs/features/fetcher-dashboard.md` to understand the BaseFetcher
-   contract and dashboard requirements
+1. Read `docs/features/fetcher-infrastructure.md` to understand the
+   BaseFetcher contract, data model, and compliance requirements
 2. Read `backend/app/services/base_fetcher.py` to understand the current
    base class implementation
 3. Read all fetcher files in `backend/app/services/` and

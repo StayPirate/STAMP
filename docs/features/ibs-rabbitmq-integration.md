@@ -369,7 +369,7 @@ connection and process the full event stream.
   `add_package_to_ticket` function used by the consumer
 - `docs/features/obs-integration.md`: defines the `IBSClient` service
   used for diff requests
-- `docs/features/fetcher-dashboard.md`: defines `BaseFetcher`
+- `docs/features/fetcher-infrastructure.md`: defines `BaseFetcher`
   infrastructure (referenced for contrast — the consumer is NOT a
   `BaseFetcher`)
 - `docs/data-sources.md`: documents the IBS RabbitMQ event bus

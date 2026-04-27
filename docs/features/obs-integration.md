@@ -147,7 +147,7 @@ section "Codestream-level Detection".
   This task is a `BaseFetcher` subclass with `name`, `description`, and
   `default_schedule` attributes. Serves as a catch-up mechanism for
   events missed by the `IBSEventConsumer`. See
-  `docs/features/fetcher-dashboard.md` for the BaseFetcher
+  `docs/features/fetcher-infrastructure.md` for the BaseFetcher
   infrastructure and `docs/features/ibs-rabbitmq-integration.md` for the
   real-time consumer that complements this periodic fetcher.
 - `create_ticket_from_detection`: on-demand task enqueued when a CVE fix
