@@ -168,28 +168,17 @@ stamp ldap-sync
 
 Output: summary of created/updated/deactivated users and role changes.
 
-### `stamp promote-admin`
-
-Assigns the Admin role to a user identified by email, with
-`source = manual`.
-
-```
-stamp promote-admin <email>
-```
-
-- If the user exists in the User table, adds the Admin role
-- If the user does not exist, exits with error:
-  `"User not found. Run 'stamp ldap-sync' first to populate the user
-  directory."`
-- If the user already has the Admin role, exits with:
-  `"User already has the Admin role."`
-
 ### Post-deployment bootstrap sequence
 
 ```
-1. stamp ldap-sync                          # populate User table (~913 records)
-2. stamp promote-admin admin@suse.com       # assign Admin role to first admin
+1. stamp ldap-sync                                              # populate User table (~913 records)
+2. stamp manage-user update --username admin1 --add-role admin  # assign Admin role to first admin
 ```
+
+The `manage-user` command is documented in
+`docs/features/local-user-management.md`. In this bootstrap context, the
+user already exists (created by the LDAP sync in step 1), and
+`manage-user update` adds the Admin role with `source = manual`.
 
 ## API Endpoints
 
@@ -431,9 +420,9 @@ Displays a table of all configured role mappings:
 
 1. **All STAMP users are SUSE employees**: the User table is populated
    exclusively from AD sync. There is no manual user creation through the
-   UI or API (the `POST /api/v1/users` endpoint is removed). The only
-   exception is the `stamp promote-admin` CLI command, which operates on
-   existing User records
+   UI or API. In environments where AD is not reachable, local user
+   accounts can be created via the CLI — see
+   `docs/features/local-user-management.md`
 2. **Login is open**: any SUSE employee can authenticate via SSO (see
    future `docs/features/sso-authentication.md`). A user with no roles
    has the same access as an unauthenticated user (read-only on public
@@ -487,8 +476,9 @@ Displays a table of all configured role mappings:
   amount of AD data stored locally
 - Employee personal data (name, email) is stored locally for operational
   purposes. No additional PII (phone, address, etc.) is imported
-- The CLI `promote-admin` command requires shell access to the server,
-  which is an appropriate security barrier for initial admin bootstrap
+- The CLI `manage-user` commands require shell access to the server,
+  which is an appropriate security barrier for administrative operations.
+  See `docs/features/local-user-management.md`
 
 ## Implementation Notes
 

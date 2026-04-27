@@ -133,6 +133,50 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
 - Test user behavior, not implementation details
 - Co-locate tests with components when practical
 
+## CLI Conventions
+
+### Framework
+
+- **Library**: Click
+- **Entry point**: `stamp` (registered as a console script in `pyproject.toml`)
+- **Architecture**: command groups for related commands (e.g.,
+  `stamp manage-user create`, `stamp manage-user update`)
+
+### Command Design
+
+- Commands that modify data MUST check their configuration guard (e.g.,
+  `ALLOW_LOCAL_USERS`) before executing. If the guard is not enabled, the
+  command MUST exit with a clear error message explaining which setting to
+  enable
+- Commands MUST be idempotent where practical — running the same command
+  twice should not produce errors or duplicate data
+- Use `--flag` for boolean options and `--option VALUE` for parameterized
+  options
+- Repeatable options use multiple `--option` flags (e.g.,
+  `--role admin --role vulnerability_analyst`)
+
+### Database Access
+
+- CLI commands use synchronous database sessions (not async). They are
+  one-shot processes, not long-running servers — async provides no benefit
+  and adds complexity
+
+### Output
+
+- Success messages and results go to stdout
+- Error messages go to stderr
+- Exit codes: 0 for success, 1 for user error (bad input, missing config),
+  2 for system error (database unreachable, unexpected failure)
+- Output is human-readable plain text. No JSON output unless a `--json`
+  flag is explicitly added to a command
+
+### Naming
+
+- Top-level commands: `verb-noun` for standalone actions (e.g.,
+  `stamp ldap-sync`)
+- Command groups: `noun` with `verb` subcommands for CRUD-like operations
+  (e.g., `stamp manage-user create`)
+
 ## Git Conventions
 
 ### Branch Naming

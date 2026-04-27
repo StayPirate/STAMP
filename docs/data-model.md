@@ -389,7 +389,7 @@ cannot be removed manually. See `docs/features/ldap-directory.md`.
 | Value     | Description                                                    |
 |-----------|----------------------------------------------------------------|
 | ad_group  | Derived from AD group membership via a RoleMapping rule        |
-| manual    | Assigned manually by an admin or via the `promote-admin` CLI   |
+| manual    | Assigned manually by an admin via API or CLI                   |
 
 ### RoleMapping
 

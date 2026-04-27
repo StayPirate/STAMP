@@ -191,7 +191,9 @@ See future `docs/features/sso-authentication.md`.
 - Activate/deactivate user (note: deactivation is normally automatic via
   LDAP sync)
 - Users are created by the LDAP directory sync — no manual user creation
-  form. See `docs/features/ldap-directory.md`
+  form. In environments without AD access, local users can be created
+  via CLI. See `docs/features/ldap-directory.md` and
+  `docs/features/local-user-management.md`
 
 ### User Profile
 
@@ -209,5 +211,5 @@ See future `docs/features/sso-authentication.md`.
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
 8. Admin bootstrap: run `stamp ldap-sync` to populate users from AD, then
-   `stamp promote-admin <email>` to assign the first Admin role. See
-   `docs/features/ldap-directory.md`
+   `stamp manage-user update --username <username> --add-role admin` to
+   assign the first Admin role. See `docs/features/ldap-directory.md`
