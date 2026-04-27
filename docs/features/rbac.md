@@ -210,6 +210,7 @@ See future `docs/features/sso-authentication.md`.
 6. Session timeout: TBD (configurable)
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
-8. Admin bootstrap: run `stamp ldap-sync` to populate users from AD, then
+8. Admin bootstrap: run `stamp fetcher run sync_ldap_directory` to
+   populate users from AD, then
    `stamp manage-user update --username <username> --add-role admin` to
    assign the first Admin role. See `docs/features/ldap-directory.md`

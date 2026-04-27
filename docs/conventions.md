@@ -172,10 +172,8 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
 
 ### Naming
 
-- Top-level commands: `verb-noun` for standalone actions (e.g.,
-  `stamp ldap-sync`)
-- Command groups: `noun` with `verb` subcommands for CRUD-like operations
-  (e.g., `stamp manage-user create`)
+- Command groups: `noun` with `verb` subcommands for related operations
+  (e.g., `stamp manage-user create`, `stamp fetcher run`)
 
 ## Git Conventions
 

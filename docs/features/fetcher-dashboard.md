@@ -153,21 +153,26 @@ check is performed at **two levels**:
 
 1. **API level** (for manual triggers): the trigger endpoint checks for
    an active `FetcherRun` **synchronously** before enqueuing the Celery
-   task. If a run is already active, the API returns 409 Conflict
-   immediately — no task is enqueued.
+   task. If a run is already active and not stale, the API returns 409
+   Conflict immediately — no task is enqueued. If the active run is
+   stale, it is marked as `failure` and the new run proceeds (see
+   "Stale Run Detection" below).
 2. **Task level** (for scheduled triggers): before invoking `execute()`,
    the `run_fetcher` task checks whether a `FetcherRun` record with
    `status = running` already exists for the requested `fetcher_name`.
 
 At the task level:
 
-- **If a run is already active**: the new attempt is discarded silently.
-  No `FetcherRun` record is created. An application-level log message is
-  emitted for observability:
+- **If a run is already active and NOT stale**: the new attempt is
+  discarded silently. No `FetcherRun` record is created. An
+  application-level log message is emitted for observability:
   ```
   logger.info("Skipping scheduled run for '%s': already running (run_id=%s)",
               fetcher_name, active_run_id)
   ```
+- **If a run is already active and stale**: the stale run is marked as
+  `failure` (see "Stale Run Detection" below), then execution proceeds
+  normally with a new `FetcherRun`.
 - **If no run is active**: execution proceeds normally (a new `FetcherRun`
   is created with `status = running`).
 
@@ -179,6 +184,9 @@ This applies to all trigger sources:
 | Schedule fires while manual run is active | `manual` | `schedule` | Silent discard with log (async — no caller to notify) |
 | Schedule fires while previous schedule run is still active | `schedule` | `schedule` | Silent discard with log |
 | Admin triggers while another manual run is active | `manual` | `manual` | API returns **409 Conflict** |
+| Schedule fires while stale run exists | any | `schedule` | Stale run marked as `failure`, new run proceeds |
+| Admin triggers while stale run exists | any | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
+| Any trigger with stale run but `timeout_seconds = 0` | any | any | Stale detection disabled — treated as active run (409 or silent discard) |
 
 The distinction is:
 
@@ -191,6 +199,37 @@ The distinction is:
 The concurrency check SHOULD use a database query with row-level locking
 (`SELECT ... FOR UPDATE`) or an equivalent atomic mechanism to prevent
 race conditions between concurrent task starts.
+
+### Stale Run Detection
+
+A run is considered **stale** when it has been in `running` status for
+longer than the fetcher's `timeout_seconds` (from `FetcherConfig`). The
+default `timeout_seconds` is 3600 (1 hour). If `timeout_seconds` is set
+to 0, stale detection is disabled for that fetcher — the run is never
+considered stale regardless of how long it has been running.
+
+When a stale run is detected (by the Celery task, the API trigger
+endpoint, or the CLI), it is resolved by updating the stale `FetcherRun`
+record:
+
+- `status` → `failure`
+- `error_message` → `"Marked as stale (running for {elapsed}, timeout
+  {timeout}s)"` for automatic resolution (Celery/API), or `"Marked as
+  stale by operator via CLI"` for CLI resolution
+- `finished_at` → `now()`
+- `duration_seconds` → calculated from `started_at`
+
+An application-level log message is emitted:
+
+```
+logger.warning("Marking stale run %s for '%s' as failure (running since %s, timeout %ds)",
+               run_id, fetcher_name, started_at, timeout_seconds)
+```
+
+Stale run detection is a recovery mechanism for unclean process
+terminations (OOM-kill, node crash, `kill -9`). It is NOT a substitute
+for proper signal handling — processes that can handle `SIGINT`/`SIGTERM`
+must do so (see "Signal handling" in the CLI section).
 
 ## Data Model
 
@@ -238,7 +277,7 @@ the dashboard charts.
 | Value | Description |
 |---|---|
 | `schedule` | Triggered by Celery Beat schedule |
-| `manual` | Triggered by an admin via the API |
+| `manual` | Triggered by an admin (via API or CLI) |
 
 ### FetcherConfig
 
@@ -251,7 +290,7 @@ one does not already exist.
 | fetcher_name | VARCHAR | PK | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled | BOOLEAN | NOT NULL, DEFAULT true | Whether the fetcher is active |
 | schedule_override | VARCHAR | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
-| timeout_seconds | INTEGER | nullable | Maximum execution time in seconds. NULL means no timeout. |
+| timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
 | rate_limit | VARCHAR | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
 | updated_at | TIMESTAMP | NOT NULL, DEFAULT | Last modification timestamp |
 
@@ -260,9 +299,19 @@ one does not already exist.
   fetcher names are unique identifiers defined in code.
 - The `schedule_override` uses standard cron syntax (5-field). When set,
   the Celery Beat schedule for this fetcher MUST be updated dynamically.
-- `timeout_seconds` is enforced by the Celery task (`soft_time_limit`).
-  When a fetcher exceeds this, a `SoftTimeLimitExceeded` exception is
-  raised and the run is marked `failure`.
+- `timeout_seconds` serves two purposes:
+  1. **Celery soft time limit**: when > 0, enforced by the Celery task
+     (`soft_time_limit`). When a fetcher exceeds this, a
+     `SoftTimeLimitExceeded` exception is raised and the run is marked
+     `failure`.
+  2. **Stale run detection threshold**: when > 0, used by the Celery task,
+     API trigger endpoint, and CLI to determine whether a `running`
+     record is stale (see "Stale Run Detection" in the Concurrency
+     Control section).
+  When set to 0, both mechanisms are disabled: Celery does not enforce a
+  time limit, and stale detection treats the run as indefinitely active.
+  The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
+  record is auto-created for a newly registered fetcher.
 
 ### FetcherAuditLog
 
@@ -663,7 +712,7 @@ Enqueues a manual run of the specified fetcher.
 |---|---|
 | 404 | Fetcher not found in registry |
 | 409 | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
-| 409 | Fetcher is already running (a `FetcherRun` with status `running` exists for this fetcher) |
+| 409 | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
 
 **Permissions**: Admin only.
 
@@ -701,7 +750,7 @@ Returns the current configuration for a fetcher.
     "schedule_override": null,
     "default_schedule": "0 */6 * * *",
     "effective_schedule": "0 */6 * * *",
-    "timeout_seconds": null,
+    "timeout_seconds": 3600,
     "rate_limit": null,
     "updated_at": "2025-04-20T10:00:00Z"
   }
@@ -739,7 +788,9 @@ include the fields to change.
 **Validation rules**:
 - `schedule_override`: must be a valid 5-field cron expression, or `null`
   to revert to the default schedule
-- `timeout_seconds`: must be a positive integer, or `null` to disable
+- `timeout_seconds`: must be a non-negative integer. 0 disables both
+  the Celery soft time limit and stale run detection. Default: 3600
+  (1 hour)
 - `rate_limit`: must match the pattern `"<number>/<unit>"` where unit is
   `s`, `m`, or `h`, or `null` to disable
 
@@ -999,7 +1050,10 @@ Contains:
 2. **Schedule**: editable cron expression input with human-readable
    preview. Shows "(default)" label when no override is set. A "Reset to
    default" button when an override is active.
-3. **Timeout**: numeric input in seconds, with "No timeout" option
+3. **Timeout**: numeric input in seconds. Default: 3600 (1 hour). Set to
+   0 to disable timeout enforcement and stale run detection. A help text
+   explains: "Controls both the maximum execution time (Celery soft time
+   limit) and the stale run detection threshold. Set to 0 to disable."
 4. **Rate limit**: text input with format hint (`"2/s"`, `"100/m"`)
 5. **Save button**: PATCHes the config. Shows confirmation dialog if
    changing the schedule.
@@ -1153,12 +1207,186 @@ can be made together.
 After creating or modifying a fetcher, the `@fetcher-dashboard-reviewer`
 agent MUST be invoked.
 
+## CLI Commands
+
+The `stamp fetcher` command group provides operational access to the
+fetcher infrastructure from the command line. It is designed for
+bootstrap, troubleshooting, and environments where the API/UI is not
+yet available. It is NOT a replacement for the API — configuration
+changes (schedule, timeout, rate limit, enable/disable) are done
+exclusively through the API.
+
+### `stamp fetcher list`
+
+Lists all registered fetchers with their current state.
+
+```
+stamp fetcher list
+```
+
+Output (human-readable table to stdout):
+
+```
+Name                       Enabled   Last Run              Status
+sync_ldap_directory        yes       2026-04-27 04:00 UTC  success (3m 12s)
+sync_cves_nvd              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)
+sync_products_smelt        yes       2026-04-26 06:00 UTC  success (45s)
+check_codestream_releases  no        2026-04-25 02:00 UTC  failure
+aggregate_fetcher_runs     yes       —                     never run
+```
+
+**Status column logic**:
+
+1. If a `FetcherRun` with `status = running` exists for the fetcher:
+   show `running ({elapsed} elapsed)` where elapsed is calculated from
+   `started_at`. If `timeout_seconds > 0` and the elapsed time exceeds
+   it, append `(stale?)` — e.g., `running (2h 30m elapsed, stale?)`.
+   If `timeout_seconds = 0`, the `(stale?)` hint is never shown.
+2. If no running record exists but completed runs exist: show the status
+   of the most recent `FetcherRun` with its duration — e.g.,
+   `success (3m 12s)`, `failure`, `partial (1m 5s)`
+3. If no `FetcherRun` records exist: show `never run`
+
+**Enabled column**: reads from `FetcherConfig.enabled`. If no
+`FetcherConfig` record exists for the fetcher, defaults to `yes`.
+
+**Data source**: queries the database directly (synchronous session).
+The fetcher registry provides the list of fetcher names; the database
+provides `FetcherRun` and `FetcherConfig` data.
+
+**Exit codes**: 0 on success, 2 on system error (database unreachable).
+
+### `stamp fetcher run <name>`
+
+Executes a fetcher synchronously (in-process, no Celery). Output is
+printed to stdout as the fetcher runs.
+
+```
+stamp fetcher run sync_ldap_directory
+```
+
+Successful output:
+
+```
+Running fetcher 'sync_ldap_directory'...
+Fetcher 'sync_ldap_directory' completed successfully in 3m 12s.
+  Created: 15
+  Updated: 898
+  Failed:  0
+```
+
+#### Execution model
+
+The command executes the fetcher directly in the CLI process using a
+synchronous database session. It does NOT enqueue a Celery task. This
+makes the command self-contained — it works even when Celery workers
+are not running (e.g., during initial deployment bootstrap).
+
+The command MUST:
+
+1. Validate that `<name>` exists in the `FETCHER_REGISTRY`. If not,
+   print an error with the list of available fetcher names and exit
+   with code 1
+2. Perform the concurrency check (see below)
+3. Create a `FetcherRun` record with `status = running` and
+   `triggered_by = manual` **before** calling `execute()`
+4. Call the fetcher's `execute()` method
+5. Update the `FetcherRun` record with final status, metrics, and
+   timestamps
+6. Print the summary to stdout
+
+The `triggered_by_user_id` is set to `NULL` for CLI executions (there
+is no authenticated user context in the CLI).
+
+#### Concurrency check
+
+Before executing, the command checks for an existing `FetcherRun` with
+`status = running` for the requested fetcher.
+
+**If a run is active and NOT stale**:
+
+```
+$ stamp fetcher run sync_cves_nvd
+Error: fetcher 'sync_cves_nvd' is already running (started 2026-04-27 12:00 UTC, 1m 30s ago).
+```
+
+Exit code 1.
+
+**If a run is active and stale** (elapsed time exceeds the fetcher's
+`timeout_seconds` from `FetcherConfig`, default 3600s). If
+`timeout_seconds = 0`, the run is never considered stale — the command
+treats it as an active run and exits with code 1 (same as the "not
+stale" case above).
+
+```
+$ stamp fetcher run sync_ldap_directory
+Warning: fetcher 'sync_ldap_directory' has a run marked as 'running'
+since 2026-04-27 04:00 UTC (2h 30m ago), which exceeds the timeout
+(300s). This run appears stale.
+Mark it as failed and proceed? [y/N]: y
+```
+
+On confirmation (`y`): the stale `FetcherRun` is updated to
+`status = failure`, `error_message = "Marked as stale by operator via
+CLI"`, `finished_at = now()`. Then the new run proceeds normally.
+
+On rejection (`N` or Enter): exit with code 1.
+
+If stdin is not a TTY (e.g., running in a script), the stale run
+prompt is skipped and the command exits with code 1 and the warning
+message. The operator must resolve the stale run interactively.
+
+#### Enabled check bypass
+
+Unlike the Celery `run_fetcher` task, the CLI command does NOT check
+the `FetcherConfig.enabled` flag. The CLI is an explicit operator
+action — if someone runs `stamp fetcher run <name>`, they intend to
+run it regardless of the enabled state. A warning is printed when
+running a disabled fetcher:
+
+```
+Warning: fetcher 'check_codestream_releases' is currently disabled.
+Running anyway (CLI bypass).
+```
+
+#### Signal handling
+
+The CLI process MUST register handlers for `SIGINT` (Ctrl+C) and
+`SIGTERM` to ensure the `FetcherRun` record is cleaned up on
+interruption:
+
+1. On signal received: update the `FetcherRun` record to
+   `status = failure`, `error_message = "Interrupted by operator
+   (SIGINT)"` (or `SIGTERM`), `finished_at = now()`,
+   `duration_seconds` calculated from `started_at`
+2. Print a message to stderr: `"\nInterrupted. Run marked as failed."`
+3. Exit with code 130 for `SIGINT` (Unix convention) or 143 for
+   `SIGTERM`
+
+**SIGKILL (kill -9)**: cannot be intercepted. The `FetcherRun` record
+will remain `running` in the database. This is the same situation that
+occurs when a Celery worker is OOM-killed or crashes. The stale run
+detection in `stamp fetcher list` (showing `stale?`) and the stale
+run resolution in `stamp fetcher run` (interactive prompt) handle
+this scenario.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0    | Fetcher completed successfully (`success` or `partial`) |
+| 1    | User error: unknown fetcher name, already running, stale run not confirmed |
+| 2    | System error: database unreachable, unhandled exception in `execute()` |
+| 130  | Interrupted by SIGINT (Ctrl+C) |
+| 143  | Interrupted by SIGTERM |
+
 ## Dependencies
 
 - Celery Beat with dynamic schedule support (`celery-redbeat` or
   equivalent)
 - A charting library for the frontend (e.g., Recharts, which integrates
   well with shadcn/ui and React)
+- Click (CLI framework) — see `docs/conventions.md` for CLI conventions
 
 ## Open Questions
 

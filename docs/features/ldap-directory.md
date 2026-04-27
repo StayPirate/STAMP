@@ -155,23 +155,23 @@ key), because the manager might not be in the User table (e.g., a senior
 executive who has not been synced yet). The relationship is resolved at
 query time via `User.ldap_uid`.
 
-## CLI Commands
+## CLI Usage
 
-### `stamp ldap-sync`
-
-Triggers an immediate LDAP directory sync, bypassing the scheduler. Used
-for initial population after deployment and for troubleshooting.
+The LDAP sync can be triggered from the command line using the generic
+fetcher command:
 
 ```
-stamp ldap-sync
+stamp fetcher run sync_ldap_directory
 ```
 
-Output: summary of created/updated/deactivated users and role changes.
+This runs the sync synchronously in the CLI process (no Celery
+required). See `docs/features/fetcher-dashboard.md` (section "CLI
+Commands") for full details on the `stamp fetcher` command group.
 
 ### Post-deployment bootstrap sequence
 
 ```
-1. stamp ldap-sync                                              # populate User table (~913 records)
+1. stamp fetcher run sync_ldap_directory                        # populate User table (~913 records)
 2. stamp manage-user update --username admin1 --add-role admin  # assign Admin role to first admin
 ```
 
