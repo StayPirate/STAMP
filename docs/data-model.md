@@ -637,7 +637,7 @@ startup if not present.
 | fetcher_name      | VARCHAR     | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
 | schedule_override | VARCHAR     | nullable           | Cron expression to override the default schedule |
-| timeout_seconds   | INTEGER     | nullable           | Max execution time in seconds      |
+| timeout_seconds   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds. Also used as stale run detection threshold. 0 disables both. |
 | rate_limit        | VARCHAR     | nullable           | Rate limit (e.g., `"2/s"`, `"100/m"`) |
 | updated_at        | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp        |
 

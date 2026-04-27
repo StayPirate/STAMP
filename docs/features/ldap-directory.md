@@ -92,7 +92,6 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 - **Name**: `sync_ldap_directory`
 - **Description**: Syncs SUSE employee data from Active Directory
 - **Default schedule**: daily at 04:00 UTC
-- **Timeout**: 300 seconds (5 minutes)
 
 #### Sync algorithm
 
