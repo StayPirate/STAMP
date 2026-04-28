@@ -734,7 +734,10 @@ The following are explicitly out of scope for this feature:
 
 - **Git-based workflow**: this spec covers only the MU process. Tracking
   submissions for git-based products (SLE 16+) will require a separate
-  mechanism using Gitea API/webhooks.
+  specification using Gitea API/webhooks. The design of this feature is
+  intentionally specific to the MU/IBS workflow — no premature abstraction
+  is introduced to accommodate Git. The eventual unification at the
+  API/UI level will be evaluated when both workflows are implemented.
 - **Manual correlation**: the VA cannot manually link/unlink SRs to
   tickets. Correlation is fully automatic via the diff API.
 - **Orphan submissions**: SRs for which the diff API returns no CVE-IDs
@@ -958,3 +961,94 @@ uses the same structure (both use `event_parameters` ->
 payloads.
 
 **Action**: verify opportunistically during implementation.
+
+### 3. Unknown CVE-IDs in Submission Request Diffs
+
+When `correlate_submission_request` extracts CVE-IDs from the diff and
+a CVE-ID is not known to STAMP (no CVE record, no ticket), the current
+pipeline silently skips that CVE-ID and only creates join records for
+known tickets.
+
+This may contradict the project-wide policy for unknown CVE-IDs at the
+codestream level (see `docs/features/package-tracking.md`, section
+"Codestream Match Outcomes", Case C), which creates a CVE record and a
+ticket via `create_ticket_from_detection`.
+
+However, applying Case C here introduces a trade-off:
+
+- **False positive risk**: a maintainer makes a typo in the changelog
+  (e.g., `CVE-2026-99999` instead of `CVE-2026-9999`). The diff API
+  returns the erroneous CVE-ID, and STAMP creates a spurious ticket for
+  a non-existent CVE. This is a sporadic human error.
+- **False negative risk**: a maintainer proactively submits a fix for a
+  CVE that is not yet in NVD (e.g., under embargo or recently assigned).
+  Ignoring the unknown CVE-ID means STAMP misses a legitimate early
+  signal.
+
+**Decision pending**: should `correlate_submission_request` invoke
+`create_ticket_from_detection` for unknown CVE-IDs (consistent with
+Case C) or silently skip them (conservative, avoids false positives)?
+This is independent of Open Question 5 (diff API accuracy) — even if
+the diff API is perfectly accurate, the maintainer typo problem remains.
+
+### 4. Release Request Arriving Before Submission Request
+
+If the `IBSEventConsumer` misses the `request.create` event for an SR
+(e.g., during reconnection) and an RR for the same incident arrives
+before the catch-up fetcher runs, the RR is discarded because no
+`SubmissionRequest` with the matching `incident_number` exists in STAMP.
+
+The catch-up fetcher (Pipeline 2, Step 1) will eventually discover the
+missed SR, but by that time the RR `request.create` event has already
+been discarded. If the RR is still in `new` or `review` state when the
+fetcher runs, it will be discovered in the same search query. But if
+the RR was accepted before the fetcher runs, it will not appear in the
+`states=new,review` search results and will be missed entirely.
+
+**Proposed mitigation**: in the catch-up fetcher, after creating a
+missed SR and obtaining its `incident_number` (via acceptance or by
+querying `GET /request/{number}`), perform an additional check for RRs
+with the same `incident_number` that are not yet in STAMP. This could
+use `GET /request?view=collection&project={codestream}&types=maintenance_release`
+filtered by the incident project, or a direct query by incident number
+if the API supports it.
+
+**Decision pending**: confirm the mitigation approach and verify the
+IBS API supports the necessary query patterns.
+
+### 5. Diff API False Positives from Context Lines
+
+The `POST /request/{id}?cmd=diff&withissues=1&view=xml` endpoint has
+been verified to return structured `<issues>` entries (see Resolved
+Questions). However, it has not been verified whether the issues are
+extracted only from **changed lines** or also from **context lines**
+surrounding the changes.
+
+If the diff API uses a context window (similar to `diff -C 3` or
+`grep -C 3`), CVE-IDs present in unchanged lines near the modified
+region could be returned as issues. This would be a structural problem
+with the IBS API (not a human error) and would systematically produce
+false correlations.
+
+The `state` attribute on each `<issue>` element (`state="added"`,
+`state="changed"`) may distinguish genuinely modified issues from
+context, but this has not been verified with a test case where known
+CVE-IDs exist in unchanged nearby lines.
+
+**Risk**: medium. If false positives occur, they would affect every SR
+that modifies a changelog containing pre-existing CVE-IDs — which is
+common for packages with a long security history.
+
+**Action**: before implementation, test empirically with an SR that
+modifies a changelog file containing pre-existing CVE-IDs (e.g., a
+package like `openssl` or `curl` with many historical CVE fixes).
+Verify whether the pre-existing CVE-IDs appear in the `<issues>` output
+and, if so, whether the `state` attribute distinguishes them from newly
+added ones.
+
+**Mitigation if confirmed**: filter issues to only those with
+`state="added"` (already done for the source diff endpoint in
+`CodestreamReleaseDetector`). If the request diff endpoint does not
+populate `state` reliably, fall back to the source diff endpoint
+(`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
+which is already known to work correctly.
