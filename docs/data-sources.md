@@ -276,6 +276,13 @@ whether update advisories have been published to product repositories.
 - **Documentation**: https://build.suse.de (internal). The OBS API
   documentation at https://api.opensuse.org/apidocs/ applies to IBS as
   both run the same software
+- **Source code verification**: The official OBS/IBS API documentation is
+  often incomplete or outdated. When evaluating available endpoints,
+  accepted parameters, response formats, or edge-case behaviors, always
+  verify against the OBS source code repository
+  (`openSUSE/open-build-service` on GitHub — particularly
+  `src/api/app/controllers/` for endpoint logic and `src/api/config/routes.rb`
+  for route definitions) rather than relying solely on the published docs
 - **See also**: `docs/features/obs-integration.md`,
   `docs/features/package-tracking.md`,
   `docs/features/package-bugowner.md`
