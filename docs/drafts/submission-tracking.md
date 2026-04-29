@@ -395,6 +395,20 @@ Supports `limit` and `offset` parameters for pagination. Requires at
 least one filter parameter (project, package, user, states, types, or
 ids).
 
+Additional filter parameters (used by Step 1b for temporal lookback):
+
+- `types` — comma-separated action types (e.g., `maintenance_incident`,
+  `maintenance_release`)
+- `created_at_from` — ISO 8601 datetime; only return requests created at
+  or after this timestamp. Verified in OBS source code
+  (`BsRequest::FindFor::Query`); not yet tested on-the-wire against IBS.
+- `created_at_to` — ISO 8601 datetime; upper bound (inclusive, with
+  1-minute tolerance in OBS implementation)
+
+These temporal parameters allow the catch-up fetcher to query accepted
+requests within a bounded time window (e.g., last 25 hours) instead of
+scanning the entire history.
+
 #### Request Details
 
 ```
@@ -528,14 +542,17 @@ fetcher handles this case (see Pipeline 2).
 
 ### Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)
 
-A `BaseFetcher` subclass that runs periodically to recover events missed
-during consumer downtime and reconcile state drift. This is the only
-mechanism for detecting request reopens (declined -> new/review).
+A `BaseFetcher` subclass that runs every **24 hours** to recover events
+missed during consumer downtime and reconcile state drift. This is the
+only mechanism for detecting request reopens (declined -> new/review).
+
+Schedule parameters are explained in the Resolved Questions section
+("Release Request Before Submission Request — DECIDED").
 
 #### Procedure
 
 ```
-Step 1 — Discover missed SRs and reconcile known ones:
+Step 1 — Discover missed open SRs and reconcile known ones:
 
   1. Identify active codestreams (distinct codestream_name values from
      TicketPackageCodestream records with status ANALYSIS or AFFECTED)
@@ -566,21 +583,44 @@ Step 1 — Discover missed SRs and reconcile known ones:
        f. If ALREADY present in ReleaseRequest but state is 'declined':
           -> Update state to 'open' (the RR was reopened)
 
+Step 1b — Discover missed accepted SRs (temporal lookback):
+
+  3. For each active codestream:
+     GET /request?view=collection&project={codestream}
+         &states=accepted&types=maintenance_incident
+         &created_at_from={now - 25h}
+
+     For each SR in the response:
+       a. Already in SubmissionRequest table? -> skip
+       b. targetpackage tracked in at least one ticket for this
+          codestream? If no -> skip
+       c. Create SubmissionRequest (state=accepted,
+          incident_number=extracted from targetproject)
+       d. Enqueue correlate_submission_request
+       e. Search for RRs with same incident_number not in STAMP:
+          GET /request?view=collection&project={codestream}
+              &states=new,review,accepted&types=maintenance_release
+              &created_at_from={now - 25h}
+          For each RR where sourceproject contains the incident_number:
+            -> Create ReleaseRequest (state mapped from IBS state)
+
 Step 2 — Reconcile requests no longer in new/review:
 
-  3. Query all SubmissionRequest records with state = 'open' that were
+  4. Query all SubmissionRequest records with state = 'open' that were
      NOT seen in Step 1 (no longer in new/review state in IBS)
 
-  4. For each such record:
+  5. For each such record:
      GET /request/{number}
      -> Update state to the current IBS state (accepted, declined,
        revoked, superseded)
      -> If accepted: extract incident_number from the response
+     -> If incident_number was just extracted: search for RRs with
+        same incident_number not in STAMP (same logic as Step 1b.e)
 
-  5. Query all ReleaseRequest records with state = 'open' that were
+  6. Query all ReleaseRequest records with state = 'open' that were
      NOT seen in Step 1
 
-  6. For each such record:
+  7. For each such record:
      GET /request/{number}
      -> Update state to the current IBS state (accepted, declined,
        revoked)
@@ -604,14 +644,19 @@ The catch-up problem for request tracking differs from the
 
 The IBS Request Search API (`GET /request?view=collection`) fills this
 gap by allowing STAMP to query for currently open requests. Combined with
-point-lookup for known requests (`GET /request/{number}`), this covers
-missed creations, missed state changes, and reopens.
+point-lookup for known requests (`GET /request/{number}`) and temporal
+lookback queries (`created_at_from`), this covers missed creations,
+missed state changes, reopens, and requests that were created and
+accepted during consumer downtime.
 
 **Volume estimate**: with ~20-30 active codestreams and ~30 open requests
 per codestream, Step 1 processes ~600-900 requests per run. Most will
 already be known to STAMP (local DB lookup, fast). Only genuinely new
-requests trigger a diff API call. Step 2 processes only requests in `open`
-state in STAMP that were not seen in Step 1 — typically a small number.
+requests trigger a diff API call. Step 1b adds one query per codestream
+for accepted SRs in the last 25 hours — typically 1-5 results per
+codestream, most already known (skipped immediately). Step 2 processes
+only requests in `open` state in STAMP that were not seen in Step 1 —
+typically a small number.
 
 ## UI Requirements
 
@@ -920,7 +965,7 @@ or `IBSEventConsumer` detects a codestream release, it does NOT update
 Reopens (`declined -> new/review`) are rare in practice. Even if STAMP
 does not detect the reopen in real-time, the subsequent conclusive state
 change (the request is eventually accepted, declined again, or revoked)
-will be caught by the RabbitMQ consumer. The 12-hour catch-up fetcher
+will be caught by the RabbitMQ consumer. The 24-hour catch-up fetcher
 provides an additional safety net.
 
 Whether `state_change` events are emitted for non-conclusive transitions
@@ -958,6 +1003,77 @@ Verified empirically on IBS (2026-04-29) with three submission requests:
 those with `state="added"` and `tracker="cve"`, consistent with the
 filtering already applied by `CodestreamReleaseDetector` on the source
 diff endpoint (see `docs/features/obs-integration.md`).
+
+### Release Request Before Submission Request — DECIDED
+
+**Problem**: when the IBSEventConsumer misses a `request.create` event
+for an SR (e.g., during reconnection) and an RR for the same incident
+arrives first, the RR is discarded because no `SubmissionRequest` with
+the matching `incident_number` exists in STAMP. If the RR is accepted
+before the catch-up fetcher runs, it may be missed entirely.
+
+**Solution**: extend the `RequestSyncFetcher` with a Step 1b that
+discovers accepted SRs missed during consumer downtime, using the IBS
+temporal filter `created_at_from`. Additionally, extend Step 2 to search
+for missed RRs when reconciling a known SR to accepted state.
+
+**Schedule parameters**:
+
+- **Interval (24 hours)**: how often the fetcher runs. Determines the
+  maximum delay before a missed event is recovered when only the
+  consumer is down. A shorter interval means faster recovery.
+- **Lookback window (25 hours)**: how far back the `created_at_from`
+  filter reaches (`now - 25h`). Determines the minimum duration of a
+  *total platform outage* (consumer + fetcher both down simultaneously)
+  before an SR becomes irrecoverable. A wider window raises this
+  threshold without affecting normal recovery speed. The 25-hour value
+  provides ample overlap across consecutive 24-hour fetcher runs.
+
+**Recovery guarantees**:
+
+| Scenario | Covered? |
+|----------|----------|
+| Consumer down, fetcher OK | Yes — Step 1b recovers within ≤24h |
+| Consumer OK, fetcher down | Yes — consumer processes events in real-time |
+| Both down <25h | Yes — first successful fetcher run covers the window |
+| Both down >25h | No — total platform outage, requires manual recovery |
+
+**Step 1b procedure** (inserted after Step 1 in Pipeline 2):
+
+```
+Step 1b — Discover missed accepted SRs:
+
+  For each active codestream:
+    GET /request?view=collection&project={codestream}
+        &states=accepted&types=maintenance_incident
+        &created_at_from={now - 25h}
+
+    For each SR in the response:
+      a. Already in SubmissionRequest table? → skip
+      b. targetpackage tracked in at least one ticket for this
+         codestream? If no → skip
+      c. Create SubmissionRequest (state=accepted,
+         incident_number=extracted from targetproject)
+      d. Enqueue correlate_submission_request
+      e. Search for RRs with same incident_number not in STAMP:
+         GET /request?view=collection&project={codestream}
+             &states=new,review,accepted&types=maintenance_release
+             &created_at_from={now - 25h}
+         For each RR where sourceproject contains the incident_number:
+           → Create ReleaseRequest (state mapped from IBS state)
+```
+
+**Step 2 extension**: when Step 2 reconciles a known SR (open→accepted)
+and extracts its `incident_number`, perform the same RR search as
+Step 1b.e for that incident. This covers the case where the SR was
+known to STAMP but the RR event was lost.
+
+**Note on `created_at_from` parameter**: verified in OBS source code
+(`BsRequest::FindFor::Query` — standard ActiveRecord range filter on
+`created_at` column). Not yet tested on-the-wire against IBS. To be
+verified empirically during implementation. Risk is negligible given
+that the parameter is a standard SQL range filter with no OBS-specific
+logic.
 
 ## Open Questions
 
@@ -1025,28 +1141,3 @@ However, applying Case C here introduces a trade-off:
 Case C) or silently skip them (conservative, avoids false positives)?
 This is independent of Open Question 5 (diff API accuracy) — even if
 the diff API is perfectly accurate, the maintainer typo problem remains.
-
-### 4. Release Request Arriving Before Submission Request
-
-If the `IBSEventConsumer` misses the `request.create` event for an SR
-(e.g., during reconnection) and an RR for the same incident arrives
-before the catch-up fetcher runs, the RR is discarded because no
-`SubmissionRequest` with the matching `incident_number` exists in STAMP.
-
-The catch-up fetcher (Pipeline 2, Step 1) will eventually discover the
-missed SR, but by that time the RR `request.create` event has already
-been discarded. If the RR is still in `new` or `review` state when the
-fetcher runs, it will be discovered in the same search query. But if
-the RR was accepted before the fetcher runs, it will not appear in the
-`states=new,review` search results and will be missed entirely.
-
-**Proposed mitigation**: in the catch-up fetcher, after creating a
-missed SR and obtaining its `incident_number` (via acceptance or by
-querying `GET /request/{number}`), perform an additional check for RRs
-with the same `incident_number` that are not yet in STAMP. This could
-use `GET /request?view=collection&project={codestream}&types=maintenance_release`
-filtered by the incident project, or a direct query by incident number
-if the API supports it.
-
-**Decision pending**: confirm the mitigation approach and verify the
-IBS API supports the necessary query patterns.
