@@ -460,7 +460,9 @@ output as the source diff. See Open Questions.
 
 ```
 1. Call IBS diff API for the request (see Data Sources above)
-2. Extract CVE-IDs from the diff response
+2. Extract CVE-IDs from the diff response (filter for `state="added"` and
+      `tracker="cve"` only — see Resolved Questions, "Diff API Issue State
+      Attribute")
 3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
 4. For each CVE-ID:
    a. Find the ticket with that CVE
@@ -924,6 +926,39 @@ provides an additional safety net.
 Whether `state_change` events are emitted for non-conclusive transitions
 remains to be verified empirically, but the design does not depend on it.
 
+### Diff API Issue State Attribute — VERIFIED
+
+The `POST /request/{id}?cmd=diff&withissues=1&view=xml` endpoint returns
+CVE-IDs from both changed lines and context lines in the diff. The
+`state` attribute on each `<issue>` element reliably distinguishes them.
+
+Verified empirically on IBS (2026-04-29) with three submission requests:
+
+- **SR#404948** (python311, submit): two CVE patches removed. Both CVEs
+  appear with `state="deleted"` — confirms that removals are correctly
+  flagged.
+- **SR#407662** (389-ds, maintenance_incident): one new CVE fix added.
+  The CVE appears with `state="added"` — no false positives from context.
+- **SR#407603** (maintenance_incident): two new CVE fixes added to a
+  changelog containing six pre-existing CVE references from older fixes.
+  The two new CVEs appear with `state="added"`. The six pre-existing
+  CVEs appear with `state="changed"` (present in context, not in changed
+  lines). This is the critical test case — it confirms that context-line
+  CVEs are NOT reported as `state="added"`.
+
+**State values observed**:
+
+| `state` value | Meaning | Action |
+|---------------|---------|--------|
+| `added` | CVE reference introduced in the diff (new fix) | Process |
+| `changed` | CVE reference present in diff context (pre-existing) | Skip |
+| `deleted` | CVE reference removed in the diff | Skip |
+
+**Decision**: `correlate_submission_request` MUST filter issues to only
+those with `state="added"` and `tracker="cve"`, consistent with the
+filtering already applied by `CodestreamReleaseDetector` on the source
+diff endpoint (see `docs/features/obs-integration.md`).
+
 ## Open Questions
 
 The following should be verified before implementation, but are not
@@ -1015,40 +1050,3 @@ if the API supports it.
 
 **Decision pending**: confirm the mitigation approach and verify the
 IBS API supports the necessary query patterns.
-
-### 5. Diff API False Positives from Context Lines
-
-The `POST /request/{id}?cmd=diff&withissues=1&view=xml` endpoint has
-been verified to return structured `<issues>` entries (see Resolved
-Questions). However, it has not been verified whether the issues are
-extracted only from **changed lines** or also from **context lines**
-surrounding the changes.
-
-If the diff API uses a context window (similar to `diff -C 3` or
-`grep -C 3`), CVE-IDs present in unchanged lines near the modified
-region could be returned as issues. This would be a structural problem
-with the IBS API (not a human error) and would systematically produce
-false correlations.
-
-The `state` attribute on each `<issue>` element (`state="added"`,
-`state="changed"`) may distinguish genuinely modified issues from
-context, but this has not been verified with a test case where known
-CVE-IDs exist in unchanged nearby lines.
-
-**Risk**: medium. If false positives occur, they would affect every SR
-that modifies a changelog containing pre-existing CVE-IDs — which is
-common for packages with a long security history.
-
-**Action**: before implementation, test empirically with an SR that
-modifies a changelog file containing pre-existing CVE-IDs (e.g., a
-package like `openssl` or `curl` with many historical CVE fixes).
-Verify whether the pre-existing CVE-IDs appear in the `<issues>` output
-and, if so, whether the `state` attribute distinguishes them from newly
-added ones.
-
-**Mitigation if confirmed**: filter issues to only those with
-`state="added"` (already done for the source diff endpoint in
-`CodestreamReleaseDetector`). If the request diff endpoint does not
-populate `state` reliably, fall back to the source diff endpoint
-(`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
-which is already known to work correctly.
