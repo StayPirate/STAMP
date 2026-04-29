@@ -523,7 +523,7 @@ system action).
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
 | package_added              | Package added to the ticket (manual by VA or automatic via CPE match / codestream detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
-| package_removed            | VA removed a package from the ticket               |
+| package_removed            | Package removed from ticket. `user_id` is set for VA-initiated removal, NULL for automatic removal (orphan cleanup when all codestreams removed). `old_value` contains the package name. `new_value` is NULL. `comment` is NULL for manual removal, `no_codestreams_remaining` for automatic. |
 | codestream_status_changed  | Codestream affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic eligibility rollup (all products AFFECTED_RESOLVED or a product returns to AFFECTED). |
 | product_status_overridden  | VA overrode product affectedness status             |
 | codestream_released        | Codestream release detected by `IBSEventConsumer` (real-time) or `CodestreamReleaseDetector` (periodic catch-up) — Case A |
@@ -533,7 +533,9 @@ system action).
 | cve_removed                | Admin removed the CVE association from a ticket. `user_id` is the Admin who performed the action. `old_value` is the CVE-ID string. `new_value` is NULL. `comment` is an optional admin note. |
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
-| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). |
+| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS, EOL), or threshold change. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). `comment` format: `package_name:product_id:reason` where reason is `reactive_ltss`, `eol`, `threshold`, or `cvss`. |
+| product_removed             | Product removed from ticket automatically (EOL with status ANALYSIS) or by orphan cleanup. `old_value` contains the product display name. `new_value` is NULL. `user_id` is NULL (system-triggered). `comment` format: `package_name:product_id:eol`. |
+| codestream_removed          | Codestream removed from ticket because it has zero remaining products (orphan cleanup). `old_value` contains the codestream name. `new_value` is NULL. `user_id` is NULL (system-triggered). `comment` format: `package_name:no_products_remaining`. |
 | ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 | ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 

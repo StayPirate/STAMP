@@ -1046,6 +1046,12 @@ affectedness-related conditions are summarized here for context:
   from NVD, creates the ticket, resolves packages via SMELT, and sets
   the originating codestream to `RELEASED`. See
   [Case C](#case-c--no-ticket-exists-for-the-cve) for details.
+- `check_lifecycle_phase_transitions`: periodic task (daily at 04:00 UTC)
+  that detects products currently in Reactive LTSS or EOL phase with
+  actionable `TicketPackageProduct` records and enqueues re-evaluation.
+  Idempotent — operates on current state with no cache. See
+  `docs/features/product-lifecycle-transitions.md` for the full
+  specification.
 
 ## Security
 

@@ -433,6 +433,48 @@ set/remove, CVE association/removal, soft-delete, restore) are NOT
 required to go through this module — they create `TicketEvent` records
 in their own services.
 
+#### Orphan Cleanup Invariants
+
+The `ticket_mutations` module enforces automatic cleanup of empty parent
+records. These are generic rules that apply regardless of the trigger —
+any current or future feature that removes a product or codestream
+automatically benefits from these invariants.
+
+**Invariant 1 — Codestream orphan rule**: after every
+`remove_ticket_package_product` call, `ticket_mutations` checks whether
+the parent `TicketPackageCodestream` has zero remaining
+`TicketPackageProduct` records. If zero products remain, it calls
+`remove_ticket_package_codestream(codestream_record)`.
+
+**Invariant 2 — Package orphan rule**: after every
+`remove_ticket_package_codestream` call, `ticket_mutations` checks
+whether the parent package in the ticket has zero remaining
+`TicketPackageCodestream` records. If zero codestreams remain, it calls
+`remove_package_from_ticket(ticket_id, package_name)`.
+
+**Cascading composition**: the invariants compose naturally through
+function calls:
+
+```
+remove_ticket_package_product(record)
+  → TicketEvent (product removed)
+  → evaluate_ticket_status()
+  → _enforce_codestream_orphan_rule()
+      → if 0 products: remove_ticket_package_codestream(...)
+          → TicketEvent (codestream removed)
+          → evaluate_ticket_status()
+          → _enforce_package_orphan_rule()
+              → if 0 codestreams: remove_package_from_ticket(...)
+                  → TicketEvent (package removed)
+                  → evaluate_ticket_status()
+```
+
+Each public function in `ticket_mutations` calls
+`evaluate_ticket_status` at the end of its execution. This ensures the
+ticket is always in a consistent state after any mutation, regardless of
+how many times `evaluate_ticket_status` is called within the same
+transaction.
+
 #### Contract
 
 Every service-layer operation that modifies data relevant to ticket

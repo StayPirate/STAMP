@@ -26,7 +26,7 @@ fields populated according to this table:
 | `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `STAMP-{n}` identifier of the original ticket | Optional VA note |
 | `duplicate_removed` | Duplicate mark reverted | VA user | `STAMP-{n}` identifier of the original ticket | `NULL` | Optional VA note |
 | `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
-| `package_removed` | VA removes package from ticket | VA user | Package name | `NULL` | `NULL` |
+| `package_removed` | Package removed from ticket (manual or automatic orphan cleanup) | VA user for manual, `NULL` for automatic | Package name | `NULL` | `NULL` for manual; `no_codestreams_remaining` for automatic |
 | `codestream_status_changed` | Codestream status changed (VA action or eligibility rollup) | VA user for manual changes, `NULL` for automatic eligibility rollup | Old status | New status | `package_name:codestream_name` |
 | `product_status_overridden` | VA overrides product status | VA user | Old status | New status | `package_name:product_id` |
 | `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
@@ -36,7 +36,9 @@ fields populated according to this table:
 | `cve_removed` | Admin removed CVE association from a ticket | Admin user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | Optional admin note |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
-| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation | `NULL` | Old status | New status | `package_name:product_id` |
+| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS, EOL), or threshold change | `NULL` | Old status | New status | `package_name:product_id:reason` (reason: `reactive_ltss`, `eol`, `threshold`, `cvss`) |
+| `product_removed` | Product removed from ticket automatically (EOL cleanup) | `NULL` | Product display name | `NULL` | `package_name:product_id:eol` |
+| `codestream_removed` | Codestream removed from ticket (orphan cleanup — zero products remaining) | `NULL` | Codestream name | `NULL` | `package_name:no_products_remaining` |
 | `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 | `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 

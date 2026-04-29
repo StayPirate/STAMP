@@ -707,12 +707,11 @@ normalizes all forms to the canonical `bsc#` prefix.
 
 ## Fetcher Registry
 
-All background tasks that fetch data from external sources inherit from
-`BaseFetcher` (`backend/app/services/base_fetcher.py`) and are
-automatically registered in the fetcher registry. The table below lists all
-fetchers — both active and planned — with their schedule, authentication
-requirements, rate limits, and data ingested. See
-`docs/features/fetcher-infrastructure.md` for infrastructure details.
+All `BaseFetcher` subclasses are automatically registered in the fetcher
+registry. The table below lists all fetchers — both active and planned —
+with their schedule, authentication requirements, rate limits, and data
+ingested. See `docs/features/fetcher-infrastructure.md` for infrastructure
+details.
 
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested |
 |---------|--------|----------|------|-------------|---------------|
@@ -726,6 +725,7 @@ requirements, rate limits, and data ingested. See
 | `check_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) |
 | `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) |
 | `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping |
+| `check_lifecycle_phase_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL |
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
 | `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, CWE, affected versions (multi-ecosystem), references |
