@@ -25,8 +25,10 @@ Follow these steps strictly:
    - If the user says no, stop here
 
 3. **Add the idea**: append the idea as a new bullet point (`- `) at the end
-   of the list. Preserve the exact wording the user provided. Do not rephrase
-   or summarize it.
+   of the list. The idea MUST be written in English, regardless of the language
+   used by the user to describe it. If the user provided the idea in a
+   non-English language, translate it to English while preserving the original
+   meaning. Do not add unnecessary embellishment or summarize it.
 
 4. **Commit the file alone**: stage ONLY `docs/drafts/ideas.md` and create a
    commit. Use the message format: `docs: add idea - <short summary>` (max 72
