@@ -33,7 +33,8 @@ stamp/
 │   ├── api-spec.md              # API specifications
 │   ├── conventions.md           # Code conventions
 │   ├── ui-design-system.md      # UI design system
-│   └── features/                # Feature specifications
+│   ├── drafts/                  # WIP feature specs (not yet approved)
+│   └── features/                # Approved feature specifications
 ├── .opencode/                   # OpenCode agents, skills, commands
 ├── backend/                     # FastAPI backend
 │   ├── app/
