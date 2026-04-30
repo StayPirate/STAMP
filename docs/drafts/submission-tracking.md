@@ -524,7 +524,7 @@ For SRs:
    - "accepted" -> accepted
      - Extract incident_number from actions[0].targetproject
        (now "SUSE:Maintenance:XXXXX")
-     - Set SR.incident_number = extracted number
+     - Call set_sr_incident_number(SR, extracted number)
    - "declined" -> declined
    - "revoked" -> revoked
    - "superseded" -> superseded
@@ -600,15 +600,9 @@ Step 1b — Discover missed accepted SRs (temporal lookback):
        a. Already in SubmissionRequest table? -> skip
        b. targetpackage tracked in at least one ticket for this
           codestream? If no -> skip
-       c. Create SubmissionRequest (state=accepted,
-          incident_number=extracted from targetproject)
-       d. Enqueue correlate_submission_request
-       e. Search for RRs with same incident_number not in STAMP:
-          GET /request?view=collection&project={codestream}
-              &states=new,review,accepted&types=maintenance_release
-              &created_at_from={now - 25h}
-          For each RR where sourceproject contains the incident_number:
-            -> Create ReleaseRequest (state mapped from IBS state)
+        c. Create SubmissionRequest (state=accepted)
+        d. Call set_sr_incident_number(SR, extracted incident_number)
+        e. Enqueue correlate_submission_request
 
 Step 2 — Reconcile requests no longer in new/review:
 
@@ -619,9 +613,8 @@ Step 2 — Reconcile requests no longer in new/review:
      GET /request/{number}
      -> Update state to the current IBS state (accepted, declined,
        revoked, superseded)
-     -> If accepted: extract incident_number from the response
-     -> If incident_number was just extracted: search for RRs with
-        same incident_number not in STAMP (same logic as Step 1b.e)
+     -> If accepted: call set_sr_incident_number(SR, extracted
+        incident_number)
 
   6. Query all ReleaseRequest records with state = 'open' that were
      NOT seen in Step 1
@@ -701,15 +694,11 @@ release detection Case B/C).
       - Not in SubmissionRequest?
         → Create SubmissionRequest record (state mapped from IBS)
         → Enqueue correlate_submission_request(submission_id)
-   c. For each newly created SR with incident_number:
-      - Query IBS for RRs with same incident_number:
-        GET /request?view=collection&project={codestream}
-            &states=new,review,accepted
-            &types=maintenance_release
-            &created_at_from={now - 14d}
-      - For each RR where sourceproject contains the incident_number:
-        → Already in ReleaseRequest table? → skip
-        → Create ReleaseRequest (state mapped from IBS state)
+   c. For each SR (newly created or re-enqueued) with incident_number:
+      - Call set_sr_incident_number(SR, incident_number)
+        (idempotent: if incident_number is already set to the same
+        value, discover_release_requests_for_incident is still called
+        but will skip existing RR records)
 ```
 
 #### Design Decisions
@@ -738,6 +727,48 @@ release detection Case B/C).
   one that triggered the discovery. `correlate_submission_request` is
   idempotent: join records that already exist are skipped, and the SR
   is only deleted if it has zero correlations in total.
+
+### Centralized Functions
+
+#### `set_sr_incident_number(submission_request, incident_number)`
+
+All code that sets `incident_number` on a `SubmissionRequest` MUST use
+this function instead of modifying the attribute directly.
+
+**Procedure**:
+
+```
+1. Set submission_request.incident_number = incident_number
+2. Call discover_release_requests_for_incident(incident_number)
+```
+
+Note: currently all callers are within the submission tracking feature
+(IBSEventConsumer, RequestSyncFetcher,
+`discover_submissions_for_ticket_package`). No external module has a
+reason to set `incident_number` directly. The centralized function
+exists to ensure `discover_release_requests_for_incident` is always
+called when an incident is discovered, not to enforce a cross-module
+boundary.
+
+#### `discover_release_requests_for_incident(incident_number)`
+
+A synchronous function that searches IBS for release requests associated
+with a given maintenance incident. Called automatically by
+`set_sr_incident_number` — not invoked directly by pipeline code.
+
+**Procedure**:
+
+```
+1. Query IBS:
+   GET /request?view=collection
+       &project=SUSE:Maintenance:{incident_number}
+       &types=maintenance_release
+       &states=new,review,accepted
+2. For each RR in the response:
+   - Already in ReleaseRequest table? → skip
+   - Create ReleaseRequest record (state mapped from IBS state,
+     codestream_name and package_name extracted from action fields)
+```
 
 ## UI Requirements
 
@@ -1098,8 +1129,10 @@ before the catch-up fetcher runs, it may be missed entirely.
 
 **Solution**: extend the `RequestSyncFetcher` with a Step 1b that
 discovers accepted SRs missed during consumer downtime, using the IBS
-temporal filter `created_at_from`. Additionally, extend Step 2 to search
-for missed RRs when reconciling a known SR to accepted state.
+temporal filter `created_at_from`. RR discovery is handled automatically
+by `set_sr_incident_number` (see Centralized Functions) whenever an
+`incident_number` is set on a SR — no explicit RR search is needed in
+the pipeline steps.
 
 **Schedule parameters**:
 
@@ -1136,21 +1169,16 @@ Step 1b — Discover missed accepted SRs:
       a. Already in SubmissionRequest table? → skip
       b. targetpackage tracked in at least one ticket for this
          codestream? If no → skip
-      c. Create SubmissionRequest (state=accepted,
-         incident_number=extracted from targetproject)
-      d. Enqueue correlate_submission_request
-      e. Search for RRs with same incident_number not in STAMP:
-         GET /request?view=collection&project={codestream}
-             &states=new,review,accepted&types=maintenance_release
-             &created_at_from={now - 25h}
-         For each RR where sourceproject contains the incident_number:
-           → Create ReleaseRequest (state mapped from IBS state)
+      c. Create SubmissionRequest (state=accepted)
+      d. Call set_sr_incident_number(SR, extracted incident_number)
+      e. Enqueue correlate_submission_request
 ```
 
 **Step 2 extension**: when Step 2 reconciles a known SR (open→accepted)
-and extracts its `incident_number`, perform the same RR search as
-Step 1b.e for that incident. This covers the case where the SR was
-known to STAMP but the RR event was lost.
+and extracts its `incident_number`, it calls
+`set_sr_incident_number(SR, extracted incident_number)` which
+automatically discovers associated RRs. This covers the case where the
+SR was known to STAMP but the RR event was lost.
 
 **Note on `created_at_from` parameter**: verified in OBS source code
 (`BsRequest::FindFor::Query` — standard ActiveRecord range filter on
@@ -1220,4 +1248,28 @@ payloads.
 
 **Action**: verify opportunistically during implementation.
 
+### 3. IBS Request Search by Incident Project
+
+`discover_release_requests_for_incident` queries IBS using
+`project=SUSE:Maintenance:{incident_number}` to find release requests
+for a specific incident. OBS source code confirms that the `project`
+parameter matches both `source_project` and `target_project` (via OR
+in `BsRequest::FindFor::Query`), and for `maintenance_release` requests
+the source project is always the incident. However, this specific usage
+(querying with an incident project name rather than a codestream) has
+NOT been tested on-the-wire against IBS.
+
+**Risk**: low. The `project` parameter is standard and the query logic
+is straightforward.
+
+**Fallback**: if the query does not return expected results, revert to
+querying by codestream with a `created_at_from` temporal filter. The
+exact signature and parameter sourcing for the fallback will be decided
+at implementation time if needed. One option is to derive
+`created_at_from` from the parent `SubmissionRequest.created_at` (the
+RR is necessarily created after the SR), which the function can resolve
+from the database using the `incident_number`.
+
+**Action**: verify empirically during implementation by running a
+manual test query against IBS for a known incident with an active RR.
 
