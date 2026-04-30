@@ -301,7 +301,11 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
    `PackageBugowner` record already exists for this `package_name`, update
    it with fresh data from IBS. If it does not exist, create it. See
    `docs/features/package-bugowner.md` for the resolution algorithm.
-5. Return a result indicating which records were created and which were
+5. Enqueue `discover_submissions_for_ticket_package(ticket_id, package_name)`
+   to retroactively discover IBS submission requests (SRs) and release
+   requests (RRs) for the ticket's CVE created within the last 14 days.
+   See `docs/drafts/submission-tracking.md`, Pipeline 3.
+6. Return a result indicating which records were created and which were
    skipped (already existed).
 
 `ticket_mutations` handles idempotency (skipping existing records),

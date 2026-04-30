@@ -483,7 +483,11 @@ output as the source diff. See Open Questions.
    b. Find the TicketPackageCodestream for (ticket, codestream, package)
    c. Create SubmissionRequestCodestream join record
 5. If no correlations were created (CVE-IDs found but no matching
-   tickets) -> delete the SubmissionRequest
+   tickets) -> delete the SubmissionRequest (silent discard).
+   Note: unknown CVE-IDs are intentionally skipped — no ticket/CVE
+   creation. If a ticket for that CVE is created later,
+   `discover_submissions_for_ticket_package` (Pipeline 3) will
+   retroactively discover this SR via IBS query.
 ```
 
 #### On `request.create` (type = maintenance_release) — New RR
@@ -658,6 +662,73 @@ codestream, most already known (skipped immediately). Step 2 processes
 only requests in `open` state in STAMP that were not seen in Step 1 —
 typically a small number.
 
+### Pipeline 3: Retroactive Discovery (`discover_submissions_for_ticket_package`)
+
+A Celery sub-operation task (not a `BaseFetcher`) enqueued by
+`add_package_to_ticket` whenever a package is added to a ticket. Discovers
+SRs and RRs that were created before STAMP started tracking the package.
+
+This is the same architectural pattern as `create_ticket_from_detection`:
+an on-demand task triggered by a parent operation, with no independent
+schedule or dashboard presence.
+
+**Trigger**: `add_package_to_ticket` enqueues this task as its final step,
+after all `TicketPackageCodestream` and `TicketPackageProduct` records have
+been created and the bugowner has been resolved. The task runs regardless of
+what triggered the package addition (VA manual action, CPE mapping,
+release detection Case B/C).
+
+#### Procedure
+
+```
+1. Retrieve the ticket's CVE-ID
+2. Retrieve ALL TicketPackageCodestream records for (ticket, package)
+   — no status filter (includes ANALYSIS, AFFECTED, RELEASED, etc.)
+3. For each codestream:
+   a. Query IBS:
+      GET /request?view=collection&project={codestream}
+          &package={package}&states=new,review,accepted
+          &types=maintenance_incident
+          &created_at_from={now - 14d}
+   b. For each SR in the response:
+      - Already in SubmissionRequest table? → skip
+      - Call diff API: POST /request/{number}?cmd=diff&withissues=1&view=xml
+      - Extract CVE-IDs (filter: state="added", tracker="cve")
+      - Is the ticket's CVE-ID among them?
+        → Yes: create SubmissionRequest record, create
+          SubmissionRequestCodestream join record
+        → No: skip (SR for a different CVE of the same package)
+   c. For each newly created SR with incident_number:
+      - Query IBS for RRs with same incident_number:
+        GET /request?view=collection&project={codestream}
+            &states=new,review,accepted
+            &types=maintenance_release
+            &created_at_from={now - 14d}
+      - For each RR where sourceproject contains the incident_number:
+        → Already in ReleaseRequest table? → skip
+        → Create ReleaseRequest (state mapped from IBS state)
+```
+
+#### Design Decisions
+
+- **No status filter on codestreams**: all codestreams are checked
+  regardless of their `PackageStatus`. This ensures SR/RR data is captured
+  even for codestreams already in `RELEASED` state (e.g., Case C tickets
+  created by `create_ticket_from_detection`). The data is not displayed in
+  the UI for final-status codestreams but is retained for audit and future
+  use.
+- **14-day lookback window**: limits the volume of accepted SRs returned
+  by IBS for long-lived packages. An SR older than 14 days whose ticket is
+  only being created now is an extreme edge case with low informational
+  value.
+- **Sub-operation task**: not a `BaseFetcher` — runs on-demand as a
+  side-effect of `add_package_to_ticket`, same category as
+  `create_ticket_from_detection`.
+- **Location of trigger**: the enqueue lives in `add_package_to_ticket`
+  (service layer), not in `ticket_mutations`. The discovery task performs
+  external I/O (IBS queries) which is outside the responsibility of
+  `ticket_mutations` (record mutations only).
+
 ## UI Requirements
 
 ### Visualization Format
@@ -818,6 +889,9 @@ documents will need updates:
 - `docs/api-spec.md` — new endpoints for SR/RR data
 - `docs/features/fetcher-dashboard.md` — the new `RequestSyncFetcher`
   appears in the dashboard
+- `docs/features/package-tracking.md` — add step 6 to
+  `add_package_to_ticket` (enqueue `discover_submissions_for_ticket_package`)
+  — **already done**
 
 ## Resolved Questions
 
@@ -942,7 +1016,7 @@ accepted):
 
 ### Catch-Up Fetcher Frequency — DECIDED
 
-Every 12 hours. This balances IBS API load with acceptable recovery time.
+Every 24 hours. This balances IBS API load with acceptable recovery time.
 Reopens are rare and even if missed by the fetcher, the subsequent
 conclusive state change (accepted/declined/revoked) will be caught by
 the RabbitMQ consumer.
@@ -1075,6 +1149,29 @@ verified empirically during implementation. Risk is negligible given
 that the parameter is a standard SQL range filter with no OBS-specific
 logic.
 
+### Unknown CVE-IDs in Submission Request Diffs — DECIDED
+
+`correlate_submission_request` does NOT invoke `create_ticket_from_detection`
+for CVE-IDs not known to STAMP. Unknown CVE-IDs are silently skipped. If no
+correlations are created (all CVE-IDs unknown or no matching tickets), the
+SubmissionRequest is deleted.
+
+**Rationale**: creating tickets from SR diffs risks false positives from
+maintainer typos in changelogs (e.g., `CVE-2026-99999` instead of
+`CVE-2026-9999`). The conservative approach avoids polluting the ticket
+database with spurious CVEs.
+
+**Compensating mechanism**: `add_package_to_ticket` enqueues a
+`discover_submissions_for_ticket_package` Celery task that retroactively
+searches IBS for existing SRs/RRs mentioning the ticket's CVE. This covers
+the case where a maintainer proactively submits a fix before the CVE is
+ingested by STAMP. See Pipeline 3 for the full procedure.
+
+**Recovery guarantee**: any SR created within 14 days before the ticket/package
+addition is discoverable. SRs older than 14 days are not recovered, but this
+is an extreme edge case with low informational value (the release detector
+will likely have already marked the codestream as RELEASED).
+
 ## Open Questions
 
 The following should be verified before implementation, but are not
@@ -1113,31 +1210,4 @@ payloads.
 
 **Action**: verify opportunistically during implementation.
 
-### 3. Unknown CVE-IDs in Submission Request Diffs
 
-When `correlate_submission_request` extracts CVE-IDs from the diff and
-a CVE-ID is not known to STAMP (no CVE record, no ticket), the current
-pipeline silently skips that CVE-ID and only creates join records for
-known tickets.
-
-This may contradict the project-wide policy for unknown CVE-IDs at the
-codestream level (see `docs/features/package-tracking.md`, section
-"Codestream Match Outcomes", Case C), which creates a CVE record and a
-ticket via `create_ticket_from_detection`.
-
-However, applying Case C here introduces a trade-off:
-
-- **False positive risk**: a maintainer makes a typo in the changelog
-  (e.g., `CVE-2026-99999` instead of `CVE-2026-9999`). The diff API
-  returns the erroneous CVE-ID, and STAMP creates a spurious ticket for
-  a non-existent CVE. This is a sporadic human error.
-- **False negative risk**: a maintainer proactively submits a fix for a
-  CVE that is not yet in NVD (e.g., under embargo or recently assigned).
-  Ignoring the unknown CVE-ID means STAMP misses a legitimate early
-  signal.
-
-**Decision pending**: should `correlate_submission_request` invoke
-`create_ticket_from_detection` for unknown CVE-IDs (consistent with
-Case C) or silently skip them (conservative, avoids false positives)?
-This is independent of Open Question 5 (diff API accuracy) — even if
-the diff API is perfectly accurate, the maintainer typo problem remains.
