@@ -481,9 +481,11 @@ output as the source diff. See Open Questions.
 4. For each CVE-ID:
    a. Find the ticket with that CVE
    b. Find the TicketPackageCodestream for (ticket, codestream, package)
-   c. Create SubmissionRequestCodestream join record
-5. If no correlations were created (CVE-IDs found but no matching
-   tickets) -> delete the SubmissionRequest (silent discard).
+   c. Create SubmissionRequestCodestream join record (idempotent:
+      skip if unique constraint already satisfied)
+5. If no correlations EXIST for this SR (total count of join records
+   in the database = 0, not just those created in this run) -> delete
+   the SubmissionRequest (silent discard).
    Note: unknown CVE-IDs are intentionally skipped — no ticket/CVE
    creation. If a ticket for that CVE is created later,
    `discover_submissions_for_ticket_package` (Pipeline 3) will
@@ -691,13 +693,14 @@ release detection Case B/C).
           &types=maintenance_incident
           &created_at_from={now - 14d}
    b. For each SR in the response:
-      - Already in SubmissionRequest table? → skip
-      - Call diff API: POST /request/{number}?cmd=diff&withissues=1&view=xml
-      - Extract CVE-IDs (filter: state="added", tracker="cve")
-      - Is the ticket's CVE-ID among them?
-        → Yes: create SubmissionRequest record, create
-          SubmissionRequestCodestream join record
-        → No: skip (SR for a different CVE of the same package)
+      - Already in SubmissionRequest AND a join record exists for
+        (this SR, this TicketPackageCodestream)? → skip
+      - Already in SubmissionRequest but no join record for
+        (this SR, this TicketPackageCodestream)?
+        → Re-enqueue correlate_submission_request(submission_id)
+      - Not in SubmissionRequest?
+        → Create SubmissionRequest record (state mapped from IBS)
+        → Enqueue correlate_submission_request(submission_id)
    c. For each newly created SR with incident_number:
       - Query IBS for RRs with same incident_number:
         GET /request?view=collection&project={codestream}
@@ -728,6 +731,13 @@ release detection Case B/C).
   (service layer), not in `ticket_mutations`. The discovery task performs
   external I/O (IBS queries) which is outside the responsibility of
   `ticket_mutations` (record mutations only).
+- **Reuse of `correlate_submission_request`**: Pipeline 3 delegates
+  diff API calls and CVE correlation to `correlate_submission_request`
+  (Pipeline 1) instead of reimplementing the logic. This ensures that
+  multi-CVE SRs are correlated with all matching tickets, not just the
+  one that triggered the discovery. `correlate_submission_request` is
+  idempotent: join records that already exist are skipped, and the SR
+  is only deleted if it has zero correlations in total.
 
 ## UI Requirements
 
