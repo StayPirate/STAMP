@@ -1,7 +1,5 @@
 # Submission Tracking
 
-**Status**: DRAFT — design decisions captured, open questions remain.
-
 ## Purpose
 
 Track IBS submission requests (SR) and release requests (RR) as entities
@@ -1102,30 +1100,6 @@ The following are explicitly out of scope for this feature:
 - **Multi-codestream SRs**: while technically possible in IBS, SUSE
   convention for security updates requires one package + one codestream
   per SR. STAMP assumes this convention and processes only `actions[0]`.
-
-## Impact on Existing Specifications
-
-When this spec is finalized and moved to `docs/features/`, the following
-documents will need updates:
-
-- `docs/data-model.md` — add `SubmissionRequest`, `ReleaseRequest`,
-  `SubmissionRequestState`, `ReleaseRequestState`, and
-  `SubmissionRequestCodestream` tables
-- `docs/features/ibs-rabbitmq-integration.md` — document new routing keys
-  (`request.create`, `request.state_change`), new processing pipelines
-  for SR and RR events, and shared consumer architecture
-- `docs/features/obs-integration.md` — document IBS request search API
-  (`GET /request?view=collection`), request detail API
-  (`GET /request/{number}`), and request diff API
-  (`POST /request/{id}?cmd=diff`)
-- `docs/architecture.md` — mention the new fetcher and submission tracking
-  in the system overview
-- `docs/api-spec.md` — new endpoints for SR/RR data
-- `docs/features/fetcher-dashboard.md` — the new `RequestSyncFetcher`
-  appears in the dashboard
-- `docs/features/package-tracking.md` — add step 6 to
-  `add_package_to_ticket` (enqueue `discover_submissions_for_ticket_package`)
-  — **already done**
 
 ## Open Questions
 
