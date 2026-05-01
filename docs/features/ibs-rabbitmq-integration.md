@@ -92,7 +92,7 @@ The routing keys for binding are `suse.obs.package.commit`,
 
 | Event | Reason for rejection |
 |---|---|
-| `suse.obs.package.build_success` | Not useful for STAMP — release detection needs source-level CVE reference analysis, not build status |
+| `suse.obs.package.build_success` | Not useful for Sentinel — release detection needs source-level CVE reference analysis, not build status |
 | `suse.obs.package.build_fail` | Same as above |
 | `suse.obs.repo.published` | Payload contains `project`, `repo`, `buildid` but no package name. Would trigger expensive `updateinfo.xml` re-download/parse without knowing what changed. Measured cost: ~600-800 ms per repository. Also fires for all update types (recommended, feature), not just security |
 | `suse.obs.package.version_change` | Redundant — `package.commit` already provides the information needed to trigger diff analysis |
@@ -287,7 +287,7 @@ Card").
 The consumer writes its current state to a Redis key every **30 seconds**
 with a **TTL of 60 seconds**:
 
-- **Key**: `stamp:ibs_consumer_status`
+- **Key**: `sentinel:ibs_consumer_status`
 - **Value**: JSON object with the following fields:
 
 ```json
@@ -360,7 +360,7 @@ status across any ticket), the event is discarded by the codestream
 filter. This applies equally to the RabbitMQ consumer and the periodic
 fetcher — neither monitors codestreams without active tickets.
 
-STAMP does not maintain an independent table of all active codestreams.
+Sentinel does not maintain an independent table of all active codestreams.
 Codestream names exist only as strings in `TicketPackageCodestream`
 records, populated when packages are resolved via SMELT. Monitoring all
 codestreams would require a new data source (e.g., deriving codestreams

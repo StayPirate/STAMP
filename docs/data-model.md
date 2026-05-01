@@ -1,6 +1,6 @@
 # Data Model
 
-This document describes the database schema for STAMP. All models are
+This document describes the database schema for Sentinel. All models are
 implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
@@ -340,7 +340,7 @@ within the context of a ticket and codestream. See
 | product_id                    | UUID      | FK(product.id), NOT NULL                   | Related product                    |
 | status                        | ENUM      | NOT NULL, DEFAULT ANALYSIS                 | PackageStatus enum                 |
 | is_override                   | BOOLEAN   | NOT NULL, DEFAULT false                    | True if VA manually overrode the inherited status |
-| released_at                   | TIMESTAMP | nullable                                  | When STAMP detected the fix in the product's repository |
+| released_at                   | TIMESTAMP | nullable                                  | When Sentinel detected the fix in the product's repository |
 | created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
 | updated_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record update timestamp            |
 
@@ -416,7 +416,7 @@ cannot be removed manually. See `docs/features/ldap-directory.md`.
 
 ### RoleMapping
 
-Stores the mapping rules between Active Directory groups and STAMP roles.
+Stores the mapping rules between Active Directory groups and Sentinel roles.
 Configured by admins via the UI or API. When a mapping is created or
 deleted, roles are applied or revoked immediately. During the daily LDAP
 sync, existing mappings are re-evaluated against current AD group
@@ -426,7 +426,7 @@ membership. See `docs/features/ldap-directory.md`.
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
 | ad_group_cn  | VARCHAR     | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
-| role         | ENUM        | NOT NULL                     | STAMP role to assign: `Admin` or `Vulnerability Analyst` |
+| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin` or `Vulnerability Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
@@ -442,7 +442,7 @@ See `docs/features/tickets.md` for the full ticket specification.
 | Column            | Type        | Constraints                  | Description                          |
 |-------------------|-------------|------------------------------|--------------------------------------|
 | id                | UUID        | PK                           | Internal identifier                  |
-| sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `STAMP-{n}` (e.g., `STAMP-42`) |
+| sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
 | status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets.md` (Severity Resolution) |
@@ -588,7 +588,7 @@ of the release detection mechanism.
 ### PackageBugowner
 
 Caches the current IBS bugowner for each source package actively tracked
-in STAMP tickets. Shared across all tickets — all `TicketPackageCodestream`
+in Sentinel tickets. Shared across all tickets — all `TicketPackageCodestream`
 records with the same `package_name` reference the same bugowner. Records
 are created on-demand when a package is first added to a ticket, maintained
 by the `sync_package_bugowners` fetcher, and removed when the package no
@@ -706,7 +706,7 @@ retention task after the 90-day individual retention window.
 ### SubmissionRequest
 
 Tracks an IBS submission request (type `maintenance_incident`) relevant
-to STAMP. See `docs/features/submission-tracking.md`.
+to Sentinel. See `docs/features/submission-tracking.md`.
 
 | Column             | Type         | Constraints              | Description                              |
 |--------------------|--------------|--------------------------|------------------------------------------|
@@ -728,7 +728,7 @@ to STAMP. See `docs/features/submission-tracking.md`.
 ### ReleaseRequest
 
 Tracks an IBS release request (type `maintenance_release`) relevant
-to STAMP. See `docs/features/submission-tracking.md`.
+to Sentinel. See `docs/features/submission-tracking.md`.
 
 | Column             | Type         | Constraints              | Description                              |
 |--------------------|--------------|--------------------------|------------------------------------------|

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the main pages of the STAMP platform. The platform is designed around
+Define the main pages of the Sentinel platform. The platform is designed around
 a ticket-based workflow where vulnerability analysts (VAs) triage, analyze, and
 resolve security issues that affect maintained products.
 
@@ -77,7 +77,7 @@ external sources but not yet picked up by any VA.
 
 | Column            | Description                                         |
 |-------------------|-----------------------------------------------------|
-| Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID (e.g., `STAMP-42 (CVE-2025-1234)`) |
+| Ticket ID         | `SNTL-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID (e.g., `SNTL-42 (CVE-2025-1234)`) |
 | Severity          | Color-coded severity badge (Critical/High/Medium/Low/None). Shown only if available (from CVSS or severity_override) |
 | CVSS Score        | Numeric CVSS score (resolved via the default CVSS version). Shown only for tickets with a CVE |
 | Affected Packages | Package names resolved automatically via CPE mapping during CVE ingestion (see `docs/features/package-tracking.md`). Comma-separated, truncated if many |
@@ -118,7 +118,7 @@ Displays all tickets assigned to the currently logged-in VA.
 
 | Column            | Description                                         |
 |-------------------|-----------------------------------------------------|
-| Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
+| Ticket ID         | `SNTL-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
 | Severity          | Color-coded severity badge                          |
 | Status            | Current ticket status badge                         |
 | Affected Packages | Package names (comma-separated, truncated)          |
@@ -163,7 +163,7 @@ Displays all tickets in the system with comprehensive search and filtering.
 
 | Column            | Description                                         |
 |-------------------|-----------------------------------------------------|
-| Ticket ID         | `STAMP-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
+| Ticket ID         | `SNTL-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID |
 | Severity          | Color-coded severity badge                          |
 | Status            | Current ticket status badge                         |
 | Assignee          | Username of assigned VA (or "Unassigned")           |
@@ -175,7 +175,7 @@ Displays all tickets in the system with comprehensive search and filtering.
 ### Search
 
 Free-text search across:
-- `STAMP-{n}` identifier
+- `SNTL-{n}` identifier
 - CVE ID (if present)
 - CVE description
 - Package names
@@ -230,10 +230,10 @@ The page is divided into the following sections:
 
 #### Header
 
-- **Ticket ID**: `STAMP-{n}` in prominent display, monospace. If the
+- **Ticket ID**: `SNTL-{n}` in prominent display, monospace. If the
   ticket has an associated CVE, the CVE ID is shown alongside with an
-  em-dash separator (e.g., `STAMP-42 — CVE-2024-1234`). Note: ticket
-  list tables use parentheses instead (e.g., `STAMP-42 (CVE-2024-1234)`)
+  em-dash separator (e.g., `SNTL-42 — CVE-2024-1234`). Note: ticket
+  list tables use parentheses instead (e.g., `SNTL-42 (CVE-2024-1234)`)
   for compactness
 - **Status badge**: color-coded current status
 - **Severity badge**: color-coded severity level. For tickets with a CVE,
@@ -373,7 +373,7 @@ products have a status other than Analysis (see
 
 Shown only when the ticket is in Duplicated state:
 
-- "This ticket is a duplicate of [STAMP-{n}]" with link to the original
+- "This ticket is a duplicate of [SNTL-{n}]" with link to the original
   ticket. If the original has a CVE, also shows the CVE ID
 - Button: "Revert duplicate status" — restores the previous state and
   reassigns the ticket to the VA who clicks the button
@@ -381,7 +381,7 @@ Shown only when the ticket is in Duplicated state:
 
 Shown on the original ticket when other tickets reference it as duplicate:
 
-- "Duplicates: [STAMP-{n1}], [STAMP-{n2}]" with links
+- "Duplicates: [SNTL-{n1}], [SNTL-{n2}]" with links
 
 #### Event History (Tab)
 

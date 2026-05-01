@@ -3,7 +3,7 @@
 ## Purpose
 
 Manage CVSS (Common Vulnerability Scoring System) assessments from multiple
-providers for each CVE. STAMP ingests CVSS data from external sources,
+providers for each CVE. Sentinel ingests CVSS data from external sources,
 allows vulnerability analysts (VAs) to provide SUSE's own assessment, and uses
 the scores to derive severity, determine product eligibility, and control
 ticket workflow progression.
@@ -13,7 +13,7 @@ ticket workflow progression.
 1. **Multi-provider**: each CVE can have CVSS assessments from multiple
    providers (NVD, CNA vendors, Red Hat, SUSE). Each assessment is stored
    independently.
-2. **Multi-version**: STAMP supports CVSS v3.1 and v4.0. A single provider
+2. **Multi-version**: Sentinel supports CVSS v3.1 and v4.0. A single provider
    may supply assessments for one or both versions. Other versions (e.g.,
    v2.0) may arrive from external sources and are stored and displayed but
    not used for decisions.
@@ -21,7 +21,7 @@ ticket workflow progression.
    CVSS version is used for all automated decisions (severity, eligibility,
    notifications). Initially set to `3.1`, changeable by Admin. See
    `docs/features/admin.md`.
-4. **SUSE assessment is authoritative**: when STAMP needs a CVSS score to
+4. **SUSE assessment is authoritative**: when Sentinel needs a CVSS score to
    make a decision, it follows the resolution cascade defined below.
 5. **Default version awareness**: every component of the system that needs
    a CVSS score for any decision MUST resolve the version from the system
@@ -29,7 +29,7 @@ ticket workflow progression.
 
 ## CVSS Score Resolution Cascade
 
-Whenever STAMP needs a CVSS score for a decision (severity calculation,
+Whenever Sentinel needs a CVSS score for a decision (severity calculation,
 eligibility threshold comparison, or any future logic), it MUST follow
 this cascade:
 
@@ -62,7 +62,7 @@ directly on the assessment record.
 - **Type**: independent assessment by NVD analysts
 - **Identified by**: `source` field with value `nvd@nist.gov`,
   `type: "Primary"` in the API response
-- **Provider name in STAMP**: `"NVD"`
+- **Provider name in Sentinel**: `"NVD"`
 - **CVSS versions**: currently v3.1; v4.0 expected in the future
 - **Fetch mechanism**: extracted from `cvssMetricV31` and `cvssMetricV40`
   arrays in the NVD CVE API response
@@ -74,7 +74,7 @@ directly on the assessment record.
   or organization that assigned the CVE)
 - **Identified by**: `source` field containing the CNA's email (e.g.,
   `secure@intel.com`), `type: "Secondary"`
-- **Provider name in STAMP**: resolved to a human-readable name using the
+- **Provider name in Sentinel**: resolved to a human-readable name using the
   NVD Source API (`services.nvd.nist.gov/rest/json/source/2.0`). For
   example, `secure@intel.com` resolves to `"Intel Corporation"`
 - **CVSS versions**: varies by CNA; may include v3.1, v4.0, or both
@@ -91,7 +91,7 @@ directly on the assessment record.
 - **Source**: Red Hat Security Data API
   (`access.redhat.com/hydra/rest/securitydata/cve/{CVE-ID}.json`)
 - **Type**: independent assessment by Red Hat Product Security
-- **Provider name in STAMP**: `"Red Hat"`
+- **Provider name in Sentinel**: `"Red Hat"`
 - **CVSS versions**: currently v3.1 only (field `cvss3` in the response).
   v4.0 will be supported when Red Hat adds it
 - **Response format**: the `cvss3` object contains `cvss3_base_score`
@@ -106,7 +106,7 @@ directly on the assessment record.
 #### SUSE
 
 - **Source**: manual input by VA via the Ticket Detail page
-- **Provider name in STAMP**: `"SUSE"`
+- **Provider name in Sentinel**: `"SUSE"`
 - **CVSS versions**: the VA MUST provide both v3.1 and v4.0 assessments
   before the ticket can progress beyond Analysis (see Workflow Gates)
 - **Input method**: the VA enters a CVSS vector string; the backend
@@ -288,7 +288,7 @@ only.
 
 **Strategy — initial fetch**:
 
-1. When a new ticket is created (CVE ingested), STAMP fetches the Red Hat
+1. When a new ticket is created (CVE ingested), Sentinel fetches the Red Hat
    CVSS for that CVE:
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
@@ -324,14 +324,14 @@ for CVEs with **active tickets** — tickets in status `New`, `Analysis`, or
 `Analyzed` with `deleted_at IS NULL` (see `docs/data-model.md` for the
 authoritative definition of active tickets).
 
-When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, STAMP
+When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, Sentinel
 stops monitoring CVSS updates for that CVE. The existing CVSS data remains
 in the database but is no longer refreshed.
 
 ## Recalculation Cascade
 
 When a CVSS assessment changes (added, modified, or removed) for a CVE
-with an active ticket, STAMP performs the following recalculation:
+with an active ticket, Sentinel performs the following recalculation:
 
 1. **Recalculate severity**: apply the resolution cascade to determine the
    new severity. If severity changed, update the CVE's `severity` field.
@@ -486,7 +486,7 @@ version.
 ```
 
 The `resolved_*` fields reflect the result of the resolution cascade for
-the current default version (which score and provider STAMP is using for
+the current default version (which score and provider Sentinel is using for
 decisions).
 
 ### Set or Update SUSE CVSS Assessment
@@ -625,4 +625,4 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - Adding/editing/deleting SUSE CVSS: Vulnerability Analyst role
 - Changing default CVSS version: Admin role only (see
   `docs/features/admin.md`)
-- External CVSS data is read-only — cannot be modified through STAMP
+- External CVSS data is read-only — cannot be modified through Sentinel

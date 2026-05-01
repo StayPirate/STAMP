@@ -1,11 +1,11 @@
 ---
 name: new-feature
-description: Guided workflow for adding a new feature to the STAMP platform. Ensures specification is written first, then implementation follows the project conventions.
+description: Guided workflow for adding a new feature to the Sentinel platform. Ensures specification is written first, then implementation follows the project conventions.
 ---
 
 ## Workflow: Adding a New Feature
 
-Follow these steps in order when adding a new feature to STAMP.
+Follow these steps in order when adding a new feature to Sentinel.
 
 ### Step 0: Check ideas list
 

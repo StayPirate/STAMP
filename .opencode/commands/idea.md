@@ -13,7 +13,7 @@ Follow these steps strictly:
    ```markdown
    # Ideas
 
-   Brainstorming ideas for STAMP. When an idea is promoted to a feature
+   Brainstorming ideas for Sentinel. When an idea is promoted to a feature
    specification, it should be removed from this list.
    ```
 

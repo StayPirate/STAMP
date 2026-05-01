@@ -1,4 +1,4 @@
-"""STAMP FastAPI application entry point."""
+"""Sentinel FastAPI application entry point."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 app = FastAPI(
-    title="STAMP",
-    description="Security Tracking And Management Platform for SUSE/openSUSE distributions",
+    title="Sentinel",
+    description="Security update management platform for SUSE/openSUSE distributions",
     version="0.1.0",
 )
 

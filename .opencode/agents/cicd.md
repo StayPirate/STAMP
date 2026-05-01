@@ -21,7 +21,7 @@ permission:
 
 ## Role
 
-You are the CI/CD specialist for the STAMP project.
+You are the CI/CD specialist for the Sentinel project.
 
 ## What you can modify
 

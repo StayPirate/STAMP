@@ -2,7 +2,7 @@
 
 ## Purpose
 
-System-wide configuration and administrative operations for the STAMP
+System-wide configuration and administrative operations for the Sentinel
 platform. The Admin panel provides settings that affect platform behavior
 across all users and tickets.
 
@@ -14,7 +14,7 @@ All administration endpoints and UI pages require the **Admin** role.
 
 ### Default CVSS Version
 
-Controls which CVSS version STAMP uses for all automated decisions. This
+Controls which CVSS version Sentinel uses for all automated decisions. This
 setting affects the entire platform — severity derivation, eligibility
 threshold comparison, and any future logic that depends on a CVSS score.
 
@@ -28,7 +28,7 @@ threshold comparison, and any future logic that depends on a CVSS score.
 
 **Impact of changing the default version**:
 
-When the Admin changes the default CVSS version, STAMP MUST:
+When the Admin changes the default CVSS version, Sentinel MUST:
 
 1. Recalculate severity for **all CVEs with active tickets** (status: New,
    Analysis, Analyzed; `deleted_at IS NULL` — see `docs/data-model.md`)

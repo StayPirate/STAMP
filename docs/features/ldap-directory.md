@@ -2,14 +2,14 @@
 
 ## Purpose
 
-Synchronize SUSE employee data from Active Directory into STAMP to enable
+Synchronize SUSE employee data from Active Directory into Sentinel to enable
 user pre-provisioning, autocomplete search, package bugowner enrichment,
 automatic role assignment from AD group membership, and manager-based
 ticket escalation when employees leave the organization.
 
 ## Data Source
 
-STAMP uses the SUSE Active Directory instance at `pan.suse.de` as the
+Sentinel uses the SUSE Active Directory instance at `pan.suse.de` as the
 single source of truth for employee identity data. See
 `docs/data-sources.md` for connection details.
 
@@ -25,7 +25,7 @@ single source of truth for employee identity data. See
 
 ### Attributes consumed
 
-| AD Attribute      | STAMP Field       | Description                          |
+| AD Attribute      | Sentinel Field       | Description                          |
 |-------------------|-------------------|--------------------------------------|
 | `sAMAccountName`  | `ldap_uid`        | Username (e.g., `ggabrielli`)        |
 | `cn`              | `full_name`       | Full display name                    |
@@ -70,14 +70,14 @@ group membership and the configured role mappings. Roles with
 
 ### New table: RoleMapping
 
-Stores the mapping rules between AD groups and STAMP roles, configured
+Stores the mapping rules between AD groups and Sentinel roles, configured
 by admins.
 
 | Column       | Type        | Constraints                  | Description                        |
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
 | ad_group_cn  | VARCHAR     | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
-| role         | ENUM        | NOT NULL                     | STAMP role to assign: `Admin` or `Vulnerability Analyst` |
+| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin` or `Vulnerability Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
@@ -160,18 +160,18 @@ The LDAP sync can be triggered from the command line using the generic
 fetcher command:
 
 ```
-stamp fetcher run sync_ldap_directory
+sentinel fetcher run sync_ldap_directory
 ```
 
 This runs the sync synchronously in the CLI process (no Celery
 required). See `docs/features/fetcher-dashboard.md` (section "CLI
-Commands") for full details on the `stamp fetcher` command group.
+Commands") for full details on the `sentinel fetcher` command group.
 
 ### Post-deployment bootstrap sequence
 
 ```
-1. stamp fetcher run sync_ldap_directory                        # populate User table (~913 records)
-2. stamp manage-user update --username admin1 --add-role admin  # assign Admin role to first admin
+1. sentinel fetcher run sync_ldap_directory                        # populate User table (~913 records)
+2. sentinel manage-user update --username admin1 --add-role admin  # assign Admin role to first admin
 ```
 
 The `manage-user` command is documented in
@@ -394,7 +394,7 @@ Admin only. Accessible from the admin settings area.
 
 Displays a table of all configured role mappings:
 - AD Group CN
-- STAMP Role
+- Sentinel Role
 - Created by (username)
 - Created at
 - Delete button
@@ -402,7 +402,7 @@ Displays a table of all configured role mappings:
 **Add Mapping flow**:
 1. Admin enters the AD group CN (text input, or searchable dropdown if
    AD group listing is feasible)
-2. Admin selects the STAMP role from a dropdown
+2. Admin selects the Sentinel role from a dropdown
 3. Admin clicks "Preview" → the system queries AD live and shows the list
    of users who would receive the role, along with a count
 4. Admin reviews the list and clicks "Confirm" to create the mapping, or
@@ -417,7 +417,7 @@ Displays a table of all configured role mappings:
 
 ## Business Rules
 
-1. **All STAMP users are SUSE employees**: the User table is populated
+1. **All Sentinel users are SUSE employees**: the User table is populated
    exclusively from AD sync. There is no manual user creation through the
    UI or API. In environments where AD is not reachable, local user
    accounts can be created via the CLI — see
@@ -434,7 +434,7 @@ Displays a table of all configured role mappings:
    but cannot remove AD-derived roles. This prevents accidental
    revocation of roles that are managed centrally
 5. **Deactivation cascades**: when an employee is deactivated in AD:
-   - The STAMP account is marked inactive
+   - The Sentinel account is marked inactive
    - API keys are revoked
    - Assigned tickets are reassigned to the line manager (if the manager
      is active and has the VA role), otherwise set to unassigned

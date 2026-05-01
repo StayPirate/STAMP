@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# STAMP Development Environment Manager
+# Sentinel Development Environment Manager
 #
 # Auto-detects Podman or Docker and manages development services
 # (PostgreSQL, Redis) defined in docker-compose.yml.
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
-PROJECT_NAME="stamp"
+PROJECT_NAME="sentinel"
 
 # Colors for output (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -36,19 +36,19 @@ else
 fi
 
 log_info() {
-    echo -e "${BLUE}[STAMP]${NC} $1"
+    echo -e "${BLUE}[Sentinel]${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[STAMP]${NC} $1"
+    echo -e "${GREEN}[Sentinel]${NC} $1"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[STAMP]${NC} $1"
+    echo -e "${YELLOW}[Sentinel]${NC} $1"
 }
 
 log_error() {
-    echo -e "${RED}[STAMP]${NC} $1"
+    echo -e "${RED}[Sentinel]${NC} $1"
 }
 
 # --- Runtime Detection ---
@@ -125,7 +125,7 @@ detect_runtime() {
     # Nothing found
     log_error "No container runtime found."
     echo ""
-    echo "  To run the STAMP development environment, install one of the following:"
+    echo "  To run the Sentinel development environment, install one of the following:"
     echo ""
     echo "    Option 1 (recommended): Podman + Compose (rootless)"
     echo "      https://podman.io/getting-started/installation"
@@ -148,7 +148,7 @@ cmd_up() {
     compose_exec up -d
     log_success "Development services are running."
     echo ""
-    echo "  PostgreSQL: localhost:5432 (user: stamp, password: stamp, db: stamp)"
+    echo   "  PostgreSQL: localhost:5432 (user: sentinel, password: sentinel, db: sentinel)"
     echo "  Redis:      localhost:6379"
     echo ""
 }
@@ -177,7 +177,7 @@ cmd_status() {
 
 cmd_help() {
     echo ""
-    echo "STAMP Development Environment Manager"
+    echo "Sentinel Development Environment Manager"
     echo ""
     echo "Usage: $0 <command>"
     echo ""

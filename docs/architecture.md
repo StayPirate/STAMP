@@ -2,7 +2,7 @@
 
 ## System Overview
 
-STAMP is a security update management platform for SUSE and openSUSE-based
+Sentinel is a security update management platform for SUSE and openSUSE-based
 Linux distributions. It automates CVE tracking, impact analysis, and update
 coordination across multiple maintained distribution versions.
 
@@ -114,7 +114,7 @@ For a comprehensive catalog of all external data sources — including active
 integrations, planned sources, and potential future sources — with access
 details, protocols, and documentation links, see `docs/data-sources.md`.
 
-The sections below describe how STAMP architecturally integrates with each
+The sections below describe how Sentinel architecturally integrates with each
 active source. See the data sources catalog for the full picture.
 
 #### CVE Sources
@@ -128,9 +128,9 @@ active source. See the data sources catalog for the full picture.
 - Internal OBS instance at build.suse.de for SUSE commercial products
 - Source packages are maintained in codestream projects (e.g.,
   `SUSE:SLE-15-SP6:Update`)
-- STAMP queries IBS to detect when security fixes have been released to
+- Sentinel queries IBS to detect when security fixes have been released to
   codestream and product repositories
-- **Real-time event consumer**: STAMP connects to the IBS RabbitMQ message
+- **Real-time event consumer**: Sentinel connects to the IBS RabbitMQ message
   bus (`rabbit.suse.de`) and consumes `suse.obs.package.commit` events for
   near-real-time codestream-level release detection. The periodic polling
   fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
@@ -142,7 +142,7 @@ active source. See the data sources catalog for the full picture.
   providing VAs visibility into the MU process progression. A periodic
   fetcher (`RequestSyncFetcher`, 02:30 UTC) handles catch-up. See
   `docs/features/submission-tracking.md`.
-- **Package bugowner resolution**: STAMP queries IBS to resolve the
+- **Package bugowner resolution**: Sentinel queries IBS to resolve the
   bugowner (maintainer) of each source package tracked in tickets. This
   data is cached locally and maintained by a periodic fetcher. See
   `docs/features/package-bugowner.md`.
@@ -152,7 +152,7 @@ active source. See the data sources catalog for the full picture.
 
 - Internal SUSE aggregator service (REST API at `smelt.suse.de/api`)
 - SMELT internally reads from IBS, channel files, and other sources
-- STAMP uses two SMELT endpoints:
+- Sentinel uses two SMELT endpoints:
   - `GET /api/v1/basic/products/` (paginated): periodic sync of the Product
     table with name, version, CPE, and repository project names
   - `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
@@ -168,15 +168,15 @@ active source. See the data sources catalog for the full picture.
 
 - Internal SUSE service (REST API at `aimaas.suse.de/api`) for product
   lifecycle data and CVSS thresholds
-- STAMP uses two AIMAAS endpoints:
+- Sentinel uses two AIMAAS endpoints:
   - `GET /api/entity/products/{slug}`: product lifecycle dates (`fcs`,
     `end_of_gs`, `end_of_ltss`, `end_of_espos`, `end_of_reactive_ltss`).
     Matched to local Product records via CPE (identical between SMELT and
     AIMAAS).
   - `GET /api/entity/cvss-threshold`: CVSS threshold for products in
     LTSS/ESPOS phases (~24 entries). Each entry references an AIMAAS
-    product ID; STAMP resolves this to a CPE to match locally.
-- When thresholds or lifecycle dates change, STAMP re-evaluates eligibility
+    product ID; Sentinel resolves this to a CPE to match locally.
+- When thresholds or lifecycle dates change, Sentinel re-evaluates eligibility
   for active tickets referencing the affected products
 
 #### Open Build Service (OBS)
@@ -189,11 +189,11 @@ active source. See the data sources catalog for the full picture.
 #### SUSE Active Directory
 
 - Internal AD at `pan.suse.de` for SUSE employee identity data
-- STAMP syncs all active employees into its User table daily via the
+- Sentinel syncs all active employees into its User table daily via the
   `sync_ldap_directory` fetcher (BaseFetcher subclass)
 - Imported attributes: `sAMAccountName`, `cn`, `mail`, `manager` (DN),
   `EMPLOYEESTATUS`, `MEMBEROF` (transient, not persisted)
-- AD group memberships (`MEMBEROF`) are used to derive STAMP roles via
+- AD group memberships (`MEMBEROF`) are used to derive Sentinel roles via
   admin-configurable RoleMapping rules
 - Direct line manager (`manager` DN) is resolved and stored for ticket
   reassignment on employee deactivation
@@ -209,7 +209,7 @@ active source. See the data sources catalog for the full picture.
 2. Workers fetch CVE data from configured sources
 3. New/updated CVEs are stored in PostgreSQL
 4. A Ticket is created automatically for each new CVE
-5. STAMP attempts to map CPE data to source package names
+5. Sentinel attempts to map CPE data to source package names
 6. For mapped packages, SMELT is queried to resolve codestreams and products
 7. TicketPackageCodestream and TicketPackageProduct records are created
    automatically with status ANALYSIS
@@ -225,7 +225,7 @@ the full ticket specification.
 ### Package Affectedness Flow
 
 1. VA analyzes a ticket and sets affectedness status per codestream
-2. STAMP propagates codestream status to products, adjusting for eligibility
+2. Sentinel propagates codestream status to products, adjusting for eligibility
    only when the propagated status is AFFECTED (CVSS score vs product
    threshold from AIMAAS)
 3. Products not eligible that inherit AFFECTED status receive
@@ -271,7 +271,7 @@ authoritative details.
 
 ## Deployment Portability
 
-STAMP must remain deployable with Docker or Podman for local and simple
+Sentinel must remain deployable with Docker or Podman for local and simple
 environments while preserving a clear path to Kubernetes deployment in the
 future. Kubernetes-specific manifests, Helm charts, or Kustomize overlays are
 intentionally deferred until the infrastructure target is known. Until then,
@@ -280,7 +280,7 @@ externally configured, and independently startable.
 
 ### Deployment Target
 
-The deployment target is not fixed at this stage. STAMP must support:
+The deployment target is not fixed at this stage. Sentinel must support:
 
 - Docker or Podman for local development and simple self-hosted deployments
 - Kubernetes as a future production-capable deployment target

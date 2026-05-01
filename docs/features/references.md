@@ -109,7 +109,7 @@ after CVE upsert and ticket creation for new CVEs):
    - Have a `url` that is no longer present in the current CVE data AND
      is not the source reference URL
    - This ensures that references removed from the upstream source are
-     also removed from STAMP
+     also removed from Sentinel
 
 ### Upsert Strategy
 

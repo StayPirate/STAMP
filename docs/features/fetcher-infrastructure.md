@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the mandatory infrastructure that all data fetchers in STAMP must
+Define the mandatory infrastructure that all data fetchers in Sentinel must
 use. Fetchers are background tasks that periodically pull data from
 external sources (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS) and update
 the local database. This specification covers the `BaseFetcher` abstract
@@ -80,7 +80,7 @@ CVE fetchers MUST additionally implement the `fetch_single` method:
 async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
     """Fetch a single CVE from the external source.
 
-    Called on-demand when STAMP encounters an unknown CVE-ID during
+    Called on-demand when Sentinel encounters an unknown CVE-ID during
     ticket creation or CVE association. Writes data to the standard
     models (CVE, CVESource, CVECVSSAssessment, TicketReference).
 

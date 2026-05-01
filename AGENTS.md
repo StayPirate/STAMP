@@ -1,8 +1,8 @@
-# STAMP - Security Tracking And Management Platform
+# Sentinel
 
 ## Overview
 
-STAMP is a platform for managing and tracking security updates for SUSE and
+Sentinel is a platform for managing and tracking security updates for SUSE and
 openSUSE-based Linux distributions. It handles CVE ingestion from multiple
 sources, determines impact on maintained distributions, and coordinates the
 preparation and release of security patches.
@@ -23,7 +23,7 @@ For full architecture details, read `docs/architecture.md`.
 ## Project Structure
 
 ```
-stamp/
+sentinel/
 ├── AGENTS.md                    # Project instructions for OpenCode
 ├── opencode.json                # OpenCode configuration
 ├── docs/                        # Specifications and documentation

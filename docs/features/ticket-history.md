@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide a complete, searchable audit trail for every ticket in STAMP. Every
+Provide a complete, searchable audit trail for every ticket in Sentinel. Every
 modification to a ticket or its related data (status, assignee, duplicate
 links, packages, codestreams, products) MUST produce a `TicketEvent` record.
 Users can browse, filter, and search the history through a dedicated "History"
@@ -23,8 +23,8 @@ fields populated according to this table:
 |---|---|---|---|---|---|
 | `status_change` | Ticket status transitions (manual or system-initiated) | VA user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional VA note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) |
 | `assignment` | Ticket assigned or reassigned | VA user for manual, `NULL` for system (e.g., LDAP deactivation cascade) | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | Optional VA note for manual; system-generated description for automatic (e.g., `"Reassigned from {old} to manager {new}: employee deactivated"`) |
-| `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `STAMP-{n}` identifier of the original ticket | Optional VA note |
-| `duplicate_removed` | Duplicate mark reverted | VA user | `STAMP-{n}` identifier of the original ticket | `NULL` | Optional VA note |
+| `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `SNTL-{n}` identifier of the original ticket | Optional VA note |
+| `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | Optional VA note |
 | `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
 | `package_removed` | Package removed from ticket (manual or automatic orphan cleanup) | VA user for manual, `NULL` for automatic | Package name | `NULL` | `NULL` for manual; `no_codestreams_remaining` for automatic |
 | `codestream_status_changed` | Codestream status changed (VA action or eligibility rollup) | VA user for manual changes, `NULL` for automatic eligibility rollup | Old status | New status | `package_name:codestream_name` |
@@ -69,7 +69,7 @@ Returns a paginated list of events for a specific ticket, ordered by
 
 | Parameter   | Type | Description          |
 |-------------|------|----------------------|
-| `ticket_id` | UUID or `STAMP-{n}` | The ticket identifier (supports dual lookup) |
+| `ticket_id` | UUID or `SNTL-{n}` | The ticket identifier (supports dual lookup) |
 
 **Query parameters**:
 

@@ -29,7 +29,7 @@ package from an older SP without changes, the newer codestream contains an IBS
 link to the older codestream's package — updates to the source codestream
 automatically propagate to the linked codestreams.
 
-Codestreams are **not** maintained as a separate table in STAMP. SMELT does
+Codestreams are **not** maintained as a separate table in Sentinel. SMELT does
 not expose an endpoint to list codestreams independently — they are discovered
 per-package via the `maintainedpackage` endpoint. The codestream name is stored
 as a string directly in the TicketPackageCodestream record.
@@ -51,7 +51,7 @@ per-package basis.
 
 An XML file in the IBS project `SUSE:Channels` that defines which packages
 from which codestreams are shipped to which products. There is one channel file
-per product. STAMP does not parse channel files directly — it relies on SMELT
+per product. Sentinel does not parse channel files directly — it relies on SMELT
 to resolve these mappings.
 
 ### SMELT
@@ -195,7 +195,7 @@ TicketPackageProduct.
 **UI note**: The VA dropdown shows the following options: Analysis, Affected,
 Not Affected, Won't Fix, Ignored, Released. The distinction between AFFECTED
 and AFFECTED_RESOLVED is never exposed to the VA — when the VA selects
-"Affected", STAMP internally decides which variant to use based on
+"Affected", Sentinel internally decides which variant to use based on
 eligibility.
 
 ### Status Behavior
@@ -208,7 +208,7 @@ re-evaluation after each change.
 #### VA sets "Affected" on a codestream
 
 1. Codestream status is set to `AFFECTED` (via `ticket_mutations`)
-2. STAMP propagates to all products under that codestream:
+2. Sentinel propagates to all products under that codestream:
    - Product in Reactive LTSS phase → `AFFECTED_RESOLVED`
    - Product has `cvss_threshold` and resolved CVSS score < threshold →
      `AFFECTED_RESOLVED` (score resolved via the CVSS resolution cascade,
@@ -223,7 +223,7 @@ re-evaluation after each change.
 #### VA sets any other status on a codestream
 
 1. Codestream status is set to the chosen value
-2. STAMP propagates the same status to all products under that codestream
+2. Sentinel propagates the same status to all products under that codestream
 3. Products with `is_override = true` are not modified
 
 #### VA overrides a product status
@@ -235,7 +235,7 @@ re-evaluation after each change.
 
 #### Automatic transitions
 
-The following transitions can be performed automatically by STAMP (see the
+The following transitions can be performed automatically by Sentinel (see the
 [Release Tracking](#release-tracking) section for the full detection
 mechanism):
 
@@ -321,7 +321,7 @@ records.
 
 The following scenarios invoke `add_package_to_ticket`:
 
-1. **Automatic (CPE mapping)**: when a CVE is ingested, STAMP maps the CPE
+1. **Automatic (CPE mapping)**: when a CVE is ingested, Sentinel maps the CPE
    data from the CVE record to source package names. For each mapped
    package name, `add_package_to_ticket` is called.
 2. **Manual**: the VA manually adds a package by name via the UI.
@@ -351,7 +351,7 @@ The VA manages packages at the **package level only**:
 
 ### Removing a Package from a Ticket
 
-When an VA removes a package from a ticket, STAMP deletes **all**
+When an VA removes a package from a ticket, Sentinel deletes **all**
 `TicketPackageCodestream` and `TicketPackageProduct` records associated
 with that package in the ticket.
 
@@ -404,7 +404,7 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
 
 - The parameter `include_reactive=1` MUST always be included to ensure
   products in Reactive LTSS phase are returned.
-- Results are **paginated**. STAMP must follow the `next` field and fetch
+- Results are **paginated**. Sentinel must follow the `next` field and fetch
   **all pages** to get the complete list of codestreams and products.
 - Each result contains a `(package, codestream)` pair with a `channel`
   object. The `channel.targets` array lists the repository project names
@@ -428,7 +428,7 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
 
 ## Release Tracking
 
-STAMP monitors two **independent** levels of release for each affected
+Sentinel monitors two **independent** levels of release for each affected
 package:
 
 1. **Codestream level**: the fix has been added to the codestream's IBS
@@ -452,7 +452,7 @@ current status is `WONT_FIX` or `IGNORED` (these states are protected, see
 
 ### Codestream-level Detection
 
-STAMP uses a `CodestreamReleaseDetector` service that monitors IBS codestream
+Sentinel uses a `CodestreamReleaseDetector` service that monitors IBS codestream
 projects for package source changes and detects CVE fixes by analyzing diffs.
 The mechanism is based on MD5 checksum comparison (inspired by SMASH's
 `TrackedReleaseFetcher`).
@@ -558,7 +558,7 @@ exists for package P (in any codestream).
 
 ##### Case C — No ticket exists for the CVE
 
-No ticket exists in STAMP for the extracted CVE-ID.
+No ticket exists in Sentinel for the extracted CVE-ID.
 
 - Enqueue a `create_ticket_from_detection` Celery task with parameters:
   `cve_id` (string), `package_name`, `codestream_name`.
@@ -596,7 +596,7 @@ No ticket exists in STAMP for the extracted CVE-ID.
 
 ### Product-level Detection
 
-STAMP uses an internal abstraction `ProductReleaseDetector` based on the
+Sentinel uses an internal abstraction `ProductReleaseDetector` based on the
 standard `updateinfo.xml` metadata file published in every product update
 repository (the same metadata file consumed by `zypper`). This is the
 ground-truth source: an advisory present in `updateinfo.xml` is, by
@@ -631,7 +631,7 @@ below for how `<repo_url>` is constructed):
 
 #### Update Repository URL Resolution
 
-STAMP does not store a separate URL field for update repositories. The HTTP
+Sentinel does not store a separate URL field for update repositories. The HTTP
 URL is constructed at runtime from each `ProductRepository.repo_name` using
 the pattern:
 
@@ -673,7 +673,7 @@ SMELT repository names fall into two categories:
   repository.
   Example: `SUSE:Updates:openSUSE-SLE:15.6`.
 
-STAMP does NOT track release status per architecture — a match on any
+Sentinel does NOT track release status per architecture — a match on any
 architecture is sufficient to set the status to `RELEASED`.
 
 **Scanning strategy per product**:
@@ -729,7 +729,7 @@ response, so the package that received the fix is known directly.
 packages, typically when a vulnerable library is statically linked into
 binding packages (e.g., a CVE in a Go or Rust library that impacts
 `containerd`, `podman`, `golang-1.21`, and others — each requiring its own
-independent fix). STAMP must identify **which specific source package** of
+independent fix). Sentinel must identify **which specific source package** of
 the ticket has been fixed by a given advisory, so that only the
 corresponding `TicketPackageProduct` record is transitioned to `RELEASED`,
 leaving the others untouched until their own fixes land.
@@ -895,7 +895,7 @@ All codestream-level open items have been resolved:
 - **CRITICAL**: The `include_reactive=1` parameter MUST always be included.
   Without it, products currently in the Reactive LTSS phase are excluded from
   results.
-- **CRITICAL**: Results are paginated. STAMP MUST iterate all pages by
+- **CRITICAL**: Results are paginated. Sentinel MUST iterate all pages by
   following the `next` URL until it is `null`.
 - **Response structure** (per result):
   ```json
@@ -928,7 +928,7 @@ All codestream-level open items have been resolved:
 - **Base URL**: `https://aimaas.suse.de/api`
 - **Matching**: AIMAAS products are matched to local `Product` records via
   `cpe`. Both SMELT and AIMAAS use identical CPE identifiers.
-- **Response fields used**: `name` (used as `display_name` in STAMP), `cpe`,
+- **Response fields used**: `name` (used as `display_name` in Sentinel), `cpe`,
   `fcs`, `end_of_gs`, `end_of_ltss`, `end_of_espos`, `end_of_reactive_ltss`
 - **Note**: the list endpoint returns a subset of fields (no `cpe`, no
   lifecycle dates). To get full details, fetch each product individually by
@@ -988,7 +988,7 @@ Package: curl                                   [Remove]
   (which then shows a dropdown and marks `is_override = true`).
 - **Color coding**: Red-Affected = red, all final states = green (except
   Ignored = greyed-out), Analysis = neutral/no color.
-- **Add Package**: opens an input where the VA types a package name. STAMP
+- **Add Package**: opens an input where the VA types a package name. Sentinel
   queries SMELT and populates the tree. If SMELT returns no results, an error
   is shown.
 
@@ -1046,7 +1046,7 @@ affectedness-related conditions are summarized here for context:
   Frequency and scope are TBD, see [Open Items](#open-items).
 - `create_ticket_from_detection`: on-demand task enqueued by the
   `CodestreamReleaseDetector` or the `IBSEventConsumer` when a CVE fix
-  is detected for a CVE that has no ticket in STAMP. Fetches CVE data
+  is detected for a CVE that has no ticket in Sentinel. Fetches CVE data
   from NVD, creates the ticket, resolves packages via SMELT, and sets
   the originating codestream to `RELEASED`. See
   [Case C](#case-c--no-ticket-exists-for-the-cve) for details.

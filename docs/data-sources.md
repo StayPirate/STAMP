@@ -2,13 +2,13 @@
 
 ## Overview
 
-STAMP integrates with multiple external data sources — both public services
+Sentinel integrates with multiple external data sources — both public services
 and SUSE-internal infrastructure — to ingest CVE data, track product
 lifecycle information, detect security update releases, and coordinate the
 patch management workflow. This document catalogs all known data sources,
 including those not yet integrated but potentially useful in the future.
 
-For details on how STAMP architecturally integrates with each active source,
+For details on how Sentinel architecturally integrates with each active source,
 see `docs/architecture.md` and the relevant feature specifications in
 `docs/features/`.
 
@@ -33,7 +33,7 @@ see `docs/architecture.md` and the relevant feature specifications in
 | GHSA | Public | Security advisories, CVSS, CWE | Planned |
 | Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Planned |
 | OSV | Public | Aggregated vulnerability data | Planned |
-| SMASH | Internal | Security update management (predecessor to STAMP) | Not planned |
+| SMASH | Internal | Security update management (predecessor to Sentinel) | Not planned |
 | PackTrack | Internal | Patch submission tracking for maintainers | Not integrated |
 | git.suse.de | Internal | Package sources for next-gen SUSE products | Not integrated |
 | openQA | Internal/Public | Automated OS testing in the release pipeline | Not integrated |
@@ -62,7 +62,7 @@ configurations, and references to advisories and patches.
   (free registration) provides higher rate limits. A companion Source API
   at `services.nvd.nist.gov/rest/json/source/2.0` resolves CNA identifiers
   to human-readable names
-- **Integration status**: **Active**. STAMP syncs CVE data every 6 hours
+- **Integration status**: **Active**. Sentinel syncs CVE data every 6 hours
   via the `sync_cves_nvd` fetcher. NVD is also used for CVSS score
   ingestion, CWE extraction, affected version parsing, and on-demand
   single-CVE lookups
@@ -89,7 +89,7 @@ MITRE a valuable source for early awareness of new vulnerabilities.
   - **CWE** identifiers from CISA analysis
   - **Affected product** data (CPE, version ranges)
 - **Access**: CVE Services REST API. Public access
-- **Integration status**: **Active**. STAMP syncs every 6 hours via the
+- **Integration status**: **Active**. Sentinel syncs every 6 hours via the
   `sync_cves_mitre` fetcher, with on-demand single-CVE fetch support.
   The fetcher extracts both the CNA block (CVE core data) and the CISA
   ADP block (SSVC, KEV, CVSS, CWE, affected versions) when present
@@ -110,7 +110,7 @@ provide a useful secondary perspective when evaluating vulnerabilities.
   `access.redhat.com/hydra/rest/securitydata/cve/{CVE-ID}.json`. Public
   access, no authentication required. Does not support incremental
   fetching — each CVE must be queried individually
-- **Integration status**: **Active**. STAMP syncs daily via the
+- **Integration status**: **Active**. Sentinel syncs daily via the
   `sync_cvss_redhat` fetcher, re-fetching CVSS data, CWE identifiers,
   and reference links for all active tickets
 - **Documentation**:
@@ -213,7 +213,7 @@ OSV is an aggregated vulnerability database operated by Google that unifies
 advisories from 20+ databases (GitHub, PyPI, crates.io, Go, Debian,
 Alpine, Linux kernel, and more) into a standardized format. It provides a
 simple REST API that supports queries by CVE ID. While OSV overlaps with
-other sources STAMP already integrates (NVD, GHSA), it can provide
+other sources Sentinel already integrates (NVD, GHSA), it can provide
 additional affected version data and reference links with type
 classification (FIX, EVIDENCE, ARTICLE, ADVISORY).
 
@@ -243,7 +243,7 @@ Source packages for maintenance updates are maintained in codestream projects
 (e.g., `SUSE:SLE-15-SP6:Update`), and released binaries are published to
 product-specific update repositories.
 
-IBS is the primary source for STAMP's release detection: STAMP queries IBS
+IBS is the primary source for Sentinel's release detection: Sentinel queries IBS
 to determine whether security fixes have landed in source codestreams and
 whether update advisories have been published to product repositories.
 
@@ -300,7 +300,7 @@ with separate projects, packages, and user accounts.
 - **Access**: REST API at `api.opensuse.org`. Supports anonymous read
   access for public projects; write operations require authentication
 - **Integration status**: **Not planned**. There is currently no intention
-  to integrate openSUSE package tracking into STAMP. This may be evaluated
+  to integrate openSUSE package tracking into Sentinel. This may be evaluated
   in the future if there is demand for tracking security updates across
   openSUSE distributions
 - **Documentation**: https://openbuildservice.org/help/,
@@ -323,7 +323,7 @@ near-real-time reactivity.
   **Package events:**
   - `*.obs.package.commit` — source package committed (payload includes
     `project`, `package`, `rev`, `srcmd5`, `files`, `user`). **Currently
-    consumed** by STAMP for codestream-level release detection
+    consumed** by Sentinel for codestream-level release detection
   - `*.obs.package.version_change` — package version changed (payload
     includes `project`, `package`, `oldversion`, `newversion`)
   - `*.obs.package.upstream_version_change` — upstream package version
@@ -412,7 +412,7 @@ near-real-time reactivity.
     must declare an exclusive queue, bind it to the exchange with a
     routing key filter, and consume messages. The exchange must be declared
     with `passive=True` and `durable=True` (consumers cannot create it)
-- **Integration status**: **Active**. STAMP consumes
+- **Integration status**: **Active**. Sentinel consumes
   `suse.obs.package.commit` events from IBS for near-real-time
   codestream-level release detection. The periodic polling fetcher
   (`check_codestream_releases`, every 24 hours at 02:00 UTC) serves as
@@ -467,10 +467,10 @@ belong to which codestreams, and which repositories serve each product.
   - `GET /api/v1/basic/products/` (paginated) — product listing
   - `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
     (paginated) — codestream and repository mapping for a package
-- **Integration status**: **Active**. STAMP periodically syncs the product
+- **Integration status**: **Active**. Sentinel periodically syncs the product
   catalog (`sync_smelt_products` fetcher) and queries package maintenance
   information on demand when adding packages to tickets. CPE identifiers
-  from SMELT are the primary join key between STAMP's product records and
+  from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
 - **Documentation**: https://smelt.suse.de (internal)
 - **See also**: `docs/features/package-tracking.md`
@@ -487,15 +487,15 @@ security update.
 - **Relevant data**: Product lifecycle dates (`fcs`, `end_of_gs`,
   `end_of_ltss`, `end_of_espos`, `end_of_reactive_ltss`) and CVSS
   thresholds per product (approximately 24 entries for products in
-  LTSS/ESPOS phases). Products are matched to STAMP's local records via
+  LTSS/ESPOS phases). Products are matched to Sentinel's local records via
   CPE identifiers (identical between SMELT and AIMAAS)
 - **Access**: REST API at `aimaas.suse.de/api`. Key endpoints:
   - `GET /api/entity/products/{slug}` — individual product lifecycle dates
   - `GET /api/entity/cvss-threshold` (paginated) — CVSS thresholds
-- **Integration status**: **Active**. STAMP periodically syncs lifecycle
+- **Integration status**: **Active**. Sentinel periodically syncs lifecycle
   dates (`sync_aimaas_lifecycle` fetcher) and CVSS thresholds
   (`sync_aimaas_thresholds` fetcher). When thresholds or lifecycle dates
-  change, STAMP re-evaluates eligibility for all active tickets
+  change, Sentinel re-evaluates eligibility for all active tickets
   referencing the affected products
 - **Documentation**: https://aimaas.suse.de (internal)
 - **See also**: `docs/features/package-tracking.md`,
@@ -516,7 +516,7 @@ memberships, and employment status.
 Active Directory is the only directory service that provides the correct
 **direct line manager** for each employee (single-value `manager`
 attribute pointing to the manager's DN). This makes it the preferred
-source for identity data in STAMP over the OpenLDAP instance.
+source for identity data in Sentinel over the OpenLDAP instance.
 
 - **Relevant data**: Employee identity (`sAMAccountName`, `cn`, `mail`),
   direct line manager (`manager` — single-value DN reference), employment
@@ -528,7 +528,7 @@ source for identity data in STAMP over the OpenLDAP instance.
   `OU=User accounts,DC=corp,DC=suse,DC=com`. Approximately 913 active
   employee records (as of 2026). Security groups are located under
   `OU=Security Groups,OU=Groups,DC=corp,DC=suse,DC=com`
-- **Integration status**: **Active**. STAMP syncs employee data daily via
+- **Integration status**: **Active**. Sentinel syncs employee data daily via
   the `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
   `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
   role mapping). See `docs/features/ldap-directory.md` for the full
@@ -548,7 +548,7 @@ contains the entire managerial chain flattened into a list of DNs (from
 direct manager up to the CEO). This makes it impossible to determine the
 direct line manager from this field alone — all employees under the same
 organizational branch share the same `manager` values. For this reason,
-STAMP uses Active Directory instead.
+Sentinel uses Active Directory instead.
 
 - **Relevant data**: Employee identity (`uid`, `cn`, `mail`,
   `suseudbemailalias` for `.de` email), SUSE-specific identifiers
@@ -563,7 +563,7 @@ STAMP uses Active Directory instead.
   `ou=accounts` (POSIX accounts), `ou=departments` (department
   structure), `ou=mounts`, `ou=Netgroup`
 - **Integration status**: **Not integrated**. Documented here for
-  reference. STAMP uses Active Directory (`pan.suse.de`) instead because
+  reference. Sentinel uses Active Directory (`pan.suse.de`) instead because
   it provides the correct direct line manager relationship. The `.de`
   email alias available on OpenLDAP (`suseudbemailalias`) is not imported
 - **Documentation**: Internal — no public documentation available
@@ -574,21 +574,21 @@ STAMP uses Active Directory instead.
 
 ### SMASH (SUSE Maintenance And Security Helper)
 
-SMASH is the predecessor platform to STAMP. It currently fulfills the same
-role that STAMP is being built to replace: managing and tracking security
-updates across SUSE's maintained product portfolio. STAMP's design is
+SMASH is the predecessor platform to Sentinel. It currently fulfills the same
+role that Sentinel is being built to replace: managing and tracking security
+updates across SUSE's maintained product portfolio. Sentinel's design is
 directly informed by lessons learned from operating SMASH.
 
 SMASH has a rich fetcher/worker architecture with integrations to many of
-the same sources STAMP uses (NVD, MITRE, Bugzilla, IBS, SMELT, AIMAAS, Red
-Hat) as well as additional sources that STAMP does not yet integrate
+the same sources Sentinel uses (NVD, MITRE, Bugzilla, IBS, SMELT, AIMAAS, Red
+Hat) as well as additional sources that Sentinel does not yet integrate
 (Google Project Zero, ZDI, GitHub Security Advisories, Linux Kernel CVE
 feeds, Oracle CSAF, Amazon ALAS, Debian Security, oss-security mailing
 list, IBM Java advisories, and Jira/ECO). SMASH's `TrackedReleaseFetcher`
 — which uses MD5 checksum comparison against IBS source info to detect
-codestream-level releases — directly inspired STAMP's equivalent mechanism.
+codestream-level releases — directly inspired Sentinel's equivalent mechanism.
 
-SMASH manages "issues" (equivalent to STAMP's tickets) through a workflow
+SMASH manages "issues" (equivalent to Sentinel's tickets) through a workflow
 of states: New, Analysis, Analyzed/Pending, Running, Resolved. Each issue
 tracks affected packages across codestreams and products, CVSS scores from
 multiple providers, and references to external bug trackers and advisories.
@@ -599,9 +599,9 @@ multiple providers, and references to external bug trackers and advisories.
 - **Access**: Web UI and REST API at `smash.suse.de`. API authentication
   via personal tokens. Endpoints include `/api/issues/`,
   `/api/embargoed-bugs/`, `/api2/issues/`, `/api2/cvss/`, and more
-- **Integration status**: **Not integrated**. STAMP is designed as SMASH's
+- **Integration status**: **Not integrated**. Sentinel is designed as SMASH's
   successor, not as an integration partner. However, a data migration path
-  from SMASH to STAMP may be needed during the transition period
+  from SMASH to Sentinel may be needed during the transition period
 - **Documentation**: https://tools.io.suse.de/smash/
 - **Source code**: https://gitlab.suse.de/tools/smash
 
@@ -641,7 +641,7 @@ serial console output analysis. In the SUSE/openSUSE ecosystem, openQA
 is a critical part of the release pipeline: maintenance updates are tested
 by openQA before they are published to customers.
 
-While openQA is not a direct data source for STAMP's core workflow, it
+While openQA is not a direct data source for Sentinel's core workflow, it
 occupies an important position in the update release pipeline between "fix
 submitted to IBS" and "update published to customers." openQA can also
 emit AMQP events to RabbitMQ, meaning its test results could theoretically
@@ -657,8 +657,8 @@ be consumed in real time.
     events to RabbitMQ
 - **Integration status**: **Not integrated**. Mentioned here for
   completeness as part of the release pipeline context. openQA sits
-  between the build phase (tracked by STAMP via IBS) and the publication
-  phase (tracked by STAMP via `updateinfo.xml`)
+  between the build phase (tracked by Sentinel via IBS) and the publication
+  phase (tracked by Sentinel via `updateinfo.xml`)
 - **Documentation**: https://open.qa/docs/,
   https://openqa.suse.de (internal)
 
@@ -671,7 +671,7 @@ be consumed in real time.
 SUSE's Bugzilla instance is the primary bug tracking system for SUSE
 products. Two web interfaces exist — `bugzilla.suse.com` (primary, for SUSE
 products) and `bugzilla.opensuse.org` (for openSUSE) — but they share the
-same underlying database. STAMP always references `bugzilla.suse.com`
+same underlying database. Sentinel always references `bugzilla.suse.com`
 regardless of which interface was originally used.
 
 Bugzilla bugs frequently appear in the security update workflow: a Bugzilla
@@ -686,7 +686,7 @@ history:
 - `bsc#` — bugzilla.suse.com (current canonical form)
 - `boo#` — bugzilla.opensuse.org
 
-All three prefixes refer to the same database and the same bug IDs. STAMP
+All three prefixes refer to the same database and the same bug IDs. Sentinel
 normalizes all forms to the canonical `bsc#` prefix.
 
 - **Relevant data**: Bug reports, security issue tracking, embargo status,
@@ -697,7 +697,7 @@ normalizes all forms to the canonical `bsc#` prefix.
   creation, status tracking, and embargo detection
 - **Integration status**: **Reference only**. Bugzilla IDs appear in IBS
   source diffs and can be manually linked to tickets via the
-  `TicketReference` system. There is no automated Bugzilla sync in STAMP.
+  `TicketReference` system. There is no automated Bugzilla sync in Sentinel.
   SMASH's extensive Bugzilla integration (fetchers for recent bugs,
   foreign bugs, CVE alias correction, CVSS marking, and reopen detection)
   provides a reference for what a deeper integration could look like
@@ -717,7 +717,7 @@ details.
 |---------|--------|----------|------|-------------|---------------|
 | `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, affected versions (CPE), references |
 | `sync_cves_mitre` | MITRE CVE Services | Every 6 hours | None | None known | CVE records, CISA ADP data (SSVC, KEV, CVSS CISA, CWE, affected versions), references |
-| `sync_cvss_redhat` | Red Hat Security Data | Daily | None | Undocumented; STAMP uses 2s delay between requests | CVSS Red Hat, CWE, references |
+| `sync_cvss_redhat` | Red Hat Security Data | Daily | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references |
 | `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates |
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product |

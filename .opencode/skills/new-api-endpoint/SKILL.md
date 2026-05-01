@@ -1,6 +1,6 @@
 ---
 name: new-api-endpoint
-description: Guided workflow for creating a new API endpoint in the STAMP backend. Ensures proper schema, service layer, and test coverage.
+description: Guided workflow for creating a new API endpoint in the Sentinel backend. Ensures proper schema, service layer, and test coverage.
 ---
 
 ## Workflow: Creating a New API Endpoint

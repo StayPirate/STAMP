@@ -76,7 +76,7 @@ future.
   active (in `new` or `review` state) for a given incident at any time.
   To create a new RR, all previous RRs must be revoked first.
 
-- **The incident is an implicit concept**: in STAMP's data model, the
+- **The incident is an implicit concept**: in Sentinel's data model, the
   incident is not a separate entity. It is the linking key
   (`incident_number`) shared between accepted SRs and RRs.
 
@@ -93,7 +93,7 @@ future.
 
 **Important**: `declined` is NOT a final state in IBS. A declined SR or RR
 can always be reopened (state transitions back to `new` or `review`).
-STAMP must handle this by transitioning the record back to `open` state.
+Sentinel must handle this by transitioning the record back to `open` state.
 
 ## Design Principle: Parallel Tracking
 
@@ -132,7 +132,7 @@ auditing and analysis.
 ### SubmissionRequest
 
 Tracks an IBS submission request (type `maintenance_incident`) relevant
-to STAMP.
+to Sentinel.
 
 | Column             | Type         | Constraints          | Description                              |
 |--------------------|--------------|----------------------|------------------------------------------|
@@ -183,7 +183,7 @@ to STAMP.
 ### ReleaseRequest
 
 Tracks an IBS release request (type `maintenance_release`) relevant to
-STAMP.
+Sentinel.
 
 | Column             | Type         | Constraints          | Description                              |
 |--------------------|--------------|----------------------|------------------------------------------|
@@ -293,7 +293,7 @@ action type. Fields observed as absent in captured payloads:
 `targetrepository`, `sourceupdate` (present in OBS source but not
 seen on the wire).
 
-**Key fields for STAMP**:
+**Key fields for Sentinel**:
 
 For SRs (`type = "maintenance_incident"`):
 - `number` — the SR number
@@ -321,7 +321,7 @@ For RRs (`type = "maintenance_release"`):
 
 **Spurious actions**: SR payloads may contain additional actions of type
 `delete` (cleanup of temporary project `SUSE:Maintenance:REQUEST:XXXXX`).
-RR payloads may contain `patchinfo` actions. STAMP must filter these and
+RR payloads may contain `patchinfo` actions. Sentinel must filter these and
 process only actions of type `maintenance_incident` or
 `maintenance_release`.
 
@@ -370,13 +370,13 @@ the class, but dots on the wire as part of the full routing key).
 project name (e.g., `SUSE:Maintenance:12345`). This happens because OBS
 modifies the action's `target_project` to the incident project before
 saving and emitting the event (see `bs_request.rb#changestate_accepted`
-and `bs_request_action_maintenance_incident.rb#execute_accept`). STAMP
+and `bs_request_action_maintenance_incident.rb#execute_accept`). Sentinel
 extracts the `incident_number` from this field.
 
 **State change events are only emitted for conclusive (final) state
 transitions** (`bs_request.rb#send_state_change`): accepted, declined,
 revoked, superseded. Transitions like `new -> review` or `declined -> new`
-(reopen) do NOT emit `state_change` events. This means STAMP cannot detect
+(reopen) do NOT emit `state_change` events. This means Sentinel cannot detect
 reopens via RabbitMQ — the catch-up fetcher is the only mechanism for
 detecting them.
 
@@ -419,12 +419,12 @@ GET /request/{number}
 
 Returns full details of a single request, including current state and
 action list. Used by the fetcher to check the current state of requests
-that are `open` in STAMP but no longer appear in the search results
+that are `open` in Sentinel but no longer appear in the search results
 (because they transitioned to accepted/declined/revoked/superseded).
 
 ### IBS Diff API (CVE Correlation)
 
-To correlate a submission request with specific CVEs, STAMP extracts
+To correlate a submission request with specific CVEs, Sentinel extracts
 CVE-IDs from the request's diff using:
 
 ```
@@ -512,7 +512,7 @@ reopens).
      (e.g., "SUSE:Maintenance:12345" -> 12345)
    - package_name = extract from targetpackage by stripping the
      incident number suffix (see Package Name Extraction in Data Sources)
-4. Does a SubmissionRequest with this incident_number exist in STAMP?
+4. Does a SubmissionRequest with this incident_number exist in Sentinel?
    If no -> skip (the incident is not tracked)
 5. Create ReleaseRequest record (state = open)
 ```
@@ -527,8 +527,8 @@ reopens).
 
 For SRs:
 3. Find SubmissionRequest by request_number
-4. If not found -> ignore (not relevant to STAMP)
-5. Map IBS state to STAMP state:
+4. If not found -> ignore (not relevant to Sentinel)
+5. Map IBS state to Sentinel state:
    - "accepted" -> accepted
      - Extract incident_number from actions[0].targetproject
        (now "SUSE:Maintenance:XXXXX")
@@ -541,8 +541,8 @@ For SRs:
 
 For RRs:
 3. Find ReleaseRequest by request_number
-4. If not found -> ignore (not relevant to STAMP)
-5. Map IBS state to STAMP state:
+4. If not found -> ignore (not relevant to Sentinel)
+5. Map IBS state to Sentinel state:
    - "accepted" -> accepted
    - "declined" -> declined
    - "revoked" -> revoked
@@ -551,7 +551,7 @@ For RRs:
 
 **Note on reopens**: IBS does not emit `state_change` events for
 non-conclusive transitions (e.g., `declined -> new`). If a declined SR
-or RR is reopened, STAMP will not detect this via RabbitMQ. The catch-up
+or RR is reopened, Sentinel will not detect this via RabbitMQ. The catch-up
 fetcher handles this case (see Pipeline 2).
 
 ### Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)
@@ -588,7 +588,7 @@ Step 1 — Discover missed open SRs and reconcile known ones:
           -> Enqueue correlate_submission_request task
        d. If ALREADY present in SubmissionRequest but state is
           'declined':
-          -> Update state to 'open' (the SR was reopened and STAMP
+          -> Update state to 'open' (the SR was reopened and Sentinel
              missed the event)
 
        For RRs:
@@ -645,14 +645,14 @@ The catch-up problem for request tracking differs from the
   against — any MD5 change since the last check is detectable regardless
   of missed events.
 - For requests, there is no equivalent "state to compare" — a request
-  created and accepted during downtime leaves no trace in STAMP's local
+  created and accepted during downtime leaves no trace in Sentinel's local
   state.
 - Additionally, IBS does not emit `state_change` events for reopens
   (`declined -> new/review`), making the catch-up fetcher the only
   mechanism for detecting them.
 
 The IBS Request Search API (`GET /request?view=collection`) fills this
-gap by allowing STAMP to query for currently open requests. Combined with
+gap by allowing Sentinel to query for currently open requests. Combined with
 point-lookup for known requests (`GET /request/{number}`) and temporal
 lookback queries (`created_at_from`), this covers missed creations,
 missed state changes, reopens, and requests that were created and
@@ -660,18 +660,18 @@ accepted during consumer downtime.
 
 **Volume estimate**: with ~20-30 active codestreams and ~30 open requests
 per codestream, Step 1 processes ~600-900 requests per run. Most will
-already be known to STAMP (local DB lookup, fast). Only genuinely new
+already be known to Sentinel (local DB lookup, fast). Only genuinely new
 requests trigger a diff API call. Step 1b adds one query per codestream
 for accepted SRs in the last 25 hours — typically 1-5 results per
 codestream, most already known (skipped immediately). Step 2 processes
-only requests in `open` state in STAMP that were not seen in Step 1 —
+only requests in `open` state in Sentinel that were not seen in Step 1 —
 typically a small number.
 
 ### Pipeline 3: Retroactive Discovery (`discover_submissions_for_ticket_package`)
 
 A Celery sub-operation task (not a `BaseFetcher`) enqueued by
 `add_package_to_ticket` whenever a package is added to a ticket. Discovers
-SRs and RRs that were created before STAMP started tracking the package.
+SRs and RRs that were created before Sentinel started tracking the package.
 
 This is the same architectural pattern as `create_ticket_from_detection`:
 an on-demand task triggered by a parent operation, with no independent
@@ -878,7 +878,7 @@ RR declined, revoked, new RR created:
 
 SR superseded:
   SR#407180                              (orange → shows superseding SR)
-  (or the superseding SR is shown if it exists in STAMP)
+  (or the superseding SR is shown if it exists in Sentinel)
 ```
 
 ### General Rules
@@ -1043,7 +1043,7 @@ on-demand, no independent schedule, no dashboard presence.
 | IBS diff API returns 4xx/5xx                                 | Same as above.                                                                               |
 | IBS REST API unreachable (`RequestSyncFetcher`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
 | RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
-| SR/RR references a codestream not tracked in STAMP           | Silent skip (not relevant to STAMP).                                                         |
+| SR/RR references a codestream not tracked in Sentinel           | Silent skip (not relevant to Sentinel).                                                         |
 | IBS diff API returns no CVE-IDs for an SR                    | SR is deleted (silent discard — see Pipeline 1, `correlate_submission_request` step 3).      |
 
 ## Configuration
@@ -1093,13 +1093,13 @@ The following are explicitly out of scope for this feature:
 - **Orphan submissions**: SRs for which the diff API returns no CVE-IDs
   are silently discarded (not saved).
 - **PackTrack integration**: PackTrack tracks a subset of submissions
-  (coodpool team packages only). STAMP consumes IBS events directly for
+  (coodpool team packages only). Sentinel consumes IBS events directly for
   universal coverage.
 - **Product-level tracking**: SRs and RRs are tracked at the codestream
   level only. Products inherit the codestream fix when released.
 - **Multi-codestream SRs**: while technically possible in IBS, SUSE
   convention for security updates requires one package + one codestream
-  per SR. STAMP assumes this convention and processes only `actions[0]`.
+  per SR. Sentinel assumes this convention and processes only `actions[0]`.
 
 ## Open Questions
 
@@ -1119,7 +1119,7 @@ the test window.
 
 **Risk**: low. The code path is clear and the logic is straightforward.
 If for some reason `targetproject` is not updated in the event payload,
-STAMP can fall back to querying `GET /request/{number}` to obtain the
+Sentinel can fall back to querying `GET /request/{number}` to obtain the
 incident number after detecting an accepted state.
 
 **Action**: verify opportunistically during implementation by logging

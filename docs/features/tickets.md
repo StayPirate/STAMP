@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the Ticket entity — the primary workflow unit of STAMP. A ticket
+Define the Ticket entity — the primary workflow unit of Sentinel. A ticket
 tracks the triage, analysis, and resolution of a security issue across
 maintained products. Tickets may or may not be associated with a CVE.
 
@@ -18,19 +18,19 @@ Every ticket has two identifiers:
 | Identifier | Format | Purpose |
 |------------|--------|---------|
 | `id` | UUID | Internal primary key, used in all foreign key relationships and API paths |
-| `sequence_id` | Auto-increment integer, exposed as `STAMP-{n}` | Human-readable identifier for UI display, search, communication, and API lookup |
+| `sequence_id` | Auto-increment integer, exposed as `SNTL-{n}` | Human-readable identifier for UI display, search, communication, and API lookup |
 
-### STAMP-{n} Format
+### SNTL-{n} Format
 
 - The `sequence_id` is an auto-increment integer assigned at ticket
   creation. It is unique and immutable.
-- The human-readable form is `STAMP-{sequence_id}` (e.g., `STAMP-1`,
-  `STAMP-42`, `STAMP-1337`). No zero-padding.
-- `STAMP-{n}` is the primary label shown in ticket lists, detail pages,
+- The human-readable form is `SNTL-{sequence_id}` (e.g., `SNTL-1`,
+  `SNTL-42`, `SNTL-1337`). No zero-padding.
+- `SNTL-{n}` is the primary label shown in ticket lists, detail pages,
   logs, events, and external communications.
 - For tickets with an associated CVE, the UI shows both identifiers:
-  `STAMP-42 (CVE-2024-1234)`.
-- For tickets without a CVE, only `STAMP-{n}` is shown.
+  `SNTL-42 (CVE-2024-1234)`.
+- For tickets without a CVE, only `SNTL-{n}` is shown.
 
 ### API Dual Lookup
 
@@ -38,17 +38,17 @@ All API endpoints that accept a `{ticket_id}` path parameter support
 dual lookup:
 
 - **UUID**: `GET /api/v1/tickets/a1b2c3d4-...` — standard UUID lookup
-- **STAMP-{n}**: `GET /api/v1/tickets/STAMP-42` — resolved via
+- **SNTL-{n}**: `GET /api/v1/tickets/SNTL-42` — resolved via
   `sequence_id` lookup
 
 The backend detects the format automatically (UUIDs contain hyphens and
-hex characters; `STAMP-{n}` starts with the literal prefix `STAMP-`).
+hex characters; `SNTL-{n}` starts with the literal prefix `SNTL-`).
 
 ### Search
 
 The `search` query parameter on `GET /api/v1/tickets` searches across:
 
-- `STAMP-{n}` identifier (exact or partial match on the numeric part)
+- `SNTL-{n}` identifier (exact or partial match on the numeric part)
 - CVE ID (if the ticket has an associated CVE)
 - CVE description
 - Package names
@@ -73,11 +73,11 @@ An VA can associate a CVE with a ticket that does not yet have one, via
 
 - The ticket must not already have a CVE associated (`cve_id IS NULL`)
 - The CVE-ID string must be provided (e.g., `CVE-2024-1234`)
-- If the CVE exists in the STAMP database and is already associated with
+- If the CVE exists in the Sentinel database and is already associated with
   another ticket, the API returns 409 Conflict with
   `existing_ticket_id` in the response body (see
   [Associate CVE endpoint](#associate-cve) for details)
-- If the CVE does not exist in the STAMP database, STAMP creates a
+- If the CVE does not exist in the Sentinel database, Sentinel creates a
   minimal CVE record (only `cve_id` set) and triggers on-demand
   single-CVE fetch in the background (see
   `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch"). The
@@ -133,7 +133,7 @@ sources), a ticket is created automatically. See
 ### Automatic: Codestream Release Detection (Case C)
 
 When the `CodestreamReleaseDetector` finds a CVE fix in IBS for a CVE
-that has no ticket in STAMP, a `create_ticket_from_detection` task
+that has no ticket in Sentinel, a `create_ticket_from_detection` task
 creates the ticket. See `docs/features/package-tracking.md` (Case C)
 for the full flow.
 
@@ -155,7 +155,7 @@ An Vulnerability Analyst can create a ticket manually via
   - If the CVE exists in the database and is already associated with
     another ticket, the creation fails with 409 Conflict and
     `existing_ticket_id` in the response body
-  - If the CVE does not exist in the database, STAMP creates a minimal
+  - If the CVE does not exist in the database, Sentinel creates a minimal
     CVE record (only `cve_id` set) and triggers on-demand single-CVE
     fetch in the background (see `docs/features/cve-tracking.md`,
     "On-demand Single-CVE Fetch"). The ticket is created immediately.
@@ -649,7 +649,7 @@ POST /api/v1/tickets/{ticket_id}/associate-cve
 ```
 
 Associates a CVE with a ticket that does not have one. If the CVE is not
-yet in the STAMP database, a minimal CVE record is created and on-demand
+yet in the Sentinel database, a minimal CVE record is created and on-demand
 fetch is triggered automatically (see `docs/features/cve-tracking.md`,
 "On-demand Single-CVE Fetch").
 
@@ -729,7 +729,7 @@ All other ticket endpoints (list, detail, assign, ignore, duplicate,
 revert-duplicate, soft-delete, restore, packages, CVSS, references,
 events) are documented in `docs/api-spec.md` and their respective
 feature specifications. All endpoints that accept `{ticket_id}` support
-dual lookup (UUID or `STAMP-{n}`).
+dual lookup (UUID or `SNTL-{n}`).
 
 ## Data Model
 
@@ -739,7 +739,7 @@ table:
 | Column            | Type        | Constraints                  | Description |
 |-------------------|-------------|------------------------------|-------------|
 | id                | UUID        | PK                           | Internal identifier |
-| sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ID, exposed as `STAMP-{n}` |
+| sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ID, exposed as `SNTL-{n}` |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
 | status            | ENUM        | NOT NULL, DEFAULT New        | Ticket status |
 | assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |

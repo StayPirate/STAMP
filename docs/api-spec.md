@@ -73,7 +73,7 @@ Each feature specification in `docs/features/` defines its own API endpoints.
 See `docs/features/cve-tracking.md` for detailed endpoint specifications.
 
 CVE data is accessed through the ticket endpoints below. On-demand
-single-CVE fetch is triggered automatically when STAMP encounters an
+single-CVE fetch is triggered automatically when Sentinel encounters an
 unknown CVE-ID during ticket creation or CVE association (see
   `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch").
 
@@ -85,12 +85,12 @@ See `docs/features/pages.md` for UI page specifications.
 See `docs/features/package-tracking.md` for package management endpoints.
 
 **Dual lookup**: all endpoints that accept a `{ticket_id}` path parameter
-support both UUID and `STAMP-{n}` format (e.g.,
-`GET /api/v1/tickets/STAMP-42`). The backend detects the format
+support both UUID and `SNTL-{n}` format (e.g.,
+`GET /api/v1/tickets/SNTL-42`). The backend detects the format
 automatically.
 
 - `GET /api/v1/tickets` — List tickets with filters. The `search` query
-  parameter searches across `STAMP-{n}` identifier, CVE ID, CVE
+  parameter searches across `SNTL-{n}` identifier, CVE ID, CVE
   description, and package names. Accepts an optional `bugowner` query
   parameter to filter tickets to those containing at least one package
   whose bugowner matches the value (matches against bugowner email, name,

@@ -1,7 +1,7 @@
 [project]
-name = "stamp"
+name = "sentinel"
 version = "0.1.0"
-description = "Security Tracking And Management Platform for SUSE/openSUSE distributions"
+description = "Security update management platform for SUSE/openSUSE distributions"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",

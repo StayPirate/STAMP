@@ -135,7 +135,7 @@ user creation endpoint. See `docs/features/ldap-directory.md`.
 ### Role Mappings (Admin only)
 
 See `docs/features/ldap-directory.md` for detailed endpoint
-specifications. Admins configure mappings from AD groups to STAMP roles
+specifications. Admins configure mappings from AD groups to Sentinel roles
 via `GET/POST/DELETE /api/v1/admin/role-mappings`.
 
 ## Implementation Details
@@ -161,7 +161,7 @@ Decision will be made during implementation of this feature.
 
 ### Password Security
 
-Not applicable — STAMP does not store or manage passwords. Authentication
+Not applicable — Sentinel does not store or manage passwords. Authentication
 is via SSO (see future `docs/features/sso-authentication.md`).
 
 ## Data Model
@@ -172,7 +172,7 @@ See `docs/data-model.md`. Key tables:
   ldap_dn, manager_uid, ldap_synced_at)
 - **UserRole**: junction table linking users to roles with source
   (`ad_group` or `manual`)
-- **RoleMapping**: maps AD group names to STAMP roles
+- **RoleMapping**: maps AD group names to Sentinel roles
 - **Role** enum: `Admin`, `Vulnerability Analyst`
 - **RoleSource** enum: `ad_group`, `manual`
 
@@ -204,13 +204,13 @@ See future `docs/features/sso-authentication.md`.
 1. There must always be at least one active user with the Admin role
 2. Users cannot change their own roles
 3. Users cannot deactivate their own account
-4. Deactivated users cannot authenticate (SSO session is valid but STAMP
+4. Deactivated users cannot authenticate (SSO session is valid but Sentinel
    rejects inactive users)
 5. All authentication events are logged (login, logout, failed attempts)
 6. Session timeout: TBD (configurable)
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
-8. Admin bootstrap: run `stamp fetcher run sync_ldap_directory` to
+8. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
    populate users from AD, then
-   `stamp manage-user update --username <username> --add-role admin` to
+   `sentinel manage-user update --username <username> --add-role admin` to
    assign the first Admin role. See `docs/features/ldap-directory.md`

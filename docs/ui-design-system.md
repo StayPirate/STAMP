@@ -1,6 +1,6 @@
 # UI Design System
 
-This document defines the visual and structural conventions for the STAMP
+This document defines the visual and structural conventions for the Sentinel
 frontend. All UI components must follow these guidelines to ensure consistency
 across the platform.
 

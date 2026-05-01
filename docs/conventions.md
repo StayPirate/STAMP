@@ -12,7 +12,7 @@
   pagination, and sorting capabilities. The API may expose additional
   capabilities not present in the UI, but the reverse is a defect
 - **HTTP APIs over CLIs**: when integrating with external services (IBS/OBS,
-  SMELT, AIMAAS, Bugzilla, etc.), STAMP MUST use their HTTP/REST APIs
+  SMELT, AIMAAS, Bugzilla, etc.), Sentinel MUST use their HTTP/REST APIs
   directly. Command-line tools (`osc`, `secbox`, etc.) are available on the
   development machine for ad-hoc exploratory testing only (e.g., verifying an
   API response format) and MUST NOT be used in application code or background
@@ -138,9 +138,9 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
 ### Framework
 
 - **Library**: Click
-- **Entry point**: `stamp` (registered as a console script in `pyproject.toml`)
+- **Entry point**: `sentinel` (registered as a console script in `pyproject.toml`)
 - **Architecture**: command groups for related commands (e.g.,
-  `stamp manage-user create`, `stamp manage-user update`)
+  `sentinel manage-user create`, `sentinel manage-user update`)
 
 ### Command Design
 
@@ -173,7 +173,7 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
 ### Naming
 
 - Command groups: `noun` with `verb` subcommands for related operations
-  (e.g., `stamp manage-user create`, `stamp fetcher run`)
+  (e.g., `sentinel manage-user create`, `sentinel fetcher run`)
 
 ## Git Conventions
 

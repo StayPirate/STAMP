@@ -1,4 +1,4 @@
-"""Shared test fixtures for the STAMP backend."""
+"""Shared test fixtures for the Sentinel backend."""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide a centralized dashboard for monitoring all data fetchers in STAMP.
+Provide a centralized dashboard for monitoring all data fetchers in Sentinel.
 The dashboard gives all users visibility into fetcher health and
 performance (no authentication required), while giving admins operational
 control (manual trigger, enable/disable, configuration) and CLI access
@@ -23,7 +23,7 @@ GET /api/v1/ibs-consumer/status
 ```
 
 Returns the current status of the `IBSEventConsumer` by reading the
-`stamp:ibs_consumer_status` key from Redis. See
+`sentinel:ibs_consumer_status` key from Redis. See
 `docs/features/ibs-rabbitmq-integration.md`, section "Redis Heartbeat"
 for the key format and TTL behavior.
 
@@ -356,7 +356,7 @@ Enqueues a manual run of the specified fetcher.
   `BaseFetcher.run()` method detects the existing `FetcherRun` record
   (matched by `run_id`) and updates it rather than creating a new one
 
-**Note on on-demand CVE fetch**: when STAMP encounters an unknown CVE-ID
+**Note on on-demand CVE fetch**: when Sentinel encounters an unknown CVE-ID
 during ticket creation or CVE association, it triggers on-demand
 single-CVE fetches via standalone Celery tasks (not through this trigger
 endpoint). These on-demand fetches are sub-operations that do not create
@@ -746,19 +746,19 @@ The aggregation task is itself a fetcher (`AggregationFetcher` inheriting
 
 ## CLI Commands
 
-The `stamp fetcher` command group provides operational access to the
+The `sentinel fetcher` command group provides operational access to the
 fetcher infrastructure from the command line. It is designed for
 bootstrap, troubleshooting, and environments where the API/UI is not
 yet available. It is NOT a replacement for the API — configuration
 changes (schedule, timeout, rate limit, enable/disable) are done
 exclusively through the API.
 
-### `stamp fetcher list`
+### `sentinel fetcher list`
 
 Lists all registered fetchers with their current state.
 
 ```
-stamp fetcher list
+sentinel fetcher list
 ```
 
 Output (human-readable table to stdout):
@@ -794,13 +794,13 @@ provides `FetcherRun` and `FetcherConfig` data.
 
 **Exit codes**: 0 on success, 2 on system error (database unreachable).
 
-### `stamp fetcher run <name>`
+### `sentinel fetcher run <name>`
 
 Executes a fetcher synchronously (in-process, no Celery). Output is
 printed to stdout as the fetcher runs.
 
 ```
-stamp fetcher run sync_ldap_directory
+sentinel fetcher run sync_ldap_directory
 ```
 
 Successful output:
@@ -844,7 +844,7 @@ Before executing, the command checks for an existing `FetcherRun` with
 **If a run is active and NOT stale**:
 
 ```
-$ stamp fetcher run sync_cves_nvd
+$ sentinel fetcher run sync_cves_nvd
 Error: fetcher 'sync_cves_nvd' is already running (started 2026-04-27 12:00 UTC, 1m 30s ago).
 ```
 
@@ -857,7 +857,7 @@ treats it as an active run and exits with code 1 (same as the "not
 stale" case above).
 
 ```
-$ stamp fetcher run sync_ldap_directory
+$ sentinel fetcher run sync_ldap_directory
 Warning: fetcher 'sync_ldap_directory' has a run marked as 'running'
 since 2026-04-27 04:00 UTC (2h 30m ago), which exceeds the timeout
 (300s). This run appears stale.
@@ -878,7 +878,7 @@ message. The operator must resolve the stale run interactively.
 
 Unlike the Celery `run_fetcher` task, the CLI command does NOT check
 the `FetcherConfig.enabled` flag. The CLI is an explicit operator
-action — if someone runs `stamp fetcher run <name>`, they intend to
+action — if someone runs `sentinel fetcher run <name>`, they intend to
 run it regardless of the enabled state. A warning is printed when
 running a disabled fetcher:
 
@@ -904,8 +904,8 @@ interruption:
 **SIGKILL (kill -9)**: cannot be intercepted. The `FetcherRun` record
 will remain `running` in the database. This is the same situation that
 occurs when a Celery worker is OOM-killed or crashes. The stale run
-detection in `stamp fetcher list` (showing `stale?`) and the stale
-run resolution in `stamp fetcher run` (interactive prompt) handle
+detection in `sentinel fetcher list` (showing `stale?`) and the stale
+run resolution in `sentinel fetcher run` (interactive prompt) handle
 this scenario.
 
 #### Exit codes

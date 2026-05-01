@@ -3,7 +3,7 @@ description: Run the full test suite for backend and frontend
 agent: build
 ---
 
-Run the complete test suite for the STAMP project:
+Run the complete test suite for the Sentinel project:
 
 1. Run backend tests:
    ```

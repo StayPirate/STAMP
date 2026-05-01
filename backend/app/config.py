@@ -15,11 +15,11 @@ class Settings(BaseSettings):
     )
 
     # Application
-    app_name: str = "stamp"
+    app_name: str = "sentinel"
     debug: bool = False
 
     # Database
-    database_url: str = "postgresql+asyncpg://stamp:stamp@localhost:5432/stamp"
+    database_url: str = "postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"

@@ -3,7 +3,7 @@
 ## Purpose
 
 Integration with Open Build Service instances for package source monitoring
-and release detection. STAMP interacts with two separate OBS instances:
+and release detection. Sentinel interacts with two separate OBS instances:
 
 - **IBS** (Internal Build Service, `build.suse.de`): used for SUSE commercial
   products. This is the primary integration for codestream-level release
@@ -27,7 +27,7 @@ and release detection. STAMP interacts with two separate OBS instances:
 
 ### Key API Operations
 
-The following IBS API endpoints are used by STAMP for codestream-level
+The following IBS API endpoints are used by Sentinel for codestream-level
 release detection (see `docs/features/package-tracking.md`), package
 bugowner resolution (see `docs/features/package-bugowner.md`), and
 submission request tracking (see `docs/features/submission-tracking.md`):
@@ -89,7 +89,7 @@ and `tracker` equal to `cve` or `bnc`.
 
 #### Package Bugowner Resolution
 
-STAMP also uses IBS to resolve package bugowners. These endpoints are
+Sentinel also uses IBS to resolve package bugowners. These endpoints are
 documented in `docs/features/package-bugowner.md` (IBS API Integration
 section):
 

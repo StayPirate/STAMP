@@ -181,7 +181,7 @@ These represent finished work.
   clipboard. This action is always available regardless of whether the
   viewing VA is a bugowner — the purpose is to share the link with the
   actual maintainer.
-- **Future**: STAMP may use this URL in automated notifications to
+- **Future**: Sentinel may use this URL in automated notifications to
   bugowners
 
 This page shows the work for a **single ticket**, filtered to only the
@@ -195,8 +195,8 @@ stacked cards (Pending Fixes, In Progress, Completed).
 
 #### Header
 
-- **Ticket ID**: `STAMP-{n}` (monospace), with CVE-ID if present
-  (e.g., `STAMP-42 — CVE-2026-1234`)
+- **Ticket ID**: `SNTL-{n}` (monospace), with CVE-ID if present
+  (e.g., `SNTL-42 — CVE-2026-1234`)
 - **Severity**: color-coded badge
 - **Ticket status**: badge showing current ticket status
 
@@ -271,7 +271,7 @@ a short message, and a "Back to My Packages" link pointing to
 | Ticket status is `New` or `Analysis` | 200 | `Clock` | Ticket not yet analyzed | This ticket is still being evaluated by the security team. Check back later. |
 | Ticket status is `Resolved` | 200 | `CheckCircle` | Ticket resolved | All fixes for this ticket have been completed. No further action is needed. |
 | Ticket status is `Ignored` | 200 | `EyeOff` | Ticket ignored | This security issue has been evaluated and does not require action. No fixes are needed. |
-| Ticket status is `Duplicated` | 200 | `Copy` | Ticket is a duplicate | This ticket has been marked as a duplicate. See the original ticket: \[STAMP-{n}\](/my-packages/ticket/{duplicate_of_id}). |
+| Ticket status is `Duplicated` | 200 | `Copy` | Ticket is a duplicate | This ticket has been marked as a duplicate. See the original ticket: \[SNTL-{n}\](/my-packages/ticket/{duplicate_of_id}). |
 | User is not a bugowner | 200 | `ShieldAlert` | No packages assigned to you | You are not listed as a maintainer for any package in this ticket. If you believe this is an error, contact the security team. |
 
 **Implementation notes:**
@@ -322,7 +322,7 @@ Returns pending fixes for the authenticated user.
 |-------|------|-------------|
 | package_name | string | Source package name |
 | ticket_id | uuid | Ticket UUID |
-| ticket_sequence_id | integer | Ticket sequence number (for `STAMP-{n}` display) |
+| ticket_sequence_id | integer | Ticket sequence number (for `SNTL-{n}` display) |
 | cve_id | string \| null | CVE identifier (null if ticket has no CVE) |
 | severity | string | Resolved severity: critical, high, moderate, low |
 | codestream_name | string | Target codestream name |

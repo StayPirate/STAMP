@@ -39,16 +39,16 @@ risk of misuse is minimal — it is functionally equivalent to the
 
 ## CLI Commands
 
-All commands are subcommands of the `stamp manage-user` group. See
+All commands are subcommands of the `sentinel manage-user` group. See
 `docs/cli-reference.md` for the full command index and
 `docs/conventions.md` (CLI Conventions) for general CLI design guidelines.
 
-### `stamp manage-user create`
+### `sentinel manage-user create`
 
 Creates a new local user account.
 
 ```
-stamp manage-user create \
+sentinel manage-user create \
   --username <username> \
   --email <email> \
   [--full-name <name>] \
@@ -90,13 +90,13 @@ stamp manage-user create \
 **Exit codes**: 0 on success, 1 on validation error (duplicate user,
 invalid role, missing flag)
 
-### `stamp manage-user update`
+### `sentinel manage-user update`
 
 Updates an existing user account. This command works on any user (local
 or LDAP-synced) and does not require the `ALLOW_LOCAL_USERS` flag.
 
 ```
-stamp manage-user update \
+sentinel manage-user update \
   --username <username> \
   [--email <new_email>] \
   [--full-name <new_name>] \
@@ -137,12 +137,12 @@ stamp manage-user update \
 
 **Exit codes**: 0 on success, 1 on validation error
 
-### `stamp manage-user delete`
+### `sentinel manage-user delete`
 
 Deactivates or permanently removes a user account.
 
 ```
-stamp manage-user delete \
+sentinel manage-user delete \
   --username <username> \
   [--hard]
 ```
@@ -206,7 +206,7 @@ used for:
 ## Business Rules
 
 1. **CLI-only**: there are no API endpoints for local user management.
-   Users are created, updated, and deleted exclusively via the `stamp
+   Users are created, updated, and deleted exclusively via the `sentinel
    manage-user` CLI commands
 2. **Configuration guard**: the `create` and `delete` commands require
    `ALLOW_LOCAL_USERS=true`. The `update` command does not require this

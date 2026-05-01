@@ -3,7 +3,7 @@
 ## Purpose
 
 Track the IBS bugowner (package maintainer) for each source package
-referenced in STAMP tickets. The bugowner is the person or group
+referenced in Sentinel tickets. The bugowner is the person or group
 responsible for maintaining a package in IBS, and is the primary contact
 for coordinating security update submissions.
 
@@ -48,7 +48,7 @@ A bugowner can be either a **person** or a **group**:
 | person | Individual IBS user with a `userid` and email | `mschreiner` (`martin.schreiner@suse.com`) |
 | group  | Team with a collective email and member list   | `kernel-maintainers` (`kernel-bugs@suse.de`) |
 
-When the bugowner is a group, STAMP stores both the group-level
+When the bugowner is a group, Sentinel stores both the group-level
 information (name and collective email) and the individual members of
 the group. This enables the future maintainer dashboard to show each
 group member the tickets relevant to their group.
@@ -60,10 +60,10 @@ maintainer leaves the organization and a replacement is designated. For
 practical purposes, the bugowner can be considered stable over the
 lifetime of most tickets.
 
-However, because changes do happen, STAMP uses a shared cache with two
+However, because changes do happen, Sentinel uses a shared cache with two
 update mechanisms:
 
-1. **On-demand update**: when a package is added to a ticket, STAMP
+1. **On-demand update**: when a package is added to a ticket, Sentinel
    queries IBS for the current bugowner and creates or updates the
    cache entry
 2. **Periodic maintenance**: a background fetcher runs every 14 days
@@ -82,7 +82,7 @@ feature are:
 ### PackageBugowner
 
 Caches the current IBS bugowner for each source package actively tracked
-in STAMP tickets. This is a shared cache — all tickets referencing the
+in Sentinel tickets. This is a shared cache — all tickets referencing the
 same package point to the same bugowner record.
 
 Records are created on-demand when a package is first added to a ticket,
@@ -107,7 +107,7 @@ See `docs/data-model.md` for the full column listing.
 
 ## IBS API Integration
 
-STAMP uses three IBS API endpoints to resolve bugowner information. All
+Sentinel uses three IBS API endpoints to resolve bugowner information. All
 endpoints use the same authentication as existing IBS integrations (see
 `docs/features/obs-integration.md`).
 
@@ -191,12 +191,12 @@ Returns the group email and full member list:
 ```
 
 The `<person>` block lists all group members. The `<maintainer>` entries
-are group administrators and are a subset of the members — STAMP does
+are group administrators and are a subset of the members — Sentinel does
 not distinguish between group administrators and regular members.
 
 ## Bugowner Resolution Algorithm
 
-When a package is added to a ticket (via `add_package_to_ticket`), STAMP
+When a package is added to a ticket (via `add_package_to_ticket`), Sentinel
 resolves the bugowner as follows:
 
 1. Query IBS: `GET /search/owner?package={package_name}&filter=bugowner`
@@ -419,7 +419,7 @@ See `docs/features/pages.md` for page placement.
 
 ## Security
 
-- Bugowner data is read-only in STAMP — it is fetched from IBS and
+- Bugowner data is read-only in Sentinel — it is fetched from IBS and
   cannot be edited by any user
 - Bugowner information is visible to all users (no role required), as
   it is non-sensitive organizational data
