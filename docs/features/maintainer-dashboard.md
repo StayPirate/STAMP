@@ -304,6 +304,30 @@ Returns pending fixes for the authenticated user.
 
 **Response**: paginated list of pending fix items.
 
+**Response item schema:**
+
+```json
+{
+  "package_name": "kernel-default",
+  "ticket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "ticket_sequence_id": 42,
+  "cve_id": "CVE-2026-1234",
+  "severity": "high",
+  "codestream_name": "SLE-15-SP6",
+  "analyzed_at": "2026-04-15T10:30:00Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| package_name | string | Source package name |
+| ticket_id | uuid | Ticket UUID |
+| ticket_sequence_id | integer | Ticket sequence number (for `STAMP-{n}` display) |
+| cve_id | string \| null | CVE identifier (null if ticket has no CVE) |
+| severity | string | Resolved severity: critical, high, moderate, low |
+| codestream_name | string | Target codestream name |
+| analyzed_at | datetime | When the ticket entered `Analyzed` status (frontend computes "Waiting" from this) |
+
 ### GET /api/v1/my/packages/in-progress
 
 Returns in-progress submissions for the authenticated user.
@@ -320,6 +344,37 @@ Returns in-progress submissions for the authenticated user.
 
 **Response**: paginated list of in-progress items with submission chain
 details.
+
+**Response item schema:**
+
+```json
+{
+  "package_name": "kernel-default",
+  "ticket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "ticket_sequence_id": 42,
+  "cve_id": "CVE-2026-1234",
+  "codestream_name": "SLE-15-SP6",
+  "submission_chain": {
+    "sr": {"number": 12345, "state": "accepted"},
+    "incident": {"number": 67890},
+    "rr": {"number": 11111, "state": "open"}
+  },
+  "first_sr_created_at": "2026-04-20T08:00:00Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| package_name | string | Source package name |
+| ticket_id | uuid | Ticket UUID |
+| ticket_sequence_id | integer | Ticket sequence number |
+| cve_id | string \| null | CVE identifier |
+| codestream_name | string | Target codestream name |
+| submission_chain | object | Most advanced submission chain for this codestream |
+| submission_chain.sr | object | Submission request: `number` (int), `state` (string) |
+| submission_chain.incident | object \| null | Maintenance incident: `number` (int) |
+| submission_chain.rr | object \| null | Release request: `number` (int), `state` (string) |
+| first_sr_created_at | datetime | When the first SR was created (frontend computes "Since") |
 
 ### GET /api/v1/my/packages/completed
 
@@ -339,6 +394,34 @@ Returns completed releases for the authenticated user.
 **Response**: paginated list of completed items with full submission chain
 and release date.
 
+**Response item schema:**
+
+```json
+{
+  "package_name": "kernel-default",
+  "ticket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "ticket_sequence_id": 42,
+  "cve_id": "CVE-2026-1234",
+  "codestream_name": "SLE-15-SP6",
+  "submission_chain": {
+    "sr": {"number": 12345, "state": "accepted"},
+    "incident": {"number": 67890},
+    "rr": {"number": 11111, "state": "accepted"}
+  },
+  "released_at": "2026-04-25T14:00:00Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| package_name | string | Source package name |
+| ticket_id | uuid | Ticket UUID |
+| ticket_sequence_id | integer | Ticket sequence number |
+| cve_id | string \| null | CVE identifier |
+| codestream_name | string | Target codestream name |
+| submission_chain | object | Full submission chain (all elements in accepted/final state) |
+| released_at | datetime | When the fix was released |
+
 ### GET /api/v1/my/packages/ticket/{ticket_id}
 
 Returns all three sections (pending, in-progress, completed) for a
@@ -354,9 +437,46 @@ specific ticket, filtered to the authenticated user's packages.
 
 **Response (normal view)**: returned when ticket status is `Analyzed` and
 the user is a bugowner of at least one package. Object with three arrays
-(`pending`, `in_progress`, `completed`), each containing the relevant
-items for the ticket. No pagination (a single ticket has a bounded number
-of codestreams).
+using a reduced item schema (ticket-level fields like `severity` and
+`cve_id` are excluded since they are available from the ticket header):
+
+```json
+{
+  "pending": [
+    {
+      "package_name": "kernel-default",
+      "codestream_name": "SLE-15-SP6",
+      "status": "AFFECTED"
+    }
+  ],
+  "in_progress": [
+    {
+      "package_name": "kernel-default",
+      "codestream_name": "SLE-15-SP6",
+      "submission_chain": {
+        "sr": {"number": 12345, "state": "accepted"},
+        "incident": {"number": 67890},
+        "rr": null
+      },
+      "first_sr_created_at": "2026-04-20T08:00:00Z"
+    }
+  ],
+  "completed": [
+    {
+      "package_name": "kernel-default",
+      "codestream_name": "SLE-15-SP6",
+      "submission_chain": {
+        "sr": {"number": 12345, "state": "accepted"},
+        "incident": {"number": 67890},
+        "rr": {"number": 11111, "state": "accepted"}
+      },
+      "released_at": "2026-04-25T14:00:00Z"
+    }
+  ]
+}
+```
+
+No pagination (a single ticket has a bounded number of codestreams).
 
 **Response (error state)**: returned when ticket status is not `Analyzed`
 or the user is not a bugowner. Object with an `error_state` key:

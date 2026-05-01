@@ -219,6 +219,26 @@ specifications.
   Filterable by `package_name`, `codestream_name`, `state`,
   `incident_number`. Unpaginated.
 
+### Maintainer Dashboard
+
+See `docs/features/maintainer-dashboard.md` for detailed endpoint
+specifications.
+
+- `GET /api/v1/my/packages/pending` — List pending fixes for the
+  authenticated user (codestreams needing a fix where user is bugowner).
+  Filterable by `package`. Paginated. Sortable by `severity`, `waiting`.
+- `GET /api/v1/my/packages/in-progress` — List in-progress submissions
+  for the authenticated user. Filterable by `package`. Paginated.
+  Sortable by `since`, `package`.
+- `GET /api/v1/my/packages/completed` — List completed releases for the
+  authenticated user. Filterable by `package`, `days`. Paginated.
+  Sortable by `released`, `package`.
+- `GET /api/v1/my/packages/ticket/{ticket_id}` — Get pending, in-progress,
+  and completed items for a single ticket filtered to the authenticated
+  user's packages. Returns 404 if ticket does not exist, 410 Gone if
+  soft-deleted. Returns an error state object (200) if ticket is not in
+  `Analyzed` status or user is not a bugowner of any package in the ticket.
+
 ### Administration
 
 See `docs/features/admin.md` for detailed endpoint specifications.
