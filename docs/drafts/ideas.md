@@ -7,3 +7,4 @@ specification, it should be removed from this list.
 - Propose STAMP command-line commands that could be useful
 - Some codestreams/packages will need to be tracked even if they are not shipped in any product. For example go1.25
 - Once all scheduled tasks (e.g. fetchers) are defined, review all schedule times and spread them out to avoid them all starting at the same moment
+- The project is becoming very large and is composed only of specs. Define and maintain an intelligent implementation plan — a plan that allows implementing the platform one (or more) pieces at a time that can be tested before moving to the next piece.
