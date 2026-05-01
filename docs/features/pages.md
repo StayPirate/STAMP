@@ -13,16 +13,18 @@ resolution, and status transition rules).
 
 ## Pages Overview
 
-| Page             | Route             | Description                                      |
-|------------------|-------------------|--------------------------------------------------|
-| Inbox            | `/inbox`          | New tickets awaiting triage                      |
-| My Tickets       | `/my-tickets`     | Tickets assigned to the current VA               |
-| All Tickets      | `/tickets`        | All tickets with search and filters              |
-| Ticket Detail    | `/tickets/:id`    | Full ticket view with CVE data and actions       |
-| Fetchers         | `/fetchers`       | Fetcher dashboard (see `docs/features/fetcher-dashboard.md`) |
-| Fetcher Detail   | `/fetchers/:name` | Individual fetcher detail (see `docs/features/fetcher-dashboard.md`) |
-| Admin Settings   | `/admin/settings` | System settings (see `docs/features/admin.md`)   |
-| Login            | `/login`          | SSO redirect page (initiates authentication via id.suse.com; no local login form) |
+| Page             | Route                        | Description                                      |
+|------------------|------------------------------|--------------------------------------------------|
+| Inbox            | `/inbox`                     | New tickets awaiting triage                      |
+| My Tickets       | `/my-tickets`                | Tickets assigned to the current VA               |
+| My Packages      | `/my-packages`               | Maintainer dashboard (see `docs/features/maintainer-dashboard.md`) |
+| My Packages (Ticket) | `/my-packages/ticket/:ticketId` | Per-ticket maintainer view (see `docs/features/maintainer-dashboard.md`) |
+| All Tickets      | `/tickets`                   | All tickets with search and filters              |
+| Ticket Detail    | `/tickets/:id`               | Full ticket view with CVE data and actions       |
+| Fetchers         | `/fetchers`                  | Fetcher dashboard (see `docs/features/fetcher-dashboard.md`) |
+| Fetcher Detail   | `/fetchers/:name`            | Individual fetcher detail (see `docs/features/fetcher-dashboard.md`) |
+| Admin Settings   | `/admin/settings`            | System settings (see `docs/features/admin.md`)   |
+| Login            | `/login`                     | SSO redirect page (initiates authentication via id.suse.com; no local login form) |
 
 ## Ticket Lifecycle
 
@@ -248,10 +250,15 @@ The page is divided into the following sections:
 |----------------|------------------------------------------------------|
 | New            | Assign to me, Ignore, Mark as Duplicate              |
 | Analysis       | Ignore, Reassign, Mark as Duplicate                  |
-| Analyzed       | Reassign, Mark as Duplicate                          |
+| Analyzed       | Reassign, Mark as Duplicate, Copy maintainer link    |
 | Resolved       | Reassign, Mark as Duplicate                          |
 | Ignored        | Reassign, Mark as Duplicate                          |
 | Duplicated     | Revert duplicate (restores previous state, reassigns to current VA) |
+
+**Copy maintainer link** (VA role only, available when ticket is in
+`Analyzed` status): copies the URL `/my-packages/ticket/:id` to the
+clipboard. The VA can then share this link with the package maintainer.
+See `docs/features/maintainer-dashboard.md` for the per-ticket view.
 
 #### Delete Ticket (Admin only)
 
