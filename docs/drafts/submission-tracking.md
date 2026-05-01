@@ -16,7 +16,7 @@ fix lands in the codestream project (detected by `CodestreamReleaseDetector`
 or `IBSEventConsumer`). This feature fills that gap by tracking both SRs
 and RRs and showing them alongside the codestream affectedness status.
 
-## Background: SUSE Maintenance Update Process
+## Domain Concepts
 
 SUSE has two processes for producing security updates:
 
@@ -126,6 +126,10 @@ the underlying request states.
 ## Data Model
 
 Three new tables. No modifications to existing tables.
+
+**Retention**: records are kept indefinitely. The data volume is small
+(a few records per ticket) and the full history provides value for
+auditing and analysis.
 
 ### SubmissionRequest
 
@@ -422,34 +426,41 @@ that are `open` in STAMP but no longer appear in the search results
 
 ### IBS Diff API (CVE Correlation)
 
-To correlate a submission request with specific CVEs, STAMP needs to
-extract the CVE-IDs from the request's diff. Two potential approaches:
-
-#### Option A: Request Diff Endpoint
+To correlate a submission request with specific CVEs, STAMP extracts
+CVE-IDs from the request's diff using:
 
 ```
 POST /request/{id}?cmd=diff&withissues=1&view=xml
 ```
 
 Operates directly on the request — no need to know source/target MD5s.
-Available in OBS (see `request_controller.rb#request_command_diff`).
+Returns `<issues>` block with structured entries:
 
-#### Option B: Source Diff Endpoint (existing)
-
+```xml
+<issue state="added|changed|deleted" tracker="cve" name="2026-XXXXX"
+       label="CVE-2026-XXXXX" url="..."/>
 ```
-POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}
-```
 
-Same endpoint used by `CodestreamReleaseDetector`. Requires knowing the
-MD5 checksums, which are not present in the RabbitMQ event payload —
-would need an additional API call to obtain them.
+Only issues with `state="added"` and `tracker="cve"` are processed.
+Issues with `state="changed"` (pre-existing CVE references in diff
+context) and `state="deleted"` (removed references) are skipped. This
+filtering is consistent with `CodestreamReleaseDetector` on the source
+diff endpoint (see `docs/features/obs-integration.md`).
 
-**Preferred**: Option A (request diff) is simpler because it does not
-require MD5 resolution. However, it has NOT been verified that
-`withissues=1` on the request diff returns the same structured `<issues>`
-output as the source diff. See Open Questions.
+Verified empirically on IBS (2026-04-29) with SR#407603: a changelog
+containing six pre-existing CVE references correctly reports them as
+`state="changed"`, while two newly added CVEs appear as
+`state="added"` — no false positives from context lines.
 
 ## Processing Pipelines
+
+Submission tracking is **independent** from release detection.
+`CodestreamReleaseDetector` and the existing `IBSEventConsumer`
+`package.commit` handler do NOT update `ReleaseRequest` records when
+they detect a codestream release. The RR state is updated exclusively
+by the submission tracking pipelines below (real-time consumer for
+conclusive state changes, catch-up fetcher for missed events and
+reopens).
 
 ### Pipeline 1: Real-Time (IBSEventConsumer)
 
@@ -475,8 +486,7 @@ output as the source diff. See Open Questions.
 ```
 1. Call IBS diff API for the request (see Data Sources above)
 2. Extract CVE-IDs from the diff response (filter for `state="added"` and
-      `tracker="cve"` only — see Resolved Questions, "Diff API Issue State
-      Attribute")
+      `tracker="cve"` only — see IBS Diff API section in Data Sources)
 3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
 4. For each CVE-ID:
    a. Find the ticket with that CVE
@@ -548,12 +558,14 @@ fetcher handles this case (see Pipeline 2).
 
 ### Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)
 
-A `BaseFetcher` subclass that runs every **24 hours** to recover events
-missed during consumer downtime and reconcile state drift. This is the
-only mechanism for detecting request reopens (declined -> new/review).
+A `BaseFetcher` subclass that runs every **24 hours** (02:30 UTC) to
+recover events missed during consumer downtime and reconcile state
+drift. This is the only mechanism for detecting request reopens
+(declined -> new/review).
 
-Schedule parameters are explained in the Resolved Questions section
-("Release Request Before Submission Request — DECIDED").
+The 25-hour lookback window in Step 1b ensures overlap across
+consecutive fetcher runs, covering total platform outages of up to
+25 hours (consumer + fetcher both down).
 
 #### Procedure
 
@@ -1114,282 +1126,6 @@ documents will need updates:
 - `docs/features/package-tracking.md` — add step 6 to
   `add_package_to_ticket` (enqueue `discover_submissions_for_ticket_package`)
   — **already done**
-
-## Resolved Questions
-
-### Request Diff API Output — VERIFIED
-
-`POST /request/{id}?cmd=diff&withissues=1&view=xml` has been tested on
-IBS with SR#407175 (freerdp maintenance request). Results:
-
-- **Confirmed**: returns `<issues>` block with structured issue entries
-- **Format**: `<issue state="added|changed" tracker="cve" name="2026-XXXXX"
-  label="CVE-2026-XXXXX" url="..."/>` — identical structure to the source
-  diff endpoint
-- **Also includes**: bugzilla references (`tracker="bnc"`)
-- **`withissues=1`** works correctly (includes issues alongside the diff
-  output, unlike `onlyissues=1` which returns only issues)
-
-**Decision**: use `POST /request/{id}?cmd=diff&withissues=1&view=xml` for
-CVE correlation. No need for MD5 resolution or the source diff endpoint.
-
-### IBS RabbitMQ Payload — VERIFIED
-
-A test consumer connected to `amqps://suse:suse@rabbit.suse.de:5671` on
-exchange `pubsub` captured 17 events over ~2.5 hours (2026-04-24).
-
-**Routing keys confirmed**:
-- `suse.obs.request.create` — binds and receives events
-- `suse.obs.request.state_change` — binds and receives events
-
-**SR state_change payload captured** (SR#407526, maintenance_incident,
-declined):
-
-```json
-{
-  "author": "JonathanKang",
-  "comment": "Declined by auto-review script (check comments for details)",
-  "description": "add CVE reference number",
-  "id": 1083132,
-  "number": 407526,
-  "actions": [
-    {
-      "action_id": 3465663,
-      "type": "maintenance_incident",
-      "sourceproject": "SUSE:Maintenance:REQUEST:407526",
-      "sourcepackage": "PackageKit.SUSE_SLE-15-SP5_Update",
-      "sourcerevision": "a76248845dedfcfc34d98e0971370442",
-      "targetproject": "SUSE:Maintenance",
-      "target_releaseproject": "SUSE:SLE-15-SP5:Update",
-      "makeoriginolder": false
-    },
-    {
-      "action_id": 3465666,
-      "type": "delete",
-      "targetproject": "SUSE:Maintenance:REQUEST:407526",
-      "makeoriginolder": false
-    }
-  ],
-  "state": "declined",
-  "oldstate": "review",
-  "when": "2026-04-24T15:05:02",
-  "who": "maintenance-robot",
-  "namespace": "SUSE",
-  "duration": 3842
-}
-```
-
-**RR state_change payload captured** (RR#407226, maintenance_release,
-accepted):
-
-```json
-{
-  "author": "crazybyte",
-  "comment": "Auto accept",
-  "description": "requesting release",
-  "id": 1082232,
-  "number": 407226,
-  "actions": [
-    {
-      "action_id": 3461979,
-      "type": "maintenance_release",
-      "sourceproject": "SUSE:Maintenance:43905",
-      "sourcepackage": "PackageKit.SUSE_SLE-15-SP5_Update",
-      "sourcerevision": "b4c1944feee5d3016fbd0ecddf227f7f",
-      "targetproject": "SUSE:SLE-15-SP5:Update",
-      "targetpackage": "PackageKit.43905",
-      "makeoriginolder": false
-    }
-  ],
-  "state": "accepted",
-  "oldstate": "new",
-  "when": "2026-04-24T14:34:25",
-  "who": "darix",
-  "namespace": "SUSE:SLE-15-SP5:Update",
-  "duration": 172317
-}
-```
-
-**Key observations from captured payloads**:
-
-1. **`target_releaseproject` confirmed present in SR payloads** — value
-   is the codestream (e.g., `SUSE:SLE-15-SP5:Update`). NOT present in
-   RR payloads (not needed — codestream is in `targetproject` for RRs).
-2. **`targetpackage` NOT present in SR payloads** — the package name
-   must be extracted from `sourcepackage` by stripping the codestream
-   suffix (`.SUSE_SLE-15-SP5_Update` -> `PackageKit`).
-3. **`targetpackage` present in RR payloads but with incident suffix** —
-   `PackageKit.43905` instead of `PackageKit`. Must strip `.XXXXX`.
-4. **Spurious actions present** — SR payloads contain a `delete` action
-   for the temporary project `SUSE:Maintenance:REQUEST:XXXXX`. RR
-   payloads may contain `patchinfo` actions. Must filter by action type.
-5. **`author`** is the original request creator; **`who`** is the person
-   who performed the state change (e.g., reviewer, UM).
-6. **`targetproject` in declined SR remains generic** —
-   `SUSE:Maintenance` (not updated to incident). Confirms that
-   `targetproject` is only updated to `SUSE:Maintenance:XXXXX` when the
-   SR is accepted (per OBS source code analysis). This specific case
-   (accepted SR) has not been captured on wire but is confirmed by code.
-7. **All action field keys observed on wire**: `action_id`, `type`,
-   `sourceproject`, `sourcepackage`, `sourcerevision`, `targetproject`,
-   `targetpackage`, `target_releaseproject`, `makeoriginolder`.
-   Fields `targetrepository` and `sourceupdate` (present in OBS source
-   `notify_params`) were NOT observed in any captured event.
-
-### Catch-Up Fetcher Frequency — DECIDED
-
-Every 24 hours. This balances IBS API load with acceptable recovery time.
-Reopens are rare and even if missed by the fetcher, the subsequent
-conclusive state change (accepted/declined/revoked) will be caught by
-the RabbitMQ consumer.
-
-### Retention Policy — DECIDED
-
-Forever. The data volume is small (a few records per ticket) and
-retaining the full history provides value for auditing and analysis.
-
-### Relationship with Release Detection — DECIDED
-
-The two mechanisms remain independent. When `CodestreamReleaseDetector`
-or `IBSEventConsumer` detects a codestream release, it does NOT update
-`ReleaseRequest` records. The RR state is updated exclusively by:
-- The RabbitMQ consumer (real-time, for conclusive state changes)
-- The catch-up fetcher (periodic, for missed events)
-
-### State Change Events and Reopens — DECIDED
-
-Reopens (`declined -> new/review`) are rare in practice. Even if STAMP
-does not detect the reopen in real-time, the subsequent conclusive state
-change (the request is eventually accepted, declined again, or revoked)
-will be caught by the RabbitMQ consumer. The 24-hour catch-up fetcher
-provides an additional safety net.
-
-Whether `state_change` events are emitted for non-conclusive transitions
-remains to be verified empirically, but the design does not depend on it.
-
-### Diff API Issue State Attribute — VERIFIED
-
-The `POST /request/{id}?cmd=diff&withissues=1&view=xml` endpoint returns
-CVE-IDs from both changed lines and context lines in the diff. The
-`state` attribute on each `<issue>` element reliably distinguishes them.
-
-Verified empirically on IBS (2026-04-29) with three submission requests:
-
-- **SR#404948** (python311, submit): two CVE patches removed. Both CVEs
-  appear with `state="deleted"` — confirms that removals are correctly
-  flagged.
-- **SR#407662** (389-ds, maintenance_incident): one new CVE fix added.
-  The CVE appears with `state="added"` — no false positives from context.
-- **SR#407603** (maintenance_incident): two new CVE fixes added to a
-  changelog containing six pre-existing CVE references from older fixes.
-  The two new CVEs appear with `state="added"`. The six pre-existing
-  CVEs appear with `state="changed"` (present in context, not in changed
-  lines). This is the critical test case — it confirms that context-line
-  CVEs are NOT reported as `state="added"`.
-
-**State values observed**:
-
-| `state` value | Meaning | Action |
-|---------------|---------|--------|
-| `added` | CVE reference introduced in the diff (new fix) | Process |
-| `changed` | CVE reference present in diff context (pre-existing) | Skip |
-| `deleted` | CVE reference removed in the diff | Skip |
-
-**Decision**: `correlate_submission_request` MUST filter issues to only
-those with `state="added"` and `tracker="cve"`, consistent with the
-filtering already applied by `CodestreamReleaseDetector` on the source
-diff endpoint (see `docs/features/obs-integration.md`).
-
-### Release Request Before Submission Request — DECIDED
-
-**Problem**: when the IBSEventConsumer misses a `request.create` event
-for an SR (e.g., during reconnection) and an RR for the same incident
-arrives first, the RR is discarded because no `SubmissionRequest` with
-the matching `incident_number` exists in STAMP. If the RR is accepted
-before the catch-up fetcher runs, it may be missed entirely.
-
-**Solution**: extend the `RequestSyncFetcher` with a Step 1b that
-discovers accepted SRs missed during consumer downtime, using the IBS
-temporal filter `created_at_from`. RR discovery is handled automatically
-by `set_sr_incident_number` (see Centralized Functions) whenever an
-`incident_number` is set on a SR — no explicit RR search is needed in
-the pipeline steps.
-
-**Schedule parameters**:
-
-- **Interval (24 hours)**: how often the fetcher runs. Determines the
-  maximum delay before a missed event is recovered when only the
-  consumer is down. A shorter interval means faster recovery.
-- **Lookback window (25 hours)**: how far back the `created_at_from`
-  filter reaches (`now - 25h`). Determines the minimum duration of a
-  *total platform outage* (consumer + fetcher both down simultaneously)
-  before an SR becomes irrecoverable. A wider window raises this
-  threshold without affecting normal recovery speed. The 25-hour value
-  provides ample overlap across consecutive 24-hour fetcher runs.
-
-**Recovery guarantees**:
-
-| Scenario | Covered? |
-|----------|----------|
-| Consumer down, fetcher OK | Yes — Step 1b recovers within ≤24h |
-| Consumer OK, fetcher down | Yes — consumer processes events in real-time |
-| Both down <25h | Yes — first successful fetcher run covers the window |
-| Both down >25h | No — total platform outage, requires manual recovery |
-
-**Step 1b procedure** (inserted after Step 1 in Pipeline 2):
-
-```
-Step 1b — Discover missed accepted SRs:
-
-  For each active codestream:
-    GET /request?view=collection&project={codestream}
-        &states=accepted&types=maintenance_incident
-        &created_at_from={now - 25h}
-
-    For each SR in the response:
-      a. Already in SubmissionRequest table? → skip
-      b. targetpackage tracked in at least one ticket for this
-         codestream? If no → skip
-      c. Create SubmissionRequest (state=accepted)
-      d. Call set_sr_incident_number(SR, extracted incident_number)
-      e. Enqueue correlate_submission_request
-```
-
-**Step 2 extension**: when Step 2 reconciles a known SR (open→accepted)
-and extracts its `incident_number`, it calls
-`set_sr_incident_number(SR, extracted incident_number)` which
-automatically discovers associated RRs. This covers the case where the
-SR was known to STAMP but the RR event was lost.
-
-**Note on `created_at_from` parameter**: verified in OBS source code
-(`BsRequest::FindFor::Query` — standard ActiveRecord range filter on
-`created_at` column). Not yet tested on-the-wire against IBS. To be
-verified empirically during implementation. Risk is negligible given
-that the parameter is a standard SQL range filter with no OBS-specific
-logic.
-
-### Unknown CVE-IDs in Submission Request Diffs — DECIDED
-
-`correlate_submission_request` does NOT invoke `create_ticket_from_detection`
-for CVE-IDs not known to STAMP. Unknown CVE-IDs are silently skipped. If no
-correlations are created (all CVE-IDs unknown or no matching tickets), the
-SubmissionRequest is deleted.
-
-**Rationale**: creating tickets from SR diffs risks false positives from
-maintainer typos in changelogs (e.g., `CVE-2026-99999` instead of
-`CVE-2026-9999`). The conservative approach avoids polluting the ticket
-database with spurious CVEs.
-
-**Compensating mechanism**: `add_package_to_ticket` enqueues a
-`discover_submissions_for_ticket_package` Celery task that retroactively
-searches IBS for existing SRs/RRs mentioning the ticket's CVE. This covers
-the case where a maintainer proactively submits a fix before the CVE is
-ingested by STAMP. See Pipeline 3 for the full procedure.
-
-**Recovery guarantee**: any SR created within 14 days before the ticket/package
-addition is discoverable. SRs older than 14 days are not recovered, but this
-is an extreme edge case with low informational value (the release detector
-will likely have already marked the codestream as RELEASED).
 
 ## Open Questions
 
