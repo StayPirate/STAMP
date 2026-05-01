@@ -769,6 +769,7 @@ sync_ldap_directory        yes       2026-04-27 04:00 UTC  success (3m 12s)
 sync_cves_nvd              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)
 sync_products_smelt        yes       2026-04-26 06:00 UTC  success (45s)
 check_codestream_releases  no        2026-04-25 02:00 UTC  failure
+sync_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)
 aggregate_fetcher_runs     yes       —                     never run
 ```
 

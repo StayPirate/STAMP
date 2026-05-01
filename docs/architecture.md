@@ -136,6 +136,12 @@ active source. See the data sources catalog for the full picture.
   fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
   serves as a catch-up mechanism for events missed during downtime. See
   `docs/features/ibs-rabbitmq-integration.md` for the full specification.
+- **Submission tracking**: the same RabbitMQ consumer also processes
+  `suse.obs.request.create` and `suse.obs.request.state_change` events to
+  track IBS submission requests (SRs) and release requests (RRs),
+  providing VAs visibility into the MU process progression. A periodic
+  fetcher (`RequestSyncFetcher`, 02:30 UTC) handles catch-up. See
+  `docs/features/submission-tracking.md`.
 - **Package bugowner resolution**: STAMP queries IBS to resolve the
   bugowner (maintainer) of each source package tracked in tickets. This
   data is cached locally and maintained by a periodic fetcher. See

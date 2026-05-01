@@ -206,6 +206,19 @@ See `docs/features/cvss-scoring.md` for detailed endpoint specifications.
 - `DELETE /api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` — Remove
   SUSE CVSS assessment. Requires the Vulnerability Analyst role.
 
+### Submission Tracking
+
+See `docs/features/submission-tracking.md` for detailed endpoint
+specifications.
+
+- `GET /api/v1/tickets/{ticket_id}/submission-requests` — List submission
+  requests correlated to a ticket. Filterable by `package_name`,
+  `codestream_name`, `state`. Unpaginated (small dataset).
+- `GET /api/v1/tickets/{ticket_id}/release-requests` — List release
+  requests associated with a ticket (derived via SR incident numbers).
+  Filterable by `package_name`, `codestream_name`, `state`,
+  `incident_number`. Unpaginated.
+
 ### Administration
 
 See `docs/features/admin.md` for detailed endpoint specifications.
