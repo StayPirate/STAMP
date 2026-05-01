@@ -881,11 +881,134 @@ SR superseded:
 
 ## API Endpoints
 
-TBD — at minimum:
-- An endpoint to list SRs correlated to a ticket or to a specific
-  `TicketPackageCodestream`
-- An endpoint to list RRs associated with a ticket (derived via
-  SR.incident_number)
+Two read-only endpoints nested under the ticket resource. Both follow the
+same access rules as `GET /api/v1/tickets/{ticket_id}` — if the caller
+can access the ticket detail, they can access its submission and release
+requests.
+
+Both endpoints return unpaginated lists (expected volume is small — fewer
+than 20 records per ticket, similar to ticket references).
+
+### `GET /api/v1/tickets/{ticket_id}/submission-requests`
+
+List all submission requests correlated to the ticket via the
+`SubmissionRequestCodestream` join table.
+
+**Query parameters** (all optional):
+
+| Parameter        | Type   | Description                                      |
+|------------------|--------|--------------------------------------------------|
+| `package_name`   | string | Filter by package name (exact match)             |
+| `codestream_name`| string | Filter by codestream name (exact match)          |
+| `state`          | string | Filter by state: `open`, `accepted`, `declined`, `revoked`, `superseded` |
+
+**Response** (200):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "request_number": 407175,
+      "package_name": "curl",
+      "codestream_name": "SUSE:SLE-15-SP6:Update",
+      "state": "accepted",
+      "author": "jdoe",
+      "incident_number": 43894,
+      "superseded_by": null,
+      "ibs_url": "https://build.suse.de/request/show/407175",
+      "incident_url": "https://build.suse.de/project/show/SUSE:Maintenance:43894",
+      "created_at": "2026-04-20T10:00:00Z",
+      "updated_at": "2026-04-20T12:00:00Z"
+    }
+  ]
+}
+```
+
+**Response fields**:
+
+| Field              | Type              | Description                                      |
+|--------------------|-------------------|--------------------------------------------------|
+| `id`               | UUID              | Internal identifier                              |
+| `request_number`   | integer           | IBS request number                               |
+| `package_name`     | string            | Target package name                              |
+| `codestream_name`  | string            | Target codestream                                |
+| `state`            | string            | Current state (see `SubmissionRequestState`)      |
+| `author`           | string \| null    | IBS username who created the request             |
+| `incident_number`  | integer \| null   | Maintenance incident number (set on acceptance)  |
+| `superseded_by`    | integer \| null   | Request number of the superseding request        |
+| `ibs_url`          | string            | Computed: `https://build.suse.de/request/show/{request_number}` |
+| `incident_url`     | string \| null    | Computed: `https://build.suse.de/project/show/SUSE:Maintenance:{incident_number}`. Null when `incident_number` is null. |
+| `created_at`       | datetime (UTC)    | Record creation timestamp                        |
+| `updated_at`       | datetime (UTC)    | Record update timestamp                          |
+
+**Error responses**:
+
+| Status | Condition                                              |
+|--------|--------------------------------------------------------|
+| 404    | Ticket not found                                       |
+| 410    | Ticket is soft-deleted and caller is not Admin         |
+| 422    | Invalid `state` value                                  |
+
+### `GET /api/v1/tickets/{ticket_id}/release-requests`
+
+List all release requests associated with the ticket. Derived via the
+SR correlation: find SRs correlated to the ticket, collect their
+`incident_number` values, then return RRs with matching
+`incident_number`.
+
+**Query parameters** (all optional):
+
+| Parameter         | Type    | Description                                      |
+|-------------------|---------|--------------------------------------------------|
+| `package_name`    | string  | Filter by package name (exact match)             |
+| `codestream_name` | string  | Filter by codestream name (exact match)          |
+| `state`           | string  | Filter by state: `open`, `accepted`, `declined`, `revoked` |
+| `incident_number` | integer | Filter by maintenance incident number            |
+
+**Response** (200):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "request_number": 407225,
+      "package_name": "curl",
+      "codestream_name": "SUSE:SLE-15-SP6:Update",
+      "state": "open",
+      "incident_number": 43894,
+      "ibs_url": "https://build.suse.de/request/show/407225",
+      "incident_url": "https://build.suse.de/project/show/SUSE:Maintenance:43894",
+      "created_at": "2026-04-21T08:00:00Z",
+      "updated_at": "2026-04-21T08:00:00Z"
+    }
+  ]
+}
+```
+
+**Response fields**:
+
+| Field              | Type           | Description                                      |
+|--------------------|----------------|--------------------------------------------------|
+| `id`               | UUID           | Internal identifier                              |
+| `request_number`   | integer        | IBS request number                               |
+| `package_name`     | string         | Target package name                              |
+| `codestream_name`  | string         | Target codestream                                |
+| `state`            | string         | Current state (see `ReleaseRequestState`)         |
+| `incident_number`  | integer        | Maintenance incident number                      |
+| `ibs_url`          | string         | Computed: `https://build.suse.de/request/show/{request_number}` |
+| `incident_url`     | string         | Computed: `https://build.suse.de/project/show/SUSE:Maintenance:{incident_number}` |
+| `created_at`       | datetime (UTC) | Record creation timestamp                        |
+| `updated_at`       | datetime (UTC) | Record update timestamp                          |
+
+**Error responses**:
+
+| Status | Condition                                              |
+|--------|--------------------------------------------------------|
+| 404    | Ticket not found                                       |
+| 410    | Ticket is soft-deleted and caller is not Admin         |
+| 422    | Invalid `state` or `incident_number` value             |
 
 ## Scope Exclusions
 
