@@ -288,7 +288,7 @@ full details.
 | end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
 | end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
 | end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, Affected status is always green (AFFECTED_RESOLVED) regardless of CVSS. |
-| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is EOL or no longer reported by SMELT |
+| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
 | smelt_synced_at      | TIMESTAMP    |                      | Last sync from SMELT               |
 | aimaas_synced_at     | TIMESTAMP    |                      | Last sync from AIMAAS              |
 | created_at           | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp          |

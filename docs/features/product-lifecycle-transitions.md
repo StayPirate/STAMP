@@ -45,13 +45,13 @@ re-evaluation.
 1. Find all products currently in **Reactive LTSS** phase
    (`end_of_ltss < today < end_of_reactive_ltss`)
    - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     in open tickets
+     in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
 2. Find all products currently in **EOL** phase (past all applicable
    lifecycle dates)
    - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     or `ANALYSIS` in open tickets
+     or `ANALYSIS` in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
 3. If no actionable records found for a product, no sub-task is enqueued

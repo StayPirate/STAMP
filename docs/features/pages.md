@@ -22,7 +22,7 @@ resolution, and status transition rules).
 | Fetchers         | `/fetchers`       | Fetcher dashboard (see `docs/features/fetcher-dashboard.md`) |
 | Fetcher Detail   | `/fetchers/:name` | Individual fetcher detail (see `docs/features/fetcher-dashboard.md`) |
 | Admin Settings   | `/admin/settings` | System settings (see `docs/features/admin.md`)   |
-| Login            | `/login`          | Authentication page                              |
+| Login            | `/login`          | SSO redirect page (initiates authentication via id.suse.com; no local login form) |
 
 ## Ticket Lifecycle
 
@@ -148,8 +148,10 @@ Displays all tickets in the system with comprehensive search and filtering.
 - Page title: "All Tickets"
 - Total ticket count
 - "Create Ticket" button (visible only to Vulnerability Analysts). Opens a
-  dialog with an optional severity selector (Critical, High, Medium, Low,
-  None). On confirmation, calls `POST /api/v1/tickets` and redirects to
+  dialog with an optional CVE-ID field and an optional severity selector
+  (Critical, High, Medium, Low, None). When a CVE-ID is provided, severity
+  is derived from the CVE's CVSS score and the severity selector is hidden.
+  On confirmation, calls `POST /api/v1/tickets` and redirects to
   the newly created ticket's detail page. See `docs/features/tickets.md`
   (Manual Creation) for the full creation flow
 - Search bar + filter controls
@@ -247,8 +249,8 @@ The page is divided into the following sections:
 | New            | Assign to me, Ignore, Mark as Duplicate              |
 | Analysis       | Ignore, Reassign, Mark as Duplicate                  |
 | Analyzed       | Reassign, Mark as Duplicate                          |
-| Resolved       | Mark as Duplicate                                    |
-| Ignored        | Mark as Duplicate                                    |
+| Resolved       | Reassign, Mark as Duplicate                          |
+| Ignored        | Reassign, Mark as Duplicate                          |
 | Duplicated     | Revert duplicate (restores previous state, reassigns to current VA) |
 
 #### Delete Ticket (Admin only)

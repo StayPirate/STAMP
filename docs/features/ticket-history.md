@@ -175,8 +175,10 @@ At the top of the History tab, a horizontal filter bar provides:
    | `severity_changed`         | Severity changed           |
    | `cvss_assessment_changed`  | CVSS assessment changed    |
    | `product_eligibility_changed` | Product eligibility changed |
-   | `ticket_deleted`           | Ticket deleted              |
-   | `ticket_restored`          | Ticket restored             |
+    | `ticket_deleted`           | Ticket deleted              |
+    | `ticket_restored`          | Ticket restored             |
+    | `product_removed`          | Product removed             |
+    | `codestream_removed`       | Codestream removed          |
 
 2. **Actor filter**: single-select dropdown with options:
    - "All" (default — no filter applied)
@@ -208,7 +210,7 @@ first). Each event entry displays:
    | Assignment | user | `assignment` |
    | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
    | Creation | plus-circle | `ticket_created`, `cve_associated`, `cve_removed` |
-   | Package | package | `package_added`, `package_removed` |
+    | Package | package | `package_added`, `package_removed`, `product_removed`, `codestream_removed` |
    | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
    | Release | check-circle | `codestream_released`, `product_released` |
    | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
@@ -242,8 +244,10 @@ first). Each event entry displays:
    | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
    | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
    | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
-   | `ticket_deleted` | Ticket deleted (if `comment` present: "Ticket deleted — **{comment}**") |
-   | `ticket_restored` | Ticket restored (if `comment` present: "Ticket restored — **{comment}**") |
+    | `ticket_deleted` | Ticket deleted (if `comment` present: "Ticket deleted — **{comment}**") |
+    | `ticket_restored` | Ticket restored (if `comment` present: "Ticket restored — **{comment}**") |
+    | `product_removed` | Product **{old_value}** removed — **{comment}** |
+    | `codestream_removed` | Codestream **{old_value}** removed — **{comment}** |
 
 5. **Comment**: if present, displayed below the description in a muted style.
 

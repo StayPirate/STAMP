@@ -331,13 +331,16 @@ with a **TTL of 60 seconds**:
 The following counters are tracked in the heartbeat (reset on each new
 connection):
 
-- **Events received**: total `package.commit` events received from the
-  broker
-- **Events relevant**: events that passed the active codestream filter
-  (step 2)
-- **Events processed**: events where the IBS diff completed successfully
-  (step 4-6)
-- **Diffs failed**: events where the IBS diff request failed
+- **Events received**: total events received from the broker (includes
+  `package.commit`, `request.create`, and `request.state_change`)
+- **Events relevant**: `package.commit` events that passed the active
+  codestream filter (step 2)
+- **Events processed**: `package.commit` events where the IBS diff
+  completed successfully (step 4-6)
+- **Diffs failed**: `package.commit` events where the IBS diff request
+  failed
+- **Requests processed**: `request.create` and `request.state_change`
+  events successfully processed by the submission tracking pipeline
 
 ### Dashboard Integration
 

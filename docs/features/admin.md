@@ -100,8 +100,10 @@ Requires: Admin role.
 
 A simple settings page containing:
 
-1. **Default CVSS Version**: dropdown with options `"v3.1"` and `"v4.0"`,
-   showing the current value. On change, a confirmation dialog:
+1. **Default CVSS Version**: dropdown with display labels `"v3.1"` and
+   `"v4.0"` (the API values sent in the PATCH request are `"3.1"` and
+   `"4.0"` without the "v" prefix), showing the current value. On change,
+   a confirmation dialog:
    - "Changing the default CVSS version will recalculate severity and
      product eligibility for all active tickets. This operation may take
      several minutes. Continue?"
