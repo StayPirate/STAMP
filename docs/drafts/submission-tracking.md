@@ -1010,6 +1010,64 @@ SR correlation: find SRs correlated to the ticket, collect their
 | 410    | Ticket is soft-deleted and caller is not Admin         |
 | 422    | Invalid `state` or `incident_number` value             |
 
+## Background Tasks
+
+| Task                                         | Type                       | Schedule           | Purpose                                                              |
+|----------------------------------------------|----------------------------|--------------------|----------------------------------------------------------------------|
+| `RequestSyncFetcher`                         | BaseFetcher (periodic)     | Every 24h (02:30 UTC) | Catch-up: discover missed SRs/RRs, reconcile states, detect reopens |
+| `correlate_submission_request`               | Celery task (on-demand)    | —                  | Call IBS diff API, extract CVE-IDs, create join records              |
+| `discover_submissions_for_ticket_package`    | Celery task (sub-operation)| —                  | Retroactive SR/RR discovery when a package is added to a ticket      |
+
+`RequestSyncFetcher` follows the `BaseFetcher` contract: automatic
+execution tracking, metric collection, and dashboard visibility.
+
+`correlate_submission_request` and `discover_submissions_for_ticket_package`
+are sub-operation tasks (same category as `create_ticket_from_detection`):
+on-demand, no independent schedule, no dashboard presence.
+
+## Error Handling
+
+| Scenario                                                     | Behavior                                                                                     |
+|--------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| IBS diff API unreachable / timeout (`correlate_submission_request`) | Celery retry with standard backoff. After max retries, SR remains without correlations — catch-up fetcher will retry on next run. |
+| IBS diff API returns 4xx/5xx                                 | Same as above.                                                                               |
+| IBS REST API unreachable (`RequestSyncFetcher`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
+| RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
+| SR/RR references a codestream not tracked in STAMP           | Silent skip (not relevant to STAMP).                                                         |
+| IBS diff API returns no CVE-IDs for an SR                    | SR is deleted (silent discard — see Pipeline 1, `correlate_submission_request` step 3).      |
+
+## Configuration
+
+| Setting                         | Type                    | Default    | Description                                                  |
+|---------------------------------|-------------------------|------------|--------------------------------------------------------------|
+| `RequestSyncFetcher` schedule   | Cron (BaseFetcher)      | Every 24h  | Overridable via fetcher config API                           |
+| Consumer routing keys           | Static (code)           | `suse.obs.request.create`, `suse.obs.request.state_change` | Added to existing `IBSEventConsumer` bindings |
+| Catch-up lookback window        | Constant                | 25h        | `created_at_from` for Step 1b temporal query                 |
+| Retroactive discovery window    | Constant                | 14d        | `created_at_from` for Pipeline 3 discovery                   |
+
+## Security
+
+The submission tracking feature introduces no new authentication
+mechanisms or credentials:
+
+- **API endpoints**: same access rules as
+  `GET /api/v1/tickets/{ticket_id}` — no additional role required.
+- **IBS API calls**: use the same IBS credentials already configured
+  for `CodestreamReleaseDetector` and the existing `IBSEventConsumer`
+  (see `ibs-rabbitmq-integration.md` and `obs-integration.md`).
+- **No sensitive data exposed**: endpoints return only IBS request
+  numbers, package names, codestream names, and states.
+
+## Dependencies
+
+- `ibs-rabbitmq-integration.md` — consumer architecture, connection
+  management, routing key bindings
+- `obs-integration.md` — IBS REST API and diff API
+- `package-tracking.md` — `TicketPackageCodestream` model,
+  `add_package_to_ticket` trigger
+- `tickets.md` — ticket model and access rules
+- `fetcher-infrastructure.md` — `BaseFetcher` base class contract
+
 ## Scope Exclusions
 
 The following are explicitly out of scope for this feature:
