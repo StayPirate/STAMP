@@ -161,6 +161,29 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
                            │  total_items_failed             │
                            └─────────────────────────────────┘
 
+┌──────────────────────────────────┐
+│  SubmissionRequest               │ (M:N via join table)
+│                                  │──────┐
+│  request_number (UQ)             │      │
+│  package_name                    │      ▼
+│  codestream_name                 │  ┌──────────────────────────────────┐
+│  state                           │  │  SubmissionRequestCodestream     │
+│  author                          │  │                                  │
+│  incident_number ─ ─ ─ ─ ─ ─ ┐  │  │  submission_request_id (FK)      │
+└──────────────────────────────────┘  │  ticket_package_codestream_id(FK)│
+                               │      └──────────────────────────────────┘
+                               │
+                               ▼ (implicit link via incident_number)
+┌──────────────────────────────────┐
+│  ReleaseRequest                  │
+│                                  │
+│  request_number (UQ)             │
+│  package_name                    │
+│  codestream_name                 │
+│  state                           │
+│  incident_number                 │
+└──────────────────────────────────┘
+
 * tpc_id = ticket_package_codestream_id (abbreviated for diagram readability)
 ```
 
@@ -680,6 +703,65 @@ retention task after the 90-day individual retention window.
 
 **Unique constraint**: (fetcher_name, week_start)
 
+### SubmissionRequest
+
+Tracks an IBS submission request (type `maintenance_incident`) relevant
+to STAMP. See `docs/features/submission-tracking.md`.
+
+| Column             | Type         | Constraints              | Description                              |
+|--------------------|--------------|--------------------------|------------------------------------------|
+| id                 | UUID         | PK                       | Internal identifier                      |
+| request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
+| package_name       | VARCHAR      | NOT NULL                 | Target package                           |
+| codestream_name    | VARCHAR      | NOT NULL                 | Target codestream                        |
+| state              | ENUM         | NOT NULL, DEFAULT open   | SubmissionRequestState (see below)       |
+| author             | VARCHAR      | nullable                 | IBS username who created the request     |
+| incident_number    | INTEGER      | nullable                 | Populated when state becomes `accepted`  |
+| superseded_by      | INTEGER      | nullable                 | Request number of the superseding request |
+| created_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record creation timestamp                |
+| updated_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record update timestamp                  |
+
+**SubmissionRequestState enum**: `open`, `accepted`, `declined`,
+`revoked`, `superseded`. `open` maps to IBS states `new` and `review`.
+`declined` is non-final (can revert to `open` on reopen).
+
+### ReleaseRequest
+
+Tracks an IBS release request (type `maintenance_release`) relevant
+to STAMP. See `docs/features/submission-tracking.md`.
+
+| Column             | Type         | Constraints              | Description                              |
+|--------------------|--------------|--------------------------|------------------------------------------|
+| id                 | UUID         | PK                       | Internal identifier                      |
+| request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
+| package_name       | VARCHAR      | NOT NULL                 | Target package                           |
+| codestream_name    | VARCHAR      | NOT NULL                 | Target codestream                        |
+| state              | ENUM         | NOT NULL, DEFAULT open   | ReleaseRequestState (see below)          |
+| incident_number    | INTEGER      | NOT NULL                 | Maintenance incident number              |
+| created_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record creation timestamp                |
+| updated_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record update timestamp                  |
+
+**ReleaseRequestState enum**: `open`, `accepted`, `declined`, `revoked`.
+`open` maps to IBS states `new` and `review`. `declined` is non-final.
+
+**Implicit link**: `SubmissionRequest.incident_number =
+ReleaseRequest.incident_number` — the maintenance incident is not a
+separate entity but an implicit linking concept.
+
+### SubmissionRequestCodestream
+
+Links a `SubmissionRequest` to the specific `TicketPackageCodestream`
+records whose CVEs are mentioned in the request's diff.
+
+| Column                        | Type      | Constraints                                | Description                        |
+|-------------------------------|-----------|--------------------------------------------|------------------------------------|
+| id                            | UUID      | PK                                         | Internal identifier                |
+| submission_request_id         | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
+| ticket_package_codestream_id  | UUID      | FK(ticket_package_codestream.id), NOT NULL | Related codestream record          |
+| created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
+
+**Unique constraint**: (submission_request_id, ticket_package_codestream_id)
+
 ## Indexes
 
 TBD — will be defined based on query patterns during implementation.
@@ -691,9 +773,9 @@ TBD — will be defined based on query patterns during implementation.
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditLog`,
-  `FetcherRunWeeklyAggregate`, and `RoleMapping` only have `created_at`
-  because they are immutable write-once records or are replaced rather
-  than updated in place —
+  `FetcherRunWeeklyAggregate`, `SubmissionRequestCodestream`, and `RoleMapping`
+  only have `created_at` because they are immutable write-once records or are
+  replaced rather than updated in place —
   `ProductRepository` records are replaced during SMELT sync, never updated
   in place; `PackageBugownerMember` records are deleted and recreated when
   group membership changes)
