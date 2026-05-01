@@ -44,9 +44,9 @@ fetcher as a catch-up mechanism for events missed during downtime.
   connection time. Exclusive queues are transient: messages published while
   the consumer is disconnected are lost
 
-### Consumed Event
+### Consumed Events
 
-Only one event type is consumed:
+Three event types are consumed:
 
 **`suse.obs.package.commit`** — emitted when a source package is committed
 to any IBS project.
@@ -60,8 +60,33 @@ to any IBS project.
 | `files`       | string | Changed files (truncated by IBS at ~800 chars) |
 | `user`        | string | User who committed the change              |
 
-The routing key for binding is `suse.obs.package.commit`. The `suse`
-prefix is the IBS scope; the public OBS instance uses `opensuse`.
+**`suse.obs.request.create`** — emitted when a new request is created in
+IBS. Used for submission requests (type `maintenance_incident`) and
+release requests (type `maintenance_release`).
+
+**`suse.obs.request.state_change`** — emitted when a request transitions
+to a conclusive state (accepted, declined, revoked, superseded).
+Non-conclusive transitions (e.g., `declined -> new` on reopen) do NOT
+emit this event.
+
+Both request events share the same payload structure:
+
+| Payload field | Type   | Description                               |
+|---------------|--------|-------------------------------------------|
+| `number`      | int    | IBS request number                         |
+| `author`      | string | Original request creator                   |
+| `actions`     | array  | List of actions (filter by `type` field)   |
+| `state`       | string | Current state (for `state_change`: new state) |
+| `oldstate`    | string | Previous state (only in `state_change`)    |
+| `who`         | string | User who performed the state change        |
+
+For full payload details and processing logic, see
+`docs/features/submission-tracking.md`, sections "Data Sources" and
+"Processing Pipelines".
+
+The routing keys for binding are `suse.obs.package.commit`,
+`suse.obs.request.create`, and `suse.obs.request.state_change`. The
+`suse` prefix is the IBS scope; the public OBS instance uses `opensuse`.
 
 ### Events Evaluated and Rejected
 
@@ -84,8 +109,9 @@ RabbitMQ broker and processes commit events in real-time.
 #### Lifecycle
 
 1. **Startup**: connect to `rabbit.suse.de`, declare an exclusive queue,
-   bind it to the `pubsub` exchange with routing key
-   `suse.obs.package.commit`
+   bind it to the `pubsub` exchange with routing keys
+   `suse.obs.package.commit`, `suse.obs.request.create`, and
+   `suse.obs.request.state_change`
 2. **Consume loop**: for each incoming message, execute the processing
    pipeline (see [Processing Pipeline](#processing-pipeline))
 3. **Reconnection**: on connection loss, reconnect with exponential backoff
@@ -104,10 +130,15 @@ Configuration:
 - `IBS_RABBITMQ_URL`: broker URL (default: `amqps://suse:suse@rabbit.suse.de`)
 - `IBS_RABBITMQ_ENABLED`: boolean to enable/disable the consumer
   (default: `true`)
-- `IBS_RABBITMQ_ROUTING_KEY`: routing key filter (default:
-  `suse.obs.package.commit`)
+- `IBS_RABBITMQ_ROUTING_KEYS`: comma-separated routing keys (default:
+  `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change`)
 
 ### Processing Pipeline
+
+The consumer dispatches messages based on routing key. The
+`suse.obs.package.commit` pipeline is described below. The
+`suse.obs.request.create` and `suse.obs.request.state_change` pipelines
+are specified in `docs/features/submission-tracking.md`.
 
 For each `suse.obs.package.commit` event:
 
@@ -168,15 +199,14 @@ For each `suse.obs.package.commit` event:
 ### Filtering: Application-side Only
 
 RabbitMQ topic exchanges allow wildcard filtering on routing key segments,
-but the IBS routing key for commit events is `suse.obs.package.commit` —
-the project and package names are in the JSON payload, not in the routing
-key. Therefore:
+but the IBS routing keys encode the event type, not the project or package
+name — those are in the JSON payload. Therefore:
 
 - **No broker-level filtering** by project or package is possible
-- The consumer receives **all** `package.commit` events from IBS
-- Filtering by active codestream (step 2) is performed in the consumer
-  process using an in-memory set lookup — this is very fast (sub-microsecond
-  per event)
+- The consumer receives **all** events matching the bound routing keys
+- Filtering by active codestream and tracked package is performed in the
+  consumer process using in-memory set lookups — this is very fast
+  (sub-microsecond per event)
 
 The expected volume is manageable: most commits on IBS are to development
 projects (`Devel:*`, `SUSE:Factory`), not to `SUSE:SLE-*:Update`
@@ -224,7 +254,7 @@ The two mechanisms are fully independent:
 |---|---|---|---|
 | `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL |
 | `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer |
-| `IBS_RABBITMQ_ROUTING_KEY` | string | `suse.obs.package.commit` | Routing key for binding |
+| `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys for binding |
 | `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay in seconds |
 | `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay in seconds |
 
