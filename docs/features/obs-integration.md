@@ -28,8 +28,9 @@ and release detection. STAMP interacts with two separate OBS instances:
 ### Key API Operations
 
 The following IBS API endpoints are used by STAMP for codestream-level
-release detection (see `docs/features/package-tracking.md`, section
-"Codestream-level Detection"):
+release detection (see `docs/features/package-tracking.md`), package
+bugowner resolution (see `docs/features/package-bugowner.md`), and
+submission request tracking (see `docs/features/submission-tracking.md`):
 
 #### Project Source Info
 
@@ -97,6 +98,63 @@ section):
 - `GET /person/{userid}` — user email and real name
 - `GET /group/{group_name}` — group email and member list
 
+#### Request Search
+
+```
+GET /request?view=collection&project={project}&states={states}
+```
+
+Returns an XML `<collection>` of `<request>` elements matching the given
+filters. Used by the `RequestSyncFetcher` to discover open requests and
+reconcile state drift. Supports pagination (`limit`, `offset`) and
+additional filters:
+
+- `types` — comma-separated action types (e.g.,
+  `maintenance_incident,maintenance_release`)
+- `states` — comma-separated states (e.g., `new,review,accepted`)
+- `package` — filter by target package name
+- `created_at_from` — ISO 8601 datetime lower bound
+
+See `docs/features/submission-tracking.md` for full usage details.
+
+#### Request Detail
+
+```
+GET /request/{number}
+```
+
+Returns full details of a single request including current state and
+action list. Used by the `RequestSyncFetcher` to reconcile requests
+that are no longer in `new`/`review` state.
+
+#### Request Diff
+
+```
+POST /request/{id}?cmd=diff&withissues=1&view=xml
+```
+
+Returns the diff of the request with structured issue references.
+Unlike the source diff endpoint, operates directly on the request — no
+need for source/target MD5 checksums.
+
+Response includes an `<issues>` block identical in format to the source
+diff endpoint:
+
+```xml
+<sourcediff>
+  <issues>
+    <issue tracker="cve" name="CVE-2025-1234" state="added"/>
+    <issue tracker="cve" name="CVE-2024-9999" state="changed"/>
+  </issues>
+</sourcediff>
+```
+
+Used by `correlate_submission_request` to extract CVE-IDs from
+submission requests. Only issues with `state="added"` and
+`tracker="cve"` are processed.
+
+See `docs/features/submission-tracking.md` for the correlation logic.
+
 ### Data Model
 
 IBS-related data is stored in the following tables (see `docs/data-model.md`):
@@ -130,6 +188,17 @@ Methods:
   `tracker` equal to `cve` or `bnc`, and returns the filtered list. The
   filtering is performed here in the client so the
   `CodestreamReleaseDetector` receives pre-filtered results.
+- `get_request_diff_issues(request_number: int) -> list[DiffIssue]`: calls
+  `POST /request/{id}?cmd=diff&withissues=1&view=xml`, parses the XML
+  response, filters for issues with `state="added"` and `tracker="cve"`,
+  and returns the filtered list. Used by `correlate_submission_request`.
+- `search_requests(project: str, **filters) -> list[RequestInfo]`: calls
+  `GET /request?view=collection` with the given filters, parses the XML
+  response, and returns structured request data. Used by the
+  `RequestSyncFetcher` and `discover_submissions_for_ticket_package`.
+- `get_request(number: int) -> RequestInfo`: calls
+  `GET /request/{number}`, returns full request details. Used by the
+  `RequestSyncFetcher` to reconcile individual request states.
 
 Configuration is injected via the application settings (`IBS_API_URL`,
 `IBS_USERNAME`, `IBS_PASSWORD`).
@@ -154,6 +223,15 @@ section "Codestream-level Detection".
   is detected for a CVE with no existing ticket (triggered by either the
   periodic fetcher or the `IBSEventConsumer`). Fetches CVE data from
   NVD, creates the ticket, and resolves packages via SMELT.
+- `sync_requests` (`RequestSyncFetcher`): periodic task (every 24 hours
+  at 02:30 UTC) that discovers missed submission/release requests and
+  reconciles state drift. See `docs/features/submission-tracking.md`.
+- `correlate_submission_request`: on-demand task that calls the IBS
+  request diff API, extracts CVE-IDs, and creates join records linking
+  submissions to tickets.
+- `discover_submissions_for_ticket_package`: on-demand sub-operation task
+  enqueued by `add_package_to_ticket` to retroactively discover existing
+  SRs/RRs for a newly tracked package.
 
 ### Business Rules
 
