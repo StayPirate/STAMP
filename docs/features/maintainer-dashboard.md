@@ -256,16 +256,18 @@ a short message, and a "Back to My Packages" link pointing to
 
 **Evaluation order** (first match wins):
 
-1. Ticket does not exist or is soft-deleted → "not found"
-2. Ticket status is not `Analyzed` → status-specific message
-3. User is not a bugowner of any package in the ticket → "no packages"
-4. All checks pass → normal view
+1. Ticket does not exist → "not found" (404)
+2. Ticket is soft-deleted → "removed" (410)
+3. Ticket status is not `Analyzed` → status-specific message
+4. User is not a bugowner of any package in the ticket → "no packages"
+5. All checks pass → normal view
 
 **Messages by scenario:**
 
 | Condition | HTTP | Icon | Title | Message |
 |-----------|------|------|-------|---------|
-| Ticket does not exist or is soft-deleted | 404 | `CircleX` | Ticket not found | The ticket you're looking for doesn't exist or may have been removed. |
+| Ticket does not exist | 404 | `CircleX` | Ticket not found | The ticket you're looking for doesn't exist or may have been removed. |
+| Ticket is soft-deleted | 410 | `CircleX` | Ticket removed | This ticket has been removed and is no longer accessible. Contact the security team if you need more information. |
 | Ticket status is `New` or `Analysis` | 200 | `Clock` | Ticket not yet analyzed | This ticket is still being evaluated by the security team. Check back later. |
 | Ticket status is `Resolved` | 200 | `CheckCircle` | Ticket resolved | All fixes for this ticket have been completed. No further action is needed. |
 | Ticket status is `Ignored` | 200 | `EyeOff` | Ticket ignored | This security issue has been evaluated and does not require action. No fixes are needed. |
@@ -274,12 +276,9 @@ a short message, and a "Back to My Packages" link pointing to
 
 **Implementation notes:**
 
-- **Soft-deleted tickets**: the per-ticket API endpoint returns 404 (not
-  410) for non-admin users, diverging from the general convention
-  established in `docs/features/tickets.md` (which specifies 410 Gone
-  for other ticket endpoints). This exception is intentional: maintainer
-  links are shared externally and must not reveal whether a ticket was
-  administratively removed.
+- **Soft-deleted tickets**: the per-ticket API endpoint returns 410 Gone
+  for non-admin users, consistent with all other ticket endpoints (see
+  `docs/features/tickets.md`).
 - **Duplicated link**: the message includes a clickable link to the
   original ticket's per-ticket view (`/my-packages/ticket/{duplicate_of_id}`).
   If the original ticket is also in an abnormal state, the user will see
@@ -350,7 +349,8 @@ specific ticket, filtered to the authenticated user's packages.
 | Code | Condition |
 |------|-----------|
 | 200  | Ticket exists — response contains either normal data or an error state object |
-| 404  | Ticket does not exist or is soft-deleted (non-admin caller) |
+| 404  | Ticket does not exist |
+| 410  | Ticket is soft-deleted (non-admin caller) |
 
 **Response (normal view)**: returned when ticket status is `Analyzed` and
 the user is a bugowner of at least one package. Object with three arrays
