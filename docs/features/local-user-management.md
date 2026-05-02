@@ -138,33 +138,34 @@ sentinel manage-user update \
 
 ### `sentinel manage-user delete`
 
-Deactivates or permanently removes a user account.
+Deactivates a user account (soft delete only).
 
 ```
 sentinel manage-user delete \
-  --username <username> \
-  [--hard]
+  --username <username>
 ```
 
 **Parameters**:
 
 | Parameter    | Required | Description                                    |
 |--------------|----------|------------------------------------------------|
-| `--username` | Yes      | Username of the user to delete                  |
-| `--hard`     | No       | Permanently remove the record from the database |
+| `--username` | Yes      | Username of the user to deactivate              |
 
 **Behavior**:
 
 1. Checks `ALLOW_LOCAL_USERS` — exits with error if disabled
 2. Looks up the user by `username` — if not found, exits with error:
    `"Error: User '{username}' not found."`
-3. **Without `--hard`** (soft delete):
-   - Sets `User.active = false`
-   - Prints: `"Deactivated user '{username}'."`
-4. **With `--hard`** (hard delete):
-   - Removes all associated `UserRole` records
-   - Removes the `User` record from the database
-   - Prints: `"Permanently deleted user '{username}'."`
+3. If the user is already inactive, exits with error:
+   `"Error: User '{username}' is already deactivated."`
+4. Sets `User.active = false`
+5. Prints: `"Deactivated user '{username}'."`
+
+This command does not permanently remove the user record from the
+database. The User record is preserved to maintain referential integrity
+with TicketEvent, ticket assignments, and UserRole audit data. This is
+consistent with LDAP sync deactivation behavior. For full database
+cleanup in development environments, reset the database directly.
 
 **Exit codes**: 0 on success, 1 on validation error
 
