@@ -67,11 +67,26 @@ sentinel manage-user create \
 **Behavior**:
 
 1. Checks `ALLOW_LOCAL_USERS` — exits with error if disabled
-2. Validates that no user exists with the same `username` or `email` — if
-   a conflict is found, exits with error:
+2. Validates username format: must be 1-64 characters, start with a
+   letter, and contain only lowercase letters, numbers, dots, hyphens,
+   and underscores (`[a-z0-9._-]`). If invalid, exits with error:
+   `"Error: Invalid username '{value}'. Username must be 1-64 characters,
+   start with a letter, and contain only lowercase letters, numbers, dots,
+   hyphens, and underscores."`
+3. For each `--role` provided, validates that it is a recognized role. If
+   not, exits with error:
+   `"Error: Invalid role '{value}'. Valid roles are: {list}."`
+   The list of valid roles is derived from the system's role definitions
+   at runtime
+4. Validates email format — if the provided email is not syntactically
+   valid, exits with error:
+   `"Error: Invalid email format '{value}'."`
+5. Validates that no user exists with the same `username` or `email`
+   (including inactive/deactivated users) — if a conflict is found, exits
+   with error:
    `"Error: A user with username '{username}' already exists."` or
    `"Error: A user with email '{email}' already exists."`
-3. Creates a `User` record with:
+6. Creates a `User` record with:
    - `username` = provided value
    - `email` = provided value
    - `full_name` = provided value or `NULL`
@@ -80,9 +95,9 @@ sentinel manage-user create \
    - `ldap_dn` = `NULL`
    - `manager_uid` = `NULL`
    - `ldap_synced_at` = `NULL`
-4. For each `--role` provided, creates a `UserRole` record with
+7. For each `--role` provided, creates a `UserRole` record with
    `ad_group_cn = '_manual'` and `assigned_by = NULL` (CLI action)
-5. Prints confirmation:
+8. Prints confirmation:
    `"Created user '{username}' ({email}) with roles: {roles}."`
    or `"Created user '{username}' ({email}) with no roles."` if no roles
    were specified
@@ -101,7 +116,8 @@ sentinel manage-user update \
   [--email <new_email>] \
   [--full-name <new_name>] \
   [--add-role <role>] ... \
-  [--remove-role <role>] ...
+  [--remove-role <role>] ... \
+  [--reactivate]
 ```
 
 **Parameters**:
@@ -113,25 +129,45 @@ sentinel manage-user update \
 | `--full-name`    | No       | No         | New display name                            |
 | `--add-role`     | No       | Yes        | Role to add: `admin`, `vulnerability_analyst` |
 | `--remove-role`  | No       | Yes        | Role to remove: `admin`, `vulnerability_analyst` |
+| `--reactivate`   | No       | No         | Reactivate a previously deactivated user    |
 
 **Behavior**:
 
 1. Looks up the user by `username` — if not found, exits with error:
    `"Error: User '{username}' not found."`
-2. If `--email` is provided, validates uniqueness and updates
-3. If `--full-name` is provided, updates
-4. For each `--add-role`, creates a `UserRole` record with
+2. If no modification flags are provided (`--email`, `--full-name`,
+   `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
+   `"No changes specified for user '{username}'."` and exits with code 0
+3. If any role appears in both `--add-role` and `--remove-role`, exits
+   with error:
+   `"Error: Role '{role}' cannot be both added and removed in the same
+   invocation."`
+4. For each role value in `--add-role` and `--remove-role`, validates that
+   it is a recognized role. If not, exits with error:
+   `"Error: Invalid role '{value}'. Valid roles are: {list}."`
+   The list of valid roles is derived from the system's role definitions
+   at runtime
+5. If `--email` is provided, validates email format — if not
+   syntactically valid, exits with error:
+   `"Error: Invalid email format '{value}'."`
+   Then validates uniqueness and updates
+6. If `--full-name` is provided, updates
+7. If `--reactivate` is provided: if the user is already active, this is
+   a no-op. If the user is inactive, sets `User.active = true`
+8. For each `--add-role`, creates a `UserRole` record with
    `ad_group_cn = '_manual'` and `assigned_by = NULL` if not already
    present for that user/role/`_manual` combination. Adding a role the
    user already has as a manual assignment is a no-op
-5. For each `--remove-role`:
+9. For each `--remove-role`:
    - If the role has `ad_group_cn != '_manual'` (AD-derived), exits with
      error:
      `"Error: Cannot remove AD-derived role '{role}'. This role is
      managed by Active Directory group membership."`
    - Otherwise, removes the `UserRole` record where
-     `ad_group_cn = '_manual'`
-6. Prints summary of changes:
+     `ad_group_cn = '_manual'`. If the user does not have the role as a
+     manual assignment, this is a no-op (idempotent behavior, consistent
+     with `--add-role`)
+10. Prints summary of changes:
    `"Updated user '{username}': {list of changes}."`
 
 **Exit codes**: 0 on success, 1 on validation error
