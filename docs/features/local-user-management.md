@@ -81,7 +81,7 @@ sentinel manage-user create \
    - `manager_uid` = `NULL`
    - `ldap_synced_at` = `NULL`
 4. For each `--role` provided, creates a `UserRole` record with
-   `source = manual`
+   `ad_group_cn = '_manual'` and `assigned_by = NULL` (CLI action)
 5. Prints confirmation:
    `"Created user '{username}' ({email}) with roles: {roles}."`
    or `"Created user '{username}' ({email}) with no roles."` if no roles
@@ -121,17 +121,16 @@ sentinel manage-user update \
 2. If `--email` is provided, validates uniqueness and updates
 3. If `--full-name` is provided, updates
 4. For each `--add-role`, creates a `UserRole` record with
-   `source = manual` if not already present. Adding a role the user
-   already has (regardless of source) is a no-op
+   `ad_group_cn = '_manual'` and `assigned_by = NULL` if not already
+   present for that user/role/`_manual` combination. Adding a role the
+   user already has as a manual assignment is a no-op
 5. For each `--remove-role`:
-   - If the role has `source = ad_group`, exits with error:
+   - If the role has `ad_group_cn != '_manual'` (AD-derived), exits with
+     error:
      `"Error: Cannot remove AD-derived role '{role}'. This role is
      managed by Active Directory group membership."`
-   - If removing the `admin` role would leave the system with zero active
-     admins, exits with error:
-     `"Error: Cannot remove the last Admin role. At least one admin must
-     exist."`
-   - Otherwise, removes the `UserRole` record
+   - Otherwise, removes the `UserRole` record where
+     `ad_group_cn = '_manual'`
 6. Prints summary of changes:
    `"Updated user '{username}': {list of changes}."`
 
@@ -159,13 +158,10 @@ sentinel manage-user delete \
 1. Checks `ALLOW_LOCAL_USERS` — exits with error if disabled
 2. Looks up the user by `username` — if not found, exits with error:
    `"Error: User '{username}' not found."`
-3. If the user is the last active admin, exits with error:
-   `"Error: Cannot delete the last Admin. At least one admin must
-   exist."`
-4. **Without `--hard`** (soft delete):
+3. **Without `--hard`** (soft delete):
    - Sets `User.active = false`
    - Prints: `"Deactivated user '{username}'."`
-5. **With `--hard`** (hard delete):
+4. **With `--hard`** (hard delete):
    - Removes all associated `UserRole` records
    - Removes the `User` record from the database
    - Prints: `"Permanently deleted user '{username}'."`
@@ -212,18 +208,20 @@ used for:
    `ALLOW_LOCAL_USERS=true`. The `update` command does not require this
    flag because it operates on existing users and is needed for
    production bootstrap. See the Configuration section for details
-3. **At least one admin**: the system must always have at least one active
-   user with the Admin role. The `update` and `delete` commands enforce
-   this constraint before removing an admin role or deactivating/deleting
-   an admin user
+3. **No "last admin" enforcement**: the CLI does not enforce a minimum
+   admin count. If the last admin is removed or deactivated via CLI, the
+   system will have zero active admins until an operator runs
+   `sentinel manage-user update --username <user> --add-role admin`.
+   This is consistent with the LDAP sync behavior (see
+   `docs/features/ldap-directory.md`, Business Rule 6)
 4. **No duplicate usernames or emails**: the `create` command enforces
    uniqueness. The `update` command enforces uniqueness when changing the
    email
 5. **Local users are marked by `ldap_uid = NULL`**: this is the canonical
    way to distinguish local users from LDAP-synced users. No additional
    flag or column is needed
-6. **Role source is `manual`**: all roles assigned via `manage-user`
-   commands have `source = manual`
+6. **Role origin is `_manual`**: all roles assigned via `manage-user`
+   commands have `ad_group_cn = '_manual'` and `assigned_by = NULL`
 
 ## Security Considerations
 

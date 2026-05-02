@@ -57,16 +57,26 @@ The `username` field is populated from `sAMAccountName`, `email` from
 
 ### Changes to UserRole table
 
-A `source` field is added to track the origin of each role assignment.
+The existing `UserRole` table is extended with an `ad_group_cn` column
+that tracks the origin of each role assignment, and an `assigned_by`
+column that records which user performed the assignment (NULL for system
+actions). The previous `source` ENUM column is removed — it is now
+derivable from `ad_group_cn` (`_manual` = manual, anything else = AD).
 
-| Column | Type | Constraints | Description                                      |
-|--------|------|-------------|--------------------------------------------------|
-| source | ENUM | NOT NULL    | `ad_group` (from AD group mapping) or `manual` (assigned by admin) |
+| Column       | Type        | Constraints                   | Description                        |
+|--------------|-------------|-------------------------------|------------------------------------|
+| ad_group_cn  | VARCHAR     | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
+| assigned_by  | UUID        | FK(user.id), nullable         | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
 
-Roles with `source = ad_group` cannot be removed by an admin through the
-UI or API. They are managed exclusively by the sync process based on AD
-group membership and the configured role mappings. Roles with
-`source = manual` can be added or removed by an admin at any time.
+Roles with `ad_group_cn != '_manual'` cannot be removed by an admin
+through the UI or API. They are managed exclusively by the sync process
+based on AD group membership and the configured role mappings. Roles
+with `ad_group_cn = '_manual'` can be added or removed by an admin at
+any time.
+
+**Unique constraint**: (user_id, role, ad_group_cn) — allows a user to
+hold the same role from multiple AD groups simultaneously (one record
+per group), plus an optional manual assignment.
 
 ### New table: RoleMapping
 
@@ -111,17 +121,42 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    that `cn` or query AD for the `sAMAccountName` of that DN) and set
    `manager_uid` to the corresponding `ldap_uid`. If the manager is not
    found in the User table, set `manager_uid = NULL`
-4. **Apply role mappings**: for each `RoleMapping` in the database:
-   - Identify all users whose `MEMBEROF` includes the mapped
-     `ad_group_cn`
-   - For each such user, ensure a `UserRole` record exists with the
-     mapped role and `source = ad_group`
-   - For users who previously had a `UserRole` with `source = ad_group`
-     for this mapping but are no longer in the AD group, remove the
-     `UserRole` record
-5. **Handle deactivations**: for each `User` with `ldap_uid IS NOT NULL`
-   that is not present in the AD results or whose `EMPLOYEESTATUS` is not
-   `Active`:
+4. **Apply role mappings** (collect-then-diff): instead of processing
+   each mapping independently, the sync computes the expected set of
+   AD-derived roles and applies the difference:
+   - For each `RoleMapping` in the database, identify all users whose
+     `MEMBEROF` includes the mapped `ad_group_cn`
+   - Build the expected set: `{(user_id, role, ad_group_cn)}` for all
+     matching users across all mappings
+   - Compare with the current set of `UserRole` records where
+     `ad_group_cn != '_manual'`
+   - **Add** records in the expected set that are missing from the DB
+     (create `UserRole` with the appropriate `ad_group_cn` and
+     `assigned_by = NULL`)
+   - **Remove** records in the DB that are not in the expected set
+   - This approach is order-independent: regardless of which mappings
+     are processed first, the result is the same
+5. **Handle deactivations** (with safety check): for each `User` with
+   `ldap_uid IS NOT NULL` that is not present in the AD results or whose
+   `EMPLOYEESTATUS` is not `Active`:
+
+   **Safety checks** (evaluated before any deactivation is performed):
+   - If the AD query returned **zero results**, abort the entire sync
+     immediately with status `failure` and log ERROR:
+     `"AD returned zero entries. Aborting sync to prevent mass
+     deactivation. Verify AD connectivity."`
+   - Otherwise, count how many users would be deactivated in this run.
+     If the count exceeds `LDAP_SYNC_MAX_DEACTIVATIONS` (env var,
+     default: **20**), **skip the entire deactivation step**:
+     - Steps 2-4 (upsert, manager, role mappings) have already been
+       processed normally
+     - Log ERROR: `"LDAP sync would deactivate {n} users (threshold:
+       {max}). Deactivation step skipped. Review manually and re-run
+       with increased threshold if intentional."`
+     - Mark the run as `partial`
+     - Do NOT process any deactivations
+
+   **Deactivation processing** (when safety checks pass):
    - Set `User.active = false`
    - Revoke all API keys belonging to this user (see
      `docs/features/sso-authentication.md`, planned)
@@ -177,7 +212,8 @@ Commands") for full details on the `sentinel fetcher` command group.
 The `manage-user` command is documented in
 `docs/features/local-user-management.md`. In this bootstrap context, the
 user already exists (created by the LDAP sync in step 1), and
-`manage-user update` adds the Admin role with `source = manual`.
+`manage-user update` adds the Admin role with `ad_group_cn = '_manual'`
+and `assigned_by = NULL` (CLI action).
 
 ## API Endpoints
 
@@ -199,7 +235,7 @@ Query parameters:
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
   `sort_order`)
 
-Response includes `roles` array with `source` field for each role.
+Response includes `roles` array with `ad_group_cn` field for each role.
 
 ### User detail
 
@@ -212,7 +248,7 @@ Returns full user profile including:
   `manager`)
 - `manager`: resolved manager object (`id`, `username`, `full_name`,
   `email`) or `null`
-- `roles`: array of `{ role, source, created_at }`
+- `roles`: array of `{ role, ad_group_cn, assigned_by, created_at }`
 
 Public endpoint (read-only).
 
@@ -233,14 +269,16 @@ Request body:
 ```
 
 Validation rules:
-- Cannot remove roles with `source = ad_group` — returns 400 with
+- Cannot remove roles with `ad_group_cn != '_manual'` — returns 400 with
   `"Cannot remove AD-derived role '{role}'. This role is managed by the
   AD group '{ad_group_cn}'."`
-- Cannot remove the last Admin role in the system — returns 409 with
-  `"Cannot remove the last Admin role. At least one admin must exist."`
-- Adding a role that the user already has (regardless of source) is a
+- Cannot remove your own Admin role — returns 403 with
+  `"Cannot remove your own Admin role."`
+- Adding a role that the user already has as a manual assignment is a
   no-op (idempotent)
-- Creates a `UserRole` record with `source = manual` for each added role
+- Creates a `UserRole` record with `ad_group_cn = '_manual'` and
+  `assigned_by` set to the authenticated admin's user ID for each added
+  role
 - Returns 200 with updated user profile including all roles
 
 ### Role Mapping management
@@ -322,7 +360,8 @@ Processing:
 1. Create the `RoleMapping` record
 2. Query AD live for members of the specified group
 3. For each member found in the User table, create a `UserRole` with
-   `source = ad_group` (if not already present)
+   `ad_group_cn` set to the mapping's group CN and `assigned_by = NULL`
+   (if not already present for that user/role/group combination)
 4. Return the created mapping with the count of affected users
 
 ```
@@ -342,14 +381,13 @@ Response (confirmation data):
 ```
 
 Processing:
-1. Remove all `UserRole` records with `source = ad_group` that were
-   created by this mapping (matching role and users who are members of
-   the AD group)
+1. Remove all `UserRole` records where `ad_group_cn` matches the
+   mapping's group CN and `role` matches the mapping's role
 2. Delete the `RoleMapping` record
 3. Return 200 with the summary
 
-Note: users who also have the same role with `source = manual` will
-retain the role.
+Note: users who also have the same role via a different AD group mapping
+or with `ad_group_cn = '_manual'` will retain the role.
 
 ## UI Requirements
 
@@ -362,8 +400,8 @@ Columns:
 - Full name
 - Username (ldap_uid)
 - Email
-- Roles (badges showing role name and source icon: lock for AD, pencil
-  for manual)
+- Roles (badges showing role name and origin icon: lock for AD-derived,
+  pencil for manual)
 - Active status
 - Manager name
 
@@ -439,9 +477,15 @@ Displays a table of all configured role mappings:
    - Assigned tickets are reassigned to the line manager (if the manager
      is active and has the VA role), otherwise set to unassigned
    - A TicketEvent is created for each reassignment
-6. **At least one admin**: the system must always have at least one
-   active user with the Admin role. The API and CLI enforce this
-   constraint
+6. **Admin self-removal protection**: an admin cannot remove their own
+   Admin role via the API. The Admin role can be removed from a user only
+   by a different admin, by the CLI, or by system actions (LDAP sync,
+   fetchers). The LDAP sync does NOT enforce any minimum admin count — if
+   the last active admin is deactivated in AD, the sync proceeds normally
+   and logs a WARNING: `"Last active admin '{username}' has been
+   deactivated by LDAP sync. Use 'sentinel manage-user update --username
+   <user> --add-role admin' to restore admin access."` Recovery is always
+   possible via CLI
 7. **Manager chain**: the `manager_uid` field enables traversal of the
    reporting chain by following User → manager → manager's manager, etc.
    This is resolved at query time, not pre-computed

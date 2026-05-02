@@ -60,7 +60,8 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │                  │
        │                   │  user_id (FK)    │
        │                   │  role            │
-       │                   │  source          │
+       │                   │  ad_group_cn     │
+       │                   │  assigned_by(FK) │
        │                   └──────────────────┘
        │
        │                   ┌──────────────────┐
@@ -385,20 +386,24 @@ the same access as an unauthenticated user (read-only on public data).
 ### UserRole
 
 Junction table linking users to roles. A user may have zero, one, or
-multiple roles assigned. Each role has a `source` indicating whether it
-was derived from an AD group mapping or manually assigned by an admin.
-Roles with `source = ad_group` are managed by the LDAP sync process and
-cannot be removed manually. See `docs/features/ldap-directory.md`.
+multiple roles assigned. The `ad_group_cn` column tracks the origin of
+each role assignment: if it contains an AD group common name, the role
+was derived from that group's RoleMapping; if it contains the sentinel
+value `_manual`, the role was assigned directly by an admin or CLI.
+Roles with `ad_group_cn != '_manual'` are managed by the LDAP sync
+process and cannot be removed via the API. See
+`docs/features/ldap-directory.md`.
 
-| Column     | Type        | Constraints                  | Description                      |
-|------------|-------------|------------------------------|----------------------------------|
-| id         | UUID        | PK                           | Internal identifier              |
-| user_id    | UUID        | FK(user.id), NOT NULL        | Associated user                  |
-| role       | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst    |
-| source     | ENUM        | NOT NULL                     | RoleSource: `ad_group` (from AD group mapping), `manual` (assigned by admin or CLI) |
-| created_at | TIMESTAMP   | NOT NULL, DEFAULT            | When the role was assigned       |
+| Column       | Type        | Constraints                  | Description                      |
+|--------------|-------------|------------------------------|----------------------------------|
+| id           | UUID        | PK                           | Internal identifier              |
+| user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
+| role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst    |
+| ad_group_cn  | VARCHAR     | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
+| assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
+| created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | When the role was assigned       |
 
-**Unique constraint**: (user_id, role)
+**Unique constraint**: (user_id, role, ad_group_cn)
 
 **Role enum values**:
 
@@ -407,12 +412,12 @@ cannot be removed manually. See `docs/features/ldap-directory.md`.
 | Admin             | Platform administration (users, settings, fetchers) |
 | Vulnerability Analyst  | CVE triage and assessment (tickets, packages, CVSS) |
 
-**RoleSource enum values**:
+**ad_group_cn semantics**:
 
-| Value     | Description                                                    |
-|-----------|----------------------------------------------------------------|
-| ad_group  | Derived from AD group membership via a RoleMapping rule        |
-| manual    | Assigned manually by an admin via API or CLI                   |
+| Value       | Meaning                                                        |
+|-------------|----------------------------------------------------------------|
+| `_manual`   | Role assigned manually by an admin via API or CLI              |
+| Any other value | AD group common name — role derived from that group's RoleMapping rule |
 
 ### RoleMapping
 

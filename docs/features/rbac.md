@@ -102,7 +102,7 @@ endpoints. Any SUSE employee can authenticate via id.suse.com.
 GET /api/v1/users/me
 ```
 
-Response: current user profile and roles (with source). Requires
+Response: current user profile and roles (with `ad_group_cn`). Requires
 authentication.
 
 ### User Management (Admin only)
@@ -119,7 +119,7 @@ List/search all users. Public endpoint (read-only). Supports `search`,
 GET /api/v1/users/{id}
 ```
 
-Get user detail including roles (with source) and resolved manager.
+Get user detail including roles (with `ad_group_cn`) and resolved manager.
 Public endpoint (read-only).
 
 ```
@@ -170,11 +170,10 @@ See `docs/data-model.md`. Key tables:
 
 - **User**: username, email, active status, LDAP fields (ldap_uid,
   ldap_dn, manager_uid, ldap_synced_at)
-- **UserRole**: junction table linking users to roles with source
-  (`ad_group` or `manual`)
+- **UserRole**: junction table linking users to roles with `ad_group_cn`
+  (AD group name or `_manual` for manual assignments)
 - **RoleMapping**: maps AD group names to Sentinel roles
 - **Role** enum: `Admin`, `Vulnerability Analyst`
-- **RoleSource** enum: `ad_group`, `manual`
 
 ## UI Requirements
 
@@ -185,7 +184,7 @@ See future `docs/features/sso-authentication.md`.
 
 ### User Management Page (Admin only)
 
-- Table of all users with their assigned roles and role sources
+- Table of all users with their assigned roles and role origins
 - Edit user roles (add/remove manual roles; AD-derived roles shown as
   locked)
 - Activate/deactivate user (note: deactivation is normally automatic via
@@ -197,12 +196,18 @@ See future `docs/features/sso-authentication.md`.
 
 ### User Profile
 
-- View own profile and roles (with source)
+- View own profile and roles (with origin)
 
 ## Business Rules
 
-1. There must always be at least one active user with the Admin role
-2. Users cannot change their own roles
+1. An admin cannot remove their own Admin role via the API. The Admin
+   role can be removed from a user only by a different admin, by the CLI,
+   or by system actions (LDAP sync). This protects against accidental
+   self-lockout. If the system ends up with zero active admins (e.g., the
+   last admin is deactivated by LDAP sync), recovery is possible via CLI:
+   `sentinel manage-user update --username <user> --add-role admin`
+2. Users cannot add roles to themselves (only admins can modify other
+   users' roles)
 3. Users cannot deactivate their own account
 4. Deactivated users cannot authenticate (SSO session is valid but Sentinel
    rejects inactive users)
