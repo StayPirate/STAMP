@@ -550,6 +550,7 @@ system action).
 | assignment                 | Ticket was assigned or reassigned                  |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
+| duplicate_target_changed   | Cascade update: the ticket's `duplicate_of_id` was re-pointed because its previous original was itself marked as duplicate. `old_value` is the previous original identifier (`SNTL-{n}`). `new_value` is the new original identifier. `user_id` is NULL (system action). |
 | package_added              | Package added to the ticket (manual by VA or automatic via CPE match / codestream detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
 | package_removed            | Package removed from ticket. `user_id` is set for VA-initiated removal, NULL for automatic removal (orphan cleanup when all codestreams removed). `old_value` contains the package name. `new_value` is NULL. `comment` is NULL for manual removal, `no_codestreams_remaining` for automatic. |
 | codestream_status_changed  | Codestream affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic eligibility rollup (all products AFFECTED_RESOLVED or a product returns to AFFECTED). |

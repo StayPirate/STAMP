@@ -110,9 +110,22 @@ An Admin can remove a CVE from a ticket via
 - A `TicketEvent` with `event_type = cve_removed` is created (see
   `docs/features/ticket-history.md`)
 - CVSS sync and release tracking cease applying to the ticket
+- Existing `TicketPackageCodestream` and `TicketPackageProduct` records
+  are preserved. However, without an associated CVE, automatic release
+  detection (both codestream-level and product-level) cannot function —
+  there is no CVE-ID to match in IBS diffs or `updateinfo.xml`
+  advisories. The VA must manually set these records to a final status
+  (`RELEASED`, `WONT_FIX`, or `IGNORED`) for the ticket to progress
+  toward Resolved. If a CVE is later re-associated with the ticket
+  (via `POST .../associate-cve`), automatic release detection resumes
+- `evaluate_ticket_status` is called after the dissociation: if severity
+  becomes `None` and the Analyzed gate requires severity, the ticket may
+  regress to Analysis
 - The CVE record itself is not deleted — it remains in the database.
-  Note: a subsequent scheduled CVE sync may re-create a ticket for this
-  CVE if no other ticket references it
+  If no other ticket references this CVE, a subsequent CVE sync will
+  create a new ticket for it — this is intentional to ensure CVEs are
+  not lost. If the Admin intends to re-associate the CVE with a
+  different ticket, this should be done before the next sync cycle
 
 **Required role**: Admin.
 
@@ -543,9 +556,29 @@ auto-assignment.
 
 - Any ticket can be marked as a duplicate of another ticket, from any
   status
+- **Target resolution**: when marking ticket A as duplicate of ticket B:
+  - If B is in `Duplicated` status, follow the `duplicate_of_id` chain
+    until a non-Duplicated ticket is found (the "ultimate original")
+  - A maximum chain depth of 10 is enforced; if exceeded, the operation
+    fails with 409 Conflict and an ERROR is logged (indicates data
+    corruption requiring manual intervention)
+  - If the resolved target equals ticket A, the operation fails with
+    400 Bad Request ("a ticket cannot be a duplicate of itself")
+  - `duplicate_of_id` is set to the resolved target (always a
+    non-Duplicated ticket)
+- **Cascade update**: when marking ticket B as duplicate of ticket C,
+  all existing tickets whose `duplicate_of_id` points to B are
+  automatically updated to point to C (the resolved target). For each
+  updated ticket, a `TicketEvent` is created with `event_type =
+  duplicate_target_changed`, `user_id = NULL` (system action),
+  `old_value` = previous original identifier, `new_value` = new
+  original identifier
+- **Invariant**: `duplicate_of_id` always references a ticket that is
+  NOT in `Duplicated` status. Multiple tickets may reference the same
+  original.
 - When marked as duplicate:
   - `status` is set to `Duplicated`
-  - `duplicate_of_id` is set to the original ticket's ID
+  - `duplicate_of_id` is set to the resolved target ticket's ID
   - `previous_status` stores the status before duplication
   - If the ticket had no assignee (`assignee_id = NULL`), the acting VA
     becomes the assignee (see
@@ -555,6 +588,14 @@ auto-assignment.
   - `duplicate_of_id` is cleared
   - `previous_status` is cleared
   - The ticket is reassigned to the VA who performed the revert
+  - After restoring the status, `evaluate_ticket_status` is called to
+    reconcile the restored status with current gate conditions. If the
+    gates for `previous_status` are no longer met (e.g., a CVSS
+    assessment was deleted while the ticket was Duplicated), the ticket
+    is automatically regressed to the appropriate status (Analysis or
+    Analyzed). This may produce two `TicketEvent` records in the same
+    transaction: `duplicate_removed` (user action) followed by
+    `status_change` (system action)
 
 ## Soft-Delete
 

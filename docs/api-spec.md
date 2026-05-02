@@ -134,7 +134,13 @@ automatically.
   ticket has an associated CVE. See `docs/features/tickets.md`.
 - `POST /api/v1/tickets/{ticket_id}/assign` — Assign or reassign a ticket
 - `POST /api/v1/tickets/{ticket_id}/ignore` — Mark ticket as ignored
-- `POST /api/v1/tickets/{ticket_id}/duplicate` — Mark ticket as duplicate
+- `POST /api/v1/tickets/{ticket_id}/duplicate` — Mark ticket as duplicate.
+  Request body: `{"duplicate_of_id": "<UUID or SNTL-{n}>"}`. The target is
+  resolved following the chain if it is itself Duplicated (see
+  `docs/features/tickets.md`, "Duplicate Handling"). All tickets previously
+  pointing to this ticket are cascade-updated to the resolved target.
+  Error responses: 400 (self-reference after resolution), 409 (chain depth
+  exceeded — data corruption, logged as ERROR), 404 (target ticket not found)
 - `POST /api/v1/tickets/{ticket_id}/revert-duplicate` — Revert duplicate status
 - `DELETE /api/v1/tickets/{ticket_id}` — Soft-delete a ticket (Admin role
   required). Sets `deleted_at` to the current timestamp. Creates a
