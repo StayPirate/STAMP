@@ -483,3 +483,36 @@ Before considering any ticket-related code change complete:
 The goal is to ensure that ticket status is always consistent with its
 underlying data. A service operation that modifies gate-relevant data
 without going through `ticket_mutations` is a bug.
+
+### 17. Specification completeness
+
+After creating or substantially modifying a feature specification in
+`docs/features/`, evaluate whether a gap analysis is needed:
+
+1. Invoke `@spec-gap-analyzer` when:
+   - A new feature specification is created in `docs/features/`
+   - An existing feature specification is modified with substantial
+     changes to business rules, state machines, data flows, or
+     operations
+2. Skip the analysis when:
+   - The change is purely cosmetic (typo fixes, formatting, rewording
+     without semantic change)
+   - Only clarifications or examples are added to an already-complete
+     spec
+3. If the analyzer identifies gaps rated as **High** severity (could
+   cause data corruption, incorrect behavior, or system failure),
+   address them in the specification before proceeding with
+   implementation
+4. Gaps rated as **Medium** severity (ambiguous behavior) should be
+   clarified in the specification in the same PR
+5. Gaps rated as **Low** severity (obvious implicit resolution) may be
+   deferred at the author's discretion
+6. When performing a full analysis across all specs (e.g., triggered
+   manually by the user), invoke `@spec-gap-analyzer` **once per spec**
+   in independent sessions. Do not combine multiple specs into a single
+   analysis
+
+The goal is to ensure that specifications are functionally complete
+before implementation begins — every operation, state transition, and
+user scenario should have its error paths, boundary conditions, and
+concurrency considerations explicitly specified.
