@@ -126,8 +126,23 @@ Public endpoint (read-only).
 PUT /api/v1/users/{id}/roles
 ```
 
-Add or remove manual roles for a user. Admin only. Cannot remove
-AD-derived roles. See `docs/features/ldap-directory.md` for details.
+Replace all manual roles for a user. Admin only. AD-derived roles are
+never affected by this endpoint.
+
+Request body:
+```json
+{ "roles": ["admin", "vulnerability_analyst"] }
+```
+
+Semantics: the provided list becomes the complete set of manual roles for
+the user. Roles present in the list but not currently assigned are added.
+Manual roles currently assigned but absent from the list are removed.
+AD-derived roles are unchanged regardless of whether they appear in the
+list. An empty list removes all manual roles.
+
+Response: the updated user object with all roles (manual and AD-derived).
+
+See `docs/features/ldap-directory.md` for details on AD-derived roles.
 
 User creation is handled by the LDAP directory sync — there is no manual
 user creation endpoint. See `docs/features/ldap-directory.md`.
@@ -137,6 +152,31 @@ user creation endpoint. See `docs/features/ldap-directory.md`.
 See `docs/features/ldap-directory.md` for detailed endpoint
 specifications. Admins configure mappings from AD groups to Sentinel roles
 via `GET/POST/DELETE /api/v1/admin/role-mappings`.
+
+### User Activation (Admin only)
+
+```
+PATCH /api/v1/users/{id}/active
+```
+
+Set the active status of a user. Admin only.
+
+Request body:
+```json
+{ "active": true }
+```
+
+Semantics: sets `User.active` to the provided value. Setting `active: false`
+deactivates the user (subsequent authenticated requests return 401). Setting
+`active: true` reactivates the user (restores authentication ability only —
+previously reassigned tickets and revoked API keys are NOT restored).
+
+Constraints:
+- An admin cannot deactivate themselves (returns 409 Conflict)
+- Setting the same value as current is a no-op (returns 200 with unchanged
+  user)
+
+Response: the updated user object.
 
 ## Implementation Details
 
@@ -158,6 +198,9 @@ Decision will be made during implementation of this feature.
 - Public endpoints (ticket list, CVE list, product list, fetcher dashboard)
   do not require authentication
 - The `require_role()` check queries the `UserRole` junction table
+- Role changes take effect on the user's next request. A request already
+  in progress continues with the permissions loaded at its start. This is
+  the expected behavior and requires no additional synchronization
 
 ### Password Security
 
@@ -209,8 +252,11 @@ See future `docs/features/sso-authentication.md`.
 2. Users cannot add roles to themselves (only admins can modify other
    users' roles)
 3. Users cannot deactivate their own account
-4. Deactivated users cannot authenticate (SSO session is valid but Sentinel
-   rejects inactive users)
+4. Deactivated users cannot authenticate. The `active` status is checked on
+   every authenticated request. If a user is deactivated while holding a
+   valid session or token, the next request to any protected endpoint
+   returns 401 Unauthorized. There is no proactive token/session
+   invalidation — the per-request check is sufficient
 5. All authentication events are logged (login, logout, failed attempts)
 6. Session timeout: TBD (configurable)
 7. A user with no roles has the same access as an unauthenticated user
