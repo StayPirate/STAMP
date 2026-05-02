@@ -536,3 +536,22 @@ in `.opencode/`, verify that `.opencode/README.md` is still accurate:
 
 The goal is to keep `.opencode/README.md` as a reliable, up-to-date
 reference for the project's OpenCode tooling.
+
+### 19. Centralized user lifecycle operations
+
+CRITICAL: Every operation that creates, modifies, deactivates, or
+reactivates a user account — or modifies user roles — MUST go through
+the `user_service` module (`backend/app/services/user_service.py`).
+Direct modification of `User` or `UserRole` model fields from API
+handlers, CLI commands, or Celery tasks is a bug.
+
+This ensures that:
+
+- Side effects (ticket reassignment, TicketEvent creation, API key
+  revocation, auth invalidation) are applied consistently
+- Business rules (self-removal guard, self-deactivation guard) are
+  enforced regardless of the entry point
+- The async pattern is maintained consistently (service is async; sync
+  callers use `asyncio.run()`)
+
+See `docs/features/user-lifecycle.md` for the full service contract.

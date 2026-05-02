@@ -81,23 +81,17 @@ sentinel manage-user create \
 4. Validates email format — if the provided email is not syntactically
    valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-5. Validates that no user exists with the same `username` or `email`
-   (including inactive/deactivated users) — if a conflict is found, exits
-   with error:
+5. Delegates to `user_service.create_user()` with:
+   - `ldap_uid = None` (local user)
+   - `active = True`
+   - `roles = [(role, '_manual') for role in provided_roles]`
+   - `acting_user_id = None` (CLI action)
+   - See `docs/features/user-lifecycle.md` for the service contract
+6. If the service raises `UserConflictError` (duplicate username or
+   email), exits with error:
    `"Error: A user with username '{username}' already exists."` or
    `"Error: A user with email '{email}' already exists."`
-6. Creates a `User` record with:
-   - `username` = provided value
-   - `email` = provided value
-   - `full_name` = provided value or `NULL`
-   - `active` = `true`
-   - `ldap_uid` = `NULL` (marks this as a local, non-LDAP user)
-   - `ldap_dn` = `NULL`
-   - `manager_uid` = `NULL`
-   - `ldap_synced_at` = `NULL`
-7. For each `--role` provided, creates a `UserRole` record with
-   `ad_group_cn = '_manual'` and `assigned_by = NULL` (CLI action)
-8. Prints confirmation:
+7. Prints confirmation:
    `"Created user '{username}' ({email}) with roles: {roles}."`
    or `"Created user '{username}' ({email}) with no roles."` if no roles
    were specified
@@ -150,24 +144,19 @@ sentinel manage-user update \
 5. If `--email` is provided, validates email format — if not
    syntactically valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-   Then validates uniqueness and updates
-6. If `--full-name` is provided, updates
-7. If `--reactivate` is provided: if the user is already active, this is
-   a no-op. If the user is inactive, sets `User.active = true`
-8. For each `--add-role`, creates a `UserRole` record with
-   `ad_group_cn = '_manual'` and `assigned_by = NULL` if not already
-   present for that user/role/`_manual` combination. Adding a role the
-   user already has as a manual assignment is a no-op
-9. For each `--remove-role`:
-   - If the role has `ad_group_cn != '_manual'` (AD-derived), exits with
-     error:
-     `"Error: Cannot remove AD-derived role '{role}'. This role is
-     managed by Active Directory group membership."`
-   - Otherwise, removes the `UserRole` record where
-     `ad_group_cn = '_manual'`. If the user does not have the role as a
-     manual assignment, this is a no-op (idempotent behavior, consistent
-     with `--add-role`)
-10. Prints summary of changes:
+6. If `--email` or `--full-name` is provided, delegates to
+   `user_service.update_user()` with `acting_user_id = None`. If the
+   service raises `UserConflictError` (duplicate email), exits with error
+7. If `--reactivate` is provided: delegates to
+   `user_service.reactivate_user()` with `acting_user_id = None`. If
+   the user is already active, this is a no-op. See
+   `docs/features/user-lifecycle.md` for reactivation semantics
+8. For role changes (`--add-role`, `--remove-role`), delegates to
+   `user_service.update_roles()` with `acting_user_id = None` and
+   roles as `(role, '_manual')` pairs. The service handles validation
+   (AD-derived role protection). Since `acting_user_id = None`, the
+   self-removal guard does not apply (CLI is a system action)
+9. Prints summary of changes:
    `"Updated user '{username}': {list of changes}."`
 
 **Exit codes**: 0 on success, 1 on validation error
@@ -194,7 +183,12 @@ sentinel manage-user delete \
    `"Error: User '{username}' not found."`
 3. If the user is already inactive, exits with error:
    `"Error: User '{username}' is already deactivated."`
-4. Sets `User.active = false`
+4. Delegates to `user_service.deactivate_user()` with
+   `acting_user_id = None` and
+   `reason = "deactivated via CLI (manage-user delete)"`. This triggers
+   the same side effects as LDAP deactivation (ticket reassignment, API
+   key revocation, TicketEvent creation) — see
+   `docs/features/user-lifecycle.md`
 5. Prints: `"Deactivated user '{username}'."`
 
 This command does not permanently remove the user record from the

@@ -126,19 +126,27 @@ Public endpoint (read-only).
 PUT /api/v1/users/{id}/roles
 ```
 
-Replace all manual roles for a user. Admin only. AD-derived roles are
+Add or remove manual roles for a user. Admin only. AD-derived roles are
 never affected by this endpoint.
 
 Request body:
 ```json
-{ "roles": ["admin", "vulnerability_analyst"] }
+{
+  "add": ["admin"],
+  "remove": ["vulnerability_analyst"]
+}
 ```
 
-Semantics: the provided list becomes the complete set of manual roles for
-the user. Roles present in the list but not currently assigned are added.
-Manual roles currently assigned but absent from the list are removed.
-AD-derived roles are unchanged regardless of whether they appear in the
-list. An empty list removes all manual roles.
+Semantics: delegates to `user_service.update_roles()` with
+`acting_user_id` set to the authenticated admin's user ID and roles as
+`(role, '_manual')` pairs. See `docs/features/user-lifecycle.md` for the
+full service contract.
+
+Validation (enforced by the service layer):
+- Cannot remove AD-derived roles (returns 400)
+- Cannot remove your own Admin role (returns 409)
+- Adding a role the user already has as a manual assignment is a no-op
+  (idempotent)
 
 Response: the updated user object with all roles (manual and AD-derived).
 
@@ -166,15 +174,16 @@ Request body:
 { "active": true }
 ```
 
-Semantics: sets `User.active` to the provided value. Setting `active: false`
-deactivates the user (subsequent authenticated requests return 401). Setting
-`active: true` reactivates the user (restores authentication ability only —
-previously reassigned tickets and revoked API keys are NOT restored).
+Semantics: delegates to `user_service.deactivate_user()` (when
+`active: false`) or `user_service.reactivate_user()` (when
+`active: true`). See `docs/features/user-lifecycle.md` for the full
+side effect contract.
 
 Constraints:
-- An admin cannot deactivate themselves (returns 409 Conflict)
-- Setting the same value as current is a no-op (returns 200 with unchanged
-  user)
+- Self-deactivation is rejected by the service layer (returns 409
+  Conflict)
+- Setting the same value as current is a no-op (returns 200 with
+  unchanged user)
 
 Response: the updated user object.
 
@@ -243,20 +252,23 @@ See future `docs/features/sso-authentication.md`.
 
 ## Business Rules
 
-1. An admin cannot remove their own Admin role via the API. The Admin
-   role can be removed from a user only by a different admin, by the CLI,
-   or by system actions (LDAP sync). This protects against accidental
-   self-lockout. If the system ends up with zero active admins (e.g., the
-   last admin is deactivated by LDAP sync), recovery is possible via CLI:
+1. An admin cannot remove their own Admin role. This is enforced by
+   `user_service.update_roles()` for any entry point where
+   `acting_user_id` is set. System actions (LDAP sync, CLI) pass
+   `acting_user_id = None` and are exempt. See
+   `docs/features/user-lifecycle.md`. If the system ends up with zero
+   active admins (e.g., the last admin is deactivated by LDAP sync),
+   recovery is possible via CLI:
    `sentinel manage-user update --username <user> --add-role admin`
 2. Users cannot add roles to themselves (only admins can modify other
    users' roles)
-3. Users cannot deactivate their own account
-4. Deactivated users cannot authenticate. The `active` status is checked on
-   every authenticated request. If a user is deactivated while holding a
-   valid session or token, the next request to any protected endpoint
-   returns 401 Unauthorized. There is no proactive token/session
-   invalidation — the per-request check is sufficient
+3. Users cannot deactivate their own account (enforced by
+   `user_service.deactivate_user()` — see
+   `docs/features/user-lifecycle.md`)
+4. Deactivated users cannot authenticate. The `active` flag is checked
+   on every authenticated request — see `docs/features/user-lifecycle.md`
+   for the auth revocation mechanism. There is no proactive
+   token/session invalidation — the per-request check is sufficient
 5. All authentication events are logged (login, logout, failed attempts)
 6. Session timeout: TBD (configurable)
 7. A user with no roles has the same access as an unauthenticated user

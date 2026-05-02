@@ -131,28 +131,31 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `active` field updates are enabled for this run
 3. **Upsert users**: for each AD entry:
    - If a `User` record with matching `ldap_uid` exists, update
-     `full_name`, `email`, `ldap_dn`, `ldap_synced_at`, and — **only
-     if the safety check passed** — `active = (EMPLOYEESTATUS ==
-     "Active")`
-   - If no matching record exists, attempt to create a new `User` with
-     `username = sAMAccountName`, `email = mail`, `full_name = cn`,
-     `ldap_uid = sAMAccountName`, `ldap_dn = distinguishedName`,
-     `active = (EMPLOYEESTATUS == "Active")`, `ldap_synced_at = now()`.
+     `full_name`, `email`, `ldap_dn`, `ldap_synced_at` via
+     `user_service.update_user()`. The `active` field is NOT modified
+     in this step — deactivations and reactivations are handled in
+     steps 6 and 7 respectively
+   - If no matching record exists, attempt to create a new `User` via
+     `user_service.create_user()` with `username = sAMAccountName`,
+     `email = mail`, `full_name = cn`, `ldap_uid = sAMAccountName`,
+     `ldap_dn = distinguishedName`,
+     `active = (EMPLOYEESTATUS == "Active")`, `acting_user_id = None`.
      Note: new user creation always sets `active` regardless of the
      safety check — the check protects existing users only
-   - If the insert fails due to a unique constraint violation on
-     `username` or `email` (collision with an existing local user that
-     has `ldap_uid = NULL`), log WARNING:
+   - If creation raises `UserConflictError` (collision with an existing
+     local user that has `ldap_uid = NULL`), log WARNING:
      `"Cannot create LDAP user '{sAMAccountName}': {field} conflicts
      with existing local user '{existing_username}'."`, call
      `record_failed()`, and skip this entry. The admin must resolve the
      conflict manually (e.g., rename or delete the local user) and
      re-run the sync. The sync continues processing remaining entries
-   - For existing LDAP users (`ldap_uid IS NOT NULL`) absent from AD
-     results: **only if the safety check passed**, set `active = false`
-     and add to the `newly_deactivated` list
-   - Track users whose `active` field was actually written from `true`
-     to `false` during this step in a `newly_deactivated` list
+   - **Only if the safety check passed**: identify existing LDAP users
+     (`ldap_uid IS NOT NULL`) that should be deactivated (absent from AD
+     results or `EMPLOYEESTATUS != Active` while currently `active = true`)
+     and add them to the `newly_deactivated` list. Also identify users
+     with `active = false` that now have `EMPLOYEESTATUS == Active` and
+     add them to the `newly_reactivated` list. No `active` field writes
+     happen in this step
 4. **Resolve managers**: for each user, extract the `cn` from the
    `manager` DN (e.g., `cn=Stoyan Manolov,...` → look up the User with
    that `cn` or query AD for the `sAMAccountName` of that DN) and set
@@ -172,28 +175,21 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `ad_group_cn`. Manual roles (`_manual`) and records from other
      mappings are never touched. Processing order is irrelevant
 6. **Deactivation side effects**: for each user in the
-   `newly_deactivated` list (users whose `active` was actually written
-   from `true` to `false` in step 3 of this run):
-   - Revoke all API keys belonging to this user (see
-     `docs/features/sso-authentication.md`, planned)
-   - Reassign open tickets: for each ticket where `assignee_id` points
-     to the deactivated user, reassign to the user identified by
-     `manager_uid`. If the manager is not active, has no compatible role
-     (Vulnerability Analyst), or `manager_uid` is NULL, set
-     `assignee_id = NULL` (unassigned). Create a `TicketEvent` of type
-     `assignment` for each reassignment with `user_id = NULL` (system
-     action) and `comment` describing the reason (e.g.,
-     `"Reassigned from {old_assignee} to {manager}: employee deactivated
-     in LDAP"`)
-   - This step is skipped entirely when the safety check froze
-     `active` changes (the `newly_deactivated` list is empty)
-7. **Reactivation** (implicit): when the safety check passes and an
-   existing user with `active = false` appears in AD with
-   `EMPLOYEESTATUS == Active`, step 3 sets `active = true`. No
-   additional side effects are triggered — reassigned tickets are NOT
-   returned to the user, revoked API keys are NOT restored. The user
-   simply regains the ability to authenticate and must create new API
-   keys manually
+   `newly_deactivated` list (identified in step 3), call
+   `user_service.deactivate_user()` with
+   `reason = "employee deactivated in LDAP"` and
+   `acting_user_id = None`. The service sets `active = false` and
+   executes all side effects atomically. See
+   `docs/features/user-lifecycle.md` for the full contract (ticket
+   reassignment, API key revocation, TicketEvent creation). This step
+   is skipped entirely when the safety check froze `active` changes
+   (the `newly_deactivated` list is empty)
+7. **Reactivation**: for each user in the `newly_reactivated` list
+   (identified in step 3), call `user_service.reactivate_user()` with
+   `acting_user_id = None`. See `docs/features/user-lifecycle.md` for
+   reactivation semantics (previously reassigned tickets and API keys
+   are NOT restored). This step is skipped entirely when the safety
+   check froze `active` changes
 8. **Metrics**: report `record_created()` for new users,
    `record_updated()` for updated users, `record_failed()` for entries
    that failed processing
@@ -297,8 +293,9 @@ Validation rules:
 - Cannot remove roles with `ad_group_cn != '_manual'` — returns 400 with
   `"Cannot remove AD-derived role '{role}'. This role is managed by the
   AD group '{ad_group_cn}'."`
-- Cannot remove your own Admin role — returns 403 with
-  `"Cannot remove your own Admin role."`
+- Cannot remove your own Admin role — returns 409 with
+  `"Cannot remove your own Admin role."` (enforced by
+  `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
 - Adding a role that the user already has as a manual assignment is a
   no-op (idempotent)
 - Creates a `UserRole` record with `ad_group_cn = '_manual'` and
@@ -496,12 +493,10 @@ Displays a table of all configured role mappings:
 4. **Override is additive only**: an admin can add manual roles to a user
    but cannot remove AD-derived roles. This prevents accidental
    revocation of roles that are managed centrally
-5. **Deactivation cascades**: when an employee is deactivated in AD:
-   - The Sentinel account is marked inactive
-   - API keys are revoked
-   - Assigned tickets are reassigned to the line manager (if the manager
-     is active and has the VA role), otherwise set to unassigned
-   - A TicketEvent is created for each reassignment
+5. **Deactivation cascades**: when an employee is deactivated in AD,
+   the side effects are handled by `user_service.deactivate_user()` —
+   see `docs/features/user-lifecycle.md` for the full contract
+   (ticket reassignment, API key revocation, TicketEvent creation)
 6. **Admin self-removal protection**: an admin cannot remove their own
    Admin role via the API. The Admin role can be removed from a user only
    by a different admin, by the CLI, or by system actions (LDAP sync,
