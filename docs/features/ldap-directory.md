@@ -109,55 +109,71 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    `OU=User accounts,DC=corp,DC=suse,DC=com` with attributes
    `sAMAccountName`, `cn`, `mail`, `manager`, `EMPLOYEESTATUS`,
    `distinguishedName`, `MEMBEROF`
-2. **Upsert users**: for each AD entry:
-   - If a `User` record with matching `ldap_uid` exists, update
-     `full_name`, `email`, `ldap_dn`, and `ldap_synced_at`
-   - If no matching record exists, create a new `User` with
-     `username = sAMAccountName`, `email = mail`, `full_name = cn`,
-     `ldap_uid = sAMAccountName`, `ldap_dn = distinguishedName`,
-     `active = (EMPLOYEESTATUS == "Active")`, `ldap_synced_at = now()`
-3. **Resolve managers**: for each user, extract the `cn` from the
-   `manager` DN (e.g., `cn=Stoyan Manolov,...` → look up the User with
-   that `cn` or query AD for the `sAMAccountName` of that DN) and set
-   `manager_uid` to the corresponding `ldap_uid`. If the manager is not
-   found in the User table, set `manager_uid = NULL`
-4. **Apply role mappings** (collect-then-diff): instead of processing
-   each mapping independently, the sync computes the expected set of
-   AD-derived roles and applies the difference:
-   - For each `RoleMapping` in the database, identify all users whose
-     `MEMBEROF` includes the mapped `ad_group_cn`
-   - Build the expected set: `{(user_id, role, ad_group_cn)}` for all
-     matching users across all mappings
-   - Compare with the current set of `UserRole` records where
-     `ad_group_cn != '_manual'`
-   - **Add** records in the expected set that are missing from the DB
-     (create `UserRole` with the appropriate `ad_group_cn` and
-     `assigned_by = NULL`)
-   - **Remove** records in the DB that are not in the expected set
-   - This approach is order-independent: regardless of which mappings
-     are processed first, the result is the same
-5. **Handle deactivations** (with safety check): for each `User` with
-   `ldap_uid IS NOT NULL` that is not present in the AD results or whose
-   `EMPLOYEESTATUS` is not `Active`:
-
-   **Safety checks** (evaluated before any deactivation is performed):
+2. **Safety check** (evaluated before any `active` field modification):
+   - Compute the **deactivation candidate set**: existing users with
+     `ldap_uid IS NOT NULL AND active = true` that are either absent
+     from the AD results or have `EMPLOYEESTATUS != Active`
    - If the AD query returned **zero results**, abort the entire sync
      immediately with status `failure` and log ERROR:
      `"AD returned zero entries. Aborting sync to prevent mass
      deactivation. Verify AD connectivity."`
-   - Otherwise, count how many users would be deactivated in this run.
-     If the count exceeds `LDAP_SYNC_MAX_DEACTIVATIONS` (env var,
-     default: **20**), **skip the entire deactivation step**:
-     - Steps 2-4 (upsert, manager, role mappings) have already been
-       processed normally
+   - If the deactivation candidate count exceeds
+     `LDAP_SYNC_MAX_DEACTIVATIONS` (env var, default: **20**), **freeze
+     all `active` field changes** for this run (both deactivations and
+     reactivations):
      - Log ERROR: `"LDAP sync would deactivate {n} users (threshold:
-       {max}). Deactivation step skipped. Review manually and re-run
-       with increased threshold if intentional."`
+       {max}). All active-status changes frozen for this run. Review
+       manually and re-run with increased threshold if intentional."`
      - Mark the run as `partial`
-     - Do NOT process any deactivations
-
-   **Deactivation processing** (when safety checks pass):
-   - Set `User.active = false`
+     - Steps 3–6 proceed normally but **skip the `active` field**
+     - Step 7 is skipped entirely (no `active` transitions occurred)
+   - If the safety check passes (candidate count within threshold),
+     `active` field updates are enabled for this run
+3. **Upsert users**: for each AD entry:
+   - If a `User` record with matching `ldap_uid` exists, update
+     `full_name`, `email`, `ldap_dn`, `ldap_synced_at`, and — **only
+     if the safety check passed** — `active = (EMPLOYEESTATUS ==
+     "Active")`
+   - If no matching record exists, attempt to create a new `User` with
+     `username = sAMAccountName`, `email = mail`, `full_name = cn`,
+     `ldap_uid = sAMAccountName`, `ldap_dn = distinguishedName`,
+     `active = (EMPLOYEESTATUS == "Active")`, `ldap_synced_at = now()`.
+     Note: new user creation always sets `active` regardless of the
+     safety check — the check protects existing users only
+   - If the insert fails due to a unique constraint violation on
+     `username` or `email` (collision with an existing local user that
+     has `ldap_uid = NULL`), log WARNING:
+     `"Cannot create LDAP user '{sAMAccountName}': {field} conflicts
+     with existing local user '{existing_username}'."`, call
+     `record_failed()`, and skip this entry. The admin must resolve the
+     conflict manually (e.g., rename or delete the local user) and
+     re-run the sync. The sync continues processing remaining entries
+   - For existing LDAP users (`ldap_uid IS NOT NULL`) absent from AD
+     results: **only if the safety check passed**, set `active = false`
+     and add to the `newly_deactivated` list
+   - Track users whose `active` field was actually written from `true`
+     to `false` during this step in a `newly_deactivated` list
+4. **Resolve managers**: for each user, extract the `cn` from the
+   `manager` DN (e.g., `cn=Stoyan Manolov,...` → look up the User with
+   that `cn` or query AD for the `sAMAccountName` of that DN) and set
+   `manager_uid` to the corresponding `ldap_uid`. If the manager is not
+   found in the User table, set `manager_uid = NULL`
+5. **Apply role mappings** (incremental per mapping): for each
+   `RoleMapping(ad_group_cn, role)` in the database:
+   - Identify all users whose `MEMBEROF` (from the AD data already in
+     memory) includes this mapping's `ad_group_cn`
+   - **Add**: for each user in the AD group who does not have a
+     `UserRole(user_id, role, ad_group_cn)` record in the DB, create
+     one with `assigned_by = NULL`
+   - **Remove**: for each `UserRole` record in the DB with this
+     specific `(role, ad_group_cn)` whose `user_id` is no longer in
+     the AD group, delete the record
+   - Each mapping operates exclusively on records tagged with its own
+     `ad_group_cn`. Manual roles (`_manual`) and records from other
+     mappings are never touched. Processing order is irrelevant
+6. **Deactivation side effects**: for each user in the
+   `newly_deactivated` list (users whose `active` was actually written
+   from `true` to `false` in step 3 of this run):
    - Revoke all API keys belonging to this user (see
      `docs/features/sso-authentication.md`, planned)
    - Reassign open tickets: for each ticket where `assignee_id` points
@@ -169,7 +185,16 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      action) and `comment` describing the reason (e.g.,
      `"Reassigned from {old_assignee} to {manager}: employee deactivated
      in LDAP"`)
-6. **Metrics**: report `record_created()` for new users,
+   - This step is skipped entirely when the safety check froze
+     `active` changes (the `newly_deactivated` list is empty)
+7. **Reactivation** (implicit): when the safety check passes and an
+   existing user with `active = false` appears in AD with
+   `EMPLOYEESTATUS == Active`, step 3 sets `active = true`. No
+   additional side effects are triggered — reassigned tickets are NOT
+   returned to the user, revoked API keys are NOT restored. The user
+   simply regains the ability to authenticate and must create new API
+   keys manually
+8. **Metrics**: report `record_created()` for new users,
    `record_updated()` for updated users, `record_failed()` for entries
    that failed processing
 
