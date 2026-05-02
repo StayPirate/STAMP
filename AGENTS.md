@@ -516,3 +516,23 @@ The goal is to ensure that specifications are functionally complete
 before implementation begins — every operation, state transition, and
 user scenario should have its error paths, boundary conditions, and
 concurrency considerations explicitly specified.
+
+### 18. OpenCode tooling documentation
+
+After adding, removing, or modifying any agent, command, or skill definition
+in `.opencode/`, verify that `.opencode/README.md` is still accurate:
+
+1. Update `.opencode/README.md` when:
+   - A new agent is added to `.opencode/agents/`
+   - An existing agent is removed or renamed
+   - An agent's purpose or trigger (guardrail association) changes
+   - A new command or skill is added, removed, or renamed in
+     `.opencode/commands/` or `.opencode/skills/`
+   - A new guardrail is added that references an agent (update the
+     agent's trigger column)
+2. Skip the update when:
+   - The change is internal to an agent's instructions without affecting
+     its name, purpose, or guardrail association
+
+The goal is to keep `.opencode/README.md` as a reliable, up-to-date
+reference for the project's OpenCode tooling.
