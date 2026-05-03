@@ -92,9 +92,11 @@ capabilities must hold both roles.
 
 ### Authentication
 
-Authentication is handled via SSO (see future
-`docs/features/sso-authentication.md`). There are no local login/logout
-endpoints. Any SUSE employee can authenticate via id.suse.com.
+Authentication is handled via two providers: SSO for LDAP-synced users
+(see `docs/features/sso-authentication.md`) and local credentials for
+local users (see `docs/features/local-authentication.md`). API keys
+provide non-interactive access for both user types (see
+`docs/features/authentication.md`).
 
 ### Current User
 
@@ -152,8 +154,10 @@ Response: the updated user object with all roles (manual and AD-derived).
 
 See `docs/features/ldap-directory.md` for details on AD-derived roles.
 
-User creation is handled by the LDAP directory sync — there is no manual
-user creation endpoint. See `docs/features/ldap-directory.md`.
+User creation for SSO users is handled by the LDAP directory sync (see
+`docs/features/ldap-directory.md`). Local users can be created by admins
+via CLI or the administration UI (see
+`docs/features/local-user-management.md`).
 
 ### Role Mappings (Admin only)
 
@@ -191,11 +195,9 @@ Response: the updated user object.
 
 ### Authentication Mechanism
 
-TBD -- options under consideration:
-- JWT tokens (stateless, good for API clients)
-- Session-based (simpler, better for SPA)
-
-Decision will be made during implementation of this feature.
+JWT with session-backed liveness checks. See
+`docs/features/authentication.md` for the full design: token format,
+session management, API keys, and middleware behavior.
 
 ### Permission Checking
 
@@ -213,8 +215,10 @@ Decision will be made during implementation of this feature.
 
 ### Password Security
 
-Not applicable — Sentinel does not store or manage passwords. Authentication
-is via SSO (see future `docs/features/sso-authentication.md`).
+Sentinel stores Argon2id password hashes for local users only. SSO users
+do not have local passwords. See
+`docs/features/local-authentication.md` for password policy and hashing
+parameters.
 
 ## Data Model
 
@@ -231,8 +235,11 @@ See `docs/data-model.md`. Key tables:
 
 ### Login Page
 
-Login is handled via SSO redirect to id.suse.com — no local login form.
-See future `docs/features/sso-authentication.md`.
+The login page displays both authentication options: an SSO button
+(redirect to id.suse.com) and a local username/password form. Both are
+always visible. See `docs/features/authentication.md` for the shared
+framework and `docs/features/sso-authentication.md` /
+`docs/features/local-authentication.md` for each provider's flow.
 
 ### User Management Page (Admin only)
 
@@ -241,9 +248,9 @@ See future `docs/features/sso-authentication.md`.
   locked)
 - Activate/deactivate user (note: deactivation is normally automatic via
   LDAP sync)
-- Users are created by the LDAP directory sync — no manual user creation
-  form. In environments without AD access, local users can be created
-  via CLI. See `docs/features/ldap-directory.md` and
+- Users are created by the LDAP directory sync (SSO users) or by admins
+  via CLI and admin UI (local users). See
+  `docs/features/ldap-directory.md` and
   `docs/features/local-user-management.md`
 
 ### User Profile
@@ -265,12 +272,15 @@ See future `docs/features/sso-authentication.md`.
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
    `docs/features/user-lifecycle.md`)
-4. Deactivated users cannot authenticate. The `active` flag is checked
-   on every authenticated request — see `docs/features/user-lifecycle.md`
-   for the auth revocation mechanism. There is no proactive
-   token/session invalidation — the per-request check is sufficient
+4. Deactivated users cannot authenticate. On deactivation, all API keys
+   are revoked and all active sessions are invalidated (proactively,
+   before marking the user inactive). Additionally, the middleware
+   checks `User.active` on every request as a defense-in-depth measure.
+   See `docs/features/authentication.md` (Deactivation ordering) and
+   `docs/features/user-lifecycle.md`
 5. All authentication events are logged (login, logout, failed attempts)
-6. Session timeout: TBD (configurable)
+6. Session duration: 7 days by default, configurable via
+   `JWT_EXPIRY_HOURS`. See `docs/features/authentication.md`
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
 8. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to

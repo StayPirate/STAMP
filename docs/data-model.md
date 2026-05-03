@@ -376,7 +376,8 @@ the same access as an unauthenticated user (read-only on public data).
 | email          | VARCHAR     | UNIQUE, NOT NULL   | Email address (from AD `mail`)   |
 | full_name      | VARCHAR     |                    | Display name (from AD `cn`)      |
 | active         | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| ldap_uid       | VARCHAR     | UNIQUE, nullable   | AD `sAMAccountName`. NULL for non-LDAP users (e.g., future service accounts) |
+| password_hash  | VARCHAR     | nullable           | Argon2id hash of password. NULL for SSO users. See `docs/features/local-authentication.md` |
+| ldap_uid       | VARCHAR     | UNIQUE, nullable   | AD `sAMAccountName`. NULL for local users |
 | ldap_dn        | VARCHAR     | nullable           | Full AD distinguished name       |
 | manager_uid    | VARCHAR     | nullable           | `ldap_uid` of the direct line manager (resolved from AD `manager` DN) |
 | ldap_synced_at | TIMESTAMP   | nullable           | When this record was last synced from AD |
@@ -436,6 +437,51 @@ membership. See `docs/features/ldap-directory.md`.
 | created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
 **Unique constraint**: (ad_group_cn, role)
+
+### Session
+
+Tracks active user sessions. Every login (SSO or local) creates a
+session record. The JWT references the session via the `session_id`
+claim. On every authenticated request, the middleware verifies that the
+session is still active and not expired. See
+`docs/features/authentication.md` (Session Management).
+
+| Column       | Type        | Constraints               | Description                                |
+|--------------|-------------|---------------------------|--------------------------------------------|
+| id           | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
+| user_id      | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
+| created_at   | TIMESTAMP   | NOT NULL, DEFAULT         | When the session was created (login time)  |
+| expires_at   | TIMESTAMP   | NOT NULL                  | When the session naturally expires         |
+| is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
+
+**Index**: (user_id, is_active) — for efficient bulk invalidation on
+user deactivation.
+
+**Cleanup**: expired and inactive sessions are deleted weekly by a
+Celery Beat maintenance task. No session history is retained.
+
+### ApiKey
+
+API keys for programmatic access. Every user (SSO or local) can create
+API keys for non-interactive authentication (bots, AI agents, CI
+pipelines). The full key value is shown only once at creation; only the
+hash is stored. See `docs/features/authentication.md` (API Keys).
+
+| Column        | Type        | Constraints               | Description                                |
+|---------------|-------------|---------------------------|--------------------------------------------|
+| id            | UUID        | PK                        | Internal identifier                        |
+| user_id       | UUID        | FK(user.id), NOT NULL     | User who owns this key                     |
+| key_hash      | VARCHAR     | NOT NULL                  | Argon2 hash of the full key                |
+| prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9b`) for display |
+| name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
+| created_at    | TIMESTAMP   | NOT NULL, DEFAULT         | When the key was created                   |
+| last_used_at  | TIMESTAMP   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
+| expires_at    | TIMESTAMP   | nullable                  | Optional expiration. NULL means never expires |
+| revoked_at    | TIMESTAMP   | nullable                  | When the key was revoked. NULL means active |
+| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
+
+**Index**: (user_id, revoked_at) — for efficient listing of active keys
+per user.
 
 ### Ticket
 

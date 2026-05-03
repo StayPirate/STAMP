@@ -62,6 +62,7 @@ Creates a new User record with optional initial roles.
 | `ldap_uid`     | `str \| None`               | No       | AD sAMAccountName. NULL for local users |
 | `ldap_dn`      | `str \| None`               | No       | Full AD distinguished name           |
 | `manager_uid`  | `str \| None`               | No       | ldap_uid of the direct line manager  |
+| `password`     | `str \| None`               | No       | Plain-text password (hashed before storage). Required for local users, must be NULL for LDAP users |
 | `roles`        | `list[tuple[Role, str]]`    | No       | List of (role, ad_group_cn) pairs    |
 | `acting_user_id` | `UUID \| None`            | No       | Who is performing the action         |
 
@@ -69,11 +70,14 @@ Creates a new User record with optional initial roles.
 
 1. Validate uniqueness of `username` and `email` across all users
    (including inactive). If violated, raise `UserConflictError`
-2. Create User record with provided fields and
+2. If `password` is provided, hash it with Argon2id (see
+   `docs/features/local-authentication.md` for hashing parameters)
+3. Create User record with provided fields,
+   `password_hash` set to the hash (or NULL if no password), and
    `ldap_synced_at = now()` if `ldap_uid` is set
-3. For each role in `roles`, create UserRole with specified `ad_group_cn`
+4. For each role in `roles`, create UserRole with specified `ad_group_cn`
    and `assigned_by = acting_user_id`
-4. Return the created User
+5. Return the created User
 
 **TicketEvent**: none (user creation does not affect tickets)
 
@@ -163,14 +167,19 @@ Deactivates a user account and triggers all associated side effects.
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
-**Side effects** (executed atomically in the same database transaction):
+**Side effects** (executed atomically in the same database transaction,
+in this specific order):
 
-1. Set `User.active = false`
-2. Revoke all API keys belonging to this user (mark as revoked, do not
-   delete — preserves audit trail). Note: the API key entity is defined
-   in the future `docs/features/sso-authentication.md` specification.
-   Until that spec is implemented, this step is a no-op
-3. Reassign open tickets: for each ticket where `assignee_id` points to
+1. Revoke all API keys belonging to this user: set `revoked_at = now()`
+   and `revoked_by = NULL` (system action) on all active keys. Keys are
+   not deleted — preserves audit trail. See
+   `docs/features/authentication.md` (API Keys) for the data model.
+2. Invalidate all active sessions for this user: set
+   `Session.is_active = false` for all rows where `user_id` matches and
+   `is_active = true`. See `docs/features/authentication.md` (Session
+   Management) for the session model.
+3. Set `User.active = false`
+4. Reassign open tickets: for each ticket where `assignee_id` points to
    the deactivated user:
    - Attempt reassignment to the user identified by `manager_uid`
    - The manager is eligible if ALL conditions are met:
@@ -187,11 +196,11 @@ Deactivates a user account and triggers all associated side effects.
      - `comment` = `"Reassigned from {old} to {new}: {reason}"` or
        `"Unassigned from {old}: {reason}, no eligible manager"`
 
-**Auth revocation mechanism**: deactivation does not proactively
-invalidate sessions or tokens. The `active` flag is checked on every
-authenticated request — the next request after deactivation returns
-401 Unauthorized. This per-request check is sufficient and requires no
-additional synchronization.
+**Ordering rationale**: API keys and sessions are revoked BEFORE the
+user is marked as inactive. This ensures that if the process is
+interrupted at any point, a user who still appears active will have
+already lost access. The admin can safely retry the deactivation
+without risk of leaving a deactivated user with valid credentials.
 
 **TicketEvent**: yes — one `assignment` event per reassigned ticket (see
 `docs/features/ticket-history.md` for the event type contract)
@@ -286,8 +295,10 @@ want to adjust a user's roles before reactivating them.
 
 | Spec | Relationship |
 |---|---|
+| `docs/features/authentication.md` | Defines API key and session models. `deactivate_user` revokes keys and invalidates sessions per the deactivation ordering |
 | `docs/features/ldap-directory.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
 | `docs/features/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/local-user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
+| `docs/features/local-authentication.md` | Defines password management. `create_user` accepts an optional password for local users |
 | `docs/features/ticket-history.md` | `deactivate_user` creates TicketEvents per the `assignment` event type contract |
 | `docs/data-model.md` | User and UserRole table definitions |

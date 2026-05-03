@@ -2,55 +2,44 @@
 
 ## Purpose
 
-Enable administrators to create, update, and delete user accounts directly
-via the CLI in environments where SUSE Active Directory (`pan.suse.de`) is
-not reachable — typically local development and staging deployments. This
-allows testing the full application workflow without depending on the SUSE
-internal network.
+Enable administrators to create, update, and delete local user accounts
+via the CLI or the administration panel in the web UI. Local users are
+accounts managed directly in Sentinel's database, independent of the
+SUSE Active Directory and LDAP sync process.
 
-Local users are created directly in the database, bypassing the LDAP sync
-process. They are functionally identical to LDAP-synced users for the
-purposes of authentication, authorization, and ticket assignment.
+Local users serve three primary use cases:
 
-## Configuration
+1. **Development and staging environments**: testing the full
+   application workflow without depending on the SUSE internal network
+2. **AI agents and automation**: dedicated accounts for AI agents or
+   bots that operate as independent identities with their own audit
+   trail (see `docs/features/authentication.md`, Use Cases: Bots and
+   AI Agents)
+3. **Environments without SSO**: deployments outside the SUSE corporate
+   network where `id.suse.com` is not reachable
 
-### `ALLOW_LOCAL_USERS`
-
-| Setting              | Type    | Default | Env var              |
-|----------------------|---------|---------|----------------------|
-| `allow_local_users`  | boolean | `false` | `ALLOW_LOCAL_USERS`  |
-
-The `create` and `delete` subcommands check this flag before executing.
-If the flag is `false` or absent, the command exits immediately with exit
-code 1 and the message:
-
-```
-Error: Local user management is disabled. Set ALLOW_LOCAL_USERS=true to
-enable this feature. This setting should only be used in development and
-staging environments.
-```
-
-The `update` subcommand does **not** check this flag. It operates on
-existing users regardless of environment, because it is needed in
-production to assign roles during initial bootstrap (e.g., promoting the
-first admin after LDAP sync). Since `update` cannot create new users, the
-risk of misuse is minimal — it is functionally equivalent to the
-`PUT /api/v1/users/{id}/roles` admin API endpoint.
+Local users are created directly in the database, bypassing the LDAP
+sync process. They are functionally identical to LDAP-synced users for
+the purposes of authorization, ticket assignment, and API key
+management. The only difference is how they authenticate: local
+credentials instead of SSO (see
+`docs/features/local-authentication.md`).
 
 ## CLI Commands
 
 All commands are subcommands of the `sentinel manage-user` group. See
-`docs/cli-reference.md` for the full command index and
-`docs/conventions.md` (CLI Conventions) for general CLI design guidelines.
+`docs/conventions.md` (CLI Conventions) for general CLI design
+guidelines.
 
 ### `sentinel manage-user create`
 
-Creates a new local user account.
+Creates a new local user account with a password.
 
 ```
 sentinel manage-user create \
   --username <username> \
   --email <email> \
+  --password <password> \
   [--full-name <name>] \
   [--role <role>] ...
 ```
@@ -61,29 +50,34 @@ sentinel manage-user create \
 |----------------|----------|------------|--------------------------------------------|
 | `--username`   | Yes      | No         | Unique username for the account             |
 | `--email`      | Yes      | No         | Unique email address                        |
+| `--password`   | Yes      | No         | Initial password (12-128 characters)        |
 | `--full-name`  | No       | No         | Display name                                |
 | `--role`       | No       | Yes        | Role to assign: `admin`, `vulnerability_analyst` |
 
 **Behavior**:
 
-1. Checks `ALLOW_LOCAL_USERS` — exits with error if disabled
-2. Validates username format: must be 1-64 characters, start with a
+1. Validates username format: must be 1-64 characters, start with a
    letter, and contain only lowercase letters, numbers, dots, hyphens,
    and underscores (`[a-z0-9._-]`). If invalid, exits with error:
    `"Error: Invalid username '{value}'. Username must be 1-64 characters,
    start with a letter, and contain only lowercase letters, numbers, dots,
    hyphens, and underscores."`
-3. For each `--role` provided, validates that it is a recognized role. If
+2. For each `--role` provided, validates that it is a recognized role. If
    not, exits with error:
    `"Error: Invalid role '{value}'. Valid roles are: {list}."`
    The list of valid roles is derived from the system's role definitions
    at runtime
-4. Validates email format — if the provided email is not syntactically
+3. Validates email format — if the provided email is not syntactically
    valid, exits with error:
    `"Error: Invalid email format '{value}'."`
+4. Validates password: 12–128 characters. If too short, exits with
+   error: `"Error: Password must be at least 12 characters."` If too
+   long, exits with error:
+   `"Error: Password must be at most 128 characters."`
 5. Delegates to `user_service.create_user()` with:
    - `ldap_uid = None` (local user)
    - `active = True`
+   - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
    - `acting_user_id = None` (CLI action)
    - See `docs/features/user-lifecycle.md` for the service contract
@@ -102,7 +96,7 @@ invalid role, missing flag)
 ### `sentinel manage-user update`
 
 Updates an existing user account. This command works on any user (local
-or LDAP-synced) and does not require the `ALLOW_LOCAL_USERS` flag.
+or LDAP-synced).
 
 ```
 sentinel manage-user update \
@@ -178,18 +172,18 @@ sentinel manage-user delete \
 
 **Behavior**:
 
-1. Checks `ALLOW_LOCAL_USERS` — exits with error if disabled
-2. Looks up the user by `username` — if not found, exits with error:
+1. Looks up the user by `username` — if not found, exits with error:
    `"Error: User '{username}' not found."`
-3. If the user is already inactive, exits with error:
+2. If the user is already inactive, exits with error:
    `"Error: User '{username}' is already deactivated."`
-4. Delegates to `user_service.deactivate_user()` with
+3. Delegates to `user_service.deactivate_user()` with
    `acting_user_id = None` and
    `reason = "deactivated via CLI (manage-user delete)"`. This triggers
-   the same side effects as LDAP deactivation (ticket reassignment, API
-   key revocation, TicketEvent creation) — see
-   `docs/features/user-lifecycle.md`
-5. Prints: `"Deactivated user '{username}'."`
+   the deactivation sequence: revoke API keys, invalidate sessions,
+   mark inactive, reassign tickets — see
+   `docs/features/user-lifecycle.md` and
+   `docs/features/authentication.md` (Deactivation ordering)
+4. Prints: `"Deactivated user '{username}'."`
 
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
@@ -198,6 +192,55 @@ consistent with LDAP sync deactivation behavior. For full database
 cleanup in development environments, reset the database directly.
 
 **Exit codes**: 0 on success, 1 on validation error
+
+### `sentinel manage-user set-password`
+
+Sets or resets the password for a local user. See
+`docs/features/local-authentication.md` for full details.
+
+```
+sentinel manage-user set-password \
+  --username <username> \
+  --password <new_password>
+```
+
+This command is only valid for local users (`ldap_uid = NULL`). It
+invalidates all active sessions after changing the password.
+
+## Administration UI
+
+In addition to CLI management, administrators can manage local users
+from a dedicated page in the web UI administration panel.
+
+### User list page
+
+Displays all users (local and SSO) with columns:
+
+- Username
+- Full name
+- Email
+- Type (Local / SSO)
+- Status (Active / Inactive)
+- Roles
+
+Filters: by type (local/SSO), by status (active/inactive), by role.
+
+### Actions available for local users
+
+- **Create**: form with username, email, password, full name, roles
+- **Edit**: change email, full name, roles
+- **Reset password**: set a new password (invalidates sessions)
+- **Deactivate**: soft delete (same as CLI `delete`)
+- **Reactivate**: restore a deactivated user
+
+### Actions available for SSO users
+
+- **Edit roles**: add/remove roles
+- **Deactivate**: soft delete
+- **Reactivate**: restore
+
+SSO users cannot have their password set or reset (they authenticate
+via id.suse.com).
 
 ## Interaction with LDAP Sync
 
@@ -212,57 +255,47 @@ the sync process:
 This separation is inherent in the existing sync algorithm — no special
 handling is required.
 
-## Authentication Dependency
-
-Local user management creates user accounts in the database but does not
-provide an authentication mechanism. To log in as a local user, a
-compatible authentication method must be available for environments
-without access to the SUSE SSO (`id.suse.com`).
-
-This dependency will be addressed in the future
-`docs/features/sso-authentication.md` specification, which must define a
-fallback authentication mechanism for environments where SSO is not
-reachable.
-
-Until an authentication mechanism is available, local users can only be
-used for:
-
-- Backend testing (via test fixtures and direct service calls)
-- Database-level verification of user-related features
-
 ## Business Rules
 
-1. **CLI-only**: there are no API endpoints for local user management.
-   Users are created, updated, and deleted exclusively via the `sentinel
-   manage-user` CLI commands
-2. **Configuration guard**: the `create` and `delete` commands require
-   `ALLOW_LOCAL_USERS=true`. The `update` command does not require this
-   flag because it operates on existing users and is needed for
-   production bootstrap. See the Configuration section for details
-3. **No "last admin" enforcement**: the CLI does not enforce a minimum
-   admin count. If the last admin is removed or deactivated via CLI, the
-   system will have zero active admins until an operator runs
+1. **Local users are identified by `ldap_uid = NULL`**: this is the
+   canonical way to distinguish local users from LDAP-synced users. No
+   additional flag or column is needed
+2. **No "last admin" enforcement**: neither the CLI nor the admin UI
+   enforces a minimum admin count. If the last admin is removed or
+   deactivated, the system will have zero active admins until an
+   operator runs
    `sentinel manage-user update --username <user> --add-role admin`.
    This is consistent with the LDAP sync behavior (see
    `docs/features/ldap-directory.md`, Business Rule 6)
-4. **No duplicate usernames or emails**: the `create` command enforces
-   uniqueness. The `update` command enforces uniqueness when changing the
-   email
-5. **Local users are marked by `ldap_uid = NULL`**: this is the canonical
-   way to distinguish local users from LDAP-synced users. No additional
-   flag or column is needed
-6. **Role origin is `_manual`**: all roles assigned via `manage-user`
-   commands have `ad_group_cn = '_manual'` and `assigned_by = NULL`
+3. **No duplicate usernames or emails**: enforced at creation and when
+   changing the email
+4. **Role origin is `_manual`**: all roles assigned via `manage-user`
+   commands or admin UI have `ad_group_cn = '_manual'` and
+   `assigned_by = NULL` (CLI) or `assigned_by = admin_user_id` (UI)
+5. **Password required at creation**: local users must have a password
+   set at creation time. There is no passwordless local user state.
 
 ## Security Considerations
 
-- **No network attack surface**: the `manage-user` commands are CLI-only,
-  requiring shell access to the host or container. There are no HTTP
-  endpoints exposed
-- **Configuration guard**: the `ALLOW_LOCAL_USERS` flag provides an
-  explicit opt-in mechanism. The default is `false`, preventing accidental
-  use in production
-- **Production environments**: production deployments should never set
-  `ALLOW_LOCAL_USERS=true`. Users in production are managed exclusively
-  via LDAP sync. The configuration guard error message explicitly warns
-  that this setting is intended for development and staging only
+- **CLI access requires shell access**: the `manage-user` commands
+  require direct access to the host or container. There are no
+  unauthenticated HTTP endpoints for user management
+- **Admin UI is authenticated and role-protected**: only users with the
+  `admin` role can access the user management pages
+- **Password policy**: minimum 12 characters, no complexity rules.
+  Length is the primary defense (see
+  `docs/features/local-authentication.md`)
+- **Audit trail**: user creation, role changes, and deactivation
+  produce `TicketEvent` records where relevant (e.g., ticket
+  reassignment on deactivation)
+
+## Cross-references
+
+- `docs/features/authentication.md` — authentication framework, API
+  keys, session management
+- `docs/features/local-authentication.md` — login endpoint, password
+  hashing, rate limiting
+- `docs/features/user-lifecycle.md` — service contract for create,
+  update, deactivate, reactivate
+- `docs/features/rbac.md` — role definitions and permission model
+- `docs/features/ldap-directory.md` — LDAP sync (manages SSO users)
