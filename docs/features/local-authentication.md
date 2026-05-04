@@ -162,15 +162,18 @@ sentinel manage-user set-password \
 
 1. Look up the user by `username` — if not found, exit with error:
    `"Error: User '{username}' not found."`
-2. If user has `ldap_uid IS NOT NULL`, exit with error:
-   `"Error: Cannot set password for SSO user '{username}'. SSO users
-   authenticate via id.suse.com."`
-3. Validate password length (minimum 12 characters)
-4. Hash the password and store in `password_hash`
-5. Invalidate all active sessions for this user (forces re-login with
-   new password)
-6. Print: `"Password updated for user '{username}'. All active sessions
+2. Call `user_service.reset_password(user_id, new_password,
+   acting_user_id=None)` — this handles validation, hashing, and
+   session invalidation (see `docs/features/user-lifecycle.md`)
+3. Print: `"Password updated for user '{username}'. All active sessions
    have been invalidated."`
+
+On `SSOUserPasswordError`: exit with error:
+`"Error: Cannot set password for SSO user '{username}'. SSO users
+authenticate via id.suse.com."`
+
+On `PasswordValidationError`: exit with error:
+`"Error: Password must be between 12 and 128 characters."`
 
 **Exit codes**: 0 on success, 1 on validation error.
 
@@ -202,13 +205,18 @@ API endpoint for admin password reset (used by the admin UI).
 **Behavior**:
 
 1. Look up the user by `user_id` — if not found, return HTTP 404
-2. If user has `ldap_uid IS NOT NULL`, return HTTP 400:
-   `"Cannot set password for SSO user. SSO users authenticate via
-   id.suse.com."`
-3. Validate password length (12–128 characters)
-4. Hash the password and store in `password_hash`
-5. Invalidate all active sessions for this user
-6. Return HTTP 200
+2. Call `user_service.reset_password(user_id, password,
+   acting_user_id=current_user.id)` — this handles SSO user check,
+   validation, hashing, and session invalidation (see
+   `docs/features/user-lifecycle.md`)
+3. Return HTTP 200
+
+On `SSOUserPasswordError`: return HTTP 400:
+`"Cannot set password for SSO user. SSO users authenticate via
+id.suse.com."`
+
+On `PasswordValidationError`: return HTTP 400:
+`"Password must be between 12 and 128 characters."`
 
 **Response** (200):
 

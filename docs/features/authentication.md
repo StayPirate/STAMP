@@ -125,12 +125,47 @@ This means that after logout or deactivation, there is a window of up to
 60 seconds before the token becomes effectively unusable. This tradeoff
 is acceptable for an internal tool.
 
+**Redis unavailability**: if Redis is unreachable, the session liveness
+check falls back to a direct database query. This is functionally
+correct but increases database load (one extra query per authenticated
+request). The Redis connection failure is logged as a WARNING on first
+occurrence (not per-request, to avoid log flooding). Normal caching
+resumes automatically when Redis becomes available again.
+
 ### Session invalidation
 
-- **Logout**: the user's current session is marked `is_active = false`.
-- **User deactivation**: all sessions for the user are marked
-  `is_active = false`. This happens **before** the user is marked as
-  inactive (see ordering below).
+Session invalidation is handled by `session_service`
+(`backend/app/services/session_service.py`), which provides two methods:
+
+#### `invalidate_session(db, session_id)`
+
+Invalidates a single session (used by the logout endpoint).
+
+1. Set `Session.is_active = false` for the given `session_id`
+2. Delete the Redis cache entry `session_liveness:{session_id}`
+3. If Redis is unreachable, proceed — the entry expires naturally
+   within the cache TTL
+
+#### `invalidate_user_sessions(db, user_id) -> int`
+
+Invalidates all active sessions for a user (used by deactivation and
+password reset).
+
+1. `UPDATE session SET is_active = false WHERE user_id = :user_id AND
+   is_active = true` — collect the list of invalidated `session_id`s
+2. For each invalidated session, delete the Redis cache entry
+   `session_liveness:{session_id}`
+3. If Redis is unreachable, log WARNING and proceed — entries expire
+   naturally within the cache TTL (30–60 seconds)
+4. Return the number of sessions invalidated
+
+**Callers**:
+
+| Caller | Context |
+|--------|---------|
+| Logout endpoint (`POST /api/v1/auth/logout`) | Calls `invalidate_session()` for the current session |
+| `user_service.deactivate_user()` | Calls `invalidate_user_sessions()` as step 2 of deactivation |
+| `user_service.reset_password()` | Calls `invalidate_user_sessions()` after updating `password_hash` |
 
 ### Deactivation ordering
 
@@ -138,7 +173,8 @@ When a user is deactivated (via `user_service.deactivate_user()`), the
 operations execute in this order:
 
 1. Revoke all API keys for the user
-2. Invalidate all active sessions for the user
+2. Invalidate all active sessions via
+   `session_service.invalidate_user_sessions()` (DB + Redis)
 3. Mark the user as inactive
 
 This ordering ensures that if the process is interrupted at any point,
@@ -330,9 +366,10 @@ Invalidates the current session.
 **Behavior**:
 
 1. Extract `session_id` from the JWT claims
-2. Mark the session as `is_active = false`
-3. Invalidate the Redis cache entry for this session
-4. Return HTTP 204
+2. Call `session_service.invalidate_session(db, session_id)` — this
+   marks the session as `is_active = false` and deletes the Redis cache
+   entry
+3. Return HTTP 204
 
 If called with an API key instead of a JWT, return HTTP 400 with
 message: `"Logout is not applicable to API key authentication."`

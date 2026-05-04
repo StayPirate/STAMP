@@ -174,10 +174,12 @@ in this specific order):
    and `revoked_by = NULL` (system action) on all active keys. Keys are
    not deleted — preserves audit trail. See
    `docs/features/authentication.md` (API Keys) for the data model.
-2. Invalidate all active sessions for this user: set
-   `Session.is_active = false` for all rows where `user_id` matches and
-   `is_active = true`. See `docs/features/authentication.md` (Session
-   Management) for the session model.
+2. Invalidate all active sessions for this user via
+   `session_service.invalidate_user_sessions(db, user_id)`. This sets
+   `Session.is_active = false` in the database AND deletes the
+   corresponding Redis cache entries. See
+   `docs/features/authentication.md` (Session invalidation) for the
+   session service contract.
 3. Set `User.active = false`
 4. Reassign open tickets: for each ticket where `assignee_id` points to
    the deactivated user:
@@ -235,6 +237,39 @@ Reactivates a previously deactivated user account.
 
 **TicketEvent**: none (reactivation is not a ticket mutation)
 
+### `reset_password()`
+
+Resets the password for a local user and invalidates all active sessions.
+
+**Parameters**:
+
+| Parameter       | Type             | Required | Description                          |
+|-----------------|------------------|----------|--------------------------------------|
+| `user_id`       | `UUID`           | Yes      | User whose password is being reset   |
+| `new_password`  | `str`            | Yes      | New plain-text password (validated and hashed internally) |
+| `acting_user_id`| `UUID \| None`   | No       | Who is performing the action (admin or system) |
+
+**Preconditions**:
+
+- User must exist. If not found, raise `UserNotFoundError`
+- User must be a local user (`ldap_uid IS NULL`). If `ldap_uid` is set,
+  raise `SSOUserPasswordError`: "Cannot set password for SSO user. SSO
+  users authenticate via id.suse.com."
+
+**Behavior**:
+
+1. Validate password length (12–128 characters). If invalid, raise
+   `PasswordValidationError`
+2. Hash the password with Argon2id (see
+   `docs/features/local-authentication.md` for hashing parameters)
+3. Update `User.password_hash` with the new hash
+4. Invalidate all active sessions via
+   `session_service.invalidate_user_sessions(db, user_id)` — this
+   forces re-login with the new password
+5. Return updated User
+
+**TicketEvent**: none (password reset does not affect tickets)
+
 ## Transactionality
 
 All operations that produce side effects (particularly `deactivate_user`)
@@ -290,15 +325,17 @@ want to adjust a user's roles before reactivating them.
 | `SelfRoleRemovalError`   | User attempting to remove own Admin role      | 409         | Exit 1, stderr       |
 | `SelfDeactivationError`  | User attempting to deactivate themselves       | 409         | Exit 1, stderr       |
 | `ADDerivedRoleError`     | Attempting to remove AD-derived role via user action | 400   | Exit 1, stderr       |
+| `SSOUserPasswordError`   | Attempting to set password for an SSO user    | 400         | Exit 1, stderr       |
+| `PasswordValidationError`| Password does not meet length requirements (12–128) | 400  | Exit 1, stderr       |
 
 ## Relationship to Other Specifications
 
 | Spec | Relationship |
 |---|---|
-| `docs/features/authentication.md` | Defines API key and session models. `deactivate_user` revokes keys and invalidates sessions per the deactivation ordering |
+| `docs/features/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
 | `docs/features/ldap-directory.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
 | `docs/features/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/local-user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
-| `docs/features/local-authentication.md` | Defines password management. `create_user` accepts an optional password for local users |
+| `docs/features/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
 | `docs/features/ticket-history.md` | `deactivate_user` creates TicketEvents per the `assignment` event type contract |
 | `docs/data-model.md` | User and UserRole table definitions |
