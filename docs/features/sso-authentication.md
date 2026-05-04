@@ -164,9 +164,11 @@ callback URL with an authorization `code` and `state` parameter.
    d. Extract the timestamp (first 4 bytes of the payload, big-endian
       uint32). If `now - timestamp > 600 seconds` (10 minutes), return
       HTTP 400 with the same message
-   e. If PKCE is used: extract `code_verifier` from bytes 20 onward of
-      the payload (bytes 0-3 = timestamp, bytes 4-19 = nonce, remainder
-      = code_verifier UTF-8)
+   e. If PKCE is used (i.e., the payload is longer than 20 bytes):
+      extract `code_verifier` from bytes 20 onward of the payload
+      (bytes 0-3 = timestamp, bytes 4-19 = nonce, remainder =
+      code_verifier UTF-8). If the payload is exactly 20 bytes, PKCE
+      was not used for this flow.
 2. Exchange the `code` for tokens at the IdP's token endpoint:
    ```
    POST {token_endpoint}
