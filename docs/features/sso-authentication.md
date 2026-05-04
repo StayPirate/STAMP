@@ -45,6 +45,38 @@ token endpoint, and JWKS URI automatically from:
 This avoids hardcoding endpoint URLs and allows seamless migration if
 the IdP changes its URL structure.
 
+#### Discovery document caching
+
+The discovery document is cached **in-memory** (not in Redis — it is
+small, public, and each application instance fetches its own copy).
+
+| Behavior | Detail |
+|----------|--------|
+| First fetch | At application startup (SSO service initialization) |
+| Refresh | Every 1 hour (background, non-blocking) |
+| Refresh fails | Use cached version. Log WARNING with the failure reason. |
+| No cache available (startup + IdP unreachable) | The application starts successfully, but `/authorize` returns HTTP 503: `"SSO service temporarily unavailable. Please try again later."` |
+| Validation | The document MUST contain `authorization_endpoint`, `token_endpoint`, and `jwks_uri`. If any required field is missing, treat as a failed fetch. |
+
+The application does NOT fail to start if the discovery document is
+unreachable. SSO is degraded (503) until the next successful refresh.
+
+### JWKS (JSON Web Key Set) caching
+
+The IdP's public keys (used to verify ID token signatures) are cached
+**in-memory** with the same graceful degradation pattern as discovery.
+
+| Behavior | Detail |
+|----------|--------|
+| First fetch | Lazy — on the first ID token verification attempt, using the `jwks_uri` from the discovery document |
+| Refresh | Every 1 hour (background, non-blocking) |
+| Unknown `kid` | If an ID token contains a `kid` not present in the cached JWKS, force-refresh the JWKS once. If the `kid` is still absent after refresh, reject the token with HTTP 401. |
+| Refresh fails | Use cached version. Log WARNING with the failure reason. |
+| No cache available (first token + JWKS unreachable) | Reject the token with HTTP 401. Log ERROR. |
+
+The unknown-`kid`-triggers-refresh mechanism handles key rotation by the
+IdP without requiring a restart or manual intervention.
+
 ## OIDC Flow: Authorization Code
 
 Sentinel uses the Authorization Code flow (not Implicit) as recommended
@@ -148,7 +180,9 @@ callback URL with an authorization `code` and `state` parameter.
 3. If the token exchange fails, return HTTP 401:
    `"SSO authentication failed. Please try again."`
 4. Validate the ID token:
-   - Verify signature against the IdP's JWKS
+   - Verify signature against the IdP's JWKS (using the cached key set;
+     if the token's `kid` is not in the cache, force-refresh once — see
+     JWKS caching above)
    - Verify `iss` matches `SSO_ISSUER_URL`
    - Verify `aud` contains `SSO_CLIENT_ID`
    - Verify `exp` has not passed
@@ -306,7 +340,8 @@ SSO button shows an error message inline (does not redirect).
   used for session caching (post-login), not for the login process
   itself.
 - **ID token signature verification**: prevents token forgery. JWKS are
-  fetched from the IdP and cached (with periodic refresh).
+  cached in-memory with 1-hour refresh and unknown-`kid` force-refresh
+  (see JWKS caching section above).
 - **SSO_CLIENT_SECRET**: must be stored securely (environment variable,
   never in code or logs).
 - **SSO_USER_CLAIM**: must point to a claim that is stable and unique
