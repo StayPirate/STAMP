@@ -229,8 +229,14 @@ into all endpoints that require authentication.
 
 ### Credential resolution
 
-1. Read the `Authorization` header. If absent, return HTTP 401.
-2. Extract the bearer value: `Authorization: Bearer <token>`.
+1. Check the `Authorization` header:
+   - If present with scheme `Bearer`: extract the token value and go to
+     step 3.
+2. If the `Authorization` header is absent, check for the session cookie
+   (`sentinel_session`):
+   - If the cookie is present: extract its value as the token and go to
+     step 3.
+   - If neither the header nor the cookie is present: return HTTP 401.
 3. Determine credential type:
    - If the token starts with `stl_ak_`: treat as **API key**
    - Otherwise: treat as **JWT**
@@ -238,6 +244,10 @@ into all endpoints that require authentication.
 5. Load the `User` record. If the user is inactive (`active = false`),
    return HTTP 401.
 6. Return the authenticated user.
+
+The dual-source approach supports both programmatic clients (which send
+`Authorization: Bearer <token>`) and browser sessions (where the JWT is
+stored in an `HttpOnly` cookie attached automatically by the browser).
 
 ### JWT validation
 
@@ -641,10 +651,13 @@ attributed to the agent's own identity.
   acceptable for an internal tool. Users can log out of Sentinel
   explicitly.
 - **Token in browser storage**: the JWT is stored in an `HttpOnly`
-  cookie with `SameSite=Strict` and `Secure` (HTTPS only). This makes
-  the token immune to XSS attacks (JavaScript cannot access HttpOnly
-  cookies). The frontend does not handle the token directly — the
-  browser attaches it automatically to every request to the same origin.
+  cookie named `sentinel_session` with `SameSite=Strict`, `Secure`
+  (HTTPS only), and `Path=/api`. This makes the token immune to XSS
+  attacks (JavaScript cannot access HttpOnly cookies). The frontend
+  does not handle the token directly — the browser attaches it
+  automatically to every request to the same origin. `SameSite=Strict`
+  prevents the cookie from being sent on cross-origin requests,
+  eliminating the need for a separate CSRF token mechanism.
 - **No concurrent session limit**: there is no enforced maximum number
   of active sessions per user. Users may have sessions on multiple
   devices simultaneously. This is a deliberate choice for an internal
