@@ -57,14 +57,19 @@ Sentinel issues JSON Web Tokens signed with a symmetric key.
 
 ### Configuration
 
-| Setting            | Type   | Default | Env var              |
-|--------------------|--------|---------|----------------------|
-| `jwt_secret_key`   | string | —       | `JWT_SECRET_KEY`     |
-| `jwt_algorithm`    | string | `HS256` | `JWT_ALGORITHM`      |
-| `jwt_expiry_hours` | int    | `168`   | `JWT_EXPIRY_HOURS`   |
+| Setting               | Type   | Default | Env var               |
+|-----------------------|--------|---------|-----------------------|
+| `jwt_secret_key`      | string | —       | `JWT_SECRET_KEY`      |
+| `jwt_algorithm`       | string | `HS256` | `JWT_ALGORITHM`       |
+| `jwt_expiry_hours`    | int    | `168`   | `JWT_EXPIRY_HOURS`    |
+| `api_key_hmac_secret` | string | —       | `API_KEY_HMAC_SECRET` |
 
 `JWT_SECRET_KEY` is required. The application must refuse to start if it
 is not set.
+
+`API_KEY_HMAC_SECRET` is required. It must be a cryptographically random
+string of at least 32 bytes, independent from `JWT_SECRET_KEY`. The
+application must refuse to start if it is not set.
 
 ### Claims
 
@@ -185,8 +190,10 @@ into all endpoints that require authentication.
 
 ### API key validation
 
-1. Hash the presented key using the same algorithm used at creation.
-2. Look up the `ApiKey` record by hash.
+1. Compute `HMAC-SHA256(key=API_KEY_HMAC_SECRET, message=presented_key)`
+   and encode the result as a lowercase hex digest.
+2. Look up the `ApiKey` record by matching `key_hash` to the computed
+   digest.
 3. Verify `revoked_at` is `NULL`.
 4. If `expires_at` is set, verify it has not passed.
 5. Update `last_used_at` to the current timestamp (debounced: update at
@@ -208,7 +215,7 @@ pipelines, and any client that cannot perform an interactive login flow.
 |---------------|--------------|----------|------------------------------------------|
 | `id`          | UUID         | No       | Primary key                              |
 | `user_id`     | UUID (FK)    | No       | References `User.id` (owner)             |
-| `key_hash`    | string       | No       | Argon2 hash of the full key              |
+| `key_hash`    | string(64)   | No       | HMAC-SHA256 hex digest of the full key   |
 | `prefix`      | string(12)   | No       | First 12 chars of the key (for display)  |
 | `name`        | string(128)  | No       | Human-readable label (e.g. "CI prod")    |
 | `created_at`  | timestamptz  | No       | When the key was created                 |
@@ -534,6 +541,18 @@ attributed to the agent's own identity.
 - **JWT_SECRET_KEY** must be a cryptographically random string of at
   least 32 characters. It must never be committed to the repository or
   logged.
+- **API_KEY_HMAC_SECRET** must be a cryptographically random string of
+  at least 32 bytes, independent from `JWT_SECRET_KEY`. Separation
+  ensures that compromise of one secret does not expose the other.
+- **API key hashing uses HMAC-SHA256**, not a slow hash like Argon2.
+  API keys have 165+ bits of entropy (32 alphanumeric characters) and
+  are not vulnerable to offline brute-force. HMAC-SHA256 with a
+  server-side secret ensures that a database dump alone does not expose
+  the keys (the hash is irreversible without the secret). Using a slow
+  hash for high-entropy tokens would create unnecessary CPU/memory
+  pressure — at 100 requests/second with Argon2 (64 MiB/hash), the
+  server would consume ~6.4 GB of RAM solely for key validation,
+  creating a denial-of-service vector.
 - **API key secrets** are hashed before storage. The plaintext is never
   stored and cannot be recovered.
 - **Session liveness check** ensures that logout and deactivation take
