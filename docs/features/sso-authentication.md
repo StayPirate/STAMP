@@ -23,11 +23,18 @@ the local login endpoint — see `docs/features/local-authentication.md`.
 | `sso_user_claim`    | string | `sub`   | `SSO_USER_CLAIM`      |
 
 All settings except `sso_user_claim` are required for SSO to function.
-If any required setting is missing, the SSO login button on the login
-page should still be displayed, but clicking it returns an error:
-`"SSO is not configured in this environment."` This allows the same
-frontend build to be deployed in both SSO-capable and SSO-less
-environments.
+If any required setting is missing, **SSO is disabled entirely**:
+
+- The login page shows only the local credentials form — the "Login
+  with SUSE SSO" button is not rendered
+- The SSO endpoints (`/api/v1/auth/sso/authorize`,
+  `/api/v1/auth/sso/callback`) return HTTP 404
+- At startup, the application logs: `"SSO authentication disabled —
+  missing settings: {list of missing setting names}"` (secret values
+  are never logged; only setting names appear)
+
+This allows the same application build to be deployed in both
+SSO-capable and SSO-less environments without any code changes.
 
 `SSO_USER_CLAIM` specifies which claim from the OIDC ID token is used
 to identify the user (matched against the `ldap_uid` field in the User

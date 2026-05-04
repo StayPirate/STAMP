@@ -14,7 +14,6 @@ start if any is missing.
 | Env Var | Type | Description | Defined in |
 |---------|------|-------------|------------|
 | `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/authentication.md` |
-| `SSO_CLIENT_SECRET` | string | OIDC client secret for id.suse.com | `docs/features/sso-authentication.md` |
 | `DATABASE_URL` | string | PostgreSQL async connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) | `docs/architecture.md` |
 
 ## Required Connection Settings
@@ -27,10 +26,32 @@ explicitly in staging/production.
 | `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | `docs/architecture.md` |
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
 | `CELERY_RESULT_BACKEND` | string | `redis://localhost:6379/2` | Celery result backend URL | `docs/architecture.md` |
-| `SSO_ISSUER_URL` | string | — | OIDC issuer URL (e.g. `https://id.suse.com`) | `docs/features/sso-authentication.md` |
-| `SSO_CLIENT_ID` | string | — | OIDC client ID | `docs/features/sso-authentication.md` |
-| `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL | `docs/features/sso-authentication.md` |
-| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `ldap_uid`) | `docs/features/sso-authentication.md` |
+
+## SSO Configuration
+
+All SSO settings are **optional**. If any of the required SSO settings
+(`SSO_ISSUER_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`,
+`SSO_REDIRECT_URI`) is missing, the application starts with **SSO
+disabled**: the login page shows only the local credentials form (the
+"Login with SUSE SSO" button is not rendered), and the SSO endpoints
+(`/api/v1/auth/sso/authorize`, `/api/v1/auth/sso/callback`) return
+HTTP 404.
+
+At startup, the application logs an INFO message indicating SSO status:
+
+- All SSO settings present: `"SSO authentication enabled
+  (issuer: {SSO_ISSUER_URL})"`
+- One or more settings missing: `"SSO authentication disabled — missing
+  settings: {list of missing setting names}"` (secret values are never
+  logged; only the setting names appear)
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `SSO_ISSUER_URL` | string | — | OIDC issuer URL (e.g. `https://id.suse.com`). Required for SSO. | `docs/features/sso-authentication.md` |
+| `SSO_CLIENT_ID` | string | — | OIDC client ID. Required for SSO. | `docs/features/sso-authentication.md` |
+| `SSO_CLIENT_SECRET` | string | — | OIDC client secret. Required for SSO. | `docs/features/sso-authentication.md` |
+| `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL. Required for SSO. | `docs/features/sso-authentication.md` |
+| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `ldap_uid`). Only relevant when SSO is enabled. | `docs/features/sso-authentication.md` |
 
 ## Authentication
 
