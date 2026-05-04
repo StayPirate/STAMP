@@ -196,8 +196,9 @@ callback URL with an authorization `code` and `state` parameter.
    `"Your account has been deactivated. Contact your administrator."`
 9. Create a `Session` record (see
     `docs/features/authentication.md`, Session Management)
-10. Issue a JWT with the session and user claims
-11. Return the token
+10. Update `user.last_login_at = now()`
+11. Issue a JWT with the session and user claims
+12. Return the token
 
 **Success response** (200):
 
