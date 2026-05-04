@@ -71,6 +71,16 @@ is not set.
 string of at least 32 bytes, independent from `JWT_SECRET_KEY`. The
 application must refuse to start if it is not set.
 
+### Configuration bounds
+
+- `JWT_EXPIRY_HOURS` must be >= 1. Values of 0 or negative cause the
+  application to refuse to start with error:
+  `"Invalid JWT_EXPIRY_HOURS: must be >= 1 (got: {value})"`
+- `JWT_EXPIRY_HOURS` values above 720 (30 days) are accepted but log a
+  WARNING at startup:
+  `"JWT_EXPIRY_HOURS is set to {value} (>720 hours). Long-lived tokens
+  increase the window of exposure if a token is compromised."`
+
 ### Claims
 
 | Claim        | Type   | Description                                   |

@@ -38,7 +38,7 @@ explicitly in staging/production.
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `JWT_ALGORITHM` | string | `HS256` | JWT signing algorithm | `docs/features/authentication.md` |
-| `JWT_EXPIRY_HOURS` | int | `168` | JWT token lifetime in hours (7 days) | `docs/features/authentication.md` |
+| `JWT_EXPIRY_HOURS` | int | `168` | JWT token lifetime in hours (7 days). Must be >= 1; values > 720 log a warning | `docs/features/authentication.md` |
 | `LOGIN_MAX_ATTEMPTS` | int | `10` | Failed login attempts before account lockout. Must be >= 1 | `docs/features/local-authentication.md` |
 | `LOGIN_LOCKOUT_MINUTES` | int | `15` | Lockout duration in minutes. Must be >= 1 | `docs/features/local-authentication.md` |
 | `ALLOW_LOCAL_USERS` | bool | `false` | Guard for local user management CLI commands | `docs/features/local-user-management.md` |
