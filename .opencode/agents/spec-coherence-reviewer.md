@@ -35,11 +35,25 @@ files.
 4. Read `docs/data-model.md` if it is referenced or if the spec defines or
    modifies any data entity
 5. Read `docs/api-spec.md` if the spec defines or modifies API endpoints
+6. Read `docs/configuration.md` if the spec defines or references any
+   environment variable or configuration setting
 
 Do NOT load all specs in `docs/features/`. Only load the specs directly
 referenced by or closely related to the one under review.
 
 ## What to check
+
+### Configuration consistency
+
+- Does the spec define environment variables or settings? If so, verify
+  that they are listed in `docs/configuration.md` with matching type,
+  default value, and description
+- Are there naming collisions (two specs defining different settings with
+  the same env var name)?
+- Are there settings in the spec that are missing from
+  `docs/configuration.md` (drift)?
+- Are the types and defaults consistent between the feature spec and the
+  configuration reference?
 
 ### Contradictory definitions
 

@@ -28,6 +28,7 @@ sentinel/
 ├── opencode.json                # OpenCode configuration
 ├── docs/                        # Specifications and documentation
 │   ├── architecture.md          # System architecture
+│   ├── configuration.md         # Configuration reference (env vars index)
 │   ├── data-model.md            # Database schema and relationships
 │   ├── data-sources.md          # External data sources catalog
 │   ├── api-spec.md              # API specifications
@@ -133,6 +134,7 @@ the location is correct according to this map:
 |----------------------------|-----------------------------------|
 | Feature specifications     | `docs/features/<feature-name>.md` |
 | General architecture       | `docs/architecture.md`            |
+| Configuration reference    | `docs/configuration.md`           |
 | Data schema                | `docs/data-model.md`              |
 | External data sources      | `docs/data-sources.md`            |
 | API specifications         | `docs/api-spec.md`                |

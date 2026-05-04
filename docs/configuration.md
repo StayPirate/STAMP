@@ -1,0 +1,108 @@
+# Configuration Reference
+
+Centralized index of all environment variables and runtime settings
+required to deploy and operate Sentinel. Each setting is defined
+authoritatively in the feature specification linked in the "Defined in"
+column — this document is an aggregated reference, not the source of
+truth.
+
+## Required Secrets
+
+These must be provided in every environment. The application refuses to
+start if any is missing.
+
+| Env Var | Type | Description | Defined in |
+|---------|------|-------------|------------|
+| `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/authentication.md` |
+| `API_KEY_HMAC_SECRET` | string (>=32 bytes) | HMAC-SHA256 key for API key hashing. Must be independent from `JWT_SECRET_KEY` | `docs/features/authentication.md` |
+| `SSO_CLIENT_SECRET` | string | OIDC client secret for id.suse.com | `docs/features/sso-authentication.md` |
+| `DATABASE_URL` | string | PostgreSQL async connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) | `docs/architecture.md` |
+
+## Required Connection Settings
+
+These have sensible local-development defaults but must be configured
+explicitly in staging/production.
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | `docs/architecture.md` |
+| `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
+| `CELERY_RESULT_BACKEND` | string | `redis://localhost:6379/2` | Celery result backend URL | `docs/architecture.md` |
+| `SSO_ISSUER_URL` | string | — | OIDC issuer URL (e.g. `https://id.suse.com`) | `docs/features/sso-authentication.md` |
+| `SSO_CLIENT_ID` | string | — | OIDC client ID | `docs/features/sso-authentication.md` |
+| `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL | `docs/features/sso-authentication.md` |
+
+## Authentication
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `JWT_ALGORITHM` | string | `HS256` | JWT signing algorithm | `docs/features/authentication.md` |
+| `JWT_EXPIRY_HOURS` | int | `168` | JWT token lifetime in hours (7 days) | `docs/features/authentication.md` |
+| `LOGIN_MAX_ATTEMPTS` | int | `10` | Failed login attempts before account lockout. Must be >= 1 | `docs/features/local-authentication.md` |
+| `LOGIN_LOCKOUT_MINUTES` | int | `15` | Lockout duration in minutes. Must be >= 1 | `docs/features/local-authentication.md` |
+| `ALLOW_LOCAL_USERS` | bool | `false` | Guard for local user management CLI commands | `docs/features/local-user-management.md` |
+
+## IBS (Internal Build Service)
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `IBS_API_URL` | string | `https://api.suse.de` | IBS API base URL | `docs/features/obs-integration.md` |
+| `IBS_USERNAME` | string | — | IBS HTTP Basic Auth username | `docs/features/obs-integration.md` |
+| `IBS_PASSWORD` | string | — | IBS HTTP Basic Auth password | `docs/features/obs-integration.md` |
+| `IBS_DOWNLOAD_BASE_URL` | string | `https://download.suse.de/ibs` | HTTP download base for repository data | `docs/features/obs-integration.md` |
+
+## IBS RabbitMQ Consumer
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL | `docs/features/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer process | `docs/features/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys | `docs/features/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay (seconds) | `docs/features/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay (seconds) | `docs/features/ibs-rabbitmq-integration.md` |
+
+## LDAP Directory Sync
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/ldap-directory.md` |
+
+## External APIs
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching | `docs/features/cve-tracking.md` |
+
+## Application
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | `docs/architecture.md` |
+| `DEBUG` | bool | `false` | Enable debug mode (never in production) | `docs/architecture.md` |
+| `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for the frontend | `docs/architecture.md` |
+
+## Runtime Database Settings
+
+These are not environment variables. They are stored in the database and
+managed via the Admin API (`PATCH /api/v1/admin/settings`).
+
+| Setting | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `default_cvss_version` | string | `"3.1"` | System-wide CVSS version for severity and eligibility. Allowed: `"3.1"`, `"4.0"` | `docs/features/cvss-scoring.md` |
+
+## Notes for Operators
+
+1. **Secrets must never be committed** to the repository or baked into
+   container images. Use `.env` files for local development,
+   ConfigMaps/Secrets for Kubernetes.
+
+2. **`JWT_SECRET_KEY` and `API_KEY_HMAC_SECRET` must be distinct**.
+   Compromise of one must not expose the other.
+
+3. **Startup validation**: the application validates all required settings
+   at boot and fails fast with a clear error message indicating which
+   variable is missing or invalid.
+
+4. **Naming convention**: environment variables use `UPPER_SNAKE_CASE`.
+   The corresponding Python setting uses `lower_snake_case`. The mapping
+   is 1:1 (e.g., `JWT_SECRET_KEY` → `jwt_secret_key`).
