@@ -60,7 +60,6 @@ Sentinel issues JSON Web Tokens signed with a symmetric key.
 | Setting               | Type   | Default | Env var               |
 |-----------------------|--------|---------|-----------------------|
 | `jwt_secret_key`      | string | —       | `JWT_SECRET_KEY`      |
-| `jwt_algorithm`       | string | `HS256` | `JWT_ALGORITHM`       |
 | `jwt_expiry_hours`    | int    | `168`   | `JWT_EXPIRY_HOURS`    |
 
 `JWT_SECRET_KEY` is required. The application must refuse to start if it
@@ -246,7 +245,7 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 
 ### JWT validation
 
-1. Decode the token using `JWT_SECRET_KEY` and `JWT_ALGORITHM`.
+1. Decode the token using `JWT_SECRET_KEY` with the `HS256` algorithm.
 2. Verify `exp` has not passed.
 3. Verify `iss` equals `"sentinel"`.
 4. Look up the session by `session_id` claim.
