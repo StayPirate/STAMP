@@ -31,6 +31,7 @@ explicitly in staging/production.
 | `SSO_ISSUER_URL` | string | — | OIDC issuer URL (e.g. `https://id.suse.com`) | `docs/features/sso-authentication.md` |
 | `SSO_CLIENT_ID` | string | — | OIDC client ID | `docs/features/sso-authentication.md` |
 | `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL | `docs/features/sso-authentication.md` |
+| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `ldap_uid`) | `docs/features/sso-authentication.md` |
 
 ## Authentication
 

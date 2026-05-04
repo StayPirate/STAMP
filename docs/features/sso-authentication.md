@@ -20,12 +20,18 @@ the local login endpoint — see `docs/features/local-authentication.md`.
 | `sso_client_id`     | string | —       | `SSO_CLIENT_ID`       |
 | `sso_client_secret` | string | —       | `SSO_CLIENT_SECRET`   |
 | `sso_redirect_uri`  | string | —       | `SSO_REDIRECT_URI`    |
+| `sso_user_claim`    | string | `sub`   | `SSO_USER_CLAIM`      |
 
-All settings are required for SSO to function. If any is missing, the
-SSO login button on the login page should still be displayed, but
-clicking it returns an error: `"SSO is not configured in this
-environment."` This allows the same frontend build to be deployed in
-both SSO-capable and SSO-less environments.
+All settings except `sso_user_claim` are required for SSO to function.
+If any required setting is missing, the SSO login button on the login
+page should still be displayed, but clicking it returns an error:
+`"SSO is not configured in this environment."` This allows the same
+frontend build to be deployed in both SSO-capable and SSO-less
+environments.
+
+`SSO_USER_CLAIM` specifies which claim from the OIDC ID token is used
+to identify the user (matched against the `ldap_uid` field in the User
+table). Defaults to `sub`.
 
 ### Discovery
 
@@ -146,8 +152,9 @@ callback URL with an authorization `code` and `state` parameter.
    - Verify `iss` matches `SSO_ISSUER_URL`
    - Verify `aud` contains `SSO_CLIENT_ID`
    - Verify `exp` has not passed
-5. Extract the `sub` claim from the ID token
-6. Look up the user by `ldap_uid = sub` in the `User` table
+5. Extract the user identifier from the ID token: read the claim
+   specified by `SSO_USER_CLAIM` (default: `sub`)
+6. Look up the user by matching `ldap_uid` to the extracted claim value
 7. If user not found, return HTTP 401:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
@@ -196,23 +203,27 @@ Unlike the local login endpoint, SSO error messages can be specific
 
 ## Identity Mapping
 
-The `sub` claim from the IdP's ID token is matched against the
-`ldap_uid` field in the `User` table. This works because:
+The claim specified by `SSO_USER_CLAIM` (default: `sub`) from the IdP's
+ID token is matched against the `ldap_uid` field in the `User` table.
+
+With the default configuration (`sub`), this works because:
 
 - The `sync_ldap_directory` fetcher imports users from SUSE Active
   Directory and stores their `sAMAccountName` as `ldap_uid`
 - `id.suse.com` uses the same AD as its identity source, so its `sub`
   claim corresponds to the `sAMAccountName`
 
-**Critical assumption**: the `sub` claim from `id.suse.com` is the bare
-`sAMAccountName` (e.g. `"mrossi"`), not a decorated form (e.g.
-`"mrossi@suse.com"` or a UUID). If the IdP changes its `sub` format,
-all SSO logins will fail silently. The implementation MUST:
+If the IdP changes its `sub` format (e.g., from bare `sAMAccountName` to
+a UUID or email-decorated form), the operator can update `SSO_USER_CLAIM`
+to point to a different claim (e.g., `preferred_username`) without code
+changes.
 
-1. Log the `sub` value at DEBUG level on every SSO login attempt
-2. Log a WARNING when a `sub` value does not match any `ldap_uid`,
+### Matching rules
+
+1. The matching is **case-sensitive and exact** (no normalization)
+2. Log the claim value at DEBUG level on every SSO login attempt
+3. Log a WARNING when the claim value does not match any `ldap_uid`,
    including the unmatched value for diagnostic purposes
-3. The matching is case-sensitive and exact (no normalization)
 
 ### No auto-provisioning
 
@@ -298,6 +309,10 @@ SSO button shows an error message inline (does not redirect).
   fetched from the IdP and cached (with periodic refresh).
 - **SSO_CLIENT_SECRET**: must be stored securely (environment variable,
   never in code or logs).
+- **SSO_USER_CLAIM**: must point to a claim that is stable and unique
+  per user. Avoid mutable claims like `email` (which users can change).
+  Recommended values: `sub` (default, guaranteed stable by OIDC spec)
+  or `preferred_username`.
 - **No auto-provisioning**: limits the blast radius of an IdP
   compromise — only pre-existing users in Sentinel's database can
   obtain access.
