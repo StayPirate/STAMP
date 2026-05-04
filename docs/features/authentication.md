@@ -268,7 +268,12 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 3. Verify `revoked_at` is `NULL`.
 4. If `expires_at` is set, verify it has not passed.
 5. Update `last_used_at` to the current timestamp (debounced: update at
-   most once per minute to reduce write pressure).
+   most once per minute to reduce write pressure). The debounce uses a
+   per-instance in-memory cache of `key_id → last_write_timestamp`. If
+   less than 60 seconds have elapsed since the last DB write for this
+   key on this instance, the update is skipped. With N API server
+   instances, the worst case is N writes per minute per key — acceptable
+   for an internal tool.
 6. Load the user by `user_id` from the `ApiKey` record.
 
 API keys do **not** use sessions. They are validated directly against the
