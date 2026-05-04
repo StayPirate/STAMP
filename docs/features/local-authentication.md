@@ -42,22 +42,26 @@ session, and returns a JWT.
 1. If the provided password exceeds 128 characters, return HTTP 401 with
    generic message immediately (prevents resource exhaustion via hashing
    of large inputs — no database lookup needed)
-2. Look up the user by `username`
-3. If user not found, return HTTP 401 with generic message (see below)
-4. If the account is locked (see Rate Limiting), return HTTP 423 with
+2. Normalize the username: strip leading and trailing whitespace, then
+   convert to lowercase. All subsequent steps (lookup, lockout counter)
+   use the normalized value.
+3. Look up the user by normalized `username`
+4. If user not found, return HTTP 401 with generic message (see below)
+5. If the account is locked (see Rate Limiting), return HTTP 423 with
    message: `"Account temporarily locked. Try again later."`
-5. If user is inactive (`active = false`), return HTTP 401 with generic
+6. If user is inactive (`active = false`), return HTTP 401 with generic
    message
-6. If user has `ldap_uid IS NOT NULL` (SSO user), return HTTP 401 with
+7. If user has `ldap_uid IS NOT NULL` (SSO user), return HTTP 401 with
    generic message — SSO users cannot use local login
-7. If user has no `password_hash` set (local user without password),
+8. If user has no `password_hash` set (local user without password),
    return HTTP 401 with generic message
-8. Verify the provided password against the stored `password_hash`
-9. If verification fails, increment the failed attempt counter and
-   return HTTP 401 with generic message
-10. On success: reset the failed attempt counter, create a `Session`
-   record, issue a JWT (see `docs/features/authentication.md` for token
-   format and claims), return the token
+9. Verify the provided password against the stored `password_hash`
+10. If verification fails, increment the failed attempt counter and
+    return HTTP 401 with generic message
+11. On success: reset the failed attempt counter, create a `Session`
+    record, update `user.last_login_at = now()`, issue a JWT (see
+    `docs/features/authentication.md` for token format and claims),
+    return the token
 
 **Success response** (200):
 
@@ -241,7 +245,8 @@ attempts per username using a Redis counter.
 **Behavior**:
 
 1. On each failed login attempt for a username, increment a Redis
-   counter: `login_attempts:{username}`
+   counter: `login_attempts:{normalized_username}` (where
+   `normalized_username` is the lowercased, trimmed input)
 2. The counter has a TTL equal to `LOGIN_LOCKOUT_MINUTES` (auto-expires)
 3. If the counter reaches `LOGIN_MAX_ATTEMPTS`, subsequent login
    attempts for that username are rejected immediately with HTTP 423
