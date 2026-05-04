@@ -473,7 +473,7 @@ hash is stored. See `docs/features/authentication.md` (API Keys).
 |---------------|-------------|---------------------------|--------------------------------------------|
 | id            | UUID        | PK                        | Internal identifier                        |
 | user_id       | UUID        | FK(user.id), NOT NULL     | User who owns this key                     |
-| key_hash      | VARCHAR(64) | NOT NULL                  | HMAC-SHA256 hex digest of the full key (keyed with `API_KEY_HMAC_SECRET`) |
+| key_hash      | VARCHAR(64) | NOT NULL, UNIQUE          | SHA-256 hex digest of the full key         |
 | prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9b`) for display |
 | name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
 | created_at    | TIMESTAMP   | NOT NULL, DEFAULT         | When the key was created                   |

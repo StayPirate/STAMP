@@ -14,7 +14,6 @@ start if any is missing.
 | Env Var | Type | Description | Defined in |
 |---------|------|-------------|------------|
 | `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/authentication.md` |
-| `API_KEY_HMAC_SECRET` | string (>=32 bytes) | HMAC-SHA256 key for API key hashing. Must be independent from `JWT_SECRET_KEY` | `docs/features/authentication.md` |
 | `SSO_CLIENT_SECRET` | string | OIDC client secret for id.suse.com | `docs/features/sso-authentication.md` |
 | `DATABASE_URL` | string | PostgreSQL async connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) | `docs/architecture.md` |
 
@@ -97,8 +96,10 @@ managed via the Admin API (`PATCH /api/v1/admin/settings`).
    container images. Use `.env` files for local development,
    ConfigMaps/Secrets for Kubernetes.
 
-2. **`JWT_SECRET_KEY` and `API_KEY_HMAC_SECRET` must be distinct**.
-   Compromise of one must not expose the other.
+2. **`JWT_SECRET_KEY` must not be reused** for other purposes (e.g.,
+   external integrations, webhook signing). Rotate it only during
+   planned maintenance windows — rotation invalidates all active JWTs
+   (mass logout).
 
 3. **Startup validation**: the application validates all required settings
    at boot and fails fast with a clear error message indicating which
