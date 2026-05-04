@@ -52,6 +52,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  ldap_dn         │
        │                   │  manager_uid     │
        │                   │  ldap_synced_at  │
+       │                   │  last_login_at   │
        │                   └────────┬─────────┘
        │                            │
        │                            ▼ (1:N)
@@ -381,6 +382,7 @@ the same access as an unauthenticated user (read-only on public data).
 | ldap_dn        | VARCHAR     | nullable           | Full AD distinguished name       |
 | manager_uid    | VARCHAR     | nullable           | `ldap_uid` of the direct line manager (resolved from AD `manager` DN) |
 | ldap_synced_at | TIMESTAMP   | nullable           | When this record was last synced from AD |
+| last_login_at  | TIMESTAMP   | nullable           | When the user last logged in (updated on every session creation). NULL if never logged in |
 | created_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
 | updated_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
 

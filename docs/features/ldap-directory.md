@@ -483,7 +483,7 @@ Displays a table of all configured role mappings:
    accounts can be created via the CLI — see
    `docs/features/local-user-management.md`
 2. **Login is open**: any SUSE employee can authenticate via SSO (see
-   future `docs/features/sso-authentication.md`). A user with no roles
+   `docs/features/sso-authentication.md`). A user with no roles
    has the same access as an unauthenticated user (read-only on public
    data)
 3. **Role assignment is hybrid**: roles can come from AD group mappings

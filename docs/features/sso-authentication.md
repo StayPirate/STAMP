@@ -339,6 +339,15 @@ SSO button shows an error message inline (does not redirect).
   and operates correctly even if Redis is unavailable. Redis is only
   used for session caching (post-login), not for the login process
   itself.
+- **OIDC `nonce` is intentionally omitted**: the `nonce` parameter
+  prevents replay of the ID token. In Sentinel's flow, this risk is
+  already mitigated by two mechanisms: (1) the authorization `code` is
+  single-use at the IdP — replaying it fails at the token exchange step,
+  and (2) the HMAC-signed `state` parameter binds the flow to a
+  specific browser session. Adding a `nonce` would require either
+  server-side storage (reintroducing Redis dependency) or embedding it
+  in the signed state (increasing payload size). The residual risk
+  without `nonce` is negligible for an internal tool.
 - **ID token signature verification**: prevents token forgery. JWKS are
   cached in-memory with 1-hour refresh and unknown-`kid` force-refresh
   (see JWKS caching section above).

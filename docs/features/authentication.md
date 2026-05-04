@@ -201,6 +201,26 @@ retained — expired and invalidated sessions are deleted without trace.
 This is a maintenance task, not a `BaseFetcher` subclass (it does not
 fetch data from external sources).
 
+### Session audit logging
+
+To compensate for session cleanup (which deletes historical records),
+session lifecycle events are logged at **INFO** level:
+
+- Session created: `"Session created for user {username} (session_id={id})"`
+- Session invalidated (logout): `"Session invalidated for user {username} (session_id={id}, reason=logout)"`
+- Sessions invalidated (bulk): `"Invalidated {count} sessions for user {username} (reason={deactivation|password_reset})"`
+
+These log entries provide a permanent audit trail (retained per log
+infrastructure policy) even after session rows are cleaned up.
+
+### `last_login_at` field
+
+The `User` table includes a `last_login_at` field (timestamptz,
+nullable) that is updated to `now()` every time a session is created
+(both SSO and local login). This provides a queryable answer to "when
+did user X last log in?" without depending on session row retention or
+log searches.
+
 ## Middleware: `get_current_user`
 
 The FastAPI dependency `get_current_user` extracts and validates
@@ -239,7 +259,8 @@ into all endpoints that require authentication.
 1. Compute `HMAC-SHA256(key=API_KEY_HMAC_SECRET, message=presented_key)`
    and encode the result as a lowercase hex digest.
 2. Look up the `ApiKey` record by matching `key_hash` to the computed
-   digest.
+   digest. If no record is found, log a WARNING with the key prefix
+   (first 12 characters) and the source IP, then return HTTP 401.
 3. Verify `revoked_at` is `NULL`.
 4. If `expires_at` is set, verify it has not passed.
 5. Update `last_used_at` to the current timestamp (debounced: update at
@@ -340,11 +361,12 @@ When a user is deactivated (via `user_service.deactivate_user()`), all
 their active API keys are revoked with `revoked_by = NULL`. This is part
 of the deactivation ordering defined in the Session Management section.
 
-### No hard limit
+### Active key limit
 
-There is no enforced maximum number of API keys per user. Operators
-should follow the principle of least privilege: one key per use case,
-revoke unused keys regularly.
+Each user may have at most **50** active (non-revoked, non-expired) API
+keys at any given time. This prevents abuse from compromised
+automations while being generous enough for any legitimate use case.
+Revoked and expired keys do not count toward the limit.
 
 ## API Endpoints
 
@@ -421,6 +443,16 @@ Creates a new API key for the current user.
   "expires_at": "ISO8601 | null (optional)"
 }
 ```
+
+**Validation**:
+
+- `name` must be 1–128 characters
+- If `expires_at` is provided, it must be in the future. If it is in the
+  past, return HTTP 400: `"expires_at must be in the future."`
+- The user must have fewer than 50 active (non-revoked, non-expired) API
+  keys. If the limit is reached, return HTTP 400:
+  `"Maximum number of active API keys reached (50). Revoke unused keys
+  before creating new ones."`
 
 **Response** (201):
 
@@ -608,10 +640,24 @@ attributed to the agent's own identity.
   invalidate the Sentinel session. This is a known limitation,
   acceptable for an internal tool. Users can log out of Sentinel
   explicitly.
-- **Token in browser storage**: the JWT should be stored in an
-  `HttpOnly` cookie (preferred, immune to XSS) or `localStorage` (if
-  cookie-based auth adds unacceptable complexity). The choice will be
-  finalized in implementation.
+- **Token in browser storage**: the JWT is stored in an `HttpOnly`
+  cookie with `SameSite=Strict` and `Secure` (HTTPS only). This makes
+  the token immune to XSS attacks (JavaScript cannot access HttpOnly
+  cookies). The frontend does not handle the token directly — the
+  browser attaches it automatically to every request to the same origin.
+- **No concurrent session limit**: there is no enforced maximum number
+  of active sessions per user. Users may have sessions on multiple
+  devices simultaneously. This is a deliberate choice for an internal
+  tool — a limit would create friction without meaningful security gain.
+  If a user's sessions need to be terminated, an admin can deactivate
+  the user (which invalidates all sessions).
+- **Key rotation**: rotating `JWT_SECRET_KEY` immediately invalidates
+  all existing JWTs (the signature verification will fail). This
+  effectively triggers a mass logout — all users must re-authenticate.
+  Operators should plan key rotation during low-traffic windows and
+  communicate the expected impact. There is no graceful dual-key
+  transition mechanism; this simplicity is acceptable for an internal
+  tool where mass re-login is a minor inconvenience.
 - **API key last_used_at debouncing**: updating `last_used_at` on every
   request would create write amplification. Updates are debounced to at
   most once per minute per key.
