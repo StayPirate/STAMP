@@ -266,7 +266,12 @@ Resets the password for a local user and invalidates all active sessions.
 4. Invalidate all active sessions via
    `session_service.invalidate_user_sessions(db, user_id)` — this
    forces re-login with the new password
-5. Return updated User
+5. Clear the login lockout counter: delete the Redis key
+   `login_attempts:{username}` if it exists. If Redis is unreachable,
+   log WARNING and proceed — the counter will expire naturally via TTL.
+   This ensures that a locked-out user regains access immediately after
+   a password reset.
+6. Return updated User
 
 **TicketEvent**: none (password reset does not affect tickets)
 
