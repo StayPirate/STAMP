@@ -402,18 +402,26 @@ Returns the currently authenticated user's profile.
 
 Invalidates the current session.
 
-**Authentication**: required (JWT only — API keys have no session).
+**Authentication**: this endpoint does NOT use the standard
+`get_current_user` middleware (which would reject requests with an
+already-invalidated session). Instead, it uses a lightweight dependency
+that only verifies the JWT signature and extracts claims — it does not
+check session liveness. This makes the endpoint fully idempotent:
+calling it multiple times (e.g., retry or double-click) always succeeds.
 
-**Behavior**:
-
-1. Extract `session_id` from the JWT claims
-2. Call `session_service.invalidate_session(db, session_id)` — this
-   marks the session as `is_active = false` and deletes the Redis cache
-   entry
-3. Return HTTP 204
+If the token is not a valid JWT (invalid signature, malformed), return
+HTTP 401.
 
 If called with an API key instead of a JWT, return HTTP 400 with
 message: `"Logout is not applicable to API key authentication."`
+
+**Behavior**:
+
+1. Verify the JWT signature (reject if invalid or expired)
+2. Extract `session_id` from the JWT claims
+3. Call `session_service.invalidate_session(db, session_id)` — this is
+   idempotent: if the session is already inactive, no change is made
+4. Return HTTP 204
 
 ### `GET /api/v1/api-keys`
 
