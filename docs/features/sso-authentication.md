@@ -56,12 +56,18 @@ frontend calls:
 
 **Behavior**:
 
-1. Generate a cryptographically random `state` parameter (32 bytes,
-   hex-encoded) and store it in a short-lived Redis key
-   (`sso_state:{state}`, TTL 10 minutes)
-2. If PKCE is used: generate `code_verifier` and `code_challenge`, store
-   the verifier in Redis alongside the state
-3. Construct the authorization URL:
+1. Generate a cryptographically random `nonce` (16 bytes)
+2. Capture the current Unix timestamp as a 4-byte big-endian integer
+3. Construct the state payload: `payload = timestamp_4bytes || nonce_16bytes`
+4. If PKCE is used: generate `code_verifier` (43-128 chars, URL-safe
+   random) and compute `code_challenge = BASE64URL(SHA256(code_verifier))`.
+   Append the `code_verifier` (UTF-8 bytes) to the payload before signing:
+   `payload = timestamp_4bytes || nonce_16bytes || code_verifier_bytes`
+5. Compute the signature:
+   `signature = HMAC-SHA256(JWT_SECRET_KEY, payload)`
+6. Encode the state parameter:
+   `state = base64url(payload) || "." || base64url(signature)`
+7. Construct the authorization URL:
    ```
    {authorization_endpoint}?
      response_type=code&
@@ -72,7 +78,10 @@ frontend calls:
      code_challenge={code_challenge}&      (if PKCE)
      code_challenge_method=S256            (if PKCE)
    ```
-4. Return the URL to the frontend
+8. Return the URL to the frontend
+
+No server-side storage (Redis or database) is required. The state is
+self-contained and its authenticity is verified by the HMAC signature.
 
 **Response** (200):
 
@@ -107,11 +116,20 @@ callback URL with an authorization `code` and `state` parameter.
 
 **Behavior**:
 
-1. Validate `state`: look up `sso_state:{state}` in Redis. If not found
-   or expired, return HTTP 400:
-   `"Invalid or expired SSO state. Please try again."`
-2. Delete the state key from Redis (one-time use)
-3. Exchange the `code` for tokens at the IdP's token endpoint:
+1. Validate the `state` parameter:
+   a. Split on `"."` into `encoded_payload` and `encoded_signature`
+   b. Decode both from base64url
+   c. Recompute `expected = HMAC-SHA256(JWT_SECRET_KEY, payload)` and
+      verify it equals the received signature (constant-time comparison).
+      If invalid, return HTTP 400:
+      `"Invalid or expired SSO state. Please try again."`
+   d. Extract the timestamp (first 4 bytes of the payload, big-endian
+      uint32). If `now - timestamp > 600 seconds` (10 minutes), return
+      HTTP 400 with the same message
+   e. If PKCE is used: extract `code_verifier` from bytes 20 onward of
+      the payload (bytes 0-3 = timestamp, bytes 4-19 = nonce, remainder
+      = code_verifier UTF-8)
+2. Exchange the `code` for tokens at the IdP's token endpoint:
    ```
    POST {token_endpoint}
    grant_type=authorization_code&
@@ -121,24 +139,24 @@ callback URL with an authorization `code` and `state` parameter.
    client_secret={SSO_CLIENT_SECRET}&
    code_verifier={code_verifier}          (if PKCE)
    ```
-4. If the token exchange fails, return HTTP 401:
+3. If the token exchange fails, return HTTP 401:
    `"SSO authentication failed. Please try again."`
-5. Validate the ID token:
+4. Validate the ID token:
    - Verify signature against the IdP's JWKS
    - Verify `iss` matches `SSO_ISSUER_URL`
    - Verify `aud` contains `SSO_CLIENT_ID`
    - Verify `exp` has not passed
-6. Extract the `sub` claim from the ID token
-7. Look up the user by `ldap_uid = sub` in the `User` table
-8. If user not found, return HTTP 401:
+5. Extract the `sub` claim from the ID token
+6. Look up the user by `ldap_uid = sub` in the `User` table
+7. If user not found, return HTTP 401:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
-9. If user is inactive (`active = false`), return HTTP 401:
+8. If user is inactive (`active = false`), return HTTP 401:
    `"Your account has been deactivated. Contact your administrator."`
-10. Create a `Session` record (see
+9. Create a `Session` record (see
     `docs/features/authentication.md`, Session Management)
-11. Issue a JWT with the session and user claims
-12. Return the token
+10. Issue a JWT with the session and user claims
+11. Return the token
 
 **Success response** (200):
 
@@ -264,8 +282,18 @@ SSO button shows an error message inline (does not redirect).
   the browser. Token exchange happens server-side.
 - **PKCE**: provides additional protection against authorization code
   interception, even for confidential clients.
-- **State parameter**: prevents CSRF attacks on the callback endpoint.
-  Single-use with a short TTL.
+- **State parameter (HMAC-based, stateless)**: prevents CSRF attacks on
+  the callback endpoint. The state is signed with `JWT_SECRET_KEY` and
+  contains a timestamp for TTL enforcement (10 minutes). No server-side
+  storage is needed — the HMAC signature guarantees authenticity and the
+  timestamp prevents stale states. The state is not single-use, but
+  replay is harmless because the OIDC `code` is single-use at the IdP:
+  a replayed state with an already-consumed code will fail at the token
+  exchange step.
+- **No Redis dependency for SSO login**: the SSO flow is fully stateless
+  and operates correctly even if Redis is unavailable. Redis is only
+  used for session caching (post-login), not for the login process
+  itself.
 - **ID token signature verification**: prevents token forgery. JWKS are
   fetched from the IdP and cached (with periodic refresh).
 - **SSO_CLIENT_SECRET**: must be stored securely (environment variable,
