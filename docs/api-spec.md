@@ -94,17 +94,27 @@ automatically.
 
 - `GET /api/v1/tickets` — List tickets with filters. The `search` query
   parameter searches across `SNTL-{n}` identifier, CVE ID, CVE
-  description, and package names. Accepts an optional `bugowner` query
-  parameter to filter tickets to those containing at least one package
-  whose bugowner matches the value (matches against bugowner email, name,
-  or group member email/userid — see `docs/features/package-bugowner.md`).
-  Accepts an optional `include_deleted`
-  query parameter (`true` or `only`). The parameter is accepted from any
-  caller, but soft-deleted tickets are included in the response only if
-  the caller holds the Admin role. For non-admin callers the parameter is
-  silently ignored. Values: `true` (include active and deleted tickets),
-  `only` (return only deleted tickets). Default behavior (parameter absent
-  or `false`): return only active tickets.
+  description, and package names. Supports the following query parameters:
+  - `search` (string): free-text search across ticket ID, CVE ID, CVE
+    description, and package names
+  - `status` (string, repeatable): filter by ticket status. Accepts one or
+    more values from: `new`, `analysis`, `analyzed`, `resolved`, `ignored`,
+    `duplicated`. When multiple values are provided, tickets matching any
+    of the specified statuses are returned
+  - `assignee` (string): filter by assignee. Accepts a user UUID or the
+    special value `none` to return only unassigned tickets
+  - `severity` (string, repeatable): filter by severity level. Accepts one
+    or more values from: `critical`, `high`, `medium`, `low`, `none`
+  - `bugowner` (string): filter tickets to those containing at least one
+    package whose bugowner matches the value (matches against bugowner
+    email, name, or group member email/userid — see
+    `docs/features/package-bugowner.md`)
+  - `include_deleted` (string): `true` or `only`. The parameter is accepted
+    from any caller, but soft-deleted tickets are included in the response
+    only if the caller holds the Admin role. For non-admin callers the
+    parameter is silently ignored. Values: `true` (include active and
+    deleted tickets), `only` (return only deleted tickets). Default behavior
+    (parameter absent or `false`): return only active tickets
 - `GET /api/v1/tickets/{ticket_id}` — Get ticket details. If the ticket is
   soft-deleted and the caller is not an Admin, returns 410 Gone with body
   `{"detail": "This ticket has been deleted. Contact an admin if you think
