@@ -57,7 +57,7 @@ At startup, the application logs an INFO message indicating SSO status:
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `JWT_EXPIRY_HOURS` | int | `168` | JWT token lifetime in hours (7 days). Must be >= 1; values > 720 log a warning | `docs/features/authentication.md` |
+| `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/authentication.md` |
 | `LOGIN_MAX_ATTEMPTS` | int | `10` | Failed login attempts before account lockout. Must be >= 1 | `docs/features/local-authentication.md` |
 | `LOGIN_LOCKOUT_MINUTES` | int | `15` | Lockout duration in minutes. Must be >= 1 | `docs/features/local-authentication.md` |
 

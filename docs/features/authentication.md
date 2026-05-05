@@ -60,7 +60,7 @@ Sentinel issues JSON Web Tokens signed with a symmetric key.
 | Setting               | Type   | Default | Env var               |
 |-----------------------|--------|---------|-----------------------|
 | `jwt_secret_key`      | string | —       | `JWT_SECRET_KEY`      |
-| `jwt_expiry_hours`    | int    | `168`   | `JWT_EXPIRY_HOURS`    |
+| `jwt_expiry_hours`    | int    | `72`    | `JWT_EXPIRY_HOURS`    |
 
 `JWT_SECRET_KEY` is required. The application must refuse to start if it
 is not set.
@@ -77,23 +77,66 @@ is not set.
 
 ### Claims
 
-| Claim        | Type   | Description                                   |
-|--------------|--------|-----------------------------------------------|
-| `sub`        | string | User UUID (primary key of the `User` row)     |
-| `session_id` | string | UUID of the associated `Session` row          |
-| `roles`      | array  | List of role names (e.g. `["admin"]`)         |
-| `iat`        | int    | Issued-at timestamp (Unix epoch)              |
-| `exp`        | int    | Expiration timestamp (Unix epoch)             |
-| `iss`        | string | `"sentinel"` (constant)                       |
+| Claim              | Type   | Description                                   |
+|--------------------|--------|-----------------------------------------------|
+| `sub`              | string | User UUID (primary key of the `User` row)     |
+| `session_id`       | string | UUID of the associated `Session` row          |
+| `roles`            | array  | List of role names (e.g. `["admin"]`)         |
+| `iat`              | int    | Issued-at timestamp (Unix epoch)              |
+| `exp`              | int    | Expiration timestamp (Unix epoch)             |
+| `session_deadline` | int    | Maximum session lifetime (Unix epoch). Set at login, never refreshed |
+| `iss`              | string | `"sentinel"` (constant)                       |
 
 ### Token lifecycle
 
-- A single token is issued at login. There is no refresh token.
-- Token duration defaults to 7 days (`168` hours), configurable via
-  `JWT_EXPIRY_HOURS`.
-- At expiration, the frontend redirects to the login page.
+- A token is issued at login with:
+  - `exp = now + JWT_EXPIRY_HOURS * 3600` (default 72 hours)
+  - `session_deadline = now + 30 days` (hardcoded, never refreshed)
+- The server transparently refreshes the token via **sliding session**
+  (see Token refresh below). Active users never experience session
+  expiration.
+- An inactive user whose token expires without renewal (no requests for
+  longer than `JWT_EXPIRY_HOURS`) is redirected to the login page.
+- After 30 days from login (`session_deadline`), the session expires
+  unconditionally — the user must re-authenticate regardless of
+  activity. This provides a hard cap on session lifetime.
 - A token becomes invalid immediately if its associated session is
   deactivated (see Session Management below).
+
+### Token refresh
+
+The authentication middleware implements a sliding session mechanism
+that transparently extends the token lifetime for active users:
+
+1. After successful JWT validation and session liveness check, compute:
+   `token_age = now - iat`
+   `refresh_threshold = JWT_EXPIRY_HOURS * 3600 * 0.5`
+2. If `token_age >= refresh_threshold`:
+   a. Verify `now + JWT_EXPIRY_HOURS * 3600` does not exceed
+      `session_deadline`. If it does, set the new `exp` to
+      `session_deadline` instead (final token before forced re-login)
+   b. Generate a new JWT with the same `sub`, `session_id`, and
+      `session_deadline`, but new `iat = now`, new `exp`, and current
+      `roles` (loaded fresh from DB)
+   c. Set the new JWT in the response `Set-Cookie` header (same cookie
+      attributes: `HttpOnly`, `SameSite=Strict`, `Secure`, `Path=/api`)
+3. If `token_age < refresh_threshold`: do nothing (normal request flow)
+
+The refresh is completely server-side and transparent to the client. No
+client-side logic or dedicated refresh endpoint is required.
+
+**Notes**:
+
+- The refresh threshold is a percentage (50%) of `JWT_EXPIRY_HOURS`, not
+  an absolute value. If the expiry is changed, the threshold adjusts
+  automatically
+- The `roles` claim in the refreshed JWT reflects the user's current
+  roles at refresh time
+- If the `Set-Cookie` header cannot be set for any reason, the old JWT
+  remains valid — the user experiences no error and the refresh is
+  retried on the next eligible request
+- No database write is required for token refresh (the Session record is
+  not modified)
 
 ## Session Management
 
@@ -110,7 +153,6 @@ deactivation, without waiting for JWT expiry.
 | `id`         | UUID         | No       | Primary key                         |
 | `user_id`    | UUID (FK)    | No       | References `User.id`                |
 | `created_at` | timestamptz  | No       | When the session was created        |
-| `expires_at` | timestamptz  | No       | When the session naturally expires  |
 | `is_active`  | boolean      | No       | `false` after logout or revocation  |
 
 ### Session liveness check
@@ -118,16 +160,20 @@ deactivation, without waiting for JWT expiry.
 On every authenticated request, the middleware checks:
 
 ```
-session.is_active = true AND session.expires_at > now()
+session.is_active = true
 ```
 
-If either condition fails, the request is rejected with HTTP 401.
+If the session is inactive, the request is rejected with HTTP 401.
+The `session_deadline` claim in the JWT provides the maximum lifetime
+check (verified during JWT validation, before the liveness check).
 
 To avoid a database round-trip on every request, the session liveness
-result is cached in Redis with a short TTL (30–60 seconds, configurable).
-This means that after logout or deactivation, there is a window of up to
-60 seconds before the token becomes effectively unusable. This tradeoff
-is acceptable for an internal tool.
+result is cached in Redis with a TTL of 60 seconds. This means that
+after logout or deactivation, there is a window of up to 60 seconds
+before the token becomes effectively unusable (in practice, the explicit
+cache purge on logout/deactivation makes this near-instantaneous — the
+TTL is only a safety net for edge cases). This tradeoff is acceptable
+for an internal tool.
 
 **Redis unavailability**: if Redis is unreachable, the session liveness
 check falls back to a direct database query. This is functionally
@@ -160,7 +206,7 @@ password reset).
 2. For each invalidated session, delete the Redis cache entry
    `session_liveness:{session_id}`
 3. If Redis is unreachable, log WARNING and proceed — entries expire
-   naturally within the cache TTL (30–60 seconds)
+   naturally within the cache TTL (60 seconds)
 4. Return the number of sessions invalidated
 
 **Callers**:
@@ -189,8 +235,9 @@ user with valid credentials.
 ### Session cleanup
 
 A Celery Beat task runs **once per week** and deletes all session rows
-where `expires_at < now()` or `is_active = false`. No session history is
-retained — expired and invalidated sessions are deleted without trace.
+where `is_active = false` or `created_at < now() - 30 days` (sessions
+that have exceeded the maximum lifetime). No session history is
+retained — invalidated and expired sessions are deleted without trace.
 
 This is a maintenance task, not a `BaseFetcher` subclass (it does not
 fetch data from external sources).
@@ -652,7 +699,7 @@ attributed to the agent's own identity.
 - **API key secrets** are hashed before storage. The plaintext is never
   stored and cannot be recovered.
 - **Session liveness check** ensures that logout and deactivation take
-  effect within the cache TTL window (30–60 seconds maximum).
+  effect within the cache TTL window (60 seconds maximum).
 - **No single logout (SLO)**: logging out of `id.suse.com` does not
   invalidate the Sentinel session. This is a known limitation,
   acceptable for an internal tool. Users can log out of Sentinel

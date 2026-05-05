@@ -279,8 +279,10 @@ framework and `docs/features/sso-authentication.md` /
    See `docs/features/authentication.md` (Deactivation ordering) and
    `docs/features/user-lifecycle.md`
 5. All authentication events are logged (login, logout, failed attempts)
-6. Session duration: 7 days by default, configurable via
-   `JWT_EXPIRY_HOURS`. See `docs/features/authentication.md`
+6. Session duration: JWT expires after 72 hours of inactivity (refreshed
+   transparently via sliding session for active users). Maximum session
+   lifetime is 30 days regardless of activity. See
+   `docs/features/authentication.md`
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
 8. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to

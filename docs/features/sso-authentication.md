@@ -87,8 +87,13 @@ IdP without requiring a restart or manual intervention.
 ## OIDC Flow: Authorization Code
 
 Sentinel uses the Authorization Code flow (not Implicit) as recommended
-by OAuth 2.1 and OIDC best practices. PKCE (Proof Key for Code
-Exchange) is used if supported by the IdP.
+by OAuth 2.1 and OIDC best practices. PKCE (Proof Key for Code Exchange)
+is always used, regardless of whether the IdP advertises support via
+`code_challenge_methods_supported` in its discovery document. This
+follows OAuth 2.1 which mandates PKCE for all authorization code grants.
+If the IdP does not support PKCE, it ignores the `code_challenge`
+parameter in the authorization request — the flow still succeeds, but
+without the additional code interception protection.
 
 ### Step 1: Login initiation
 
@@ -104,9 +109,9 @@ frontend calls:
 1. Generate a cryptographically random `nonce` (16 bytes)
 2. Capture the current Unix timestamp as a 4-byte big-endian integer
 3. Construct the state payload: `payload = timestamp_4bytes || nonce_16bytes`
-4. If PKCE is used: generate `code_verifier` (43-128 chars, URL-safe
-   random) and compute `code_challenge = BASE64URL(SHA256(code_verifier))`.
-   Append the `code_verifier` (UTF-8 bytes) to the payload before signing:
+4. Generate `code_verifier` (43-128 chars, URL-safe random) and compute
+   `code_challenge = BASE64URL(SHA256(code_verifier))`. Append the
+   `code_verifier` (UTF-8 bytes) to the payload before signing:
    `payload = timestamp_4bytes || nonce_16bytes || code_verifier_bytes`
 5. Compute the signature:
    `signature = HMAC-SHA256(JWT_SECRET_KEY, payload)`
@@ -120,8 +125,8 @@ frontend calls:
      redirect_uri={SSO_REDIRECT_URI}&
      scope=openid profile email&
      state={state}&
-     code_challenge={code_challenge}&      (if PKCE)
-     code_challenge_method=S256            (if PKCE)
+     code_challenge={code_challenge}&
+     code_challenge_method=S256
    ```
 8. Return the URL to the frontend
 
@@ -171,11 +176,9 @@ callback URL with an authorization `code` and `state` parameter.
    d. Extract the timestamp (first 4 bytes of the payload, big-endian
       uint32). If `now - timestamp > 600 seconds` (10 minutes), return
       HTTP 400 with the same message
-   e. If PKCE is used (i.e., the payload is longer than 20 bytes):
-      extract `code_verifier` from bytes 20 onward of the payload
+   e. Extract `code_verifier` from bytes 20 onward of the payload
       (bytes 0-3 = timestamp, bytes 4-19 = nonce, remainder =
-      code_verifier UTF-8). If the payload is exactly 20 bytes, PKCE
-      was not used for this flow.
+      code_verifier UTF-8).
 2. Exchange the `code` for tokens at the IdP's token endpoint:
    ```
    POST {token_endpoint}
@@ -184,10 +187,16 @@ callback URL with an authorization `code` and `state` parameter.
    redirect_uri={SSO_REDIRECT_URI}&
    client_id={SSO_CLIENT_ID}&
    client_secret={SSO_CLIENT_SECRET}&
-   code_verifier={code_verifier}          (if PKCE)
+   code_verifier={code_verifier}
    ```
-3. If the token exchange fails, return HTTP 401:
+3. If the token exchange fails (non-2xx HTTP response, network error,
+   or 2xx response whose body does not contain an `id_token` field),
+   return HTTP 401:
    `"SSO authentication failed. Please try again."`
+   Log at WARNING level: `"SSO token exchange failed: {reason}"` where
+   reason is `"HTTP {status}"` for non-2xx, `"no id_token in response"`
+   for missing field, or `"network error: {detail}"` for connectivity
+   failures.
 4. Validate the ID token:
    - Verify signature against the IdP's JWKS (using the cached key set;
      if the token's `kid` is not in the cache, force-refresh once — see
@@ -196,7 +205,14 @@ callback URL with an authorization `code` and `state` parameter.
    - Verify `aud` contains `SSO_CLIENT_ID`
    - Verify `exp` has not passed
 5. Extract the user identifier from the ID token: read the claim
-   specified by `SSO_USER_CLAIM` (default: `sub`)
+   specified by `SSO_USER_CLAIM` (default: `sub`). If the claim is
+   absent from the ID token, or its value is `null` or an empty string,
+   return HTTP 401:
+   `"SSO authentication failed. Please try again."`
+   Log at WARNING level: `"SSO callback: expected claim
+   '{claim_name}' not found in ID token from {issuer}. Available
+   claims: {list_of_claim_names}."` (claim values are never logged —
+   only names, to aid debugging without leaking PII)
 6. Look up the user by matching `ldap_uid` to the extracted claim value
 7. If user not found, return HTTP 401:
    `"No Sentinel account found for this identity. Contact your
@@ -306,8 +322,10 @@ This is a deliberate design decision:
 - For an internal tool, the risk is minimal: if a user's session is
   compromised, an admin can deactivate the user, which immediately
   invalidates all sessions
-- The Sentinel JWT expires naturally within the configured duration
-  (default 7 days)
+- The Sentinel JWT is refreshed transparently via sliding session for
+  active users. Inactive sessions expire after the configured duration
+  (default 72 hours). All sessions expire unconditionally after 30 days
+  (see `docs/features/authentication.md`, Token lifecycle).
 
 ## Authentication Providers Endpoint
 
