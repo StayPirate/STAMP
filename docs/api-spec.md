@@ -9,7 +9,10 @@ All API endpoints are prefixed with `/api/v1/`.
 ### Authentication
 
 All endpoints require authentication unless explicitly marked as public.
-Authentication mechanism TBD (JWT or session-based).
+Authentication uses JWT tokens in HttpOnly cookies (browser sessions) or
+API keys (programmatic access). See `docs/features/authentication.md`,
+`docs/features/sso-authentication.md`, and
+`docs/features/local-authentication.md` for full details.
 
 ### Response Format
 
@@ -290,9 +293,12 @@ See `docs/features/rbac.md` for access control details and
 `docs/features/ldap-directory.md` for LDAP integration details.
 
 Users are populated from SUSE Active Directory via the
-`sync_ldap_directory` fetcher. There is no manual user creation endpoint.
-Authentication mechanism TBD (SSO via id.suse.com — see future
-`docs/features/sso-authentication.md`).
+`sync_ldap_directory` fetcher. There is no public user self-registration
+endpoint. Local users are created by admins via CLI or admin UI (see
+`docs/features/local-authentication.md`). Authentication is provided via
+SSO (see `docs/features/sso-authentication.md`) for directory users, or
+via local password for admin-created local users (see
+`docs/features/local-authentication.md`).
 
 - `GET /api/v1/users` — List/search users (public). Supports `search`
   (min 2 chars, searches username/email/full_name), `active` (boolean),

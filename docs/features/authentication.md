@@ -576,7 +576,7 @@ Lists API keys across all users. Admin only.
 
 ```json
 {
-  "items": [
+  "data": [
     {
       "id": "uuid",
       "prefix": "stl_ak_7f3a9b",
@@ -590,9 +590,11 @@ Lists API keys across all users. Admin only.
       "revoked_by": "uuid | null"
     }
   ],
-  "total": 42,
-  "page": 1,
-  "per_page": 50
+  "meta": {
+    "total": 42,
+    "page": 1,
+    "per_page": 50
+  }
 }
 ```
 
