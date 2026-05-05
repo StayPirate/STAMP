@@ -10,7 +10,7 @@ guidelines.
 |------------------------------------|------------------------------------------|----------------------------------------------|
 | `sentinel manage-user create`      | Create a local user account              | [user-management](features/user-management.md) |
 | `sentinel manage-user update`      | Update an existing user account          | [user-management](features/user-management.md) |
-| `sentinel manage-user delete`      | Deactivate a user account                | [user-management](features/user-management.md) |
+| `sentinel manage-user deactivate`  | Deactivate a user account                | [user-management](features/user-management.md) |
 | `sentinel manage-user set-password`| Set or reset password for a local user   | [user-management](features/user-management.md) |
 | `sentinel manage-user unlock`      | Clear login lockout counter for a user   | [user-management](features/user-management.md) |
 | `sentinel fetcher list`            | List all fetchers with current state     | [fetcher-dashboard](features/fetcher-dashboard.md) |

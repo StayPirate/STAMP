@@ -47,7 +47,6 @@ Creates a new local user account with a password.
 sentinel manage-user create \
   --username <username> \
   --email <email> \
-  --password <password> \
   [--full-name <name>] \
   [--role <role>] ...
 ```
@@ -58,9 +57,14 @@ sentinel manage-user create \
 |----------------|----------|------------|--------------------------------------------|
 | `--username`   | Yes      | No         | Unique username for the account             |
 | `--email`      | Yes      | No         | Unique email address                        |
-| `--password`   | Yes      | No         | Initial password (12-128 characters)        |
 | `--full-name`  | No       | No         | Display name                                |
 | `--role`       | No       | Yes        | Role to assign: `admin`, `vulnerability_analyst` |
+
+The password is collected interactively via a hidden prompt (input is not
+echoed to the terminal, like `sudo`). The prompt asks for the password
+twice for confirmation. If the two entries do not match, the command exits
+with error: `"Error: Passwords do not match."` (exit code 1). This
+command cannot be used non-interactively — a TTY is required.
 
 **Behavior**:
 
@@ -158,17 +162,22 @@ sentinel manage-user update \
    roles as `(role, '_manual')` pairs. The service handles validation
    (AD-derived role protection). Since `acting_user_id = None`, the
    self-removal guard does not apply (CLI is a system action)
-9. Prints summary of changes:
-   `"Updated user '{username}': {list of changes}."`
+9. Prints summary of changes. The summary lists only changes that were
+   actually applied (not no-ops). If all requested operations resulted
+   in no-ops (e.g., reactivating an already-active user, adding a role
+   the user already has, removing a role the user does not have), prints:
+   `"No changes applied to user '{username}'."` and exits with code 0.
+   Otherwise prints:
+   `"Updated user '{username}': {list of actual changes}."`
 
 **Exit codes**: 0 on success, 1 on validation error
 
-### `sentinel manage-user delete`
+### `sentinel manage-user deactivate`
 
 Deactivates a user account (soft delete only).
 
 ```
-sentinel manage-user delete \
+sentinel manage-user deactivate \
   --username <username>
 ```
 
@@ -182,16 +191,13 @@ sentinel manage-user delete \
 
 1. Looks up the user by `username` — if not found, exits with error:
    `"Error: User '{username}' not found."`
-2. If the user is already inactive, exits with error:
-   `"Error: User '{username}' is already deactivated."`
-3. Delegates to `user_service.deactivate_user()` with
+2. Delegates to `user_service.deactivate_user()` with
    `acting_user_id = None` and
-   `reason = "deactivated via CLI (manage-user delete)"`. This triggers
-   the deactivation sequence: revoke API keys, invalidate sessions,
-   mark inactive, reassign tickets — see
-   `docs/features/user-lifecycle.md` and
-   `docs/features/authentication.md` (Deactivation ordering)
-4. Prints: `"Deactivated user '{username}'."`
+   `reason = "deactivated via CLI (manage-user deactivate)"`. If the
+   user is already inactive, the service returns a no-op — prints:
+   `"User '{username}' is already inactive."` and exits with code 0
+3. If the service performed the deactivation (user was active), prints:
+   `"Deactivated user '{username}'."`
 
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
@@ -209,9 +215,15 @@ policy and hashing.
 
 ```
 sentinel manage-user set-password \
-  --username <username> \
-  --password <new_password>
+  --username <username>
 ```
+
+The new password is collected interactively via a hidden prompt (input is
+not echoed to the terminal, like `sudo`). The prompt asks for the
+password twice for confirmation. If the two entries do not match, the
+command exits with error: `"Error: Passwords do not match."` (exit
+code 1). This command cannot be used non-interactively — a TTY is
+required.
 
 This command is only valid for local users (`ldap_uid = NULL`). If
 invoked on an SSO user, exits with error:
@@ -239,15 +251,17 @@ sentinel manage-user unlock \
 **Behavior**:
 
 1. Normalize the username (trim whitespace, lowercase)
-2. Delete the Redis key `login_attempts:{normalized_username}`
-3. If Redis is unreachable, exit with error:
+2. Look up the user by normalized username in the database — if not
+   found, exit with error:
+   `"Error: User '{username}' not found."` (exit code 1)
+3. Delete the Redis key `login_attempts:{normalized_username}`
+4. If Redis is unreachable, exit with error:
    `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
    (exit code 2)
-4. Print: `"Unlocked user '{username}'."`
+5. Print: `"Unlocked user '{username}'."`
 
 The command is idempotent: if the counter does not exist (user was not
-locked), it succeeds silently. No database lookup is required — the
-command operates directly on Redis.
+locked), it succeeds silently.
 
 **Exit codes**: 0 on success, 1 on validation error (missing parameter),
 2 on system error (Redis unreachable)
@@ -383,7 +397,9 @@ Reset the password for a local user.
    acting_user_id=authenticated_admin.id)` — this handles SSO user
    check, validation, hashing, and session invalidation (see
    `docs/features/user-lifecycle.md`)
-3. Return HTTP 200
+3. Log the operation at INFO level: admin identity (user_id, username)
+   and target user (user_id, username)
+4. Return HTTP 200
 
 **Error responses**:
 - SSO user: HTTP 400 — `"Cannot set password for SSO user. SSO users
@@ -490,6 +506,10 @@ handling is required.
 - **CLI access requires shell access**: the `manage-user` commands
   require direct access to the host or container. There are no
   unauthenticated HTTP endpoints for user management
+- **Passwords are never CLI arguments**: the `create` and `set-password`
+  commands collect passwords via hidden interactive prompts. This
+  prevents exposure in process listings (`ps aux`) and shell history
+  files. A TTY is required — these commands cannot be scripted
 - **Admin UI is authenticated and role-protected**: only users with the
   `admin` role can access the user management pages
 - **Password policy**: minimum 12 characters, no complexity rules.
@@ -498,6 +518,12 @@ handling is required.
 - **Audit trail**: user creation, role changes, and deactivation
   produce `TicketEvent` records where relevant (e.g., ticket
   reassignment on deactivation)
+- **Admin password reset is logged**: every admin-initiated password
+  reset is logged at INFO level with the acting admin's identity and
+  the target user. No rate limiting or step-up authentication is applied
+  — the admin role is the highest trust level in the system, and
+  additional friction would not meaningfully improve security given that
+  a compromised admin already has full system access
 
 ## Cross-references
 

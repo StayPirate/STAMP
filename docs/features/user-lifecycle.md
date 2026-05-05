@@ -321,6 +321,25 @@ roles to an inactive user is permitted — it has no immediate effect but
 prepares the user for reactivation. This is intentional: an admin may
 want to adjust a user's roles before reactivating them.
 
+### Concurrent role modification from multiple entry points
+
+`update_roles()` does not require row-level locking. Each role is an
+independent tuple `(user_id, role, ad_group_cn)` managed via atomic
+INSERT/DELETE operations — there is no read-modify-write pattern.
+Concurrency safety is guaranteed by:
+
+1. **UNIQUE constraint** `(user_id, role, ad_group_cn)` — prevents
+   duplicate records regardless of timing
+2. **Disjoint key spaces** — manual actions use `ad_group_cn = '_manual'`
+   while LDAP sync uses the actual AD group CN. These never operate on
+   the same row
+3. **Idempotency** — adding a role already present is a no-op; removing
+   a role not present is a no-op. Two concurrent identical operations
+   produce the same final state as one
+
+No locking, serialization, or coordination is needed between CLI, API,
+and LDAP sync entry points for role modifications.
+
 ## Error Handling
 
 | Error                    | Condition                                    | API mapping | CLI mapping          |
