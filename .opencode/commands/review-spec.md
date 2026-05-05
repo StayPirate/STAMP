@@ -103,8 +103,11 @@ Return the sorted list of OPEN findings with all details.
 entire analysis and presentation phase (step 4a.3a). The user will
 manually switch to Build mode when ready to apply the fix. After
 implementing the fix and updating the review file (steps 4a.3c–4a.3e),
-the agent MUST switch back to Plan mode before presenting the next
-finding.
+the agent MUST NOT present the next finding in the same message.
+Instead, it asks the user if they want to continue (step 4a.3f) and
+waits for their response. The user is responsible for switching back
+to Plan mode (Tab key) before replying. The next finding is presented
+only in the subsequent message, after the user has confirmed.
 
 For the highest-priority OPEN finding:
 
@@ -202,13 +205,22 @@ Update `docs/drafts/review/README.md`:
 - Recalculate the OPEN finding counts for this spec's row
 - Update the Total row
 
-#### 4a.3f. Return to Plan mode and continue or stop
+#### 4a.3f. Ask to continue (do NOT present next finding yet)
 
-After completing the fix, switch back to Plan mode immediately. Then
-ask the user: "Continuo con il prossimo finding?" — if yes, repeat
-from step 4a.3a with the next highest-priority OPEN finding (still in
-Plan mode). If no, stop and show a brief summary of what was resolved
-in this session.
+After completing the fix, ask the user:
+
+> "Finding risolto. Continuo con il prossimo? (ricorda di passare a Plan
+> con Tab prima di rispondere)"
+
+CRITICAL: Do NOT present the next finding in this same message. Stop
+here and wait for the user's reply. The next finding (step 4a.3a) is
+presented only in the following message, after the user confirms. This
+gives the user the opportunity to switch back to Plan mode before the
+next finding is shown.
+
+If the user says yes, present the next highest-priority OPEN finding
+from step 4a.3a. If no, show a brief summary of what was resolved in
+this session.
 
 ---
 
