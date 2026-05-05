@@ -81,7 +81,6 @@ is not set.
 |--------------------|--------|-----------------------------------------------|
 | `sub`              | string | User UUID (primary key of the `User` row)     |
 | `session_id`       | string | UUID of the associated `Session` row          |
-| `roles`            | array  | List of role names (e.g. `["admin"]`)         |
 | `iat`              | int    | Issued-at timestamp (Unix epoch)              |
 | `exp`              | int    | Expiration timestamp (Unix epoch)             |
 | `session_deadline` | int    | Maximum session lifetime (Unix epoch). Set at login, never refreshed |
@@ -116,8 +115,7 @@ that transparently extends the token lifetime for active users:
       `session_deadline`. If it does, set the new `exp` to
       `session_deadline` instead (final token before forced re-login)
    b. Generate a new JWT with the same `sub`, `session_id`, and
-      `session_deadline`, but new `iat = now`, new `exp`, and current
-      `roles` (loaded fresh from DB)
+      `session_deadline`, but new `iat = now` and new `exp`
    c. Set the new JWT in the response `Set-Cookie` header (same cookie
       attributes: `HttpOnly`, `SameSite=Strict`, `Secure`, `Path=/api`)
 3. If `token_age < refresh_threshold`: do nothing (normal request flow)
@@ -130,8 +128,6 @@ client-side logic or dedicated refresh endpoint is required.
 - The refresh threshold is a percentage (50%) of `JWT_EXPIRY_HOURS`, not
   an absolute value. If the expiry is changed, the threshold adjusts
   automatically
-- The `roles` claim in the refreshed JWT reflects the user's current
-  roles at refresh time
 - If the `Set-Cookie` header cannot be set for any reason, the old JWT
   remains valid — the user experiences no error and the refresh is
   retried on the next eligible request
@@ -299,11 +295,8 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 5. Verify the session passes the liveness check (active + not expired).
    Use Redis cache when available.
 6. Load the user by `sub` claim.
-7. Load the user's **current roles from the database** — the `roles`
-   claim in the JWT is not used for authorization decisions. It exists
-   for informational purposes only (e.g., frontend UI can use it for
-   optimistic rendering before fetching fresh data). This ensures that
-   role changes take effect immediately, without waiting for re-login.
+7. Load the user's **current roles from the database**. Role changes
+   take effect immediately, without waiting for re-login.
 
 ### API key validation
 
@@ -570,7 +563,7 @@ Lists API keys across all users. Admin only.
 | `user_id`  | UUID   | Filter by user (optional)           |
 | `status`   | string | `active`, `revoked`, `expired` (optional) |
 | `page`     | int    | Page number (default 1)             |
-| `per_page` | int    | Items per page (default 50)         |
+| `per_page` | int    | Items per page (default 50, max 100)  |
 
 **Response** (200): paginated array of API key objects with user info:
 
