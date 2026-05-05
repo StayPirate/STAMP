@@ -1,52 +1,243 @@
 ---
-description: Run systematic spec reviews and fix open findings interactively
+description: Interactive spec review and finding resolution workflow
 ---
 
-Review the feature specification(s) specified in $ARGUMENTS using all 4
-reviewer agents in sequence, or interactively fix open findings from
-previous reviews.
+Fully interactive command — no arguments accepted. Presents a recap of
+all specs and their review status, then lets the user choose between
+fixing open findings or running new reviews.
 
-## Arguments
-
-- `<spec-name>` — review a single spec (e.g., `tickets`, `rbac`)
-- `all` — review all specs in `docs/features/` sequentially
-- `list` — interactive mode: list all specs and let the user choose which
-  one to review
-- `fix` — interactive mode: recap open findings across all specs, choose
-  one to work on, and resolve findings one at a time
+**Verbosity rule**: all data-gathering operations (scanning directories,
+reading files, parsing findings) MUST be delegated to a Task agent
+(subagent type `general` or `explore`). This keeps the main conversation
+clean — the user sees only the formatted output and interactive prompts,
+not the underlying tool calls. Never use Glob, Read, Grep, or Bash
+directly in the main conversation for data-gathering steps; always
+delegate to a subagent and use the returned data to present results.
 
 ---
 
-## Mode 1: Review (`<spec-name>` or `all`)
+## Step 1: Gather data (silent)
 
-### 1. Determine target specs
+Use the Task tool (subagent type `general`) to perform all of the
+following in a single subagent session. Instruct the subagent to return
+a structured result (JSON or clearly formatted text) containing:
 
-- If `$ARGUMENTS` is `all`: list all `.md` files in `docs/features/` and
-  process each one in alphabetical order
-- Otherwise: the target is `docs/features/$ARGUMENTS.md`. Verify it exists;
-  if not, report the error and stop
+1. **Spec list**: all `.md` filenames in `docs/features/` (without
+   extension), sorted alphabetically
+2. **Review status per spec**: for each spec, check if
+   `docs/drafts/review/<name>.md` exists. If it does, parse it to
+   extract:
+   - Last reviewed date
+   - Count of OPEN findings by severity (High, Medium, Low)
+   - Count of RESOLVED findings
+3. **Cross-spec patterns**: group OPEN findings across all specs by
+   category and similar title/description keywords. If 2+ specs share
+   findings with the same category AND overlapping keywords, flag them
+   as a common pattern (include pattern description and affected specs)
+4. **Specs with no review file**: mark as "Never reviewed"
 
-### 2. For each target spec
+The subagent should return all this data in a single message. Do NOT
+present anything to the user until the subagent returns.
 
-#### 2a. Load context
+---
 
-Read the following files:
+## Step 2: Display recap
+
+Using the data from Step 1, present the recap table directly to the
+user:
+
+```
+| Spec              | Last Review | High | Medium | Low | Total Open |
+|-------------------|-------------|------|--------|-----|------------|
+| tickets           | 2025-01-15  |    2 |      3 |   1 |          6 |
+| package-tracking  | 2025-01-14  |    1 |      2 |   0 |          3 |
+| rbac              | —           |    — |      — |   — |   (never)  |
+
+Common patterns:
+  - "Missing error path for concurrent updates" → tickets, package-tracking
+  - "Unspecified pagination limits" → rbac, tickets
+```
+
+If no review files exist at all, show:
+
+> No review files found yet. You can run reviews to generate findings.
+
+---
+
+## Step 3: Ask mode
+
+Use the `question` tool to ask the user what they want to do. Options:
+
+- **Fix findings** — description: "Resolve open findings one at a time"
+  (only show this option if there are specs with OPEN findings)
+- **Run reviews** — description: "Run reviewer agents on specs"
+
+---
+
+## Step 4a: Fix findings flow
+
+### 4a.1. Ask which spec to fix
+
+Use the `question` tool to present only the specs that have OPEN
+findings. Each option label is the spec name; the description shows the
+open finding counts (e.g., "2 High, 3 Medium, 1 Low — 6 open").
+
+Sort by total open findings descending (most findings first).
+
+### 4a.2. Load spec data (silent)
+
+Use the Task tool (subagent type `general`) to:
+- Read the chosen spec's review file (`docs/drafts/review/<name>.md`)
+- Read the target spec (`docs/features/<name>.md`)
+- Parse all OPEN findings with full details (ID, title, severity,
+  category, description)
+- Sort them by priority:
+  1. Severity: High → Medium → Low
+  2. Section order: Gap Analysis → Coherence → Design → Security
+
+Return the sorted list of OPEN findings with all details.
+
+### 4a.3. Fix loop (one finding at a time)
+
+**Mode management**: the agent MUST remain in Plan mode during the
+entire analysis and presentation phase (step 4a.3a). The user will
+manually switch to Build mode when ready to apply the fix. After
+implementing the fix and updating the review file (steps 4a.3c–4a.3e),
+the agent MUST switch back to Plan mode before presenting the next
+finding.
+
+For the highest-priority OPEN finding:
+
+#### 4a.3a. Present the finding with context (in Italian)
+
+Present the finding to the user in Italian, including:
+
+1. **Contesto del problema**: explain *what* the problem is, *why* it is
+   a problem, and *what impact* it has on the spec or the system. Give
+   the user enough context to understand the situation without having to
+   re-read the entire spec. Reference the specific section(s) of the
+   spec where the problem manifests.
+2. **Soluzione proposta**: describe the proposed solution, list **all
+   files** that will be modified and what changes in each. The fix is
+   NOT limited to the target spec — it may touch any file in the
+   repository (other specs in `docs/features/`, `docs/data-model.md`,
+   `docs/api-spec.md`, `docs/architecture.md`, or any other relevant
+   document).
+
+Format:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Finding: <ID> — <Title> (<Severity>)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Contesto:
+<Spiegazione in italiano di cosa è il problema, perché è un problema,
+e quale impatto ha. Riferimenti alle sezioni specifiche della spec.>
+
+Soluzione proposta:
+<Descrizione in italiano della soluzione proposta.>
+
+File coinvolti:
+  - <file-path> — <cosa cambia>
+  - <file-path> — <cosa cambia>
+  - ...
+
+Approvi questa soluzione? [sì / modificare / saltare]
+```
+
+#### 4a.3b. Wait for user decision
+
+- **sì** (or approval): wait for the user to switch to Build mode
+  before implementing the fix. Do NOT start editing files while still
+  in Plan mode.
+- **modificare**: ask what the user wants to change, adjust the
+  proposal, and present it again (remain in Plan mode)
+- **saltare**: skip this finding, move to the next one (remain in Plan
+  mode)
+
+#### 4a.3c. Implement the fix
+
+Edit all affected files to implement the approved solution. This may
+include:
+- Modifying the target spec (`docs/features/<name>.md`)
+- Modifying other specs referenced by the finding
+- Modifying cross-cutting documents (`docs/data-model.md`,
+  `docs/api-spec.md`, `docs/architecture.md`, etc.)
+- Any other documentation file relevant to the fix
+
+#### 4a.3d. Update the review file
+
+Mark the finding as RESOLVED in the review file:
+
+```markdown
+### <ID> — <Title> (<Severity>)
+
+**Category**: <category>
+**Status**: RESOLVED
+**Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
+
+<Original detailed description of the finding>
+```
+
+#### 4a.3e. Update README index
+
+Update `docs/drafts/review/README.md`:
+- Recalculate the OPEN finding counts for this spec's row
+- Update the Total row
+
+#### 4a.3f. Return to Plan mode and continue or stop
+
+After completing the fix, switch back to Plan mode immediately. Then
+ask the user: "Continuo con il prossimo finding?" — if yes, repeat
+from step 4a.3a with the next highest-priority OPEN finding (still in
+Plan mode). If no, stop and show a brief summary of what was resolved
+in this session.
+
+---
+
+## Step 4b: Run reviews flow
+
+### 4b.1. Ask which spec to review
+
+Use the `question` tool to present the available choices. Options in
+this exact order:
+
+1. **ALL** — description: "Run review on all specs sequentially"
+2. Then each spec from `docs/features/` in alphabetical order, with
+   description:
+   - If previously reviewed: "Last review: <date> — <N> open findings"
+   - If never reviewed: "Never reviewed"
+
+Single selection only.
+
+### 4b.2. Execute review
+
+If the user selects **ALL**: process all specs in `docs/features/` in
+alphabetical order, applying the review procedure (below) to each one.
+
+If the user selects a specific spec: apply the review procedure to that
+spec only.
+
+### Review procedure (for each target spec)
+
+#### Load context
+
+Use the Task tool (subagent type `general`) to read:
 
 1. The target spec: `docs/features/<name>.md`
 2. All specs referenced by the target (look for links like
    `docs/features/other-spec.md` or mentions of "see <spec-name>")
-3. Cross-cutting documents (always load these):
+3. Cross-cutting documents (always load):
    - `docs/data-model.md`
    - `docs/api-spec.md`
    - `docs/architecture.md`
+4. Existing review file if present (`docs/drafts/review/<name>.md`) —
+   to identify previously RESOLVED findings
 
-#### 2b. Load existing findings (if any)
+The subagent should return the content of all loaded files.
 
-If `docs/drafts/review/<name>.md` already exists, read it to identify
-findings previously marked as RESOLVED. These will be preserved if the
-resolution is still valid in the current spec.
-
-#### 2c. Run reviewers in sequence
+#### Run reviewers in sequence
 
 Execute each reviewer as a Task agent, one at a time, in this order:
 
@@ -64,7 +255,7 @@ For each reviewer, pass the target spec content and all loaded context.
 Collect all findings with: title, severity (High/Medium/Low), category,
 and detailed description.
 
-#### 2d. Write findings file
+#### Write findings file
 
 Write (or overwrite) `docs/drafts/review/<name>.md` with this structure:
 
@@ -120,200 +311,23 @@ Rules for writing the file:
   `TKT` for tickets, `PKG` for package-tracking, `RBAC` for rbac)
 - Within each section, sort findings by severity: High first, then
   Medium, then Low
-- For previously RESOLVED findings: if the resolution is still valid in
-  the current spec, keep the finding with status RESOLVED and include the
-  resolution text. If the spec has regressed, reopen it as OPEN
+- For previously RESOLVED findings: if the resolution is still valid
+  in the current spec, keep the finding with status RESOLVED and
+  include the resolution text. If the spec has regressed, reopen it
+  as OPEN
 - Each finding MUST have enough detail for the user to understand and
   act on it without re-running the reviewer
 
-#### 2e. Update README index
+#### Update README index
 
 After writing the findings file, update `docs/drafts/review/README.md`:
 - Update the row for this spec in the summary table with actual counts
 - Update the "Last Review" column with today's date
 - Recalculate the Total row
 
-### 3. Final report
+### 4b.3. Final report
 
-After all specs are processed, output a summary to the user:
+After all selected specs are processed, output a summary to the user:
 - How many specs were reviewed
 - Total findings by severity
 - Which specs have High-severity findings requiring attention
-
----
-
-## Mode 2: List (`list`)
-
-Interactive spec selection for review.
-
-### 1. Enumerate available specs
-
-List all `.md` files in `docs/features/` and extract spec names (filename
-without the `.md` extension). Sort alphabetically.
-
-### 2. Check existing review status
-
-For each spec, check if `docs/drafts/review/<name>.md` exists. If it does,
-parse it to extract:
-- Last reviewed date
-- Count of OPEN findings by severity (High/Medium/Low)
-
-### 3. Present interactive choice
-
-Use the `question` tool to present the user with the list of specs. Each
-option label is the spec name; the description includes review status info:
-- If previously reviewed: `Last review: <date> — <N> open findings (<H> High, <M> Medium, <L> Low)`
-- If never reviewed: `Never reviewed`
-
-Allow single selection only.
-
-### 4. Run review on selected spec
-
-Once the user selects a spec, proceed with Mode 1 (Review) using the
-selected spec name as the target. Follow all steps in Mode 1 starting
-from step 2.
-
----
-
-## Mode 3: Fix (`fix`)
-
-Interactive mode for resolving open findings from previous reviews.
-
-### 1. Prerequisites
-
-Scan `docs/drafts/review/` for `.md` files (excluding `README.md`).
-If the directory does not exist or contains no review files, stop with:
-
-> No review files found. Run `/review-spec <name>` or `/review-spec all`
-> first to generate findings.
-
-### 2. Parse all review files
-
-For each review file:
-- Parse all findings (ID, title, severity, category, status, description)
-- Count OPEN findings by severity (High, Medium, Low)
-- Collect finding titles and categories for cross-spec pattern detection
-
-### 3. Cross-spec pattern detection
-
-Group OPEN findings across all specs by category and similar
-title/description keywords. If 2 or more specs share findings with the
-same category AND overlapping keywords in their title or description,
-flag them as a "common pattern". This helps the user decide which spec to
-fix first (fixing a common pattern in one spec may inform the fix for
-others).
-
-### 4. Display recap table
-
-Present the user with a summary table and any common patterns:
-
-```
-| Spec              | High | Medium | Low | Total Open |
-|-------------------|------|--------|-----|------------|
-| tickets           |    2 |      3 |   1 |          6 |
-| package-tracking  |    1 |      2 |   0 |          3 |
-| rbac              |    0 |      1 |   2 |          3 |
-
-⚠ Common patterns detected:
-  - "Missing error path for concurrent updates" affects: tickets, package-tracking
-  - "Unspecified pagination limits" affects: rbac, tickets
-```
-
-If no specs have OPEN findings, inform the user:
-
-> All findings are resolved. Nothing to fix.
-
-### 5. Ask which spec to work on
-
-Ask the user which spec they want to work on. Wait for their choice
-before proceeding.
-
-### 6. Fix loop (one finding at a time)
-
-Load the chosen spec's review file and its target spec. Sort OPEN
-findings by priority:
-1. Severity: High → Medium → Low
-2. Section order: Gap Analysis → Coherence → Design → Security
-
-For the highest-priority OPEN finding:
-
-#### 6a. Present the finding with context (in Italian)
-
-Present the finding to the user in Italian, including:
-
-1. **Contesto del problema**: explain *what* the problem is, *why* it is
-   a problem, and *what impact* it has on the spec or the system. Give
-   the user enough context to understand the situation without having to
-   re-read the entire spec. Reference the specific section(s) of the spec
-   where the problem manifests.
-2. **Soluzione proposta**: describe the proposed solution, list **all
-   files** that will be modified and what changes in each. The fix is NOT
-   limited to the target spec — it may touch any file in the repository
-   (other specs in `docs/features/`, `docs/data-model.md`,
-   `docs/api-spec.md`, `docs/architecture.md`, or any other relevant
-   document).
-
-Format:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Finding: <ID> — <Title> (<Severity>)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📋 Contesto:
-<Spiegazione in italiano di cosa è il problema, perché è un problema,
-e quale impatto ha. Riferimenti alle sezioni specifiche della spec.>
-
-💡 Soluzione proposta:
-<Descrizione in italiano della soluzione proposta.>
-
-File coinvolti:
-  - <file-path> — <cosa cambia>
-  - <file-path> — <cosa cambia>
-  - ...
-
-Approvi questa soluzione? [sì / modificare / saltare]
-```
-
-#### 6b. Wait for user decision
-
-- **sì** (or approval): proceed to implement the fix
-- **modificare**: ask what the user wants to change, adjust the proposal,
-  and present it again
-- **saltare**: skip this finding, move to the next one
-
-#### 6c. Implement the fix
-
-Edit all affected files to implement the approved solution. This may
-include:
-- Modifying the target spec (`docs/features/<name>.md`)
-- Modifying other specs referenced by the finding
-- Modifying cross-cutting documents (`docs/data-model.md`,
-  `docs/api-spec.md`, `docs/architecture.md`, etc.)
-- Any other documentation file relevant to the fix
-
-#### 6d. Update the review file
-
-Mark the finding as RESOLVED in the review file:
-
-```markdown
-### <ID> — <Title> (<Severity>)
-
-**Category**: <category>
-**Status**: RESOLVED
-**Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
-
-<Original detailed description of the finding>
-```
-
-#### 6e. Update README index
-
-Update `docs/drafts/review/README.md`:
-- Recalculate the OPEN finding counts for this spec's row
-- Update the Total row
-
-#### 6f. Continue or stop
-
-Ask the user: "Continuo con il prossimo finding?" — if yes, repeat from
-step 6a with the next highest-priority OPEN finding. If no, stop and
-show a brief summary of what was resolved in this session.
