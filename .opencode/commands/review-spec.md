@@ -158,6 +158,12 @@ Approvi questa soluzione? [sì / modificare / saltare]
 
 #### 4a.3c. Implement the fix
 
+CRITICAL: This step is MANDATORY. You MUST NOT proceed to updating the
+review file (step 4a.3d) without first implementing the approved
+solution in the actual spec/documentation files. Marking a finding as
+RESOLVED without applying the fix is a bug. The implementation IS the
+fix — the review file update is merely a record of it.
+
 Edit all affected files to implement the approved solution. This may
 include:
 - Modifying the target spec (`docs/features/<name>.md`)
@@ -166,7 +172,17 @@ include:
   `docs/api-spec.md`, `docs/architecture.md`, etc.)
 - Any other documentation file relevant to the fix
 
+After editing, verify that every file listed in "File coinvolti" from
+the proposal has been modified. If a listed file was not changed, either
+apply the missing change or explain to the user why it was not needed.
+
 #### 4a.3d. Update the review file
+
+PRECONDITION: Only mark a finding as RESOLVED after the fix has been
+implemented (step 4a.3c). If for any reason the fix was NOT applied to
+the spec/documentation files, the finding MUST remain OPEN. The
+Resolution field must reference the actual changes made (file paths and
+what was changed), not just state the intent.
 
 Mark the finding as RESOLVED in the review file:
 
