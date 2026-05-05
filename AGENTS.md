@@ -89,6 +89,17 @@ Examples:
 - `secbox osc -A https://build.suse.de ls SUSE:SLE-15-SP6:Update`
 - `secbox osc -A https://build.suse.de api /source/SUSE:SLE-15-SP6:Update/kernel-default`
 
+## Workspace Awareness
+
+When checking for existing files or directories, ALWAYS inspect the
+actual filesystem (using `ls`, `Read`, or `Glob` tools) rather than
+relying solely on git-tracked files. Files and directories listed in
+`.gitignore` are not versioned but may contain important local work
+products (e.g., review findings in `docs/drafts/review/`, build
+artifacts, local configuration). Never assume a file does not exist
+just because it is untracked by git. When overwriting a file, first
+check its current content on disk to avoid losing existing data.
+
 ## External File Loading
 
 CRITICAL: When you encounter a reference to a specification file (e.g.,

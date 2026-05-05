@@ -386,6 +386,12 @@ the same access as an unauthenticated user (read-only on public data).
 | created_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
 | updated_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
 
+**Check constraint**: `chk_user_auth_exclusive` —
+`(ldap_uid IS NOT NULL AND password_hash IS NULL) OR (ldap_uid IS NULL AND password_hash IS NOT NULL)`
+— enforces mutual exclusivity: SSO users cannot have a password, local
+users must have a password. See `docs/features/user-management.md`
+(Business Rule 5) and `docs/features/local-authentication.md`.
+
 ### UserRole
 
 Junction table linking users to roles. A user may have zero, one, or

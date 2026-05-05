@@ -125,39 +125,23 @@ Get user detail including roles (with `ad_group_cn`) and resolved manager.
 Public endpoint (read-only).
 
 ```
-PUT /api/v1/users/{id}/roles
+PUT /api/v1/admin/users/{user_id}/roles
 ```
 
 Add or remove manual roles for a user. Admin only. AD-derived roles are
-never affected by this endpoint.
-
-Request body:
-```json
-{
-  "add": ["admin"],
-  "remove": ["vulnerability_analyst"]
-}
-```
+never affected by this endpoint. The full endpoint specification is
+defined in `docs/features/user-management.md` (Admin API endpoints).
 
 Semantics: delegates to `user_service.update_roles()` with
 `acting_user_id` set to the authenticated admin's user ID and roles as
 `(role, '_manual')` pairs. See `docs/features/user-lifecycle.md` for the
 full service contract.
 
-Validation (enforced by the service layer):
-- Cannot remove AD-derived roles (returns 400)
-- Cannot remove your own Admin role (returns 409)
-- Adding a role the user already has as a manual assignment is a no-op
-  (idempotent)
-
-Response: the updated user object with all roles (manual and AD-derived).
-
 See `docs/features/ldap-directory.md` for details on AD-derived roles.
 
 User creation for SSO users is handled by the LDAP directory sync (see
 `docs/features/ldap-directory.md`). Local users can be created by admins
-via CLI or the administration UI (see
-`docs/features/user-management.md`).
+via CLI (see `docs/features/user-management.md`).
 
 ### Role Mappings (Admin only)
 
@@ -168,28 +152,17 @@ via `GET/POST/DELETE /api/v1/admin/role-mappings`.
 ### User Activation (Admin only)
 
 ```
-PATCH /api/v1/users/{id}/active
+PATCH /api/v1/admin/users/{user_id}/active
 ```
 
-Set the active status of a user. Admin only.
-
-Request body:
-```json
-{ "active": true }
-```
+Set the active status of a user. Admin only. The full endpoint
+specification (request/response schema, error codes, constraints) is
+defined in `docs/features/user-management.md` (Admin API endpoints).
 
 Semantics: delegates to `user_service.deactivate_user()` (when
 `active: false`) or `user_service.reactivate_user()` (when
 `active: true`). See `docs/features/user-lifecycle.md` for the full
 side effect contract.
-
-Constraints:
-- Self-deactivation is rejected by the service layer (returns 409
-  Conflict)
-- Setting the same value as current is a no-op (returns 200 with
-  unchanged user)
-
-Response: the updated user object.
 
 ## Implementation Details
 

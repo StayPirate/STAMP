@@ -307,9 +307,9 @@ via local password for admin-created local users (see
 - `GET /api/v1/users/{id}` — Get user detail including roles (with
   source) and resolved manager (public)
 - `GET /api/v1/users/me` — Get current authenticated user profile
-- `PUT /api/v1/users/{id}/roles` — Add/remove manual roles (admin only).
+- `PUT /api/v1/admin/users/{user_id}/roles` — Add/remove manual roles (admin only).
   Cannot remove AD-derived roles. Request body: `{ "add": [...],
-  "remove": [...] }`
+  "remove": [...] }`. See `docs/features/user-management.md`
 
 ### Role Mappings
 

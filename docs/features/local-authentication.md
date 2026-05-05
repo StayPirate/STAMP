@@ -91,7 +91,10 @@ prevent username enumeration.
 
 Passwords are stored as Argon2id hashes in the `password_hash` column of
 the `User` table. This column is nullable — it is `NULL` for SSO users
-and for local users who have not yet been assigned a password.
+(who authenticate via id.suse.com and never have a local password).
+Local users always have a `password_hash` set (required at creation).
+This mutual exclusivity is enforced by a database CHECK constraint
+(`chk_user_auth_exclusive`) — see `docs/data-model.md`.
 
 ### Hashing configuration
 
@@ -194,41 +197,15 @@ or hidden).
 
 ### `PUT /api/v1/admin/users/{user_id}/password`
 
-API endpoint for admin password reset (used by the admin UI).
+API endpoint for admin password reset (used by the admin UI). The full
+endpoint specification (request/response schema, error codes) is defined
+in `docs/features/user-management.md` (Admin API endpoints).
 
 **Authentication**: required. **Permission**: `admin` role.
 
-**Request body**:
-
-```json
-{
-  "password": "string (required, 12-128 chars)"
-}
-```
-
-**Behavior**:
-
-1. Look up the user by `user_id` — if not found, return HTTP 404
-2. Call `user_service.reset_password(user_id, password,
-   acting_user_id=current_user.id)` — this handles SSO user check,
-   validation, hashing, and session invalidation (see
-   `docs/features/user-lifecycle.md`)
-3. Return HTTP 200
-
-On `SSOUserPasswordError`: return HTTP 400:
-`"Cannot set password for SSO user. SSO users authenticate via
-id.suse.com."`
-
-On `PasswordValidationError`: return HTTP 400:
-`"Password must be between 12 and 128 characters."`
-
-**Response** (200):
-
-```json
-{
-  "detail": "Password updated. All active sessions have been invalidated."
-}
-```
+Delegates to `user_service.reset_password()` which handles SSO user
+check, password validation, hashing, and session invalidation. See
+`docs/features/user-lifecycle.md` for the service contract.
 
 ## Rate Limiting / Brute-Force Protection
 

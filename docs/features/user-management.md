@@ -204,7 +204,8 @@ cleanup in development environments, reset the database directly.
 ### `sentinel manage-user set-password`
 
 Sets or resets the password for a local user. See
-`docs/features/local-authentication.md` for full details.
+`docs/features/local-authentication.md` for full details on password
+policy and hashing.
 
 ```
 sentinel manage-user set-password \
@@ -212,8 +213,12 @@ sentinel manage-user set-password \
   --password <new_password>
 ```
 
-This command is only valid for local users (`ldap_uid = NULL`). It
-invalidates all active sessions after changing the password.
+This command is only valid for local users (`ldap_uid = NULL`). If
+invoked on an SSO user, exits with error:
+`"Error: Cannot set password for SSO user '{username}'. SSO users
+authenticate via id.suse.com."` (exit code 1)
+
+It invalidates all active sessions after changing the password.
 
 ### `sentinel manage-user unlock`
 
@@ -267,12 +272,17 @@ Filters: by type (local/SSO), by status (active/inactive), by role.
 
 ### Actions available for local users
 
-- **Create**: form with username, email, password, full name, roles
 - **Edit**: change email, full name, roles
 - **Reset password**: set a new password (invalidates sessions)
 - **Unlock**: clear the login lockout counter (same as CLI `unlock`)
 - **Deactivate**: soft delete (same as CLI `delete`)
 - **Reactivate**: restore a deactivated user
+
+Note: local user creation is restricted to the CLI
+(`sentinel manage-user create`). This ensures that user provisioning
+requires shell access, which is an appropriate security barrier for the
+supported use cases (development, bots, non-SSO environments). See
+`docs/features/ldap-directory.md` Business Rule 1.
 
 ### Actions available for SSO users
 
@@ -285,9 +295,147 @@ via id.suse.com).
 
 ### Admin API endpoints
 
+All user mutation endpoints are defined here. This is the single source
+of truth for the user management API surface. Other specs define the
+business rules and service-layer contracts that these endpoints invoke.
+
+All endpoints below require the `admin` role unless otherwise stated.
+
+#### `PATCH /api/v1/admin/users/{user_id}`
+
+Update a user's profile fields.
+
+**Request body** (all fields optional, at least one required):
+
+```json
+{
+  "email": "new@example.com",
+  "full_name": "New Display Name"
+}
+```
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404
+2. If no fields are provided in the body, return HTTP 422:
+   `"At least one field must be provided."`
+3. If `email` is provided, validate format — if invalid, return HTTP 422:
+   `"Invalid email format."`
+4. Delegate to `user_service.update_user()` with
+   `acting_user_id = authenticated_admin.id`
+5. If the service raises `UserConflictError` (duplicate email), return
+   HTTP 409: `"A user with this email already exists."`
+6. Return HTTP 200 with the updated user profile
+
+**Response**: same schema as `GET /api/v1/users/{id}`
+
+#### `PUT /api/v1/admin/users/{user_id}/roles`
+
+Add or remove manual roles for a user.
+
+**Request body**:
+
+```json
+{
+  "add": ["admin"],
+  "remove": ["vulnerability_analyst"]
+}
+```
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404
+2. Delegate to `user_service.update_roles()` with
+   `acting_user_id = authenticated_admin.id` and roles as
+   `(role, '_manual')` pairs
+
+**Validation rules**:
+- Cannot remove roles with `ad_group_cn != '_manual'` — returns HTTP 400:
+  `"Cannot remove AD-derived role '{role}'. This role is managed by the
+  AD group '{ad_group_cn}'."`
+- Cannot remove your own Admin role — returns HTTP 409:
+  `"Cannot remove your own Admin role."` (enforced by
+  `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
+- Adding a role that the user already has as a manual assignment is a
+  no-op (idempotent)
+- Creates a `UserRole` record with `ad_group_cn = '_manual'` and
+  `assigned_by` set to the authenticated admin's user ID for each added
+  role
+
+**Response**: HTTP 200 with updated user profile including all roles
+
+#### `PUT /api/v1/admin/users/{user_id}/password`
+
+Reset the password for a local user.
+
+**Request body**:
+
+```json
+{
+  "password": "string (required, 12-128 chars)"
+}
+```
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404
+2. Delegate to `user_service.reset_password(user_id, password,
+   acting_user_id=authenticated_admin.id)` — this handles SSO user
+   check, validation, hashing, and session invalidation (see
+   `docs/features/user-lifecycle.md`)
+3. Return HTTP 200
+
+**Error responses**:
+- SSO user: HTTP 400 — `"Cannot set password for SSO user. SSO users
+  authenticate via id.suse.com."`
+- Invalid password: HTTP 400 — `"Password must be between 12 and 128
+  characters."`
+
+**Response** (200):
+
+```json
+{
+  "detail": "Password updated. All active sessions have been invalidated."
+}
+```
+
+#### `PATCH /api/v1/admin/users/{user_id}/active`
+
+Set the active status of a user (deactivate or reactivate).
+
+**Request body**:
+
+```json
+{
+  "active": true
+}
+```
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404
+2. If `active: false`: delegate to `user_service.deactivate_user()` with
+   `acting_user_id = authenticated_admin.id` and
+   `reason = "deactivated by admin via API"`
+3. If `active: true`: delegate to `user_service.reactivate_user()` with
+   `acting_user_id = authenticated_admin.id`
+4. Return HTTP 200 with the updated user profile
+
+**Constraints**:
+- Self-deactivation is rejected by the service layer — returns HTTP 409:
+  `"Cannot deactivate your own account."`
+- Setting the same value as current is a no-op (returns 200 with
+  unchanged user)
+
+See `docs/features/user-lifecycle.md` for the full side effect contract
+(API key revocation, session invalidation, ticket reassignment on
+deactivation).
+
+**Response**: same schema as `GET /api/v1/users/{id}`
+
 #### `POST /api/v1/admin/users/{user_id}/unlock`
 
-**Permission**: `admin` role
+Clear the login lockout counter for a user.
 
 **Behavior**:
 
@@ -334,6 +482,8 @@ handling is required.
    `assigned_by = NULL` (CLI) or `assigned_by = admin_user_id` (UI)
 5. **Password required at creation**: local users must have a password
    set at creation time. There is no passwordless local user state.
+   This invariant is enforced at the database level by a CHECK
+   constraint (see `docs/data-model.md`, `chk_user_auth_exclusive`)
 
 ## Security Considerations
 

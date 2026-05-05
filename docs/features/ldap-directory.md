@@ -276,32 +276,17 @@ Public endpoint (read-only).
 ### User role management
 
 ```
-PUT /api/v1/users/{id}/roles
+PUT /api/v1/admin/users/{user_id}/roles
 ```
 
-Admin only. Add or remove manual roles for a user.
+Admin only. Add or remove manual roles for a user. The full endpoint
+specification (request/response schema, validation rules, error codes)
+is defined in `docs/features/user-management.md` (Admin API endpoints).
 
-Request body:
-```json
-{
-  "add": ["admin"],
-  "remove": ["vulnerability_analyst"]
-}
-```
-
-Validation rules:
-- Cannot remove roles with `ad_group_cn != '_manual'` — returns 400 with
-  `"Cannot remove AD-derived role '{role}'. This role is managed by the
-  AD group '{ad_group_cn}'."`
-- Cannot remove your own Admin role — returns 409 with
-  `"Cannot remove your own Admin role."` (enforced by
-  `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
-- Adding a role that the user already has as a manual assignment is a
-  no-op (idempotent)
-- Creates a `UserRole` record with `ad_group_cn = '_manual'` and
-  `assigned_by` set to the authenticated admin's user ID for each added
-  role
-- Returns 200 with updated user profile including all roles
+Key rules (defined in detail in user-management.md):
+- Cannot remove AD-derived roles (only manual roles are removable)
+- Cannot remove your own Admin role
+- Adding an existing role is idempotent
 
 ### Role Mapping management
 
@@ -477,11 +462,12 @@ Displays a table of all configured role mappings:
 
 ## Business Rules
 
-1. **All Sentinel users are SUSE employees**: the User table is populated
-   exclusively from AD sync. There is no manual user creation through the
-   UI or API. In environments where AD is not reachable, local user
-   accounts can be created via the CLI — see
-   `docs/features/user-management.md`
+1. **AD is the primary user source**: the User table is populated
+   primarily from AD sync. Local user accounts (for development, bots,
+   or environments without SSO) can be created exclusively via the CLI
+   (`sentinel manage-user create`) — see
+   `docs/features/user-management.md`. There is no user creation through
+   the UI or API
 2. **Login is open**: any SUSE employee can authenticate via SSO (see
    `docs/features/sso-authentication.md`). A user with no roles
    has the same access as an unauthenticated user (read-only on public
