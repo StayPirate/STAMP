@@ -287,7 +287,8 @@ Filters: by type (local/SSO), by status (active/inactive), by role.
 ### Actions available for local users
 
 - **Edit**: change email, full name, roles
-- **Reset password**: set a new password (invalidates sessions)
+- **Reset password**: set a new password for a local user (see
+  "Reset password flow" below)
 - **Unlock**: clear the login lockout counter (same as CLI `unlock`)
 - **Deactivate**: soft delete (same as CLI `delete`)
 - **Reactivate**: restore a deactivated user
@@ -306,6 +307,35 @@ supported use cases (development, bots, non-SSO environments). See
 
 SSO users cannot have their password set or reset (they authenticate
 via id.suse.com).
+
+### Reset password flow
+
+When an admin clicks "Reset password" on a local user, the UI presents
+an inline form (or modal) with the following fields:
+
+1. **New password** (required, masked input)
+2. **Confirm password** (required, masked input)
+
+**Client-side validation**:
+- Both fields must be non-empty
+- Both fields must match — if they do not, display an inline error:
+  "Passwords do not match." The submit button remains disabled until
+  the fields match
+- Password length must be 12–128 characters (consistent with
+  `docs/features/local-authentication.md`)
+
+**On submit**: call `PUT /api/v1/admin/users/{user_id}/password` with
+the new password. On success, display a confirmation message:
+"Password updated. All active sessions for this user have been
+invalidated."
+
+**Error handling**:
+- HTTP 400 (invalid password): display the server error message inline
+- HTTP 400 (SSO user): this case should not occur since the button is
+  only shown for local users, but if it does, display the error
+
+The "Reset password" button is only visible for local users
+(`ldap_uid = NULL`). It is never shown for SSO users.
 
 ### Admin API endpoints
 
