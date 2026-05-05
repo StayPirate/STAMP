@@ -483,8 +483,11 @@ hash is stored. See `docs/features/authentication.md` (API Keys).
 | revoked_at    | TIMESTAMP   | nullable                  | When the key was revoked. NULL means active |
 | revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
 
-**Index**: (user_id, revoked_at) — for efficient listing of active keys
-per user.
+**Indexes**:
+
+- (user_id, revoked_at) — for efficient listing of active keys per user.
+- UNIQUE (user_id, name) WHERE revoked_at IS NULL — prevents duplicate
+  names among non-revoked keys for the same user.
 
 ### Ticket
 

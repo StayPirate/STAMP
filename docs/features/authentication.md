@@ -131,6 +131,9 @@ client-side logic or dedicated refresh endpoint is required.
 - If the `Set-Cookie` header cannot be set for any reason, the old JWT
   remains valid — the user experiences no error and the refresh is
   retried on the next eligible request
+- If the database query for loading current roles fails during refresh,
+  the refresh is silently skipped: the old JWT remains valid and a
+  WARNING is logged. The next request will re-attempt the refresh
 - No database write is required for token refresh (the Session record is
   not modified)
 
@@ -282,6 +285,11 @@ into all endpoints that require authentication.
    return HTTP 401.
 6. Return the authenticated user.
 
+All HTTP 401 responses return a generic body `{"detail": "Authentication
+required"}` regardless of the specific failure reason (expired token,
+invalidated session, session deadline reached, inactive user). No
+information about the failure cause is disclosed.
+
 The dual-source approach supports both programmatic clients (which send
 `Authorization: Bearer <token>`) and browser sessions (where the JWT is
 stored in an `HttpOnly` cookie attached automatically by the browser).
@@ -410,18 +418,20 @@ When a user is deactivated (via `user_service.deactivate_user()`), all
 their active API keys are revoked with `revoked_by = NULL`. This is part
 of the deactivation ordering defined in the Session Management section.
 
-### Active key limit
+### Active key anomaly detection
 
-Each user may have at most **50** active (non-revoked, non-expired) API
-keys at any given time. This prevents abuse from compromised
-automations while being generous enough for any legitimate use case.
-Revoked and expired keys do not count toward the limit.
+There is no hard limit on the number of API keys a user can create.
+A WARNING log is emitted when a user exceeds **20** active (non-revoked,
+non-expired) keys, as an anomaly indicator. Active key count is evaluated
+at query time: `WHERE revoked_at IS NULL AND (expires_at IS NULL OR
+expires_at > now())`. This provides detection without blocking legitimate
+automation use cases.
 
 ### Expired and revoked key retention
 
 Expired and revoked API keys are **retained permanently** — there is no
-cleanup task. At this scale (~hundreds of users, max 50 active keys per
-user), the table grows by at most a few thousand rows per year — negligible
+cleanup task. At this scale (~hundreds of users), the table grows by at
+most a few thousand rows per year — negligible
 storage. Retained records serve as audit trail (who had access, when it was
 revoked). If volume becomes a concern in the future, an operational
 `DELETE WHERE revoked_at < now() - interval '2 years'` can be applied.
@@ -513,12 +523,12 @@ Creates a new API key for the current user.
 **Validation**:
 
 - `name` must be 1–128 characters
+- `name` must be unique among the user's non-revoked keys. If a
+  non-revoked key with the same name already exists, return HTTP 409:
+  `"A non-revoked API key with this name already exists. Revoke it
+  first to reuse the name."`
 - If `expires_at` is provided, it must be in the future. If it is in the
   past, return HTTP 400: `"expires_at must be in the future."`
-- The user must have fewer than 50 active (non-revoked, non-expired) API
-  keys. If the limit is reached, return HTTP 400:
-  `"Maximum number of active API keys reached (50). Revoke unused keys
-  before creating new ones."`
 
 **Response** (201):
 
@@ -735,8 +745,7 @@ attributed to the agent's own identity.
 - **No mandatory API key expiration**: `expires_at` is optional — API keys
   can live indefinitely without rotation. For an internal tool, credential
   hygiene is the user's responsibility. Mitigation mechanisms exist: users
-  can revoke keys at any time, admin deactivation revokes all keys, and the
-  50-key limit prevents unbounded accumulation.
+  can revoke keys at any time, and admin deactivation revokes all keys.
 - **No minimum API key duration**: the only validation on `expires_at` is
   that it must be in the future. Keys with very short durations (seconds or
   minutes) are valid use cases for testing. If a key expires before the
