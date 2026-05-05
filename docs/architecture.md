@@ -197,8 +197,10 @@ active source. See the data sources catalog for the full picture.
   admin-configurable RoleMapping rules
 - Direct line manager (`manager` DN) is resolved and stored for ticket
   reassignment on employee deactivation
-- Connection: anonymous bind on port 389 (plaintext, no TLS — internal
-  network only, no credentials transmitted)
+- Connection: anonymous bind on port 636 (LDAPS — TLS validated against
+  SUSE Trust Root CA committed at `certs/SUSE_Trust_Root.crt`). TLS is
+  required because `MEMBEROF` data drives role assignment including admin
+  privileges — see security rationale in `docs/features/ldap-directory.md`
 - See `docs/features/ldap-directory.md` for the full specification
 
 ## Data Flow

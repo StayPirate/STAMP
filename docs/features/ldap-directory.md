@@ -13,15 +13,26 @@ Sentinel uses the SUSE Active Directory instance at `pan.suse.de` as the
 single source of truth for employee identity data. See
 `docs/data-sources.md` for connection details.
 
-- **Server**: `ldap://pan.suse.de`
+- **Server**: `ldaps://pan.suse.de`
 - **Base DN**: `OU=User accounts,DC=corp,DC=suse,DC=com`
 - **Authentication**: anonymous bind (no credentials required)
-- **Protocol**: LDAP (port 389, plaintext — no TLS/STARTTLS). This is an
-  explicit design decision: the connection uses anonymous bind (no
-  credentials transmitted) and traverses the SUSE internal network only.
-  The data exchanged (employee names, emails, group memberships) is
-  already widely known within the organization. The security trade-off
-  is accepted.
+- **Protocol**: LDAPS (port 636, TLS). The server certificate is issued by
+  the SUSE internal PKI (chain: SUSE CA all 2023.1 → SUSE CA Root → SUSE
+  Trust Root). The root CA certificate is committed at
+  `certs/SUSE_Trust_Root.crt` and installed in the container system trust
+  store at build time. The `LDAP_URI` and `LDAP_CA_CERT_PATH` environment
+  variables control the connection (see `docs/configuration.md`).
+
+### Security rationale
+
+TLS is mandatory for this connection despite anonymous bind and internal
+network placement. The `MEMBEROF` attribute returned by AD is used to
+derive Sentinel role assignments via Role Mappings — including the `admin`
+role. Without TLS, a man-in-the-middle attacker on the network path could
+inject forged `MEMBEROF` values in LDAP responses, causing the sync process
+to grant arbitrary roles (including `admin`) to attacker-controlled
+accounts. LDAPS with server certificate validation ensures response
+authenticity and eliminates this privilege escalation vector.
 
 ### Attributes consumed
 
@@ -174,6 +185,9 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    - Each mapping operates exclusively on records tagged with its own
      `ad_group_cn`. Manual roles (`_manual`) and records from other
      mappings are never touched. Processing order is irrelevant
+   - For the full semantics of how AD-derived and manual role
+     assignments coexist independently, see `docs/features/rbac.md`
+     (Role Origins and Coexistence)
 6. **Deactivation side effects**: for each user in the
    `newly_deactivated` list (identified in step 3), call
    `user_service.deactivate_user()` with
