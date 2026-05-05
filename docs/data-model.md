@@ -39,6 +39,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  duplicate_of_id │  │    │  comment         │  │
 │  (FK, self-ref)  │  │    │                  │  │
 │  previous_status │  │    │                  │  │
+│  deleted_at      │  │    │                  │  │
 └──────┬───────────┘  │    └──────────────────┘  │
        │              │                          │
        │              │    ┌──────────────────┐   │
@@ -48,6 +49,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  email           │
        │                   │  full_name       │
        │                   │  active          │
+       │                   │  password_hash   │
        │                   │  ldap_uid        │
        │                   │  ldap_dn         │
        │                   │  manager_uid     │
@@ -71,6 +73,26 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  ad_group_cn     │
        │                   │  role            │
        │                   │  created_by (FK) │
+       │                   └──────────────────┘
+       │
+       │                   ┌──────────────────┐
+       │                   │    Session       │
+       │                   │                  │
+       │                   │  user_id (FK)    │
+       │                   │  is_active       │
+       │                   └──────────────────┘
+       │
+       │                   ┌──────────────────┐
+       │                   │    ApiKey        │
+       │                   │                  │
+       │                   │  user_id (FK)    │
+       │                   │  key_hash        │
+       │                   │  prefix          │
+       │                   │  name            │
+       │                   │  expires_at      │
+       │                   │  revoked_at      │
+       │                   │  revoked_by (FK) │
+       │                   │  last_used_at    │
        │                   └──────────────────┘
        │
        │
@@ -172,10 +194,10 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  state                           │  │  SubmissionRequestCodestream     │
 │  author                          │  │                                  │
 │  incident_number ─ ─ ─ ─ ─ ─ ┐  │  │  submission_request_id (FK)      │
-└──────────────────────────────────┘  │  ticket_package_codestream_id(FK)│
-                               │      └──────────────────────────────────┘
-                               │
-                               ▼ (implicit link via incident_number)
+│  superseded_by                │  │  │  ticket_package_codestream_id(FK)│
+└──────────────────────────────────┘  └──────────────────────────────────┘
+                                │
+                                ▼ (implicit link via incident_number)
 ┌──────────────────────────────────┐
 │  ReleaseRequest                  │
 │                                  │

@@ -91,16 +91,22 @@ consistent. You do NOT write or modify code.
 - Do the relationships (foreign keys, cardinality) shown in the diagram
   match the FK columns defined in the table definitions?
 - Are entity names identical between the diagram and the table definitions?
+- Are functionally significant columns (authentication, soft-delete, state
+  tracking, override flags) represented in the diagram?
 
 ### Diagram readability
 
-- The ER diagram must remain lean and easy to read — it should show
-  entities, relationships, and key columns (PK/FK) only, not replicate
-  every column from the table definitions
+- The ER diagram should show all functionally relevant columns for each
+  entity — not just PK/FK, but any column that is significant for
+  understanding the entity's purpose and behavior (authentication fields,
+  status fields, soft-delete markers, state tracking, override flags, etc.)
+- The goal is that a reader can understand the entity's role and key
+  attributes from the diagram alone, without needing to scroll to the
+  detailed table definitions
+- Omit timestamps (`created_at`, `updated_at`) and purely operational
+  fields that don't add understanding of the entity's role
 - If entity or key names are too long for the diagram, abbreviate them
   in the diagram and add an explanatory note directly below the diagram
-- Avoid letting the diagram grow into a detailed duplicate of the table
-  definitions
 - If the diagram has been reviewed and approved with its current level of
   detail, do not re-flag the same entities for simplification — only flag
   readability concerns for newly added or modified entities
