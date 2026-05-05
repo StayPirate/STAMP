@@ -236,10 +236,11 @@ framework and `docs/features/sso-authentication.md` /
    `user_service.update_roles()` for any entry point where
    `acting_user_id` is set. System actions (LDAP sync, CLI) pass
    `acting_user_id = None` and are exempt. See
-   `docs/features/user-lifecycle.md`. If the system ends up with zero
-   active admins (e.g., the last admin is deactivated by LDAP sync),
-   recovery is possible via CLI:
-   `sentinel manage-user update --username <user> --add-role admin`
+   `docs/features/user-lifecycle.md`. This guard ensures that via
+   UI/API, admins cannot accidentally eliminate all admin users — the
+   acting admin always retains the role. For the full "zero admins"
+   scenario (possible only via CLI/system operations) and recovery
+   procedure, see `docs/features/user-management.md`, Business Rule 2
 2. Users cannot add roles to themselves (only admins can modify other
    users' roles)
 3. Users cannot deactivate their own account (enforced by

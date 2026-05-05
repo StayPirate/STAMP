@@ -310,6 +310,15 @@ via local password for admin-created local users (see
 - `PUT /api/v1/admin/users/{user_id}/roles` — Add/remove manual roles (admin only).
   Cannot remove AD-derived roles. Request body: `{ "add": [...],
   "remove": [...] }`. See `docs/features/user-management.md`
+- `GET /api/v1/admin/users/{user_id}/deactivation-impact` — Preview side
+  effects of deactivating a user (admin only). Returns counts of API keys,
+  sessions, and tickets affected, plus reassignment target. See
+  `docs/features/user-management.md`
+- `PATCH /api/v1/admin/users/{user_id}/active` — Deactivate or reactivate a
+  user (admin only). Request body: `{ "active": bool }`. See
+  `docs/features/user-management.md`
+- `POST /api/v1/admin/users/{user_id}/unlock` — Clear login lockout counter
+  (admin only). See `docs/features/user-management.md`
 
 ### Role Mappings
 

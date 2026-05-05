@@ -128,7 +128,10 @@ Adds or removes roles for a user.
    `acting_user_id == user_id` AND `Admin` is in the `remove` list,
    reject the operation with `SelfRoleRemovalError`. This prevents any
    authenticated user from removing their own Admin role, regardless of
-   the entry point. System actions (`acting_user_id = None`) are exempt
+   the entry point. System actions (`acting_user_id = None`) are exempt.
+   For the implications of this guard on the "zero admins" scenario and
+   the CLI recovery procedure, see `docs/features/user-management.md`,
+   Business Rule 2
 2. **AD-derived role protection**: when `acting_user_id` is set (user
    action), cannot remove roles with `ad_group_cn != '_manual'`. Raise
    `ADDerivedRoleError`. System actions are exempt (LDAP sync must be

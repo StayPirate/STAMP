@@ -178,7 +178,8 @@ Deactivates a user account (soft delete only).
 
 ```
 sentinel manage-user deactivate \
-  --username <username>
+  --username <username> \
+  [--yes]
 ```
 
 **Parameters**:
@@ -186,18 +187,44 @@ sentinel manage-user deactivate \
 | Parameter    | Required | Description                                    |
 |--------------|----------|------------------------------------------------|
 | `--username` | Yes      | Username of the user to deactivate              |
+| `--yes`      | No       | Skip interactive confirmation prompt            |
 
 **Behavior**:
 
 1. Looks up the user by `username` — if not found, exits with error:
    `"Error: User '{username}' not found."`
-2. Delegates to `user_service.deactivate_user()` with
-   `acting_user_id = None` and
-   `reason = "deactivated via CLI (manage-user deactivate)"`. If the
-   user is already inactive, the service returns a no-op — prints:
+2. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
-3. If the service performed the deactivation (user was active), prints:
-   `"Deactivated user '{username}'."`
+3. Queries the impact of deactivation:
+   - Count of active API keys that will be revoked
+   - Count of active sessions that will be invalidated
+   - Count of open tickets assigned to the user, and the reassignment
+     target (manager username if eligible, otherwise "unassigned")
+   - Whether this user is the last active user with the Admin role
+4. Displays the impact summary:
+   ```
+   About to deactivate user '{username}':
+     - {n} active API keys will be revoked
+     - {n} active sessions will be invalidated
+     - {n} open tickets will be reassigned to '{manager}' (manager)
+   ```
+   If tickets will be unassigned (no eligible manager):
+   ```
+     - {n} open tickets will be unassigned (no eligible manager)
+   ```
+   If the user is the last active admin, appends a warning to stderr:
+   ```
+   WARNING: this is the last active user with Admin role.
+   After deactivation, assign Admin to another user via:
+     sentinel manage-user update --username <user> --add-role admin
+   ```
+5. Unless `--yes` is passed, prompts: `Proceed? [y/N]`
+   - If the user answers anything other than `y` or `Y`, exits with
+     code 0 without deactivating
+6. Delegates to `user_service.deactivate_user()` with
+   `acting_user_id = None` and
+   `reason = "deactivated via CLI (manage-user deactivate)"`
+7. Prints: `"Deactivated user '{username}'."`
 
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
@@ -258,7 +285,10 @@ sentinel manage-user unlock \
 4. If Redis is unreachable, exit with error:
    `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
    (exit code 2)
-5. Print: `"Unlocked user '{username}'."`
+5. Log the action at INFO level: target username and timestamp (CLI
+   operations do not have an acting user identity — shell access is the
+   implicit authorization)
+6. Print: `"Unlocked user '{username}'."`
 
 The command is idempotent: if the counter does not exist (user was not
 locked), it succeeds silently.
@@ -290,7 +320,9 @@ Filters: by type (local/SSO), by status (active/inactive), by role.
 - **Reset password**: set a new password for a local user (see
   "Reset password flow" below)
 - **Unlock**: clear the login lockout counter (same as CLI `unlock`)
-- **Deactivate**: soft delete (same as CLI `delete`)
+- **Deactivate**: soft delete (same as CLI `deactivate`). Shows a
+  confirmation dialog before proceeding (see "Deactivation confirmation
+  dialog" below)
 - **Reactivate**: restore a deactivated user
 
 Note: local user creation is restricted to the CLI
@@ -302,11 +334,46 @@ supported use cases (development, bots, non-SSO environments). See
 ### Actions available for SSO users
 
 - **Edit roles**: add/remove roles
-- **Deactivate**: soft delete
+- **Deactivate**: soft delete. Shows a confirmation dialog before
+  proceeding (see "Deactivation confirmation dialog" below)
 - **Reactivate**: restore
 
 SSO users cannot have their password set or reset (they authenticate
 via id.suse.com).
+
+### Deactivation confirmation dialog
+
+When an admin clicks "Deactivate" for any user (local or SSO), the
+frontend calls `GET /api/v1/admin/users/{user_id}/deactivation-impact`
+and displays a confirmation dialog with the impact summary before
+calling `PATCH /api/v1/admin/users/{user_id}/active`.
+
+The dialog displays:
+
+```
+Deactivate user '{username}'?
+
+This action will:
+  - Revoke {n} active API keys
+  - Invalidate {n} active sessions
+  - Reassign {n} open tickets to '{manager}'
+    (or: Leave {n} open tickets unassigned — no eligible manager)
+
+[Cancel]  [Deactivate]
+```
+
+If all counts are zero, the dialog simplifies to:
+
+```
+Deactivate user '{username}'?
+
+No active API keys, sessions, or assigned tickets.
+
+[Cancel]  [Deactivate]
+```
+
+The "Deactivate" button uses a destructive style (red) to signal the
+severity of the action.
 
 ### Reset password flow
 
@@ -479,6 +546,39 @@ deactivation).
 
 **Response**: same schema as `GET /api/v1/users/{id}`
 
+#### `GET /api/v1/admin/users/{user_id}/deactivation-impact`
+
+Returns a preview of the side effects that would occur if the user were
+deactivated. Used by the frontend to display a confirmation dialog before
+proceeding with deactivation.
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404
+2. If the user is already inactive, return HTTP 409:
+   `"User is already inactive."`
+3. Query and return the impact summary
+
+**Response** (HTTP 200):
+
+```json
+{
+  "api_keys_count": 3,
+  "sessions_count": 2,
+  "tickets_count": 5,
+  "reassignment_target": "luigi.verdi"
+}
+```
+
+| Field                  | Type          | Description                                      |
+|------------------------|---------------|--------------------------------------------------|
+| `api_keys_count`       | `int`         | Active API keys that will be revoked             |
+| `sessions_count`       | `int`         | Active sessions that will be invalidated         |
+| `tickets_count`        | `int`         | Open tickets assigned to this user               |
+| `reassignment_target`  | `str \| null` | Manager username if eligible for reassignment, otherwise `null` (tickets will be unassigned) |
+
+**Authorization**: requires `admin` role.
+
 #### `POST /api/v1/admin/users/{user_id}/unlock`
 
 Clear the login lockout counter for a user.
@@ -488,10 +588,13 @@ Clear the login lockout counter for a user.
 1. Look up the user by `user_id` — if not found, return HTTP 404
 2. Normalize the user's `username` (trim, lowercase)
 3. Delete the Redis key `login_attempts:{normalized_username}`
-4. Return HTTP 204 (no content)
+4. Log the action at INFO level: admin identity (user ID and username of
+   the acting admin), target user (user ID and username), and timestamp
+5. Return HTTP 204 (no content)
 
 The endpoint is idempotent: if the user is not locked, it returns 204
-without error.
+without error. The log entry is emitted regardless (to record that an
+admin attempted to unlock).
 
 If Redis is unreachable, return HTTP 503 with message:
 `"Lockout service unavailable."`
@@ -514,10 +617,18 @@ handling is required.
 1. **Local users are identified by `ldap_uid = NULL`**: this is the
    canonical way to distinguish local users from LDAP-synced users. No
    additional flag or column is needed
-2. **No "last admin" enforcement**: neither the CLI nor the admin UI
-   enforces a minimum admin count. If the last admin is removed or
-   deactivated, the system will have zero active admins until an
-   operator runs
+2. **No "last admin" enforcement**: the system does not enforce a
+   minimum admin count. However, via UI/API it is practically impossible
+   for administrators to accidentally eliminate all admins — the
+   self-removal guard (see `docs/features/rbac.md`, Business Rule 1)
+   prevents any admin from removing their own Admin role, so at least
+   the acting admin always retains the role. Via CLI or system
+   operations (`acting_user_id = None`), the self-removal guard does
+   not apply, and it is possible to remove or deactivate even the last
+   admin. This is intentional and non-problematic: the platform
+   continues to function normally without active admin users (all
+   non-admin features remain operational). In these rare cases, a
+   system administrator with shell access can restore admin access via:
    `sentinel manage-user update --username <user> --add-role admin`.
    This is consistent with the LDAP sync behavior (see
    `docs/features/ldap-directory.md`, Business Rule 6)
