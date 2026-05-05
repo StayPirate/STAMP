@@ -61,6 +61,7 @@ Sentinel issues JSON Web Tokens signed with a symmetric key.
 |-----------------------|--------|---------|-----------------------|
 | `jwt_secret_key`      | string | —       | `JWT_SECRET_KEY`      |
 | `jwt_expiry_hours`    | int    | `72`    | `JWT_EXPIRY_HOURS`    |
+| `session_max_lifetime_days` | int | `30` | `SESSION_MAX_LIFETIME_DAYS` |
 
 `JWT_SECRET_KEY` is required. The application must refuse to start if it
 is not set.
@@ -74,6 +75,16 @@ is not set.
   WARNING at startup:
   `"JWT_EXPIRY_HOURS is set to {value} (>720 hours). Long-lived tokens
   increase the window of exposure if a token is compromised."`
+- `JWT_SECRET_KEY` must be at least 32 characters. If the value is shorter,
+  the application refuses to start with error:
+  `"Invalid JWT_SECRET_KEY: must be at least 32 characters (got: {length})"`
+- `SESSION_MAX_LIFETIME_DAYS` must be >= 1. Values of 0 or negative cause
+  the application to refuse to start with error:
+  `"Invalid SESSION_MAX_LIFETIME_DAYS: must be >= 1 (got: {value})"`
+- `SESSION_MAX_LIFETIME_DAYS` values above 365 are accepted but log a
+  WARNING at startup:
+  `"SESSION_MAX_LIFETIME_DAYS is set to {value} (>365 days). Long-lived
+  sessions increase exposure if a session is compromised."`
 
 ### Claims
 
@@ -83,14 +94,14 @@ is not set.
 | `session_id`       | string | UUID of the associated `Session` row          |
 | `iat`              | int    | Issued-at timestamp (Unix epoch)              |
 | `exp`              | int    | Expiration timestamp (Unix epoch)             |
-| `session_deadline` | int    | Maximum session lifetime (Unix epoch). Set at login, never refreshed |
+| `session_deadline` | int    | Maximum session lifetime (Unix epoch). Set at login per `SESSION_MAX_LIFETIME_DAYS`, never refreshed |
 | `iss`              | string | `"sentinel"` (constant)                       |
 
 ### Token lifecycle
 
 - A token is issued at login with:
   - `exp = now + JWT_EXPIRY_HOURS * 3600` (default 72 hours)
-  - `session_deadline = now + 30 days` (hardcoded, never refreshed)
+  - `session_deadline = now + SESSION_MAX_LIFETIME_DAYS * 86400` (default 30 days, never refreshed)
 - The server transparently refreshes the token via **sliding session**
   (see Token refresh below). Active users never experience session
   expiration.
@@ -418,6 +429,11 @@ When a user is deactivated (via `user_service.deactivate_user()`), all
 their active API keys are revoked with `revoked_by = NULL`. This is part
 of the deactivation ordering defined in the Session Management section.
 
+Revocation during deactivation is permanent. When the user is later
+reactivated, API keys are NOT restored — the plaintext secret is not
+stored and cannot be recovered. The user must create new keys after
+reactivation.
+
 ### Active key anomaly detection
 
 There is no hard limit on the number of API keys a user can create.
@@ -480,7 +496,9 @@ message: `"Logout is not applicable to API key authentication."`
 2. Extract `session_id` from the JWT claims
 3. Call `session_service.invalidate_session(db, session_id)` — this is
    idempotent: if the session is already inactive, no change is made
-4. Return HTTP 204
+4. Set a `Set-Cookie` header that clears the `sentinel_session` cookie:
+   `Set-Cookie: sentinel_session=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
+5. Return HTTP 204
 
 ### `GET /api/v1/api-keys`
 
@@ -509,7 +527,10 @@ Lists all API keys for the current user.
 
 Creates a new API key for the current user.
 
-**Authentication**: required.
+**Authentication**: required (JWT session only). API-key-authenticated
+requests receive HTTP 403 with message: `"API key creation requires
+session authentication."` — this prevents a compromised API key from
+self-replicating by generating additional keys.
 
 **Request body**:
 
