@@ -259,8 +259,10 @@ attempts per username using a Redis counter.
   for an internal tool.
 - The lockout does not affect API key authentication (API keys bypass
   the login endpoint entirely).
-- There is no admin UI to manually unlock an account — the admin waits
-  for the TTL to expire, or clears the Redis key manually if urgent.
+- An admin can unlock a locked account via `sentinel manage-user unlock
+  --username <name>` (CLI) or the "Unlock" action in the admin user
+  management page. Alternatively, the lockout expires automatically
+  after the TTL. See `docs/features/user-management.md`.
 - **Redis unavailability**: if Redis is unreachable, the login endpoint
   operates in **fail-open** mode — login proceeds without rate limiting.
   This prioritizes availability over brute-force protection. The
@@ -274,15 +276,17 @@ attempts per username using a Redis counter.
 
 ## Login Page
 
-The login page always displays both authentication options:
+The login page always displays the username/password form. The "Login
+with SUSE SSO" button is rendered only when SSO is configured — the
+frontend determines this by calling `GET /api/v1/auth/providers` (see
+`docs/features/sso-authentication.md`).
 
-- **"Login with SUSE SSO" button**: initiates the SSO flow (see
-  `docs/features/sso-authentication.md`)
-- **Username/password form**: submits to `POST /api/v1/auth/login`
+- **"Login with SUSE SSO" button** (conditional): initiates the SSO flow
+- **Username/password form** (always visible): submits to
+  `POST /api/v1/auth/login`
 
-Both sections are always visible regardless of environment. The local
-login form does not check whether local users exist — it simply returns
-an authentication error if the credentials are invalid.
+The local login form does not check whether local users exist — it
+simply returns an authentication error if the credentials are invalid.
 
 ### Frontend behavior on login success
 
@@ -326,6 +330,6 @@ When any API call returns HTTP 401 and the user has a stored token
   (JWT format, session model, API keys, middleware)
 - `docs/features/sso-authentication.md` — SSO login flow (alternative
   provider)
-- `docs/features/local-user-management.md` — creating and managing
+- `docs/features/user-management.md` — creating and managing
   local user accounts
 - `docs/features/user-lifecycle.md` — deactivation side effects

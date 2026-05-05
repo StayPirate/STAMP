@@ -340,7 +340,7 @@ want to adjust a user's roles before reactivating them.
 | `docs/features/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
 | `docs/features/ldap-directory.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
 | `docs/features/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
-| `docs/features/local-user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
+| `docs/features/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
 | `docs/features/ticket-history.md` | `deactivate_user` creates TicketEvents per the `assignment` event type contract |
 | `docs/data-model.md` | User and UserRole table definitions |

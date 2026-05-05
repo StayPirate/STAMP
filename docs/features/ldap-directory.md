@@ -231,7 +231,7 @@ Commands") for full details on the `sentinel fetcher` command group.
 ```
 
 The `manage-user` command is documented in
-`docs/features/local-user-management.md`. In this bootstrap context, the
+`docs/features/user-management.md`. In this bootstrap context, the
 user already exists (created by the LDAP sync in step 1), and
 `manage-user update` adds the Admin role with `ad_group_cn = '_manual'`
 and `assigned_by = NULL` (CLI action).
@@ -481,7 +481,7 @@ Displays a table of all configured role mappings:
    exclusively from AD sync. There is no manual user creation through the
    UI or API. In environments where AD is not reachable, local user
    accounts can be created via the CLI — see
-   `docs/features/local-user-management.md`
+   `docs/features/user-management.md`
 2. **Login is open**: any SUSE employee can authenticate via SSO (see
    `docs/features/sso-authentication.md`). A user with no roles
    has the same access as an unauthenticated user (read-only on public
@@ -541,7 +541,7 @@ Displays a table of all configured role mappings:
   purposes. No additional PII (phone, address, etc.) is imported
 - The CLI `manage-user` commands require shell access to the server,
   which is an appropriate security barrier for administrative operations.
-  See `docs/features/local-user-management.md`
+  See `docs/features/user-management.md`
 
 ## Implementation Notes
 

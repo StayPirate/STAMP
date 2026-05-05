@@ -6,10 +6,12 @@ guidelines.
 
 ## Commands
 
-| Command                     | Description                              | Guard                | Spec                                               |
-|-----------------------------|------------------------------------------|----------------------|----------------------------------------------------|
-| `sentinel manage-user create`  | Create a local user account              | `ALLOW_LOCAL_USERS`  | [local-user-management](features/local-user-management.md) |
-| `sentinel manage-user update`  | Update an existing user account          | —                    | [local-user-management](features/local-user-management.md) |
-| `sentinel manage-user delete`  | Delete a local user account              | `ALLOW_LOCAL_USERS`  | [local-user-management](features/local-user-management.md) |
-| `sentinel fetcher list`        | List all fetchers with current state     | —                    | [fetcher-dashboard](features/fetcher-dashboard.md) |
-| `sentinel fetcher run <name>`  | Execute a fetcher synchronously          | —                    | [fetcher-dashboard](features/fetcher-dashboard.md) |
+| Command                            | Description                              | Spec                                         |
+|------------------------------------|------------------------------------------|----------------------------------------------|
+| `sentinel manage-user create`      | Create a local user account              | [user-management](features/user-management.md) |
+| `sentinel manage-user update`      | Update an existing user account          | [user-management](features/user-management.md) |
+| `sentinel manage-user delete`      | Deactivate a user account                | [user-management](features/user-management.md) |
+| `sentinel manage-user set-password`| Set or reset password for a local user   | [user-management](features/user-management.md) |
+| `sentinel manage-user unlock`      | Clear login lockout counter for a user   | [user-management](features/user-management.md) |
+| `sentinel fetcher list`            | List all fetchers with current state     | [fetcher-dashboard](features/fetcher-dashboard.md) |
+| `sentinel fetcher run <name>`      | Execute a fetcher synchronously          | [fetcher-dashboard](features/fetcher-dashboard.md) |

@@ -1,11 +1,11 @@
-# Local User Management
+# User Management
 
 ## Purpose
 
-Enable administrators to create, update, and delete local user accounts
-via the CLI or the administration panel in the web UI. Local users are
-accounts managed directly in Sentinel's database, independent of the
-SUSE Active Directory and LDAP sync process.
+Enable administrators to manage user accounts via the CLI and the
+administration panel in the web UI. This spec covers both local users
+(managed directly in Sentinel's database) and SSO users (synced from
+SUSE Active Directory via LDAP).
 
 Local users serve three primary use cases:
 
@@ -17,6 +17,11 @@ Local users serve three primary use cases:
    AI Agents)
 3. **Environments without SSO**: deployments outside the SUSE corporate
    network where `id.suse.com` is not reachable
+
+SSO users are provisioned and maintained by the LDAP sync process (see
+`docs/features/ldap-directory.md`). Administrators can modify their
+roles and deactivate/reactivate them, but cannot set passwords or create
+them manually.
 
 Local users are created directly in the database, bypassing the LDAP
 sync process. They are functionally identical to LDAP-synced users for
@@ -30,6 +35,9 @@ credentials instead of SSO (see
 All commands are subcommands of the `sentinel manage-user` group. See
 `docs/conventions.md` (CLI Conventions) for general CLI design
 guidelines.
+
+These commands require direct shell access to the host or container.
+There are no unauthenticated HTTP endpoints for user management.
 
 ### `sentinel manage-user create`
 
@@ -207,10 +215,42 @@ sentinel manage-user set-password \
 This command is only valid for local users (`ldap_uid = NULL`). It
 invalidates all active sessions after changing the password.
 
+### `sentinel manage-user unlock`
+
+Clears the login lockout counter for a user, allowing them to log in
+immediately without waiting for the TTL to expire.
+
+```
+sentinel manage-user unlock \
+  --username <username>
+```
+
+**Parameters**:
+
+| Parameter    | Required | Description                              |
+|--------------|----------|------------------------------------------|
+| `--username` | Yes      | Username of the user to unlock           |
+
+**Behavior**:
+
+1. Normalize the username (trim whitespace, lowercase)
+2. Delete the Redis key `login_attempts:{normalized_username}`
+3. If Redis is unreachable, exit with error:
+   `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
+   (exit code 2)
+4. Print: `"Unlocked user '{username}'."`
+
+The command is idempotent: if the counter does not exist (user was not
+locked), it succeeds silently. No database lookup is required — the
+command operates directly on Redis.
+
+**Exit codes**: 0 on success, 1 on validation error (missing parameter),
+2 on system error (Redis unreachable)
+
 ## Administration UI
 
-In addition to CLI management, administrators can manage local users
-from a dedicated page in the web UI administration panel.
+Administrators can manage all users (local and SSO) from a dedicated
+page in the web UI administration panel.
 
 ### User list page
 
@@ -230,6 +270,7 @@ Filters: by type (local/SSO), by status (active/inactive), by role.
 - **Create**: form with username, email, password, full name, roles
 - **Edit**: change email, full name, roles
 - **Reset password**: set a new password (invalidates sessions)
+- **Unlock**: clear the login lockout counter (same as CLI `unlock`)
 - **Deactivate**: soft delete (same as CLI `delete`)
 - **Reactivate**: restore a deactivated user
 
@@ -241,6 +282,25 @@ Filters: by type (local/SSO), by status (active/inactive), by role.
 
 SSO users cannot have their password set or reset (they authenticate
 via id.suse.com).
+
+### Admin API endpoints
+
+#### `POST /api/v1/admin/users/{user_id}/unlock`
+
+**Permission**: `admin` role
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404
+2. Normalize the user's `username` (trim, lowercase)
+3. Delete the Redis key `login_attempts:{normalized_username}`
+4. Return HTTP 204 (no content)
+
+The endpoint is idempotent: if the user is not locked, it returns 204
+without error.
+
+If Redis is unreachable, return HTTP 503 with message:
+`"Lockout service unavailable."`
 
 ## Interaction with LDAP Sync
 

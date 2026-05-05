@@ -309,9 +309,42 @@ This is a deliberate design decision:
 - The Sentinel JWT expires naturally within the configured duration
   (default 7 days)
 
+## Authentication Providers Endpoint
+
+#### `GET /api/v1/auth/providers`
+
+**Authentication**: none (public endpoint).
+
+**Purpose**: allows the frontend to discover which authentication methods
+are available before rendering the login page.
+
+**Response** (HTTP 200):
+
+```json
+{
+  "local": true,
+  "sso": true
+}
+```
+
+- `local` is always `true` (local authentication cannot be disabled)
+- `sso` is `true` when all required SSO settings are configured, `false`
+  otherwise
+
+The frontend calls this endpoint once when loading the login page and
+uses the response to decide whether to render the SSO button.
+
 ## Login Page
 
-The login page displays both authentication options:
+The login page conditionally displays authentication options based on the
+response from `GET /api/v1/auth/providers`:
+
+- The **username/password form** is always rendered (local auth is always
+  available)
+- The **"Login with SUSE SSO" button** is rendered only when
+  `sso = true` in the providers response
+
+When SSO is enabled:
 
 ```
 ┌─────────────────────────────────────┐
@@ -328,8 +361,20 @@ The login page displays both authentication options:
 └─────────────────────────────────────┘
 ```
 
-Both options are always visible. If SSO is not configured, clicking the
-SSO button shows an error message inline (does not redirect).
+When SSO is disabled:
+
+```
+┌─────────────────────────────────────┐
+│             Sentinel                │
+│                                     │
+│   Username: [__________________]    │
+│   Password: [__________________]    │
+│   [ Login ]                         │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+The "or" divider is only shown when both options are present.
 
 ## Security Considerations
 

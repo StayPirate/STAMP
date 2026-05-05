@@ -144,10 +144,9 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
 
 ### Command Design
 
-- Commands that modify data MUST check their configuration guard (e.g.,
-  `ALLOW_LOCAL_USERS`) before executing. If the guard is not enabled, the
-  command MUST exit with a clear error message explaining which setting to
-  enable
+- Commands that modify data MAY check a configuration guard before
+  executing. If a guard is defined and not enabled, the command MUST exit
+  with a clear error message explaining which setting to enable
 - Commands MUST be idempotent where practical — running the same command
   twice should not produce errors or duplicate data
 - Use `--flag` for boolean options and `--option VALUE` for parameterized

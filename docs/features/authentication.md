@@ -690,7 +690,7 @@ attributed to the agent's own identity.
   id.suse.com
 - `docs/features/user-lifecycle.md` — deactivation side effects
   (API key revocation, session invalidation)
-- `docs/features/local-user-management.md` — creating local user
+- `docs/features/user-management.md` — creating local user
   accounts (including for AI agents)
 - `docs/features/rbac.md` — role-based access control and permission
   model

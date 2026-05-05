@@ -157,7 +157,7 @@ See `docs/features/ldap-directory.md` for details on AD-derived roles.
 User creation for SSO users is handled by the LDAP directory sync (see
 `docs/features/ldap-directory.md`). Local users can be created by admins
 via CLI or the administration UI (see
-`docs/features/local-user-management.md`).
+`docs/features/user-management.md`).
 
 ### Role Mappings (Admin only)
 
@@ -251,7 +251,7 @@ framework and `docs/features/sso-authentication.md` /
 - Users are created by the LDAP directory sync (SSO users) or by admins
   via CLI and admin UI (local users). See
   `docs/features/ldap-directory.md` and
-  `docs/features/local-user-management.md`
+  `docs/features/user-management.md`
 
 ### User Profile
 
