@@ -239,15 +239,21 @@ attempts per username using a Redis counter.
 
 | Setting                   | Type | Default | Env var                     |
 |---------------------------|------|---------|-----------------------------|
-| `login_max_attempts`      | int  | `10`    | `LOGIN_MAX_ATTEMPTS`        |
-| `login_lockout_minutes`   | int  | `15`    | `LOGIN_LOCKOUT_MINUTES`     |
+| `login_max_attempts`      | int  | `5`     | `LOGIN_MAX_ATTEMPTS`        |
+| `login_lockout_minutes`   | int  | `10`    | `LOGIN_LOCKOUT_MINUTES`     |
 
 **Behavior**:
 
 1. On each failed login attempt for a username, increment a Redis
    counter: `login_attempts:{normalized_username}` (where
-   `normalized_username` is the lowercased, trimmed input)
-2. The counter has a TTL equal to `LOGIN_LOCKOUT_MINUTES` (auto-expires)
+   `normalized_username` is the lowercased, trimmed input) and reset the
+   TTL to `LOGIN_LOCKOUT_MINUTES`. This extends the counting window
+   under active attack — an attacker cannot bypass lockout by spacing
+   attempts just under the TTL
+2. The counter is also incremented for non-existent usernames. The login
+   flow performs a dummy Argon2 hash verification when the user is not
+   found, to equalize response time and eliminate timing side-channels
+   for username enumeration
 3. If the counter reaches `LOGIN_MAX_ATTEMPTS`, subsequent login
    attempts for that username are rejected immediately with HTTP 423
    until the TTL expires
@@ -271,7 +277,7 @@ attempts per username using a Redis counter.
   connection failure should be logged as a warning for operators.
 - **Configuration bounds**: `LOGIN_MAX_ATTEMPTS` must be >= 1.
   `LOGIN_LOCKOUT_MINUTES` must be >= 1. Values of 0 or negative are
-  treated as their defaults (10 and 15 respectively) with a startup
+  treated as their defaults (5 and 10 respectively) with a startup
   warning logged.
 
 ## Login Page
@@ -315,7 +321,10 @@ When any API call returns HTTP 401 and the user has a stored token
   effective than complexity requirements. The 12-character minimum
   provides adequate entropy.
 - **Session invalidation on password change**: prevents continued access
-  with old credentials after a password reset.
+  with old credentials after a password reset. All sessions are
+  invalidated, including the caller's own session — no exception for
+  admin self-password-reset. The admin receives the success response,
+  then the next API call returns 401 (frontend redirects to login).
 - **Redis-based lockout**: survives application restarts, shared across
   all API server instances.
 - **No password in JWT**: the JWT contains only user ID, session ID, and

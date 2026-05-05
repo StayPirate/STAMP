@@ -404,10 +404,16 @@ The "or" divider is only shown when both options are present.
   the callback endpoint. The state is signed with `JWT_SECRET_KEY` and
   contains a timestamp for TTL enforcement (10 minutes). No server-side
   storage is needed — the HMAC signature guarantees authenticity and the
-  timestamp prevents stale states. The state is not single-use, but
-  replay is harmless because the OIDC `code` is single-use at the IdP:
-  a replayed state with an already-consumed code will fail at the token
-  exchange step.
+  timestamp prevents stale states. The state is **not single-use** —
+  replay protection relies entirely on the IdP's single-use authorization
+  code: a replayed state with an already-consumed code will fail at the
+  token exchange step. **Accepted risk**: if the IdP has a code-replay
+  vulnerability (i.e., allows the same authorization code to be exchanged
+  more than once), Sentinel's state parameter offers no additional
+  protection. This is acceptable for an internal tool using enterprise
+  IdPs (Keycloak, Azure AD) with well-tested OAuth implementations.
+  Making the state single-use would require server-side storage
+  (reintroducing the Redis dependency eliminated by design).
 - **No Redis dependency for SSO login**: the SSO flow is fully stateless
   and operates correctly even if Redis is unavailable. Redis is only
   used for session caching (post-login), not for the login process

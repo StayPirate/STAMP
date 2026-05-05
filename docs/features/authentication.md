@@ -424,6 +424,15 @@ keys at any given time. This prevents abuse from compromised
 automations while being generous enough for any legitimate use case.
 Revoked and expired keys do not count toward the limit.
 
+### Expired and revoked key retention
+
+Expired and revoked API keys are **retained permanently** — there is no
+cleanup task. At this scale (~hundreds of users, max 50 active keys per
+user), the table grows by at most a few thousand rows per year — negligible
+storage. Retained records serve as audit trail (who had access, when it was
+revoked). If volume becomes a concern in the future, an operational
+`DELETE WHERE revoked_at < now() - interval '2 years'` can be applied.
+
 ## API Endpoints
 
 ### `GET /api/v1/users/me`
@@ -728,6 +737,15 @@ attributed to the agent's own identity.
 - **API key last_used_at debouncing**: updating `last_used_at` on every
   request would create write amplification. Updates are debounced to at
   most once per minute per key.
+- **No mandatory API key expiration**: `expires_at` is optional — API keys
+  can live indefinitely without rotation. For an internal tool, credential
+  hygiene is the user's responsibility. Mitigation mechanisms exist: users
+  can revoke keys at any time, admin deactivation revokes all keys, and the
+  50-key limit prevents unbounded accumulation.
+- **No minimum API key duration**: the only validation on `expires_at` is
+  that it must be in the future. Keys with very short durations (seconds or
+  minutes) are valid use cases for testing. If a key expires before the
+  client uses it, the user simply creates a new one.
 
 ## Cross-references
 
