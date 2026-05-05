@@ -1,17 +1,21 @@
 ---
-description: Run systematic spec reviews using all 4 reviewer agents
+description: Run systematic spec reviews and fix open findings interactively
 ---
 
 Review the feature specification(s) specified in $ARGUMENTS using all 4
-reviewer agents in sequence, then write structured findings to
-`docs/drafts/review/`.
+reviewer agents in sequence, or interactively fix open findings from
+previous reviews.
 
 ## Arguments
 
 - `<spec-name>` — review a single spec (e.g., `tickets`, `rbac`)
 - `all` — review all specs in `docs/features/` sequentially
+- `fix` — interactive mode: recap open findings across all specs, choose
+  one to work on, and resolve findings one at a time
 
-## Procedure
+---
+
+## Mode 1: Review (`<spec-name>` or `all`)
 
 ### 1. Determine target specs
 
@@ -133,3 +137,148 @@ After all specs are processed, output a summary to the user:
 - How many specs were reviewed
 - Total findings by severity
 - Which specs have High-severity findings requiring attention
+
+---
+
+## Mode 2: Fix (`fix`)
+
+Interactive mode for resolving open findings from previous reviews.
+
+### 1. Prerequisites
+
+Scan `docs/drafts/review/` for `.md` files (excluding `README.md`).
+If the directory does not exist or contains no review files, stop with:
+
+> No review files found. Run `/review-spec <name>` or `/review-spec all`
+> first to generate findings.
+
+### 2. Parse all review files
+
+For each review file:
+- Parse all findings (ID, title, severity, category, status, description)
+- Count OPEN findings by severity (High, Medium, Low)
+- Collect finding titles and categories for cross-spec pattern detection
+
+### 3. Cross-spec pattern detection
+
+Group OPEN findings across all specs by category and similar
+title/description keywords. If 2 or more specs share findings with the
+same category AND overlapping keywords in their title or description,
+flag them as a "common pattern". This helps the user decide which spec to
+fix first (fixing a common pattern in one spec may inform the fix for
+others).
+
+### 4. Display recap table
+
+Present the user with a summary table and any common patterns:
+
+```
+| Spec              | High | Medium | Low | Total Open |
+|-------------------|------|--------|-----|------------|
+| tickets           |    2 |      3 |   1 |          6 |
+| package-tracking  |    1 |      2 |   0 |          3 |
+| rbac              |    0 |      1 |   2 |          3 |
+
+⚠ Common patterns detected:
+  - "Missing error path for concurrent updates" affects: tickets, package-tracking
+  - "Unspecified pagination limits" affects: rbac, tickets
+```
+
+If no specs have OPEN findings, inform the user:
+
+> All findings are resolved. Nothing to fix.
+
+### 5. Ask which spec to work on
+
+Ask the user which spec they want to work on. Wait for their choice
+before proceeding.
+
+### 6. Fix loop (one finding at a time)
+
+Load the chosen spec's review file and its target spec. Sort OPEN
+findings by priority:
+1. Severity: High → Medium → Low
+2. Section order: Gap Analysis → Coherence → Design → Security
+
+For the highest-priority OPEN finding:
+
+#### 6a. Present the finding with context (in Italian)
+
+Present the finding to the user in Italian, including:
+
+1. **Contesto del problema**: explain *what* the problem is, *why* it is
+   a problem, and *what impact* it has on the spec or the system. Give
+   the user enough context to understand the situation without having to
+   re-read the entire spec. Reference the specific section(s) of the spec
+   where the problem manifests.
+2. **Soluzione proposta**: describe the proposed solution, list **all
+   files** that will be modified and what changes in each. The fix is NOT
+   limited to the target spec — it may touch any file in the repository
+   (other specs in `docs/features/`, `docs/data-model.md`,
+   `docs/api-spec.md`, `docs/architecture.md`, or any other relevant
+   document).
+
+Format:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Finding: <ID> — <Title> (<Severity>)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 Contesto:
+<Spiegazione in italiano di cosa è il problema, perché è un problema,
+e quale impatto ha. Riferimenti alle sezioni specifiche della spec.>
+
+💡 Soluzione proposta:
+<Descrizione in italiano della soluzione proposta.>
+
+File coinvolti:
+  - <file-path> — <cosa cambia>
+  - <file-path> — <cosa cambia>
+  - ...
+
+Approvi questa soluzione? [sì / modificare / saltare]
+```
+
+#### 6b. Wait for user decision
+
+- **sì** (or approval): proceed to implement the fix
+- **modificare**: ask what the user wants to change, adjust the proposal,
+  and present it again
+- **saltare**: skip this finding, move to the next one
+
+#### 6c. Implement the fix
+
+Edit all affected files to implement the approved solution. This may
+include:
+- Modifying the target spec (`docs/features/<name>.md`)
+- Modifying other specs referenced by the finding
+- Modifying cross-cutting documents (`docs/data-model.md`,
+  `docs/api-spec.md`, `docs/architecture.md`, etc.)
+- Any other documentation file relevant to the fix
+
+#### 6d. Update the review file
+
+Mark the finding as RESOLVED in the review file:
+
+```markdown
+### <ID> — <Title> (<Severity>)
+
+**Category**: <category>
+**Status**: RESOLVED
+**Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
+
+<Original detailed description of the finding>
+```
+
+#### 6e. Update README index
+
+Update `docs/drafts/review/README.md`:
+- Recalculate the OPEN finding counts for this spec's row
+- Update the Total row
+
+#### 6f. Continue or stop
+
+Ask the user: "Continuo con il prossimo finding?" — if yes, repeat from
+step 6a with the next highest-priority OPEN finding. If no, stop and
+show a brief summary of what was resolved in this session.
