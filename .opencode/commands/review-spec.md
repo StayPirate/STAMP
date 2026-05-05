@@ -10,6 +10,8 @@ previous reviews.
 
 - `<spec-name>` — review a single spec (e.g., `tickets`, `rbac`)
 - `all` — review all specs in `docs/features/` sequentially
+- `list` — interactive mode: list all specs and let the user choose which
+  one to review
 - `fix` — interactive mode: recap open findings across all specs, choose
   one to work on, and resolve findings one at a time
 
@@ -140,7 +142,40 @@ After all specs are processed, output a summary to the user:
 
 ---
 
-## Mode 2: Fix (`fix`)
+## Mode 2: List (`list`)
+
+Interactive spec selection for review.
+
+### 1. Enumerate available specs
+
+List all `.md` files in `docs/features/` and extract spec names (filename
+without the `.md` extension). Sort alphabetically.
+
+### 2. Check existing review status
+
+For each spec, check if `docs/drafts/review/<name>.md` exists. If it does,
+parse it to extract:
+- Last reviewed date
+- Count of OPEN findings by severity (High/Medium/Low)
+
+### 3. Present interactive choice
+
+Use the `question` tool to present the user with the list of specs. Each
+option label is the spec name; the description includes review status info:
+- If previously reviewed: `Last review: <date> — <N> open findings (<H> High, <M> Medium, <L> Low)`
+- If never reviewed: `Never reviewed`
+
+Allow single selection only.
+
+### 4. Run review on selected spec
+
+Once the user selects a spec, proceed with Mode 1 (Review) using the
+selected spec name as the target. Follow all steps in Mode 1 starting
+from step 2.
+
+---
+
+## Mode 3: Fix (`fix`)
 
 Interactive mode for resolving open findings from previous reviews.
 
