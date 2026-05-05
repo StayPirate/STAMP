@@ -155,6 +155,8 @@ the location is correct according to this map:
 | API client code            | `frontend/src/api/`               |
 | Backend tests              | `backend/tests/`                  |
 | Frontend tests             | `frontend/tests/`                 |
+| Draft documents            | `docs/drafts/`                    |
+| Review findings            | `docs/drafts/review/`             |
 
 If the user asks to create a file in a location that does not match this map,
 STOP and notify: "This file should go in [correct location] according to the
