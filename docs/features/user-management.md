@@ -108,7 +108,10 @@ invalid role, missing flag)
 ### `sentinel manage-user update`
 
 Updates an existing user account. This command works on any user (local
-or LDAP-synced).
+or LDAP-synced), regardless of whether the user is currently active or
+inactive. Modifications to email, full_name, and roles are permitted on
+inactive users — this allows admins to prepare an account (e.g., assign
+appropriate roles) before reactivating it.
 
 ```
 sentinel manage-user update \
@@ -232,6 +235,13 @@ with TicketEvent, ticket assignments, and UserRole audit data. This is
 consistent with LDAP sync deactivation behavior. For full database
 cleanup in development environments, reset the database directly.
 
+**Inactive user management principle**: deactivation blocks login and
+revokes active sessions/keys, but does not prevent administrative
+modifications to the account. All management operations (update profile,
+set password, modify roles) remain available on inactive users via both
+CLI and API. This allows admins to prepare accounts before reactivation
+(e.g., assign appropriate roles, set a new password).
+
 **Exit codes**: 0 on success, 1 on validation error
 
 ### `sentinel manage-user set-password`
@@ -257,6 +267,10 @@ invoked on an SSO user, exits with error:
 `"Error: Cannot set password for SSO user '{username}'. SSO users
 authenticate via id.suse.com."` (exit code 1)
 
+This command operates on both active and inactive local users. Setting a
+password on an inactive user prepares credentials for reactivation — the
+user will not be able to log in until reactivated.
+
 It invalidates all active sessions after changing the password.
 
 ### `sentinel manage-user unlock`
@@ -281,14 +295,23 @@ sentinel manage-user unlock \
 2. Look up the user by normalized username in the database — if not
    found, exit with error:
    `"Error: User '{username}' not found."` (exit code 1)
-3. Delete the Redis key `login_attempts:{normalized_username}`
-4. If Redis is unreachable, exit with error:
+3. If the user is inactive, print a warning to stderr:
+   `"Warning: User '{username}' is inactive. Unlock has no practical
+   effect until the user is reactivated."` — then continue (do not
+   abort)
+4. If the user is an SSO user (`ldap_uid IS NOT NULL`), print a warning
+   to stderr:
+   `"Warning: User '{username}' is an SSO user. Local login lockout
+   does not apply to SSO authentication."` — then continue (do not
+   abort)
+5. Delete the Redis key `login_attempts:{normalized_username}`
+6. If Redis is unreachable, exit with error:
    `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
    (exit code 2)
-5. Log the action at INFO level: target username and timestamp (CLI
+7. Log the action at INFO level: target username and timestamp (CLI
    operations do not have an acting user identity — shell access is the
    implicit authorization)
-6. Print: `"Unlocked user '{username}'."`
+8. Print: `"Unlocked user '{username}'."`
 
 The command is idempotent: if the counter does not exist (user was not
 locked), it succeeds silently.
@@ -310,7 +333,9 @@ Displays all users (local and SSO) with columns:
 - Email
 - Type (Local / SSO)
 - Status (Active / Inactive)
-- Roles
+- Roles — each role displays badge(s) indicating its origin(s): "Manual",
+  AD group name, or both. See `docs/features/rbac.md` (Role Origins and
+  Coexistence) for the coexistence semantics and UI representation
 
 Filters: by type (local/SSO), by status (active/inactive), by role.
 
@@ -414,7 +439,8 @@ All endpoints below require the `admin` role unless otherwise stated.
 
 #### `PATCH /api/v1/admin/users/{user_id}`
 
-Update a user's profile fields.
+Update a user's profile fields. This endpoint operates on both active and
+inactive users (see "Inactive user management principle" above).
 
 **Request body** (all fields optional, at least one required):
 
@@ -468,7 +494,11 @@ Add or remove manual roles for a user.
   `"Cannot remove your own Admin role."` (enforced by
   `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
 - Adding a role that the user already has as a manual assignment is a
-  no-op (idempotent)
+   no-op (idempotent)
+- Adding a role that the user already holds via AD derivation creates a
+  separate `_manual` record — both origins coexist independently. See
+  `docs/features/rbac.md` (Role Origins and Coexistence) for full
+  semantics
 - Creates a `UserRole` record with `ad_group_cn = '_manual'` and
   `assigned_by` set to the authenticated admin's user ID for each added
   role
@@ -477,7 +507,10 @@ Add or remove manual roles for a user.
 
 #### `PUT /api/v1/admin/users/{user_id}/password`
 
-Reset the password for a local user.
+Reset the password for a local user. This endpoint operates on both
+active and inactive local users (see "Inactive user management principle"
+above). Setting a password on an inactive user prepares credentials for
+reactivation.
 
 **Request body**:
 
@@ -576,6 +609,15 @@ proceeding with deactivation.
 | `sessions_count`       | `int`         | Active sessions that will be invalidated         |
 | `tickets_count`        | `int`         | Open tickets assigned to this user               |
 | `reassignment_target`  | `str \| null` | Manager username if eligible for reassignment, otherwise `null` (tickets will be unassigned) |
+
+**Semantics**: this endpoint returns a point-in-time snapshot of the
+user's current state. The response is purely informational — the
+subsequent `PATCH .../active` call does not verify whether the impact has
+changed since the preview was fetched. Between viewing the preview and
+confirming the deactivation, new resources may have been assigned to the
+user (tickets, API keys, sessions). The deactivation proceeds regardless
+and affects all resources at execution time, not only those shown in the
+preview.
 
 **Authorization**: requires `admin` role.
 

@@ -517,13 +517,11 @@ Displays a table of all configured role mappings:
 
 ## Security Considerations
 
-- **Plaintext LDAP (whitelisted)**: the connection to `pan.suse.de:389`
-  uses plaintext LDAP without TLS or STARTTLS. This is an explicit
-  project decision, not an oversight. Rationale: anonymous bind (no
-  credentials transmitted), internal SUSE network only, and the data
-  exchanged (employee names, emails, group memberships) is already
-  widely known within the organization. Security reviewers should treat
-  this as a whitelisted exception.
+- **LDAPS with TLS validation**: the connection to `pan.suse.de` uses
+  LDAPS (port 636) with server certificate validation against the SUSE
+  Trust Root CA (`certs/SUSE_Trust_Root.crt`). TLS is mandatory to
+  protect the integrity of `MEMBEROF` responses used for role derivation
+  — see the Security rationale section above for the full threat model
 - LDAP queries use anonymous bind — no credentials are stored or
   transmitted. This is consistent with the current AD configuration at
   `pan.suse.de`

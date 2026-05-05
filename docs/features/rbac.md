@@ -204,6 +204,50 @@ See `docs/data-model.md`. Key tables:
 - **RoleMapping**: maps AD group names to Sentinel roles
 - **Role** enum: `Admin`, `Vulnerability Analyst`
 
+## Role Origins and Coexistence
+
+A user can acquire a role from two independent sources (origins):
+
+- **Manual** (`ad_group_cn = '_manual'`): assigned by an admin via CLI
+  or API. Can be removed by an admin at any time.
+- **AD-derived** (`ad_group_cn = <group CN>`): derived from AD group
+  membership during LDAP sync. Managed exclusively by the sync process
+  — cannot be removed via UI or API. See `docs/features/ldap-directory.md`.
+
+### Coexistence rules
+
+1. The same role can be held by a user from multiple origins
+   simultaneously. Each origin creates a distinct `UserRole` record
+   (unique constraint: `user_id, role, ad_group_cn`).
+2. **Manual assignment when role already exists via AD**: creates a new
+   `UserRole` record with `ad_group_cn = '_manual'`. The user now holds
+   the role from both sources. If the AD group is later revoked, only
+   the `ldap_sync` record is removed — the manual assignment persists.
+3. **AD derivation when role already exists manually**: the LDAP sync
+   creates a new `UserRole` record with the AD group's `ad_group_cn`.
+   The user now holds the role from both sources. If the admin later
+   removes the manual assignment, only the `_manual` record is removed
+   — the AD-derived assignment persists.
+4. A role is effectively held as long as **at least one** `UserRole`
+   record exists for that `(user_id, role)` pair, regardless of origin.
+5. Removing a manual role never affects AD-derived records; removing an
+   AD-derived role (via sync) never affects manual records. The two
+   lifecycles are fully independent.
+
+### UI representation
+
+In the Admin UI (user detail page and user management page), each role
+displays badge(s) indicating its active origin(s):
+
+- A role held only manually shows a "Manual" badge
+- A role held only via AD shows a badge with the AD group name (locked,
+  not removable by the admin)
+- A role held from both sources shows both badges — the admin can remove
+  the manual assignment but the AD badge remains (locked)
+
+This gives admins full visibility into why a user has a given role and
+what would happen if they remove the manual assignment.
+
 ## UI Requirements
 
 ### Login Page
