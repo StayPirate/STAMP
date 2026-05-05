@@ -14,6 +14,15 @@ not the underlying tool calls. Never use Glob, Read, Grep, or Bash
 directly in the main conversation for data-gathering steps; always
 delegate to a subagent and use the returned data to present results.
 
+**CRITICAL — gitignored files**: the files under `docs/drafts/` (including
+`docs/drafts/review/`) are listed in `.gitignore` and will NOT appear in
+Glob results or git-tracked file listings. Whenever a subagent needs to
+discover or read files in `docs/drafts/`, it MUST use
+`bash ls docs/drafts/review/` (or `bash ls docs/drafts/`) to list
+existing files, then use the Read tool to read their content. Never rely
+on Glob for files under `docs/drafts/`. This applies to ALL steps below
+(data gathering, loading review files, loading context for reviews).
+
 ---
 
 ## Step 1: Gather data (silent)
