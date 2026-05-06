@@ -77,8 +77,8 @@ present anything to the user until the subagent returns.
 ## Step 2: Display recap
 
 Using the data from Step 1, present the recap table directly to the
-user. The table is split into two sections: **enabled specs** (active)
-and **disabled specs** (frozen).
+user. Show only **enabled specs** — disabled specs are not displayed in
+the recap (they remain accessible via "Toggle spec tracking").
 
 ### Enabled specs (main table)
 
@@ -102,30 +102,6 @@ Common patterns:
 ```
 
 The **Total** row sums only enabled specs.
-
-### Disabled specs (below the main table)
-
-If there are disabled specs, show them below the main table with a
-separator label. Disabled specs use a **text-only format without emoji**
-for the severity sub-row (`H:N,M:N,L:N`, omitting severities with zero
-count):
-
-```
-Disabled specs:
-| Spec             | GAP | COH | DES | SEC | API | Total | Last Review |
-|------------------|-----|-----|-----|-----|-----|-------|-------------|
-| pages            |  —  |  —  |  —  |  —  |   6 |     6 | 2025-01-14  |
-|                  |     |     |     |     | H:1,M:2,L:3 | H:1,M:2,L:3 |  |
-| references       |  —  |  —  |  —  |  —  |   2 |     2 | 2025-01-14  |
-|                  |     |     |     |     | M:1,L:1 | M:1,L:1 |  |
-```
-
-Rules for the disabled section:
-- No emoji anywhere in disabled rows
-- Sub-row uses `H:N,M:N,L:N` format (comma-separated, omit zero)
-- If the spec has never been reviewed: all cells are `—`, Total is `—`
-- Disabled specs do NOT contribute to the main table's **Total** row
-- Cross-spec patterns consider only enabled specs
 
 ### Edge cases
 
