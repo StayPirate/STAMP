@@ -435,6 +435,8 @@ Request body:
 ```
 
 Validation:
+- Returns 422 with code `VALIDATION_ERROR` if `ad_group_cn` exceeds 256
+  characters (maximum length matching Active Directory CN limits)
 - Returns 422 with code `ROLE_MAPPING_GROUP_NOT_FOUND` if the AD group
   does not exist (queries AD live to verify). This is a business-level
   validation — the group CN is syntactically valid but does not exist

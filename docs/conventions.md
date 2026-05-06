@@ -191,6 +191,11 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
   options
 - Repeatable options use multiple `--option` flags (e.g.,
   `--role admin --role vulnerability_analyst`)
+- **Username normalization**: all CLI commands that accept a username
+  argument MUST normalize it (trim whitespace, lowercase) before lookup.
+  Usernames are stored exclusively as lowercase in the database; this
+  normalization ensures operator input is always matched correctly
+  regardless of case
 
 ### Database Access
 

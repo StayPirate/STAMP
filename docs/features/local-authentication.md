@@ -254,6 +254,16 @@ attempts per username using a Redis counter.
   for an internal tool.
 - The lockout does not affect API key authentication (API keys bypass
   the login endpoint entirely).
+- **Lockout does NOT invalidate existing sessions**. This is intentional:
+  lockout is a temporary brute-force mitigation, not a security
+  compromise indicator. A user who is already authenticated (has a valid
+  JWT session) continues working normally even if their account is
+  locked due to failed login attempts from another source. Revoking
+  sessions on lockout would amplify the DoS vector — an attacker could
+  not only block new logins but also disconnect the legitimate user from
+  active work. This contrasts with deactivation and password reset,
+  which DO invalidate sessions because they indicate a deliberate
+  administrative action or credential compromise.
 - An admin can unlock a locked account via `sentinel manage-user unlock
   --username <name>` (CLI) or the "Unlock" action in the admin user
   management page. Alternatively, the lockout expires automatically

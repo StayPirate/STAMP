@@ -142,9 +142,10 @@ sentinel manage-user update \
 
 **Behavior**:
 
-1. Looks up the user by `username` — if not found, exits with error:
-   `"Error: User '{username}' not found."`
-2. If no modification flags are provided (`--email`, `--full-name`,
+1. Normalize the username (trim whitespace, lowercase)
+2. Looks up the user by normalized username — if not found, exits with
+   error: `"Error: User '{username}' not found."`
+3. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
    `"No changes specified for user '{username}'."` and exits with code 0
 3. If any role appears in both `--add-role` and `--remove-role`, exits
@@ -231,9 +232,10 @@ sentinel manage-user deactivate \
 
 **Behavior**:
 
-1. Looks up the user by `username` — if not found, exits with error:
-   `"Error: User '{username}' not found."`
-2. If the user is already inactive, prints:
+1. Normalize the username (trim whitespace, lowercase)
+2. Looks up the user by normalized username — if not found, exits with
+   error: `"Error: User '{username}' not found."`
+3. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
 3. Queries the impact of deactivation:
    - Count of active API keys that will be revoked
@@ -307,7 +309,8 @@ command exits with error: `"Error: Passwords do not match."` (exit
 code 1). This command cannot be used non-interactively — a TTY is
 required.
 
-This command is only valid for local users (`ldap_uid = NULL`). If
+This command is only valid for local users (`ldap_uid = NULL`). The
+username is normalized (trim whitespace, lowercase) before lookup. If
 invoked on an SSO user, exits with error:
 `"Error: Cannot set password for SSO user '{username}'. SSO users
 authenticate via id.suse.com."` (exit code 1)
@@ -383,6 +386,104 @@ succeeds with a no-op and exits with code 0.
 
 **Output channels**: confirmation to stdout. `"Warning: ..."` messages
 to stderr. `"Error: ..."` messages to stderr.
+
+### `sentinel manage-user list`
+
+Lists all users in the system with their key attributes.
+
+```
+sentinel manage-user list \
+  [--active | --inactive] \
+  [--role <role>] ... \
+  [--type local|sso]
+```
+
+**Parameters**:
+
+| Parameter    | Required | Repeatable | Description                                    |
+|--------------|----------|------------|------------------------------------------------|
+| `--active`   | No       | No         | Show only active users                         |
+| `--inactive` | No       | No         | Show only inactive users                       |
+| `--role`     | No       | Yes        | Filter by role: `admin`, `vulnerability_analyst` |
+| `--type`     | No       | No         | Filter by type: `local` or `sso`               |
+
+`--active` and `--inactive` are mutually exclusive. If neither is
+provided, all users are shown regardless of status.
+
+**Behavior**:
+
+1. Query all users matching the provided filters
+2. Sort results alphabetically by username
+3. Print a table to stdout with columns:
+
+```
+USERNAME        FULL NAME            EMAIL                    TYPE   STATUS    ROLES
+jdoe            John Doe             jdoe@example.com         local  active    admin, vulnerability_analyst
+mrossi          Mario Rossi          mrossi@suse.com          sso    active    vulnerability_analyst
+olduser         Old User             old@example.com          local  inactive  —
+```
+
+Column alignment uses fixed-width spaces. The ROLES column shows a
+comma-separated list of roles, or `—` if the user has no roles.
+
+If no users match the filters, prints: `"No users found matching the
+specified criteria."` and exits with code 0.
+
+**Idempotency**: Idempotent. Read-only command, no state changes.
+
+**Exit codes**: 0 on success (including empty results), 2 on system
+error (database unreachable).
+
+**Output channels**: table to stdout. `"Error: ..."` messages to stderr.
+
+### `sentinel manage-user show`
+
+Displays detailed information about a single user.
+
+```
+sentinel manage-user show \
+  --username <username>
+```
+
+**Parameters**:
+
+| Parameter    | Required | Description                              |
+|--------------|----------|------------------------------------------|
+| `--username` | Yes      | Username of the user to display          |
+
+**Behavior**:
+
+1. Normalize the username (trim whitespace, lowercase)
+2. Look up the user by normalized username — if not found, exit with
+   error: `"Error: User '{username}' not found."` (exit code 1)
+3. Print detailed user information to stdout:
+
+```
+Username:     jdoe
+Full name:    John Doe
+Email:        jdoe@example.com
+Type:         local
+Status:       active
+Roles:        admin (manual), vulnerability_analyst (O SUSE Security)
+Created:      2025-03-15 10:30:00 UTC
+Last login:   2025-06-01 14:22:00 UTC
+Manager:      mrossi
+```
+
+The ROLES field shows each role with its origin in parentheses:
+`manual` for roles assigned via CLI/API, or the AD group CN for roles
+derived from LDAP sync. If a role has both origins, show both:
+`admin (manual, O SUSE Admins)`.
+
+If `Last login` is never, show `—`. If `Manager` is not set, show `—`.
+
+**Idempotency**: Idempotent. Read-only command, no state changes.
+
+**Exit codes**: 0 on success, 1 on validation error (user not found),
+2 on system error (database unreachable).
+
+**Output channels**: user detail to stdout. `"Error: ..."` messages to
+stderr.
 
 ## Administration UI
 
@@ -692,14 +793,22 @@ proceeding with deactivation.
 
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
-2. If the user is already inactive, return HTTP 409 with code
+2. If the resolved user is the requesting admin themselves, return
+   HTTP 409 with code `USER_SELF_DEACTIVATION`:
+   `"Cannot preview deactivation impact for your own account."`
+   Rationale: the actual deactivation endpoint rejects self-deactivation
+   with the same code. Rejecting the preview as well keeps the API
+   consistent — if you cannot deactivate yourself, you cannot preview
+   the impact either. This prevents a confusing UX where the preview
+   succeeds but the subsequent action is rejected.
+3. If the user is already inactive, return HTTP 409 with code
    `USER_ALREADY_INACTIVE`: `"User is already inactive."`
    Note: 409 is used here as a precondition check — the deactivation
    impact preview is meaningless for an already-inactive user. Returning
    409 allows the client to distinguish between a valid preview (200) and
    a state where the preview should not be presented to the admin,
    without requiring the client to inspect a response body flag.
-3. Query and return the impact summary
+4. Query and return the impact summary
 
 **Response** (HTTP 200):
 
@@ -820,6 +929,28 @@ handling is required.
   — the admin role is the highest trust level in the system, and
   additional friction would not meaningfully improve security given that
   a compromised admin already has full system access
+- **No notification on admin password reset (accepted risk)**: when an
+  admin resets a user's password via `PUT /api/v1/admin/users/{user}/password`,
+  the target user receives no notification (no email, no in-app alert).
+  A compromised admin could covertly take over an account. This is
+  accepted because: (1) the admin trust level already implies full system
+  access; (2) the audit log (INFO-level logging of acting admin and
+  target user) provides a forensic trail; (3) adding a notification
+  system (SMTP infrastructure, templates, bounce handling) is
+  disproportionate to the residual risk in an internal tool. If the
+  threat model evolves (e.g., multi-tenant admin roles), user-facing
+  notifications should be reconsidered
+- **Per-username lockout DoS vector (accepted risk)**: the per-username
+  lockout mechanism (5 failed attempts → account locked for 10 minutes)
+  allows anyone who knows a valid username to lock out that account by
+  sending 5 failed login attempts. This is a known trade-off in internal
+  tools: brute-force protection at the cost of a low-effort DoS vector.
+  Mitigations: (1) the lockout is temporary (auto-expires via Redis
+  TTL); (2) an admin can unlock immediately via CLI or API; (3) existing
+  sessions are NOT invalidated by lockout (see
+  `docs/features/local-authentication.md`) — a logged-in user continues
+  working normally even if their account is locked. Future mitigation:
+  per-IP rate limiting could be added if the threat model changes
 
 ## Cross-references
 

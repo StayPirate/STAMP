@@ -461,7 +461,7 @@ membership. See `docs/features/ldap-directory.md`.
 | Column       | Type        | Constraints                  | Description                        |
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
-| ad_group_cn  | VARCHAR     | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
+| ad_group_cn  | VARCHAR(256) | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
 | role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin` or `Vulnerability Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
