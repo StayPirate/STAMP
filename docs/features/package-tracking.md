@@ -955,6 +955,287 @@ All codestream-level open items have been resolved:
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
 
+## API Endpoints
+
+### Add Package to Ticket
+
+```
+POST /api/v1/tickets/{ticket_id}/packages
+```
+
+Add a source package to a ticket. Sentinel queries SMELT to resolve all
+maintained codestreams and products for the package, creates
+`TicketPackageCodestream` and `TicketPackageProduct` records via
+`ticket_mutations`, resolves the IBS bugowner, and enqueues submission
+discovery. See [Adding Packages to a Ticket](#adding-packages-to-a-ticket)
+for the full behavior.
+
+**Request body**:
+
+```json
+{
+  "package_name": "openssl-3"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `package_name` | string | Yes | Name of the source package to add |
+
+**Response** (201 Created):
+
+```json
+{
+  "data": {
+    "package_name": "openssl-3",
+    "codestreams_created": 3,
+    "codestreams_skipped": 0,
+    "products_created": 7,
+    "products_skipped": 0
+  }
+}
+```
+
+The response reports how many records were created vs. skipped (already
+existed). This supports idempotent re-calls — if the package was already
+added, all counts will be zero in the `created` fields.
+
+**Permissions**: Vulnerability Analyst role required.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
+| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
+| 422 | `VALIDATION_ERROR` | Missing or empty `package_name` |
+| 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
+| 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
+
+**Idempotency**: safe to call multiple times for the same package. If the
+package is already fully resolved, the response will report zero created
+records.
+
+---
+
+### Remove Package from Ticket
+
+```
+DELETE /api/v1/tickets/{ticket_id}/packages/{package_name}
+```
+
+Remove a package and all its associated `TicketPackageCodestream` and
+`TicketPackageProduct` records from the ticket. Creates a `TicketEvent`
+with `event_type = package_removed`.
+
+**Response**: 204 No Content (empty body).
+
+**Permissions**: Vulnerability Analyst role required.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
+| 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
+| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
+
+---
+
+### Change Codestream Status
+
+```
+PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/codestreams/{codestream_name}
+```
+
+Change the affectedness status of a codestream. Triggers status propagation
+to all child products (with eligibility evaluation for "Affected"), the
+codestream eligibility rollup, TicketEvent creation, and ticket status
+re-evaluation — all via `ticket_mutations`.
+
+**Request body**:
+
+```json
+{
+  "status": "AFFECTED"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status` | string | Yes | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`, `RELEASED` |
+
+**Note on PATCH with side effects**: this endpoint uses PATCH because from
+the client's perspective it is a single-field update on a specific
+resource. The side effects (product propagation, eligibility evaluation,
+ticket status re-evaluation) are a consequence of the domain model, not
+of additional business operations. This is a documented deviation from the
+`POST /resource/{id}/verb` convention for operations with side effects.
+
+**Response** (200 OK):
+
+```json
+{
+  "data": {
+    "ticket_id": "uuid",
+    "package_name": "openssl-3",
+    "codestream_name": "SUSE:SLE-15-SP6:Update",
+    "status": "AFFECTED",
+    "products": [
+      {
+        "product_id": "uuid",
+        "product_name": "SLES 15 SP6",
+        "status": "AFFECTED",
+        "is_override": false
+      },
+      {
+        "product_id": "uuid",
+        "product_name": "SLES-LTSS 15-SP4",
+        "status": "AFFECTED_RESOLVED",
+        "is_override": false
+      }
+    ]
+  }
+}
+```
+
+The response includes the updated codestream and all its child products
+with their resulting statuses (after propagation and eligibility
+evaluation), allowing the client to update the UI tree without a separate
+fetch.
+
+**Permissions**: Vulnerability Analyst role required.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
+| 404 | `RESOURCE_NOT_FOUND` | Package or codestream not found on this ticket |
+| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
+| 422 | `VALIDATION_ERROR` | Invalid status value |
+
+---
+
+### Override Product Status
+
+```
+PATCH /api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}
+```
+
+Override the affectedness status of a specific product. Sets
+`is_override = true` on the product record. Triggers the codestream
+eligibility rollup, TicketEvent creation, and ticket status re-evaluation
+via `ticket_mutations`.
+
+**Request body**:
+
+```json
+{
+  "status": "WONT_FIX"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status` | string | Yes | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`, `RELEASED`, `AFFECTED_RESOLVED` |
+
+**Note on PATCH with side effects**: same rationale as the codestream
+endpoint above — single-field update from the client's perspective.
+
+**Response** (200 OK):
+
+```json
+{
+  "data": {
+    "ticket_id": "uuid",
+    "package_name": "openssl-3",
+    "codestream_name": "SUSE:SLE-15-SP6:Update",
+    "product_id": "uuid",
+    "product_name": "SLES-LTSS 15-SP4",
+    "status": "WONT_FIX",
+    "is_override": true
+  }
+}
+```
+
+**Permissions**: Vulnerability Analyst role required.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
+| 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |
+| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
+| 422 | `VALIDATION_ERROR` | Invalid status value |
+
+---
+
+### List Products
+
+```
+GET /api/v1/products
+```
+
+List all products synced from SMELT. Paginated.
+
+**Query parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | int | 1 | Page number |
+| `per_page` | int | 20 | Items per page (max: 100) |
+| `sort_by` | string | `name` | Sort field. Valid values: `name`, `version`, `cpe`, `created_at` |
+| `sort_order` | string | `asc` | Sort direction: `asc` or `desc` |
+| `search` | string | — | Filter by name (case-insensitive substring match) |
+| `active` | boolean | — | Filter by active status. If omitted, returns all products |
+| `lifecycle_phase` | string | — | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `espos`, `ltss`, `reactive_ltss`, `eol` |
+
+**Response** (200 OK):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "SUSE Linux Enterprise Server",
+      "version": "15 SP6",
+      "cpe": "cpe:/o:suse:sles:15:sp6",
+      "display_name": "SLES 15 SP6",
+      "active": true,
+      "lifecycle_phase": "general_support",
+      "cvss_threshold": null,
+      "smelt_synced_at": "2025-01-15T02:00:00Z",
+      "aimaas_synced_at": "2025-01-15T03:00:00Z"
+    }
+  ],
+  "meta": {
+    "total": 142,
+    "page": 1,
+    "per_page": 20
+  }
+}
+```
+
+**Permissions**: public endpoint (no authentication required).
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `VALIDATION_ERROR` | Invalid query parameter value (e.g., non-integer `page`, unknown `sort_by` field, unknown `lifecycle_phase` value) |
+
+---
+
 ## UI Requirements
 
 ### Ticket Detail — Affectedness Section
