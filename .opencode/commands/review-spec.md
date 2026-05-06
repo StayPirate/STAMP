@@ -58,9 +58,9 @@ user:
 ```
 | Spec             | GAP | COH | DES | SEC | API | Total | Last Review |
 |------------------|-----|-----|-----|-----|-----|-------|-------------|
-| tickets          |   3 |   1 |   1 |   2 |  —  |     7 | 2025-01-15  |
+| tickets          |   3 |   1 |   1 |   2 | 🟢  |     7 | 2025-01-15  |
 |                  | 1:🔴 2:🟠 | 1:🟡 | 1:🟠 | 1:🔴 1:🟠 |  | 2:🔴 4:🟠 1:🟡 |  |
-| package-tracking |   2 |  —  |   1 |  —  |  —  |     3 | 2025-01-14  |
+| package-tracking |   2 | 🟢  |   1 |  —  |  —  |     3 | 2025-01-14  |
 |                  | 1:🟠 1:🟡 |  | 1:🔴 |  |  | 1:🔴 1:🟠 1:🟡 |  |
 | rbac             |  —  |  —  |  —  |  —  |  —  | (never) | —         |
 
@@ -234,12 +234,15 @@ Mark the finding as RESOLVED in the review file:
 
 Update `docs/drafts/review/README.md` using the two-row-per-spec format:
 - **Main row**: spec name, OPEN finding count per reviewer section
-  (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
-  sections with zero findings.
+   (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
+   sections that have never been reviewed (`_Not yet reviewed._` in the
+   review file). Use `🟢` for sections that have been reviewed but have
+   zero OPEN findings (either no findings were raised, or all findings
+   are RESOLVED).
 - **Sub-row**: severity breakdown per section using colored circles:
-  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
-  separated by spaces, omitting severities with zero count. Leave cell
-  empty if the main row is `—`.
+   `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+   separated by spaces, omitting severities with zero count. Leave cell
+   empty if the main row is `—` or `🟢`.
 - Recalculate the **Total** rows (main + sub) by summing all specs.
 
 #### 4a.3f. Ask to continue (do NOT present next finding yet)
@@ -515,12 +518,15 @@ Rules for writing the file:
 After writing the findings file, update `docs/drafts/review/README.md`
 using the two-row-per-spec format:
 - **Main row**: spec name, OPEN finding count per reviewer section
-  (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
-  sections with zero findings.
+   (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
+   sections that have never been reviewed (`_Not yet reviewed._` in the
+   review file). Use `🟢` for sections that have been reviewed but have
+   zero OPEN findings (either no findings were raised, or all findings
+   are RESOLVED).
 - **Sub-row**: severity breakdown per section using colored circles:
-  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
-  separated by spaces, omitting severities with zero count. Leave cell
-  empty if the main row is `—`.
+   `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+   separated by spaces, omitting severities with zero count. Leave cell
+   empty if the main row is `—` or `🟢`.
 - Update the "Last Review" column with today's date
 - Recalculate the **Total** rows (main + sub) by summing all specs.
 
@@ -696,12 +702,15 @@ Rules:
 After writing/updating findings files, update
 `docs/drafts/review/README.md` using the two-row-per-spec format:
 - **Main row**: spec name, OPEN finding count per reviewer section
-  (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
-  sections with zero findings.
+   (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
+   sections that have never been reviewed (`_Not yet reviewed._` in the
+   review file). Use `🟢` for sections that have been reviewed but have
+   zero OPEN findings (either no findings were raised, or all findings
+   are RESOLVED).
 - **Sub-row**: severity breakdown per section using colored circles:
-  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
-  separated by spaces, omitting severities with zero count. Leave cell
-  empty if the main row is `—`.
+   `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+   separated by spaces, omitting severities with zero count. Leave cell
+   empty if the main row is `—` or `🟢`.
 - Update the "Last Review" column with today's date
 - Recalculate the **Total** rows (main + sub) by summing all specs.
 
