@@ -671,15 +671,15 @@ Request body:
   by the VA. Ignored if `cve_id` is provided (severity is derived from
   CVSS)
 
-Response: the created ticket object (201 Created). Includes
-`cve_data_pending: true` when a CVE-ID was provided and the CVE data
-is being fetched in the background.
+Response: the created ticket object wrapped in the standard `{"data": ...}`
+envelope (201 Created). Includes `cve_data_pending: true` when a CVE-ID
+was provided and the CVE data is being fetched in the background.
 
 Error responses:
 
-- 409: CVE is already associated with another ticket. Response body
-  includes `existing_ticket_id` (UUID) to allow the frontend to link
-  to the existing ticket
+- 409 with code `TICKET_CVE_CONFLICT`: CVE is already associated with
+  another ticket. Response body includes `existing_ticket_id` (UUID) to
+  allow the frontend to link to the existing ticket
 
 Requires the Vulnerability Analyst role.
 
@@ -704,16 +704,18 @@ Request body:
 
 - `cve_id` (string, required): CVE identifier string
 
-Response: the updated ticket object (200 OK). Includes
-`cve_data_pending: true` when the CVE data is being fetched in the
-background.
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK). Includes `cve_data_pending: true` when the CVE data
+is being fetched in the background.
 
 Error responses:
 
-- 400: ticket already has a CVE associated
-- 409: CVE is already associated with another ticket. Response body
-  includes `existing_ticket_id` (UUID) to allow the frontend to link
-  to the existing ticket
+- 400 with code `TICKET_CVE_ALREADY_SET`: ticket already has a CVE
+  associated
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_CVE_CONFLICT`: CVE is already associated with
+  another ticket. Response body includes `existing_ticket_id` (UUID) to
+  allow the frontend to link to the existing ticket
 
 Requires the Vulnerability Analyst role.
 
@@ -731,8 +733,9 @@ Response: 204 No Content.
 
 Error responses:
 
-- 400: ticket does not have a CVE associated
-- 404: ticket not found
+- 400 with code `TICKET_CVE_NOT_SET`: ticket does not have a CVE
+  associated
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
 
 Requires the Admin role.
 
@@ -755,12 +758,14 @@ Request body:
 - `severity` (string, required): severity value (Critical, High, Medium,
   Low, None)
 
-Response: the updated ticket object (200 OK).
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK).
 
 Error responses:
 
-- 400: ticket has an associated CVE (severity is derived from CVSS, not
-  manually settable)
+- 400 with code `TICKET_SEVERITY_DERIVED`: ticket has an associated CVE
+  (severity is derived from CVSS, not manually settable)
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
 
 Requires the Vulnerability Analyst role.
 

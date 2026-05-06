@@ -125,7 +125,7 @@ Get user detail including roles (with `ad_group_cn`) and resolved manager.
 Public endpoint (read-only).
 
 ```
-PUT /api/v1/admin/users/{user}/roles
+POST /api/v1/admin/users/{user}/roles
 ```
 
 Add or remove manual roles for a user. Admin only. AD-derived roles are

@@ -31,15 +31,17 @@ for the key format and TTL behavior.
 
 ```json
 {
-  "status": "connected",
-  "status_since": "2026-04-20T02:08:00Z",
-  "events_received": 12847,
-  "events_relevant": 342,
-  "events_processed": 338,
-  "diffs_failed": 4,
-  "last_error": null,
-  "reconnect_attempts": 0,
-  "next_retry_seconds": null
+  "data": {
+    "status": "connected",
+    "status_since": "2026-04-20T02:08:00Z",
+    "events_received": 12847,
+    "events_relevant": 342,
+    "events_processed": 338,
+    "diffs_failed": 4,
+    "last_error": null,
+    "reconnect_attempts": 0,
+    "next_retry_seconds": null
+  }
 }
 ```
 
@@ -47,15 +49,17 @@ for the key format and TTL behavior.
 
 ```json
 {
-  "status": "reconnecting",
-  "status_since": "2026-04-23T16:45:00Z",
-  "events_received": 12847,
-  "events_relevant": 342,
-  "events_processed": 338,
-  "diffs_failed": 4,
-  "last_error": "Connection refused",
-  "reconnect_attempts": 7,
-  "next_retry_seconds": 245
+  "data": {
+    "status": "reconnecting",
+    "status_since": "2026-04-23T16:45:00Z",
+    "events_received": 12847,
+    "events_relevant": 342,
+    "events_processed": 338,
+    "diffs_failed": 4,
+    "last_error": "Connection refused",
+    "reconnect_attempts": 7,
+    "next_retry_seconds": 245
+  }
 }
 ```
 
@@ -67,15 +71,17 @@ not on disconnection).
 
 ```json
 {
-  "status": "unreachable",
-  "status_since": null,
-  "events_received": null,
-  "events_relevant": null,
-  "events_processed": null,
-  "diffs_failed": null,
-  "last_error": null,
-  "reconnect_attempts": null,
-  "next_retry_seconds": null
+  "data": {
+    "status": "unreachable",
+    "status_since": null,
+    "events_received": null,
+    "events_relevant": null,
+    "events_processed": null,
+    "diffs_failed": null,
+    "last_error": null,
+    "reconnect_attempts": null,
+    "next_retry_seconds": null
+  }
 }
 ```
 
@@ -106,6 +112,13 @@ GET /api/v1/fetchers
 
 Returns all registered fetchers with their current status and
 configuration.
+
+**Pagination**: not paginated. The number of fetchers is bounded by the
+application's fetcher registry (expected <30 entries). The full list is
+always returned.
+
+**Sorting**: results are ordered by `name` ascending (alphabetical).
+Client-controlled sorting is not supported.
 
 **Response** (200 OK):
 
@@ -171,6 +184,9 @@ Returns paginated run history for a specific fetcher.
 | `from_date` | datetime | — | Filter runs started on or after this datetime |
 | `to_date` | datetime | — | Filter runs started on or before this datetime |
 
+**Sorting**: default `sort_by=started_at`, `sort_order=desc` (most recent
+run first). Follows the project-wide default sorting convention.
+
 **Response** (200 OK):
 
 ```json
@@ -208,9 +224,9 @@ Returns paginated run history for a specific fetcher.
 
 **Error responses**:
 
-| Status | Condition |
-|---|---|
-| 404 | Fetcher not found in registry |
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | Fetcher not found in registry |
 
 ### Get Fetcher Run Detail
 
@@ -231,9 +247,9 @@ users see additional fields (`error_traceback`).
 
 **Error responses**:
 
-| Status | Condition |
-|---|---|
-| 404 | Fetcher or run not found |
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | Fetcher or run not found |
 
 ### Get Fetcher Run Timeline Data
 
@@ -315,9 +331,9 @@ individual runs for the last 90 days, weekly aggregates for older data.
 
 **Error responses**:
 
-| Status | Condition |
-|---|---|
-| 404 | Fetcher not found in registry |
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | Fetcher not found in registry |
 
 ### Trigger Fetcher (Admin Only)
 
@@ -340,11 +356,11 @@ Enqueues a manual run of the specified fetcher.
 
 **Error responses**:
 
-| Status | Condition |
-|---|---|
-| 404 | Fetcher not found in registry |
-| 409 | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
-| 409 | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | Fetcher not found in registry |
+| 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
+| 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
 
 **Permissions**: Admin only.
 
@@ -393,9 +409,9 @@ Returns the current configuration for a fetcher.
 
 **Error responses**:
 
-| Status | Condition |
-|---|---|
-| 404 | Fetcher not found |
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | Fetcher not found |
 
 ### Update Fetcher Config (Admin Only)
 
@@ -443,10 +459,10 @@ include the fields to change.
 
 **Error responses**:
 
-| Status | Condition |
-|---|---|
-| 404 | Fetcher not found |
-| 422 | Invalid cron expression, timeout, or rate limit format |
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | Fetcher not found |
+| 422 | `VALIDATION_ERROR` | Invalid cron expression, timeout, or rate limit format |
 
 ### Get Fetcher Audit Log (Admin Only)
 
@@ -462,6 +478,9 @@ Returns the audit trail of admin actions for a fetcher.
 |---|---|---|---|
 | `page` | int | 1 | Page number |
 | `per_page` | int | 20 | Items per page (max 100) |
+
+**Sorting**: default `sort_by=created_at`, `sort_order=desc` (most recent
+entry first). Follows the project-wide default sorting convention.
 
 **Response** (200 OK):
 

@@ -16,11 +16,13 @@ API keys (programmatic access). See `docs/features/authentication.md`,
 
 ### Response Format
 
-All responses use JSON. Successful responses follow this structure:
+All responses use JSON.
+
+**Paginated list endpoints** return:
 
 ```json
 {
-  "data": { ... },
+  "data": [ ... ],
   "meta": {
     "total": 100,
     "page": 1,
@@ -28,6 +30,19 @@ All responses use JSON. Successful responses follow this structure:
   }
 }
 ```
+
+**Single-resource and unpaginated list endpoints** return:
+
+```json
+{
+  "data": { ... }
+}
+```
+
+The `meta` object is present **only** on paginated list endpoints.
+Unpaginated endpoints return the full dataset in `data` (clients can derive
+the count from the array length). Endpoints that intentionally omit
+pagination must state the justification (e.g., bounded dataset size).
 
 Error responses follow this structure:
 
@@ -101,6 +116,16 @@ List endpoints support sorting:
 
 - `sort_by` (string): Field name to sort by
 - `sort_order` (string): `asc` or `desc` (default: `desc`)
+
+**Default sort order**: when a paginated list endpoint does not document
+specific sorting behavior, the implicit default is `sort_by=created_at`,
+`sort_order=desc` (newest first). Endpoints with a different natural
+ordering (e.g., alphabetical, severity-based) must state their default
+explicitly.
+
+Endpoints that intentionally do not support client-controlled sorting must
+state so with justification (e.g., "fixed chronological order for timeline
+display").
 
 ### Request Tracing
 
@@ -247,12 +272,13 @@ automatically.
     deleted tickets), `only` (return only deleted tickets). Default behavior
     (parameter absent or `false`): return only active tickets
 - `GET /api/v1/tickets/{ticket_id}` — Get ticket details. If the ticket is
-  soft-deleted and the caller is not an Admin, returns 410 Gone with body
-  `{"detail": "This ticket has been deleted. Contact an admin if you think
-  this is an error."}`. Admin callers receive the full ticket data with the
-  `deleted_at` field populated. The response includes bugowner information
-  for each package (type, name, email, and group members when applicable).
-  See `docs/features/package-bugowner.md` for the response format.
+  soft-deleted and the caller is not an Admin, returns 410 Gone with code
+  `TICKET_DELETED` and detail: "This ticket has been deleted. Contact an
+  admin if you think this is an error." Admin callers receive the full
+  ticket data with the `deleted_at` field populated. The response includes
+  bugowner information for each package (type, name, email, and group
+  members when applicable). See `docs/features/package-bugowner.md` for
+  the response format.
 - `POST /api/v1/tickets` — Create a ticket manually (Vulnerability Analyst
   role). The creating user is automatically assigned. Optionally accepts
   a `cve_id` to associate a CVE at creation time. If the CVE is not in
@@ -333,7 +359,7 @@ See `docs/features/references.md` for detailed endpoint specifications.
   filterable by `source`)
 - `POST /api/v1/tickets/{ticket_id}/references` — Add a manual reference
   (Vulnerability Analyst role)
-- `PUT /api/v1/tickets/{ticket_id}/references/{reference_id}` — Update a
+- `PATCH /api/v1/tickets/{ticket_id}/references/{reference_id}` — Update a
   reference (Vulnerability Analyst role)
 - `DELETE /api/v1/tickets/{ticket_id}/references/{reference_id}` — Delete
   a reference (Vulnerability Analyst role)
@@ -430,8 +456,34 @@ specifications.
 
 ### Users and Auth
 
-See `docs/features/rbac.md` for access control details and
-`docs/features/ldap-directory.md` for LDAP integration details.
+See `docs/features/rbac.md` for access control details,
+`docs/features/ldap-directory.md` for LDAP integration details,
+`docs/features/authentication.md` for session/API key management,
+`docs/features/local-authentication.md` for local login, and
+`docs/features/sso-authentication.md` for SSO login.
+
+**Authentication endpoints**:
+
+- `POST /api/v1/auth/login` — Local username/password login. Returns JWT.
+  See `docs/features/local-authentication.md`
+- `GET /api/v1/auth/sso/authorize` — Initiate SSO login (returns IdP URL).
+  See `docs/features/sso-authentication.md`
+- `POST /api/v1/auth/sso/callback` — Complete SSO login (exchange code for
+  JWT). See `docs/features/sso-authentication.md`
+- `POST /api/v1/auth/logout` — Invalidate current session. See
+  `docs/features/authentication.md`
+- `GET /api/v1/api-keys` — List current user's API keys. See
+  `docs/features/authentication.md`
+- `POST /api/v1/api-keys` — Create API key (session auth only). See
+  `docs/features/authentication.md`
+- `DELETE /api/v1/api-keys/{key_id}` — Revoke own API key. See
+  `docs/features/authentication.md`
+- `GET /api/v1/admin/api-keys` — List all users' API keys (admin only). See
+  `docs/features/authentication.md`
+- `DELETE /api/v1/admin/api-keys/{key_id}` — Revoke any user's API key
+  (admin only). See `docs/features/authentication.md`
+
+**User endpoints**:
 
 Users are populated from SUSE Active Directory via the
 `sync_ldap_directory` fetcher. There is no public user self-registration
@@ -448,7 +500,9 @@ via local password for admin-created local users (see
 - `GET /api/v1/users/{user}` — Get user detail including roles (with
   source) and resolved manager (public)
 - `GET /api/v1/users/me` — Get current authenticated user profile
-- `PUT /api/v1/admin/users/{user}/roles` — Add/remove manual roles (admin only).
+- `PATCH /api/v1/admin/users/{user}` — Update user profile fields (email,
+  full_name). Admin only. See `docs/features/user-management.md`
+- `POST /api/v1/admin/users/{user}/roles` — Add/remove manual roles (admin only).
   Cannot remove AD-derived roles. Request body: `{ "add": [...],
   "remove": [...] }`. See `docs/features/user-management.md`
 - `GET /api/v1/admin/users/{user}/deactivation-impact` — Preview side
@@ -460,6 +514,9 @@ via local password for admin-created local users (see
   `docs/features/user-management.md`
 - `POST /api/v1/admin/users/{user}/unlock` — Clear login lockout counter
   (admin only). See `docs/features/user-management.md`
+- `POST /api/v1/admin/users/{user}/password` — Reset password for a local
+  user (admin only). Invalidates all sessions. See
+  `docs/features/user-management.md`
 
 ### Role Mappings
 

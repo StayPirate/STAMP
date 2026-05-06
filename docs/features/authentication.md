@@ -464,12 +464,14 @@ Returns the currently authenticated user's profile.
 
 ```json
 {
-  "id": "uuid",
-  "username": "string",
-  "email": "string",
-  "full_name": "string | null",
-  "roles": ["string"],
-  "active": true
+  "data": {
+    "id": "uuid",
+    "username": "string",
+    "email": "string",
+    "full_name": "string | null",
+    "roles": ["string"],
+    "active": true
+  }
 }
 ```
 
@@ -488,7 +490,8 @@ If the token is not a valid JWT (invalid signature, malformed), return
 HTTP 401.
 
 If called with an API key instead of a JWT, return HTTP 400 with
-message: `"Logout is not applicable to API key authentication."`
+code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
+`"Logout is not applicable to API key authentication."`
 
 **Behavior**:
 
@@ -506,21 +509,26 @@ Lists all API keys for the current user.
 
 **Authentication**: required.
 
+**Pagination**: not paginated. A user's API keys are naturally bounded
+(expected <20 per user). The full list is always returned.
+
 **Response** (200): array of API key objects (without the full secret):
 
 ```json
-[
-  {
-    "id": "uuid",
-    "prefix": "stl_ak_7f3a9b",
-    "name": "CI production",
-    "created_at": "ISO8601",
-    "last_used_at": "ISO8601 | null",
-    "expires_at": "ISO8601 | null",
-    "revoked_at": "ISO8601 | null",
-    "revoked_by": "uuid | null"
-  }
-]
+{
+  "data": [
+    {
+      "id": "uuid",
+      "prefix": "stl_ak_7f3a9b",
+      "name": "CI production",
+      "created_at": "ISO8601",
+      "last_used_at": "ISO8601 | null",
+      "expires_at": "ISO8601 | null",
+      "revoked_at": "ISO8601 | null",
+      "revoked_by": "uuid | null"
+    }
+  ]
+}
 ```
 
 ### `POST /api/v1/api-keys`
@@ -528,9 +536,7 @@ Lists all API keys for the current user.
 Creates a new API key for the current user.
 
 **Authentication**: required (JWT session only). API-key-authenticated
-requests receive HTTP 403 with message: `"API key creation requires
-session authentication."` — this prevents a compromised API key from
-self-replicating by generating additional keys.
+requests receive HTTP 403 (see Validation below).
 
 **Request body**:
 
@@ -545,22 +551,31 @@ self-replicating by generating additional keys.
 
 - `name` must be 1–128 characters
 - `name` must be unique among the user's non-revoked keys. If a
-  non-revoked key with the same name already exists, return HTTP 409:
+  non-revoked key with the same name already exists, return HTTP 409
+  with code `API_KEY_NAME_CONFLICT`:
   `"A non-revoked API key with this name already exists. Revoke it
   first to reuse the name."`
 - If `expires_at` is provided, it must be in the future. If it is in the
-  past, return HTTP 400: `"expires_at must be in the future."`
+  past, return HTTP 400 with code `VALIDATION_ERROR`:
+  `"expires_at must be in the future."`
+
+**Authentication restriction**: API-key-authenticated requests receive
+HTTP 403 with code `AUTH_SESSION_REQUIRED` and message: `"API key
+creation requires session authentication."` — this prevents a
+compromised API key from self-replicating by generating additional keys.
 
 **Response** (201):
 
 ```json
 {
-  "id": "uuid",
-  "prefix": "stl_ak_7f3a9b",
-  "name": "CI production",
-  "key": "stl_ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "created_at": "ISO8601",
-  "expires_at": "ISO8601 | null"
+  "data": {
+    "id": "uuid",
+    "prefix": "stl_ak_7f3a9b",
+    "name": "CI production",
+    "key": "stl_ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "created_at": "ISO8601",
+    "expires_at": "ISO8601 | null"
+  }
 }
 ```
 
@@ -576,7 +591,7 @@ Revokes an API key belonging to the current user.
 **Behavior**:
 
 1. Look up the key by `key_id` — if not found or belongs to a different
-   user, return HTTP 404
+   user, return HTTP 404 with code `API_KEY_NOT_FOUND`
 2. If already revoked, return HTTP 200 (idempotent)
 3. Set `revoked_at = now()`, `revoked_by = current_user.id`
 4. Return HTTP 200
@@ -630,7 +645,8 @@ Revokes any user's API key. Admin only.
 
 **Behavior**:
 
-1. Look up the key by `key_id` — if not found, return HTTP 404
+1. Look up the key by `key_id` — if not found, return HTTP 404 with
+   code `API_KEY_NOT_FOUND`
 2. If already revoked, return HTTP 200 (idempotent)
 3. Set `revoked_at = now()`, `revoked_by = current_user.id` (the admin)
 4. Return HTTP 200

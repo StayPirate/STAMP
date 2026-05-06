@@ -446,7 +446,7 @@ GET /api/v1/tickets/{ticket_id}/cvss
 ```
 
 **Tickets without CVE**: returns 400 Bad Request with
-`{"detail": "This ticket has no associated CVE. CVSS assessments are not available."}`.
+`{"code": "TICKET_CVE_NOT_SET", "detail": "This ticket has no associated CVE. CVSS assessments are not available."}`.
 The same 400 response applies to `POST .../cvss/suse` and
 `DELETE .../cvss/suse/{version}` when called on a ticket without a CVE.
 
@@ -511,7 +511,16 @@ The backend validates the vector, calculates the score, and saves the
 assessment. If an existing SUSE assessment for the same version exists, it
 is updated (upsert). Triggers recalculation cascade.
 
-Response: the created or updated assessment object.
+Response (200 OK): the created or updated assessment object wrapped in
+the standard `{"data": ...}` envelope.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `TICKET_CVE_NOT_SET` | Ticket has no associated CVE |
+| 404 | `TICKET_NOT_FOUND` | Ticket not found |
+| 422 | `VALIDATION_ERROR` | Invalid vector format or unsupported CVSS version |
 
 Requires the Vulnerability Analyst role.
 
@@ -524,6 +533,16 @@ DELETE /api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}
 Removes the SUSE CVSS assessment for the specified version. Triggers
 recalculation cascade. The ticket may no longer meet the progression gate
 requirements.
+
+Response: 204 No Content.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `TICKET_CVE_NOT_SET` | Ticket has no associated CVE |
+| 404 | `TICKET_NOT_FOUND` | Ticket not found |
+| 404 | `RESOURCE_NOT_FOUND` | No SUSE assessment exists for the specified version |
 
 Requires the Vulnerability Analyst role.
 

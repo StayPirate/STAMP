@@ -87,8 +87,14 @@ Request body:
 Validates the value against allowed values. Triggers recalculation for all
 active tickets as a background task.
 
-Response: the updated settings object, plus a task status indicator if
-recalculation is in progress.
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `VALIDATION_ERROR` | Invalid setting value (e.g., unsupported CVSS version) |
+
+Response: the updated settings object in the standard `{"data": ...}`
+envelope, plus a task status indicator if recalculation is in progress.
 
 Requires: Admin role.
 

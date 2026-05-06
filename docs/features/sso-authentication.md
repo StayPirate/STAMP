@@ -137,7 +137,9 @@ self-contained and its authenticity is verified by the HMAC signature.
 
 ```json
 {
-  "authorization_url": "https://id.suse.com/authorize?..."
+  "data": {
+    "authorization_url": "https://id.suse.com/authorize?..."
+  }
 }
 ```
 
@@ -229,16 +231,28 @@ callback URL with an authorization `code` and `state` parameter.
 
 ```json
 {
-  "access_token": "eyJhbG...",
-  "token_type": "bearer",
-  "expires_at": "ISO8601"
+  "data": {
+    "access_token": "eyJhbG...",
+    "token_type": "bearer",
+    "expires_at": "ISO8601"
+  }
 }
 ```
 
-**Error response** (401):
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `AUTH_SSO_STATE_INVALID` | Invalid or expired SSO state parameter |
+| 401 | `AUTH_SSO_FAILED` | Token exchange failed, user not found, or user inactive |
+| 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
+| 503 | `AUTH_SSO_UNAVAILABLE` | SSO service temporarily unavailable (IdP discovery unreachable) |
+
+Error response format:
 
 ```json
 {
+  "code": "AUTH_SSO_FAILED",
   "detail": "error message"
 }
 ```
@@ -340,8 +354,10 @@ are available before rendering the login page.
 
 ```json
 {
-  "local": true,
-  "sso": true
+  "data": {
+    "local": true,
+    "sso": true
+  }
 }
 ```
 

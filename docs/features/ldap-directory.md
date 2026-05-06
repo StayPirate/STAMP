@@ -290,7 +290,7 @@ Public endpoint (read-only).
 ### User role management
 
 ```
-PUT /api/v1/admin/users/{user}/roles
+POST /api/v1/admin/users/{user}/roles
 ```
 
 Admin only. Add or remove manual roles for a user. The full endpoint
@@ -309,6 +309,10 @@ GET /api/v1/admin/role-mappings
 ```
 
 Admin only. Returns all configured role mappings.
+
+**Pagination**: not paginated. The number of role mappings is naturally
+bounded (one per AD group × role combination, expected <30 entries).
+The full list is always returned.
 
 Response:
 ```json
@@ -343,14 +347,16 @@ Request body:
 Response:
 ```json
 {
-  "ad_group_cn": "O SUSE Security",
-  "role": "vulnerability_analyst",
-  "affected_users": [
-    { "id": "uuid", "username": "ggabrielli", "full_name": "Gianluca Gabrielli", "email": "..." },
-    { "id": "uuid", "username": "jsegitz", "full_name": "Johannes Segitz", "email": "..." }
-  ],
-  "affected_count": 22,
-  "unknown_users": ["newemployee"]
+  "data": {
+    "ad_group_cn": "O SUSE Security",
+    "role": "vulnerability_analyst",
+    "affected_users": [
+      { "id": "uuid", "username": "ggabrielli", "full_name": "Gianluca Gabrielli", "email": "..." },
+      { "id": "uuid", "username": "jsegitz", "full_name": "Johannes Segitz", "email": "..." }
+    ],
+    "affected_count": 22,
+    "unknown_users": ["newemployee"]
+  }
 }
 ```
 
@@ -374,8 +380,10 @@ Request body:
 ```
 
 Validation:
-- Returns 422 if the AD group does not exist (queries AD live to verify)
-- Returns 409 if a mapping for the same (ad_group_cn, role) already exists
+- Returns 422 with code `VALIDATION_ERROR` if the AD group does not
+  exist (queries AD live to verify)
+- Returns 409 with code `RESOURCE_CONFLICT` if a mapping for the same
+  (ad_group_cn, role) already exists
 
 Processing:
 1. Create the `RoleMapping` record
@@ -395,9 +403,11 @@ determine affected users.
 Response (confirmation data):
 ```json
 {
-  "mapping": { "ad_group_cn": "O SUSE Security", "role": "vulnerability_analyst" },
-  "affected_users_count": 22,
-  "message": "Removing this mapping will revoke the 'vulnerability_analyst' role from 22 users."
+  "data": {
+    "mapping": { "ad_group_cn": "O SUSE Security", "role": "vulnerability_analyst" },
+    "affected_users_count": 22,
+    "message": "Removing this mapping will revoke the 'vulnerability_analyst' role from 22 users."
+  }
 }
 ```
 
@@ -406,6 +416,12 @@ Processing:
    mapping's group CN and `role` matches the mapping's role
 2. Delete the `RoleMapping` record
 3. Return 200 with the summary
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `RESOURCE_NOT_FOUND` | Role mapping not found |
 
 Note: users who also have the same role via a different AD group mapping
 or with `ad_group_cn = '_manual'` will retain the role.

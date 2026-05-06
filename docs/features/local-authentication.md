@@ -67,21 +67,31 @@ session, and returns a JWT.
 
 ```json
 {
-  "access_token": "eyJhbG...",
-  "token_type": "bearer",
-  "expires_at": "ISO8601"
+  "data": {
+    "access_token": "eyJhbG...",
+    "token_type": "bearer",
+    "expires_at": "ISO8601"
+  }
 }
 ```
 
-**Error response** (401):
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_INVALID_CREDENTIALS` | Invalid username or password (also covers: user not found, inactive user, SSO user, no password set) |
+| 423 | `AUTH_ACCOUNT_LOCKED` | Account temporarily locked due to too many failed attempts |
+
+Error response format:
 
 ```json
 {
+  "code": "AUTH_INVALID_CREDENTIALS",
   "detail": "Invalid username or password."
 }
 ```
 
-The error message is intentionally generic and identical for all failure
+The 401 error message is intentionally generic and identical for all failure
 cases (user not found, wrong password, inactive user, SSO user) to
 prevent username enumeration.
 
@@ -195,7 +205,7 @@ user ID.
 For SSO users, the "Reset password" action is not available (greyed out
 or hidden).
 
-### `PUT /api/v1/admin/users/{user}/password`
+### `POST /api/v1/admin/users/{user}/password`
 
 API endpoint for admin password reset (used by the admin UI). The full
 endpoint specification (request/response schema, error codes) is defined

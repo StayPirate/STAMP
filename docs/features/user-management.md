@@ -481,7 +481,7 @@ an inline form (or modal) with the following fields:
 - Password length must be 12–128 characters (consistent with
   `docs/features/local-authentication.md`)
 
-**On submit**: call `PUT /api/v1/admin/users/{user}/password` with
+**On submit**: call `POST /api/v1/admin/users/{user}/password` with
 the new password. On success, display a confirmation message:
 "Password updated. All active sessions for this user have been
 invalidated."
@@ -518,20 +518,23 @@ inactive users (see "Inactive user management principle" above).
 
 **Behavior**:
 
-1. Look up the user by `user_id` — if not found, return HTTP 404
-2. If no fields are provided in the body, return HTTP 422:
-   `"At least one field must be provided."`
-3. If `email` is provided, validate format — if invalid, return HTTP 422:
-   `"Invalid email format."`
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
+2. If no fields are provided in the body, return HTTP 422 with code
+   `VALIDATION_ERROR`: `"At least one field must be provided."`
+3. If `email` is provided, validate format — if invalid, return HTTP 422
+   with code `VALIDATION_ERROR`: `"Invalid email format."`
 4. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
 5. If the service raises `UserConflictError` (duplicate email), return
-   HTTP 409: `"A user with this email already exists."`
-6. Return HTTP 200 with the updated user profile
+   HTTP 409 with code `USER_ALREADY_EXISTS`:
+   `"A user with this email already exists."`
+6. Return HTTP 200 with the updated user profile in the standard
+   `{"data": ...}` envelope
 
 **Response**: same schema as `GET /api/v1/users/{user}`
 
-#### `PUT /api/v1/admin/users/{user}/roles`
+#### `POST /api/v1/admin/users/{user}/roles`
 
 Add or remove manual roles for a user.
 
@@ -546,16 +549,19 @@ Add or remove manual roles for a user.
 
 **Behavior**:
 
-1. Look up the user by `user_id` — if not found, return HTTP 404
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
 2. Delegate to `user_service.update_roles()` with
    `acting_user_id = authenticated_admin.id` and roles as
    `(role, '_manual')` pairs
 
 **Validation rules**:
-- Cannot remove roles with `ad_group_cn != '_manual'` — returns HTTP 400:
+- Cannot remove roles with `ad_group_cn != '_manual'` — returns HTTP 400
+  with code `USER_AD_ROLE_PROTECTED`:
   `"Cannot remove AD-derived role '{role}'. This role is managed by the
   AD group '{ad_group_cn}'."`
-- Cannot remove your own Admin role — returns HTTP 409:
+- Cannot remove your own Admin role — returns HTTP 409 with code
+  `USER_SELF_ROLE_REMOVAL`:
   `"Cannot remove your own Admin role."` (enforced by
   `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
 - Adding a role that the user already has as a manual assignment is a
@@ -568,9 +574,10 @@ Add or remove manual roles for a user.
   `assigned_by` set to the authenticated admin's user ID for each added
   role
 
-**Response**: HTTP 200 with updated user profile including all roles
+**Response**: HTTP 200 with updated user profile including all roles,
+wrapped in the standard `{"data": ...}` envelope.
 
-#### `PUT /api/v1/admin/users/{user}/password`
+#### `POST /api/v1/admin/users/{user}/password`
 
 Reset the password for a local user. This endpoint operates on both
 active and inactive local users (see "Inactive user management principle"
@@ -587,7 +594,8 @@ reactivation.
 
 **Behavior**:
 
-1. Look up the user by `user_id` — if not found, return HTTP 404
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
 2. Delegate to `user_service.reset_password(user_id, password,
    acting_user_id=authenticated_admin.id)` — this handles SSO user
    check, validation, hashing, and session invalidation (see
@@ -597,16 +605,20 @@ reactivation.
 4. Return HTTP 200
 
 **Error responses**:
-- SSO user: HTTP 400 — `"Cannot set password for SSO user. SSO users
-  authenticate via id.suse.com."`
-- Invalid password: HTTP 400 — `"Password must be between 12 and 128
-  characters."`
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `USER_SSO_PASSWORD_FORBIDDEN` | Cannot set password for SSO user |
+| 400 | `VALIDATION_ERROR` | Password must be between 12 and 128 characters |
+| 404 | `USER_NOT_FOUND` | User not found |
 
 **Response** (200):
 
 ```json
 {
-  "detail": "Password updated. All active sessions have been invalidated."
+  "data": {
+    "detail": "Password updated. All active sessions have been invalidated."
+  }
 }
 ```
 
@@ -624,16 +636,19 @@ Set the active status of a user (deactivate or reactivate).
 
 **Behavior**:
 
-1. Look up the user by `user_id` — if not found, return HTTP 404
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
 2. If `active: false`: delegate to `user_service.deactivate_user()` with
    `acting_user_id = authenticated_admin.id` and
    `reason = "deactivated by admin via API"`
 3. If `active: true`: delegate to `user_service.reactivate_user()` with
    `acting_user_id = authenticated_admin.id`
-4. Return HTTP 200 with the updated user profile
+4. Return HTTP 200 with the updated user profile in the standard
+   `{"data": ...}` envelope
 
 **Constraints**:
-- Self-deactivation is rejected by the service layer — returns HTTP 409:
+- Self-deactivation is rejected by the service layer — returns HTTP 409
+  with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
 - Setting the same value as current is a no-op (returns 200 with
   unchanged user)
@@ -652,19 +667,22 @@ proceeding with deactivation.
 
 **Behavior**:
 
-1. Look up the user by `user_id` — if not found, return HTTP 404
-2. If the user is already inactive, return HTTP 409:
-   `"User is already inactive."`
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
+2. If the user is already inactive, return HTTP 409 with code
+   `USER_ALREADY_INACTIVE`: `"User is already inactive."`
 3. Query and return the impact summary
 
 **Response** (HTTP 200):
 
 ```json
 {
-  "api_keys_count": 3,
-  "sessions_count": 2,
-  "tickets_count": 5,
-  "reassignment_target": "luigi.verdi"
+  "data": {
+    "api_keys_count": 3,
+    "sessions_count": 2,
+    "tickets_count": 5,
+    "reassignment_target": "luigi.verdi"
+  }
 }
 ```
 
@@ -692,7 +710,8 @@ Clear the login lockout counter for a user.
 
 **Behavior**:
 
-1. Look up the user by `user_id` — if not found, return HTTP 404
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
 2. Normalize the user's `username` (trim, lowercase)
 3. Clear the user's failed login attempt counter in Redis (see
    `local-authentication.md` for lockout mechanism details)
@@ -704,8 +723,8 @@ The endpoint is idempotent: if the user is not locked, it returns 204
 without error. The log entry is emitted regardless (to record that an
 admin attempted to unlock).
 
-If Redis is unreachable, return HTTP 503 with message:
-`"Lockout service unavailable."`
+If Redis is unreachable, return HTTP 503 with code
+`RESOURCE_UNAVAILABLE` and message: `"Lockout service unavailable."`
 
 ## Interaction with LDAP Sync
 

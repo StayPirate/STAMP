@@ -302,7 +302,8 @@ Returns pending fixes for the authenticated user.
 | sort_by    | string  | severity| Sort field: severity, waiting       |
 | sort_order | string  | desc    | Sort direction: asc, desc           |
 
-**Response**: paginated list of pending fix items.
+**Response**: paginated list of pending fix items using the standard
+`{"data": [...], "meta": {"total", "page", "per_page"}}` envelope.
 
 **Response item schema:**
 
@@ -343,7 +344,7 @@ Returns in-progress submissions for the authenticated user.
 | sort_order | string  | desc    | Sort direction: asc, desc           |
 
 **Response**: paginated list of in-progress items with submission chain
-details.
+details, using the standard `{"data": [...], "meta": {"total", "page", "per_page"}}` envelope.
 
 **Response item schema:**
 
@@ -392,7 +393,7 @@ Returns completed releases for the authenticated user.
 | sort_order | string  | desc     | Sort direction: asc, desc          |
 
 **Response**: paginated list of completed items with full submission chain
-and release date.
+and release date, using the standard `{"data": [...], "meta": {"total", "page", "per_page"}}` envelope.
 
 **Response item schema:**
 
@@ -429,11 +430,11 @@ specific ticket, filtered to the authenticated user's packages.
 
 **Status codes:**
 
-| Code | Condition |
-|------|-----------|
-| 200  | Ticket exists — response contains either normal data or an error state object |
-| 404  | Ticket does not exist |
-| 410  | Ticket is soft-deleted (non-admin caller) |
+| Code | Error Code | Condition |
+|------|------------|-----------|
+| 200  | — | Ticket exists — response contains either normal data or an error state object |
+| 404  | `TICKET_NOT_FOUND` | Ticket does not exist |
+| 410  | `TICKET_DELETED` | Ticket is soft-deleted (non-admin caller) |
 
 **Response (normal view)**: returned when ticket status is `Analyzed` and
 the user is a bugowner of at least one package. Object with three arrays
@@ -442,29 +443,30 @@ using a reduced item schema (ticket-level fields like `severity` and
 
 ```json
 {
-  "pending": [
-    {
-      "package_name": "kernel-default",
-      "codestream_name": "SLE-15-SP6",
-      "status": "AFFECTED"
-    }
-  ],
-  "in_progress": [
-    {
-      "package_name": "kernel-default",
-      "codestream_name": "SLE-15-SP6",
-      "submission_chain": {
-        "sr": {"number": 12345, "state": "accepted"},
-        "incident": {"number": 67890},
-        "rr": null
-      },
-      "first_sr_created_at": "2026-04-20T08:00:00Z"
-    }
-  ],
-  "completed": [
-    {
-      "package_name": "kernel-default",
-      "codestream_name": "SLE-15-SP6",
+  "data": {
+    "pending": [
+      {
+        "package_name": "kernel-default",
+        "codestream_name": "SLE-15-SP6",
+        "status": "AFFECTED"
+      }
+    ],
+    "in_progress": [
+      {
+        "package_name": "kernel-default",
+        "codestream_name": "SLE-15-SP6",
+        "submission_chain": {
+          "sr": {"number": 12345, "state": "accepted"},
+          "incident": {"number": 67890},
+          "rr": null
+        },
+        "first_sr_created_at": "2026-04-20T08:00:00Z"
+      }
+    ],
+    "completed": [
+      {
+        "package_name": "kernel-default",
+        "codestream_name": "SLE-15-SP6",
       "submission_chain": {
         "sr": {"number": 12345, "state": "accepted"},
         "incident": {"number": 67890},
@@ -473,6 +475,7 @@ using a reduced item schema (ticket-level fields like `severity` and
       "released_at": "2026-04-25T14:00:00Z"
     }
   ]
+  }
 }
 ```
 
@@ -483,11 +486,13 @@ or the user is not a bugowner. Object with an `error_state` key:
 
 ```json
 {
-  "error_state": {
-    "icon": "Clock",
-    "title": "Ticket not yet analyzed",
-    "message": "This ticket is still being evaluated by the security team. Check back later.",
-    "link": null
+  "data": {
+    "error_state": {
+      "icon": "Clock",
+      "title": "Ticket not yet analyzed",
+      "message": "This ticket is still being evaluated by the security team. Check back later.",
+      "link": null
+    }
   }
 }
 ```

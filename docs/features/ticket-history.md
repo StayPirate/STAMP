@@ -64,7 +64,9 @@ GET /api/v1/tickets/{ticket_id}/events
 ```
 
 Returns a paginated list of events for a specific ticket, ordered by
-`created_at` descending (newest first).
+`created_at` descending (newest first). Sorting is fixed —
+client-controlled `sort_by` / `sort_order` parameters are not supported
+(timeline display requires chronological ordering).
 
 **Path parameters**:
 
@@ -133,10 +135,10 @@ Returns a paginated list of events for a specific ticket, ordered by
 
 **Error responses**:
 
-| Status | Condition |
-|--------|-----------|
-| 404    | Ticket not found |
-| 410    | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404    | `TICKET_NOT_FOUND` | Ticket not found |
+| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
 
 **Permissions**: publicly accessible for active tickets (no authentication
 required). If the ticket is soft-deleted, only Admin users can access its

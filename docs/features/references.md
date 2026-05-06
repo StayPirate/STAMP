@@ -153,6 +153,9 @@ response.
 |-----------|--------|---------|-----------------------------------|
 | source    | string | —       | Filter by source (e.g., `"sync_cves_nvd"`, `"manual"`) |
 
+**Sorting**: results are ordered by `created_at` ascending (oldest first).
+Client-controlled sorting is not supported (small dataset).
+
 **Response** (200 OK):
 
 ```json
@@ -204,10 +207,10 @@ references; non-admin callers receive 410 Gone.
 
 **Error responses**:
 
-| Status | Condition           |
-|--------|---------------------|
-| 404    | Ticket not found    |
-| 410    | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
+| Status | Code | Condition           |
+|--------|------|---------------------|
+| 404    | `TICKET_NOT_FOUND` | Ticket not found    |
+| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
 
 ### Add Reference
 
@@ -265,21 +268,22 @@ Adds a manual reference to a ticket.
 
 **Error responses**:
 
-| Status | Condition                                        |
-|--------|--------------------------------------------------|
-| 404    | Ticket not found                                 |
-| 409    | URL already exists for this ticket               |
-| 410    | Ticket is soft-deleted and the caller is not an Admin |
-| 422    | Invalid URL format or missing required fields    |
+| Status | Code | Condition                                        |
+|--------|------|--------------------------------------------------|
+| 404    | `TICKET_NOT_FOUND` | Ticket not found                                 |
+| 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket               |
+| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin |
+| 422    | `VALIDATION_ERROR` | Invalid URL format or missing required fields    |
 
 ### Update Reference
 
 ```
-PUT /api/v1/tickets/{ticket_id}/references/{reference_id}
+PATCH /api/v1/tickets/{ticket_id}/references/{reference_id}
 ```
 
 Updates an existing reference. Any reference can be updated regardless
-of its source (automatic or manual).
+of its source (automatic or manual). Only the fields included in the
+request body are updated — omitted fields remain unchanged.
 
 **Note on automatic references**: if a user changes the `url` of an
 automatic reference, the fetcher's stale cleanup will not recognize the
@@ -299,8 +303,10 @@ coexists with the fetcher-managed one.
 
 | Field | Type   | Required | Description                     |
 |-------|--------|----------|---------------------------------|
-| url   | string | yes      | URL of the external resource    |
+| url   | string | no       | URL of the external resource    |
 | title | string | no       | Optional label for the reference |
+
+At least one field must be provided.
 
 **Response** (200 OK): the updated reference object (same format as
 create response).
@@ -309,12 +315,12 @@ create response).
 
 **Error responses**:
 
-| Status | Condition                                        |
-|--------|--------------------------------------------------|
-| 404    | Ticket or reference not found                    |
-| 409    | URL already exists for this ticket (if changed)  |
-| 410    | Ticket is soft-deleted and the caller is not an Admin |
-| 422    | Invalid URL format or missing required fields    |
+| Status | Code | Condition                                        |
+|--------|------|--------------------------------------------------|
+| 404    | `RESOURCE_NOT_FOUND` | Ticket or reference not found                    |
+| 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket (if changed)  |
+| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin |
+| 422    | `VALIDATION_ERROR` | Invalid URL format or missing required fields    |
 
 ### Delete Reference
 
@@ -331,10 +337,10 @@ source (automatic or manual).
 
 **Error responses**:
 
-| Status | Condition                          |
-|--------|------------------------------------|
-| 404    | Ticket or reference not found      |
-| 410    | Ticket is soft-deleted and the caller is not an Admin |
+| Status | Code | Condition                          |
+|--------|------|------------------------------------|
+| 404    | `RESOURCE_NOT_FOUND` | Ticket or reference not found      |
+| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin |
 
 ## UI Requirements
 
