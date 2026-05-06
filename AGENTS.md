@@ -570,3 +570,32 @@ This ensures that:
   callers use `asyncio.run()`)
 
 See `docs/features/user-lifecycle.md` for the full service contract.
+
+### 20. API convention conformity
+
+After creating or modifying a feature specification in `docs/features/` that
+defines or modifies API endpoints, evaluate whether an API convention review
+is needed:
+
+1. Invoke `@api-convention-reviewer` when:
+   - A new feature specification defines API endpoints (HTTP method, path,
+     request/response schemas)
+   - An existing feature specification is modified with changes to endpoint
+     definitions (new endpoints, changed paths, modified error responses,
+     altered pagination or filtering)
+   - `docs/api-spec.md` General Conventions section is modified (to verify
+     existing specs still conform)
+2. Skip the review when:
+   - The change is purely cosmetic (typo fixes, formatting, rewording
+     without semantic change to endpoint definitions)
+   - The specification does not define any API endpoints
+   - Only implementation code is modified (pytest handles convention
+     enforcement at the code level)
+3. If the reviewer identifies issues rated as "Needs revision" (violations
+   that would cause implementation ambiguity or client incompatibility),
+   address them in the specification before proceeding with implementation
+4. Issues rated as "Minor issues" should be fixed in the same PR
+
+The goal is to catch API convention violations at the specification stage —
+before any implementation code is written — so that developers can implement
+endpoints without design ambiguity.

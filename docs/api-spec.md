@@ -33,7 +33,8 @@ Error responses follow this structure:
 
 ```json
 {
-  "detail": "Error description",
+  "code": "TICKET_NOT_FOUND",
+  "detail": "Ticket with ID 'abc-123' does not exist",
   "errors": [
     {
       "field": "field_name",
@@ -42,6 +43,41 @@ Error responses follow this structure:
   ]
 }
 ```
+
+Fields:
+
+- `code` (string, required): a stable machine-readable error identifier in
+  UPPER_SNAKE_CASE. Clients MUST use this field (not `detail`) for
+  programmatic error handling
+- `detail` (string, required): a human-readable description of the error.
+  May change without notice — do not match against this string
+- `errors` (array, optional): field-level validation errors. Present only
+  for `VALIDATION_ERROR` responses
+
+#### Error Code Categories
+
+Error codes are grouped by prefix:
+
+| Prefix | Domain | Examples |
+|--------|--------|----------|
+| `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
+| `AUTH_*` | Authentication and authorization | `AUTH_TOKEN_EXPIRED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION` |
+| `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
+| `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
+| `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING` |
+| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE` |
+
+Rules:
+
+- Every new error introduced in the codebase MUST have a corresponding code
+  with the appropriate prefix
+- Codes are defined as a Python enum in the backend (`app/core/errors.py`)
+  and are part of the API contract — removing or renaming a code is a
+  breaking change
+- When an error does not fit an existing category, use the `RESOURCE_*`
+  prefix for generic cases or introduce a new prefix if a distinct domain
+  emerges
 
 ### Pagination
 
@@ -65,6 +101,70 @@ List endpoints support sorting:
 
 - `sort_by` (string): Field name to sort by
 - `sort_order` (string): `asc` or `desc` (default: `desc`)
+
+### Request Tracing
+
+Every API response includes an `X-Request-ID` header containing a UUID that
+uniquely identifies the request. If the client sends an `X-Request-ID`
+header, the server adopts it; otherwise the server generates one.
+
+The request ID is propagated to all log entries produced during request
+processing, enabling end-to-end debugging. Clients should log or display the
+request ID when reporting errors to support staff.
+
+### Rate Limiting
+
+Rate limiting is not enforced at this time. When activated, the API will
+communicate limits via standard headers:
+
+- `X-RateLimit-Limit`: maximum requests allowed in the current window
+- `X-RateLimit-Remaining`: requests remaining in the current window
+- `X-RateLimit-Reset`: UTC epoch timestamp when the window resets
+
+Clients that exceed the limit will receive `429 Too Many Requests`. Clients
+SHOULD respect these headers proactively to avoid hitting limits.
+
+### Versioning
+
+The API uses URL-path versioning (`/api/v1/`). Only v1 exists at this time.
+
+Rules:
+
+- Additive changes (new fields in responses, new endpoints, new optional
+  query parameters) are NOT breaking changes and are added to v1 directly
+- Removal or renaming of fields, changes to response structure, changes to
+  error codes, or semantic changes to existing behavior are breaking changes
+- A v2 will only be considered after a stable production instance is
+  confirmed — until then, all work happens on v1
+- When a new version is eventually introduced, the previous version will
+  include a `Sunset` response header indicating the deprecation date
+
+### Mutation Patterns
+
+Two patterns exist for modifying resources:
+
+**PATCH — field update without significant side-effects:**
+
+```
+PATCH /api/v1/tickets/{id}
+Body: {"severity": "high"}
+```
+
+Used when the operation is a direct attribute change with no additional
+business logic beyond validation.
+
+**POST with action verb — operation with business logic or side-effects:**
+
+```
+POST /api/v1/tickets/{id}/assign
+Body: {"user_id": "..."}
+```
+
+Used when the operation triggers additional logic such as notifications,
+event logging, state transitions, or cross-entity validation.
+
+Rule of thumb: if the operation requires a dedicated service method (not
+just a field setter), it is an action endpoint (POST with verb).
 
 ## Endpoints
 

@@ -14,6 +14,7 @@ findings without modifying files.
 
 | Agent | Type | Trigger | Purpose |
 |-------|------|---------|---------|
+| `@api-convention-reviewer` | Reviewer | Guardrail 20 | Verifies API endpoint definitions in specs conform to project conventions |
 | `@api-parity-reviewer` | Reviewer | Guardrail 12 | Ensures the REST API provides at least the same operability as the web UI |
 | `@cicd` | Implementation | Guardrail 5 | CI/CD pipeline expert for GitHub Actions, Dockerfiles, and deployment configs |
 | `@data-model-reviewer` | Reviewer | Guardrail 8 | Reviews data model changes for simplicity, consistency, and conventions |
