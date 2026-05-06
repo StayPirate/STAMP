@@ -52,6 +52,11 @@ before proceeding.
 
 ## API Endpoints
 
+All endpoints in this section require the Admin role. Standard
+authentication and authorization errors apply per `api-spec.md` General
+Conventions: 401 (`AUTH_TOKEN_EXPIRED`) for unauthenticated requests, 403
+(`AUTH_INSUFFICIENT_ROLE`) for authenticated users without Admin role.
+
 ### Get System Settings
 
 ```
@@ -87,14 +92,24 @@ Request body:
 Validates the value against allowed values. Triggers recalculation for all
 active tickets as a background task.
 
+**Note on PATCH with side effects**: this endpoint uses PATCH because
+semantically it is a configuration field update — the setting changes value
+and the response is returned immediately. The recalculation cascade is an
+asynchronous side effect (Celery background task) that does not block the
+response. The client experience is that of a simple field update with
+instant confirmation. This is a documented deviation from the
+`POST /resource/{id}/verb` convention for operations with side effects.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
 | 422 | `VALIDATION_ERROR` | Invalid setting value (e.g., unsupported CVSS version) |
 
 Response: the updated settings object in the standard `{"data": ...}`
-envelope, plus a task status indicator if recalculation is in progress.
+envelope.
 
 Requires: Admin role.
 
@@ -110,10 +125,9 @@ A simple settings page containing:
    `"v4.0"` (the API values sent in the PATCH request are `"3.1"` and
    `"4.0"` without the "v" prefix), showing the current value. On change,
    a confirmation dialog:
-   - "Changing the default CVSS version will recalculate severity and
-     product eligibility for all active tickets. This operation may take
-     several minutes. Continue?"
-   - Confirm → PATCH API call → show progress/success feedback
+   - "Changing the default CVSS version will re-evaluate all products on
+     currently open tickets. Continue?"
+   - Confirm → PATCH API call → show success feedback
    - Cancel → no change
 
 Future administrative settings will be added to this page as needed.

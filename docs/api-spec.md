@@ -476,11 +476,11 @@ See `docs/features/rbac.md` for access control details,
   `docs/features/authentication.md`
 - `POST /api/v1/api-keys` — Create API key (session auth only). See
   `docs/features/authentication.md`
-- `DELETE /api/v1/api-keys/{key_id}` — Revoke own API key. See
+- `POST /api/v1/api-keys/{key_id}/revoke` — Revoke own API key. See
   `docs/features/authentication.md`
 - `GET /api/v1/admin/api-keys` — List all users' API keys (admin only). See
   `docs/features/authentication.md`
-- `DELETE /api/v1/admin/api-keys/{key_id}` — Revoke any user's API key
+- `POST /api/v1/admin/api-keys/{key_id}/revoke` — Revoke any user's API key
   (admin only). See `docs/features/authentication.md`
 
 **User endpoints**:

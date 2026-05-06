@@ -552,7 +552,7 @@ requests receive HTTP 403 (see Validation below).
 - `name` must be 1–128 characters
 - `name` must be unique among the user's non-revoked keys. If a
   non-revoked key with the same name already exists, return HTTP 409
-  with code `API_KEY_NAME_CONFLICT`:
+  with code `AUTH_API_KEY_NAME_CONFLICT`:
   `"A non-revoked API key with this name already exists. Revoke it
   first to reuse the name."`
 - If `expires_at` is provided, it must be in the future. If it is in the
@@ -582,19 +582,45 @@ compromised API key from self-replicating by generating additional keys.
 The `key` field contains the full secret and is returned **only** in
 this response. It is never returned again by any other endpoint.
 
-### `DELETE /api/v1/api-keys/{key_id}`
+### `POST /api/v1/api-keys/{key_id}/revoke`
 
-Revokes an API key belonging to the current user.
+Revokes an API key belonging to the current user. The key record is
+preserved in the database (not deleted) and remains visible in list
+endpoints with `revoked_at` populated.
 
 **Authentication**: required.
 
 **Behavior**:
 
 1. Look up the key by `key_id` — if not found or belongs to a different
-   user, return HTTP 404 with code `API_KEY_NOT_FOUND`
+   user, return HTTP 404 with code `AUTH_API_KEY_NOT_FOUND`
 2. If already revoked, return HTTP 200 (idempotent)
 3. Set `revoked_at = now()`, `revoked_by = current_user.id`
 4. Return HTTP 200
+
+**Response** (200):
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "prefix": "stl_ak_7f3a9b",
+    "name": "CI production",
+    "created_at": "ISO8601",
+    "last_used_at": "ISO8601 | null",
+    "expires_at": "ISO8601 | null",
+    "revoked_at": "ISO8601",
+    "revoked_by": "uuid"
+  }
+}
+```
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found or belongs to a different user |
 
 ### `GET /api/v1/admin/api-keys`
 
@@ -637,19 +663,48 @@ Lists API keys across all users. Admin only.
 }
 ```
 
-### `DELETE /api/v1/admin/api-keys/{key_id}`
+### `POST /api/v1/admin/api-keys/{key_id}/revoke`
 
-Revokes any user's API key. Admin only.
+Revokes any user's API key. Admin only. The key record is preserved in
+the database (not deleted) and remains visible in list endpoints with
+`revoked_at` populated.
 
 **Authentication**: required. **Permission**: `admin` role.
 
 **Behavior**:
 
 1. Look up the key by `key_id` — if not found, return HTTP 404 with
-   code `API_KEY_NOT_FOUND`
+   code `AUTH_API_KEY_NOT_FOUND`
 2. If already revoked, return HTTP 200 (idempotent)
 3. Set `revoked_at = now()`, `revoked_by = current_user.id` (the admin)
 4. Return HTTP 200
+
+**Response** (200):
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "prefix": "stl_ak_7f3a9b",
+    "name": "CI production",
+    "user_id": "uuid",
+    "username": "string",
+    "created_at": "ISO8601",
+    "last_used_at": "ISO8601 | null",
+    "expires_at": "ISO8601 | null",
+    "revoked_at": "ISO8601",
+    "revoked_by": "uuid"
+  }
+}
+```
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+| 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found |
 
 ## UI Surfaces
 
