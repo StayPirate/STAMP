@@ -270,7 +270,9 @@ Query parameters:
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
   `sort_order`)
 
-Response includes `roles` array with `ad_group_cn` field for each role.
+Response uses the standard paginated envelope (`data` array + `meta`
+object). Each user object follows the same schema as
+`GET /api/v1/users/{user}` (see User detail below).
 
 **Error responses**:
 
@@ -284,12 +286,42 @@ Response includes `roles` array with `ad_group_cn` field for each role.
 GET /api/v1/users/{user}
 ```
 
-Returns full user profile including:
-- User fields (`username`, `email`, `full_name`, `active`, `ldap_uid`,
-  `manager`)
-- `manager`: resolved manager object (`id`, `username`, `full_name`,
-  `email`) or `null`
-- `roles`: array of `{ role, ad_group_cn, assigned_by, created_at }`
+Returns full user profile. Public endpoint (read-only). Response uses
+the standard single-resource envelope:
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "username": "string",
+    "email": "string",
+    "full_name": "string",
+    "active": true,
+    "ldap_uid": "string | null",
+    "manager": {
+      "id": "uuid",
+      "username": "string",
+      "full_name": "string",
+      "email": "string"
+    } | null,
+    "roles": [
+      {
+        "role": "admin",
+        "ad_group_cn": "O SUSE Security",
+        "assigned_by": "uuid | null",
+        "created_at": "ISO8601"
+      }
+    ],
+    "created_at": "ISO8601",
+    "updated_at": "ISO8601"
+  }
+}
+```
+
+Field notes:
+- `manager`: resolved manager object (from AD `manager` DN) or `null`
+- `roles`: array of all roles from both AD group mappings and manual
+  assignments. `ad_group_cn` is `'_manual'` for manually assigned roles
 
 Public endpoint (read-only).
 
@@ -445,16 +477,23 @@ Response (confirmation data):
   "data": {
     "mapping": { "ad_group_cn": "O SUSE Security", "role": "vulnerability_analyst" },
     "affected_users_count": 22,
-    "message": "Removing this mapping will revoke the 'vulnerability_analyst' role from 22 users."
+    "message": "Removed the 'vulnerability_analyst' role from 22 users."
   }
 }
 ```
 
 Processing:
-1. Remove all `UserRole` records where `ad_group_cn` matches the
-   mapping's group CN and `role` matches the mapping's role
-2. Delete the `RoleMapping` record
-3. Return 200 with the summary
+1. Look up the `RoleMapping` record by ID — return 404 if not found
+2. Count `UserRole` records where `ad_group_cn` matches the mapping's
+   group CN and `role` matches the mapping's role (this is the
+   `affected_users_count` in the response)
+3. Remove those `UserRole` records
+4. Delete the `RoleMapping` record
+5. Return 200 with the impact summary
+
+This endpoint returns 200 with an impact summary instead of 204 because
+the deletion has side effects (role revocation from affected users) that
+the admin needs to confirm in the response.
 
 **Error responses**:
 

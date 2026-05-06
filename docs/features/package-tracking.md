@@ -1006,7 +1006,6 @@ added, all counts will be zero in the `created` fields.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
@@ -1038,7 +1037,6 @@ with `event_type = package_removed`.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
@@ -1114,7 +1112,6 @@ fetch.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or codestream not found on this ticket |
@@ -1171,7 +1168,6 @@ endpoint above — single-field update from the client's perspective.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |

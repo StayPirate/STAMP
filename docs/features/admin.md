@@ -52,10 +52,10 @@ before proceeding.
 
 ## API Endpoints
 
-All endpoints in this section require the Admin role. Standard
-authentication and authorization errors apply per `api-spec.md` General
-Conventions: 401 (`AUTH_TOKEN_EXPIRED`) for unauthenticated requests, 403
-(`AUTH_INSUFFICIENT_ROLE`) for authenticated users without Admin role.
+All endpoints in this section require the Admin role. Global responses
+(401, 422) apply per `api-spec.md` "Global Responses" section. 403
+(`AUTH_INSUFFICIENT_ROLE`) is returned for authenticated users without
+Admin role.
 
 ### Get System Settings
 
@@ -104,7 +104,6 @@ instant confirmation. This is a documented deviation from the
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
 | 422 | `VALIDATION_ERROR` | Invalid setting value (e.g., unsupported CVSS version) |
 

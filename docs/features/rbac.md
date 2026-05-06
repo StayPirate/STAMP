@@ -117,7 +117,8 @@ here with the required access level and a link to the owning spec.
 | PATCH | `/api/v1/admin/users/{user}` | Admin | [user-management](user-management.md) |
 | POST | `/api/v1/admin/users/{user}/roles` | Admin | [user-management](user-management.md) |
 | POST | `/api/v1/admin/users/{user}/password` | Admin | [user-management](user-management.md) |
-| PATCH | `/api/v1/admin/users/{user}/active` | Admin | [user-management](user-management.md) |
+| POST | `/api/v1/admin/users/{user}/deactivate` | Admin | [user-management](user-management.md) |
+| POST | `/api/v1/admin/users/{user}/reactivate` | Admin | [user-management](user-management.md) |
 | GET | `/api/v1/admin/users/{user}/deactivation-impact` | Admin | [user-management](user-management.md) |
 | POST | `/api/v1/admin/users/{user}/unlock` | Admin | [user-management](user-management.md) |
 | GET | `/api/v1/admin/role-mappings` | Admin | [ldap-directory](ldap-directory.md) |

@@ -102,10 +102,12 @@ their own business rules.
 **Behavior**:
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
-2. If `email` is provided, validate uniqueness. If violated, raise
+2. If `email` or `full_name` is provided, and `user.ldap_uid IS NOT NULL`,
+   and `acting_user_id` is not None: raise `SSOFieldReadOnlyError`
+3. If `email` is provided, validate uniqueness. If violated, raise
    `UserConflictError`
-3. Apply provided field updates (only non-None parameters are applied)
-4. Return updated User
+4. Apply provided field updates (only non-None parameters are applied)
+5. Return updated User
 
 **TicketEvent**: none
 
@@ -343,17 +345,24 @@ Concurrency safety is guaranteed by:
 No locking, serialization, or coordination is needed between CLI, API,
 and LDAP sync entry points for role modifications.
 
-## Error Handling
+## Service Exceptions
 
-| Error                    | Condition                                    | API mapping | CLI mapping          |
-|--------------------------|----------------------------------------------|-------------|----------------------|
-| `UserNotFoundError`      | User ID does not exist                       | 404         | Exit 1, stderr       |
-| `UserConflictError`      | Duplicate username or email                  | 409         | Exit 1, stderr       |
-| `SelfRoleRemovalError`   | User attempting to remove own Admin role      | 409         | Exit 1, stderr       |
-| `SelfDeactivationError`  | User attempting to deactivate themselves       | 409         | Exit 1, stderr       |
-| `ADDerivedRoleError`     | Attempting to remove AD-derived role via user action | 400   | Exit 1, stderr       |
-| `SSOUserPasswordError`   | Attempting to set password for an SSO user    | 400         | Exit 1, stderr       |
-| `PasswordValidationError`| Password does not meet length requirements (12–128) | 400  | Exit 1, stderr       |
+The service layer raises the following typed exceptions. Each consumer
+(API handler, CLI command, background task) is responsible for
+translating these into its own response format (HTTP status + error code,
+CLI exit code + stderr message, etc.). See `docs/features/user-management.md`
+for the API-layer mapping.
+
+| Exception | Raised when |
+|-----------|-------------|
+| `UserNotFoundError` | User lookup by ID or username finds no match |
+| `UserConflictError` | Duplicate username or email (uniqueness constraint violation) |
+| `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role |
+| `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
+| `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
+| `SSOFieldReadOnlyError` | Admin attempts to modify identity fields (`email`, `full_name`) for an SSO user. These fields are managed by directory sync; manual changes would be overwritten on the next sync cycle |
+| `SSOUserPasswordError` | Attempting to set or reset password for a non-local (SSO) user |
+| `PasswordValidationError` | Password does not meet length requirements (12–128 characters) |
 
 ## Relationship to Other Specifications
 

@@ -296,10 +296,11 @@ into all endpoints that require authentication.
    return HTTP 401.
 6. Return the authenticated user.
 
-All HTTP 401 responses return a generic body `{"detail": "Authentication
-required"}` regardless of the specific failure reason (expired token,
-invalidated session, session deadline reached, inactive user). No
-information about the failure cause is disclosed.
+All HTTP 401 responses return a generic body `{"code":
+"AUTH_NOT_AUTHENTICATED", "detail": "Authentication required"}` regardless
+of the specific failure reason (expired token, invalidated session, session
+deadline reached, inactive user). No information about the failure cause is
+disclosed. See also `docs/api-spec.md`, "Global Responses".
 
 The dual-source approach supports both programmatic clients (which send
 `Authorization: Bearer <token>`) and browser sessions (where the JWT is
@@ -487,7 +488,11 @@ check session liveness. This makes the endpoint fully idempotent:
 calling it multiple times (e.g., retry or double-click) always succeeds.
 
 If the token is not a valid JWT (invalid signature, malformed), return
-HTTP 401.
+HTTP 401 with code `AUTH_NOT_AUTHENTICATED` and body
+`{"code": "AUTH_NOT_AUTHENTICATED", "detail": "Authentication required"}`.
+This endpoint does not use `get_current_user` and therefore handles
+authentication failure directly (same response format for client
+consistency).
 
 If called with an API key instead of a JWT, return HTTP 400 with
 code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
@@ -511,6 +516,9 @@ Lists all API keys for the current user.
 
 **Pagination**: not paginated. A user's API keys are naturally bounded
 (expected <20 per user). The full list is always returned.
+
+**Sorting**: not supported (small bounded dataset per user; results
+returned in creation order, newest first).
 
 **Response** (200): array of API key objects (without the full secret):
 
@@ -619,7 +627,6 @@ endpoints with `revoked_at` populated.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found or belongs to a different user |
 
 ### `GET /api/v1/admin/api-keys`
@@ -636,6 +643,8 @@ Lists API keys across all users. Admin only.
 | `status`   | string | `active`, `revoked`, `expired` (optional) |
 | `page`     | int    | Page number (default 1)             |
 | `per_page` | int    | Items per page (default 50, max 100)  |
+| `sort_by`  | string | Field to sort by: `created_at`, `last_used_at` (default: `created_at`) |
+| `sort_order`| string | `asc` or `desc` (default: `desc`)  |
 
 **Response** (200): paginated array of API key objects with user info:
 
@@ -702,7 +711,6 @@ the database (not deleted) and remains visible in list endpoints with
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_TOKEN_EXPIRED` | Missing or invalid authentication |
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
 | 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found |
 

@@ -76,7 +76,7 @@ Error codes are grouped by prefix:
 | Prefix | Domain | Examples |
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
-| `AUTH_*` | Authentication and authorization | `AUTH_TOKEN_EXPIRED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID` |
+| `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
@@ -148,6 +148,29 @@ communicate limits via standard headers:
 
 Clients that exceed the limit will receive `429 Too Many Requests`. Clients
 SHOULD respect these headers proactively to avoid hitting limits.
+
+### Global Responses
+
+The following responses may be returned by any authenticated endpoint due to
+shared dependencies (middleware). Individual endpoint error tables document
+only endpoint-specific errors; global responses are not repeated.
+
+| Status | Code                     | Condition                                      | Source                         |
+|--------|--------------------------|------------------------------------------------|--------------------------------|
+| 401    | `AUTH_NOT_AUTHENTICATED` | Missing, malformed, or invalid credentials     | `get_current_user` dependency  |
+| 422    | `VALIDATION_ERROR`       | Request body/query/path fails schema validation | FastAPI automatic (Pydantic)   |
+| 500    | `INTERNAL_ERROR`         | Unhandled server error                         | Framework                      |
+
+Notes:
+
+- **Public endpoints** (explicitly marked) are exempt from 401
+- The 401 response body is always `{"code": "AUTH_NOT_AUTHENTICATED",
+  "detail": "Authentication required"}` regardless of the specific failure
+  reason — no information about the failure cause is disclosed
+- The 422 response uses Pydantic's native format with the `errors` array
+  populated with field-level details
+- Endpoint error tables should only list responses that are specific to
+  that endpoint's logic (e.g., 404, 409, 403 for role requirements)
 
 ### Versioning
 
@@ -470,6 +493,9 @@ See `docs/features/rbac.md` for access control details,
   See `docs/features/sso-authentication.md`
 - `POST /api/v1/auth/sso/callback` — Complete SSO login (exchange code for
   JWT). See `docs/features/sso-authentication.md`
+- `GET /api/v1/auth/providers` — Discover available authentication methods
+  (local, SSO). Public, no authentication required. See
+  `docs/features/sso-authentication.md`
 - `POST /api/v1/auth/logout` — Invalidate current session. See
   `docs/features/authentication.md`
 - `GET /api/v1/api-keys` — List current user's API keys. See
@@ -509,8 +535,12 @@ via local password for admin-created local users (see
   effects of deactivating a user (admin only). Returns counts of API keys,
   sessions, and tickets affected, plus reassignment target. See
   `docs/features/user-management.md`
-- `PATCH /api/v1/admin/users/{user}/active` — Deactivate or reactivate a
-  user (admin only). Request body: `{ "active": bool }`. See
+- `POST /api/v1/admin/users/{user}/deactivate` — Deactivate a user
+  (admin only). Triggers side effects: API key revocation, session
+  invalidation, ticket reassignment. See
+  `docs/features/user-management.md`
+- `POST /api/v1/admin/users/{user}/reactivate` — Reactivate a
+  previously deactivated user (admin only). See
   `docs/features/user-management.md`
 - `POST /api/v1/admin/users/{user}/unlock` — Clear login lockout counter
   (admin only). See `docs/features/user-management.md`

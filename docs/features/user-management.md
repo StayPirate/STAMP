@@ -436,7 +436,7 @@ via id.suse.com).
 When an admin clicks "Deactivate" for any user (local or SSO), the
 frontend calls `GET /api/v1/admin/users/{user}/deactivation-impact`
 and displays a confirmation dialog with the impact summary before
-calling `PATCH /api/v1/admin/users/{user}/active`.
+calling `POST /api/v1/admin/users/{user}/deactivate`.
 
 The dialog displays:
 
@@ -524,15 +524,20 @@ inactive users (see "Inactive user management principle" above).
    `VALIDATION_ERROR`: `"At least one field must be provided."`
 3. If `email` is provided, validate format — if invalid, return HTTP 422
    with code `VALIDATION_ERROR`: `"Invalid email format."`
-4. Delegate to `user_service.update_user()` with
+4. If the user is an SSO user (`ldap_uid IS NOT NULL`) and `email` or
+   `full_name` is provided, return HTTP 409 with code
+   `SSO_FIELD_READONLY`:
+   `"Cannot modify identity fields for SSO users. These fields are managed by the directory service."`
+5. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
-5. If the service raises `UserConflictError` (duplicate email), return
+6. If the service raises `UserConflictError` (duplicate email), return
    HTTP 409 with code `USER_ALREADY_EXISTS`:
    `"A user with this email already exists."`
-6. Return HTTP 200 with the updated user profile in the standard
+7. Return HTTP 200 with the updated user profile in the standard
    `{"data": ...}` envelope
 
-**Response**: same schema as `GET /api/v1/users/{user}`
+**Response**: user profile in `{"data": {...}}` envelope (see
+`docs/features/ldap-directory.md`, User detail, for the full schema).
 
 #### `POST /api/v1/admin/users/{user}/roles`
 
@@ -575,7 +580,8 @@ Add or remove manual roles for a user.
   role
 
 **Response**: HTTP 200 with updated user profile including all roles,
-wrapped in the standard `{"data": ...}` envelope.
+wrapped in the standard `{"data": ...}` envelope (see
+`docs/features/ldap-directory.md`, User detail, for the full schema).
 
 #### `POST /api/v1/admin/users/{user}/password`
 
@@ -622,27 +628,22 @@ reactivation.
 }
 ```
 
-#### `PATCH /api/v1/admin/users/{user}/active`
+#### `POST /api/v1/admin/users/{user}/deactivate`
 
-Set the active status of a user (deactivate or reactivate).
+Deactivate a user account. Triggers significant side effects (API key
+revocation, session invalidation, ticket reassignment).
 
-**Request body**:
-
-```json
-{
-  "active": true
-}
-```
+**Request body**: none (empty body or omitted).
 
 **Behavior**:
 
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
-2. If `active: false`: delegate to `user_service.deactivate_user()` with
+2. If the user is already inactive, return HTTP 200 with the unchanged
+   user profile (idempotent no-op)
+3. Delegate to `user_service.deactivate_user()` with
    `acting_user_id = authenticated_admin.id` and
    `reason = "deactivated by admin via API"`
-3. If `active: true`: delegate to `user_service.reactivate_user()` with
-   `acting_user_id = authenticated_admin.id`
 4. Return HTTP 200 with the updated user profile in the standard
    `{"data": ...}` envelope
 
@@ -650,14 +651,33 @@ Set the active status of a user (deactivate or reactivate).
 - Self-deactivation is rejected by the service layer — returns HTTP 409
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
-- Setting the same value as current is a no-op (returns 200 with
-  unchanged user)
 
 See `docs/features/user-lifecycle.md` for the full side effect contract
 (API key revocation, session invalidation, ticket reassignment on
 deactivation).
 
-**Response**: same schema as `GET /api/v1/users/{user}`
+**Response**: user profile in `{"data": {...}}` envelope (see
+`docs/features/ldap-directory.md`, User detail, for the full schema).
+
+#### `POST /api/v1/admin/users/{user}/reactivate`
+
+Reactivate a previously deactivated user account.
+
+**Request body**: none (empty body or omitted).
+
+**Behavior**:
+
+1. Look up the user by `user_id` — if not found, return HTTP 404 with
+   code `USER_NOT_FOUND`
+2. If the user is already active, return HTTP 200 with the unchanged
+   user profile (idempotent no-op)
+3. Delegate to `user_service.reactivate_user()` with
+   `acting_user_id = authenticated_admin.id`
+4. Return HTTP 200 with the updated user profile in the standard
+   `{"data": ...}` envelope
+
+**Response**: user profile in `{"data": {...}}` envelope (see
+`docs/features/ldap-directory.md`, User detail, for the full schema).
 
 #### `GET /api/v1/admin/users/{user}/deactivation-impact`
 
@@ -695,7 +715,7 @@ proceeding with deactivation.
 
 **Semantics**: this endpoint returns a point-in-time snapshot of the
 user's current state. The response is purely informational — the
-subsequent `PATCH .../active` call does not verify whether the impact has
+subsequent `POST .../deactivate` call does not verify whether the impact has
 changed since the preview was fetched. Between viewing the preview and
 confirming the deactivation, new resources may have been assigned to the
 user (tickets, API keys, sessions). The deactivation proceeds regardless

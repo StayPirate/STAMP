@@ -193,7 +193,7 @@ callback URL with an authorization `code` and `state` parameter.
    ```
 3. If the token exchange fails (non-2xx HTTP response, network error,
    or 2xx response whose body does not contain an `id_token` field),
-   return HTTP 401:
+   return HTTP 401 with code `AUTH_SSO_FAILED`:
    `"SSO authentication failed. Please try again."`
    Log at WARNING level: `"SSO token exchange failed: {reason}"` where
    reason is `"HTTP {status}"` for non-2xx, `"no id_token in response"`
@@ -209,17 +209,18 @@ callback URL with an authorization `code` and `state` parameter.
 5. Extract the user identifier from the ID token: read the claim
    specified by `SSO_USER_CLAIM` (default: `sub`). If the claim is
    absent from the ID token, or its value is `null` or an empty string,
-   return HTTP 401:
+   return HTTP 401 with code `AUTH_SSO_FAILED`:
    `"SSO authentication failed. Please try again."`
    Log at WARNING level: `"SSO callback: expected claim
    '{claim_name}' not found in ID token from {issuer}. Available
    claims: {list_of_claim_names}."` (claim values are never logged —
    only names, to aid debugging without leaking PII)
 6. Look up the user by matching `ldap_uid` to the extracted claim value
-7. If user not found, return HTTP 401:
+7. If user not found, return HTTP 401 with code `AUTH_SSO_USER_NOT_FOUND`:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
-8. If user is inactive (`active = false`), return HTTP 401:
+8. If user is inactive (`active = false`), return HTTP 401 with code
+   `AUTH_SSO_USER_INACTIVE`:
    `"Your account has been deactivated. Contact your administrator."`
 9. Create a `Session` record (see
     `docs/features/authentication.md`, Session Management)
@@ -244,7 +245,9 @@ callback URL with an authorization `code` and `state` parameter.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 400 | `AUTH_SSO_STATE_INVALID` | Invalid or expired SSO state parameter |
-| 401 | `AUTH_SSO_FAILED` | Token exchange failed, user not found, or user inactive |
+| 401 | `AUTH_SSO_FAILED` | Token exchange failed or ID token validation failed (transient/infrastructure) |
+| 401 | `AUTH_SSO_USER_NOT_FOUND` | User authenticated by IdP does not exist in the Sentinel User table |
+| 401 | `AUTH_SSO_USER_INACTIVE` | User exists but has been deactivated |
 | 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
 | 503 | `AUTH_SSO_UNAVAILABLE` | SSO service temporarily unavailable (IdP discovery unreachable) |
 
@@ -367,6 +370,10 @@ are available before rendering the login page.
 
 The frontend calls this endpoint once when loading the login page and
 uses the response to decide whether to render the SSO button.
+
+No application-level error responses. This endpoint reads internal
+configuration only and has no failure modes beyond standard server
+errors (500).
 
 ## Login Page
 
