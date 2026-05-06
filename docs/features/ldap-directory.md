@@ -272,6 +272,12 @@ Query parameters:
 
 Response includes `roles` array with `ad_group_cn` field for each role.
 
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters |
+
 ### User detail
 
 ```
@@ -286,6 +292,12 @@ Returns full user profile including:
 - `roles`: array of `{ role, ad_group_cn, assigned_by, created_at }`
 
 Public endpoint (read-only).
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `USER_NOT_FOUND` | No user found matching the given UUID or username |
 
 ### User role management
 
@@ -364,6 +376,13 @@ The `unknown_users` field lists AD usernames found in the group but not
 yet present in the User table (e.g., employees hired after the last
 sync). These users will receive the role at the next sync.
 
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `VALIDATION_ERROR` | Invalid request body (missing or empty `ad_group_cn`, unrecognized `role`) |
+| 503 | `RESOURCE_UNAVAILABLE` | AD is unreachable or the connection timed out (10–15 s timeout) |
+
 ```
 POST /api/v1/admin/role-mappings
 ```
@@ -384,6 +403,26 @@ Validation:
   exist (queries AD live to verify)
 - Returns 409 with code `RESOURCE_CONFLICT` if a mapping for the same
   (ad_group_cn, role) already exists
+- Returns 503 with code `RESOURCE_UNAVAILABLE` if AD is unreachable or
+  the connection timed out
+
+Response (`201 Created`):
+```json
+{
+  "data": {
+    "id": "uuid",
+    "ad_group_cn": "O SUSE Security",
+    "role": "vulnerability_analyst",
+    "created_at": "2026-05-06T12:00:00Z",
+    "affected_users_count": 22
+  }
+}
+```
+
+A single AD group may have multiple mappings (one per role). For example,
+group "O SUSE Security" can be mapped to both `admin` and
+`vulnerability_analyst` simultaneously. Each mapping operates
+independently — creating or deleting one does not affect the other.
 
 Processing:
 1. Create the `RoleMapping` record
@@ -397,8 +436,8 @@ Processing:
 DELETE /api/v1/admin/role-mappings/{id}
 ```
 
-Admin only. Removes a role mapping. Before deletion, queries AD live to
-determine affected users.
+Admin only. Removes a role mapping. Identifies affected users from local
+`UserRole` records matching the mapping's `ad_group_cn` and `role`.
 
 Response (confirmation data):
 ```json

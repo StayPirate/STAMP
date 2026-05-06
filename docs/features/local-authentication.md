@@ -47,8 +47,10 @@ session, and returns a JWT.
    use the normalized value.
 3. Look up the user by normalized `username`
 4. If user not found, return HTTP 401 with generic message (see below)
-5. If the account is locked (see Rate Limiting), return HTTP 423 with
-   message: `"Account temporarily locked. Try again later."`
+5. If the account is locked (see Rate Limiting), return HTTP 429 with
+   message: `"Account temporarily locked. Try again later."` and include
+   a `Retry-After` header with the number of seconds remaining until the
+   lockout expires
 6. If user is inactive (`active = false`), return HTTP 401 with generic
    message
 7. If user has `ldap_uid IS NOT NULL` (SSO user), return HTTP 401 with
@@ -80,7 +82,7 @@ session, and returns a JWT.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 401 | `AUTH_INVALID_CREDENTIALS` | Invalid username or password (also covers: user not found, inactive user, SSO user, no password set) |
-| 423 | `AUTH_ACCOUNT_LOCKED` | Account temporarily locked due to too many failed attempts |
+| 429 | `AUTH_ACCOUNT_LOCKED` | Account temporarily locked due to too many failed attempts. Includes `Retry-After` header |
 
 Error response format:
 
@@ -242,8 +244,8 @@ attempts per username using a Redis counter.
    found, to equalize response time and eliminate timing side-channels
    for username enumeration
 3. If the counter reaches `LOGIN_MAX_ATTEMPTS`, subsequent login
-   attempts for that username are rejected immediately with HTTP 423
-   until the TTL expires
+   attempts for that username are rejected immediately with HTTP 429
+   (with `Retry-After` header) until the TTL expires
 4. On successful login, delete the counter
 
 **Notes**:

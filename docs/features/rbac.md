@@ -88,81 +88,51 @@ capabilities must hold both roles.
 | View ticket references           | Yes   | Yes | Yes    |
 | View fetcher dashboard           | Yes   | Yes | Yes    |
 
-## API Endpoints
+## Endpoint Permission Map
 
-### Authentication
+This section documents access control rules only. It does NOT define
+endpoint behavior, parameters, response schemas, or error codes — those
+belong in the owning specification linked in the last column.
 
-Authentication is handled via two providers: SSO for LDAP-synced users
-(see `docs/features/sso-authentication.md`) and local credentials for
-local users (see `docs/features/local-authentication.md`). API keys
-provide non-interactive access for both user types (see
-`docs/features/authentication.md`).
+When adding a new endpoint to any feature spec, add a corresponding row
+here with the required access level and a link to the owning spec.
 
-### Current User
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| POST | `/api/v1/auth/login` | Unauthenticated | [local-authentication](local-authentication.md) |
+| GET | `/api/v1/auth/sso/authorize` | Unauthenticated | [sso-authentication](sso-authentication.md) |
+| POST | `/api/v1/auth/sso/callback` | Unauthenticated | [sso-authentication](sso-authentication.md) |
+| GET | `/api/v1/auth/providers` | Unauthenticated | [sso-authentication](sso-authentication.md) |
+| POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md) |
+| GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md) |
+| GET | `/api/v1/users` | Public (read-only) | [ldap-directory](ldap-directory.md) |
+| GET | `/api/v1/users/{user}` | Public (read-only) | [ldap-directory](ldap-directory.md) |
+| GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
+| POST | `/api/v1/api-keys` | Authenticated (session only) | [authentication](authentication.md) |
+| POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md) |
+| GET | `/api/v1/admin/settings` | Admin | [admin](admin.md) |
+| PATCH | `/api/v1/admin/settings` | Admin | [admin](admin.md) |
+| GET | `/api/v1/admin/api-keys` | Admin | [authentication](authentication.md) |
+| POST | `/api/v1/admin/api-keys/{key_id}/revoke` | Admin | [authentication](authentication.md) |
+| PATCH | `/api/v1/admin/users/{user}` | Admin | [user-management](user-management.md) |
+| POST | `/api/v1/admin/users/{user}/roles` | Admin | [user-management](user-management.md) |
+| POST | `/api/v1/admin/users/{user}/password` | Admin | [user-management](user-management.md) |
+| PATCH | `/api/v1/admin/users/{user}/active` | Admin | [user-management](user-management.md) |
+| GET | `/api/v1/admin/users/{user}/deactivation-impact` | Admin | [user-management](user-management.md) |
+| POST | `/api/v1/admin/users/{user}/unlock` | Admin | [user-management](user-management.md) |
+| GET | `/api/v1/admin/role-mappings` | Admin | [ldap-directory](ldap-directory.md) |
+| POST | `/api/v1/admin/role-mappings` | Admin | [ldap-directory](ldap-directory.md) |
+| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ldap-directory](ldap-directory.md) |
+| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ldap-directory](ldap-directory.md) |
 
-```
-GET /api/v1/users/me
-```
-
-Response: current user profile and roles (with `ad_group_cn`). Requires
-authentication.
-
-### User Management (Admin only)
-
-```
-GET /api/v1/users
-```
-
-List/search all users. Public endpoint (read-only). Supports `search`,
-`active`, `role`, `has_role` query parameters. See
-`docs/features/ldap-directory.md` for details.
-
-```
-GET /api/v1/users/{user}
-```
-
-Get user detail including roles (with `ad_group_cn`) and resolved manager.
-Public endpoint (read-only).
-
-```
-POST /api/v1/admin/users/{user}/roles
-```
-
-Add or remove manual roles for a user. Admin only. AD-derived roles are
-never affected by this endpoint. The full endpoint specification is
-defined in `docs/features/user-management.md` (Admin API endpoints).
-
-Semantics: delegates to `user_service.update_roles()` with
-`acting_user_id` set to the authenticated admin's user ID and roles as
-`(role, '_manual')` pairs. See `docs/features/user-lifecycle.md` for the
-full service contract.
-
-See `docs/features/ldap-directory.md` for details on AD-derived roles.
-
-User creation for SSO users is handled by the LDAP directory sync (see
-`docs/features/ldap-directory.md`). Local users can be created by admins
-via CLI (see `docs/features/user-management.md`).
-
-### Role Mappings (Admin only)
-
-See `docs/features/ldap-directory.md` for detailed endpoint
-specifications. Admins configure mappings from AD groups to Sentinel roles
-via `GET/POST/DELETE /api/v1/admin/role-mappings`.
-
-### User Activation (Admin only)
-
-```
-PATCH /api/v1/admin/users/{user}/active
-```
-
-Set the active status of a user. Admin only. The full endpoint
-specification (request/response schema, error codes, constraints) is
-defined in `docs/features/user-management.md` (Admin API endpoints).
-
-Semantics: delegates to `user_service.deactivate_user()` (when
-`active: false`) or `user_service.reactivate_user()` (when
-`active: true`). See `docs/features/user-lifecycle.md` for the full
-side effect contract.
+**Notes**:
+- "Unauthenticated" = no authentication required (public login/SSO flows)
+- "Authenticated" = any logged-in user regardless of role
+- "Public (read-only)" = any authenticated user, no role required
+- "Admin" = requires the `admin` role
+- User creation: SSO users are created by the LDAP directory sync (see
+  [ldap-directory](ldap-directory.md)); local users are created by admins
+  via CLI (see [user-management](user-management.md))
 
 ## Implementation Details
 
