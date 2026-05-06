@@ -160,14 +160,110 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
   one-shot processes, not long-running servers — async provides no benefit
   and adds complexity
 
-### Output
+### Output Contract
 
-- Success messages and results go to stdout
-- Error messages go to stderr
-- Exit codes: 0 for success, 1 for user error (bad input, missing config),
-  2 for system error (database unreachable, unexpected failure)
-- Output is human-readable plain text. No JSON output unless a `--json`
-  flag is explicitly added to a command
+All CLI commands MUST follow this output contract for consistency and
+scriptability.
+
+#### Channel Separation
+
+- **stdout**: success messages, results, tables, structured step reports
+- **stderr**: error messages (`Error: ...`), warnings (`Warning: ...`)
+
+This separation allows callers to redirect stdout for parsing while
+still receiving diagnostics on stderr.
+
+#### Exit Codes
+
+| Code | Meaning | Examples |
+|------|---------|----------|
+| 0    | Success (includes idempotent no-ops) | Command completed, or state already reached |
+| 1    | User error | Bad input, validation failure, concurrency conflict, unknown resource |
+| 2    | System error | Database unreachable, Redis unreachable, unhandled exception |
+| 130  | Interrupted by SIGINT (Ctrl+C) | Operator cancelled a long-running command |
+| 143  | Interrupted by SIGTERM | Process manager requested shutdown |
+
+Every command specification MUST document which exit codes it can produce.
+
+#### Success Output
+
+Single-operation commands print a concise confirmation to stdout:
+
+```
+Created user 'jdoe' (jdoe@example.com) with roles: admin.
+```
+
+Read-only commands print structured output (tables, lists) to stdout.
+
+#### Error Output
+
+All errors go to stderr with the prefix `Error:`:
+
+```
+Error: User 'jdoe' not found.
+```
+
+Warnings go to stderr with the prefix `Warning:` and do NOT cause a
+non-zero exit code:
+
+```
+Warning: User 'jdoe' is inactive. Unlock has no practical effect until the user is reactivated.
+```
+
+#### Multi-Step Reporting (Fail-Fast)
+
+Commands that perform multiple sequential mutations with fail-fast
+semantics MUST use structured step reporting on stdout:
+
+| Prefix | Meaning |
+|--------|---------|
+| `✓`    | Step completed successfully |
+| `✗`    | Step failed (include reason) |
+| `—`    | Step not attempted (aborted due to previous failure) |
+
+Example:
+
+```
+✓ Email updated to new@example.com
+✗ Role update failed: role 'nonexistent' does not exist
+— Reactivation not attempted (aborted due to previous error)
+```
+
+This pattern applies when a command executes >1 independent mutation in
+sequence where partial success is possible. It does NOT apply to:
+
+- Atomic single-operation commands (use simple success/error messages)
+- Commands with internal phases that are not user-visible mutations
+  (e.g., `fetcher run` has concurrency check → execute → record, but
+  the user cares about the fetcher result, not the internal phases)
+
+#### Idempotency
+
+Commands MUST be idempotent where practical. Specifically:
+
+- If the desired state is already reached (e.g., deactivating an already
+  inactive user, unlocking a user that is not locked), the command prints
+  an informational message to stdout and exits with code 0 — never with
+  an error
+- Commands that require interactive input for security (e.g., password
+  prompts) are exempt from idempotency — each invocation inherently
+  changes state
+- Commands that execute external work (e.g., `fetcher run`) are exempt —
+  they produce side effects by design
+
+Each command specification MUST explicitly declare its idempotency:
+
+- **Idempotent**: safe to re-run; no-op if state is already reached
+- **Not idempotent (interactive)**: requires interactive input that
+  changes state on every invocation
+- **Not idempotent (by design)**: produces side effects intentionally
+
+#### Human-Readable Format
+
+- Output is human-readable plain text by default
+- No JSON output unless a `--json` flag is explicitly added to a command
+- Tables use fixed-width columns aligned with spaces (no box-drawing
+  characters)
 
 ### Naming
 

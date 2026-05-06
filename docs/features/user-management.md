@@ -102,8 +102,14 @@ command cannot be used non-interactively — a TTY is required.
    or `"Created user '{username}' ({email}) with no roles."` if no roles
    were specified
 
+**Idempotency**: Not idempotent (interactive). Each invocation collects a
+new password interactively; the operation inherently changes state.
+
 **Exit codes**: 0 on success, 1 on validation error (duplicate user,
-invalid role, missing flag)
+invalid role, missing flag), 2 on system error (database unreachable).
+
+**Output channels**: confirmation message to stdout, all `"Error: ..."`
+messages to stderr.
 
 ### `sentinel manage-user update`
 
@@ -156,15 +162,18 @@ sentinel manage-user update \
 6. If `--email` or `--full-name` is provided, delegates to
    `user_service.update_user()` with `acting_user_id = None`. If the
    service raises `UserConflictError` (duplicate email), exits with error
-7. If `--reactivate` is provided: delegates to
-   `user_service.reactivate_user()` with `acting_user_id = None`. If
-   the user is already active, this is a no-op. See
-   `docs/features/user-lifecycle.md` for reactivation semantics
-8. For role changes (`--add-role`, `--remove-role`), delegates to
+7. For role changes (`--add-role`, `--remove-role`), delegates to
    `user_service.update_roles()` with `acting_user_id = None` and
    roles as `(role, '_manual')` pairs. The service handles validation
    (AD-derived role protection). Since `acting_user_id = None`, the
    self-removal guard does not apply (CLI is a system action)
+8. If `--reactivate` is provided: delegates to
+   `user_service.reactivate_user()` with `acting_user_id = None`. If
+   the user is already active, this is a no-op. See
+   `docs/features/user-lifecycle.md` for reactivation semantics.
+   Reactivation is intentionally the LAST mutation step so that the
+   account is fully configured (correct email, roles, etc.) before
+   becoming active again
 9. Prints summary of changes. The summary lists only changes that were
    actually applied (not no-ops). If all requested operations resulted
    in no-ops (e.g., reactivating an already-active user, adding a role
@@ -173,7 +182,35 @@ sentinel manage-user update \
    Otherwise prints:
    `"Updated user '{username}': {list of actual changes}."`
 
-**Exit codes**: 0 on success, 1 on validation error
+**Error handling (fail-fast)**: steps 6–8 are executed sequentially. If
+any step fails, the command exits immediately (exit code 1) WITHOUT
+attempting subsequent steps. The error message MUST clearly report:
+
+- Which operations completed successfully (prefix `✓`)
+- Which operation failed and why (prefix `✗`)
+- Which operations were not attempted due to the failure (prefix `—`)
+
+Example output on partial failure:
+
+```
+✓ Email updated to new@example.com
+✗ Role update failed: role 'nonexistent' does not exist
+— Reactivation not attempted (aborted due to previous error)
+```
+
+This ensures the admin knows exactly what state the account is in after
+a partial failure and can re-run the command with corrected arguments for
+the remaining operations.
+
+**Idempotency**: Idempotent. If all requested operations result in no-ops
+(state already reached), the command prints an informational message and
+exits with code 0.
+
+**Exit codes**: 0 on success (including no-op), 1 on validation or
+operational error, 2 on system error (database unreachable).
+
+**Output channels**: structured step report (`✓`/`✗`/`—`) and success
+messages to stdout. All `"Error: ..."` messages to stderr.
 
 ### `sentinel manage-user deactivate`
 
@@ -242,7 +279,15 @@ set password, modify roles) remain available on inactive users via both
 CLI and API. This allows admins to prepare accounts before reactivation
 (e.g., assign appropriate roles, set a new password).
 
-**Exit codes**: 0 on success, 1 on validation error
+**Idempotency**: Idempotent. If the user is already inactive, the
+command prints an informational message and exits with code 0.
+
+**Exit codes**: 0 on success (including no-op and user-cancelled
+confirmation), 1 on validation error, 2 on system error (database
+unreachable).
+
+**Output channels**: impact summary and confirmation to stdout.
+`"Error: ..."` messages and `"WARNING: ..."` (last admin) to stderr.
 
 ### `sentinel manage-user set-password`
 
@@ -272,6 +317,19 @@ password on an inactive user prepares credentials for reactivation — the
 user will not be able to log in until reactivated.
 
 It invalidates all active sessions after changing the password.
+
+On success, prints to stdout:
+`"Password updated for user '{username}'. All active sessions invalidated."`
+
+**Idempotency**: Not idempotent (interactive). Each invocation collects a
+new password interactively; the operation inherently changes state.
+
+**Exit codes**: 0 on success, 1 on validation error (user not found,
+SSO user, passwords don't match, password policy violation), 2 on system
+error (database unreachable).
+
+**Output channels**: confirmation message to stdout. All `"Error: ..."`
+messages to stderr.
 
 ### `sentinel manage-user unlock`
 
@@ -316,8 +374,14 @@ sentinel manage-user unlock \
 The command is idempotent: if the counter does not exist (user was not
 locked), it succeeds silently.
 
-**Exit codes**: 0 on success, 1 on validation error (missing parameter),
-2 on system error (Redis unreachable)
+**Idempotency**: Idempotent. If the user is not locked, the command
+succeeds with a no-op and exits with code 0.
+
+**Exit codes**: 0 on success (including no-op), 1 on validation error
+(user not found), 2 on system error (Redis unreachable).
+
+**Output channels**: confirmation to stdout. `"Warning: ..."` messages
+to stderr. `"Error: ..."` messages to stderr.
 
 ## Administration UI
 

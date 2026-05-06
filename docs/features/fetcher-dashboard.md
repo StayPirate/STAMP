@@ -792,7 +792,12 @@ aggregate_fetcher_runs     yes       —                     never run
 The fetcher registry provides the list of fetcher names; the database
 provides `FetcherRun` and `FetcherConfig` data.
 
+**Idempotency**: Idempotent. Read-only command; safe to re-run at any
+time.
+
 **Exit codes**: 0 on success, 2 on system error (database unreachable).
+
+**Output channels**: table to stdout. `"Error: ..."` messages to stderr.
 
 ### `sentinel fetcher run <name>`
 
@@ -917,6 +922,12 @@ this scenario.
 | 2    | System error: database unreachable, unhandled exception in `execute()` |
 | 130  | Interrupted by SIGINT (Ctrl+C) |
 | 143  | Interrupted by SIGTERM |
+
+**Idempotency**: Not idempotent (by design). Each invocation executes
+the fetcher and produces side effects intentionally.
+
+**Output channels**: progress and summary to stdout. `"Warning: ..."`
+and `"Error: ..."` messages to stderr.
 
 ## System Metrics (Future Iteration)
 
