@@ -265,6 +265,23 @@ Each command specification MUST explicitly declare its idempotency:
 - Tables use fixed-width columns aligned with spaces (no box-drawing
   characters)
 
+#### Automated Verification
+
+When CLI commands are implemented, a parametrized test suite MUST verify
+the output contract mechanically. At minimum, the test suite should
+cover:
+
+- Exit code 0 on success and idempotent no-ops
+- Exit code 1 on known user errors (bad input, unknown resource)
+- Exit code 2 on simulated system errors (unreachable database/Redis)
+- Error messages written to stderr (not stdout)
+- Success messages written to stdout (not stderr)
+- Multi-step commands produce `✓`/`✗`/`—` prefixed lines on partial
+  failure
+
+This is preferred over a manual review agent because the rules are
+deterministic and mechanically verifiable.
+
 ### Naming
 
 - Command groups: `noun` with `verb` subcommands for related operations
