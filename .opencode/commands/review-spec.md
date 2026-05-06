@@ -56,11 +56,13 @@ Using the data from Step 1, present the recap table directly to the
 user:
 
 ```
-| Spec              | Last Review | High | Medium | Low | Total Open |
-|-------------------|-------------|------|--------|-----|------------|
-| tickets           | 2025-01-15  |    2 |      3 |   1 |          6 |
-| package-tracking  | 2025-01-14  |    1 |      2 |   0 |          3 |
-| rbac              | —           |    — |      — |   — |   (never)  |
+| Spec             | GAP | COH | DES | SEC | API | Total | Last Review |
+|------------------|-----|-----|-----|-----|-----|-------|-------------|
+| tickets          |   3 |   1 |   1 |   2 |  —  |     7 | 2025-01-15  |
+|                  | 1:🔴 2:🟠 | 1:🟡 | 1:🟠 | 1:🔴 1:🟠 |  | 2:🔴 4:🟠 1:🟡 |  |
+| package-tracking |   2 |  —  |   1 |  —  |  —  |     3 | 2025-01-14  |
+|                  | 1:🟠 1:🟡 |  | 1:🔴 |  |  | 1:🔴 1:🟠 1:🟡 |  |
+| rbac             |  —  |  —  |  —  |  —  |  —  | (never) | —         |
 
 Common patterns:
   - "Missing error path for concurrent updates" → tickets, package-tracking
@@ -79,11 +81,31 @@ Use the `question` tool to ask the user what they want to do. Options:
 
 - **Fix findings** — description: "Resolve open findings one at a time"
   (only show this option if there are specs with OPEN findings)
-- **Run reviews** — description: "Run reviewer agents on specs"
+- **Run reviews** — description: "Run all reviewer agents on specs"
+- **Run single reviewer** — description: "Run one specific reviewer on
+  one or all specs"
 
 ---
 
 ## Step 4a: Fix findings flow
+
+### 4a.0. Ask grouping mode
+
+Use the `question` tool to ask how the user wants to work on findings.
+Options:
+
+- **By spec** — description: "Work on all findings of a specific spec"
+- **By reviewer** — description: "Work on all findings of a specific
+  reviewer, across all specs"
+
+Single selection only.
+
+If the user selects **By spec**, proceed to step 4a.1 (below).
+If the user selects **By reviewer**, proceed to step 4a-R (below).
+
+---
+
+### By-spec flow
 
 ### 4a.1. Ask which spec to fix
 
@@ -102,7 +124,7 @@ Use the Task tool (subagent type `general`) to:
   category, description)
 - Sort them by priority:
   1. Severity: High → Medium → Low
-  2. Section order: Gap Analysis → Coherence → Design → Security
+   2. Section order: Gap Analysis → Coherence → Design → Security → API Conventions
 
 Return the sorted list of OPEN findings with all details.
 
@@ -210,9 +232,15 @@ Mark the finding as RESOLVED in the review file:
 
 #### 4a.3e. Update README index
 
-Update `docs/drafts/review/README.md`:
-- Recalculate the OPEN finding counts for this spec's row
-- Update the Total row
+Update `docs/drafts/review/README.md` using the two-row-per-spec format:
+- **Main row**: spec name, OPEN finding count per reviewer section
+  (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
+  sections with zero findings.
+- **Sub-row**: severity breakdown per section using colored circles:
+  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+  separated by spaces, omitting severities with zero count. Leave cell
+  empty if the main row is `—`.
+- Recalculate the **Total** rows (main + sub) by summing all specs.
 
 #### 4a.3f. Ask to continue (do NOT present next finding yet)
 
@@ -230,6 +258,122 @@ next finding is shown.
 If the user says yes, present the next highest-priority OPEN finding
 from step 4a.3a. If no, show a brief summary of what was resolved in
 this session.
+
+---
+
+### By-reviewer flow
+
+### 4a-R.1. Ask which reviewer
+
+Use the `question` tool to present only the reviewers that have at least
+one OPEN finding across all specs. Each option label is the reviewer
+name; the description shows the total open finding count and number of
+affected specs (e.g., "9 open findings across 3 specs").
+
+Options (in this order, skipping those with zero OPEN findings):
+
+1. **Gap Analysis**
+2. **Coherence**
+3. **Design**
+4. **Security**
+5. **API Conventions**
+
+Single selection only.
+
+### 4a-R.2. Load findings (silent)
+
+Use the Task tool (subagent type `general`) to:
+- Read all review files in `docs/drafts/review/` (use
+  `bash ls docs/drafts/review/` to discover them)
+- Extract all OPEN findings from the section corresponding to the chosen
+  reviewer, across **all** specs
+- For each finding: include the spec name, finding ID, title, severity,
+  category, and full description
+- Sort by:
+  1. Severity: High → Medium → Low
+  2. Spec name alphabetical
+
+Return the sorted list grouped by spec, with all details.
+
+### 4a-R.3. Fix loop (one finding at a time)
+
+**Mode management**: same rules as step 4a.3 — remain in Plan mode
+during analysis/presentation, user switches to Build mode for fixes.
+
+**Context management**: for each finding, the agent needs the context
+of the spec it belongs to. Context is loaded via a **fresh Task agent**
+(new session) per spec, to ensure clean context without accumulation
+from previous specs.
+
+#### 4a-R.3a. Present the finding with context (in Italian)
+
+When presenting the first finding of a spec, use the Task tool (subagent
+type `general`, **new session**) to silently load:
+- The target spec (`docs/features/<name>.md`)
+- All specs referenced by the target
+- Cross-cutting documents (`docs/data-model.md`, `docs/api-spec.md`,
+  `docs/architecture.md`)
+
+Then present the finding to the user in Italian, with the same format as
+step 4a.3a but with an added **Spec** line:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Finding: <ID> — <Title> (<Severity>)
+Spec: <spec-name>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Contesto:
+<Spiegazione in italiano di cosa è il problema, perché è un problema,
+e quale impatto ha. Riferimenti alle sezioni specifiche della spec.>
+
+Soluzione proposta:
+<Descrizione in italiano della soluzione proposta.>
+
+File coinvolti:
+  - <file-path> — <cosa cambia>
+  - <file-path> — <cosa cambia>
+  - ...
+
+Approvi questa soluzione? [sì / modificare / saltare]
+```
+
+For subsequent findings of the **same** spec, reuse the context already
+loaded (same Task agent session via `task_id`). Do NOT reload context
+unless the spec changes.
+
+#### 4a-R.3b–3e. Fix implementation, review file update, README update
+
+Same as steps 4a.3b through 4a.3e. Apply fixes, update the review file
+of the spec the finding belongs to, update README index.
+
+#### 4a-R.3f. Ask to continue / spec transition
+
+After completing a fix, check whether the next finding belongs to the
+same spec or a different one.
+
+**Same spec**: ask as usual:
+
+> "Finding risolto. Continuo con il prossimo? (ricorda di passare a Plan
+> con Tab prima di rispondere)"
+
+**Different spec**: inform the user and ask for confirmation:
+
+> "Finding risolto. Il prossimo finding è in `<next-spec-name>`. Carico
+> il contesto della nuova spec (sessione fresca). Continuo? (ricorda di
+> passare a Plan con Tab prima di rispondere)"
+
+If the user says yes and the spec is changing, load context for the new
+spec via a **fresh Task agent** (new session, do NOT reuse the previous
+`task_id`). This ensures clean context without accumulation from the
+previous spec.
+
+If the user says no, show a brief summary of what was resolved in this
+session (findings resolved, grouped by spec).
+
+CRITICAL: Do NOT present the next finding in this same message. Stop
+and wait for the user's reply. The next finding is presented only in
+the following message.
 
 ---
 
@@ -287,6 +431,9 @@ Execute each reviewer as a Task agent, one at a time, in this order:
    edge cases, alternatives, long-term maintainability
 4. **@security-reviewer** — find security vulnerabilities, insecure
    patterns, missing security controls in the spec's design
+5. **@api-convention-reviewer** — verify API endpoint definitions
+   conform to project conventions (error codes, naming, mutation
+   patterns, pagination, envelope format)
 
 For each reviewer, pass the target spec content and all loaded context.
 Collect all findings with: title, severity (High/Medium/Low), category,
@@ -301,7 +448,7 @@ Write (or overwrite) `docs/drafts/review/<name>.md` with this structure:
 
 **Spec**: `docs/features/<name>.md`
 **Last reviewed**: <YYYY-MM-DD>
-**Reviewers**: Gap Analysis, Coherence, Design, Security
+**Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
 
@@ -341,6 +488,14 @@ Write (or overwrite) `docs/drafts/review/<name>.md` with this structure:
 ### <NAME>-SEC-01 — <Title> (High)
 
 ...
+
+---
+
+## API Conventions
+
+### <NAME>-API-01 — <Title> (High)
+
+...
 ```
 
 Rules for writing the file:
@@ -357,14 +512,203 @@ Rules for writing the file:
 
 #### Update README index
 
-After writing the findings file, update `docs/drafts/review/README.md`:
-- Update the row for this spec in the summary table with actual counts
+After writing the findings file, update `docs/drafts/review/README.md`
+using the two-row-per-spec format:
+- **Main row**: spec name, OPEN finding count per reviewer section
+  (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
+  sections with zero findings.
+- **Sub-row**: severity breakdown per section using colored circles:
+  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+  separated by spaces, omitting severities with zero count. Leave cell
+  empty if the main row is `—`.
 - Update the "Last Review" column with today's date
-- Recalculate the Total row
+- Recalculate the **Total** rows (main + sub) by summing all specs.
 
 ### 4b.3. Final report
 
 After all selected specs are processed, output a summary to the user:
 - How many specs were reviewed
+- Total findings by severity
+- Which specs have High-severity findings requiring attention
+
+---
+
+## Step 4c: Run single reviewer flow
+
+### 4c.1. Ask which reviewer
+
+Use the `question` tool to present the available reviewers. Options in
+this exact order:
+
+1. **Gap Analysis** — description: "Uncovered functional cases, missing
+   state transitions, error paths, boundary conditions"
+2. **Coherence** — description: "Contradictions and terminology
+   inconsistencies with other specs"
+3. **Design** — description: "Architectural decisions, complexity, edge
+   cases, alternatives, maintainability"
+4. **Security** — description: "Security vulnerabilities, insecure
+   patterns, missing controls"
+5. **API Conventions** — description: "API endpoint definitions
+   conformity (error codes, naming, pagination, envelope)"
+
+Single selection only.
+
+### 4c.2. Ask which spec
+
+Use the `question` tool to present the available choices. Options in
+this exact order:
+
+1. **ALL** — description: "Run reviewer on all specs in parallel"
+2. Then each spec from `docs/features/` in alphabetical order, with
+   description:
+   - If previously reviewed: "Last review: <date> — <N> open findings"
+   - If never reviewed: "Never reviewed"
+
+Single selection only.
+
+### 4c.3. Execute review
+
+#### Load context and run reviewer
+
+For each target spec, use the Task tool (subagent type matching the
+chosen reviewer) to:
+
+1. Read the target spec: `docs/features/<name>.md`
+2. Read all specs referenced by the target (look for links like
+   `docs/features/other-spec.md` or mentions of "see <spec-name>")
+3. Read cross-cutting documents (always):
+   - `docs/data-model.md`
+   - `docs/api-spec.md`
+   - `docs/architecture.md`
+4. Read existing review file if present (`docs/drafts/review/<name>.md`)
+   — to identify previously RESOLVED findings in the reviewer's section
+5. Execute the review and return findings
+
+**Parallelism**: if the user selected **ALL**, launch one Task agent
+**per spec in parallel** (multiple Task tool calls in a single message).
+Each agent independently loads its own spec + references + cross-cutting
+docs and runs the chosen reviewer. If the user selected a single spec,
+launch one Task agent.
+
+Reviewer-to-agent mapping:
+
+| Selection | Subagent type |
+|-----------|---------------|
+| Gap Analysis | `spec-gap-analyzer` |
+| Coherence | `spec-coherence-reviewer` |
+| Design | `design-reviewer` |
+| Security | `security-reviewer` |
+| API Conventions | `api-convention-reviewer` |
+
+### 4c.4. Write/update findings file
+
+For each reviewed spec, update `docs/drafts/review/<name>.md`:
+
+#### If the file already exists
+
+Replace **only** the section (`## <Section Name>`) corresponding to the
+executed reviewer with the new findings. All other sections remain
+untouched. Previously RESOLVED findings in the updated section are kept
+if the resolution is still valid; reopened as OPEN if the spec has
+regressed.
+
+Update the file header:
+- Set `**Last reviewed**` to today's date
+- Ensure the `**Reviewers**` line lists all sections that have been
+  populated (not placeholders)
+
+#### If the file does not exist
+
+Create the file with this structure:
+
+```markdown
+# Review: <spec-name>
+
+**Spec**: `docs/features/<name>.md`
+**Last reviewed**: <YYYY-MM-DD>
+**Reviewers**: <Name of the executed reviewer>
+
+---
+
+## Gap Analysis
+
+_Not yet reviewed._
+
+---
+
+## Coherence
+
+_Not yet reviewed._
+
+---
+
+## Design
+
+_Not yet reviewed._
+
+---
+
+## Security
+
+_Not yet reviewed._
+
+---
+
+## API Conventions
+
+_Not yet reviewed._
+```
+
+Then replace the placeholder (`_Not yet reviewed._`) in the section
+corresponding to the executed reviewer with the actual findings.
+
+#### Finding format
+
+Findings within the populated section follow the same format as Step 4b:
+
+```markdown
+### <NAME>-<PREFIX>-01 — <Title> (Severity)
+
+**Category**: <category>
+**Status**: OPEN
+
+<Detailed description of the finding>
+```
+
+Section-to-prefix mapping:
+
+| Section | Prefix |
+|---------|--------|
+| Gap Analysis | GAP |
+| Coherence | COH |
+| Design | DES |
+| Security | SEC |
+| API Conventions | API |
+
+Rules:
+- Within the section, sort findings by severity: High first, then
+  Medium, then Low
+- Each finding MUST have enough detail for the user to understand and
+  act on it without re-running the reviewer
+
+### 4c.5. Update README index
+
+After writing/updating findings files, update
+`docs/drafts/review/README.md` using the two-row-per-spec format:
+- **Main row**: spec name, OPEN finding count per reviewer section
+  (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
+  sections with zero findings.
+- **Sub-row**: severity breakdown per section using colored circles:
+  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+  separated by spaces, omitting severities with zero count. Leave cell
+  empty if the main row is `—`.
+- Update the "Last Review" column with today's date
+- Recalculate the **Total** rows (main + sub) by summing all specs.
+
+### 4c.6. Final report
+
+Output a summary to the user:
+- Which reviewer was executed
+- How many specs were processed
 - Total findings by severity
 - Which specs have High-severity findings requiring attention
