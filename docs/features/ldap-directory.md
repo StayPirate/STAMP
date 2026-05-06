@@ -358,6 +358,10 @@ Admin only. Returns all configured role mappings.
 bounded (one per AD group × role combination, expected <30 entries).
 The full list is always returned.
 
+**Sorting**: results are returned in insertion order (`created_at`
+ascending). No client-side sorting parameters are supported (bounded
+dataset).
+
 Response:
 ```json
 {
@@ -431,8 +435,10 @@ Request body:
 ```
 
 Validation:
-- Returns 422 with code `VALIDATION_ERROR` if the AD group does not
-  exist (queries AD live to verify)
+- Returns 422 with code `ROLE_MAPPING_GROUP_NOT_FOUND` if the AD group
+  does not exist (queries AD live to verify). This is a business-level
+  validation — the group CN is syntactically valid but does not exist
+  in Active Directory
 - Returns 409 with code `RESOURCE_CONFLICT` if a mapping for the same
   (ad_group_cn, role) already exists
 - Returns 503 with code `RESOURCE_UNAVAILABLE` if AD is unreachable or
@@ -471,7 +477,7 @@ DELETE /api/v1/admin/role-mappings/{id}
 Admin only. Removes a role mapping. Identifies affected users from local
 `UserRole` records matching the mapping's `ad_group_cn` and `role`.
 
-Response (confirmation data):
+Response (**200**):
 ```json
 {
   "data": {

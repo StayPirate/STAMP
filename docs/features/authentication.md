@@ -600,7 +600,8 @@ requests receive HTTP 403 (see Validation below).
 
 **Validation**:
 
-- `name` must be 1–128 characters
+- `name` must be 1–128 characters. If the name is empty or exceeds 128
+  characters, return HTTP 422 with code `VALIDATION_ERROR`
 - `name` must be unique among the user's non-revoked keys. If a
   non-revoked key with the same name already exists, return HTTP 409
   with code `AUTH_API_KEY_NAME_CONFLICT`:

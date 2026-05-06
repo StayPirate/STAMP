@@ -143,6 +143,13 @@ self-contained and its authenticity is verified by the HMAC signature.
 }
 ```
 
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
+| 503 | `AUTH_SSO_UNAVAILABLE` | OIDC discovery document unreachable and no cached version available |
+
 The frontend then redirects the browser to this URL.
 
 ### Step 2: IdP authentication

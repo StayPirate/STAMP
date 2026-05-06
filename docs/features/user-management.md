@@ -526,7 +526,7 @@ inactive users (see "Inactive user management principle" above).
    with code `VALIDATION_ERROR`: `"Invalid email format."`
 4. If the user is an SSO user (`ldap_uid IS NOT NULL`) and `email` or
    `full_name` is provided, return HTTP 409 with code
-   `SSO_FIELD_READONLY`:
+   `USER_SSO_FIELD_READONLY`:
    `"Cannot modify identity fields for SSO users. These fields are managed by the directory service."`
 5. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
@@ -694,6 +694,11 @@ proceeding with deactivation.
    code `USER_NOT_FOUND`
 2. If the user is already inactive, return HTTP 409 with code
    `USER_ALREADY_INACTIVE`: `"User is already inactive."`
+   Note: 409 is used here as a precondition check — the deactivation
+   impact preview is meaningless for an already-inactive user. Returning
+   409 allows the client to distinguish between a valid preview (200) and
+   a state where the preview should not be presented to the admin,
+   without requiring the client to inspect a response body flag.
 3. Query and return the impact summary
 
 **Response** (HTTP 200):

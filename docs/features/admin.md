@@ -75,6 +75,12 @@ Response:
 
 Requires: Admin role.
 
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+
 ### Update System Settings
 
 ```
