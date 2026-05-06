@@ -33,17 +33,41 @@ a structured result (JSON or clearly formatted text) containing:
 
 1. **Spec list**: all `.md` filenames in `docs/features/` (without
    extension), sorted alphabetically
-2. **Review status per spec**: for each spec, check if
-   `docs/drafts/review/<name>.md` exists. If it does, parse it to
-   extract:
+2. **Tracking state**: read `docs/drafts/review/.tracking.json`. Handle
+   these cases:
+   - **File does not exist** (first run): create it with ALL specs
+     currently in `docs/features/` set to `"enabled": true`. Write the
+     file to disk immediately.
+   - **File exists**: load it. For any spec in `docs/features/` that is
+     NOT present in the JSON, add it as `"enabled": false` (new spec
+     discovered — disabled by default). Write the updated file back.
+   - For any spec listed in the JSON that no longer exists in
+     `docs/features/`, remove it from the JSON (stale entry cleanup).
+   - Return two lists: **enabled specs** and **disabled specs**.
+3. **Review status per spec**: for each spec (enabled AND disabled),
+   check if `docs/drafts/review/<name>.md` exists. If it does, parse it
+   to extract:
    - Last reviewed date
    - Count of OPEN findings by severity (High, Medium, Low)
    - Count of RESOLVED findings
-3. **Cross-spec patterns**: group OPEN findings across all specs by
-   category and similar title/description keywords. If 2+ specs share
-   findings with the same category AND overlapping keywords, flag them
-   as a common pattern (include pattern description and affected specs)
-4. **Specs with no review file**: mark as "Never reviewed"
+4. **Cross-spec patterns**: group OPEN findings across **enabled specs
+   only** by category and similar title/description keywords. If 2+
+   specs share findings with the same category AND overlapping keywords,
+   flag them as a common pattern (include pattern description and
+   affected specs)
+5. **Specs with no review file**: mark as "Never reviewed"
+
+The `.tracking.json` file format:
+
+```json
+{
+  "specs": {
+    "tickets": { "enabled": true },
+    "rbac": { "enabled": true },
+    "pages": { "enabled": false }
+  }
+}
+```
 
 The subagent should return all this data in a single message. Do NOT
 present anything to the user until the subagent returns.
@@ -53,7 +77,13 @@ present anything to the user until the subagent returns.
 ## Step 2: Display recap
 
 Using the data from Step 1, present the recap table directly to the
-user:
+user. The table is split into two sections: **enabled specs** (active)
+and **disabled specs** (frozen).
+
+### Enabled specs (main table)
+
+Show only enabled specs, sorted alphabetically. Use the standard
+two-row-per-spec format with emoji severity indicators:
 
 ```
 | Spec             | GAP | COH | DES | SEC | API | Total | Last Review |
@@ -63,15 +93,51 @@ user:
 | package-tracking |   2 | 🟢  |   1 |  —  |  —  |     3 | 2025-01-14  |
 |                  | 1:🟠 1:🟡 |  | 1:🔴 |  |  | 1:🔴 1:🟠 1:🟡 |  |
 | rbac             |  —  |  —  |  —  |  —  |  —  | (never) | —         |
+| **Total**        |   5 |   1 |   2 |   2 | 🟢  |    10 | —           |
+|                  | ... |     |     |     |     |       |             |
 
 Common patterns:
   - "Missing error path for concurrent updates" → tickets, package-tracking
   - "Unspecified pagination limits" → rbac, tickets
 ```
 
-If no review files exist at all, show:
+The **Total** row sums only enabled specs.
 
-> No review files found yet. You can run reviews to generate findings.
+### Disabled specs (below the main table)
+
+If there are disabled specs, show them below the main table with a
+separator label. Disabled specs use a **text-only format without emoji**
+for the severity sub-row (`H:N,M:N,L:N`, omitting severities with zero
+count):
+
+```
+Disabled specs:
+| Spec             | GAP | COH | DES | SEC | API | Total | Last Review |
+|------------------|-----|-----|-----|-----|-----|-------|-------------|
+| pages            |  —  |  —  |  —  |  —  |   6 |     6 | 2025-01-14  |
+|                  |     |     |     |     | H:1,M:2,L:3 | H:1,M:2,L:3 |  |
+| references       |  —  |  —  |  —  |  —  |   2 |     2 | 2025-01-14  |
+|                  |     |     |     |     | M:1,L:1 | M:1,L:1 |  |
+```
+
+Rules for the disabled section:
+- No emoji anywhere in disabled rows
+- Sub-row uses `H:N,M:N,L:N` format (comma-separated, omit zero)
+- If the spec has never been reviewed: all cells are `—`, Total is `—`
+- Disabled specs do NOT contribute to the main table's **Total** row
+- Cross-spec patterns consider only enabled specs
+
+### Edge cases
+
+If no enabled specs have review files, show:
+
+> No review files found for enabled specs. You can run reviews to
+> generate findings.
+
+If all specs are disabled, show:
+
+> All specs are currently disabled. Use "Toggle spec tracking" to enable
+> specs before running reviews.
 
 ---
 
@@ -80,10 +146,14 @@ If no review files exist at all, show:
 Use the `question` tool to ask the user what they want to do. Options:
 
 - **Fix findings** — description: "Resolve open findings one at a time"
-  (only show this option if there are specs with OPEN findings)
+  (only show this option if there are enabled specs with OPEN findings)
 - **Run reviews** — description: "Run all reviewer agents on specs"
+  (only show this option if there is at least one enabled spec)
 - **Run single reviewer** — description: "Run one specific reviewer on
   one or all specs"
+  (only show this option if there is at least one enabled spec)
+- **Toggle spec tracking** — description: "Enable or disable spec
+  tracking"
 
 ---
 
@@ -109,9 +179,10 @@ If the user selects **By reviewer**, proceed to step 4a-R (below).
 
 ### 4a.1. Ask which spec to fix
 
-Use the `question` tool to present only the specs that have OPEN
-findings. Each option label is the spec name; the description shows the
-open finding counts (e.g., "2 High, 3 Medium, 1 Low — 6 open").
+Use the `question` tool to present only the **enabled** specs that have
+OPEN findings. Disabled specs are never shown here. Each option label is
+the spec name; the description shows the open finding counts (e.g.,
+"2 High, 3 Medium, 1 Low — 6 open").
 
 Sort by total open findings descending (most findings first).
 
@@ -232,18 +303,8 @@ Mark the finding as RESOLVED in the review file:
 
 #### 4a.3e. Update README index
 
-Update `docs/drafts/review/README.md` using the two-row-per-spec format:
-- **Main row**: spec name, OPEN finding count per reviewer section
-   (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
-   sections that have never been reviewed (`_Not yet reviewed._` in the
-   review file). Use `🟢` for sections that have been reviewed but have
-   zero OPEN findings (either no findings were raised, or all findings
-   are RESOLVED).
-- **Sub-row**: severity breakdown per section using colored circles:
-   `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
-   separated by spaces, omitting severities with zero count. Leave cell
-   empty if the main row is `—` or `🟢`.
-- Recalculate the **Total** rows (main + sub) by summing all specs.
+Update `docs/drafts/review/README.md` following the layout rules in the
+"README Index Layout" section at the end of this document.
 
 #### 4a.3f. Ask to continue (do NOT present next finding yet)
 
@@ -269,9 +330,10 @@ this session.
 ### 4a-R.1. Ask which reviewer
 
 Use the `question` tool to present only the reviewers that have at least
-one OPEN finding across all specs. Each option label is the reviewer
-name; the description shows the total open finding count and number of
-affected specs (e.g., "9 open findings across 3 specs").
+one OPEN finding across **enabled** specs. Disabled specs' findings are
+excluded from this count. Each option label is the reviewer name; the
+description shows the total open finding count and number of affected
+specs (e.g., "9 open findings across 3 specs").
 
 Options (in this order, skipping those with zero OPEN findings):
 
@@ -289,7 +351,7 @@ Use the Task tool (subagent type `general`) to:
 - Read all review files in `docs/drafts/review/` (use
   `bash ls docs/drafts/review/` to discover them)
 - Extract all OPEN findings from the section corresponding to the chosen
-  reviewer, across **all** specs
+  reviewer, across **enabled specs only** (skip disabled specs)
 - For each finding: include the spec name, finding ID, title, severity,
   category, and full description
 - Sort by:
@@ -384,12 +446,13 @@ the following message.
 
 ### 4b.1. Ask which spec to review
 
-Use the `question` tool to present the available choices. Options in
+Use the `question` tool to present the available choices. Only
+**enabled** specs are shown — disabled specs are excluded. Options in
 this exact order:
 
-1. **ALL** — description: "Run review on all specs sequentially"
-2. Then each spec from `docs/features/` in alphabetical order, with
-   description:
+1. **ALL** — description: "Run review on all enabled specs sequentially"
+2. Then each **enabled** spec from `docs/features/` in alphabetical
+   order, with description:
    - If previously reviewed: "Last review: <date> — <N> open findings"
    - If never reviewed: "Never reviewed"
 
@@ -397,8 +460,9 @@ Single selection only.
 
 ### 4b.2. Execute review
 
-If the user selects **ALL**: process all specs in `docs/features/` in
-alphabetical order, applying the review procedure (below) to each one.
+If the user selects **ALL**: process all **enabled** specs in
+`docs/features/` in alphabetical order, applying the review procedure
+(below) to each one.
 
 If the user selects a specific spec: apply the review procedure to that
 spec only.
@@ -516,19 +580,8 @@ Rules for writing the file:
 #### Update README index
 
 After writing the findings file, update `docs/drafts/review/README.md`
-using the two-row-per-spec format:
-- **Main row**: spec name, OPEN finding count per reviewer section
-   (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
-   sections that have never been reviewed (`_Not yet reviewed._` in the
-   review file). Use `🟢` for sections that have been reviewed but have
-   zero OPEN findings (either no findings were raised, or all findings
-   are RESOLVED).
-- **Sub-row**: severity breakdown per section using colored circles:
-   `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
-   separated by spaces, omitting severities with zero count. Leave cell
-   empty if the main row is `—` or `🟢`.
-- Update the "Last Review" column with today's date
-- Recalculate the **Total** rows (main + sub) by summing all specs.
+following the layout rules in the "README Index Layout" section at the
+end of this document. Update the "Last Review" column with today's date.
 
 ### 4b.3. Final report
 
@@ -561,12 +614,13 @@ Single selection only.
 
 ### 4c.2. Ask which spec
 
-Use the `question` tool to present the available choices. Options in
+Use the `question` tool to present the available choices. Only
+**enabled** specs are shown — disabled specs are excluded. Options in
 this exact order:
 
-1. **ALL** — description: "Run reviewer on all specs in parallel"
-2. Then each spec from `docs/features/` in alphabetical order, with
-   description:
+1. **ALL** — description: "Run reviewer on all enabled specs in parallel"
+2. Then each **enabled** spec from `docs/features/` in alphabetical
+   order, with description:
    - If previously reviewed: "Last review: <date> — <N> open findings"
    - If never reviewed: "Never reviewed"
 
@@ -700,19 +754,9 @@ Rules:
 ### 4c.5. Update README index
 
 After writing/updating findings files, update
-`docs/drafts/review/README.md` using the two-row-per-spec format:
-- **Main row**: spec name, OPEN finding count per reviewer section
-   (GAP/COH/DES/SEC/API), total open, last review date. Use `—` for
-   sections that have never been reviewed (`_Not yet reviewed._` in the
-   review file). Use `🟢` for sections that have been reviewed but have
-   zero OPEN findings (either no findings were raised, or all findings
-   are RESOLVED).
-- **Sub-row**: severity breakdown per section using colored circles:
-   `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
-   separated by spaces, omitting severities with zero count. Leave cell
-   empty if the main row is `—` or `🟢`.
-- Update the "Last Review" column with today's date
-- Recalculate the **Total** rows (main + sub) by summing all specs.
+`docs/drafts/review/README.md` following the layout rules in the
+"README Index Layout" section at the end of this document. Update the
+"Last Review" column with today's date.
 
 ### 4c.6. Final report
 
@@ -721,3 +765,128 @@ Output a summary to the user:
 - How many specs were processed
 - Total findings by severity
 - Which specs have High-severity findings requiring attention
+
+---
+
+## Step 4d: Toggle spec tracking flow
+
+### 4d.1. Present current state and ask for toggle
+
+Use the `question` tool with `multiple: true` to allow the user to
+select one or more specs to toggle. Present ALL specs (both enabled and
+disabled), sorted alphabetically. Each option:
+
+- **Label**: the spec name
+- **Description**: current state and context, e.g.:
+  - `"Currently: ENABLED — 5 open findings"`
+  - `"Currently: ENABLED — never reviewed"`
+  - `"Currently: DISABLED — 3 findings frozen (last review: 2026-05-06)"`
+  - `"Currently: DISABLED — never reviewed"`
+
+The user selects the specs they want to **flip** (enabled → disabled, or
+disabled → enabled).
+
+### 4d.2. Apply toggles
+
+For each selected spec, flip its state in `.tracking.json`:
+
+#### Enabling a spec (disabled → enabled)
+
+If the spec has an existing review file with OPEN findings:
+1. Use the Task tool (subagent type `general`) to perform a **lightweight
+   validation** of the existing findings:
+   - Read the spec (`docs/features/<name>.md`)
+   - Read the review file (`docs/drafts/review/<name>.md`)
+   - For each OPEN finding, check if it is still applicable to the
+     current version of the spec
+   - Findings that are no longer applicable (the spec has been changed to
+     address the issue, or the relevant section no longer exists) are
+     marked as RESOLVED with:
+     ```
+     **Status**: RESOLVED
+     **Resolution**: Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)
+     ```
+   - Findings that are still applicable remain OPEN
+   - Return: list of findings validated, how many remained OPEN, how many
+     were auto-resolved
+2. Update the review file on disk with the new statuses
+3. Update `docs/drafts/review/README.md` to reflect the re-enabled spec
+   (move it from the disabled section to the main table)
+
+If the spec has no review file or no OPEN findings: simply flip the
+state. No validation needed.
+
+#### Disabling a spec (enabled → disabled)
+
+1. Flip the state in `.tracking.json`
+2. The review file (if it exists) is left untouched on disk — findings
+   are preserved ("frozen")
+3. Update `docs/drafts/review/README.md` to move the spec to the
+   disabled section
+4. Recalculate the **Total** row (the disabled spec no longer contributes)
+
+### 4d.3. Save state and confirm
+
+1. Write the updated `.tracking.json` to disk
+2. Update `docs/drafts/review/README.md` with the new layout
+3. Present a summary to the user:
+
+```
+Tracking aggiornato:
+  ✓ pages: DISABLED → ENABLED (3 findings validated, 1 auto-resolved)
+  ✓ references: ENABLED → DISABLED (2 findings frozen)
+  ✓ new-feature: DISABLED → ENABLED (never reviewed)
+```
+
+---
+
+## README Index Layout
+
+This section defines the canonical layout rules for
+`docs/drafts/review/README.md`. All steps that update the README index
+MUST follow these rules.
+
+### Structure
+
+The README has two sections:
+1. **Main table** — enabled specs only
+2. **Disabled section** — disabled specs (shown below the main table)
+
+### Main table (enabled specs)
+
+Two-row-per-spec format:
+
+- **Main row**: spec name (as a link to the review file), OPEN finding
+  count per reviewer section (GAP/COH/DES/SEC/API), total open, last
+  review date. Use `—` for sections that have never been reviewed
+  (`_Not yet reviewed._` in the review file). Use `🟢` for sections
+  that have been reviewed but have zero OPEN findings (either no
+  findings were raised, or all findings are RESOLVED).
+- **Sub-row**: severity breakdown per section using colored circles:
+  `🔴` = High, `🟠` = Medium, `🟡` = Low. Format: `N:🔴 N:🟠 N:🟡`,
+  separated by spaces, omitting severities with zero count. Leave cell
+  empty if the main row is `—` or `🟢`.
+- **Total row** at the bottom: sum of OPEN findings across **enabled
+  specs only**, with severity sub-row.
+
+### Disabled section
+
+Shown below the main table, preceded by a `### Disabled specs` heading.
+Uses the same table structure but with **text-only severity format**
+(no emoji):
+
+- **Main row**: same columns, same rules for `—` and counts. Use `-`
+  (text dash) instead of `🟢` for reviewed-with-zero-findings.
+- **Sub-row**: severity format is `H:N,M:N,L:N` (comma-separated,
+  omit severities with zero count). Leave cell empty if main row is
+  `—` or `-`.
+- **No Total row** for disabled specs.
+- If a spec has never been reviewed: all cells are `—`.
+
+### When to update
+
+The README index is updated:
+- After writing/modifying any findings file (steps 4a.3e, 4b review
+  procedure, 4c.5)
+- After toggling spec tracking (step 4d)
+- Always recalculate the Total row based on current enabled specs
