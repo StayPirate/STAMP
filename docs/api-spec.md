@@ -139,6 +139,37 @@ Rules:
 - When a new version is eventually introduced, the previous version will
   include a `Sunset` response header indicating the deprecation date
 
+### User Identifier Resolution
+
+All parameters that identify a user — whether path parameters, query
+parameters, or request body fields — accept either a UUID or a username.
+Resolution is automatic:
+
+- If the value is a valid UUID (RFC 4122 format), lookup is by primary key
+  (`User.id`)
+- Otherwise, lookup is by the `username` field (case-sensitive exact match)
+- If no user matches either lookup, the endpoint returns 404 with error code
+  `USER_NOT_FOUND`
+
+Response payloads always contain the user's UUID (never the username as
+identifier). The database persists only UUIDs in foreign keys and
+relationships.
+
+This convention applies to:
+
+- Path parameters (e.g., `/api/v1/users/{user}`)
+- Query parameters (e.g., `?assignee=ggabrielli`)
+- Request body fields (e.g., `{"user_id": "ggabrielli"}`)
+
+The special filter value `none` (used in query parameters like `assignee`)
+is not subject to user resolution — it is handled as a literal keyword
+before resolution is attempted.
+
+Implementation note: a reusable FastAPI dependency
+(`resolve_user_identifier`) handles the detection and lookup. See
+`docs/conventions.md` (FastAPI Conventions) for the reference
+implementation pattern.
+
 ### Mutation Patterns
 
 Two patterns exist for modifying resources:
@@ -201,8 +232,8 @@ automatically.
     more values from: `new`, `analysis`, `analyzed`, `resolved`, `ignored`,
     `duplicated`. When multiple values are provided, tickets matching any
     of the specified statuses are returned
-  - `assignee` (string): filter by assignee. Accepts a user UUID or the
-    special value `none` to return only unassigned tickets
+  - `assignee` (string): filter by assignee. Accepts a user UUID, a
+    username, or the special value `none` to return only unassigned tickets
   - `severity` (string, repeatable): filter by severity level. Accepts one
     or more values from: `critical`, `high`, `medium`, `low`, `none`
   - `bugowner` (string): filter tickets to those containing at least one
@@ -414,20 +445,20 @@ via local password for admin-created local users (see
   (min 2 chars, searches username/email/full_name), `active` (boolean),
   `role` (enum), `has_role` (boolean) query parameters. Standard
   pagination and sorting
-- `GET /api/v1/users/{id}` — Get user detail including roles (with
+- `GET /api/v1/users/{user}` — Get user detail including roles (with
   source) and resolved manager (public)
 - `GET /api/v1/users/me` — Get current authenticated user profile
-- `PUT /api/v1/admin/users/{user_id}/roles` — Add/remove manual roles (admin only).
+- `PUT /api/v1/admin/users/{user}/roles` — Add/remove manual roles (admin only).
   Cannot remove AD-derived roles. Request body: `{ "add": [...],
   "remove": [...] }`. See `docs/features/user-management.md`
-- `GET /api/v1/admin/users/{user_id}/deactivation-impact` — Preview side
+- `GET /api/v1/admin/users/{user}/deactivation-impact` — Preview side
   effects of deactivating a user (admin only). Returns counts of API keys,
   sessions, and tickets affected, plus reassignment target. See
   `docs/features/user-management.md`
-- `PATCH /api/v1/admin/users/{user_id}/active` — Deactivate or reactivate a
+- `PATCH /api/v1/admin/users/{user}/active` — Deactivate or reactivate a
   user (admin only). Request body: `{ "active": bool }`. See
   `docs/features/user-management.md`
-- `POST /api/v1/admin/users/{user_id}/unlock` — Clear login lockout counter
+- `POST /api/v1/admin/users/{user}/unlock` — Clear login lockout counter
   (admin only). See `docs/features/user-management.md`
 
 ### Role Mappings

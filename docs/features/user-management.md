@@ -362,7 +362,8 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is an SSO user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
    abort)
-5. Delete the Redis key `login_attempts:{normalized_username}`
+5. Clear the user's failed login attempt counter in Redis (see
+   `local-authentication.md` for lockout mechanism details)
 6. If Redis is unreachable, exit with error:
    `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
    (exit code 2)
@@ -433,9 +434,9 @@ via id.suse.com).
 ### Deactivation confirmation dialog
 
 When an admin clicks "Deactivate" for any user (local or SSO), the
-frontend calls `GET /api/v1/admin/users/{user_id}/deactivation-impact`
+frontend calls `GET /api/v1/admin/users/{user}/deactivation-impact`
 and displays a confirmation dialog with the impact summary before
-calling `PATCH /api/v1/admin/users/{user_id}/active`.
+calling `PATCH /api/v1/admin/users/{user}/active`.
 
 The dialog displays:
 
@@ -480,7 +481,7 @@ an inline form (or modal) with the following fields:
 - Password length must be 12–128 characters (consistent with
   `docs/features/local-authentication.md`)
 
-**On submit**: call `PUT /api/v1/admin/users/{user_id}/password` with
+**On submit**: call `PUT /api/v1/admin/users/{user}/password` with
 the new password. On success, display a confirmation message:
 "Password updated. All active sessions for this user have been
 invalidated."
@@ -501,7 +502,7 @@ business rules and service-layer contracts that these endpoints invoke.
 
 All endpoints below require the `admin` role unless otherwise stated.
 
-#### `PATCH /api/v1/admin/users/{user_id}`
+#### `PATCH /api/v1/admin/users/{user}`
 
 Update a user's profile fields. This endpoint operates on both active and
 inactive users (see "Inactive user management principle" above).
@@ -528,9 +529,9 @@ inactive users (see "Inactive user management principle" above).
    HTTP 409: `"A user with this email already exists."`
 6. Return HTTP 200 with the updated user profile
 
-**Response**: same schema as `GET /api/v1/users/{id}`
+**Response**: same schema as `GET /api/v1/users/{user}`
 
-#### `PUT /api/v1/admin/users/{user_id}/roles`
+#### `PUT /api/v1/admin/users/{user}/roles`
 
 Add or remove manual roles for a user.
 
@@ -569,7 +570,7 @@ Add or remove manual roles for a user.
 
 **Response**: HTTP 200 with updated user profile including all roles
 
-#### `PUT /api/v1/admin/users/{user_id}/password`
+#### `PUT /api/v1/admin/users/{user}/password`
 
 Reset the password for a local user. This endpoint operates on both
 active and inactive local users (see "Inactive user management principle"
@@ -609,7 +610,7 @@ reactivation.
 }
 ```
 
-#### `PATCH /api/v1/admin/users/{user_id}/active`
+#### `PATCH /api/v1/admin/users/{user}/active`
 
 Set the active status of a user (deactivate or reactivate).
 
@@ -641,9 +642,9 @@ See `docs/features/user-lifecycle.md` for the full side effect contract
 (API key revocation, session invalidation, ticket reassignment on
 deactivation).
 
-**Response**: same schema as `GET /api/v1/users/{id}`
+**Response**: same schema as `GET /api/v1/users/{user}`
 
-#### `GET /api/v1/admin/users/{user_id}/deactivation-impact`
+#### `GET /api/v1/admin/users/{user}/deactivation-impact`
 
 Returns a preview of the side effects that would occur if the user were
 deactivated. Used by the frontend to display a confirmation dialog before
@@ -685,7 +686,7 @@ preview.
 
 **Authorization**: requires `admin` role.
 
-#### `POST /api/v1/admin/users/{user_id}/unlock`
+#### `POST /api/v1/admin/users/{user}/unlock`
 
 Clear the login lockout counter for a user.
 
@@ -693,7 +694,8 @@ Clear the login lockout counter for a user.
 
 1. Look up the user by `user_id` — if not found, return HTTP 404
 2. Normalize the user's `username` (trim, lowercase)
-3. Delete the Redis key `login_attempts:{normalized_username}`
+3. Clear the user's failed login attempt counter in Redis (see
+   `local-authentication.md` for lockout mechanism details)
 4. Log the action at INFO level: admin identity (user ID and username of
    the acting admin), target user (user ID and username), and timestamp
 5. Return HTTP 204 (no content)

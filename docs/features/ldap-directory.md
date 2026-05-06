@@ -275,7 +275,7 @@ Response includes `roles` array with `ad_group_cn` field for each role.
 ### User detail
 
 ```
-GET /api/v1/users/{id}
+GET /api/v1/users/{user}
 ```
 
 Returns full user profile including:
@@ -290,7 +290,7 @@ Public endpoint (read-only).
 ### User role management
 
 ```
-PUT /api/v1/admin/users/{user_id}/roles
+PUT /api/v1/admin/users/{user}/roles
 ```
 
 Admin only. Add or remove manual roles for a user. The full endpoint

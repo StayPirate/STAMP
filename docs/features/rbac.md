@@ -118,14 +118,14 @@ List/search all users. Public endpoint (read-only). Supports `search`,
 `docs/features/ldap-directory.md` for details.
 
 ```
-GET /api/v1/users/{id}
+GET /api/v1/users/{user}
 ```
 
 Get user detail including roles (with `ad_group_cn`) and resolved manager.
 Public endpoint (read-only).
 
 ```
-PUT /api/v1/admin/users/{user_id}/roles
+PUT /api/v1/admin/users/{user}/roles
 ```
 
 Add or remove manual roles for a user. Admin only. AD-derived roles are
@@ -152,7 +152,7 @@ via `GET/POST/DELETE /api/v1/admin/role-mappings`.
 ### User Activation (Admin only)
 
 ```
-PATCH /api/v1/admin/users/{user_id}/active
+PATCH /api/v1/admin/users/{user}/active
 ```
 
 Set the active status of a user. Admin only. The full endpoint

@@ -195,7 +195,7 @@ user ID.
 For SSO users, the "Reset password" action is not available (greyed out
 or hidden).
 
-### `PUT /api/v1/admin/users/{user_id}/password`
+### `PUT /api/v1/admin/users/{user}/password`
 
 API endpoint for admin password reset (used by the admin UI). The full
 endpoint specification (request/response schema, error codes) is defined

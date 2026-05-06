@@ -51,6 +51,38 @@
 - Use dependency injection (`Depends()`) for database sessions, auth, etc.
 - All endpoints must have OpenAPI documentation (summary, description)
 - Use appropriate HTTP status codes and response models
+- **User identifier resolution**: all parameters that identify a user accept
+  either a UUID or a username (see `docs/api-spec.md`, "User Identifier
+  Resolution"). Use the shared `resolve_user_identifier` dependency:
+
+  ```python
+  from uuid import UUID
+  from sqlalchemy import select
+  from sqlalchemy.ext.asyncio import AsyncSession
+  from fastapi import HTTPException
+
+  async def resolve_user_identifier(
+      identifier: str, db: AsyncSession
+  ) -> User:
+      """Resolve a user by UUID or username.
+
+      If the identifier is a valid UUID, lookup is by primary key.
+      Otherwise, lookup is by the username field (exact match).
+      Raises 404 if no user is found.
+      """
+      try:
+          user_uuid = UUID(identifier)
+          user = await db.get(User, user_uuid)
+      except ValueError:
+          user = await db.scalar(
+              select(User).where(User.username == identifier)
+          )
+      if not user:
+          raise HTTPException(status_code=404, detail="User not found")
+      return user
+  ```
+
+  Location: `backend/app/core/dependencies.py` (or equivalent shared module)
 
 ### SQLAlchemy Conventions
 
@@ -73,6 +105,12 @@
 - Use fixtures for database sessions, test data, authenticated clients
 - Test naming: `test_<what>_<condition>_<expected_result>`
 - Example: `test_get_cve_not_found_returns_404`
+- **User identifier resolution**: every endpoint that accepts a user
+  identifier MUST be tested with both UUID and username inputs. At minimum:
+  - Valid UUID → returns expected result
+  - Valid username → returns same expected result
+  - Non-existent UUID → 404
+  - Non-existent username → 404
 
 ## TypeScript (Frontend)
 
