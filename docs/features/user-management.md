@@ -569,6 +569,9 @@ Add or remove manual roles for a user.
   `USER_SELF_ROLE_REMOVAL`:
   `"Cannot remove your own Admin role."` (enforced by
   `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
+- If both `add` and `remove` are empty arrays (or missing), the
+  operation is a no-op — returns HTTP 200 with the unchanged user
+  profile in the standard `{"data": ...}` envelope
 - Adding a role that the user already has as a manual assignment is a
    no-op (idempotent)
 - Adding a role that the user already holds via AD derivation creates a
@@ -737,11 +740,11 @@ Clear the login lockout counter for a user.
    `local-authentication.md` for lockout mechanism details)
 4. Log the action at INFO level: admin identity (user ID and username of
    the acting admin), target user (user ID and username), and timestamp
-5. Return HTTP 204 (no content)
+5. Return HTTP 200 with `{"data": {"detail": "Account unlocked successfully."}}`
 
-The endpoint is idempotent: if the user is not locked, it returns 204
-without error. The log entry is emitted regardless (to record that an
-admin attempted to unlock).
+The endpoint is idempotent: if the user is not locked, it returns 200
+with the same response without error. The log entry is emitted
+regardless (to record that an admin attempted to unlock).
 
 If Redis is unreachable, return HTTP 503 with code
 `RESOURCE_UNAVAILABLE` and message: `"Lockout service unavailable."`

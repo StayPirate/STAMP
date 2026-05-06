@@ -244,10 +244,20 @@ user with valid credentials.
 
 ### Session cleanup
 
-A Celery Beat task runs **once per week** and deletes all session rows
-where `is_active = false` or `created_at < now() - 30 days` (sessions
-that have exceeded the maximum lifetime). No session history is
-retained — invalidated and expired sessions are deleted without trace.
+A Celery Beat task runs **once per week** and deletes session rows matching
+either of these conditions:
+
+- `is_active = false AND updated_at < now() - interval '1 hour'` —
+  invalidated sessions, with a 1-hour grace period. The grace period
+  protects against a race condition where a concurrent request has already
+  passed the Redis cache check (cache miss or token refresh) but has not
+  yet loaded the Session row from the database. Without the grace period,
+  the row could be deleted mid-flight, causing a 500 error.
+- `created_at < now() - 30 days` — sessions that have exceeded the
+  maximum lifetime, regardless of active status.
+
+No session history is retained — invalidated and expired sessions are
+deleted without trace.
 
 This is a maintenance task, not a `BaseFetcher` subclass (it does not
 fetch data from external sources).
@@ -325,15 +335,41 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 2. Look up the `ApiKey` record by matching `key_hash` to the computed
    digest. If no record is found, log a WARNING with the key prefix
    (first 12 characters) and the source IP, then return HTTP 401.
+
+   **Log rate limiting**: the WARNING emission is rate-limited to prevent
+   log flooding from brute-force attacks. The HTTP 401 response is
+   ALWAYS returned regardless of rate limiting — only the log emission
+   is suppressed. Details:
+
+   - **Granularity**: per source IP (independent of the key prefix
+     used). An attacker trying 1000 different keys from the same IP
+     generates a single WARNING per period.
+   - **Rate**: at most 1 WARNING every 60 seconds per source IP per
+     server instance.
+   - **Aggregated log format**: when the rate limiter unblocks an
+     emission after the suppression period, the WARNING includes a
+     suppression counter:
+     `"API key validation failed from {ip} (prefix: {prefix}). {N} additional failures suppressed in the last 60s."`
+     If N = 0 (first failure, no suppression), the suffix is omitted.
+   - **Storage**: per-instance in-memory dictionary (no Redis). Same
+     philosophy as the `last_used_at` debounce — no coordination
+     between instances is needed.
+   - **Eviction**: entries expire after 5 minutes of inactivity (no
+     failed attempt from that IP). Maximum 10,000 entries; if the limit
+     is reached, the least recently used entry is evicted (LRU). This
+     prevents memory growth from IP spoofing or large botnets.
+   - **Multi-instance**: with N instances, the worst case is N WARNINGs
+     per minute per IP (one per instance) — acceptable for an internal
+     tool.
 3. Verify `revoked_at` is `NULL`.
 4. If `expires_at` is set, verify it has not passed.
 5. Update `last_used_at` to the current timestamp (debounced: update at
-   most once per minute to reduce write pressure). The debounce uses a
-   per-instance in-memory cache of `key_id → last_write_timestamp`. If
-   less than 60 seconds have elapsed since the last DB write for this
-   key on this instance, the update is skipped. With N API server
-   instances, the worst case is N writes per minute per key — acceptable
-   for an internal tool.
+   most once per minute **per server instance** to reduce write
+   pressure). The debounce uses a per-instance in-memory cache of
+   `key_id → last_write_timestamp`. If less than 60 seconds have elapsed
+   since the last DB write for this key on this instance, the update is
+   skipped. With N API server instances, the worst case is N writes per
+   minute per key — acceptable for an internal tool.
 6. Load the user by `user_id` from the `ApiKey` record.
 
 API keys do **not** use sessions. They are validated directly against the
@@ -500,7 +536,14 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
 
 **Behavior**:
 
-1. Verify the JWT signature (reject if invalid or expired)
+1. Verify the JWT signature (reject if signature is invalid or token is
+   malformed). The `exp` claim is NOT checked — a token with a valid
+   signature but past expiration is accepted. This allows users to
+   explicitly log out even after their token has expired (e.g., returning
+   to a stale tab after 73+ hours). The security impact is negligible:
+   the token is bound to a specific `session_id`, so an attacker with a
+   stolen expired token can only invalidate that one session (a single
+   forced re-login)
 2. Extract `session_id` from the JWT claims
 3. Call `session_service.invalidate_session(db, session_id)` — this is
    idempotent: if the session is already inactive, no change is made
@@ -850,6 +893,25 @@ attributed to the agent's own identity.
   that it must be in the future. Keys with very short durations (seconds or
   minutes) are valid use cases for testing. If a key expires before the
   client uses it, the user simply creates a new one.
+- **No client fingerprint binding on session cookies**: the session cookie
+  is not bound to any client fingerprint (IP address, User-Agent, or TLS
+  channel binding). A stolen cookie can be replayed from any network
+  location without server-side detection. This is an **accepted risk** for
+  the following reasons:
+  - Binding to IP would break usability for users on VPNs, roaming
+    networks, or dynamic IPs — common in an internal enterprise
+    environment where employees switch between office, home, and travel
+    networks
+  - Binding to User-Agent provides negligible security (trivially spoofed)
+  - TLS channel binding (RFC 5929) is not widely supported by browsers
+  - The tool operates on a trusted internal network, reducing the attack
+    surface for cookie theft
+  - Existing compensating controls: `Secure` flag (HTTPS only), `HttpOnly`
+    (no XSS access), `SameSite=Strict` (no cross-origin leakage), 30-day
+    maximum session lifetime, admin deactivation (invalidates all sessions
+    immediately)
+  - Detection of session theft is not a goal for this tool; prevention
+    via the cookie flags above is the primary defense
 
 ## Cross-references
 
