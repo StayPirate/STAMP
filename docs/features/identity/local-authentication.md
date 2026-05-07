@@ -306,22 +306,11 @@ frontend determines this by calling `GET /api/v1/auth/providers` (see
 The local login form does not check whether local users exist — it
 simply returns an authentication error if the credentials are invalid.
 
-### Frontend behavior on login success
+### Frontend behavior
 
-1. Store the JWT (see `docs/features/authentication.md`, Security
-   Considerations for storage mechanism)
-2. Redirect to the dashboard (or the originally requested page if the
-   user was redirected to login)
-
-### Frontend behavior on token expiration
-
-When any API call returns HTTP 401 and the user has a stored token
-(indicating the token has expired rather than being absent):
-
-1. Clear the stored token
-2. Redirect to the login page
-3. Optionally display a message: "Your session has expired. Please log
-   in again."
+Post-login redirect and session expiration handling follow the shared
+behavior defined in `docs/features/identity/authentication.md` § Frontend
+session behavior.
 
 ## Security Considerations
 

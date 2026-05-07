@@ -313,6 +313,13 @@ Unlike the local login endpoint, SSO error messages can be specific
 
 ### Frontend flow
 
+0. **Session guard**: if the user already has a valid session (JWT
+   cookie present and not expired), navigating to the login page
+   redirects automatically to the dashboard — the login form is not
+   rendered. If the user bypasses this frontend guard (e.g., direct API
+   call) and completes a full SSO flow while already authenticated, a
+   new session is created without invalidating existing ones — see
+   `docs/features/identity/authentication.md`, Concurrent Sessions.
 1. User clicks "Login with SUSE SSO"
 2. Frontend saves the current URL to `sessionStorage` (key:
    `sentinel_return_url`) to preserve the user's intended destination
@@ -340,10 +347,10 @@ Unlike the local login endpoint, SSO error messages can be specific
 8. Frontend extracts `code` and `state` from URL parameters
 9. Frontend calls `POST /api/v1/auth/sso/callback` with code and state
 10. On success: the backend sets the session cookie (`sentinel_session`,
-    HttpOnly — see `docs/features/authentication.md`, Token Storage).
-    The frontend then checks `sessionStorage` for `sentinel_return_url`:
-    if present, redirects there and removes the key; otherwise redirects
-    to the dashboard
+    HttpOnly — see `docs/features/identity/authentication.md`, Token
+    Storage). The frontend then applies the post-login redirect logic
+    (see `docs/features/identity/authentication.md` § Frontend session
+    behavior)
 11. On error: display error message on login page
 
 ## Identity Mapping

@@ -232,6 +232,23 @@ password reset).
 | `user_service.deactivate_user()` | Calls `invalidate_user_sessions()` as step 2 of deactivation |
 | `user_service.reset_password()` | Calls `invalidate_user_sessions()` after updating `password_hash` |
 
+### Concurrent sessions
+
+Multiple concurrent sessions per user are allowed by design. A new login
+(SSO or local) creates a new `Session` record without invalidating
+existing ones. This supports legitimate multi-device usage (e.g., desktop
+and laptop).
+
+Sessions are only invalidated explicitly by:
+- Logout (current session only)
+- User deactivation (all sessions)
+- Password reset (all sessions)
+
+Orphaned sessions (e.g., from a browser where the user never explicitly
+logged out) are cleaned up by the weekly session cleanup task. All
+sessions expire unconditionally after `SESSION_MAX_LIFETIME_DAYS`
+regardless of activity.
+
 ### Deactivation ordering
 
 When a user is deactivated (via `user_service.deactivate_user()`), the
@@ -288,6 +305,37 @@ nullable) that is updated to `now()` every time a session is created
 (both SSO and local login). This provides a queryable answer to "when
 did user X last log in?" without depending on session row retention or
 log searches.
+
+### Frontend session behavior
+
+This section defines the frontend behavior shared by both login providers
+(SSO and local). Provider-specific frontend flows are documented in their
+respective specs.
+
+#### Post-login redirect
+
+After a successful login (regardless of provider):
+
+1. The backend sets the session cookie (`sentinel_session`, HttpOnly) —
+   the frontend does not handle the token directly
+2. The frontend checks `sessionStorage` for `sentinel_return_url`:
+   - If present: redirect to that URL and remove the key
+   - If absent: redirect to the dashboard
+3. Each provider is responsible for saving `sentinel_return_url` to
+   `sessionStorage` before initiating the login flow (to preserve the
+   user's intended destination across redirects)
+
+#### Session expiration handling
+
+When any API call returns HTTP 401 and the user previously had an active
+session (the browser was sending the `sentinel_session` cookie):
+
+1. Redirect to the login page
+2. Display an informational message: "Your session has expired. Please
+   log in again."
+
+This applies regardless of the expiration cause (token expired, session
+deadline reached, session invalidated by admin).
 
 ## Middleware: `get_current_user`
 
