@@ -67,6 +67,15 @@ URL with HTTPS scheme (the HTTP scheme is allowed only when the host is
 the application logs a WARNING and disables SSO (same behavior as a
 missing required setting).
 
+### Operational note: `JWT_SECRET_KEY` rotation
+
+The SSO state parameter is signed with `JWT_SECRET_KEY`. Rotating this
+key immediately invalidates all in-flight SSO flows (users who have been
+redirected to the IdP but have not yet completed the callback). Affected
+users see "Invalid or expired SSO state" and must restart the login.
+Maximum disruption window: 10 minutes (the state TTL). Recommendation:
+rotate the key during low-traffic periods.
+
 ### Discovery
 
 Sentinel uses OIDC Discovery to resolve the authorization endpoint,
@@ -87,7 +96,7 @@ small, public, and each application instance fetches its own copy).
 | Behavior | Detail |
 |----------|--------|
 | First fetch | At application startup (SSO service initialization) |
-| Refresh | Lazy with 1-hour TTL: the first request after the TTL expires triggers a synchronous re-fetch (typically <100ms to the IdP). Subsequent requests within the TTL use the cache. Each API server process maintains an independent cache. |
+| Refresh | Lazy with 1-hour TTL: the first request after the TTL expires triggers a synchronous re-fetch (HTTP timeout: 5 seconds; typically <100ms to the IdP). Subsequent requests within the TTL use the cache. Each API server process maintains an independent cache. |
 | Refresh fails | Use cached version. Log WARNING with the failure reason. |
 | No cache available (startup + IdP unreachable) | The application starts successfully, but `/authorize` returns HTTP 503: `"SSO service temporarily unavailable. Please try again later."` |
 | Validation | The document MUST contain `authorization_endpoint`, `token_endpoint`, and `jwks_uri`. If any required field is missing, treat as a failed fetch. |
@@ -103,8 +112,8 @@ The IdP's public keys (used to verify ID token signatures) are cached
 | Behavior | Detail |
 |----------|--------|
 | First fetch | Lazy — on the first ID token verification attempt, using the `jwks_uri` from the discovery document |
-| Refresh | Lazy with 1-hour TTL: the first token verification after the TTL expires triggers a synchronous re-fetch. Each API server process maintains an independent cache. |
-| Unknown `kid` | If an ID token contains a `kid` not present in the cached JWKS, force-refresh the JWKS once. If the `kid` is still absent after refresh, reject the token with HTTP 401. |
+| Refresh | Lazy with 1-hour TTL: the first token verification after the TTL expires triggers a synchronous re-fetch (HTTP timeout: 5 seconds). Each API server process maintains an independent cache. |
+| Unknown `kid` | If an ID token contains a `kid` not present in the cached JWKS, force-refresh the JWKS once (HTTP timeout: 5 seconds). If the `kid` is still absent after refresh, reject the token with HTTP 401. |
 | Refresh fails | Use cached version. Log WARNING with the failure reason. |
 | No cache available (first token + JWKS unreachable) | Reject the token with HTTP 401. Log ERROR. |
 

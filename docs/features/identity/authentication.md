@@ -945,6 +945,9 @@ attributed to the agent's own identity.
 - **Key rotation**: rotating `JWT_SECRET_KEY` immediately invalidates
   all existing JWTs (the signature verification will fail). This
   effectively triggers a mass logout — all users must re-authenticate.
+  Additionally, any in-flight SSO flows (state parameter signed with the
+  old key) will fail at callback — max 10 minutes of disruption (see
+  `docs/features/identity/sso-authentication.md`, Operational note).
   Operators should plan key rotation during low-traffic windows and
   communicate the expected impact. There is no graceful dual-key
   transition mechanism; this simplicity is acceptable for an internal
