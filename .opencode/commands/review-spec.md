@@ -30,7 +30,8 @@ The command determines the target type in this order:
    | API | API Conventions | api-convention-reviewer |
 
 2. Otherwise → treated as a spec name (matched against filenames in
-   `docs/features/` without `.md` extension)
+   `docs/features/**/` without `.md` extension; filenames are unique
+   across subdirectories)
 
 ### Shortcut flow
 
@@ -59,7 +60,7 @@ to the interactive flow.
 
 **If target is a spec name:**
 
-- Spec does not exist in `docs/features/`:
+- Spec does not exist in `docs/features/**/`:
   > Errore: la spec `<name>` non esiste in `docs/features/`.
 
 - Spec exists but is disabled in `.tracking.json`:
@@ -106,18 +107,21 @@ Use the Task tool (subagent type `general`) to perform all of the
 following in a single subagent session. Instruct the subagent to return
 a structured result (JSON or clearly formatted text) containing:
 
-1. **Spec list**: all `.md` filenames in `docs/features/` (without
-   extension), sorted alphabetically
+1. **Spec list**: all `.md` filenames in `docs/features/` subdirectories
+   (use Glob `docs/features/**/*.md` to find all specs recursively;
+   exclude `pages/*.md` sub-pages). Use the filename without extension
+   as the spec name (filenames are unique across subdirectories). Sort
+   alphabetically.
 2. **Tracking state**: read `docs/drafts/review/.tracking.json`. Handle
    these cases:
    - **File does not exist** (first run): create it with ALL specs
-     currently in `docs/features/` set to `"enabled": true`. Write the
+     currently in `docs/features/**/` set to `"enabled": true`. Write the
      file to disk immediately.
-   - **File exists**: load it. For any spec in `docs/features/` that is
+   - **File exists**: load it. For any spec in `docs/features/**/` that is
      NOT present in the JSON, add it as `"enabled": false` (new spec
      discovered — disabled by default). Write the updated file back.
    - For any spec listed in the JSON that no longer exists in
-     `docs/features/`, remove it from the JSON (stale entry cleanup).
+     `docs/features/**/`, remove it from the JSON (stale entry cleanup).
    - Return two lists: **enabled specs** and **disabled specs**.
 3. **Review status per spec**: for each spec (enabled AND disabled),
    check if `docs/drafts/review/<name>.md` exists. If it does, parse it
@@ -241,7 +245,7 @@ Sort by total open findings descending (most findings first).
 
 Use the Task tool (subagent type `general`) to:
 - Read the chosen spec's review file (`docs/drafts/review/<name>.md`)
-- Read the target spec (`docs/features/<name>.md`)
+- Read the target spec (`docs/features/**/<name>.md`)
 - Parse all OPEN findings with full details (ID, title, severity,
   category, description)
 - Sort them by priority:
@@ -322,7 +326,7 @@ fix — the review file update is merely a record of it.
 
 Edit all affected files to implement the approved solution. This may
 include:
-- Modifying the target spec (`docs/features/<name>.md`)
+- Modifying the target spec (`docs/features/**/<name>.md`)
 - Modifying other specs referenced by the finding
 - Modifying cross-cutting documents (`docs/data-model.md`,
   `docs/api-spec.md`, `docs/architecture.md`, etc.)
@@ -425,7 +429,7 @@ from previous specs.
 
 When presenting the first finding of a spec, use the Task tool (subagent
 type `general`, **new session**) to silently load:
-- The target spec (`docs/features/<name>.md`)
+- The target spec (`docs/features/**/<name>.md`)
 - All specs referenced by the target
 - Cross-cutting documents (`docs/data-model.md`, `docs/api-spec.md`,
   `docs/architecture.md`)
@@ -502,7 +506,7 @@ Use the `question` tool to present the available choices. Only
 this exact order:
 
 1. **ALL** — description: "Run review on all enabled specs sequentially"
-2. Then each **enabled** spec from `docs/features/` in alphabetical
+2. Then each **enabled** spec from `docs/features/**/` in alphabetical
    order, with description:
    - If previously reviewed: "Last review: <date> — <N> open findings"
    - If never reviewed: "Never reviewed"
@@ -512,7 +516,7 @@ Single selection only.
 ### 4b.2. Execute review
 
 If the user selects **ALL**: process all **enabled** specs in
-`docs/features/` in alphabetical order, applying the review procedure
+`docs/features/**/` in alphabetical order, applying the review procedure
 (below) to each one.
 
 If the user selects a specific spec: apply the review procedure to that
@@ -524,9 +528,9 @@ spec only.
 
 Use the Task tool (subagent type `general`) to read:
 
-1. The target spec: `docs/features/<name>.md`
+1. The target spec: `docs/features/**/<name>.md`
 2. All specs referenced by the target (look for links like
-   `docs/features/other-spec.md` or mentions of "see <spec-name>")
+   `docs/features/<domain>/<spec>.md` or mentions of "see <spec-name>")
 3. Cross-cutting documents (always load):
    - `docs/data-model.md`
    - `docs/api-spec.md`
@@ -564,7 +568,7 @@ Write (or overwrite) `docs/drafts/review/<name>.md` with this structure:
 ```markdown
 # Review: <spec-name>
 
-**Spec**: `docs/features/<name>.md`
+**Spec**: `docs/features/**/<name>.md`
 **Last reviewed**: <YYYY-MM-DD>
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
@@ -670,7 +674,7 @@ Use the `question` tool to present the available choices. Only
 this exact order:
 
 1. **ALL** — description: "Run reviewer on all enabled specs in parallel"
-2. Then each **enabled** spec from `docs/features/` in alphabetical
+2. Then each **enabled** spec from `docs/features/**/` in alphabetical
    order, with description:
    - If previously reviewed: "Last review: <date> — <N> open findings"
    - If never reviewed: "Never reviewed"
@@ -684,9 +688,9 @@ Single selection only.
 For each target spec, use the Task tool (subagent type matching the
 chosen reviewer) to:
 
-1. Read the target spec: `docs/features/<name>.md`
+1. Read the target spec: `docs/features/**/<name>.md`
 2. Read all specs referenced by the target (look for links like
-   `docs/features/other-spec.md` or mentions of "see <spec-name>")
+   `docs/features/<domain>/<spec>.md` or mentions of "see <spec-name>")
 3. Read cross-cutting documents (always):
    - `docs/data-model.md`
    - `docs/api-spec.md`
@@ -735,7 +739,7 @@ Create the file with this structure:
 ```markdown
 # Review: <spec-name>
 
-**Spec**: `docs/features/<name>.md`
+**Spec**: `docs/features/**/<name>.md`
 **Last reviewed**: <YYYY-MM-DD>
 **Reviewers**: <Name of the executed reviewer>
 
@@ -846,7 +850,7 @@ For each selected spec, flip its state in `.tracking.json`:
 If the spec has an existing review file with OPEN findings:
 1. Use the Task tool (subagent type `general`) to perform a **lightweight
    validation** of the existing findings:
-   - Read the spec (`docs/features/<name>.md`)
+   - Read the spec (`docs/features/**/<name>.md`)
    - Read the review file (`docs/drafts/review/<name>.md`)
    - For each OPEN finding, check if it is still applicable to the
      current version of the spec

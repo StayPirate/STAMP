@@ -46,14 +46,14 @@ reviewers. You do NOT write or modify files.
 2. Read `docs/architecture.md` to understand the system context
 3. Read `docs/data-model.md` to understand the data structures involved
 4. Scan the specification for references to other documents:
-   - Explicit references (e.g., "see `docs/features/package-tracking.md`")
+   - Explicit references (e.g., "see `docs/features/packages/package-tracking.md`")
    - References to `docs/api-spec.md` or `docs/conventions.md`
    - Implicit references: mentions of concepts, entities, or flows detailed
      in other specs
 5. Read all directly referenced specifications (first level only — do NOT
    follow references from the referenced specs)
 
-Do NOT load all specs in `docs/features/`. Only load the specs directly
+Do NOT load all specs in `docs/features/**/`. Only load the specs directly
 referenced by or closely related to the one under review.
 
 ## What to check

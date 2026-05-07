@@ -5,7 +5,8 @@ agent: build
 
 Review the implementation for the feature specified in $ARGUMENTS.
 
-1. Read the feature specification from `docs/features/$ARGUMENTS.md`
+1. Find and read the feature specification matching `docs/features/**/$ARGUMENTS.md`
+   (spec filenames are unique across subdirectories; use Glob to locate the file)
 2. Read all related implementation files (models, schemas, services, endpoints,
    frontend components)
 3. Compare the implementation against the specification

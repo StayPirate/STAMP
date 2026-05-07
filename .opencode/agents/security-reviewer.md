@@ -21,8 +21,8 @@ You do NOT write or modify code.
 1. Read `docs/conventions.md` for project conventions
 2. Read `docs/architecture.md` to understand the system architecture
 3. If the change relates to a feature, read the corresponding spec in
-   `docs/features/`
-4. If authentication or authorization is involved, read `docs/features/rbac.md`
+   `docs/features/**/`
+4. If authentication or authorization is involved, read `docs/features/identity/rbac.md`
 5. Read all files involved in the change (models, schemas, services, endpoints)
 
 ## What to check

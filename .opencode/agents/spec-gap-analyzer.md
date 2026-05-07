@@ -59,7 +59,7 @@ files.
 1. Read the specification that was created or modified (provided as context
    by the caller)
 2. Scan the specification for references to other documents:
-   - Explicit references (e.g., "see `docs/features/package-tracking.md`")
+   - Explicit references (e.g., "see `docs/features/packages/package-tracking.md`")
    - References to `docs/data-model.md`, `docs/api-spec.md`, or
      `docs/architecture.md`
    - Implicit references: mentions of concepts, entities, statuses, or
@@ -70,7 +70,7 @@ files.
    modifies any data entity
 5. Read `docs/api-spec.md` if the spec defines or modifies API endpoints
 
-Do NOT load all specs in `docs/features/`. Only load the specs directly
+Do NOT load all specs in `docs/features/**/`. Only load the specs directly
 referenced by or closely related to the one under review.
 
 ## What to check
