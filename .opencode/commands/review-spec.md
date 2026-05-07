@@ -932,7 +932,7 @@ Uses the same table structure but with **text-only severity format**
 
 - **Main row**: same columns, same rules for `—` and counts. Use `-`
   (text dash) instead of `🟢` for reviewed-with-zero-findings.
-- **Sub-row**: severity format is `H:N,M:N,L:N` (comma-separated,
+- **Sub-row**: severity format is `H:N M:N L:N` (space-separated,
   omit severities with zero count). Leave cell empty if main row is
   `—` or `-`.
 - **No Total row** for disabled specs.
