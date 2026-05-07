@@ -10,7 +10,7 @@ authentication.md          Session/JWT/API-key framework (umbrella)
 └── local-authentication.md  Username/password login, lockout
 
 ldap-directory.md          SUSE AD sync, role mapping
-user-lifecycle.md          Service-layer contract for user mutations
+user-service.md            Service-layer contract for user mutations
 user-management.md         Admin CLI and API for user operations
 rbac.md                    Role definitions and endpoint permission map
 ```
@@ -22,6 +22,6 @@ rbac.md                    Role definitions and endpoint permission map
   defined there and inherited by sub-specs.
 - `ldap-directory.md` provisions users and derives roles via AD group
   mappings; `rbac.md` defines what those roles grant.
-- `user-lifecycle.md` is the centralized service contract consumed by
+- `user-service.md` is the centralized service contract consumed by
   `user-management.md`, `ldap-directory.md`, and any future entry point
   that mutates users.

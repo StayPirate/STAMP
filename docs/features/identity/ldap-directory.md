@@ -10,7 +10,7 @@ ticket escalation when employees leave the organization.
 The LDAP sync fetcher is the **sole authority** for identity data of LDAP
 users (`email`, `full_name`, `ldap_dn`, `manager_uid`, `ldap_synced_at`).
 These fields cannot be modified manually via the API or CLI. See LDAP User
-Data Ownership in `docs/features/identity/user-lifecycle.md` for the
+Data Ownership in `docs/features/identity/user-service.md` for the
 service-layer enforcement rules.
 
 ## Data Source
@@ -200,13 +200,13 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    `reason = "employee deactivated in LDAP"` and
    `acting_user_id = None`. The service sets `active = false` and
    executes all side effects atomically. See
-    `docs/features/identity/user-lifecycle.md` for the full contract (ticket
+    `docs/features/identity/user-service.md` for the full contract (ticket
     unassignment, API key revocation, TicketEvent creation). This step
    is skipped entirely when the safety check froze `active` changes
    (the `newly_deactivated` list is empty)
 7. **Reactivation**: for each user in the `newly_reactivated` list
    (identified in step 3), call `user_service.reactivate_user()` with
-   `acting_user_id = None`. See `docs/features/identity/user-lifecycle.md` for
+   `acting_user_id = None`. See `docs/features/identity/user-service.md` for
     reactivation semantics (previously unassigned tickets and API keys
    are NOT restored). This step is skipped entirely when the safety
    check froze `active` changes
@@ -603,7 +603,7 @@ Displays a table of all configured role mappings:
    revocation of roles that are managed centrally
 5. **Deactivation cascades**: when an employee is deactivated in AD,
    the side effects are handled by `user_service.deactivate_user()` —
-   see `docs/features/identity/user-lifecycle.md` for the full contract
+   see `docs/features/identity/user-service.md` for the full contract
     (ticket unassignment, API key revocation, TicketEvent creation)
 6. **Admin self-removal protection**: an admin cannot remove their own
    Admin role via the API. The Admin role can be removed from a user only

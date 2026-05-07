@@ -92,7 +92,7 @@ command cannot be used non-interactively — a TTY is required.
    - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
    - `acting_user_id = None` (CLI action)
-   - See `docs/features/identity/user-lifecycle.md` for the service contract
+   - See `docs/features/identity/user-service.md` for the service contract
 6. If the service raises `UserConflictError` (duplicate username or
    email), exits with error:
    `"Error: A user with username '{username}' already exists."` or
@@ -117,11 +117,11 @@ Updates an existing user account. Identity field modifications
 (`--email`, `--full-name`) are only permitted on local users — LDAP
 users have their identity fields managed exclusively by directory sync
 (see LDAP User Data Ownership in
-`docs/features/identity/user-lifecycle.md`). Role changes and
+`docs/features/identity/user-service.md`). Role changes and
 reactivation are permitted on both local and LDAP users. The command
 works regardless of whether the user is currently active or inactive
 (see Inactive User Management Principle in
-`docs/features/identity/user-lifecycle.md`).
+`docs/features/identity/user-service.md`).
 
 ```
 sentinel manage-user update \
@@ -180,7 +180,7 @@ sentinel manage-user update \
 10. If `--reactivate` is provided: delegates to
    `user_service.reactivate_user()` with `acting_user_id = None`. If
    the user is already active, this is a no-op. See
-   `docs/features/identity/user-lifecycle.md` for reactivation semantics.
+   `docs/features/identity/user-service.md` for reactivation semantics.
    Reactivation is intentionally the LAST mutation step so that the
    account is fully configured (correct email, roles, etc.) before
    becoming active again
@@ -279,7 +279,7 @@ consistent with LDAP sync deactivation behavior. For full database
 cleanup in development environments, reset the database directly.
 
 **Inactive user management principle**: see
-`docs/features/identity/user-lifecycle.md` (Inactive User Management Principle).
+`docs/features/identity/user-service.md` (Inactive User Management Principle).
 
 **Idempotency**: Idempotent. If the user is already inactive, the
 command prints an informational message and exits with code 0.
@@ -607,9 +607,9 @@ All endpoints below require the `admin` role unless otherwise stated.
 Update a user's profile fields. Only local users (`ldap_uid IS NULL`)
 can be modified — LDAP users have their identity fields managed by
 directory sync (see LDAP User Data Ownership in
-`docs/features/identity/user-lifecycle.md`). This endpoint operates on
+`docs/features/identity/user-service.md`). This endpoint operates on
 both active and inactive users (see Inactive User Management Principle
-in `docs/features/identity/user-lifecycle.md`).
+in `docs/features/identity/user-service.md`).
 
 **Request body** (all fields optional, at least one required):
 
@@ -671,7 +671,7 @@ Add or remove manual roles for a user.
 - Cannot remove your own Admin role — returns HTTP 409 with code
   `USER_SELF_ROLE_REMOVAL`:
   `"Cannot remove your own Admin role."` (enforced by
-  `user_service.update_roles()` — see `docs/features/identity/user-lifecycle.md`)
+  `user_service.update_roles()` — see `docs/features/identity/user-service.md`)
 - If both `add` and `remove` are empty arrays (or missing), the
   operation is a no-op — returns HTTP 200 with the unchanged user
   profile in the standard `{"data": ...}` envelope
@@ -693,7 +693,7 @@ wrapped in the standard `{"data": ...}` envelope (see
 
 Reset the password for a local user. This endpoint operates on both
 active and inactive local users (see Inactive User Management Principle
-in `docs/features/identity/user-lifecycle.md`). Setting a password on an
+in `docs/features/identity/user-service.md`). Setting a password on an
 inactive user prepares credentials for reactivation.
 
 **Request body**:
@@ -711,7 +711,7 @@ inactive user prepares credentials for reactivation.
 2. Delegate to `user_service.reset_password(user_id, password,
    acting_user_id=authenticated_admin.id)` — this handles SSO user
    check, validation, hashing, and session invalidation (see
-   `docs/features/identity/user-lifecycle.md`)
+   `docs/features/identity/user-service.md`)
 3. Log the operation at INFO level: admin identity (user_id, username)
    and target user (user_id, username)
 4. Return HTTP 200
@@ -758,7 +758,7 @@ revocation, session invalidation, ticket unassignment).
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
 
-See `docs/features/identity/user-lifecycle.md` for the full side effect contract
+See `docs/features/identity/user-service.md` for the full side effect contract
 (API key revocation, session invalidation, ticket unassignment on
 deactivation).
 
@@ -958,7 +958,7 @@ handling is required.
   keys, session management
 - `docs/features/identity/local-authentication.md` — login endpoint, password
   hashing, rate limiting
-- `docs/features/identity/user-lifecycle.md` — service contract for create,
+- `docs/features/identity/user-service.md` — service contract for create,
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
 - `docs/features/identity/ldap-directory.md` — LDAP sync (manages SSO users)

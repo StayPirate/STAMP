@@ -215,7 +215,7 @@ in `docs/features/identity/user-management.md` (Admin API endpoints).
 
 Delegates to `user_service.reset_password()` which handles SSO user
 check, password validation, hashing, and session invalidation. See
-`docs/features/identity/user-lifecycle.md` for the service contract.
+`docs/features/identity/user-service.md` for the service contract.
 
 ## Rate Limiting / Brute-Force Protection
 
@@ -387,4 +387,4 @@ session behavior.
   provider)
 - `docs/features/identity/user-management.md` — creating and managing
   local user accounts
-- `docs/features/identity/user-lifecycle.md` — deactivation side effects
+- `docs/features/identity/user-service.md` — deactivation side effects

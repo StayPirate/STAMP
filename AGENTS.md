@@ -569,7 +569,7 @@ This ensures that:
 - The async pattern is maintained consistently (service is async; sync
   callers use `asyncio.run()`)
 
-See `docs/features/identity/user-lifecycle.md` for the full service contract.
+See `docs/features/identity/user-service.md` for the full service contract.
 
 ### 20. API convention conformity
 

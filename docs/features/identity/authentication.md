@@ -997,7 +997,7 @@ attributed to the agent's own identity.
   password management
 - `docs/features/identity/sso-authentication.md` — SSO login flow with
   id.suse.com
-- `docs/features/identity/user-lifecycle.md` — deactivation side effects
+- `docs/features/identity/user-service.md` — deactivation side effects
   (API key revocation, session invalidation)
 - `docs/features/identity/user-management.md` — creating local user
   accounts (including for AI agents)

@@ -572,4 +572,4 @@ The "or" divider is only shown when both options are present.
   provider)
 - `docs/features/identity/ldap-directory.md` — LDAP sync that provisions SSO
   user accounts
-- `docs/features/identity/user-lifecycle.md` — deactivation side effects
+- `docs/features/identity/user-service.md` — deactivation side effects

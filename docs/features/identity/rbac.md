@@ -253,7 +253,7 @@ framework and `docs/features/identity/sso-authentication.md` /
    `user_service.update_roles()` for any entry point where
    `acting_user_id` is set. System actions (LDAP sync, CLI) pass
    `acting_user_id = None` and are exempt. See
-   `docs/features/identity/user-lifecycle.md`. This guard ensures that via
+   `docs/features/identity/user-service.md`. This guard ensures that via
    UI/API, admins cannot accidentally eliminate all admin users — the
    acting admin always retains the role. For the full "zero admins"
    scenario (possible only via CLI/system operations) and recovery
@@ -262,13 +262,13 @@ framework and `docs/features/identity/sso-authentication.md` /
    users' roles)
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
-   `docs/features/identity/user-lifecycle.md`)
+   `docs/features/identity/user-service.md`)
 4. Deactivated users cannot authenticate. On deactivation, all API keys
    are revoked and all active sessions are invalidated (proactively,
    before marking the user inactive). Additionally, the middleware
    checks `User.active` on every request as a defense-in-depth measure.
    See `docs/features/identity/authentication.md` (Deactivation ordering) and
-   `docs/features/identity/user-lifecycle.md`
+   `docs/features/identity/user-service.md`
 5. All authentication events are logged (login, logout, failed attempts)
 6. Session duration: JWT expires after 72 hours of inactivity (refreshed
    transparently via sliding session for active users). Maximum session

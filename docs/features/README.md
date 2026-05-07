@@ -21,7 +21,7 @@ Index of all feature specification domains.
 - [sso-authentication.md](identity/sso-authentication.md) — OIDC SSO login flow
 - [local-authentication.md](identity/local-authentication.md) — Username/password login, lockout
 - [ldap-directory.md](identity/ldap-directory.md) — SUSE AD sync, role mapping
-- [user-lifecycle.md](identity/user-lifecycle.md) — Service-layer contract for user mutations
+- [user-service.md](identity/user-service.md) — Service-layer contract for user mutations
 - [user-management.md](identity/user-management.md) — Admin CLI and API for user operations
 - [rbac.md](identity/rbac.md) — Role definitions and endpoint permission map
 
