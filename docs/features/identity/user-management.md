@@ -240,19 +240,14 @@ sentinel manage-user deactivate \
 3. Queries the impact of deactivation:
    - Count of active API keys that will be revoked
    - Count of active sessions that will be invalidated
-   - Count of open tickets assigned to the user, and the reassignment
-     target (manager username if eligible, otherwise "unassigned")
+   - Count of open tickets assigned to the user that will be unassigned
    - Whether this user is the last active user with the Admin role
 4. Displays the impact summary:
    ```
    About to deactivate user '{username}':
      - {n} active API keys will be revoked
      - {n} active sessions will be invalidated
-     - {n} open tickets will be reassigned to '{manager}' (manager)
-   ```
-   If tickets will be unassigned (no eligible manager):
-   ```
-     - {n} open tickets will be unassigned (no eligible manager)
+     - {n} open tickets will be unassigned
    ```
    If the user is the last active admin, appends a warning to stderr:
    ```
@@ -547,8 +542,7 @@ Deactivate user '{username}'?
 This action will:
   - Revoke {n} active API keys
   - Invalidate {n} active sessions
-  - Reassign {n} open tickets to '{manager}'
-    (or: Leave {n} open tickets unassigned — no eligible manager)
+  - Unassign {n} open tickets
 
 [Cancel]  [Deactivate]
 ```
@@ -579,7 +573,7 @@ an inline form (or modal) with the following fields:
 - Both fields must match — if they do not, display an inline error:
   "Passwords do not match." The submit button remains disabled until
   the fields match
-- Password length must be 12–128 characters (consistent with
+- Password length must be 16–128 characters (consistent with
   `docs/features/identity/local-authentication.md`)
 
 **On submit**: call `POST /api/v1/admin/users/{user}/password` with
@@ -719,7 +713,7 @@ reactivation.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 400 | `USER_SSO_PASSWORD_FORBIDDEN` | Cannot set password for SSO user |
-| 400 | `VALIDATION_ERROR` | Password must be between 12 and 128 characters |
+| 400 | `VALIDATION_ERROR` | Password must be between 16 and 128 characters |
 | 404 | `USER_NOT_FOUND` | User not found |
 
 **Response** (200):
@@ -735,7 +729,7 @@ reactivation.
 #### `POST /api/v1/admin/users/{user}/deactivate`
 
 Deactivate a user account. Triggers significant side effects (API key
-revocation, session invalidation, ticket reassignment).
+revocation, session invalidation, ticket unassignment).
 
 **Request body**: none (empty body or omitted).
 
@@ -757,7 +751,7 @@ revocation, session invalidation, ticket reassignment).
   `"Cannot deactivate your own account."`
 
 See `docs/features/identity/user-lifecycle.md` for the full side effect contract
-(API key revocation, session invalidation, ticket reassignment on
+(API key revocation, session invalidation, ticket unassignment on
 deactivation).
 
 **Response**: user profile in `{"data": {...}}` envelope (see
@@ -817,8 +811,7 @@ proceeding with deactivation.
   "data": {
     "api_keys_count": 3,
     "sessions_count": 2,
-    "tickets_count": 5,
-    "reassignment_target": "luigi.verdi"
+    "tickets_count": 5
   }
 }
 ```
@@ -827,8 +820,7 @@ proceeding with deactivation.
 |------------------------|---------------|--------------------------------------------------|
 | `api_keys_count`       | `int`         | Active API keys that will be revoked             |
 | `sessions_count`       | `int`         | Active sessions that will be invalidated         |
-| `tickets_count`        | `int`         | Open tickets assigned to this user               |
-| `reassignment_target`  | `str \| null` | Manager username if eligible for reassignment, otherwise `null` (tickets will be unassigned) |
+| `tickets_count`        | `int`         | Open tickets assigned to this user that will be unassigned |
 
 **Semantics**: this endpoint returns a point-in-time snapshot of the
 user's current state. The response is purely informational — the
@@ -921,8 +913,8 @@ handling is required.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)
 - **Audit trail**: user creation, role changes, and deactivation
-  produce `TicketEvent` records where relevant (e.g., ticket
-  reassignment on deactivation)
+   produce `TicketEvent` records where relevant (e.g., ticket
+   unassignment on deactivation)
 - **Admin password reset is logged**: every admin-initiated password
   reset is logged at INFO level with the acting admin's identity and
   the target user. No rate limiting or step-up authentication is applied

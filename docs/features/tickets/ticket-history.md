@@ -22,7 +22,7 @@ fields populated according to this table:
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` |
 |---|---|---|---|---|---|
 | `status_change` | Ticket status transitions (manual or system-initiated) | VA user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional VA note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) |
-| `assignment` | Ticket assigned or reassigned | VA user for manual, `NULL` for system (e.g., LDAP deactivation cascade) | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | Optional VA note for manual; system-generated description for automatic (e.g., `"Reassigned from {old} to manager {new}: employee deactivated"`) |
+| `assignment` | Ticket assigned or reassigned | VA user for manual, `NULL` for system (e.g., employee deactivation) | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | Optional VA note for manual; system-generated description for automatic (e.g., `"Unassigned from {old}: employee deactivated"`) |
 | `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `SNTL-{n}` identifier of the original ticket | Optional VA note |
 | `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | Optional VA note |
 | `duplicate_target_changed` | Cascade update: the original ticket was itself marked as duplicate, so this ticket's `duplicate_of_id` was re-pointed to the ultimate original | `NULL` | `SNTL-{n}` identifier of the previous original | `SNTL-{n}` identifier of the new original | `NULL` |

@@ -533,11 +533,11 @@ via local password for admin-created local users (see
   "remove": [...] }`. See `docs/features/identity/user-management.md`
 - `GET /api/v1/admin/users/{user}/deactivation-impact` — Preview side
   effects of deactivating a user (admin only). Returns counts of API keys,
-  sessions, and tickets affected, plus reassignment target. See
+  sessions, and tickets affected. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/deactivate` — Deactivate a user
   (admin only). Triggers side effects: API key revocation, session
-  invalidation, ticket reassignment. See
+  invalidation, ticket unassignment. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/reactivate` — Reactivate a
   previously deactivated user (admin only). See

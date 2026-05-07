@@ -197,7 +197,7 @@ process listings and shell history). See
 
 The user management page in the administration panel includes a "Reset
 password" action for local users. The admin enters the new password
-(same validation: 12–128 characters). The behavior delegates to
+(same validation: 16–128 characters). The behavior delegates to
 `user_service.reset_password()` with `acting_user_id` set to the admin's
 user ID. See `docs/features/identity/user-management.md` for the full
 admin UI specification.

@@ -9,7 +9,7 @@ regardless of the entry point (API, CLI, LDAP sync, or future
 integrations).
 
 Without this centralization, each entry point would need to independently
-implement side effects (ticket reassignment, API key revocation,
+implement side effects (ticket unassignment, API key revocation,
 TicketEvent creation) and business rules (self-removal guard,
 self-deactivation guard), leading to inconsistency and bugs.
 
@@ -76,7 +76,10 @@ Creates a new User record with optional initial roles.
    `password_hash` set to the hash (or NULL if no password), and
    `ldap_synced_at = now()` if `ldap_uid` is set
 4. For each role in `roles`, create UserRole with specified `ad_group_cn`
-   and `assigned_by = acting_user_id`
+   and `assigned_by = acting_user_id`. If the list contains duplicate
+   entries (same role + same `ad_group_cn`), deduplicate silently — only
+   one UserRole record is created per unique `(role, ad_group_cn)` pair.
+   This is consistent with the idempotency behavior of `update_roles()`.
 5. Return the created User
 
 **TicketEvent**: none (user creation does not affect tickets)
@@ -182,26 +185,22 @@ in this specific order):
 2. Invalidate all active sessions for this user via
    `session_service.invalidate_user_sessions(db, user_id)`. This sets
    `Session.is_active = false` in the database AND deletes the
-   corresponding Redis cache entries. See
+   corresponding Redis cache entries. If Redis is unreachable during
+   cache deletion, log WARNING and proceed — the database is the
+   authoritative source for session validity. Auth middleware MUST
+   verify session status against the database on cache miss. See
    `docs/features/identity/authentication.md` (Session invalidation) for the
    session service contract.
 3. Set `User.active = false`
-4. Reassign open tickets: for each ticket where `assignee_id` points to
-   the deactivated user:
-   - Attempt reassignment to the user identified by `manager_uid`
-   - The manager is eligible if ALL conditions are met:
-     - `manager_uid` is not NULL
-     - Manager user exists and is active
-     - Manager holds the Vulnerability Analyst role
-   - If the manager is not eligible, set `assignee_id = NULL`
-     (unassigned)
-   - Create a `TicketEvent` of type `assignment` with:
-     - `user_id = NULL` (system action)
-     - `old_value` = deactivated user's username
-     - `new_value` = manager's username (if reassigned) or `NULL`
-       (if unassigned)
-     - `comment` = `"Reassigned from {old} to {new}: {reason}"` or
-       `"Unassigned from {old}: {reason}, no eligible manager"`
+4. Unassign open tickets: for each ticket where `assignee_id` points to
+   the deactivated user and the ticket is in an active status (Analysis,
+   Analyzed), set `assignee_id = NULL`. No attempt is made to reassign
+   to the manager or any other user. Create a `TicketEvent` of type
+   `assignment` with:
+   - `user_id = NULL` (system action)
+   - `old_value` = deactivated user's username
+   - `new_value` = `NULL`
+   - `comment` = `"Unassigned from {old}: employee deactivated"`
 
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
 user is marked as inactive. This ensures that if the process is
@@ -209,7 +208,7 @@ interrupted at any point, a user who still appears active will have
 already lost access. The admin can safely retry the deactivation
 without risk of leaving a deactivated user with valid credentials.
 
-**TicketEvent**: yes — one `assignment` event per reassigned ticket (see
+**TicketEvent**: yes — one `assignment` event per unassigned ticket (see
 `docs/features/tickets/ticket-history.md` for the event type contract)
 
 ### `reactivate_user()`
@@ -235,7 +234,7 @@ Reactivates a previously deactivated user account.
 
 **Explicitly NOT restored**:
 
-- Previously reassigned tickets are NOT returned to the user
+- Previously unassigned tickets are NOT returned to the user
 - Revoked API keys are NOT restored (user must create new ones manually)
 - Role assignments are unchanged (roles are not affected by
   deactivation/reactivation)
@@ -286,7 +285,7 @@ All operations that produce side effects (particularly `deactivate_user`)
 MUST execute within a single database transaction. If any step fails, the
 entire operation is rolled back. This ensures that a user is never left in
 a partially-deactivated state (e.g., marked inactive but tickets not
-reassigned).
+unassigned).
 
 Operations without side effects (`create_user`, `update_user`,
 `update_roles`, `reactivate_user`) are also transactional but the
@@ -303,21 +302,6 @@ check and write MUST use row-level locking (`SELECT ... FOR UPDATE`) to
 prevent duplicate side effects. The first caller acquires the lock,
 performs the deactivation, and commits. The second caller acquires the
 lock, finds `active = false`, and returns as a no-op.
-
-### Batch deactivation cascading (LDAP sync)
-
-When multiple users are deactivated in the same LDAP sync run and one
-user's manager is also in the `newly_deactivated` list, the following
-may occur: user A's tickets are reassigned to manager B, then manager B
-is deactivated and B's tickets (including those just received from A) are
-reassigned to B's manager or set to unassigned.
-
-This produces a correct final state but generates intermediate
-TicketEvents. This is acceptable — the audit trail accurately reflects
-the sequence of operations. Implementers SHOULD NOT attempt to optimize
-this case by pre-computing the deactivation graph, as the added
-complexity is not justified for the rare scenario (~20 users max per
-threshold).
 
 ### Role modification during deactivation
 
@@ -362,7 +346,7 @@ for the API-layer mapping.
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
 | `SSOFieldReadOnlyError` | Admin attempts to modify identity fields (`email`, `full_name`) for an SSO user. These fields are managed by directory sync; manual changes would be overwritten on the next sync cycle |
 | `SSOUserPasswordError` | Attempting to set or reset password for a non-local (SSO) user |
-| `PasswordValidationError` | Password does not meet length requirements (12–128 characters) |
+| `PasswordValidationError` | Password does not meet length requirements (16–128 characters) |
 
 ## Relationship to Other Specifications
 
