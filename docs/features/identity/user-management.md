@@ -485,25 +485,53 @@ If `Last login` is never, show `—`. If `Manager` is not set, show `—`.
 **Output channels**: user detail to stdout. `"Error: ..."` messages to
 stderr.
 
-## Administration UI
+## UI
 
-Administrators can manage all users (local and SSO) from a dedicated
-page in the web UI administration panel.
+The web UI provides public user pages accessible to all authenticated
+and unauthenticated users, plus administration controls accessible only
+to admins.
 
-### User list page
+### Users page
 
-Displays all users (local and SSO) with columns:
+Accessible to all users. Displays a searchable, sortable table of all
+users.
 
-- Username
+Columns:
 - Full name
+- Username
 - Email
 - Type (Local / SSO)
-- Status (Active / Inactive)
-- Roles — each role displays badge(s) indicating its origin(s): "Manual",
-  AD group name, or both. See `docs/features/identity/rbac.md` (Role Origins and
-  Coexistence) for the coexistence semantics and UI representation
+- Roles — each role displays badge(s) indicating its origin(s): lock
+  icon for AD-derived, pencil icon for manual. See
+  `docs/features/identity/rbac.md` (Role Origins and Coexistence) for
+  the coexistence semantics and UI representation
+- Active status
+- Manager name
 
-Filters: by type (local/SSO), by status (active/inactive), by role.
+Features:
+- Search field with autocomplete (min 2 characters, searches name/email/
+  username)
+- Filter by type (local/SSO), role, active status
+- Click row to navigate to user detail page
+
+Admin-specific actions available on each user row are described in
+"Actions available for local users" and "Actions available for SSO
+users" below.
+
+### User detail page
+
+Accessible to all users (read-only for non-admins). Shows:
+
+- **Profile section**: full name, username, email, active status, manager
+  (linked to their profile), LDAP sync timestamp
+- **Roles section** (editable by Admin only):
+  - AD-derived roles: displayed with a lock icon and the source group
+    name (e.g., `Vulnerability Analyst` lock icon `from "O SUSE
+    Security"`). Not removable
+  - Manual roles: displayed with a remove button. Removable by admin
+  - "Add Role" button: dropdown to add a manual role
+- **Assigned tickets section**: list of tickets currently assigned to
+  this user
 
 ### Actions available for local users
 
@@ -594,6 +622,80 @@ invalidated."
 The "Reset password" button is only visible for local users
 (`ldap_uid = NULL`). It is never shown for SSO users.
 
+### Public API endpoints
+
+These endpoints are publicly accessible (read-only) and do not require
+authentication.
+
+#### `GET /api/v1/users`
+
+User search and autocomplete. Returns a paginated list of users.
+
+Query parameters:
+- `search` (string, optional): searches across `username`, `email`, and
+  `full_name`. Minimum 2 characters. Supports partial matching
+- `active` (boolean, optional): filter by active status
+- `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`)
+- `has_role` (boolean, optional): `true` to return only users with at
+  least one role, `false` for users with no roles
+- Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
+  `sort_order`)
+
+Response uses the standard paginated envelope (`data` array + `meta`
+object). Each user object follows the same schema as
+`GET /api/v1/users/{user}` (see below).
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters |
+
+#### `GET /api/v1/users/{user}`
+
+Returns full user profile. Response uses the standard single-resource
+envelope:
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "username": "string",
+    "email": "string",
+    "full_name": "string",
+    "active": true,
+    "ldap_uid": "string | null",
+    "manager": {
+      "id": "uuid",
+      "username": "string",
+      "full_name": "string",
+      "email": "string"
+    } | null,
+    "roles": [
+      {
+        "role": "admin",
+        "ad_group_cn": "O SUSE Security",
+        "assigned_by": "uuid | null",
+        "created_at": "ISO8601"
+      }
+    ],
+    "created_at": "ISO8601",
+    "updated_at": "ISO8601"
+  }
+}
+```
+
+Field notes:
+- `manager`: resolved manager object (from AD `manager` DN) or `null`
+- `roles`: array of all roles from both AD group mappings and manual
+  assignments. `ad_group_cn` is `'_manual'` for manually assigned roles
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `USER_NOT_FOUND` | No user found matching the given UUID or username |
+
 ### Admin API endpoints
 
 All user mutation endpoints are defined here. This is the single source
@@ -640,7 +742,8 @@ in `docs/features/identity/user-service.md`).
    `{"data": ...}` envelope
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
+`GET /api/v1/users/{user}` in Public API endpoints above for the full
+response schema).
 
 #### `POST /api/v1/admin/users/{user}/roles`
 
@@ -687,7 +790,8 @@ Add or remove manual roles for a user.
 
 **Response**: HTTP 200 with updated user profile including all roles,
 wrapped in the standard `{"data": ...}` envelope (see
-`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
+`GET /api/v1/users/{user}` in Public API endpoints above for the full
+response schema).
 
 #### `POST /api/v1/admin/users/{user}/password`
 
@@ -763,7 +867,8 @@ See `docs/features/identity/user-service.md` for the full side effect contract
 deactivation).
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
+`GET /api/v1/users/{user}` in Public API endpoints above for the full
+response schema).
 
 #### `POST /api/v1/admin/users/{user}/reactivate`
 
@@ -783,7 +888,8 @@ Reactivate a previously deactivated user account.
    `{"data": ...}` envelope
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
+`GET /api/v1/users/{user}` in Public API endpoints above for the full
+response schema).
 
 #### `GET /api/v1/admin/users/{user}/deactivation-impact`
 

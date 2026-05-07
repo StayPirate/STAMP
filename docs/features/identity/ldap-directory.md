@@ -56,59 +56,12 @@ is not persisted in the database.
 
 ## Data Model
 
-### Changes to User table
-
-The existing `User` table is extended with LDAP-specific fields. All
-active employees from AD (~913 records) are synced into this table.
-
-| Column         | Type        | Constraints            | Description                        |
-|----------------|-------------|------------------------|------------------------------------|
-| ldap_uid       | VARCHAR     | UNIQUE, nullable       | AD `sAMAccountName`. NULL for non-LDAP users (e.g., future service accounts) |
-| ldap_dn        | VARCHAR     | nullable               | Full AD distinguished name         |
-| manager_uid    | VARCHAR     | nullable               | `ldap_uid` of the direct line manager (self-referencing via `User.ldap_uid`) |
-| ldap_synced_at | TIMESTAMP   | nullable               | When this record was last synced from AD |
-
-The `username` field is populated from `sAMAccountName`, `email` from
-`mail`, and `full_name` from `cn`. The `active` field is set based on
-`EMPLOYEESTATUS`: `true` when the value is `Active`, `false` otherwise.
-
-### Changes to UserRole table
-
-The existing `UserRole` table is extended with an `ad_group_cn` column
-that tracks the origin of each role assignment, and an `assigned_by`
-column that records which user performed the assignment (NULL for system
-actions). The previous `source` ENUM column is removed — it is now
-derivable from `ad_group_cn` (`_manual` = manual, anything else = AD).
-
-| Column       | Type        | Constraints                   | Description                        |
-|--------------|-------------|-------------------------------|------------------------------------|
-| ad_group_cn  | VARCHAR     | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
-| assigned_by  | UUID        | FK(user.id), nullable         | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
-
-Roles with `ad_group_cn != '_manual'` cannot be removed by an admin
-through the UI or API. They are managed exclusively by the sync process
-based on AD group membership and the configured role mappings. Roles
-with `ad_group_cn = '_manual'` can be added or removed by an admin at
-any time.
-
-**Unique constraint**: (user_id, role, ad_group_cn) — allows a user to
-hold the same role from multiple AD groups simultaneously (one record
-per group), plus an optional manual assignment.
-
-### New table: RoleMapping
-
-Stores the mapping rules between AD groups and Sentinel roles, configured
-by admins.
-
-| Column       | Type        | Constraints                  | Description                        |
-|--------------|-------------|------------------------------|------------------------------------|
-| id           | UUID        | PK                           | Internal identifier                |
-| ad_group_cn  | VARCHAR     | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
-| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin` or `Vulnerability Analyst` |
-| created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
-| created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
-
-**Unique constraint**: (ad_group_cn, role)
+See `docs/data-model.md` for the complete schema of the User, UserRole,
+and RoleMapping tables. The LDAP-specific columns (`ldap_uid`, `ldap_dn`,
+`manager_uid`, `ldap_synced_at`) are documented there along with the
+`ad_group_cn` and `assigned_by` columns on UserRole. The Attributes
+Consumed table above shows how AD attributes map to these fields during
+sync.
 
 ## Fetcher
 
@@ -264,27 +217,8 @@ and `assigned_by = NULL` (CLI action).
 GET /api/v1/users
 ```
 
-Extended with autocomplete support. Public endpoint (read-only).
-
-Query parameters:
-- `search` (string, optional): searches across `username`, `email`, and
-  `full_name`. Minimum 2 characters. Supports partial matching
-- `active` (boolean, optional): filter by active status
-- `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`)
-- `has_role` (boolean, optional): `true` to return only users with at
-  least one role, `false` for users with no roles
-- Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
-  `sort_order`)
-
-Response uses the standard paginated envelope (`data` array + `meta`
-object). Each user object follows the same schema as
-`GET /api/v1/users/{user}` (see User detail below).
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters |
+Public endpoint (read-only). The full endpoint specification is defined
+in `docs/features/identity/user-management.md` (Public API endpoints).
 
 ### User detail
 
@@ -292,50 +226,8 @@ object). Each user object follows the same schema as
 GET /api/v1/users/{user}
 ```
 
-Returns full user profile. Public endpoint (read-only). Response uses
-the standard single-resource envelope:
-
-```json
-{
-  "data": {
-    "id": "uuid",
-    "username": "string",
-    "email": "string",
-    "full_name": "string",
-    "active": true,
-    "ldap_uid": "string | null",
-    "manager": {
-      "id": "uuid",
-      "username": "string",
-      "full_name": "string",
-      "email": "string"
-    } | null,
-    "roles": [
-      {
-        "role": "admin",
-        "ad_group_cn": "O SUSE Security",
-        "assigned_by": "uuid | null",
-        "created_at": "ISO8601"
-      }
-    ],
-    "created_at": "ISO8601",
-    "updated_at": "ISO8601"
-  }
-}
-```
-
-Field notes:
-- `manager`: resolved manager object (from AD `manager` DN) or `null`
-- `roles`: array of all roles from both AD group mappings and manual
-  assignments. `ad_group_cn` is `'_manual'` for manually assigned roles
-
-Public endpoint (read-only).
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 404 | `USER_NOT_FOUND` | No user found matching the given UUID or username |
+Public endpoint (read-only). The full endpoint specification is defined
+in `docs/features/identity/user-management.md` (Public API endpoints).
 
 ### User role management
 
@@ -520,40 +412,10 @@ or with `ad_group_cn = '_manual'` will retain the role.
 
 ## UI Requirements
 
-### Users page
+### Users page and User detail page
 
-Accessible to all users (public, read-only). Displays a searchable,
-sortable table of all users.
-
-Columns:
-- Full name
-- Username (ldap_uid)
-- Email
-- Roles (badges showing role name and origin icon: lock for AD-derived,
-  pencil for manual)
-- Active status
-- Manager name
-
-Features:
-- Search field with autocomplete (min 2 characters, searches name/email/
-  username)
-- Filter by role, active status
-- Click row to navigate to user detail page
-
-### User detail page
-
-Accessible to all users (public, read-only for non-admins). Shows:
-
-- **Profile section**: full name, username, email, active status, manager
-  (linked to their profile), LDAP sync timestamp
-- **Roles section** (editable by Admin only):
-  - AD-derived roles: displayed with a lock icon and the source group
-    name (e.g., `Vulnerability Analyst 🔒 from "O SUSE Security"`). Not
-    removable
-  - Manual roles: displayed with a remove button. Removable by admin
-  - "Add Role" button: dropdown to add a manual role
-- **Assigned tickets section**: list of tickets currently assigned to
-  this user
+The public users page and user detail page are defined in
+`docs/features/identity/user-management.md` (UI section).
 
 ### Settings > Role Mappings page
 
