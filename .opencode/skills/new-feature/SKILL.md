@@ -31,7 +31,27 @@ Follow these steps in order when adding a new feature to Sentinel.
    - **UI Requirements**: pages, components, user interactions
    - **Security**: auth/permission requirements
    - **Background Tasks**: any async processing needed
-3. Review the specification with the user before proceeding
+3. If the specification is a **sub-specification** (i.e., it specializes or
+   implements a part of a broader parent spec), it MUST include immediately
+   after the H1 title and before the `---` separator:
+
+   ```markdown
+   **Parent spec**: `docs/features/<parent-name>.md`
+   **Sibling specs**: `docs/features/<sibling-1>.md`, `docs/features/<sibling-2>.md`
+   **Inherited concerns**: <concise list of responsibilities defined in the
+   parent spec that apply to this sub-spec without being redefined here>
+   ```
+
+   - **Parent spec** (required): path to the parent specification.
+   - **Sibling specs** (optional): other sub-specs at the same level under the
+     same parent. Include only when siblings exist. Helps the reader understand
+     the full picture without navigating back to the parent.
+   - **Inherited concerns** (required): signals which rules (e.g., token
+     format, error code namespace, session lifecycle) are defined in the parent
+     and not repeated locally. The reader knows to load the parent spec for
+     those details.
+
+4. Review the specification with the user before proceeding
 
 ### Step 2: Update shared specifications
 
