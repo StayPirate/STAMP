@@ -853,7 +853,7 @@ with the same response without error. The log entry is emitted
 regardless (to record that an admin attempted to unlock).
 
 If Redis is unreachable, return HTTP 503 with code
-`RESOURCE_UNAVAILABLE` and message: `"Lockout service unavailable."`
+`REDIS_UNAVAILABLE` and message: `"Lockout service unavailable."`
 
 ## Interaction with LDAP Sync
 

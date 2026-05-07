@@ -94,6 +94,24 @@ Rules:
   prefix for generic cases or introduce a new prefix if a distinct domain
   emerges
 
+#### Infrastructure Dependency Errors (HTTP 503)
+
+When an endpoint fails because an external dependency is unreachable,
+use a domain-specific error code that identifies the unavailable service.
+Do not use a generic code — the client and operator need to know *which*
+dependency failed.
+
+Pattern: `<DEPENDENCY>_UNAVAILABLE` with HTTP 503.
+
+Examples:
+
+| Code | Dependency |
+|------|------------|
+| `REDIS_UNAVAILABLE` | Redis cache/session store |
+| `AD_UNAVAILABLE` | Active Directory (LDAP) |
+| `SMELT_UNAVAILABLE` | SMELT API |
+| `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
+
 ### Pagination
 
 List endpoints support pagination via query parameters:

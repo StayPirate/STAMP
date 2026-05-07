@@ -417,7 +417,7 @@ sync). These users will receive the role at the next sync.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 422 | `VALIDATION_ERROR` | Invalid request body (missing or empty `ad_group_cn`, unrecognized `role`) |
-| 503 | `RESOURCE_UNAVAILABLE` | AD is unreachable or the connection timed out (10–15 s timeout) |
+| 503 | `AD_UNAVAILABLE` | AD is unreachable or the connection timed out (10–15 s timeout) |
 
 ```
 POST /api/v1/admin/role-mappings
@@ -443,7 +443,7 @@ Validation:
   in Active Directory
 - Returns 409 with code `RESOURCE_CONFLICT` if a mapping for the same
   (ad_group_cn, role) already exists
-- Returns 503 with code `RESOURCE_UNAVAILABLE` if AD is unreachable or
+- Returns 503 with code `AD_UNAVAILABLE` if AD is unreachable or
   the connection timed out
 
 Response (`201 Created`):

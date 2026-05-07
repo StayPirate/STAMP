@@ -109,7 +109,17 @@ their own business rules.
    and `acting_user_id` is not None: raise `SSOFieldReadOnlyError`
 3. If `email` is provided, validate uniqueness. If violated, raise
    `UserConflictError`
-4. Apply provided field updates (only non-None parameters are applied)
+4. Apply provided field updates. Optional parameters use a `_MISSING`
+   sentinel as default to distinguish three states:
+   - `_MISSING` (default): field is not modified
+   - `None`: field is explicitly cleared to NULL in the database
+   - Any other value: field is updated to the new value
+
+   This is necessary because nullable fields (`full_name`,
+   `manager_uid`, `ldap_dn`) may need to be explicitly cleared — e.g.,
+   when LDAP sync discovers that an AD attribute has been removed. The
+   pattern follows Python's standard sentinel convention
+   (`dataclasses.MISSING`).
 5. Return updated User
 
 **TicketEvent**: none
