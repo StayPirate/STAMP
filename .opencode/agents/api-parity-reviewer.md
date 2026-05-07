@@ -31,8 +31,8 @@ defect.
 
 1. Read `docs/api-spec.md` to understand the documented API surface
 2. Read `docs/architecture.md` to understand the system design
-3. Read `docs/features/pages.md` to understand all UI pages and their actions
-4. List all files in `docs/features/` and read any spec relevant to the
+3. Read `docs/features/ui/pages.md` to understand all UI pages and their actions
+4. List all specs in `docs/features/**/` and read any spec relevant to the
    change being reviewed
 5. List all files in `backend/app/api/v1/` to identify implemented endpoints
 6. List all files in `frontend/src/pages/` and `frontend/src/components/` to

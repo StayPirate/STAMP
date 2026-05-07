@@ -20,16 +20,16 @@ You review ticket-related changes at two levels — **code** and
 **specification** — to ensure two invariants:
 
 1. Every ticket mutation is covered by a `TicketEvent` record following
-   the contract in `docs/features/ticket-history.md`
+   the contract in `docs/features/tickets/ticket-history.md`
 2. Every modification to gate-relevant data goes through the
    `ticket_mutations` module, ensuring automatic ticket status evaluation
-   (see `docs/features/tickets.md`, Centralized Status Evaluation)
+   (see `docs/features/tickets/tickets.md`, Centralized Status Evaluation)
 
 You do NOT write or modify code.
 
 ## Before reviewing
 
-1. Read `docs/features/ticket-history.md` to understand the event type
+1. Read `docs/features/tickets/ticket-history.md` to understand the event type
    contract table (event types, field population rules, atomicity
    requirements)
 2. Read `docs/data-model.md` — specifically the `TicketEvent` table and the
@@ -38,9 +38,9 @@ You do NOT write or modify code.
 4. Read all changed or relevant files in `backend/app/services/` and
    `backend/app/tasks/` that perform ticket mutations
 5. If the review is triggered by a feature spec change, read the full spec
-   in `docs/features/`
+   in `docs/features/**/`
 6. Read `backend/tests/` files corresponding to the changed services/tasks
-7. Read `docs/features/tickets.md` — specifically the "Centralized Status
+7. Read `docs/features/tickets/tickets.md` — specifically the "Centralized Status
    Evaluation" section and the "Ticket Mutations Module" subsection, to
    understand which data is gate-relevant and the contract for the module
 
@@ -58,7 +58,7 @@ or `backend/app/tasks/` that mutate tickets or their related data.
   assignee, duplicate links, packages, CVSS assessments, severity)
 - For each mutation, verify that a `TicketEvent` is created with the
   correct `event_type` per the contract table in
-  `docs/features/ticket-history.md`
+  `docs/features/tickets/ticket-history.md`
 - Flag any mutation that does NOT produce a `TicketEvent` as a defect
 
 #### Contract compliance
@@ -128,7 +128,7 @@ For each `TicketEvent` creation, verify:
 ### Level 2: Specification review
 
 Apply this level when the change creates or modifies a feature spec in
-`docs/features/` that describes operations on tickets.
+`docs/features/**/` that describes operations on tickets.
 
 #### Mutation identification
 
@@ -143,7 +143,7 @@ Apply this level when the change creates or modifies a feature spec in
 
 - For each identified mutation, check whether a corresponding
   `TicketEventType` exists in the contract table of
-  `docs/features/ticket-history.md`
+  `docs/features/tickets/ticket-history.md`
 - If the mutation is covered, verify that the spec's description of the
   operation is compatible with the event contract (e.g., the spec does
   not describe a system action with mandatory user attribution)
@@ -151,7 +151,7 @@ Apply this level when the change creates or modifies a feature spec in
   **Needs revision** and propose:
   - A new `TicketEventType` value name
   - Expected `user_id`, `old_value`, `new_value`, `comment` population
-  - Where to add it in `docs/features/ticket-history.md` and
+  - Where to add it in `docs/features/tickets/ticket-history.md` and
     `docs/data-model.md`
 
 #### Consistency with existing specs
@@ -165,7 +165,7 @@ Apply this level when the change creates or modifies a feature spec in
 #### Ticket mutations module coverage
 
 - For each identified mutation that modifies gate-relevant data (see
-  `docs/features/tickets.md`, Centralized Status Evaluation → Ticket
+  `docs/features/tickets/tickets.md`, Centralized Status Evaluation → Ticket
   Mutations Module), verify that the spec describes the operation as
   going through the `ticket_mutations` module (or at minimum does not
   describe direct model manipulation)

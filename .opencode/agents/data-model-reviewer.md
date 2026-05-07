@@ -24,7 +24,7 @@ consistent. You do NOT write or modify code.
 3. Read all model files in `backend/app/models/`
 4. Read any new or modified migration files in `backend/alembic/versions/`
 5. If the change relates to a feature, read the corresponding spec in
-   `docs/features/`
+   `docs/features/**/`
 
 ## What to check
 

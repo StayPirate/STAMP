@@ -22,7 +22,10 @@ Follow these steps in order when adding a new feature to Sentinel.
 
 ### Step 1: Write the specification
 
-1. Create a new file in `docs/features/<feature-name>.md`
+1. Create a new file in `docs/features/<domain>/<feature-name>.md`
+   where `<domain>` is one of: `identity`, `tickets`, `packages`,
+   `integrations`, `platform`, `ui`. Ask the user which domain
+   subdirectory is appropriate if it is not obvious from context.
 2. The specification MUST include:
    - **Purpose**: what the feature does and why it is needed
    - **Data Model**: new or modified database tables/columns
@@ -36,8 +39,8 @@ Follow these steps in order when adding a new feature to Sentinel.
    after the H1 title and before the `---` separator:
 
    ```markdown
-   **Parent spec**: `docs/features/<parent-name>.md`
-   **Sibling specs**: `docs/features/<sibling-1>.md`, `docs/features/<sibling-2>.md`
+   **Parent spec**: `docs/features/<domain>/<parent-name>.md`
+   **Sibling specs**: `docs/features/<domain>/<sibling-1>.md`, `docs/features/<domain>/<sibling-2>.md`
    **Inherited concerns**: <concise list of responsibilities defined in the
    parent spec that apply to this sub-spec without being redefined here>
    ```

@@ -19,7 +19,7 @@ You review tests for completeness and quality. You do NOT write or modify code.
 ## Before reviewing
 
 1. Read the implementation code that is being tested
-2. Read the corresponding feature specification in `docs/features/`
+2. Read the corresponding feature specification in `docs/features/**/`
 3. Read `docs/conventions.md` for testing conventions
 
 ## What to check
@@ -37,7 +37,7 @@ You review tests for completeness and quality. You do NOT write or modify code.
   assert that a `TicketEvent` is created with the correct `event_type`,
   `old_value`, `new_value`, and `user_id`? Missing `TicketEvent` assertions
   for ticket-mutating operations MUST be flagged as a coverage gap. See
-  `docs/features/ticket-history.md` for the event type contract.
+  `docs/features/tickets/ticket-history.md` for the event type contract.
 - Frontend: are components tested for rendering, user interaction, and edge cases?
 
 ## Output

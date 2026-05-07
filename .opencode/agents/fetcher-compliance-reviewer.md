@@ -20,7 +20,7 @@ infrastructure. You do NOT write or modify code.
 
 ## Before reviewing
 
-1. Read `docs/features/fetcher-infrastructure.md` to understand the
+1. Read `docs/features/platform/fetcher-infrastructure.md` to understand the
    BaseFetcher contract, data model, and compliance requirements
 2. Read `backend/app/services/base_fetcher.py` to understand the current
    base class implementation
@@ -28,7 +28,7 @@ infrastructure. You do NOT write or modify code.
    `backend/app/tasks/`
 4. Read `docs/conventions.md` for naming and style conventions
 5. If the fetcher relates to a specific feature, read the corresponding
-   spec in `docs/features/`
+   spec in `docs/features/**/`
 
 ## What to check
 

@@ -25,7 +25,7 @@ files.
 1. Read the specification that was created or modified (provided as context
    by the caller)
 2. Scan the specification for references to other documents:
-   - Explicit references (e.g., "see `docs/features/package-tracking.md`")
+   - Explicit references (e.g., "see `docs/features/packages/package-tracking.md`")
    - References to `docs/data-model.md`, `docs/api-spec.md`, or
      `docs/architecture.md`
    - Implicit references: mentions of concepts, entities, statuses, or
@@ -38,14 +38,14 @@ files.
 6. Read `docs/configuration.md` if the spec defines or references any
    environment variable or configuration setting
 
-Do NOT load all specs in `docs/features/`. Only load the specs directly
+Do NOT load all specs in `docs/features/**/`. Only load the specs directly
 referenced by or closely related to the one under review.
 
 ## What to check
 
 ### RBAC coherence (tri-level verification)
 
-When the spec under review is `docs/features/rbac.md`, OR when the spec
+When the spec under review is `docs/features/identity/rbac.md`, OR when the spec
 under review defines API endpoints, perform these three checks:
 
 **Check A — Prose ↔ Permission Matrix**: the operations described in the
@@ -63,7 +63,7 @@ access level. Flag contradictions (e.g., the table says "Admin" but the
 Permission Matrix assigns the operation to "Vulnerability Analyst").
 
 **Check C — Endpoint Permission Map ↔ owning specs**: every API endpoint
-defined in a feature spec in `docs/features/` (recognizable by code
+defined in a feature spec in `docs/features/**/` (recognizable by code
 blocks containing `METHOD /api/v1/...`) must have a corresponding row in
 the Endpoint Permission Map table in `rbac.md`. Additionally, the access
 level declared in the Endpoint Permission Map must match the access level
@@ -73,7 +73,7 @@ only" but the table says "Authenticated", flag it as a conflict). Flag:
 - Access level mismatches between the table and the owning spec
 
 When reviewing a spec that is NOT `rbac.md` but defines endpoints, load
-`docs/features/rbac.md` and perform only Check C for the endpoints in
+`docs/features/identity/rbac.md` and perform only Check C for the endpoints in
 the spec under review.
 
 ### Configuration consistency

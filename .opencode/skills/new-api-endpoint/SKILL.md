@@ -9,7 +9,8 @@ Follow these steps when adding a new API endpoint.
 
 ### Step 1: Verify specification
 
-1. Read the relevant feature specification in `docs/features/`
+1. Read the relevant feature specification in `docs/features/<domain>/`
+   (use Glob with `docs/features/**/<name>.md` to locate the file)
 2. Verify the endpoint is defined in the specification
 3. If not, update the specification first
 

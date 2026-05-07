@@ -23,7 +23,7 @@ the implementation. You do NOT write or modify code or documentation.
 3. Read `docs/data-model.md` to understand the documented schema
 4. Read `docs/conventions.md` for documentation and code style requirements
 5. List all files in `backend/app/api/v1/` to identify implemented endpoints
-6. List all files in `docs/features/` to identify existing feature specs
+6. List all specs in `docs/features/**/` to identify existing feature specs
 7. If the review is triggered by a specific change, read the changed files and
    their corresponding specs
 
@@ -46,7 +46,7 @@ the implementation. You do NOT write or modify code or documentation.
 
 - Does every implemented feature (identifiable by service modules in
   `backend/app/services/` or page components in `frontend/src/pages/`) have
-  a corresponding specification in `docs/features/`?
+  a corresponding specification in `docs/features/**/`?
 - Are feature specs up to date with the current implementation? Flag any
   behavior described in the spec that is not implemented, or implemented
   behavior not reflected in the spec
@@ -80,7 +80,7 @@ the implementation. You do NOT write or modify code or documentation.
 
 ### Cross-reference integrity
 
-- Do links and references between docs (e.g., "see `docs/features/X.md`")
+- Do links and references between docs (e.g., "see `docs/features/tickets/X.md`")
   point to files that actually exist?
 - Are referenced sections and anchors valid?
 - When a feature spec references API endpoints, do those endpoints exist in
