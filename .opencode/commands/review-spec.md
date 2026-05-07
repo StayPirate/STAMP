@@ -1,10 +1,85 @@
 ---
-description: Interactive spec review and finding resolution workflow
+description: Spec review and finding resolution workflow (interactive or shortcut)
 ---
 
-Fully interactive command — no arguments accepted. Presents a recap of
-all specs and their review status, then lets the user choose between
-fixing open findings or running new reviews.
+## Arguments (shortcut mode)
+
+This command supports an optional shortcut syntax to skip the
+interactive menus and jump directly into the fix flow:
+
+```
+/review-spec fix <target>
+```
+
+Where `<target>` is either a **spec name** or a **reviewer
+abbreviation**.
+
+### Target resolution
+
+The command determines the target type in this order:
+
+1. If `<target>` matches (case-insensitive) one of the known reviewer
+   abbreviations → treated as a reviewer:
+
+   | Abbreviation | Reviewer | Section |
+   |--------------|----------|---------|
+   | GAP | Gap Analysis | spec-gap-analyzer |
+   | COH | Coherence | spec-coherence-reviewer |
+   | DES | Design | design-reviewer |
+   | SEC | Security | security-reviewer |
+   | API | API Conventions | api-convention-reviewer |
+
+2. Otherwise → treated as a spec name (matched against filenames in
+   `docs/features/` without `.md` extension)
+
+### Shortcut flow
+
+When invoked with `fix <target>`:
+
+1. **Step 1 (data gathering)** runs normally — silently, via a Task
+   subagent — to collect spec list, tracking state, and review status.
+2. **Steps 2 and 3 are skipped entirely** (no recap table, no mode
+   question).
+3. **Step 4a.0 is skipped** (no "By spec / By reviewer" question).
+4. **Validation** is performed on the gathered data (see below).
+5. On success, the flow jumps directly to the fix loop:
+   - **Spec target** → skip step 4a.1 (spec selection), proceed to step
+     4a.2 (Load spec data) with the specified spec.
+   - **Reviewer target** → skip step 4a-R.1 (reviewer selection),
+     proceed to step 4a-R.2 (Load findings) with the specified reviewer.
+6. Everything else (fix loop, presentation, mode management, fix
+   implementation, review file update, README update) remains identical
+   to the interactive flow.
+
+### Validation errors
+
+After Step 1 data gathering completes, validate the target. If
+validation fails, output the error message and stop — do NOT fall back
+to the interactive flow.
+
+**If target is a spec name:**
+
+- Spec does not exist in `docs/features/`:
+  > Errore: la spec `<name>` non esiste in `docs/features/`.
+
+- Spec exists but is disabled in `.tracking.json`:
+  > Errore: la spec `<name>` è disabilitata. Abilitala prima con
+  > `/review-spec` → Toggle spec tracking.
+
+- Spec is enabled but has zero OPEN findings:
+  > Nessun finding OPEN per la spec `<name>`.
+
+**If target is a reviewer abbreviation:**
+
+- No OPEN findings for that reviewer across any enabled spec:
+  > Nessun finding OPEN per `<Reviewer Name>` su spec abilitate.
+
+### No-argument mode (interactive)
+
+When invoked without arguments (`/review-spec` with no arguments), the
+command operates in fully interactive mode as described below. Presents
+a recap of all specs and their review status, then lets the user choose
+between fixing open findings or running new reviews.
 
 **Verbosity rule**: all data-gathering operations (scanning directories,
 reading files, parsing findings) MUST be delegated to a Task agent
