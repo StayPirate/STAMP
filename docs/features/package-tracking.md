@@ -235,9 +235,10 @@ re-evaluation after each change.
 
 #### Automatic transitions
 
-The following transitions can be performed automatically by Sentinel (see the
-[Release Tracking](#release-tracking) section for the full detection
-mechanism):
+The following transitions can be performed automatically by Sentinel (see
+`docs/features/ibs-codestream-release-detection.md` and
+`docs/features/ibs-product-release-detection.md` for the full detection
+mechanisms):
 
 | From              | To                | Applies to             | Trigger                                |
 |-------------------|-------------------|------------------------|----------------------------------------|
@@ -330,12 +331,12 @@ The following scenarios invoke `add_package_to_ticket`:
    finds a CVE fix in a package that is not tracked in the ticket. It calls
    `add_package_to_ticket` to add all codestreams and products, then sets
    the specific codestream where the fix was detected to `RELEASED`. See
-   [Case B](#case-b--ticket-exists-package-not-tracked-in-the-ticket).
+   `docs/features/ibs-codestream-release-detection.md` (Case B).
 4. **Ticket auto-creation (Case C)**: a CVE fix is detected for a CVE with
    no existing ticket. After creating the ticket,
    `add_package_to_ticket` is called, then the originating codestream is
    set to `RELEASED`. See
-   [Case C](#case-c--no-ticket-exists-for-the-cve).
+   `docs/features/ibs-codestream-release-detection.md` (Case C).
 
 ### Package Management Constraints
 
@@ -432,9 +433,13 @@ Sentinel monitors two **independent** levels of release for each affected
 package:
 
 1. **Codestream level**: the fix has been added to the codestream's IBS
-   project (e.g., `SUSE:SLE-15-SP6:Update`).
+   project (e.g., `SUSE:SLE-15-SP6:Update`). See
+   `docs/features/ibs-codestream-release-detection.md` for the full
+   detection mechanism (MD5 cache, IBS diff analysis, match outcomes).
 2. **Product level**: the fix has been published to the product's update
-   repository (e.g., the SLES 15 SP6 update repository consumed by `zypper`).
+   repository (e.g., the SLES 15 SP6 update repository consumed by
+   `zypper`). See `docs/features/ibs-product-release-detection.md` for the
+   full detection mechanism (updateinfo.xml parsing, advisory match chain).
 
 The two levels are detected through different mechanisms and update different
 records:
@@ -449,426 +454,6 @@ records:
 In both cases, the automatic transition to `RELEASED` is suppressed when the
 current status is `WONT_FIX` or `IGNORED` (these states are protected, see
 "Status Behavior" above).
-
-### Codestream-level Detection
-
-Sentinel uses a `CodestreamReleaseDetector` service that monitors IBS codestream
-projects for package source changes and detects CVE fixes by analyzing diffs.
-The mechanism is based on MD5 checksum comparison (inspired by SMASH's
-`TrackedReleaseFetcher`).
-
-#### IBS Endpoints
-
-The detector uses two IBS API calls (see `docs/features/obs-integration.md`
-for full endpoint documentation):
-
-1. **Source info** — `GET /source/{project}?view=info` — returns a
-   `<sourceinfo>` element per package containing the `srcmd5` checksum of
-   the current source revision. One call per codestream project retrieves
-   all packages at once.
-
-2. **Diff with issues** —
-   `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
-   — returns `<issues><issue>` elements listing CVE and BNC references
-   added between the two revisions. IBS extracts these from the changelog
-   and spec changes internally.
-
-#### MD5 Checksum Cache
-
-The detector maintains a `CodestreamPackageChecksum` table in PostgreSQL
-(see `docs/data-model.md`) that stores the last known `srcmd5` for each
-`(codestream_name, package_name)` pair. This cache enables efficient
-change detection: only packages whose MD5 has changed since the last run
-need to be diffed.
-
-#### Procedure
-
-The `CodestreamReleaseDetector` runs on a periodic schedule (every 24
-hours at 02:00 UTC via Celery Beat) and executes the following steps.
-This periodic fetcher serves as a catch-up mechanism for events missed
-by the real-time `IBSEventConsumer` during downtime — see
-`docs/features/ibs-rabbitmq-integration.md`.
-
-1. **Identify active codestreams**: query the distinct `codestream_name`
-   values from `TicketPackageCodestream` records with a non-final,
-   non-protected status (`ANALYSIS` or `AFFECTED`). Only codestreams with
-   at least one active ticket package are scanned.
-
-2. **Fetch current MD5 checksums**: for each active codestream, call
-   `GET /source/{codestream}?view=info` via the `IBSClient` service. This
-   returns `{package_name: srcmd5}` for all packages in the project.
-
-3. **Compare against cached MD5s**: for each package returned by IBS,
-   compare the `srcmd5` with the value stored in
-   `CodestreamPackageChecksum`. Packages with unchanged MD5 are skipped.
-
-4. **First-run behavior**: when no cached MD5 exists for a codestream
-   (first time the detector processes it), the current MD5 values are
-   saved to `CodestreamPackageChecksum` without performing any diffs. CVE
-   detection begins from the second run onward. This avoids spurious
-   matches from the entire package history.
-
-5. **Diff changed packages**: for each package with a changed MD5, call
-   `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
-   via the `IBSClient`. Extract references with `state="added"` and
-   `tracker` equal to `cve` or `bnc`.
-
-6. **Process extracted CVEs**: for each CVE-ID found in the diff, apply
-   the match logic described in
-   [Codestream Match Outcomes](#codestream-match-outcomes) below.
-
-7. **Update cache**: write the new MD5 to `CodestreamPackageChecksum` for
-   each successfully processed package. The cache is updated **only if the
-   IBS diff request succeeded** (HTTP 200). If IBS returned an error for
-   a specific package diff, the MD5 is NOT updated so the next run will
-   re-attempt the diff for that package.
-
-#### Codestream Match Outcomes
-
-For each CVE-ID extracted from the diff of a changed package P in
-codestream C, the detector evaluates three cases:
-
-##### Case A — Ticket exists, package tracked in that codestream
-
-A `TicketPackageCodestream` record exists for the ticket's CVE with
-`package_name = P` and `codestream_name = C`.
-
-- Set `TicketPackageCodestream.status` to `RELEASED` through the
-  `ticket_mutations` module (unless current status is `WONT_FIX` or
-  `IGNORED`).
-- Create a `TicketEvent` with `event_type = codestream_released`,
-  `user_id = NULL` (system action).
-
-##### Case B — Ticket exists, package NOT tracked in the ticket
-
-A ticket exists for the CVE, but no `TicketPackageCodestream` record
-exists for package P (in any codestream).
-
-- Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
-  and products via SMELT and create the records with status `ANALYSIS`
-  (record creation goes through `ticket_mutations`).
-- Set the `TicketPackageCodestream` for codestream C to `RELEASED`
-  through `ticket_mutations` (the specific codestream where the fix
-  was detected).
-- Create a `TicketEvent` with `event_type = package_added`,
-  `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
-  detected in `{C}`".
-- Notify the ticket's assignee.
-- Add the ticket to the "Revisit" list.
-
-##### Case C — No ticket exists for the CVE
-
-No ticket exists in Sentinel for the extracted CVE-ID.
-
-- Enqueue a `create_ticket_from_detection` Celery task with parameters:
-  `cve_id` (string), `package_name`, `codestream_name`.
-- The task performs:
-   1. Fetch CVE data from NVD API v2
-      (`GET /rest/json/cves/2.0?cveId={cve_id}`). If NVD is unreachable
-      or the CVE is not yet published, create a minimal CVE record with
-      only the CVE-ID and `severity = None`.
-   2. Create the CVE record.
-   3. Create a Ticket with status `New`, no assignee.
-   4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
-      all codestreams and products via SMELT and create the records with
-      status `ANALYSIS` (record creation goes through `ticket_mutations`).
-   5. Set the `TicketPackageCodestream` for the originating codestream to
-      `RELEASED` through `ticket_mutations`.
-   6. Create a `TicketEvent` with `event_type = ticket_created`,
-       `user_id = NULL`, comment: `"CVE fix detected in {package}
-       ({codestream})"`.
-
-#### Error Handling
-
-- **IBS unreachable / timeout**: skip the codestream with ERROR-level log,
-  retry on the next scheduled run.
-- **IBS returns error for a specific package diff**: log ERROR, do NOT
-  update the MD5 cache (the next run will re-attempt the diff), continue
-  with remaining packages.
-- **SMELT unreachable** (during Case B/C package resolution): log ERROR,
-  the package addition is skipped. The next run will not re-trigger it
-  (MD5 already cached), so the condition should be surfaced to operators
-  via monitoring.
-- **Deduplication** (Case C): if multiple packages in the same run yield
-  the same CVE-ID without a ticket, only one `create_ticket_from_detection`
-  task is enqueued. Subsequent packages with the same CVE-ID in the same
-  run are handled as Case B once the ticket is created.
-
-### Product-level Detection
-
-Sentinel uses an internal abstraction `ProductReleaseDetector` based on the
-standard `updateinfo.xml` metadata file published in every product update
-repository (the same metadata file consumed by `zypper`). This is the
-ground-truth source: an advisory present in `updateinfo.xml` is, by
-definition, available to end users of that product.
-
-#### Procedure
-
-For each product P with an associated update repository URL `<repo_url>`
-(see [Update Repository URL Resolution](#update-repository-url-resolution)
-below for how `<repo_url>` is constructed):
-
-1. Download `<repo_url>/repodata/repomd.xml`.
-2. Locate the `<data type="updateinfo">` element and extract the location
-   of the `updateinfo.xml.gz` file (path relative to `<repo_url>`).
-3. Download and parse `updateinfo.xml`.
-4. Iterate the `<update>` elements. For each `<update>` U, check whether its
-   `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
-   matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-   records reference P and are in a non-final, non-protected status.
-5. For each such advisory, apply the
-   [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
-   below to identify which specific source package of the ticket received
-   the fix.
-
-#### Outcome per matched (ticket, product, package)
-
-- `TicketPackageProduct.status` is set to `RELEASED` through the
-  `ticket_mutations` module (unless current status is `WONT_FIX` or
-  `IGNORED`).
-- `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
-  of the advisory.
-
-#### Update Repository URL Resolution
-
-Sentinel does not store a separate URL field for update repositories. The HTTP
-URL is constructed at runtime from each `ProductRepository.repo_name` using
-the pattern:
-
-```
-{IBS_DOWNLOAD_BASE_URL}/{repo_name.replace(':', '/')}/update/
-```
-
-where `IBS_DOWNLOAD_BASE_URL` is an environment variable (default:
-`https://download.suse.de/ibs`). For example, repo name
-`SUSE:Updates:SLE-Module-Basesystem:15-SP7:x86_64` produces the URL
-`https://download.suse.de/ibs/SUSE/Updates/SLE-Module-Basesystem/15-SP7/x86_64/update/`.
-
-Only `ProductRepository` entries with prefix `SUSE:Updates:` are relevant
-for release tracking. Other repository types are excluded:
-
-- `SUSE:Products:*` — base product/pool repos, never contain
-  `updateinfo.xml`.
-- Repos whose last segment is `debug` or `src` — companion repos for
-  debuginfo and source packages, never contain advisory metadata.
-- Repos targeting non-RPM distributions (Debian, Ubuntu, or
-  `MultiLinuxManagerTools` targeting Debian/Ubuntu) — these use apt
-  format, not RPM repodata.
-
-If a product has no eligible `SUSE:Updates:*` entries in
-`ProductRepository`, it is skipped during release tracking with a
-WARNING-level log. This is expected for products that are not yet released
-(e.g., SLE 16.x) or deprecated.
-
-#### Multi-architecture Handling
-
-SMELT repository names fall into two categories:
-
-- **Single-arch repos**: name ends with a known architecture segment.
-  Known architectures: `x86_64`, `aarch64`, `s390x`, `ppc64le`, `i586`,
-  `i686`, `ia64`, `ppc64`.
-  Example: `SUSE:Updates:SLE-Module-Basesystem:15-SP7:x86_64`.
-- **Multi-arch repos**: name does NOT end with an architecture segment.
-  These repos contain packages for all architectures in a single
-  repository.
-  Example: `SUSE:Updates:openSUSE-SLE:15.6`.
-
-Sentinel does NOT track release status per architecture — a match on any
-architecture is sufficient to set the status to `RELEASED`.
-
-**Scanning strategy per product**:
-
-1. From the product's `ProductRepository` entries, select those eligible
-   for release tracking (prefix `SUSE:Updates:`, excluding `debug`,
-   `src`, and non-RPM repos as described above).
-2. If a multi-arch repo exists, scan it first (it covers all
-   architectures in a single repository).
-3. If no match was found (or no multi-arch repo exists), scan single-arch
-   repos: `x86_64` first (primary architecture), then remaining
-   architectures in alphabetical order.
-4. As soon as a match is found on any repo, set status to `RELEASED` and
-   stop — do not scan remaining repos.
-
-This approach handles the common case efficiently (most advisories land on
-x86_64) while also covering arch-specific packages like `s390-tools` that
-are only released for `s390x`.
-
-#### Error Handling
-
-The `ProductReleaseDetector` handles the following error conditions
-gracefully:
-
-- **HTTP 404** (repository does not exist on `download.suse.de`): skip
-  with WARNING-level log. This is expected for brand-new products whose
-  repos have not yet been created (e.g., SLE 16.x, SL-Micro 6.x).
-- **HTTP 403** (access restricted): skip with WARNING-level log. Some
-  partner repos may have access restrictions.
-- **`repomd.xml` exists but has no `<data type="updateinfo">`**: skip
-  silently. This means the repository exists but has had zero security
-  updates published to it. This is normal for newly launched or niche
-  products.
-- **Network errors / timeouts**: skip with ERROR-level log, retry on the
-  next scheduled run of `check_product_releases`.
-
-**TBD** (see [Open Items](#open-items)):
-
-- Caching of repodata metadata (ETag/Last-Modified, incremental parsing).
-- Backfill semantics for advisories that pre-date the ticket.
-
-### Advisory ↔ Source Package Match
-
-This match procedure is defined once and applies to the **product-level**
-detection only. It operates on `<update>` entries from `updateinfo.xml`.
-
-The codestream-level detector does not use this match chain — the IBS diff
-endpoint (`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
-already provides an explicit `CVE → source package` link via the `<issues>`
-response, so the package that received the fix is known directly.
-
-**Why this matters**: a single CVE can affect multiple distinct source
-packages, typically when a vulnerable library is statically linked into
-binding packages (e.g., a CVE in a Go or Rust library that impacts
-`containerd`, `podman`, `golang-1.21`, and others — each requiring its own
-independent fix). Sentinel must identify **which specific source package** of
-the ticket has been fixed by a given advisory, so that only the
-corresponding `TicketPackageProduct` record is transitioned to `RELEASED`,
-leaving the others untouched until their own fixes land.
-
-The match is a cascade — the first step that produces a positive match
-wins; on failure, processing falls through to the next step.
-
-#### Step 1 — Title pattern match
-
-- Apply the regular expression
-  `^(Security|Recommended|Optional|Feature) update for (\S+)$` to the
-  advisory's `<title>`.
-- **Pattern not recognized** (no match for the regex above): emit a
-  WARNING-level application log including `advisory_id`, `repo`, and the
-  raw `title`, then fall through to Step 2. These warnings will feed the
-  future admin "Sync diagnostics" page (separate spec).
-- **Pattern recognized and the captured group `<X>` exactly equals one of
-  the ticket's `package_name` values**: MATCH on that package.
-- **Pattern recognized but `<X>` does not equal any ticket package**: fall
-  through silently to Step 2 (this is the normal case for advisories that
-  legitimately use a title package name distinct from the source name).
-
-#### Step 2 — Heuristic prefix match
-
-For each `package_name` PT of the ticket, PT is a candidate match if it
-appears either:
-
-- in the package name `<X>` extracted from the title (rule:
-  `X == PT` OR `X.startswith(PT + "-")`), **or**
-- in at least one `<package name="B">` of the `<pkglist>` (rule:
-  `B == PT` OR `B.startswith(PT + "-")`).
-
-Then:
-
-- **No candidate** → fall through to Step 3.
-- **Exactly one candidate** → MATCH on that package.
-- **Multiple candidates**: the longest PT wins (most specific match).
-  Example: a ticket containing both `openssl` and `openssl-3` against an
-  advisory whose pkglist includes `libopenssl-3-devel` resolves to
-  `openssl-3`.
-- **Ambiguity not resolved by length** (two or more PT of the same length
-  matching) → fall through to Step 3.
-
-#### Step 3 — `primary.xml` exact source match
-
-- Download `primary.xml` of the repository (also referenced from
-  `repomd.xml`).
-- For each binary RPM listed in the advisory's `<pkglist>`, read its
-  `<rpm:sourcerpm>` element (e.g.,
-  `openssl-3-3.1.4-150600.5.9.1.src.rpm`) and derive the source package
-  name by stripping the trailing `-version-release.arch.src.rpm`
-  components (yielding e.g. `openssl-3`).
-- Compare the resulting source names against the ticket's `package_name`
-  values (exact equality).
-- **No match** → proceed with the no-match flow below.
-- **Exactly one ticket package matches** → MATCH on that package.
-- **Multiple ticket packages match** (e.g., the advisory ships SRPMs for
-  several source packages that are all in the ticket): apply the same
-  tie-breaker as Step 2 — the longest `package_name` wins. If two or more
-  matching packages have the same length, fall through to the no-match
-  flow (this is conservative: better to surface the case for VA review
-  than to risk flipping the wrong record).
-
-### Match Outcomes
-
-#### Positive match (source package S of the ticket on product P)
-
-- `TicketPackageProduct(S, P).status` → `RELEASED`.
-- `TicketPackageProduct(S, P).released_at` = advisory's `<issued date>`.
-- The transition is suppressed when the current status is `WONT_FIX` or
-  `IGNORED` (protected states, see "Status Behavior").
-
-Note: codestream-level match outcomes are described separately in the
-[Codestream Match Outcomes](#codestream-match-outcomes) section above.
-
-#### No-match (product level: advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
-
-- Create a `TicketEvent` of informational type recording: `advisory_id`,
-  the source name derived from `primary.xml` if available, and a note that
-  no ticket package matched.
-- Notify the ticket's assignee (notification mechanism is TBD at the system
-  level, see [Open Items](#open-items)).
-- Add the ticket to the **"Revisit" list** (separate feature spec, TBD).
-- **No automatic modification** is made to the ticket's package records.
-
-Note: codestream-level no-match behavior (CVE found in diff but package
-not tracked in ticket, or no ticket exists at all) is described in
-[Codestream Match Outcomes](#codestream-match-outcomes) above — Cases B
-and C.
-
-### Open Items
-
-The following aspects of release tracking are intentionally left open in
-this revision of the spec. They will be closed in subsequent sessions
-before implementation begins. They are listed here so any reader (human or
-agent) can see at a glance what is missing.
-
-#### Product-level detection
-
-- **Repodata caching** — Strategy for caching `repomd.xml` /
-  `updateinfo.xml` / `primary.xml` (ETag, Last-Modified, incremental
-  parsing) to avoid redundant downloads.
-- **Backfill of pre-existing advisories** — Behavior when a new ticket is
-  opened for a CVE for which an advisory already exists in the product
-  repository (mark `RELEASED` retroactively with a historical
-  `released_at`, or ignore advisories older than the ticket).
-- **Formal definition of "relevant advisory"** — Edge cases (e.g.,
-  `<update status>` values other than `stable`, advisories with empty
-  `<pkglist>`, retracted advisories) need formalization.
-
-#### Codestream-level detection
-
-All codestream-level open items have been resolved:
-
-- **IBS endpoint** — Resolved: `GET /source/{project}?view=info` for
-  change detection, `POST /source/{project}/{package}?cmd=diff` for CVE
-  extraction. See [Codestream-level Detection](#codestream-level-detection)
-  and `docs/features/obs-integration.md`.
-- **Match strategy** — Resolved: the IBS diff endpoint provides an
-  explicit `CVE → source package` link, so the Advisory ↔ Source Package
-  Match chain is not needed at the codestream level.
-
-#### Cross-cutting
-
-- **Released advisory persistence** — Whether to store a reference to the
-  advisory that caused the automatic `RELEASED` transition (e.g., a
-  `released_advisory_id` field on `TicketPackageProduct` holding the
-  `SUSE-SU-YYYY:NNNN` identifier) for traceability and UI display, or to
-  rely solely on `released_at` plus the audit log.
-
-#### Dependencies on separate features
-
-- **"Revisit" list** — Destination for tickets in the no-match flow.
-  Separate feature spec.
-- **Notifications** — Mechanism (in-app, email) for notifying the
-  assignee in the no-match flow. Separate feature spec.
-- **Admin "Sync diagnostics" page** — Destination for unrecognized title
-  warnings (and, potentially, products without a configured update
-  repository URL). Separate feature spec.
 
 ## External Data Sources
 
@@ -1311,22 +896,21 @@ affectedness-related conditions are summarized here for context:
   UTC via Celery Beat) that invokes the `CodestreamReleaseDetector`
   service. Serves as a catch-up mechanism for events missed by the
   real-time `IBSEventConsumer` (see
-  `docs/features/ibs-rabbitmq-integration.md`). Scans all codestreams
-  that have at least one `TicketPackageCodestream` record in a
-  non-final, non-protected status. See
-  [Codestream-level Detection](#codestream-level-detection) for the full
+  `docs/features/ibs-rabbitmq-integration.md`). See
+  `docs/features/ibs-codestream-release-detection.md` for the full
   procedure.
 - `check_product_releases`: periodic task that invokes the
   `ProductReleaseDetector` (`updateinfo.xml`-based) for
   `TicketPackageProduct` records and applies the automatic transitions to
-  `RELEASED` described in the [Release Tracking](#release-tracking) section.
-  Frequency and scope are TBD, see [Open Items](#open-items).
+  `RELEASED`. See `docs/features/ibs-product-release-detection.md` for
+  the full procedure. Frequency and scope are TBD.
 - `create_ticket_from_detection`: on-demand task enqueued by the
   `CodestreamReleaseDetector` or the `IBSEventConsumer` when a CVE fix
   is detected for a CVE that has no ticket in Sentinel. Fetches CVE data
   from NVD, creates the ticket, resolves packages via SMELT, and sets
   the originating codestream to `RELEASED`. See
-  [Case C](#case-c--no-ticket-exists-for-the-cve) for details.
+  `docs/features/ibs-codestream-release-detection.md` (Case C) for
+  details.
 - `check_lifecycle_phase_transitions`: periodic task (daily at 04:00 UTC)
   that detects products currently in Reactive LTSS or EOL phase with
   actionable `TicketPackageProduct` records and enqueues re-evaluation.
@@ -1350,8 +934,7 @@ affectedness-related conditions are summarized here for context:
 - **Channel file parsing**: direct parsing of channel files from
   `SUSE:Channels` may be added if SMELT data is insufficient.
 - **IBS release tracking details**: both detection levels are now fully
-  specified. The product-level mechanism uses `updateinfo.xml` (see
-  [Product-level Detection](#product-level-detection)). The codestream-level
-  mechanism uses IBS source info and diff endpoints (see
-  [Codestream-level Detection](#codestream-level-detection) and
-  `docs/features/obs-integration.md`).
+  specified in dedicated specs. See
+  `docs/features/ibs-codestream-release-detection.md` (IBS source info
+  and diff endpoints) and `docs/features/ibs-product-release-detection.md`
+  (`updateinfo.xml` parsing).

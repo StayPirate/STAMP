@@ -23,12 +23,14 @@ and release detection. Sentinel interacts with two separate OBS instances:
   - `IBS_PASSWORD`: IBS API password
   - `IBS_DOWNLOAD_BASE_URL`: HTTP download base URL for repository data
     (default: `https://download.suse.de/ibs`). Used by the
-    `ProductReleaseDetector` — see `docs/features/package-tracking.md`.
+    `ProductReleaseDetector` — see `docs/features/ibs-product-release-detection.md`.
 
 ### Key API Operations
 
 The following IBS API endpoints are used by Sentinel for codestream-level
-release detection (see `docs/features/package-tracking.md`), package
+release detection (see `docs/features/ibs-codestream-release-detection.md`),
+product-level release detection (see
+`docs/features/ibs-product-release-detection.md`), package
 bugowner resolution (see `docs/features/package-bugowner.md`), and
 submission request tracking (see `docs/features/submission-tracking.md`):
 
@@ -206,8 +208,8 @@ Configuration is injected via the application settings (`IBS_API_URL`,
 #### CodestreamReleaseDetector (`backend/app/services/codestream_release_detector.py`)
 
 Orchestrates codestream-level release detection using the `IBSClient`.
-Full procedure is documented in `docs/features/package-tracking.md`,
-section "Codestream-level Detection".
+Full procedure is documented in
+`docs/features/ibs-codestream-release-detection.md`.
 
 ### Background Tasks
 
