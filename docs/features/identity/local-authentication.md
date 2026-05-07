@@ -1,7 +1,7 @@
 # Local Authentication
 
-**Parent spec**: `docs/features/authentication.md`
-**Sibling specs**: `docs/features/sso-authentication.md`
+**Parent spec**: `docs/features/identity/authentication.md`
+**Sibling specs**: `docs/features/identity/sso-authentication.md`
 **Inherited concerns**: token storage (HttpOnly cookie), session
 lifecycle, logout, error code namespace (`AUTH_*`)
 
