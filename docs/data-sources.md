@@ -285,6 +285,8 @@ whether update advisories have been published to product repositories.
   for route definitions) rather than relying solely on the published docs
 - **See also**: `docs/features/obs-integration.md`,
   `docs/features/package-tracking.md`,
+  `docs/features/ibs-codestream-release-detection.md`,
+  `docs/features/ibs-product-release-detection.md`,
   `docs/features/package-bugowner.md`
 
 ### OBS (Open Build Service)

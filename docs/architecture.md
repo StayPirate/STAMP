@@ -246,7 +246,8 @@ the full ticket specification.
 
 Release detection runs on two **independent** levels — codestream and
 product — through different mechanisms. See
-`docs/features/package-tracking.md` (section "Release Tracking") for the
+`docs/features/ibs-codestream-release-detection.md` and
+`docs/features/ibs-product-release-detection.md` for the
 authoritative details.
 
 1. Codestream-level detection uses two complementary mechanisms:
@@ -256,10 +257,9 @@ authoritative details.
    See `docs/features/ibs-rabbitmq-integration.md`.
 2. **Codestream level**: the consumer or fetcher queries IBS diff endpoints
    (see `docs/features/obs-integration.md` and
-   `docs/features/package-tracking.md`, section "Codestream-level
-   Detection") to detect whether the fix for the ticket's CVE has landed
-   in the codestream IBS project. When detected,
-   `TicketPackageCodestream.status` is set to `RELEASED`.
+   `docs/features/ibs-codestream-release-detection.md`) to detect whether
+   the fix for the ticket's CVE has landed in the codestream IBS project.
+   When detected, `TicketPackageCodestream.status` is set to `RELEASED`.
 3. **Product level**: workers fetch `updateinfo.xml` from each product's
    update repository and look for advisories that reference the ticket's
    CVE. A package match cascade (title → heuristic → `primary.xml`)
