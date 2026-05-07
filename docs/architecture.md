@@ -200,8 +200,8 @@ active source. See the data sources catalog for the full picture.
 - Connection: anonymous bind on port 636 (LDAPS — TLS validated against
   SUSE Trust Root CA committed at `certs/SUSE_Trust_Root.crt`). TLS is
   required because `MEMBEROF` data drives role assignment including admin
-  privileges — see security rationale in `docs/features/identity/ldap-directory.md`
-- See `docs/features/identity/ldap-directory.md` for the full specification
+  privileges — see security rationale in `docs/features/identity/ldap-integration.md`
+- See `docs/features/identity/ldap-integration.md` for the full specification
 
 ## Data Flow
 

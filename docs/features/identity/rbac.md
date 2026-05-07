@@ -105,8 +105,8 @@ here with the required access level and a link to the owning spec.
 | GET | `/api/v1/auth/providers` | Unauthenticated | [sso-authentication](sso-authentication.md) |
 | POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md) |
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md) |
-| GET | `/api/v1/users` | Public (read-only) | [ldap-directory](ldap-directory.md) |
-| GET | `/api/v1/users/{user}` | Public (read-only) | [ldap-directory](ldap-directory.md) |
+| GET | `/api/v1/users` | Public (read-only) | [ldap-integration](ldap-integration.md) |
+| GET | `/api/v1/users/{user}` | Public (read-only) | [ldap-integration](ldap-integration.md) |
 | GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys` | Authenticated (session only) | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md) |
@@ -121,10 +121,10 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/admin/users/{user}/reactivate` | Admin | [user-management](user-management.md) |
 | GET | `/api/v1/admin/users/{user}/deactivation-impact` | Admin | [user-management](user-management.md) |
 | POST | `/api/v1/admin/users/{user}/unlock` | Admin | [user-management](user-management.md) |
-| GET | `/api/v1/admin/role-mappings` | Admin | [ldap-directory](ldap-directory.md) |
-| POST | `/api/v1/admin/role-mappings` | Admin | [ldap-directory](ldap-directory.md) |
-| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ldap-directory](ldap-directory.md) |
-| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ldap-directory](ldap-directory.md) |
+| GET | `/api/v1/admin/role-mappings` | Admin | [ldap-integration](ldap-integration.md) |
+| POST | `/api/v1/admin/role-mappings` | Admin | [ldap-integration](ldap-integration.md) |
+| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ldap-integration](ldap-integration.md) |
+| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ldap-integration](ldap-integration.md) |
 
 **Notes**:
 - "Unauthenticated" = no authentication required (public login/SSO flows)
@@ -132,7 +132,7 @@ here with the required access level and a link to the owning spec.
 - "Public (read-only)" = any authenticated user, no role required
 - "Admin" = requires the `admin` role
 - User creation: SSO users are created by the LDAP directory sync (see
-  [ldap-directory](ldap-directory.md)); local users are created by admins
+  [ldap-integration](ldap-integration.md)); local users are created by admins
   via CLI (see [user-management](user-management.md))
 
 ## Implementation Details
@@ -183,7 +183,7 @@ A user can acquire a role from two independent sources (origins):
   or API. Can be removed by an admin at any time.
 - **AD-derived** (`ad_group_cn = <group CN>`): derived from AD group
   membership during LDAP sync. Managed exclusively by the sync process
-  — cannot be removed via UI or API. See `docs/features/identity/ldap-directory.md`.
+  — cannot be removed via UI or API. See `docs/features/identity/ldap-integration.md`.
 
 ### Coexistence rules
 
@@ -240,7 +240,7 @@ framework and `docs/features/identity/sso-authentication.md` /
   LDAP sync)
 - Users are created by the LDAP directory sync (SSO users) or by admins
   via CLI and admin UI (local users). See
-  `docs/features/identity/ldap-directory.md` and
+  `docs/features/identity/ldap-integration.md` and
   `docs/features/identity/user-management.md`
 
 ### User Profile
@@ -279,4 +279,4 @@ framework and `docs/features/identity/sso-authentication.md` /
 8. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
    populate users from AD, then
    `sentinel manage-user update --username <username> --add-role admin` to
-   assign the first Admin role. See `docs/features/identity/ldap-directory.md`
+   assign the first Admin role. See `docs/features/identity/ldap-integration.md`

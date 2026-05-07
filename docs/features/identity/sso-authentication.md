@@ -570,6 +570,6 @@ The "or" divider is only shown when both options are present.
   (JWT format, session model, API keys, middleware)
 - `docs/features/identity/local-authentication.md` — local login (alternative
   provider)
-- `docs/features/identity/ldap-directory.md` — LDAP sync that provisions SSO
+- `docs/features/identity/ldap-integration.md` — LDAP sync that provisions SSO
   user accounts
 - `docs/features/identity/user-service.md` — deactivation side effects

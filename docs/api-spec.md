@@ -498,7 +498,7 @@ specifications.
 ### Users and Auth
 
 See `docs/features/identity/rbac.md` for access control details,
-`docs/features/identity/ldap-directory.md` for LDAP integration details,
+`docs/features/identity/ldap-integration.md` for LDAP integration details,
 `docs/features/identity/authentication.md` for session/API key management,
 `docs/features/identity/local-authentication.md` for local login, and
 `docs/features/identity/sso-authentication.md` for SSO login.
@@ -568,7 +568,7 @@ via local password for admin-created local users (see
 
 ### Role Mappings
 
-See `docs/features/identity/ldap-directory.md` for detailed specifications.
+See `docs/features/identity/ldap-integration.md` for detailed specifications.
 
 - `GET /api/v1/admin/role-mappings` — List all AD group → role mappings
   (admin only)

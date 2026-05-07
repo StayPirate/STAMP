@@ -388,7 +388,7 @@ Used by both TicketPackageCodestream and TicketPackageProduct.
 
 Platform users with role-based access. Users are populated from SUSE
 Active Directory via the `sync_ldap_directory` fetcher (see
-`docs/features/identity/ldap-directory.md`). Users can hold zero, one, or
+`docs/features/identity/ldap-integration.md`). Users can hold zero, one, or
 multiple roles via the UserRole junction table. A user with no roles has
 the same access as an unauthenticated user (read-only on public data).
 
@@ -423,7 +423,7 @@ was derived from that group's RoleMapping; if it contains the sentinel
 value `_manual`, the role was assigned directly by an admin or CLI.
 Roles with `ad_group_cn != '_manual'` are managed by the LDAP sync
 process and cannot be removed via the API. See
-`docs/features/identity/ldap-directory.md`.
+`docs/features/identity/ldap-integration.md`.
 
 | Column       | Type        | Constraints                  | Description                      |
 |--------------|-------------|------------------------------|----------------------------------|
@@ -456,7 +456,7 @@ Stores the mapping rules between Active Directory groups and Sentinel roles.
 Configured by admins via the UI or API. When a mapping is created or
 deleted, roles are applied or revoked immediately. During the daily LDAP
 sync, existing mappings are re-evaluated against current AD group
-membership. See `docs/features/identity/ldap-directory.md`.
+membership. See `docs/features/identity/ldap-integration.md`.
 
 | Column       | Type        | Constraints                  | Description                        |
 |--------------|-------------|------------------------------|------------------------------------|

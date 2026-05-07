@@ -535,7 +535,7 @@ source for identity data in Sentinel over the OpenLDAP instance.
 - **Integration status**: **Active**. Sentinel syncs employee data daily via
   the `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
   `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
-  role mapping). See `docs/features/identity/ldap-directory.md` for the full
+  role mapping). See `docs/features/identity/ldap-integration.md` for the full
   specification
 - **Documentation**: Internal — no public documentation available
 

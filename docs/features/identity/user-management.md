@@ -19,7 +19,7 @@ Local users serve three primary use cases:
    network where `id.suse.com` is not reachable
 
 SSO users are provisioned and maintained by the LDAP sync process (see
-`docs/features/identity/ldap-directory.md`). Administrators can modify their
+`docs/features/identity/ldap-integration.md`). Administrators can modify their
 roles and deactivate/reactivate them, but cannot set passwords or create
 them manually.
 
@@ -548,7 +548,7 @@ Note: local user creation is restricted to the CLI
 (`sentinel manage-user create`). This ensures that user provisioning
 requires shell access, which is an appropriate security barrier for the
 supported use cases (development, bots, non-SSO environments). See
-`docs/features/identity/ldap-directory.md` Business Rule 1.
+`docs/features/identity/ldap-integration.md` Business Rule 1.
 
 ### Actions available for SSO users
 
@@ -1001,7 +1001,7 @@ handling is required.
    system administrator with shell access can restore admin access via:
    `sentinel manage-user update --username <user> --add-role admin`.
    This is consistent with the LDAP sync behavior (see
-   `docs/features/identity/ldap-directory.md`, Business Rule 6)
+   `docs/features/identity/ldap-integration.md`, Business Rule 6)
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
@@ -1067,4 +1067,4 @@ handling is required.
 - `docs/features/identity/user-service.md` — service contract for create,
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
-- `docs/features/identity/ldap-directory.md` — LDAP sync (manages SSO users)
+- `docs/features/identity/ldap-integration.md` — LDAP sync (manages SSO users)

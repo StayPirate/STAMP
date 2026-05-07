@@ -86,9 +86,9 @@ At startup, the application logs an INFO message indicating SSO status:
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ldap-directory.md` |
-| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ldap-directory.md` |
-| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/identity/ldap-directory.md` |
+| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ldap-integration.md` |
+| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ldap-integration.md` |
+| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/identity/ldap-integration.md` |
 
 ## External APIs
 
