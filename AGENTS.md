@@ -599,3 +599,95 @@ is needed:
 The goal is to catch API convention violations at the specification stage —
 before any implementation code is written — so that developers can implement
 endpoints without design ambiguity.
+
+### 21. Information placement — avoid misplaced or duplicated rules
+
+Before writing a new rule, convention, pattern, or behavior in a specification
+document, perform this self-check:
+
+**A) Inter-document test (across specs or toward cross-cutting docs)**
+
+1. **Reuse**: could this information be needed by another feature spec?
+2. **Duplication**: does a similar rule already exist elsewhere?
+3. **Scope**: if this feature spec were removed entirely, would the rule
+   lose its meaning?
+
+If the answers indicate that the information is not exclusive to the current
+spec, STOP and propose the following options to the user:
+
+- (a) The rule stays in the current spec because it is the natural owner;
+  other specs reference it
+- (b) The rule belongs in a cross-cutting document (see mapping below); the
+  current spec adds a reference instead
+- (c) The rule stays where it is because generalizing now would be premature
+  or speculative
+
+Cross-cutting document mapping:
+
+| Information type | Target document |
+|---|---|
+| Code patterns, naming, style conventions | `docs/conventions.md` |
+| API envelope format, errors, pagination, shared behaviors | `docs/api-spec.md` |
+| Entities, columns, relationships, DB constraints | `docs/data-model.md` |
+| External system integration (protocols, URLs, auth) | `docs/data-sources.md` / `docs/architecture.md` |
+| Configuration patterns, environment variables | `docs/configuration.md` |
+| Cross-cutting UI/UX rules | `docs/ui-design-system.md` |
+| Shared business behaviors owned by no single feature | Dedicated feature spec, referenced by others |
+
+**B) Intra-document test (within the same spec)**
+
+When a spec repeats the same rule or behavior across multiple sections (e.g.,
+the same pattern for multiple endpoints, the same logic for multiple states),
+STOP and propose the following options to the user:
+
+- (a) Extract the rule into a "General rules" or "Common behavior" section of
+  the spec, so all current and future sections inherit it automatically
+- (b) Keep it repeated because the variations between cases are sufficient to
+  make generalization dangerous or misleading
+
+**C) Guard against premature generalization**
+
+Do NOT generalize when:
+
+- The rule has been observed in only one context
+- Its applicability to other contexts is speculative
+- Generalizing would introduce ambiguity or artificial coupling between
+  unrelated features
+
+When in doubt, leave the rule in the specific context and flag the potential
+for future generalization as a note.
+
+**D) Mandatory user confirmation**
+
+The agent MUST NOT proceed with any consolidation, extraction, or
+generalization without explicit user confirmation. The agent presents the
+analysis, proposes the options, and waits for the user's decision.
+
+**E) Post-hoc verification**
+
+After significant modifications to documents in `docs/`, invoke
+`@docs-placement-reviewer` when:
+
+1. A new rule, convention, or behavior has been added to a feature spec
+2. An existing feature spec has been modified with content that could be
+   cross-cutting (reusable patterns, generic rules, shared behaviors)
+3. A feature spec repeats the same concept across multiple sections
+4. Multiple feature specs are modified in the same session with related
+   content
+
+Skip the review when:
+
+- The modification is purely cosmetic (typo fixes, formatting)
+- The added content is clearly specific to the feature (business logic that
+  has no meaning outside this feature)
+- Only cross-cutting documents (`data-model.md`, `api-spec.md`, etc.) are
+  updated without impact on feature specs
+
+If the reviewer identifies issues rated as "Needs revision", propose the
+relocation/consolidation options to the user before considering the task
+complete.
+
+The goal is to keep each piece of information in the single most appropriate
+location — avoiding both fragmentation (same rule scattered across multiple
+specs) and over-centralization (feature-specific details extracted into
+cross-cutting documents where they lose context).

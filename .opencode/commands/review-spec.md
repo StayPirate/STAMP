@@ -270,6 +270,12 @@ For the highest-priority OPEN finding:
 
 #### 4a.3a. Present the finding with context (in Italian)
 
+Before formulating the proposed solution, apply the placement self-check
+from Guardrail 21 (tests A–D). If the fix involves adding new rules or
+patterns to a spec, verify that the proposed destination is the most
+appropriate location. If placement is ambiguous, include the options in
+the proposal for the user to decide.
+
 Present the finding to the user in Italian, including:
 
 1. **Contesto del problema**: explain *what* the problem is, *why* it is
@@ -433,6 +439,12 @@ type `general`, **new session**) to silently load:
 - All specs referenced by the target
 - Cross-cutting documents (`docs/data-model.md`, `docs/api-spec.md`,
   `docs/architecture.md`)
+
+Before formulating the proposed solution, apply the placement self-check
+from Guardrail 21 (tests A–D). If the fix involves adding new rules or
+patterns to a spec, verify that the proposed destination is the most
+appropriate location. If placement is ambiguous, include the options in
+the proposal for the user to decide.
 
 Then present the finding to the user in Italian, with the same format as
 step 4a.3a but with an added **Spec** line:

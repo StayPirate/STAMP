@@ -19,6 +19,7 @@ findings without modifying files.
 | `@cicd` | Implementation | Guardrail 5 | CI/CD pipeline expert for GitHub Actions, Dockerfiles, and deployment configs |
 | `@data-model-reviewer` | Reviewer | Guardrail 8 | Reviews data model changes for simplicity, consistency, and conventions |
 | `@design-reviewer` | Reviewer | On-demand | Evaluates architectural decisions, complexity, and alternatives in feature specs |
+| `@docs-placement-reviewer` | Reviewer | Guardrail 21 | Verifies rules and patterns are placed in the most appropriate location (not misplaced or duplicated) |
 | `@docs-reviewer` | Reviewer | Guardrail 9 | Reviews documentation completeness and coherence with implementation |
 | `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies fetchers inherit from BaseFetcher and report metrics correctly |
 | `@security-reviewer` | Reviewer | Guardrail 10 | Reviews code for security vulnerabilities and insecure patterns |
