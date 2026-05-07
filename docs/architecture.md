@@ -369,6 +369,24 @@ frontend container is responsible for proxying API requests in a given
 environment, its nginx upstream configuration must be provided by deployment
 configuration, such as a mounted config file, without rebuilding the image.
 
+### Clock Synchronization
+
+All application instances in a multi-instance deployment must have their system
+clocks synchronized via NTP (or an equivalent time synchronization protocol).
+Sentinel relies on timestamps for several security and correctness mechanisms:
+
+- SSO state parameter validation (10-minute TTL window)
+- JWT `exp` and `iat` claim verification
+- Session expiration enforcement
+- Cache TTL calculations (discovery document, JWKS)
+
+Clock skew between instances can shorten or lengthen time-based windows
+unpredictably. For example, if the instance generating an SSO state has a clock
+2 minutes ahead of the instance processing the callback, the effective validity
+window shrinks from 10 minutes to 8 minutes. While modern NTP-synced servers
+typically maintain sub-second accuracy (making this negligible in practice),
+operators must ensure NTP is configured and running on all hosts.
+
 ### Health And Readiness
 
 Runtime services must expose health checks that work for both Docker/Podman
