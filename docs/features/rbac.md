@@ -224,8 +224,10 @@ what would happen if they remove the manual assignment.
 ### Login Page
 
 The login page displays both authentication options: an SSO button
-(redirect to id.suse.com) and a local username/password form. Both are
-always visible. See `docs/features/authentication.md` for the shared
+(redirect to id.suse.com) and a local username/password form. The SSO
+button is rendered only when SSO is configured (the frontend determines
+this by calling `GET /api/v1/auth/providers`); the local form is always
+visible. See `docs/features/authentication.md` for the shared
 framework and `docs/features/sso-authentication.md` /
 `docs/features/local-authentication.md` for each provider's flow.
 

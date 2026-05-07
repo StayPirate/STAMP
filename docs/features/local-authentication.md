@@ -145,14 +145,18 @@ local users:
 sentinel manage-user create \
   --username <username> \
   --email <email> \
-  --password <password> \
   [--full-name <name>] \
   [--role <role>] ...
 ```
 
+The password is collected interactively via a hidden prompt (input is not
+echoed to the terminal, like `sudo`). Passwords are never passed as CLI
+arguments — arguments are visible in process listings (`ps aux`) and
+shell history files.
+
 | Parameter    | Required | Description                           |
 |--------------|----------|---------------------------------------|
-| `--password` | Yes      | Initial password for the local user   |
+| (prompt)     | Yes      | Initial password, collected interactively |
 
 **Password validation**:
 - Minimum 12 characters
@@ -173,9 +177,11 @@ Sets or resets the password for a local user.
 
 ```
 sentinel manage-user set-password \
-  --username <username> \
-  --password <new_password>
+  --username <username>
 ```
+
+The new password is collected interactively via a hidden prompt (input is
+not echoed to the terminal). Passwords are never passed as CLI arguments.
 
 **Behavior**:
 

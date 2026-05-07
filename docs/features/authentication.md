@@ -121,7 +121,12 @@ that transparently extends the token lifetime for active users:
 1. After successful JWT validation and session liveness check, compute:
    `token_age = now - iat`
    `refresh_threshold = JWT_EXPIRY_HOURS * 3600 * 0.5`
-2. If `token_age >= refresh_threshold`:
+2. If `session_deadline < now`: do not refresh. The session has exceeded
+   its maximum lifetime — the current token remains valid until its `exp`
+   but no new token is issued. (In practice, step 5 of JWT validation
+   catches this, but the explicit guard here prevents issuing a token
+   with `exp` in the past if reached via edge cases like clock skew.)
+3. If `token_age >= refresh_threshold`:
    a. Verify `now + JWT_EXPIRY_HOURS * 3600` does not exceed
       `session_deadline`. If it does, set the new `exp` to
       `session_deadline` instead (final token before forced re-login)
@@ -129,7 +134,7 @@ that transparently extends the token lifetime for active users:
       `session_deadline`, but new `iat = now` and new `exp`
    c. Set the new JWT in the response `Set-Cookie` header (same cookie
       attributes: `HttpOnly`, `SameSite=Strict`, `Secure`, `Path=/api`)
-3. If `token_age < refresh_threshold`: do nothing (normal request flow)
+4. If `token_age < refresh_threshold`: do nothing (normal request flow)
 
 The refresh is completely server-side and transparent to the client. No
 client-side logic or dedicated refresh endpoint is required.
@@ -253,8 +258,10 @@ either of these conditions:
   passed the Redis cache check (cache miss or token refresh) but has not
   yet loaded the Session row from the database. Without the grace period,
   the row could be deleted mid-flight, causing a 500 error.
-- `created_at < now() - 30 days` — sessions that have exceeded the
-  maximum lifetime, regardless of active status.
+- `created_at < now() - (SESSION_MAX_LIFETIME_DAYS + 1) days` — sessions
+  that have exceeded the configured maximum lifetime plus a 1-day buffer,
+  regardless of active status. The buffer avoids cleaning up sessions
+  that are still within their validity window due to clock skew.
 
 No session history is retained — invalidated and expired sessions are
 deleted without trace.
@@ -291,8 +298,9 @@ into all endpoints that require authentication.
 ### Credential resolution
 
 1. Check the `Authorization` header:
-   - If present with scheme `Bearer`: extract the token value and go to
-     step 3.
+   - If present with scheme `Bearer`: extract the token value. If the
+     extracted value is empty or whitespace-only, treat as header absent
+     and proceed to step 2. Otherwise, go to step 3.
 2. If the `Authorization` header is absent, check for the session cookie
    (`sentinel_session`):
    - If the cookie is present: extract its value as the token and go to
@@ -321,11 +329,16 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 1. Decode the token using `JWT_SECRET_KEY` with the `HS256` algorithm.
 2. Verify `exp` has not passed.
 3. Verify `iss` equals `"sentinel"`.
-4. Look up the session by `session_id` claim.
-5. Verify the session passes the liveness check (active + not expired).
+4. Verify `session_deadline` has not passed. Additionally, verify that
+   `iat + SESSION_MAX_LIFETIME_DAYS * 86400 >= now` (using the current
+   configured value). This ensures that a reduction of
+   `SESSION_MAX_LIFETIME_DAYS` takes immediate effect on existing tokens
+   without requiring explicit session invalidation.
+5. Look up the session by `session_id` claim.
+6. Verify the session passes the liveness check (active + not expired).
    Use Redis cache when available.
-6. Load the user by `sub` claim.
-7. Load the user's **current roles from the database**. Role changes
+7. Load the user by `sub` claim.
+8. Load the user's **current roles from the database**. Role changes
    take effect immediately, without waiting for re-login.
 
 ### API key validation
@@ -608,7 +621,7 @@ requests receive HTTP 403 (see Validation below).
   `"A non-revoked API key with this name already exists. Revoke it
   first to reuse the name."`
 - If `expires_at` is provided, it must be in the future. If it is in the
-  past, return HTTP 400 with code `VALIDATION_ERROR`:
+  past, return HTTP 400 with code `AUTH_API_KEY_INVALID_EXPIRY`:
   `"expires_at must be in the future."`
 
 **Authentication restriction**: API-key-authenticated requests receive
@@ -684,7 +697,7 @@ Lists API keys across all users. Admin only.
 | Parameter  | Type   | Description                         |
 |------------|--------|-------------------------------------|
 | `user_id`  | UUID   | Filter by user (optional)           |
-| `status`   | string | `active`, `revoked`, `expired` (optional) |
+| `status`   | string | `active`, `revoked`, or `expired` — single value only (optional) |
 | `page`     | int    | Page number (default 1)             |
 | `per_page` | int    | Items per page (default 50, max 100)  |
 | `sort_by`  | string | Field to sort by: `created_at`, `last_used_at` (default: `created_at`) |
@@ -731,6 +744,11 @@ the database (not deleted) and remains visible in list endpoints with
 2. If already revoked, return HTTP 200 (idempotent)
 3. Set `revoked_at = now()`, `revoked_by = current_user.id` (the admin)
 4. Return HTTP 200
+
+**Self-revocation**: an admin may revoke the API key authenticating the
+current request. This succeeds because authentication validation occurs
+before handler execution. The key is revoked and all subsequent requests
+using it are rejected.
 
 **Response** (200):
 
@@ -913,6 +931,14 @@ attributed to the agent's own identity.
     immediately)
   - Detection of session theft is not a goal for this tool; prevention
     via the cookie flags above is the primary defense
+- **OIDC state parameter not single-use (accepted risk)**: the OIDC
+  `state` parameter is HMAC-signed with a timestamp for CSRF protection,
+  but it is not stored server-side or tracked as consumed. Replay
+  protection relies on the IdP's single-use authorization code. If the
+  IdP has a code-replay vulnerability, Sentinel has no independent
+  defense. This is accepted given enterprise IdP reliability (id.suse.com
+  / Azure AD) and the operational cost of maintaining a consumed-states
+  cache for a low-probability attack vector.
 
 ## Cross-references
 

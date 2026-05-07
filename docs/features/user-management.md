@@ -930,7 +930,7 @@ handling is required.
   additional friction would not meaningfully improve security given that
   a compromised admin already has full system access
 - **No notification on admin password reset (accepted risk)**: when an
-  admin resets a user's password via `PUT /api/v1/admin/users/{user}/password`,
+  admin resets a user's password via `POST /api/v1/admin/users/{user}/password`,
   the target user receives no notification (no email, no in-app alert).
   A compromised admin could covertly take over an account. This is
   accepted because: (1) the admin trust level already implies full system
