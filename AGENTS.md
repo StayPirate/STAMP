@@ -103,7 +103,7 @@ check its current content on disk to avoid losing existing data.
 ## External File Loading
 
 CRITICAL: When you encounter a reference to a specification file (e.g.,
-`docs/features/cve-tracking.md`), use your Read tool to load it. Treat the
+`docs/features/tickets/cve-tracking.md`), use your Read tool to load it. Treat the
 content as mandatory instructions that override defaults. Load specifications
 on a need-to-know basis — do NOT preemptively load all references.
 
@@ -143,7 +143,7 @@ the location is correct according to this map:
 
 | Content Type               | Location                          |
 |----------------------------|-----------------------------------|
-| Feature specifications     | `docs/features/<feature-name>.md` |
+| Feature specifications     | `docs/features/<domain>/<feature-name>.md` |
 | General architecture       | `docs/architecture.md`            |
 | Configuration reference    | `docs/configuration.md`           |
 | Data schema                | `docs/data-model.md`              |
@@ -336,7 +336,7 @@ Before considering any ticket-related code change complete:
 
 1. Identify which ticket mutations the code performs
 2. Verify that a `TicketEvent` is created for each mutation, with:
-   - Correct `event_type` per the contract in `docs/features/ticket-history.md`
+   - Correct `event_type` per the contract in `docs/features/tickets/ticket-history.md`
    - `old_value` and `new_value` populated where applicable
    - `user_id` set for user-initiated actions, `NULL` for system actions
    - `comment` populated for automated events with a system description
@@ -348,12 +348,12 @@ Before considering any ticket-related code change complete:
    - Correct `user_id` (user vs `NULL` for system)
 5. If the change introduces a new type of ticket mutation not covered by
    an existing `TicketEventType`, STOP and propose an update to
-   `docs/data-model.md` and `docs/features/ticket-history.md` before
+   `docs/data-model.md` and `docs/features/tickets/ticket-history.md` before
    proceeding with the implementation
 6. After implementation, invoke `@ticket-integrity-reviewer` to verify:
    - All mutations are covered by `TicketEvent` records
    - Field values comply with the contract in
-     `docs/features/ticket-history.md`
+     `docs/features/tickets/ticket-history.md`
    - Events share the same database transaction as the mutation
 7. When creating or modifying a feature spec in `docs/features/` that
    describes ticket operations, invoke `@ticket-integrity-reviewer` to verify
@@ -411,7 +411,7 @@ notifications, or any future logic) MUST:
 3. If no assessment of the default version exists from any provider, do
    NOT fall back to a different CVSS version
 
-See `docs/features/cvss-scoring.md` for the full specification.
+See `docs/features/tickets/cvss-scoring.md` for the full specification.
 
 ### 14. Fetcher base class compliance
 
@@ -444,7 +444,7 @@ After creating or modifying any fetcher, invoke
 `@fetcher-compliance-reviewer` to verify correct integration with the
 fetcher infrastructure.
 
-See `docs/features/fetcher-infrastructure.md` for the full specification.
+See `docs/features/platform/fetcher-infrastructure.md` for the full specification.
 
 ### 15. Specification coherence
 
@@ -492,7 +492,7 @@ Before considering any ticket-related code change complete:
 3. If there is no suitable function in `ticket_mutations`, add one
    before proceeding
 4. Verify that the architectural integration tests (see
-   `docs/features/tickets.md`, Architectural Test Requirement) cover
+   `docs/features/tickets/tickets.md`, Architectural Test Requirement) cover
    the new or modified operation
 
 The goal is to ensure that ticket status is always consistent with its
@@ -569,7 +569,7 @@ This ensures that:
 - The async pattern is maintained consistently (service is async; sync
   callers use `asyncio.run()`)
 
-See `docs/features/user-lifecycle.md` for the full service contract.
+See `docs/features/identity/user-lifecycle.md` for the full service contract.
 
 ### 20. API convention conformity
 

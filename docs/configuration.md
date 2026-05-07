@@ -13,7 +13,7 @@ start if any is missing.
 
 | Env Var | Type | Description | Defined in |
 |---------|------|-------------|------------|
-| `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/authentication.md` |
+| `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/identity/authentication.md` |
 | `DATABASE_URL` | string | PostgreSQL async connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) | `docs/architecture.md` |
 
 ## Required Connection Settings
@@ -47,54 +47,54 @@ At startup, the application logs an INFO message indicating SSO status:
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `SSO_ISSUER_URL` | string | — | OIDC issuer URL (e.g. `https://id.suse.com`). Required for SSO. | `docs/features/sso-authentication.md` |
-| `SSO_CLIENT_ID` | string | — | OIDC client ID. Required for SSO. | `docs/features/sso-authentication.md` |
-| `SSO_CLIENT_SECRET` | string | — | OIDC client secret. Required for SSO. | `docs/features/sso-authentication.md` |
-| `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL. Required for SSO. | `docs/features/sso-authentication.md` |
-| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `ldap_uid`). Only relevant when SSO is enabled. | `docs/features/sso-authentication.md` |
+| `SSO_ISSUER_URL` | string | — | OIDC issuer URL (e.g. `https://id.suse.com`). Required for SSO. | `docs/features/identity/sso-authentication.md` |
+| `SSO_CLIENT_ID` | string | — | OIDC client ID. Required for SSO. | `docs/features/identity/sso-authentication.md` |
+| `SSO_CLIENT_SECRET` | string | — | OIDC client secret. Required for SSO. | `docs/features/identity/sso-authentication.md` |
+| `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL. Required for SSO. | `docs/features/identity/sso-authentication.md` |
+| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `ldap_uid`). Only relevant when SSO is enabled. | `docs/features/identity/sso-authentication.md` |
 
 ## Authentication
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/authentication.md` |
-| `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. After this period from login, the session expires unconditionally regardless of activity. Must be >= 1; values > 365 log a warning | `docs/features/authentication.md` |
-| `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1 | `docs/features/local-authentication.md` |
-| `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1 | `docs/features/local-authentication.md` |
+| `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/identity/authentication.md` |
+| `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. After this period from login, the session expires unconditionally regardless of activity. Must be >= 1; values > 365 log a warning | `docs/features/identity/authentication.md` |
+| `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1 | `docs/features/identity/local-authentication.md` |
+| `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1 | `docs/features/identity/local-authentication.md` |
 
 
 ## IBS (Internal Build Service)
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `IBS_API_URL` | string | `https://api.suse.de` | IBS API base URL | `docs/features/obs-integration.md` |
-| `IBS_USERNAME` | string | — | IBS HTTP Basic Auth username | `docs/features/obs-integration.md` |
-| `IBS_PASSWORD` | string | — | IBS HTTP Basic Auth password | `docs/features/obs-integration.md` |
-| `IBS_DOWNLOAD_BASE_URL` | string | `https://download.suse.de/ibs` | HTTP download base for repository data | `docs/features/obs-integration.md` |
+| `IBS_API_URL` | string | `https://api.suse.de` | IBS API base URL | `docs/features/integrations/ibs-integration.md` |
+| `IBS_USERNAME` | string | — | IBS HTTP Basic Auth username | `docs/features/integrations/ibs-integration.md` |
+| `IBS_PASSWORD` | string | — | IBS HTTP Basic Auth password | `docs/features/integrations/ibs-integration.md` |
+| `IBS_DOWNLOAD_BASE_URL` | string | `https://download.suse.de/ibs` | HTTP download base for repository data | `docs/features/integrations/ibs-integration.md` |
 
 ## IBS RabbitMQ Consumer
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL | `docs/features/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer process | `docs/features/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys | `docs/features/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay (seconds) | `docs/features/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay (seconds) | `docs/features/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer process | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 
 ## LDAP Directory Sync
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/ldap-directory.md` |
-| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/ldap-directory.md` |
-| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/ldap-directory.md` |
+| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ldap-directory.md` |
+| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ldap-directory.md` |
+| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/identity/ldap-directory.md` |
 
 ## External APIs
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching | `docs/features/cve-tracking.md` |
+| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching | `docs/features/tickets/cve-tracking.md` |
 
 ## Application
 
@@ -111,7 +111,7 @@ managed via the Admin API (`PATCH /api/v1/admin/settings`).
 
 | Setting | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `default_cvss_version` | string | `"3.1"` | System-wide CVSS version for severity and eligibility. Allowed: `"3.1"`, `"4.0"` | `docs/features/cvss-scoring.md` |
+| `default_cvss_version` | string | `"3.1"` | System-wide CVSS version for severity and eligibility. Allowed: `"3.1"`, `"4.0"` | `docs/features/tickets/cvss-scoring.md` |
 
 ## Notes for Operators
 

@@ -111,7 +111,7 @@ Shows codestreams where:
 
 The "Progress" column shows the most advanced submission chain for that
 codestream, displayed in the same visual style as the ticket detail page
-(see `docs/features/submission-tracking.md`, UI section):
+(see `docs/features/packages/ibs-submission-tracking.md`, UI section):
 
 - `SR#XXXXX` — SR submitted, pending review (state: `open`)
 - `SR#XXXXX → SM#XXXXX` — SR accepted, incident created, no RR yet
@@ -524,7 +524,7 @@ The dashboard uses existing UI components from the design system:
 - `Table` — for listing items within each tab/card
 - `Badge` — for severity, status, and submission state indicators
 - Submission chain display — reuses the same visual component from the
-  ticket detail affectedness tree (see `docs/features/submission-tracking.md`)
+  ticket detail affectedness tree (see `docs/features/packages/ibs-submission-tracking.md`)
 
 ### Visual Emphasis
 

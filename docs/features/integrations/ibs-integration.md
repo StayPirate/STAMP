@@ -32,7 +32,7 @@ release detection (see `docs/features/ibs-codestream-release-detection.md`),
 product-level release detection (see
 `docs/features/ibs-product-release-detection.md`), package
 bugowner resolution (see `docs/features/package-bugowner.md`), and
-submission request tracking (see `docs/features/submission-tracking.md`):
+submission request tracking (see `docs/features/packages/ibs-submission-tracking.md`):
 
 #### Project Source Info
 
@@ -117,7 +117,7 @@ additional filters:
 - `package` — filter by target package name
 - `created_at_from` — ISO 8601 datetime lower bound
 
-See `docs/features/submission-tracking.md` for full usage details.
+See `docs/features/packages/ibs-submission-tracking.md` for full usage details.
 
 #### Request Detail
 
@@ -155,7 +155,7 @@ Used by `correlate_submission_request` to extract CVE-IDs from
 submission requests. Only issues with `state="added"` and
 `tracker="cve"` are processed.
 
-See `docs/features/submission-tracking.md` for the correlation logic.
+See `docs/features/packages/ibs-submission-tracking.md` for the correlation logic.
 
 ### Data Model
 
@@ -218,7 +218,7 @@ Full procedure is documented in
   This task is a `BaseFetcher` subclass with `name`, `description`, and
   `default_schedule` attributes. Serves as a catch-up mechanism for
   events missed by the `IBSEventConsumer`. See
-  `docs/features/fetcher-infrastructure.md` for the BaseFetcher
+  `docs/features/platform/fetcher-infrastructure.md` for the BaseFetcher
   infrastructure and `docs/features/ibs-rabbitmq-integration.md` for the
   real-time consumer that complements this periodic fetcher.
 - `create_ticket_from_detection`: on-demand task enqueued when a CVE fix
@@ -227,7 +227,7 @@ Full procedure is documented in
   NVD, creates the ticket, and resolves packages via SMELT.
 - `sync_requests` (`RequestSyncFetcher`): periodic task (every 24 hours
   at 02:30 UTC) that discovers missed submission/release requests and
-  reconciles state drift. See `docs/features/submission-tracking.md`.
+  reconciles state drift. See `docs/features/packages/ibs-submission-tracking.md`.
 - `correlate_submission_request`: on-demand task that calls the IBS
   request diff API, extracts CVE-IDs, and creates join records linking
   submissions to tickets.

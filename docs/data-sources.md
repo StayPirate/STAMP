@@ -267,12 +267,12 @@ whether update advisories have been published to product repositories.
   - `GET /group/{group_name}` — group details (email, member list)
 - **Integration status**: **Active**. Codestream-level release detection
   uses two complementary mechanisms: the `IBSEventConsumer` (real-time
-  via IBS RabbitMQ, see `docs/features/ibs-rabbitmq-integration.md`) and
+  via IBS RabbitMQ, see `docs/features/integrations/ibs-rabbitmq-integration.md`) and
   the periodic `check_codestream_releases` fetcher (catch-up every 24
   hours at 02:00 UTC). Product-level release detection
   (`check_product_releases`) runs as a periodic `BaseFetcher` subclass.
   Package bugowner resolution uses the owner search, person, and group
-  endpoints — see `docs/features/package-bugowner.md`
+  endpoints — see `docs/features/packages/package-bugowner.md`
 - **Documentation**: https://build.suse.de (internal). The OBS API
   documentation at https://api.opensuse.org/apidocs/ applies to IBS as
   both run the same software
@@ -283,11 +283,11 @@ whether update advisories have been published to product repositories.
   (`openSUSE/open-build-service` on GitHub — particularly
   `src/api/app/controllers/` for endpoint logic and `src/api/config/routes.rb`
   for route definitions) rather than relying solely on the published docs
-- **See also**: `docs/features/obs-integration.md`,
-  `docs/features/package-tracking.md`,
-  `docs/features/ibs-codestream-release-detection.md`,
-  `docs/features/ibs-product-release-detection.md`,
-  `docs/features/package-bugowner.md`
+- **See also**: `docs/features/integrations/ibs-integration.md`,
+  `docs/features/packages/package-tracking.md`,
+  `docs/features/packages/ibs-codestream-release-detection.md`,
+  `docs/features/packages/ibs-product-release-detection.md`,
+  `docs/features/packages/package-bugowner.md`
 
 ### OBS (Open Build Service)
 
@@ -420,7 +420,7 @@ near-real-time reactivity.
   (`check_codestream_releases`, every 24 hours at 02:00 UTC) serves as
   a catch-up mechanism for events missed during consumer downtime, since
   queues are exclusive and transient. See
-  `docs/features/ibs-rabbitmq-integration.md` for the full specification
+  `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification
 - **Documentation**: https://rabbit.opensuse.org (OBS),
   https://github.com/openSUSE/suse_msg/blob/master/amqp_infra.md,
   OBS event types: https://github.com/openSUSE/open-build-service/tree/master/src/api/app/models/event
@@ -475,7 +475,7 @@ belong to which codestreams, and which repositories serve each product.
   from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
 - **Documentation**: https://smelt.suse.de (internal)
-- **See also**: `docs/features/package-tracking.md`
+- **See also**: `docs/features/packages/package-tracking.md`
 
 ### AIMAAS
 
@@ -500,8 +500,8 @@ security update.
   change, Sentinel re-evaluates eligibility for all active tickets
   referencing the affected products
 - **Documentation**: https://aimaas.suse.de (internal)
-- **See also**: `docs/features/package-tracking.md`,
-  `docs/features/cvss-scoring.md`
+- **See also**: `docs/features/packages/package-tracking.md`,
+  `docs/features/tickets/cvss-scoring.md`
 
 ---
 
@@ -535,7 +535,7 @@ source for identity data in Sentinel over the OpenLDAP instance.
 - **Integration status**: **Active**. Sentinel syncs employee data daily via
   the `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
   `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
-  role mapping). See `docs/features/ldap-directory.md` for the full
+  role mapping). See `docs/features/identity/ldap-directory.md` for the full
   specification
 - **Documentation**: Internal — no public documentation available
 
@@ -714,7 +714,7 @@ normalizes all forms to the canonical `bsc#` prefix.
 All `BaseFetcher` subclasses are automatically registered in the fetcher
 registry. The table below lists all fetchers — both active and planned —
 with their schedule, authentication requirements, rate limits, and data
-ingested. See `docs/features/fetcher-infrastructure.md` for infrastructure
+ingested. See `docs/features/platform/fetcher-infrastructure.md` for infrastructure
 details.
 
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested |
@@ -738,7 +738,7 @@ details.
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS
 RabbitMQ) is a continuous service, not a `BaseFetcher` subclass. See
-`docs/features/ibs-rabbitmq-integration.md`.
+`docs/features/integrations/ibs-rabbitmq-integration.md`.
 
 ### New Data Structures
 

@@ -443,7 +443,7 @@ Only issues with `state="added"` and `tracker="cve"` are processed.
 Issues with `state="changed"` (pre-existing CVE references in diff
 context) and `state="deleted"` (removed references) are skipped. This
 filtering is consistent with `CodestreamReleaseDetector` on the source
-diff endpoint (see `docs/features/obs-integration.md`).
+diff endpoint (see `docs/features/integrations/ibs-integration.md`).
 
 Verified empirically on IBS (2026-04-29) with SR#407603: a changelog
 containing six pre-existing CVE references correctly reports them as
@@ -1064,7 +1064,7 @@ mechanisms or credentials:
   `GET /api/v1/tickets/{ticket_id}` — no additional role required.
 - **IBS API calls**: use the same IBS credentials already configured
   for `CodestreamReleaseDetector` and the existing `IBSEventConsumer`
-  (see `ibs-rabbitmq-integration.md` and `obs-integration.md`).
+  (see `ibs-rabbitmq-integration.md` and `ibs-integration.md`).
 - **No sensitive data exposed**: endpoints return only IBS request
   numbers, package names, codestream names, and states.
 
@@ -1072,7 +1072,7 @@ mechanisms or credentials:
 
 - `ibs-rabbitmq-integration.md` — consumer architecture, connection
   management, routing key bindings
-- `obs-integration.md` — IBS REST API and diff API
+- `ibs-integration.md` — IBS REST API and diff API
 - `package-tracking.md` — `TicketPackageCodestream` model,
   `add_package_to_ticket` trigger
 - `tickets.md` — ticket model and access rules
