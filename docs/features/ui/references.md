@@ -46,7 +46,7 @@ twice on the same ticket.
 ### source_reference_url_pattern
 
 CVE fetchers that inherit from `BaseFetcher` (see
-`docs/features/fetcher-infrastructure.md`) have an optional class attribute
+`docs/features/platform/fetcher-infrastructure.md`) have an optional class attribute
 `source_reference_url_pattern` that defines the URL pattern for the
 fetcher's human-readable CVE page.
 
@@ -401,6 +401,6 @@ does not include reference-related event types.
 ## Dependencies
 
 - `docs/features/cve-tracking.md` — CVE ingestion flow creates references
-- `docs/features/fetcher-infrastructure.md` — `BaseFetcher` contract for
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` contract for
   `source_reference_url_pattern`
 - `docs/features/pages.md` — Ticket Detail page displays references

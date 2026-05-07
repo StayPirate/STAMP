@@ -39,7 +39,7 @@ The mechanism is based on MD5 checksum comparison (inspired by SMASH's
 
 ### IBS Endpoints
 
-The detector uses two IBS API calls (see `docs/features/obs-integration.md`
+The detector uses two IBS API calls (see `docs/features/integrations/ibs-integration.md`
 for full endpoint documentation):
 
 1. **Source info** — `GET /source/{project}?view=info` — returns a
@@ -196,7 +196,7 @@ All codestream-level open items have been resolved:
 - **IBS endpoint** — Resolved: `GET /source/{project}?view=info` for
   change detection, `POST /source/{project}/{package}?cmd=diff` for CVE
   extraction. See [Detection Mechanism](#detection-mechanism) above
-  and `docs/features/obs-integration.md`.
+  and `docs/features/integrations/ibs-integration.md`.
 - **Match strategy** — Resolved: the IBS diff endpoint provides an
   explicit `CVE -> source package` link, so the Advisory ↔ Source Package
   Match chain (used by the product-level detector) is not needed at the

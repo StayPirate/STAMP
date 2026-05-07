@@ -98,8 +98,8 @@ coordination across multiple maintained distribution versions.
   (`app/services/base_fetcher.py`), which provides automatic execution
   tracking, metric collection, and registry. The fetcher registry feeds
   a dashboard that shows execution history, performance charts, and
-   operational controls. See `docs/features/fetcher-infrastructure.md`
-   for the base class contract and `docs/features/fetcher-dashboard.md`
+   operational controls. See `docs/features/platform/fetcher-infrastructure.md`
+   for the base class contract and `docs/features/platform/fetcher-dashboard.md`
    for the monitoring dashboard.
 
 ### Database (PostgreSQL)
@@ -135,18 +135,18 @@ active source. See the data sources catalog for the full picture.
   near-real-time codestream-level release detection. The periodic polling
   fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
   serves as a catch-up mechanism for events missed during downtime. See
-  `docs/features/ibs-rabbitmq-integration.md` for the full specification.
+  `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification.
 - **Submission tracking**: the same RabbitMQ consumer also processes
   `suse.obs.request.create` and `suse.obs.request.state_change` events to
   track IBS submission requests (SRs) and release requests (RRs),
   providing VAs visibility into the MU process progression. A periodic
   fetcher (`RequestSyncFetcher`, 02:30 UTC) handles catch-up. See
-  `docs/features/submission-tracking.md`.
+  `docs/features/packages/ibs-submission-tracking.md`.
 - **Package bugowner resolution**: Sentinel queries IBS to resolve the
   bugowner (maintainer) of each source package tracked in tickets. This
   data is cached locally and maintained by a periodic fetcher. See
-  `docs/features/package-bugowner.md`.
-- See `docs/features/package-tracking.md` for codestream/product concepts
+  `docs/features/packages/package-bugowner.md`.
+- See `docs/features/packages/package-tracking.md` for codestream/product concepts
 
 #### SMELT
 
@@ -162,7 +162,7 @@ active source. See the data sources catalog for the full picture.
     in Reactive LTSS phase. All pages MUST be fetched.
 - Target repository names from `maintainedpackage` are matched to local
   Product records via the ProductRepository table
-- See `docs/features/package-tracking.md` for full integration details
+- See `docs/features/packages/package-tracking.md` for full integration details
 
 #### AIMAAS
 
@@ -200,8 +200,8 @@ active source. See the data sources catalog for the full picture.
 - Connection: anonymous bind on port 636 (LDAPS — TLS validated against
   SUSE Trust Root CA committed at `certs/SUSE_Trust_Root.crt`). TLS is
   required because `MEMBEROF` data drives role assignment including admin
-  privileges — see security rationale in `docs/features/ldap-directory.md`
-- See `docs/features/ldap-directory.md` for the full specification
+  privileges — see security rationale in `docs/features/identity/ldap-directory.md`
+- See `docs/features/identity/ldap-directory.md` for the full specification
 
 ## Data Flow
 
@@ -221,7 +221,7 @@ active source. See the data sources catalog for the full picture.
 Tickets can also be created manually by Vulnerability Analysts without an
 associated CVE — for example, to track security issues reported through
 internal bug trackers before a CVE-ID is assigned. A CVE can be
-associated with the ticket later. See `docs/features/tickets.md` for
+associated with the ticket later. See `docs/features/tickets/tickets.md` for
 the full ticket specification.
 
 ### Package Affectedness Flow
@@ -240,24 +240,24 @@ the full ticket specification.
    if a product later becomes eligible again, the codestream reverts to
    AFFECTED
 6. VA can override individual product statuses when needed
-7. See `docs/features/package-tracking.md` for full status propagation rules
+7. See `docs/features/packages/package-tracking.md` for full status propagation rules
 
 ### Release Tracking Flow
 
 Release detection runs on two **independent** levels — codestream and
 product — through different mechanisms. See
-`docs/features/ibs-codestream-release-detection.md` and
-`docs/features/ibs-product-release-detection.md` for the
+`docs/features/packages/ibs-codestream-release-detection.md` and
+`docs/features/packages/ibs-product-release-detection.md` for the
 authoritative details.
 
 1. Codestream-level detection uses two complementary mechanisms:
    the `IBSEventConsumer` (real-time via IBS RabbitMQ) and the periodic
    `check_codestream_releases` fetcher (catch-up every 24 hours at
    02:00 UTC). Both share the same MD5 cache to avoid duplicate work.
-   See `docs/features/ibs-rabbitmq-integration.md`.
+   See `docs/features/integrations/ibs-rabbitmq-integration.md`.
 2. **Codestream level**: the consumer or fetcher queries IBS diff endpoints
-   (see `docs/features/obs-integration.md` and
-   `docs/features/ibs-codestream-release-detection.md`) to detect whether
+   (see `docs/features/integrations/ibs-integration.md` and
+   `docs/features/packages/ibs-codestream-release-detection.md`) to detect whether
    the fix for the ticket's CVE has landed in the codestream IBS project.
    When detected, `TicketPackageCodestream.status` is set to `RELEASED`.
 3. **Product level**: workers fetch `updateinfo.xml` from each product's
@@ -411,4 +411,4 @@ an orchestrated deployment.
 - Role-based access control (RBAC) for all operations
 - API authentication required for all non-public endpoints
 - Secrets managed via environment variables, never in code
-- See `docs/features/rbac.md` for detailed permission model
+- See `docs/features/identity/rbac.md` for detailed permission model

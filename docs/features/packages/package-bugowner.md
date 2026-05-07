@@ -21,7 +21,7 @@ This feature enables:
 This specification is the authoritative source for bugowner resolution,
 caching, and maintenance. See `docs/features/package-tracking.md` for
 package affectedness and release tracking. See
-`docs/features/obs-integration.md` for IBS API integration details.
+`docs/features/integrations/ibs-integration.md` for IBS API integration details.
 
 ## Domain Concepts
 
@@ -109,7 +109,7 @@ See `docs/data-model.md` for the full column listing.
 
 Sentinel uses three IBS API endpoints to resolve bugowner information. All
 endpoints use the same authentication as existing IBS integrations (see
-`docs/features/obs-integration.md`).
+`docs/features/integrations/ibs-integration.md`).
 
 ### Owner Search
 

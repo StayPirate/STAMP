@@ -110,8 +110,8 @@ here with the required access level and a link to the owning spec.
 | GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys` | Authenticated (session only) | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md) |
-| GET | `/api/v1/admin/settings` | Admin | [admin](admin.md) |
-| PATCH | `/api/v1/admin/settings` | Admin | [admin](admin.md) |
+| GET | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md) |
+| PATCH | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md) |
 | GET | `/api/v1/admin/api-keys` | Admin | [authentication](authentication.md) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | Admin | [authentication](authentication.md) |
 | PATCH | `/api/v1/admin/users/{user}` | Admin | [user-management](user-management.md) |

@@ -81,7 +81,7 @@ Both request events share the same payload structure:
 | `who`         | string | User who performed the state change        |
 
 For full payload details and processing logic, see
-`docs/features/submission-tracking.md`, sections "Data Sources" and
+`docs/features/packages/ibs-submission-tracking.md`, sections "Data Sources" and
 "Processing Pipelines".
 
 The routing keys for binding are `suse.obs.package.commit`,
@@ -138,7 +138,7 @@ Configuration:
 The consumer dispatches messages based on routing key. The
 `suse.obs.package.commit` pipeline is described below. The
 `suse.obs.request.create` and `suse.obs.request.state_change` pipelines
-are specified in `docs/features/submission-tracking.md`.
+are specified in `docs/features/packages/ibs-submission-tracking.md`.
 
 For each `suse.obs.package.commit` event:
 
@@ -393,16 +393,16 @@ connection and process the full event stream.
   or modify the exchange/queue configuration
 - IBS API credentials for diff requests use the same `IBS_USERNAME` /
   `IBS_PASSWORD` environment variables as the periodic fetcher (see
-  `docs/features/obs-integration.md`)
+  `docs/features/integrations/ibs-integration.md`)
 
 ## Dependencies
 
 - `docs/features/package-tracking.md`: defines the codestream-level
   detection logic (Case A/B/C), `CodestreamPackageChecksum` cache, and
   `add_package_to_ticket` function used by the consumer
-- `docs/features/obs-integration.md`: defines the `IBSClient` service
-  used for diff requests
-- `docs/features/fetcher-infrastructure.md`: defines `BaseFetcher`
+- `docs/features/integrations/ibs-integration.md`: defines the `IBSClient` service
+   used for diff requests
+- `docs/features/platform/fetcher-infrastructure.md`: defines `BaseFetcher`
   infrastructure (referenced for contrast — the consumer is NOT a
   `BaseFetcher`)
 - `docs/data-sources.md`: documents the IBS RabbitMQ event bus

@@ -222,10 +222,10 @@ Represents a Common Vulnerability and Exposure entry.
 | id             | UUID         | PK                   | Internal identifier             |
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
 | description    | TEXT         |                      | Vulnerability description       |
-| severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
+| severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMP    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMP    |                      | Date CVE was last modified     |
-| nvd_status     | VARCHAR      |                      | NVD vulnerability status (e.g., `Analyzed`, `Rejected`, `Modified`). Updated during NVD sync. See `docs/features/cve-tracking.md` for handling rules. |
+| nvd_status     | VARCHAR      |                      | NVD vulnerability status (e.g., `Analyzed`, `Rejected`, `Modified`). Updated during NVD sync. See `docs/features/tickets/cve-tracking.md` for handling rules. |
 | created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp        |
 
@@ -249,7 +249,7 @@ Tracks the origin of CVE data from different sources.
 Stores individual CVSS assessments from multiple providers for each CVE.
 A CVE can have assessments from NVD, CNA vendors, Red Hat, and SUSE (VA
 input). Each provider may supply assessments for multiple CVSS versions.
-See `docs/features/cvss-scoring.md` for the full specification.
+See `docs/features/tickets/cvss-scoring.md` for the full specification.
 
 | Column        | Type          | Constraints                            | Description                        |
 |---------------|---------------|----------------------------------------|------------------------------------|
@@ -276,7 +276,7 @@ See `docs/features/cvss-scoring.md` for the full specification.
 ### SystemSetting
 
 Key-value store for system-wide configuration. See
-`docs/features/admin.md` for details.
+`docs/features/platform/admin.md` for details.
 
 | Column     | Type        | Constraints        | Description                      |
 |------------|-------------|--------------------|----------------------------------|
@@ -295,7 +295,7 @@ Key-value store for system-wide configuration. See
 Represents a SUSE product (base products, LTSS variants, ESPOS variants,
 etc.). Each variant is a separate product with its own CPE. Synced
 periodically from SMELT (product list and repositories) and enriched with
-lifecycle data from AIMAAS. See `docs/features/package-tracking.md` for
+lifecycle data from AIMAAS. See `docs/features/packages/package-tracking.md` for
 full details.
 
 | Column               | Type         | Constraints          | Description                        |
@@ -312,7 +312,7 @@ full details.
 | end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
 | end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
 | end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, Affected status is always green (AFFECTED_RESOLVED) regardless of CVSS. |
-| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
+| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/packages/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
 | smelt_synced_at      | TIMESTAMP    |                      | Last sync from SMELT               |
 | aimaas_synced_at     | TIMESTAMP    |                      | Last sync from AIMAAS              |
 | created_at           | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp          |
@@ -336,7 +336,7 @@ Product records. Synced from SMELT alongside products.
 ### TicketPackageCodestream
 
 Records the affectedness status of a source package in a specific codestream
-within the context of a ticket. See `docs/features/package-tracking.md` for
+within the context of a ticket. See `docs/features/packages/package-tracking.md` for
 status propagation rules.
 
 | Column          | Type      | Constraints                  | Description                        |
@@ -355,7 +355,7 @@ status propagation rules.
 
 Records the affectedness status of a source package for a specific product
 within the context of a ticket and codestream. See
-`docs/features/package-tracking.md` for status inheritance and override rules.
+`docs/features/packages/package-tracking.md` for status inheritance and override rules.
 
 | Column                        | Type      | Constraints                                | Description                        |
 |-------------------------------|-----------|--------------------------------------------|------------------------------------|
@@ -388,7 +388,7 @@ Used by both TicketPackageCodestream and TicketPackageProduct.
 
 Platform users with role-based access. Users are populated from SUSE
 Active Directory via the `sync_ldap_directory` fetcher (see
-`docs/features/ldap-directory.md`). Users can hold zero, one, or
+`docs/features/identity/ldap-directory.md`). Users can hold zero, one, or
 multiple roles via the UserRole junction table. A user with no roles has
 the same access as an unauthenticated user (read-only on public data).
 
@@ -399,7 +399,7 @@ the same access as an unauthenticated user (read-only on public data).
 | email          | VARCHAR     | UNIQUE, NOT NULL   | Email address (from AD `mail`)   |
 | full_name      | VARCHAR     |                    | Display name (from AD `cn`)      |
 | active         | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| password_hash  | VARCHAR     | nullable           | Argon2id hash of password. NULL for SSO users. See `docs/features/local-authentication.md` |
+| password_hash  | VARCHAR     | nullable           | Argon2id hash of password. NULL for SSO users. See `docs/features/identity/local-authentication.md` |
 | ldap_uid       | VARCHAR     | UNIQUE, nullable   | AD `sAMAccountName`. NULL for local users |
 | ldap_dn        | VARCHAR     | nullable           | Full AD distinguished name       |
 | manager_uid    | VARCHAR     | nullable           | `ldap_uid` of the direct line manager (resolved from AD `manager` DN) |
@@ -411,8 +411,8 @@ the same access as an unauthenticated user (read-only on public data).
 **Check constraint**: `chk_user_auth_exclusive` —
 `(ldap_uid IS NOT NULL AND password_hash IS NULL) OR (ldap_uid IS NULL AND password_hash IS NOT NULL)`
 — enforces mutual exclusivity: SSO users cannot have a password, local
-users must have a password. See `docs/features/user-management.md`
-(Business Rule 5) and `docs/features/local-authentication.md`.
+users must have a password. See `docs/features/identity/user-management.md`
+(Business Rule 5) and `docs/features/identity/local-authentication.md`.
 
 ### UserRole
 
@@ -423,7 +423,7 @@ was derived from that group's RoleMapping; if it contains the sentinel
 value `_manual`, the role was assigned directly by an admin or CLI.
 Roles with `ad_group_cn != '_manual'` are managed by the LDAP sync
 process and cannot be removed via the API. See
-`docs/features/ldap-directory.md`.
+`docs/features/identity/ldap-directory.md`.
 
 | Column       | Type        | Constraints                  | Description                      |
 |--------------|-------------|------------------------------|----------------------------------|
@@ -456,7 +456,7 @@ Stores the mapping rules between Active Directory groups and Sentinel roles.
 Configured by admins via the UI or API. When a mapping is created or
 deleted, roles are applied or revoked immediately. During the daily LDAP
 sync, existing mappings are re-evaluated against current AD group
-membership. See `docs/features/ldap-directory.md`.
+membership. See `docs/features/identity/ldap-directory.md`.
 
 | Column       | Type        | Constraints                  | Description                        |
 |--------------|-------------|------------------------------|------------------------------------|
@@ -475,7 +475,7 @@ session record. The JWT references the session via the `session_id`
 claim. On every authenticated request, the middleware verifies that the
 session is still active. The maximum session lifetime (30 days) is
 enforced via the `session_deadline` claim in the JWT, not in this table.
-See `docs/features/authentication.md` (Session Management).
+See `docs/features/identity/authentication.md` (Session Management).
 
 | Column       | Type        | Constraints               | Description                                |
 |--------------|-------------|---------------------------|--------------------------------------------|
@@ -496,7 +496,7 @@ Celery Beat maintenance task. No session history is retained.
 API keys for programmatic access. Every user (SSO or local) can create
 API keys for non-interactive authentication (bots, AI agents, CI
 pipelines). The full key value is shown only once at creation; only the
-hash is stored. See `docs/features/authentication.md` (API Keys).
+hash is stored. See `docs/features/identity/authentication.md` (API Keys).
 
 | Column        | Type        | Constraints               | Description                                |
 |---------------|-------------|---------------------------|--------------------------------------------|
@@ -522,7 +522,7 @@ hash is stored. See `docs/features/authentication.md` (API Keys).
 Represents the internal workflow unit for a security issue. A ticket may
 optionally be associated with a CVE (0..1:1 relationship). Tickets track
 the triage and resolution lifecycle managed by vulnerability analysts (VAs).
-See `docs/features/tickets.md` for the full ticket specification.
+See `docs/features/tickets/tickets.md` for the full ticket specification.
 
 | Column            | Type        | Constraints                  | Description                          |
 |-------------------|-------------|------------------------------|--------------------------------------|
@@ -530,7 +530,7 @@ See `docs/features/tickets.md` for the full ticket specification.
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
 | status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets.md` (Severity Resolution) |
+| severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
 | previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
@@ -545,7 +545,7 @@ Soft-deleted tickets are excluded from all default queries. All sub-resources
 of a soft-deleted ticket (references, events, packages, codestreams, products)
 remain intact in the database but are inaccessible to non-admin users.
 
-**Status transitions**: see `docs/features/tickets.md` (Ticket Lifecycle)
+**Status transitions**: see `docs/features/tickets/tickets.md` (Ticket Lifecycle)
 for the full transition diagram, gates, and rules.
 
 Summary:
@@ -567,7 +567,7 @@ Summary:
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
 are handled automatically by the `ticket_mutations` module — see
-`docs/features/tickets.md` (Centralized Status Evaluation).
+`docs/features/tickets/tickets.md` (Centralized Status Evaluation).
 
 **Status categories**:
 - **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`
@@ -588,7 +588,7 @@ are handled automatically by the `ticket_mutations` module — see
 
 Stores external links associated with a ticket. References are created
 automatically by CVE fetchers during ingestion and can also be added
-manually by Vulnerability Analysts. See `docs/features/references.md` for
+manually by Vulnerability Analysts. See `docs/features/ui/references.md` for
 the full specification.
 
 | Column     | Type           | Constraints                  | Description                        |
@@ -656,7 +656,7 @@ checksums of packages in IBS codestream projects. By comparing the
 current `srcmd5` from IBS with the cached value, both mechanisms
 identify which packages have changed and need a diff analysis. The shared
 cache prevents duplicate work between the two detection paths. See
-`docs/features/ibs-rabbitmq-integration.md`.
+`docs/features/integrations/ibs-rabbitmq-integration.md`.
 
 This table contains no domain data — it is purely an operational artifact
 of the release detection mechanism.
@@ -679,7 +679,7 @@ records with the same `package_name` reference the same bugowner. Records
 are created on-demand when a package is first added to a ticket, maintained
 by the `sync_package_bugowners` fetcher, and removed when the package no
 longer appears in any active ticket. See
-`docs/features/package-bugowner.md` for the full specification.
+`docs/features/packages/package-bugowner.md` for the full specification.
 
 | Column         | Type        | Constraints          | Description                        |
 |----------------|-------------|----------------------|------------------------------------|
@@ -703,7 +703,7 @@ longer appears in any active ticket. See
 Stores the individual members of group bugowners. Populated only when
 the parent `PackageBugowner.bugowner_type` is `group`. Each record
 represents one member of the IBS group. See
-`docs/features/package-bugowner.md` for the full specification.
+`docs/features/packages/package-bugowner.md` for the full specification.
 
 | Column               | Type        | Constraints                          | Description                        |
 |----------------------|-------------|--------------------------------------|------------------------------------|
@@ -718,7 +718,7 @@ represents one member of the IBS group. See
 ### FetcherRun
 
 Records every execution of a fetcher. Primary data source for the fetcher
-dashboard charts. See `docs/features/fetcher-infrastructure.md` for full
+dashboard charts. See `docs/features/platform/fetcher-infrastructure.md` for full
 specification.
 
 | Column               | Type        | Constraints              | Description                        |
@@ -792,7 +792,7 @@ retention task after the 90-day individual retention window.
 ### SubmissionRequest
 
 Tracks an IBS submission request (type `maintenance_incident`) relevant
-to Sentinel. See `docs/features/submission-tracking.md`.
+to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 
 | Column             | Type         | Constraints              | Description                              |
 |--------------------|--------------|--------------------------|------------------------------------------|
@@ -814,7 +814,7 @@ to Sentinel. See `docs/features/submission-tracking.md`.
 ### ReleaseRequest
 
 Tracks an IBS release request (type `maintenance_release`) relevant
-to Sentinel. See `docs/features/submission-tracking.md`.
+to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 
 | Column             | Type         | Constraints              | Description                              |
 |--------------------|--------------|--------------------------|------------------------------------------|
@@ -870,4 +870,4 @@ TBD — will be defined based on query patterns during implementation.
 - The schema will evolve as features are implemented; this document must be
   updated before any schema changes
 - The `CVECVSSAssessment` table supports multiple providers and CVSS
-  versions — see `docs/features/cvss-scoring.md`
+  versions — see `docs/features/tickets/cvss-scoring.md`
