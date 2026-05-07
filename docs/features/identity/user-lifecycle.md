@@ -45,6 +45,39 @@ This distinction allows the service to enforce invariants for interactive
 users while preserving the ability of system processes to perform any
 operation.
 
+## LDAP User Data Ownership
+
+For LDAP users (`ldap_uid IS NOT NULL`), all identity fields (`email`,
+`full_name`, `ldap_dn`, `manager_uid`, `ldap_synced_at`) are managed
+exclusively by the LDAP sync fetcher. No human caller — whether via
+API or CLI — may modify these fields. The only legitimate consumer of
+`update_user()` for LDAP users is the sync process itself
+(`acting_user_id = None`).
+
+Fields managed by dedicated operations are not subject to this
+restriction:
+
+- `active` — managed by `deactivate_user()` / `reactivate_user()`,
+  available to admins
+- Roles — managed by `update_roles()`, available to admins for manual
+  roles (`ad_group_cn = '_manual'`)
+- `password_hash` — managed by `reset_password()`, which independently
+  blocks SSO users via `SSOUserPasswordError`
+
+Conversely, for local users (`ldap_uid IS NULL`), the LDAP-specific
+fields (`ldap_dn`, `manager_uid`, `ldap_synced_at`) are not applicable
+and must not be set — they have no source of truth outside of Active
+Directory.
+
+## Inactive User Management Principle
+
+Deactivation blocks login and revokes active sessions/keys, but does not
+prevent administrative modifications to the account. All management
+operations (`update_user`, `reset_password`, `update_roles`) remain
+available on inactive users via both CLI and API. This allows admins to
+prepare accounts before reactivation (e.g., assign appropriate roles, set
+a new password).
+
 ## Operations
 
 ### `create_user()`
@@ -105,11 +138,19 @@ their own business rules.
 **Behavior**:
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
-2. If `email` or `full_name` is provided, and `user.ldap_uid IS NOT NULL`,
-   and `acting_user_id` is not None: raise `SSOFieldReadOnlyError`
-3. If `email` is provided, validate uniqueness. If violated, raise
+2. If `user.ldap_uid IS NOT NULL` and `acting_user_id` is not None:
+   raise `LDAPFieldReadOnlyError`. Identity fields of LDAP users are
+   managed exclusively by directory sync (see LDAP User Data Ownership
+   above). The entire `update_user()` operation is blocked for human
+   callers on LDAP users — there is no identity field that an admin
+   should modify manually.
+3. If `user.ldap_uid IS NULL` and any of `ldap_dn`, `manager_uid`, or
+   `ldap_synced_at` is provided (not `_MISSING`): raise
+   `LDAPFieldReadOnlyError`. These fields are LDAP-specific and have
+   no source of truth for local users.
+4. If `email` is provided, validate uniqueness. If violated, raise
    `UserConflictError`
-4. Apply provided field updates. Optional parameters use a `_MISSING`
+5. Apply provided field updates. Optional parameters use a `_MISSING`
    sentinel as default to distinguish three states:
    - `_MISSING` (default): field is not modified
    - `None`: field is explicitly cleared to NULL in the database
@@ -120,7 +161,10 @@ their own business rules.
    when LDAP sync discovers that an AD attribute has been removed. The
    pattern follows Python's standard sentinel convention
    (`dataclasses.MISSING`).
-5. Return updated User
+
+    If all optional parameters are `_MISSING`, this is a no-op: no UPDATE
+   is issued. The User record returned is the one loaded in step 1.
+6. Return updated User
 
 **TicketEvent**: none
 
@@ -354,7 +398,7 @@ for the API-layer mapping.
 | `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role |
 | `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
-| `SSOFieldReadOnlyError` | Admin attempts to modify identity fields (`email`, `full_name`) for an SSO user. These fields are managed by directory sync; manual changes would be overwritten on the next sync cycle |
+| `LDAPFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an LDAP user — all identity fields are managed by directory sync; (2) any caller attempts to set LDAP-specific fields (`ldap_dn`, `manager_uid`, `ldap_synced_at`) on a local user — these fields are not applicable |
 | `SSOUserPasswordError` | Attempting to set or reset password for a non-local (SSO) user |
 | `PasswordValidationError` | Password does not meet length requirements (16–128 characters) |
 

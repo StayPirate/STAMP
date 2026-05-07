@@ -113,11 +113,15 @@ messages to stderr.
 
 ### `sentinel manage-user update`
 
-Updates an existing user account. This command works on any user (local
-or LDAP-synced), regardless of whether the user is currently active or
-inactive. Modifications to email, full_name, and roles are permitted on
-inactive users — this allows admins to prepare an account (e.g., assign
-appropriate roles) before reactivating it.
+Updates an existing user account. Identity field modifications
+(`--email`, `--full-name`) are only permitted on local users — LDAP
+users have their identity fields managed exclusively by directory sync
+(see LDAP User Data Ownership in
+`docs/features/identity/user-lifecycle.md`). Role changes and
+reactivation are permitted on both local and LDAP users. The command
+works regardless of whether the user is currently active or inactive
+(see Inactive User Management Principle in
+`docs/features/identity/user-lifecycle.md`).
 
 ```
 sentinel manage-user update \
@@ -145,37 +149,42 @@ sentinel manage-user update \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If no modification flags are provided (`--email`, `--full-name`,
+3. If the user is an LDAP user (`ldap_uid IS NOT NULL`) and `--email` or
+   `--full-name` is provided, exits with error:
+   `"Error: User '{username}' is managed by directory sync. Identity
+   fields cannot be modified manually."` (exit code 1). Role changes
+   and reactivation are still permitted on LDAP users.
+4. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
    `"No changes specified for user '{username}'."` and exits with code 0
-3. If any role appears in both `--add-role` and `--remove-role`, exits
+5. If any role appears in both `--add-role` and `--remove-role`, exits
    with error:
    `"Error: Role '{role}' cannot be both added and removed in the same
    invocation."`
-4. For each role value in `--add-role` and `--remove-role`, validates that
+6. For each role value in `--add-role` and `--remove-role`, validates that
    it is a recognized role. If not, exits with error:
    `"Error: Invalid role '{value}'. Valid roles are: {list}."`
    The list of valid roles is derived from the system's role definitions
    at runtime
-5. If `--email` is provided, validates email format — if not
+7. If `--email` is provided, validates email format — if not
    syntactically valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-6. If `--email` or `--full-name` is provided, delegates to
+8. If `--email` or `--full-name` is provided, delegates to
    `user_service.update_user()` with `acting_user_id = None`. If the
    service raises `UserConflictError` (duplicate email), exits with error
-7. For role changes (`--add-role`, `--remove-role`), delegates to
+9. For role changes (`--add-role`, `--remove-role`), delegates to
    `user_service.update_roles()` with `acting_user_id = None` and
    roles as `(role, '_manual')` pairs. The service handles validation
    (AD-derived role protection). Since `acting_user_id = None`, the
    self-removal guard does not apply (CLI is a system action)
-8. If `--reactivate` is provided: delegates to
+10. If `--reactivate` is provided: delegates to
    `user_service.reactivate_user()` with `acting_user_id = None`. If
    the user is already active, this is a no-op. See
    `docs/features/identity/user-lifecycle.md` for reactivation semantics.
    Reactivation is intentionally the LAST mutation step so that the
    account is fully configured (correct email, roles, etc.) before
    becoming active again
-9. Prints summary of changes. The summary lists only changes that were
+11. Prints summary of changes. The summary lists only changes that were
    actually applied (not no-ops). If all requested operations resulted
    in no-ops (e.g., reactivating an already-active user, adding a role
    the user already has, removing a role the user does not have), prints:
@@ -183,7 +192,7 @@ sentinel manage-user update \
    Otherwise prints:
    `"Updated user '{username}': {list of actual changes}."`
 
-**Error handling (fail-fast)**: steps 6–8 are executed sequentially. If
+**Error handling (fail-fast)**: steps 8–10 are executed sequentially. If
 any step fails, the command exits immediately (exit code 1) WITHOUT
 attempting subsequent steps. The error message MUST clearly report:
 
@@ -269,12 +278,8 @@ with TicketEvent, ticket assignments, and UserRole audit data. This is
 consistent with LDAP sync deactivation behavior. For full database
 cleanup in development environments, reset the database directly.
 
-**Inactive user management principle**: deactivation blocks login and
-revokes active sessions/keys, but does not prevent administrative
-modifications to the account. All management operations (update profile,
-set password, modify roles) remain available on inactive users via both
-CLI and API. This allows admins to prepare accounts before reactivation
-(e.g., assign appropriate roles, set a new password).
+**Inactive user management principle**: see
+`docs/features/identity/user-lifecycle.md` (Inactive User Management Principle).
 
 **Idempotency**: Idempotent. If the user is already inactive, the
 command prints an informational message and exits with code 0.
@@ -599,8 +604,12 @@ All endpoints below require the `admin` role unless otherwise stated.
 
 #### `PATCH /api/v1/admin/users/{user}`
 
-Update a user's profile fields. This endpoint operates on both active and
-inactive users (see "Inactive user management principle" above).
+Update a user's profile fields. Only local users (`ldap_uid IS NULL`)
+can be modified — LDAP users have their identity fields managed by
+directory sync (see LDAP User Data Ownership in
+`docs/features/identity/user-lifecycle.md`). This endpoint operates on
+both active and inactive users (see Inactive User Management Principle
+in `docs/features/identity/user-lifecycle.md`).
 
 **Request body** (all fields optional, at least one required):
 
@@ -619,10 +628,9 @@ inactive users (see "Inactive user management principle" above).
    `VALIDATION_ERROR`: `"At least one field must be provided."`
 3. If `email` is provided, validate format — if invalid, return HTTP 422
    with code `VALIDATION_ERROR`: `"Invalid email format."`
-4. If the user is an SSO user (`ldap_uid IS NOT NULL`) and `email` or
-   `full_name` is provided, return HTTP 409 with code
-   `USER_SSO_FIELD_READONLY`:
-   `"Cannot modify identity fields for SSO users. These fields are managed by the directory service."`
+4. If the user is an LDAP user (`ldap_uid IS NOT NULL`), return HTTP 409
+   with code `USER_LDAP_FIELD_READONLY`:
+   `"Cannot modify identity fields for LDAP users. These fields are managed by the directory service."`
 5. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
 6. If the service raises `UserConflictError` (duplicate email), return
@@ -684,9 +692,9 @@ wrapped in the standard `{"data": ...}` envelope (see
 #### `POST /api/v1/admin/users/{user}/password`
 
 Reset the password for a local user. This endpoint operates on both
-active and inactive local users (see "Inactive user management principle"
-above). Setting a password on an inactive user prepares credentials for
-reactivation.
+active and inactive local users (see Inactive User Management Principle
+in `docs/features/identity/user-lifecycle.md`). Setting a password on an
+inactive user prepares credentials for reactivation.
 
 **Request body**:
 

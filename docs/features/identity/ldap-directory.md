@@ -7,6 +7,12 @@ user pre-provisioning, autocomplete search, package bugowner enrichment,
 automatic role assignment from AD group membership, and manager-based
 ticket escalation when employees leave the organization.
 
+The LDAP sync fetcher is the **sole authority** for identity data of LDAP
+users (`email`, `full_name`, `ldap_dn`, `manager_uid`, `ldap_synced_at`).
+These fields cannot be modified manually via the API or CLI. See LDAP User
+Data Ownership in `docs/features/identity/user-lifecycle.md` for the
+service-layer enforcement rules.
+
 ## Data Source
 
 Sentinel uses the SUSE Active Directory instance at `pan.suse.de` as the
