@@ -263,7 +263,7 @@ Resets the password for a local user and invalidates all active sessions.
 
 **Behavior**:
 
-1. Validate password length (12–128 characters). If invalid, raise
+1. Validate password length (16–128 characters). If invalid, raise
    `PasswordValidationError`
 2. Hash the password with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)

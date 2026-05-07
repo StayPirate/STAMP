@@ -82,8 +82,8 @@ command cannot be used non-interactively — a TTY is required.
 3. Validates email format — if the provided email is not syntactically
    valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-4. Validates password: 12–128 characters. If too short, exits with
-   error: `"Error: Password must be at least 12 characters."` If too
+4. Validates password: 16–128 characters. If too short, exits with
+   error: `"Error: Password must be at least 16 characters."` If too
    long, exits with error:
    `"Error: Password must be at most 128 characters."`
 5. Delegates to `user_service.create_user()` with:
@@ -698,7 +698,7 @@ reactivation.
 
 ```json
 {
-  "password": "string (required, 12-128 chars)"
+  "password": "string (required, 16-128 chars)"
 }
 ```
 
@@ -917,7 +917,7 @@ handling is required.
   files. A TTY is required — these commands cannot be scripted
 - **Admin UI is authenticated and role-protected**: only users with the
   `admin` role can access the user management pages
-- **Password policy**: minimum 12 characters, no complexity rules.
+- **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)
 - **Audit trail**: user creation, role changes, and deactivation

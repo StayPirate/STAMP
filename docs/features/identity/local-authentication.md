@@ -52,22 +52,25 @@ session, and returns a JWT.
 2. Normalize the username: strip leading and trailing whitespace, then
    convert to lowercase. All subsequent steps (lookup, lockout counter)
    use the normalized value.
-3. Look up the user by normalized `username`
-4. If user not found, return HTTP 401 with generic message (see below)
-5. If the account is locked (see Rate Limiting), return HTTP 429 with
+3. If the normalized username is empty, return HTTP 401 with generic
+   message (same as user not found — no lockout counter is created for
+   empty usernames)
+4. Look up the user by normalized `username`
+5. If user not found, return HTTP 401 with generic message (see below)
+6. If the account is locked (see Rate Limiting), return HTTP 429 with
    message: `"Account temporarily locked. Try again later."` and include
    a `Retry-After` header with the number of seconds remaining until the
    lockout expires
-6. If user is inactive (`active = false`), return HTTP 401 with generic
+7. If user is inactive (`active = false`), return HTTP 401 with generic
    message
-7. If user has `ldap_uid IS NOT NULL` (SSO user), return HTTP 401 with
+8. If user has `ldap_uid IS NOT NULL` (SSO user), return HTTP 401 with
    generic message — SSO users cannot use local login
-8. If user has no `password_hash` set (local user without password),
+9. If user has no `password_hash` set (local user without password),
    return HTTP 401 with generic message
-9. Verify the provided password against the stored `password_hash`
-10. If verification fails, increment the failed attempt counter and
+10. Verify the provided password against the stored `password_hash`
+11. If verification fails, increment the failed attempt counter and
     return HTTP 401 with generic message
-11. On success: reset the failed attempt counter, create a `Session`
+12. On success: reset the failed attempt counter, create a `Session`
     record, update `user.last_login_at = now()`, issue a JWT (see
     `docs/features/identity/authentication.md` for token format and claims),
     return the token
@@ -156,17 +159,26 @@ Passwords are set in two scenarios:
    for an existing local user
 
 There is no self-service password reset or password change in the
-initial implementation. Users who need a password change must request it
-from an admin.
+initial implementation (v1 scoping decision). Users who need a password
+change must request it from an admin. This is acceptable given the
+primary use cases (development environments, bot accounts, deployments
+without SSO) and will be revisited as a follow-up if local user adoption
+grows beyond these scenarios.
 
 ### Password validation
 
-- Minimum 12 characters
+- Minimum 16 characters
 - Maximum 128 characters (reasonable UX limit; the SHA-256 pre-hash
   normalizes any length to a fixed 44-byte input for bcrypt, so there
   is no resource exhaustion risk from long passwords)
 - No complexity rules (uppercase, numbers, symbols) — length is the
   primary defense
+- No breach database check (e.g., HaveIBeenPwned k-anonymity API or
+  local bloom filter) in v1. Rationale: passwords are set by admins (not
+  self-service), the tool is internal, and integrating with external
+  breach services or maintaining a local bloom filter adds complexity
+  disproportionate to the threat model. May be reconsidered if
+  self-service password change is added in the future.
 
 These rules are enforced by `user_service.reset_password()` and apply
 to all password-setting paths (CLI and admin UI).
@@ -229,15 +241,29 @@ attempts per username using a Redis counter.
    flow performs a dummy bcrypt hash verification when the user is not
    found, to equalize response time and eliminate timing side-channels
    for username enumeration
-3. If the counter reaches `LOGIN_MAX_ATTEMPTS`, subsequent login
-   attempts for that username are rejected immediately with HTTP 429
-   (with `Retry-After` header) until the TTL expires
+3. If the counter is already at or above `LOGIN_MAX_ATTEMPTS` when a new
+   attempt arrives (checked at login step 6, before password
+   verification), the attempt is rejected immediately with HTTP 429
+   (with `Retry-After` header). This means an attacker gets exactly
+   `LOGIN_MAX_ATTEMPTS` password verifications before lockout takes
+   effect — the Nth attempt is the last one that receives a full
+   password check. Attempts rejected at this step do **not** increment
+   the counter or reset the TTL — the lockout window expires naturally
+   from the last failed password verification (step 11)
 4. On successful login, delete the counter
 
 **Notes**:
 
 - Lockout is per-username, not per-IP. This is simpler and sufficient
   for an internal tool.
+- **Per-username lockout DoS (accepted risk)**: an unauthenticated
+  attacker who knows a username can lock out that account with
+  `LOGIN_MAX_ATTEMPTS` invalid attempts. This is mitigated by: (a) lockout
+  does not invalidate existing sessions (the legitimate user already
+  logged in continues working), (b) admin unlock is available via CLI or
+  admin UI, (c) the lockout expires automatically after the TTL. For
+  environments where this is unacceptable, a per-IP rate limit at the
+  reverse proxy layer provides secondary defense.
 - The lockout does not affect API key authentication (API keys bypass
   the login endpoint entirely).
 - **Lockout does NOT invalidate existing sessions**. This is intentional:
@@ -254,6 +280,11 @@ attempts per username using a Redis counter.
   --username <name>` (CLI) or the "Unlock" action in the admin user
   management page. Alternatively, the lockout expires automatically
   after the TTL. See `docs/features/identity/user-management.md`.
+- **Permanent lockout is not possible**: once the account is locked,
+  subsequent rejected attempts (step 6) do not increment the counter or
+  reset the TTL. The lockout expires naturally after
+  `LOGIN_LOCKOUT_MINUTES` from the last actual failed password
+  verification, even under sustained attack.
 - **Redis unavailability**: if Redis is unreachable, the login endpoint
   operates in **fail-open** mode — login proceeds without rate limiting.
   This prioritizes availability over brute-force protection. The
@@ -264,6 +295,18 @@ attempts per username using a Redis counter.
   `LOGIN_LOCKOUT_MINUTES` must be >= 1. Values of 0 or negative are
   treated as their defaults (5 and 10 respectively) with a startup
   warning logged.
+- **Redis key namespace safety**: the key format
+  `login_attempts:{normalized_username}` is safe from namespace
+  collisions because usernames are restricted to `[a-z0-9._-]` at
+  creation time (see `docs/features/identity/user-management.md`). No
+  characters in the allowed charset conflict with Redis key delimiters.
+- **Non-existent username counters (accepted risk)**: Redis counters are
+  created for every non-existent username attempted (to prevent timing
+  side-channels). A high-volume attack could create many short-lived
+  keys. This is accepted because: (a) keys are TTL-bounded and expire
+  after `LOGIN_LOCKOUT_MINUTES`, (b) each key is small (a few bytes),
+  (c) per-IP rate limiting at the reverse proxy layer (recommended for
+  exposed deployments) limits key creation rate.
 
 ## Login Page
 
@@ -295,15 +338,41 @@ session behavior.
   concurrent login attempts. The SHA-256 pre-hash avoids bcrypt's
   72-byte input limit while adding no meaningful computational cost.
 - **No password complexity rules**: research shows that length is more
-  effective than complexity requirements. The 12-character minimum
+  effective than complexity requirements. The 16-character minimum
   provides adequate entropy.
 - **Session invalidation on password change**: prevents continued access
   with old credentials after a password reset. All sessions are
   invalidated, including the caller's own session — no exception for
   admin self-password-reset. The admin receives the success response,
-  then the next API call returns 401 (frontend redirects to login).
+  then the next API call returns 401. The frontend handles this via its
+  standard session expiration behavior (see
+  `docs/features/identity/authentication.md` § Frontend session behavior).
 - **Redis-based lockout**: survives application restarts, shared across
   all API server instances.
+- **Fail-open rate limiting (accepted risk)**: when Redis is unreachable,
+  the login endpoint operates without rate limiting to preserve
+  availability. This is accepted for an internal tool on a trusted
+  network. For deployments in untrusted environments (external networks,
+  public-facing instances), operators should configure a global
+  per-IP rate limit at the reverse proxy layer (e.g., nginx `limit_req`)
+  as an infrastructure-level backstop against brute-force during Redis
+  outages.
+- **Per-IP rate limiting delegated to reverse proxy**: Sentinel
+  intentionally does not implement per-IP rate limiting at the
+  application level. The reverse proxy (nginx, ingress controller) is
+  the appropriate layer for IP-based throttling because it sees the
+  client's real IP address without relying on `X-Forwarded-For` headers
+  (which can be spoofed by upstream hops). This covers both the
+  fail-open scenario (Redis outage) and distributed attacks using many
+  usernames from a single IP.
+- **No self-service password change (v1 accepted risk)**: local users
+  cannot change their own password. If a user suspects credential
+  compromise, they must contact an admin who performs a password reset
+  (CLI or admin UI). During the window between compromise detection and
+  admin intervention, the old credential remains valid. This is accepted
+  for v1 given the limited use cases (dev environments, bots, no-SSO
+  deployments). A `POST /api/v1/auth/change-password` endpoint (requiring
+  active session + old password) is a planned follow-up.
 - **No password in JWT**: the JWT contains only user ID, session ID, and
   roles. The password hash is never included in tokens or API responses.
 - **Password not returned by API**: no endpoint returns the
