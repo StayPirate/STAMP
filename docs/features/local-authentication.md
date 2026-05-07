@@ -1,5 +1,11 @@
 # Local Authentication
 
+**Parent spec**: `docs/features/authentication.md`
+**Inherited concerns**: token storage (HttpOnly cookie), session
+lifecycle, logout, error code namespace (`AUTH_*`)
+
+---
+
 ## Purpose
 
 Provide a credential-based login mechanism for local user accounts.

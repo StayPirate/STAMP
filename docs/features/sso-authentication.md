@@ -1,5 +1,11 @@
 # SSO Authentication
 
+**Parent spec**: `docs/features/authentication.md`
+**Inherited concerns**: token storage (HttpOnly cookie), session
+lifecycle, logout, error code namespace (`AUTH_*`)
+
+---
+
 ## Purpose
 
 Provide single sign-on authentication for Sentinel using the SUSE
@@ -39,6 +45,26 @@ SSO-capable and SSO-less environments without any code changes.
 `SSO_USER_CLAIM` specifies which claim from the OIDC ID token is used
 to identify the user (matched against the `ldap_uid` field in the User
 table). Defaults to `sub`.
+
+`SSO_REDIRECT_URI` is the full URL (scheme + host + path) where the IdP
+redirects the browser after authentication. It MUST point to the
+canonical frontend callback route `/auth/callback` (e.g.,
+`https://sentinel.suse.de/auth/callback`). This value MUST be registered
+in the IdP's client configuration — the IdP rejects requests with a
+`redirect_uri` that does not match any registered URI. Multiple URIs can
+be registered in the IdP for the same client (one per environment), and
+each Sentinel instance sets `SSO_REDIRECT_URI` to the value matching its
+environment:
+
+- Production: `https://sentinel.suse.de/auth/callback`
+- Staging: `https://sentinel-staging.suse.de/auth/callback`
+- Local dev: `http://localhost:5173/auth/callback`
+
+At startup, Sentinel validates that `SSO_REDIRECT_URI` is a well-formed
+URL with HTTPS scheme (the HTTP scheme is allowed only when the host is
+`localhost` or `127.0.0.1`, for local development). If validation fails,
+the application logs a WARNING and disables SSO (same behavior as a
+missing required setting).
 
 ### Discovery
 
@@ -188,7 +214,8 @@ callback URL with an authorization `code` and `state` parameter.
    e. Extract `code_verifier` from bytes 20 onward of the payload
       (bytes 0-3 = timestamp, bytes 4-19 = nonce, remainder =
       code_verifier UTF-8).
-2. Exchange the `code` for tokens at the IdP's token endpoint:
+2. Exchange the `code` for tokens at the IdP's token endpoint (HTTP
+   timeout: 10 seconds):
    ```
    POST {token_endpoint}
    grant_type=authorization_code&
@@ -213,6 +240,12 @@ callback URL with an authorization `code` and `state` parameter.
    - Verify `iss` matches `SSO_ISSUER_URL`
    - Verify `aud` contains `SSO_CLIENT_ID`
    - Verify `exp` has not passed
+   - Verify `iat` (issued-at) is not more than 10 minutes in the past
+     (consistent with the state TTL). Reject tokens issued before this
+     threshold with HTTP 401 and code `AUTH_SSO_FAILED`
+   - Clock skew tolerance: allow up to 30 seconds of difference for all
+     time-based claims (`exp`, `iat`) to accommodate minor clock
+     drift between Sentinel and the IdP
 5. Extract the user identifier from the ID token: read the claim
    specified by `SSO_USER_CLAIM` (default: `sub`). If the claim is
    absent from the ID token, or its value is `null` or an empty string,
@@ -223,6 +256,7 @@ callback URL with an authorization `code` and `state` parameter.
    claims: {list_of_claim_names}."` (claim values are never logged —
    only names, to aid debugging without leaking PII)
 6. Look up the user by matching `ldap_uid` to the extracted claim value
+   (lowercased — see Matching rules)
 7. If user not found, return HTTP 401 with code `AUTH_SSO_USER_NOT_FOUND`:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
@@ -276,14 +310,37 @@ Unlike the local login endpoint, SSO error messages can be specific
 ### Frontend flow
 
 1. User clicks "Login with SUSE SSO"
-2. Frontend calls `GET /api/v1/auth/sso/authorize`
-3. Frontend redirects browser to the returned `authorization_url`
-4. User authenticates at id.suse.com
-5. Browser is redirected back to Sentinel (e.g. `/auth/callback`)
-6. Frontend extracts `code` and `state` from URL parameters
-7. Frontend calls `POST /api/v1/auth/sso/callback` with code and state
-8. On success: store JWT, redirect to dashboard
-9. On error: display error message on login page
+2. Frontend saves the current URL to `sessionStorage` (key:
+   `sentinel_return_url`) to preserve the user's intended destination
+   across the SSO redirect
+3. Frontend calls `GET /api/v1/auth/sso/authorize`
+   - On HTTP 404 (`AUTH_SSO_DISABLED`): show only the local login form
+     (hide the SSO button). This should not normally happen since the
+     button is rendered conditionally via `/auth/providers`, but handles
+     race conditions (e.g., SSO disabled between page load and click)
+   - On HTTP 503 (`AUTH_SSO_UNAVAILABLE`): display an inline error
+     message on the login page: "SSO is temporarily unavailable, please
+     try later." Do not redirect the browser away
+   - On success: proceed to step 4
+4. Frontend redirects browser to the returned `authorization_url`
+5. User authenticates at id.suse.com
+6. Browser is redirected back to Sentinel at the canonical callback
+   route: `/auth/callback`
+7. Frontend checks URL parameters for `error`:
+   - If `error` parameter is present (IdP denied consent or encountered
+     an error): display an appropriate error message on the login page
+     using `error_description` if available (e.g., "Authentication was
+     denied or failed at the identity provider: {error_description}").
+     Do NOT call the backend callback endpoint
+   - If `error` parameter is absent: proceed to step 8
+8. Frontend extracts `code` and `state` from URL parameters
+9. Frontend calls `POST /api/v1/auth/sso/callback` with code and state
+10. On success: the backend sets the session cookie (`sentinel_session`,
+    HttpOnly — see `docs/features/authentication.md`, Token Storage).
+    The frontend then checks `sessionStorage` for `sentinel_return_url`:
+    if present, redirects there and removes the key; otherwise redirects
+    to the dashboard
+11. On error: display error message on login page
 
 ## Identity Mapping
 
@@ -304,7 +361,14 @@ changes.
 
 ### Matching rules
 
-1. The matching is **case-sensitive and exact** (no normalization)
+1. The matching is **case-insensitive**: the claim value is normalized
+   to lowercase before comparison with `ldap_uid`. This ensures
+   consistency with the `sync_ldap_directory` fetcher, which stores
+   `sAMAccountName` normalized to lowercase (as required by the CLI
+   conventions). Since AD `sAMAccountName` is inherently
+   case-insensitive, this normalization prevents silent login failures
+   if the IdP returns a differently-cased value (e.g., `JDoe` vs
+   `jdoe`).
 2. Log the claim value at DEBUG level on every SSO login attempt
 3. Log a WARNING when the claim value does not match any `ldap_uid`,
    including the unmatched value for diagnostic purposes
@@ -426,6 +490,13 @@ The "or" divider is only shown when both options are present.
 
 ## Security Considerations
 
+- **Local lockout does not apply to SSO**: the login lockout mechanism
+  defined in `local-authentication.md` (Redis counter after failed
+  password attempts) applies only to the local login endpoint. SSO login
+  bypasses this counter because credentials are verified by the IdP, not
+  by Sentinel — brute-force protection is the IdP's responsibility. The
+  only access control that applies to SSO users is the `is_active` flag
+  (deactivated users cannot log in via any method).
 - **Authorization Code flow**: the client secret is never exposed to
   the browser. Token exchange happens server-side.
 - **PKCE**: provides additional protection against authorization code
