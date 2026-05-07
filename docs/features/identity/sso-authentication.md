@@ -17,7 +17,7 @@ Sentinel via the `sync_ldap_directory` fetcher.
 
 SSO authentication is available only to users with `ldap_uid IS NOT NULL`
 (LDAP-synced users). Local users (`ldap_uid = NULL`) authenticate via
-the local login endpoint — see `docs/features/local-authentication.md`.
+the local login endpoint — see `docs/features/identity/local-authentication.md`.
 
 ## Configuration
 
@@ -277,7 +277,7 @@ callback URL with an authorization `code` and `state` parameter.
    `AUTH_SSO_USER_INACTIVE`:
    `"Your account has been deactivated. Contact your administrator."`
 9. Create a `Session` record (see
-    `docs/features/authentication.md`, Session Management)
+    `docs/features/identity/authentication.md`, Session Management)
 10. Update `user.last_login_at = now()`
 11. Issue a JWT with the session and user claims
 12. Return the token
@@ -415,7 +415,7 @@ This is a deliberate design choice:
 
 The standard logout endpoint (`POST /api/v1/auth/logout`) invalidates
 the Sentinel session. This is the same endpoint used by local users (see
-`docs/features/authentication.md`).
+`docs/features/identity/authentication.md`).
 
 ### No Single Logout (SLO)
 
@@ -433,7 +433,7 @@ This is a deliberate design decision:
 - The Sentinel JWT is refreshed transparently via sliding session for
   active users. Inactive sessions expire after the configured duration
   (default 72 hours). All sessions expire unconditionally after 30 days
-  (see `docs/features/authentication.md`, Token lifecycle).
+  (see `docs/features/identity/authentication.md`, Token lifecycle).
 
 ## Authentication Providers Endpoint
 
@@ -566,10 +566,10 @@ The "or" divider is only shown when both options are present.
 
 ## Cross-references
 
-- `docs/features/authentication.md` — shared authentication framework
+- `docs/features/identity/authentication.md` — shared authentication framework
   (JWT format, session model, API keys, middleware)
-- `docs/features/local-authentication.md` — local login (alternative
+- `docs/features/identity/local-authentication.md` — local login (alternative
   provider)
-- `docs/features/ldap-directory.md` — LDAP sync that provisions SSO
+- `docs/features/identity/ldap-directory.md` — LDAP sync that provisions SSO
   user accounts
-- `docs/features/user-lifecycle.md` — deactivation side effects
+- `docs/features/identity/user-lifecycle.md` — deactivation side effects

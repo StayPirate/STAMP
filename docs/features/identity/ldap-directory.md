@@ -186,7 +186,7 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `ad_group_cn`. Manual roles (`_manual`) and records from other
      mappings are never touched. Processing order is irrelevant
    - For the full semantics of how AD-derived and manual role
-     assignments coexist independently, see `docs/features/rbac.md`
+     assignments coexist independently, see `docs/features/identity/rbac.md`
      (Role Origins and Coexistence)
 6. **Deactivation side effects**: for each user in the
    `newly_deactivated` list (identified in step 3), call
@@ -194,13 +194,13 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    `reason = "employee deactivated in LDAP"` and
    `acting_user_id = None`. The service sets `active = false` and
    executes all side effects atomically. See
-   `docs/features/user-lifecycle.md` for the full contract (ticket
+   `docs/features/identity/user-lifecycle.md` for the full contract (ticket
    reassignment, API key revocation, TicketEvent creation). This step
    is skipped entirely when the safety check froze `active` changes
    (the `newly_deactivated` list is empty)
 7. **Reactivation**: for each user in the `newly_reactivated` list
    (identified in step 3), call `user_service.reactivate_user()` with
-   `acting_user_id = None`. See `docs/features/user-lifecycle.md` for
+   `acting_user_id = None`. See `docs/features/identity/user-lifecycle.md` for
    reactivation semantics (previously reassigned tickets and API keys
    are NOT restored). This step is skipped entirely when the safety
    check froze `active` changes
@@ -234,7 +234,7 @@ sentinel fetcher run sync_ldap_directory
 ```
 
 This runs the sync synchronously in the CLI process (no Celery
-required). See `docs/features/fetcher-dashboard.md` (section "CLI
+required). See `docs/features/platform/fetcher-dashboard.md` (section "CLI
 Commands") for full details on the `sentinel fetcher` command group.
 
 ### Post-deployment bootstrap sequence
@@ -245,7 +245,7 @@ Commands") for full details on the `sentinel fetcher` command group.
 ```
 
 The `manage-user` command is documented in
-`docs/features/user-management.md`. In this bootstrap context, the
+`docs/features/identity/user-management.md`. In this bootstrap context, the
 user already exists (created by the LDAP sync in step 1), and
 `manage-user update` adds the Admin role with `ad_group_cn = '_manual'`
 and `assigned_by = NULL` (CLI action).
@@ -339,7 +339,7 @@ POST /api/v1/admin/users/{user}/roles
 
 Admin only. Add or remove manual roles for a user. The full endpoint
 specification (request/response schema, validation rules, error codes)
-is defined in `docs/features/user-management.md` (Admin API endpoints).
+is defined in `docs/features/identity/user-management.md` (Admin API endpoints).
 
 Key rules (defined in detail in user-management.md):
 - Cannot remove AD-derived roles (only manual roles are removable)
@@ -582,10 +582,10 @@ Displays a table of all configured role mappings:
    primarily from AD sync. Local user accounts (for development, bots,
    or environments without SSO) can be created exclusively via the CLI
    (`sentinel manage-user create`) — see
-   `docs/features/user-management.md`. There is no user creation through
+   `docs/features/identity/user-management.md`. There is no user creation through
    the UI or API
 2. **Login is open**: any SUSE employee can authenticate via SSO (see
-   `docs/features/sso-authentication.md`). A user with no roles
+   `docs/features/identity/sso-authentication.md`). A user with no roles
    has the same access as an unauthenticated user (read-only on public
    data)
 3. **Role assignment is hybrid**: roles can come from AD group mappings
@@ -597,7 +597,7 @@ Displays a table of all configured role mappings:
    revocation of roles that are managed centrally
 5. **Deactivation cascades**: when an employee is deactivated in AD,
    the side effects are handled by `user_service.deactivate_user()` —
-   see `docs/features/user-lifecycle.md` for the full contract
+   see `docs/features/identity/user-lifecycle.md` for the full contract
    (ticket reassignment, API key revocation, TicketEvent creation)
 6. **Admin self-removal protection**: an admin cannot remove their own
    Admin role via the API. The Admin role can be removed from a user only
@@ -641,7 +641,7 @@ Displays a table of all configured role mappings:
   purposes. No additional PII (phone, address, etc.) is imported
 - The CLI `manage-user` commands require shell access to the server,
   which is an appropriate security barrier for administrative operations.
-  See `docs/features/user-management.md`
+  See `docs/features/identity/user-management.md`
 
 ## Implementation Notes
 

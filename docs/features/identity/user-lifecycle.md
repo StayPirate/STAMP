@@ -132,7 +132,7 @@ Adds or removes roles for a user.
    authenticated user from removing their own Admin role, regardless of
    the entry point. System actions (`acting_user_id = None`) are exempt.
    For the implications of this guard on the "zero admins" scenario and
-   the CLI recovery procedure, see `docs/features/user-management.md`,
+   the CLI recovery procedure, see `docs/features/identity/user-management.md`,
    Business Rule 2
 2. **AD-derived role protection**: when `acting_user_id` is set (user
    action), cannot remove roles with `ad_group_cn != '_manual'`. Raise
@@ -178,12 +178,12 @@ in this specific order):
 1. Revoke all API keys belonging to this user: set `revoked_at = now()`
    and `revoked_by = NULL` (system action) on all active keys. Keys are
    not deleted — preserves audit trail. See
-   `docs/features/authentication.md` (API Keys) for the data model.
+   `docs/features/identity/authentication.md` (API Keys) for the data model.
 2. Invalidate all active sessions for this user via
    `session_service.invalidate_user_sessions(db, user_id)`. This sets
    `Session.is_active = false` in the database AND deletes the
    corresponding Redis cache entries. See
-   `docs/features/authentication.md` (Session invalidation) for the
+   `docs/features/identity/authentication.md` (Session invalidation) for the
    session service contract.
 3. Set `User.active = false`
 4. Reassign open tickets: for each ticket where `assignee_id` points to
@@ -210,7 +210,7 @@ already lost access. The admin can safely retry the deactivation
 without risk of leaving a deactivated user with valid credentials.
 
 **TicketEvent**: yes — one `assignment` event per reassigned ticket (see
-`docs/features/ticket-history.md` for the event type contract)
+`docs/features/tickets/ticket-history.md` for the event type contract)
 
 ### `reactivate_user()`
 
@@ -350,7 +350,7 @@ and LDAP sync entry points for role modifications.
 The service layer raises the following typed exceptions. Each consumer
 (API handler, CLI command, background task) is responsible for
 translating these into its own response format (HTTP status + error code,
-CLI exit code + stderr message, etc.). See `docs/features/user-management.md`
+CLI exit code + stderr message, etc.). See `docs/features/identity/user-management.md`
 for the API-layer mapping.
 
 | Exception | Raised when |
@@ -368,10 +368,10 @@ for the API-layer mapping.
 
 | Spec | Relationship |
 |---|---|
-| `docs/features/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
-| `docs/features/ldap-directory.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
-| `docs/features/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
-| `docs/features/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
-| `docs/features/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
-| `docs/features/ticket-history.md` | `deactivate_user` creates TicketEvents per the `assignment` event type contract |
+| `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
+| `docs/features/identity/ldap-directory.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
+| `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
+| `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
+| `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
+| `docs/features/tickets/ticket-history.md` | `deactivate_user` creates TicketEvents per the `assignment` event type contract |
 | `docs/data-model.md` | User and UserRole table definitions |

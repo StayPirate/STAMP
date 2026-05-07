@@ -80,7 +80,7 @@ An VA can associate a CVE with a ticket that does not yet have one, via
 - If the CVE does not exist in the Sentinel database, Sentinel creates a
   minimal CVE record (only `cve_id` set) and triggers on-demand
   single-CVE fetch in the background (see
-  `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch"). The
+  `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch"). The
   association proceeds immediately with the minimal CVE record. The API
   response includes `cve_data_pending: true`
 - When a CVE is associated:
@@ -108,7 +108,7 @@ An Admin can remove a CVE from a ticket via
   [Severity Resolution](#severity-resolution)). If `severity_override`
   is also `NULL`, the ticket severity becomes `None`
 - A `TicketEvent` with `event_type = cve_removed` is created (see
-  `docs/features/ticket-history.md`)
+  `docs/features/tickets/ticket-history.md`)
 - CVSS sync and release tracking cease applying to the ticket
 - Existing `TicketPackageCodestream` and `TicketPackageProduct` records
   are preserved. However, without an associated CVE, automatic release
@@ -135,7 +135,7 @@ An Admin can remove a CVE from a ticket via
 
 When a CVE is ingested from an external source (NVD, MITRE, or future
 sources), a ticket is created automatically. See
-`docs/features/cve-tracking.md` for the full ingestion flow.
+`docs/features/tickets/cve-tracking.md` for the full ingestion flow.
 
 - `cve_id`: set to the ingested CVE
 - `status`: `New`
@@ -147,7 +147,7 @@ sources), a ticket is created automatically. See
 
 When the `CodestreamReleaseDetector` finds a CVE fix in IBS for a CVE
 that has no ticket in Sentinel, a `create_ticket_from_detection` task
-creates the ticket. See `docs/features/ibs-codestream-release-detection.md`
+creates the ticket. See `docs/features/packages/ibs-codestream-release-detection.md`
 (Case C) for the full flow.
 
 - `cve_id`: set to the created/fetched CVE
@@ -170,7 +170,7 @@ An Vulnerability Analyst can create a ticket manually via
     `existing_ticket_id` in the response body
   - If the CVE does not exist in the database, Sentinel creates a minimal
     CVE record (only `cve_id` set) and triggers on-demand single-CVE
-    fetch in the background (see `docs/features/cve-tracking.md`,
+    fetch in the background (see `docs/features/tickets/cve-tracking.md`,
     "On-demand Single-CVE Fetch"). The ticket is created immediately.
     The API response includes `cve_data_pending: true`
   - If the CVE exists in the database and is not associated with any
@@ -190,7 +190,7 @@ An Vulnerability Analyst can create a ticket manually via
 **Required role**: Vulnerability Analyst.
 
 The UI must provide a mechanism to create tickets manually (button
-placement TBD in `docs/features/pages.md`).
+placement TBD in `docs/features/ui/pages.md`).
 
 ### Future: External Sources
 
@@ -214,7 +214,7 @@ layer.
 
 1. If the ticket has a CVE (`cve_id IS NOT NULL`): severity =
    `cve.severity` (derived from CVSS assessments via the resolution
-   cascade — see `docs/features/cvss-scoring.md`)
+   cascade — see `docs/features/tickets/cvss-scoring.md`)
 2. If the ticket does not have a CVE (`cve_id IS NULL`): severity =
    `ticket.severity_override`
 3. If neither is available: severity = `None` (unknown)
@@ -295,7 +295,7 @@ when ALL of the following conditions are met:
    without CVE, `severity_override` must be set by the VA
 5. **SUSE CVSS provided** (only for tickets with CVE): the VA must have
    provided BOTH SUSE CVSS v3.1 AND v4.0 assessments (see
-   `docs/features/cvss-scoring.md`)
+   `docs/features/tickets/cvss-scoring.md`)
 
 This evaluation is performed automatically by the centralized status
 evaluation function (see "Centralized Status Evaluation" below) after
@@ -342,7 +342,7 @@ naturally when gate conditions are no longer met:
 - **Resolved → Analyzed**: any package or product transitions to a
   non-final status while "Analyzed" gates remain met (e.g., CVSS
   recalculation moves a product from AFFECTED_RESOLVED to AFFECTED —
-  see `docs/features/cvss-scoring.md`, Recalculation Cascade)
+  see `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
 - **Resolved → Analysis**: both "Resolved" and "Analyzed" gates are
   broken (e.g., a new package is added with codestreams in ANALYSIS)
 
@@ -403,11 +403,11 @@ ticket-related models directly.
 `ticket_mutations` (assessment creation, update, deletion) delegate
 CVSS resolution and severity calculation to pure functions in
 `services/cvss.py`. The resolution cascade logic is never reimplemented
-inside `ticket_mutations`. See `docs/features/cvss-scoring.md` (Service
+inside `ticket_mutations`. See `docs/features/tickets/cvss-scoring.md` (Service
 Architecture) for the full responsibility split between the two modules.
 
 **Relationship with `add_package_to_ticket`**: the centralized package
-addition function defined in `docs/features/package-tracking.md` handles
+addition function defined in `docs/features/packages/package-tracking.md` handles
 SMELT resolution and external I/O. It delegates the actual creation of
 `TicketPackageCodestream` and `TicketPackageProduct` records to
 `ticket_mutations` functions. Similarly, package removal delegates
@@ -438,7 +438,7 @@ After creating a `TicketPackageProduct` with status `AFFECTED_RESOLVED`
 (inherited from an `AFFECTED` parent where the product is not eligible),
 the codestream eligibility rollup is evaluated: if all products under the
 parent codestream are now `AFFECTED_RESOLVED`, the codestream itself is
-set to `AFFECTED_RESOLVED` (see `docs/features/package-tracking.md`,
+set to `AFFECTED_RESOLVED` (see `docs/features/packages/package-tracking.md`,
 Automatic transitions).
 
 Operations that do NOT modify gate-relevant data (assignment, duplicate
@@ -609,7 +609,7 @@ auto-assignment.
   inaccessible to non-admin users (API returns 410 Gone)
 - A soft-deleted ticket can be restored by clearing `deleted_at`
 - Both operations create a `TicketEvent` record (see
-  `docs/features/ticket-history.md`)
+  `docs/features/tickets/ticket-history.md`)
 
 ### Status Categories
 
@@ -665,7 +665,7 @@ Request body:
 - `cve_id` (string, optional): CVE identifier string to associate with
   the ticket. If the CVE is not in the database, a minimal CVE record
   is created and on-demand fetch is triggered (see
-  `docs/features/cve-tracking.md`, "On-demand Single-CVE Fetch")
+  `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch")
 - `severity` (string, optional): initial severity override (Critical,
   High, Medium, Low, None). If omitted, severity is `None` until set
   by the VA. Ignored if `cve_id` is provided (severity is derived from
@@ -691,7 +691,7 @@ POST /api/v1/tickets/{ticket_id}/associate-cve
 
 Associates a CVE with a ticket that does not have one. If the CVE is not
 yet in the Sentinel database, a minimal CVE record is created and on-demand
-fetch is triggered automatically (see `docs/features/cve-tracking.md`,
+fetch is triggered automatically (see `docs/features/tickets/cve-tracking.md`,
 "On-demand Single-CVE Fetch").
 
 Request body:
@@ -804,4 +804,4 @@ table:
   managing packages, setting severity override: Vulnerability Analyst role
 - Removing a CVE from a ticket: Admin role
 - Soft-deleting and restoring tickets: Admin role
-- See `docs/features/rbac.md` for the full permission model
+- See `docs/features/identity/rbac.md` for the full permission model

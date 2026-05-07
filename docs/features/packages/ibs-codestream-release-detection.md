@@ -8,9 +8,9 @@ checksum comparison and IBS diff analysis. This is the **codestream-level**
 release detection mechanism.
 
 For the overall release tracking architecture (two independent levels —
-codestream and product), see `docs/features/package-tracking.md`, section
+codestream and product), see `docs/features/packages/package-tracking.md`, section
 "Release Tracking". For product-level detection, see
-`docs/features/ibs-product-release-detection.md`.
+`docs/features/packages/ibs-product-release-detection.md`.
 
 ## Context
 
@@ -28,7 +28,7 @@ the status of the products under it**.
 
 The automatic transition to `RELEASED` is suppressed when the current status
 is `WONT_FIX` or `IGNORED` (protected states — see
-`docs/features/package-tracking.md`, "Status Behavior").
+`docs/features/packages/package-tracking.md`, "Status Behavior").
 
 ## Detection Mechanism
 
@@ -62,7 +62,7 @@ change detection: only packages whose MD5 has changed since the last run
 need to be diffed.
 
 This cache is shared with the real-time `IBSEventConsumer` (see
-`docs/features/ibs-rabbitmq-integration.md`) — changes processed in
+`docs/features/integrations/ibs-rabbitmq-integration.md`) — changes processed in
 real-time are not re-processed by the periodic fetcher.
 
 ### Procedure
@@ -71,7 +71,7 @@ The `CodestreamReleaseDetector` runs on a periodic schedule (every 24
 hours at 02:00 UTC via Celery Beat) and executes the following steps.
 This periodic fetcher serves as a catch-up mechanism for events missed
 by the real-time `IBSEventConsumer` during downtime — see
-`docs/features/ibs-rabbitmq-integration.md`.
+`docs/features/integrations/ibs-rabbitmq-integration.md`.
 
 1. **Identify active codestreams**: query the distinct `codestream_name`
    values from `TicketPackageCodestream` records with a non-final,
@@ -131,7 +131,7 @@ exists for package P (in any codestream).
 - Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
   and products via SMELT and create the records with status `ANALYSIS`
   (record creation goes through `ticket_mutations`). See
-  `docs/features/package-tracking.md`, "Adding Packages to a Ticket".
+  `docs/features/packages/package-tracking.md`, "Adding Packages to a Ticket".
 - Set the `TicketPackageCodestream` for codestream C to `RELEASED`
   through `ticket_mutations` (the specific codestream where the fix
   was detected).
@@ -185,7 +185,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 - **Type**: `BaseFetcher` subclass
 - **Schedule**: every 24 hours at 02:00 UTC (`0 2 * * *`)
 - **Role**: catch-up mechanism for events missed by the real-time
-  `IBSEventConsumer` (see `docs/features/ibs-rabbitmq-integration.md`)
+  `IBSEventConsumer` (see `docs/features/integrations/ibs-rabbitmq-integration.md`)
 - **Scope**: scans all codestreams that have at least one
   `TicketPackageCodestream` record in a non-final, non-protected status
 

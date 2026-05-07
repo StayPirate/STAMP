@@ -6,7 +6,7 @@ Define the automated behavior when a product transitions to the Reactive
 LTSS phase or reaches End of Life (EOL) while it has non-final
 `TicketPackageProduct` records in active tickets. This specification
 relies on the orphan cleanup invariants in `ticket_mutations` (defined in
-`docs/features/tickets.md`) that ensure codestreams and packages are
+`docs/features/tickets/tickets.md`) that ensure codestreams and packages are
 automatically removed when they no longer have children.
 
 ## Terminology
@@ -102,14 +102,14 @@ or protected status (`WONT_FIX`, `IGNORED`) are not modified.
 
 #### Reason: `threshold_change` / `cvss_change`
 
-Existing behavior as specified in `docs/features/package-tracking.md` and
-`docs/features/cvss-scoring.md`.
+Existing behavior as specified in `docs/features/packages/package-tracking.md` and
+`docs/features/tickets/cvss-scoring.md`.
 
 ## Cascading Cleanup
 
 When `re_evaluate_product_eligibility` removes a `TicketPackageProduct`
 (ANALYSIS → delete for EOL), the orphan cleanup invariants defined in
-`docs/features/tickets.md` (Ticket Mutations Module, "Orphan Cleanup
+`docs/features/tickets/tickets.md` (Ticket Mutations Module, "Orphan Cleanup
 Invariants") automatically cascade: if the parent codestream has zero
 remaining products it is removed, and if the parent package has zero
 remaining codestreams it is removed from the ticket. Each step produces
@@ -131,7 +131,7 @@ with `user_id = NULL` (system action).
 **Event types used**: `product_eligibility_changed` (existing),
 `product_removed`, `codestream_removed`, and `package_removed` (existing).
 See `docs/data-model.md` for the full enum definition and
-`docs/features/ticket-history.md` for the field contract.
+`docs/features/tickets/ticket-history.md` for the field contract.
 
 ## Integration with Existing Tasks
 

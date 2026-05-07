@@ -19,7 +19,7 @@ This feature enables:
    affecting their packages (separate spec)
 
 This specification is the authoritative source for bugowner resolution,
-caching, and maintenance. See `docs/features/package-tracking.md` for
+caching, and maintenance. See `docs/features/packages/package-tracking.md` for
 package affectedness and release tracking. See
 `docs/features/integrations/ibs-integration.md` for IBS API integration details.
 
@@ -408,7 +408,7 @@ Codestreams:
 The bugowner display is informational — no edit actions are available
 (the data comes from IBS).
 
-See `docs/features/pages.md` for page placement.
+See `docs/features/ui/pages.md` for page placement.
 
 ## Background Tasks
 
@@ -425,7 +425,7 @@ See `docs/features/pages.md` for page placement.
   it is non-sensitive organizational data
 - The `sync_package_bugowners` fetcher configuration (enable/disable,
   schedule, rate limit) is admin-only, managed via the fetcher dashboard
-  like all other fetchers. See `docs/features/rbac.md`
+  like all other fetchers. See `docs/features/identity/rbac.md`
 
 ## Future Considerations
 

@@ -23,7 +23,7 @@ package-centric perspective on security update work.
 ## User Identification
 
 A user is identified as a maintainer of a package through the existing
-`PackageBugowner` data (see `docs/features/package-bugowner.md`):
+`PackageBugowner` data (see `docs/features/packages/package-bugowner.md`):
 
 - **Person bugowner**: the user's email matches
   `PackageBugowner.bugowner_email`
@@ -252,7 +252,7 @@ When the per-ticket page cannot show the normal view (header + three
 cards), it displays a **minimal status page** instead: an icon, a title,
 a short message, and a "Back to My Packages" link pointing to
 `/my-packages`. No ticket header or details are exposed. See
-`docs/features/tickets.md` for ticket statuses and soft-delete behavior.
+`docs/features/tickets/tickets.md` for ticket statuses and soft-delete behavior.
 
 **Evaluation order** (first match wins):
 
@@ -278,7 +278,7 @@ a short message, and a "Back to My Packages" link pointing to
 
 - **Soft-deleted tickets**: the per-ticket API endpoint returns 410 Gone
   for non-admin users, consistent with all other ticket endpoints (see
-  `docs/features/tickets.md`).
+  `docs/features/tickets/tickets.md`).
 - **Duplicated link**: the message includes a clickable link to the
   original ticket's per-ticket view (`/my-packages/ticket/{duplicate_of_id}`).
   If the original ticket is also in an abnormal state, the user will see

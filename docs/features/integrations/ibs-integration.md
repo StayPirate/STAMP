@@ -23,15 +23,15 @@ and release detection. Sentinel interacts with two separate OBS instances:
   - `IBS_PASSWORD`: IBS API password
   - `IBS_DOWNLOAD_BASE_URL`: HTTP download base URL for repository data
     (default: `https://download.suse.de/ibs`). Used by the
-    `ProductReleaseDetector` — see `docs/features/ibs-product-release-detection.md`.
+    `ProductReleaseDetector` — see `docs/features/packages/ibs-product-release-detection.md`.
 
 ### Key API Operations
 
 The following IBS API endpoints are used by Sentinel for codestream-level
-release detection (see `docs/features/ibs-codestream-release-detection.md`),
+release detection (see `docs/features/packages/ibs-codestream-release-detection.md`),
 product-level release detection (see
-`docs/features/ibs-product-release-detection.md`), package
-bugowner resolution (see `docs/features/package-bugowner.md`), and
+`docs/features/packages/ibs-product-release-detection.md`), package
+bugowner resolution (see `docs/features/packages/package-bugowner.md`), and
 submission request tracking (see `docs/features/packages/ibs-submission-tracking.md`):
 
 #### Project Source Info
@@ -92,7 +92,7 @@ and `tracker` equal to `cve` or `bnc`.
 #### Package Bugowner Resolution
 
 Sentinel also uses IBS to resolve package bugowners. These endpoints are
-documented in `docs/features/package-bugowner.md` (IBS API Integration
+documented in `docs/features/packages/package-bugowner.md` (IBS API Integration
 section):
 
 - `GET /search/owner?package={name}&filter=bugowner` — resolve effective
@@ -165,7 +165,7 @@ IBS-related data is stored in the following tables (see `docs/data-model.md`):
   `srcmd5` for each `(codestream_name, package_name)` pair. Shared by the
   `IBSEventConsumer` (real-time) and the `CodestreamReleaseDetector`
   (periodic catch-up) to detect source changes. See
-  `docs/features/ibs-rabbitmq-integration.md`.
+  `docs/features/integrations/ibs-rabbitmq-integration.md`.
 - `TicketPackageCodestream.codestream_name`: stores the IBS project name
   (e.g., `SUSE:SLE-15-SP6:Update`) as a string. Codestreams are not
   maintained as a separate table.
@@ -209,7 +209,7 @@ Configuration is injected via the application settings (`IBS_API_URL`,
 
 Orchestrates codestream-level release detection using the `IBSClient`.
 Full procedure is documented in
-`docs/features/ibs-codestream-release-detection.md`.
+`docs/features/packages/ibs-codestream-release-detection.md`.
 
 ### Background Tasks
 
@@ -219,7 +219,7 @@ Full procedure is documented in
   `default_schedule` attributes. Serves as a catch-up mechanism for
   events missed by the `IBSEventConsumer`. See
   `docs/features/platform/fetcher-infrastructure.md` for the BaseFetcher
-  infrastructure and `docs/features/ibs-rabbitmq-integration.md` for the
+  infrastructure and `docs/features/integrations/ibs-rabbitmq-integration.md` for the
   real-time consumer that complements this periodic fetcher.
 - `create_ticket_from_detection`: on-demand task enqueued when a CVE fix
   is detected for a CVE with no existing ticket (triggered by either the

@@ -20,7 +20,7 @@ ticket workflow progression.
 3. **Configurable default version**: a system-wide setting determines which
    CVSS version is used for all automated decisions (severity, eligibility,
    notifications). Initially set to `3.1`, changeable by Admin. See
-   `docs/features/admin.md`.
+   `docs/features/platform/admin.md`.
 4. **SUSE assessment is authoritative**: when Sentinel needs a CVSS score to
    make a decision, it follows the resolution cascade defined below.
 5. **Default version awareness**: every component of the system that needs
@@ -43,7 +43,7 @@ this cascade:
 
 When the score is absent and a decision requires a numeric value (e.g.,
 eligibility threshold comparison), the system uses **10.0** (worst-case,
-conservative approach). See `docs/features/package-tracking.md` for
+conservative approach). See `docs/features/packages/package-tracking.md` for
 eligibility rules.
 
 ## Providers
@@ -170,7 +170,7 @@ derived from CVSS assessments. It is never set manually.
 **Note**: for tickets without a CVE, severity is determined by the
 `severity_override` field on the Ticket, set manually by the VA. The
 CVE severity derivation described below applies only to tickets with an
-associated CVE. See `docs/features/tickets.md` (Severity Resolution)
+associated CVE. See `docs/features/tickets/tickets.md` (Severity Resolution)
 for the unified resolution logic.
 
 ### Calculation Rules
@@ -216,7 +216,7 @@ This ensures that:
 
 **Tickets without CVE**: this gate does not apply. Instead, the VA must
 set `severity_override` before the ticket can progress. See
-`docs/features/tickets.md` (Gate: Analysis → Analyzed) for the full
+`docs/features/tickets/tickets.md` (Gate: Analysis → Analyzed) for the full
 gate conditions applicable to all ticket types.
 
 ### Severity Required
@@ -240,7 +240,7 @@ selection follows the resolution cascade with a conservative fallback:
 This ensures that a CVE without any CVSS data is never excluded from a
 product due to threshold rules.
 
-See `docs/features/package-tracking.md` for the full eligibility logic.
+See `docs/features/packages/package-tracking.md` for the full eligibility logic.
 
 ## Data Sync
 
@@ -256,7 +256,7 @@ changes.
 1. `last_nvd_sync_at` is derived from the `started_at` timestamp of the
    most recent successful `FetcherRun` for the `sync_cves_nvd` fetcher.
    If no successful run exists, the fetcher bootstraps with the last 7
-   days (see `docs/features/cve-tracking.md`, "First Run Strategy")
+   days (see `docs/features/tickets/cve-tracking.md`, "First Run Strategy")
 2. Every 6 hours, a Celery task fetches CVEs modified since
    `last_nvd_sync_at`:
    ```
@@ -348,9 +348,9 @@ with an active ticket, Sentinel performs the following recalculation:
 3. **Codestream and ticket status re-evaluation**: product status changes
    in step 2 MUST be applied through the `ticket_mutations` module, which
    evaluates the codestream eligibility rollup (see
-   `docs/features/package-tracking.md`, Automatic transitions) and then
+   `docs/features/packages/package-tracking.md`, Automatic transitions) and then
    calls `evaluate_ticket_status` to re-evaluate the ticket status (see
-   `docs/features/tickets.md`, Centralized Status Evaluation). In
+   `docs/features/tickets/tickets.md`, Centralized Status Evaluation). In
    practice, a CVSS recalculation that moves products from
    `AFFECTED_RESOLVED` to `AFFECTED` may also move the parent codestream
    from `AFFECTED_RESOLVED` back to `AFFECTED`, and the ticket from
@@ -375,7 +375,7 @@ with an active ticket, Sentinel performs the following recalculation:
 
 The CVSS Card is a dedicated section in the Ticket Detail page
 (`/tickets/:id`), displayed after the CVE Information Card. See
-`docs/features/pages.md` for the full page layout.
+`docs/features/ui/pages.md` for the full page layout.
 
 ### Structure
 
@@ -576,7 +576,7 @@ These functions are used in two contexts:
 
 All operations that create, update, or delete `CVECVSSAssessment`
 records MUST go through the `ticket_mutations` module (see
-`docs/features/tickets.md`, Ticket Mutations Module). This module:
+`docs/features/tickets/tickets.md`, Ticket Mutations Module). This module:
 
 1. Persists the `CVECVSSAssessment` record change
 2. Calls `cvss.resolve_cvss_score()` to determine the new resolved score
@@ -610,7 +610,7 @@ the severity, eligibility, and ticket state adjustments are committed
 together.
 
 **Exception — batch recalculation on default version change**: when the
-Admin changes the default CVSS version (see `docs/features/admin.md`),
+Admin changes the default CVSS version (see `docs/features/platform/admin.md`),
 the cascade must run for all active tickets. This batch operation is
 executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
@@ -643,5 +643,5 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - Viewing CVSS data: publicly accessible (no authentication required)
 - Adding/editing/deleting SUSE CVSS: Vulnerability Analyst role
 - Changing default CVSS version: Admin role only (see
-  `docs/features/admin.md`)
+  `docs/features/platform/admin.md`)
 - External CVSS data is read-only — cannot be modified through Sentinel

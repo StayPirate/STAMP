@@ -11,7 +11,7 @@ control, data model, and data retention.
 
 For the monitoring dashboard (API endpoints, frontend pages, CLI
 commands) that consumes this infrastructure, see
-`docs/features/fetcher-dashboard.md`.
+`docs/features/platform/fetcher-dashboard.md`.
 
 ## Terminology
 
@@ -60,7 +60,7 @@ class MyConcreteFetcher(BaseFetcher):
     # Only applicable to CVE fetchers. When set, a TicketReference
     # is automatically created with this URL for each processed CVE.
     # Uses {cve_id} as placeholder (e.g., "CVE-2026-3317").
-    # See docs/features/references.md for details.
+    # See docs/features/ui/references.md for details.
     source_reference_url_pattern: str | None = None
 
     async def execute(self, session: AsyncSession) -> None:
@@ -93,7 +93,7 @@ async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
 This method is **optional** for non-CVE fetchers and **required** for
 CVE fetchers. The system discovers all fetchers that implement
 `fetch_single` via the registry and invokes them in parallel when an
-on-demand fetch is needed (see `docs/features/cve-tracking.md`,
+on-demand fetch is needed (see `docs/features/tickets/cve-tracking.md`,
 "On-demand Single-CVE Fetch").
 
 The `fetch_single` method does NOT create a `FetcherRun` record. It is
@@ -225,7 +225,7 @@ logger.warning("Marking stale run %s for '%s' as failure (running since %s, time
 Stale run detection is a recovery mechanism for unclean process
 terminations (OOM-kill, node crash, `kill -9`). It is NOT a substitute
 for proper signal handling — processes that can handle `SIGINT`/`SIGTERM`
-must do so (see `docs/features/fetcher-dashboard.md`, section "CLI
+must do so (see `docs/features/platform/fetcher-dashboard.md`, section "CLI
 Commands", "Signal handling").
 
 ## Data Model
@@ -433,7 +433,7 @@ Invoke `@fetcher-compliance-reviewer` when:
 2. **Required attributes**: `name`, `description`, and `default_schedule`
    are defined on the class. For CVE fetchers,
    `source_reference_url_pattern` should be set if the source has a
-   human-readable web page (see `docs/features/references.md`), and
+   human-readable web page (see `docs/features/ui/references.md`), and
    `fetch_single()` must be implemented (see "On-demand Single-Item
    Fetch" above)
 3. **Unique name**: the fetcher's `name` does not conflict with any

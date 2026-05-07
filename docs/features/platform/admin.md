@@ -36,14 +36,14 @@ When the Admin changes the default CVSS version, Sentinel MUST:
 2. Re-evaluate product eligibility for all active tickets using the new
    default version's score
 3. Apply the same recalculation cascade as a CVSS score change (see
-   `docs/features/cvss-scoring.md`, Recalculation Cascade)
+   `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
 4. Create `TicketEvent` records for every severity or eligibility change
 
 This operation may take time for a large number of active tickets. It
 is executed as a background task (Celery). The task reuses the same
 `ticket_mutations` functions used for individual CVSS changes — each
 ticket is processed in an independent database transaction. See
-`docs/features/cvss-scoring.md` (Cascade Execution Model) for the
+`docs/features/tickets/cvss-scoring.md` (Cascade Execution Model) for the
 full batch execution specification.
 
 **Warning**: changing the default CVSS version is a significant operation.

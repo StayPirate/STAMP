@@ -7,9 +7,9 @@ parsing `updateinfo.xml` metadata from IBS download infrastructure. This is
 the **product-level** release detection mechanism.
 
 For the overall release tracking architecture (two independent levels —
-codestream and product), see `docs/features/package-tracking.md`, section
+codestream and product), see `docs/features/packages/package-tracking.md`, section
 "Release Tracking". For codestream-level detection, see
-`docs/features/ibs-codestream-release-detection.md`.
+`docs/features/packages/ibs-codestream-release-detection.md`.
 
 ## Context
 
@@ -28,7 +28,7 @@ update repository.
 
 The automatic transition to `RELEASED` is suppressed when the current status
 is `WONT_FIX` or `IGNORED` (protected states — see
-`docs/features/package-tracking.md`, "Status Behavior").
+`docs/features/packages/package-tracking.md`, "Status Behavior").
 
 ## Detection Mechanism
 
@@ -155,7 +155,7 @@ The codestream-level detector does not use this match chain — the IBS diff
 endpoint (`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
 already provides an explicit `CVE -> source package` link via the `<issues>`
 response, so the package that received the fix is known directly. See
-`docs/features/ibs-codestream-release-detection.md`.
+`docs/features/packages/ibs-codestream-release-detection.md`.
 
 **Why this matters**: a single CVE can affect multiple distinct source
 packages, typically when a vulnerable library is statically linked into
@@ -232,7 +232,7 @@ Then:
 - `TicketPackageProduct(S, P).status` → `RELEASED`.
 - `TicketPackageProduct(S, P).released_at` = advisory's `<issued date>`.
 - The transition is suppressed when the current status is `WONT_FIX` or
-  `IGNORED` (protected states, see `docs/features/package-tracking.md`,
+  `IGNORED` (protected states, see `docs/features/packages/package-tracking.md`,
   "Status Behavior").
 
 ### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
@@ -247,7 +247,7 @@ Then:
 
 Note: codestream-level no-match behavior (CVE found in diff but package
 not tracked in ticket, or no ticket exists at all) is described in
-`docs/features/ibs-codestream-release-detection.md` (Cases B and C).
+`docs/features/packages/ibs-codestream-release-detection.md` (Cases B and C).
 
 ## Background Task
 

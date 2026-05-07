@@ -347,7 +347,7 @@ source (automatic or manual).
 ### Ticket Detail Page
 
 References are displayed in a dedicated **References** section in the
-Ticket Detail page (see `docs/features/pages.md`).
+Ticket Detail page (see `docs/features/ui/pages.md`).
 
 #### Layout
 
@@ -396,11 +396,11 @@ does not include reference-related event types.
 - All references are editable/deletable by any Vulnerability Analyst,
   regardless of who created them or whether they were created
   automatically
-- See `docs/features/rbac.md` for the full permission model
+- See `docs/features/identity/rbac.md` for the full permission model
 
 ## Dependencies
 
-- `docs/features/cve-tracking.md` — CVE ingestion flow creates references
+- `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates references
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` contract for
   `source_reference_url_pattern`
-- `docs/features/pages.md` — Ticket Detail page displays references
+- `docs/features/ui/pages.md` — Ticket Detail page displays references

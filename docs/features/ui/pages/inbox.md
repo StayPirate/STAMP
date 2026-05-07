@@ -18,7 +18,7 @@ external sources but not yet picked up by any VA.
 | Ticket ID         | `SNTL-{n}` identifier, monospace. For tickets with a CVE, also shows CVE ID (e.g., `SNTL-42 (CVE-2025-1234)`) |
 | Severity          | Color-coded severity badge (Critical/High/Medium/Low/None). Shown only if available (from CVSS or severity_override) |
 | CVSS Score        | Numeric CVSS score (resolved via the default CVSS version). Shown only for tickets with a CVE |
-| Affected Packages | Package names resolved automatically via CPE mapping during CVE ingestion (see `docs/features/package-tracking.md`). Comma-separated, truncated if many |
+| Affected Packages | Package names resolved automatically via CPE mapping during CVE ingestion (see `docs/features/packages/package-tracking.md`). Comma-separated, truncated if many |
 | Summary           | First ~120 characters of the CVE description (if CVE present), or empty |
 | Published         | Date the CVE was published (if CVE present)          |
 | Actions           | Quick action buttons                                 |

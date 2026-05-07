@@ -17,12 +17,12 @@ Read-only access to public data:
 ### Vulnerability Analyst
 
 Operates the triage and assessment workflow:
-- Create tickets manually (see `docs/features/tickets.md`)
+- Create tickets manually (see `docs/features/tickets/tickets.md`)
 - Assign and reassign tickets
 - Change ticket status (New, Analysis, Analyzed, Resolved, Ignored,
   Duplicated)
 - Mark tickets as duplicate and revert duplicate status
-- Associate a CVE with a ticket (see `docs/features/tickets.md`)
+- Associate a CVE with a ticket (see `docs/features/tickets/tickets.md`)
 - Set and update severity override for tickets without CVE
 - Add and remove packages from tickets
 - Change codestream and product affectedness status
@@ -140,7 +140,7 @@ here with the required access level and a link to the owning spec.
 ### Authentication Mechanism
 
 JWT with session-backed liveness checks. See
-`docs/features/authentication.md` for the full design: token format,
+`docs/features/identity/authentication.md` for the full design: token format,
 session management, API keys, and middleware behavior.
 
 ### Permission Checking
@@ -183,7 +183,7 @@ A user can acquire a role from two independent sources (origins):
   or API. Can be removed by an admin at any time.
 - **AD-derived** (`ad_group_cn = <group CN>`): derived from AD group
   membership during LDAP sync. Managed exclusively by the sync process
-  — cannot be removed via UI or API. See `docs/features/ldap-directory.md`.
+  — cannot be removed via UI or API. See `docs/features/identity/ldap-directory.md`.
 
 ### Coexistence rules
 
@@ -227,9 +227,9 @@ The login page displays both authentication options: an SSO button
 (redirect to id.suse.com) and a local username/password form. The SSO
 button is rendered only when SSO is configured (the frontend determines
 this by calling `GET /api/v1/auth/providers`); the local form is always
-visible. See `docs/features/authentication.md` for the shared
-framework and `docs/features/sso-authentication.md` /
-`docs/features/local-authentication.md` for each provider's flow.
+visible. See `docs/features/identity/authentication.md` for the shared
+framework and `docs/features/identity/sso-authentication.md` /
+`docs/features/identity/local-authentication.md` for each provider's flow.
 
 ### User Management Page (Admin only)
 
@@ -240,8 +240,8 @@ framework and `docs/features/sso-authentication.md` /
   LDAP sync)
 - Users are created by the LDAP directory sync (SSO users) or by admins
   via CLI and admin UI (local users). See
-  `docs/features/ldap-directory.md` and
-  `docs/features/user-management.md`
+  `docs/features/identity/ldap-directory.md` and
+  `docs/features/identity/user-management.md`
 
 ### User Profile
 
@@ -253,30 +253,30 @@ framework and `docs/features/sso-authentication.md` /
    `user_service.update_roles()` for any entry point where
    `acting_user_id` is set. System actions (LDAP sync, CLI) pass
    `acting_user_id = None` and are exempt. See
-   `docs/features/user-lifecycle.md`. This guard ensures that via
+   `docs/features/identity/user-lifecycle.md`. This guard ensures that via
    UI/API, admins cannot accidentally eliminate all admin users — the
    acting admin always retains the role. For the full "zero admins"
    scenario (possible only via CLI/system operations) and recovery
-   procedure, see `docs/features/user-management.md`, Business Rule 2
+   procedure, see `docs/features/identity/user-management.md`, Business Rule 2
 2. Users cannot add roles to themselves (only admins can modify other
    users' roles)
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
-   `docs/features/user-lifecycle.md`)
+   `docs/features/identity/user-lifecycle.md`)
 4. Deactivated users cannot authenticate. On deactivation, all API keys
    are revoked and all active sessions are invalidated (proactively,
    before marking the user inactive). Additionally, the middleware
    checks `User.active` on every request as a defense-in-depth measure.
-   See `docs/features/authentication.md` (Deactivation ordering) and
-   `docs/features/user-lifecycle.md`
+   See `docs/features/identity/authentication.md` (Deactivation ordering) and
+   `docs/features/identity/user-lifecycle.md`
 5. All authentication events are logged (login, logout, failed attempts)
 6. Session duration: JWT expires after 72 hours of inactivity (refreshed
    transparently via sliding session for active users). Maximum session
    lifetime is 30 days regardless of activity. See
-   `docs/features/authentication.md`
+   `docs/features/identity/authentication.md`
 7. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
 8. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
    populate users from AD, then
    `sentinel manage-user update --username <username> --add-role admin` to
-   assign the first Admin role. See `docs/features/ldap-directory.md`
+   assign the first Admin role. See `docs/features/identity/ldap-directory.md`

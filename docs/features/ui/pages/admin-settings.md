@@ -3,4 +3,4 @@
 **Route**: `/admin/settings`
 
 This page is fully specified in
-[`docs/features/admin.md`](../admin.md).
+[`docs/features/platform/admin.md`](../admin.md).

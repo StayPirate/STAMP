@@ -27,7 +27,7 @@ Horizontal bar fixed at the top of the application.
 | Element           | Position | Description                                         |
 |-------------------|----------|-----------------------------------------------------|
 | Application logo  | Left     | Sentinel logo/wordmark. Links to default route      |
-| User menu         | Right    | Authenticated: user name + avatar, dropdown with logout. Unauthenticated: Login button (initiates SSO via id.suse.com — see `docs/features/sso-authentication.md`) |
+| User menu         | Right    | Authenticated: user name + avatar, dropdown with logout. Unauthenticated: Login button (initiates SSO via id.suse.com — see `docs/features/identity/sso-authentication.md`) |
 
 ## Sidebar Navigation
 

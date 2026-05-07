@@ -3,7 +3,7 @@
 ## Purpose
 
 Track the affectedness of source packages across IBS codestreams and SUSE
-products in the context of tickets. See `docs/features/tickets.md` for
+products in the context of tickets. See `docs/features/tickets/tickets.md` for
 the ticket specification (identification, creation, lifecycle).
 
 ## Domain Concepts
@@ -116,7 +116,7 @@ The rules are:
    If no entry exists, the threshold is implicitly 0 (all CVEs eligible).
 2. **Resolve the CVSS score**: the score used for threshold comparison is
    determined by the CVSS resolution cascade (see
-   `docs/features/cvss-scoring.md`):
+   `docs/features/tickets/cvss-scoring.md`):
    - SUSE assessment of the system-wide default CVSS version → if present,
      use this score
    - Highest score among all providers for the default CVSS version → if
@@ -133,8 +133,8 @@ The rules are:
 
 **Important**: the CVSS version used for threshold comparison MUST always
 be resolved from the system-wide default CVSS version configuration — never
-hardcoded. See `docs/features/cvss-scoring.md` and
-`docs/features/admin.md`.
+hardcoded. See `docs/features/tickets/cvss-scoring.md` and
+`docs/features/platform/admin.md`.
 
 ## Data Model
 
@@ -201,7 +201,7 @@ eligibility.
 ### Status Behavior
 
 All codestream and product status changes described in this section MUST
-go through the `ticket_mutations` module (see `docs/features/tickets.md`,
+go through the `ticket_mutations` module (see `docs/features/tickets/tickets.md`,
 Ticket Mutations Module), which ensures automatic ticket status
 re-evaluation after each change.
 
@@ -212,7 +212,7 @@ re-evaluation after each change.
    - Product in Reactive LTSS phase → `AFFECTED_RESOLVED`
    - Product has `cvss_threshold` and resolved CVSS score < threshold →
      `AFFECTED_RESOLVED` (score resolved via the CVSS resolution cascade,
-     see `docs/features/cvss-scoring.md`)
+     see `docs/features/tickets/cvss-scoring.md`)
    - Otherwise → `AFFECTED`
 3. Products with `is_override = true` are not modified
 4. After propagation, if **all** products under the codestream are in
@@ -236,8 +236,8 @@ re-evaluation after each change.
 #### Automatic transitions
 
 The following transitions can be performed automatically by Sentinel (see
-`docs/features/ibs-codestream-release-detection.md` and
-`docs/features/ibs-product-release-detection.md` for the full detection
+`docs/features/packages/ibs-codestream-release-detection.md` and
+`docs/features/packages/ibs-product-release-detection.md` for the full detection
 mechanisms):
 
 | From              | To                | Applies to             | Trigger                                |
@@ -301,7 +301,7 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 4. Resolve and cache the IBS bugowner for the package. If a
    `PackageBugowner` record already exists for this `package_name`, update
    it with fresh data from IBS. If it does not exist, create it. See
-   `docs/features/package-bugowner.md` for the resolution algorithm.
+   `docs/features/packages/package-bugowner.md` for the resolution algorithm.
 5. Enqueue `discover_submissions_for_ticket_package(ticket_id, package_name)`
    to retroactively discover IBS submission requests (SRs) and release
    requests (RRs) for the ticket's CVE created within the last 14 days.
@@ -311,7 +311,7 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 
 `ticket_mutations` handles idempotency (skipping existing records),
 initial status determination, and eligibility logic internally — see
-`docs/features/tickets.md`, Ticket Mutations Module.
+`docs/features/tickets/tickets.md`, Ticket Mutations Module.
 
 **Idempotency**: the function is safe to call multiple times for the same
 package. If SMELT adds new codestreams or products for a package after the
@@ -331,12 +331,12 @@ The following scenarios invoke `add_package_to_ticket`:
    finds a CVE fix in a package that is not tracked in the ticket. It calls
    `add_package_to_ticket` to add all codestreams and products, then sets
    the specific codestream where the fix was detected to `RELEASED`. See
-   `docs/features/ibs-codestream-release-detection.md` (Case B).
+   `docs/features/packages/ibs-codestream-release-detection.md` (Case B).
 4. **Ticket auto-creation (Case C)**: a CVE fix is detected for a CVE with
    no existing ticket. After creating the ticket,
    `add_package_to_ticket` is called, then the originating codestream is
    set to `RELEASED`. See
-   `docs/features/ibs-codestream-release-detection.md` (Case C).
+   `docs/features/packages/ibs-codestream-release-detection.md` (Case C).
 
 ### Package Management Constraints
 
@@ -390,7 +390,7 @@ record for audit and traceability. The following event types are defined:
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's
   `old_value`, `new_value`, and `comment` fields as strings. See
-  `docs/features/ticket-history.md` for the exact field mapping and
+  `docs/features/tickets/ticket-history.md` for the exact field mapping and
   `docs/data-model.md` for the schema.
 
 ### SMELT Query for Package Resolution
@@ -434,11 +434,11 @@ package:
 
 1. **Codestream level**: the fix has been added to the codestream's IBS
    project (e.g., `SUSE:SLE-15-SP6:Update`). See
-   `docs/features/ibs-codestream-release-detection.md` for the full
+   `docs/features/packages/ibs-codestream-release-detection.md` for the full
    detection mechanism (MD5 cache, IBS diff analysis, match outcomes).
 2. **Product level**: the fix has been published to the product's update
    repository (e.g., the SLES 15 SP6 update repository consumed by
-   `zypper`). See `docs/features/ibs-product-release-detection.md` for the
+   `zypper`). See `docs/features/packages/ibs-product-release-detection.md` for the
    full detection mechanism (updateinfo.xml parsing, advisory match chain).
 
 The two levels are detected through different mechanisms and update different
@@ -856,17 +856,17 @@ Package: curl                                   [Remove]
 
 ### Ticket Lifecycle Integration
 
-See `docs/features/tickets.md` (Ticket Lifecycle) for the authoritative
+See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the authoritative
 gate conditions and status transition rules. All codestream and product
 status changes go through the `ticket_mutations` module, which
 automatically re-evaluates ticket status after each change (see
-`docs/features/tickets.md`, Centralized Status Evaluation). The
+`docs/features/tickets/tickets.md`, Centralized Status Evaluation). The
 affectedness-related conditions are summarized here for context:
 
 - **Analysis → Analyzed** (automatic): at least one package must be
   added, no TicketPackageCodestream or TicketPackageProduct records may
   be in `ANALYSIS` status. Additional gate conditions (severity, CVSS)
-  are defined in `docs/features/tickets.md`.
+  are defined in `docs/features/tickets/tickets.md`.
 - **Analyzed → Resolved** (automatic): all TicketPackageCodestream and
   TicketPackageProduct records must have status `RELEASED`,
   `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`, or `AFFECTED_RESOLVED`.
@@ -876,7 +876,7 @@ affectedness-related conditions are summarized here for context:
 - **Resolved → Analyzed** (automatic): resolved gate conditions no
   longer met but analyzed gates still met (e.g., CVSS recalculation
   causes products to transition from `AFFECTED_RESOLVED` to `AFFECTED`).
-  See `docs/features/cvss-scoring.md` (Recalculation Cascade).
+  See `docs/features/tickets/cvss-scoring.md` (Recalculation Cascade).
 - **Resolved → Analysis** (automatic): both resolved and analyzed gate
   conditions no longer met (e.g., package added with codestreams in
   `ANALYSIS`).
@@ -896,26 +896,26 @@ affectedness-related conditions are summarized here for context:
   UTC via Celery Beat) that invokes the `CodestreamReleaseDetector`
   service. Serves as a catch-up mechanism for events missed by the
   real-time `IBSEventConsumer` (see
-  `docs/features/ibs-rabbitmq-integration.md`). See
-  `docs/features/ibs-codestream-release-detection.md` for the full
+  `docs/features/integrations/ibs-rabbitmq-integration.md`). See
+  `docs/features/packages/ibs-codestream-release-detection.md` for the full
   procedure.
 - `check_product_releases`: periodic task that invokes the
   `ProductReleaseDetector` (`updateinfo.xml`-based) for
   `TicketPackageProduct` records and applies the automatic transitions to
-  `RELEASED`. See `docs/features/ibs-product-release-detection.md` for
+  `RELEASED`. See `docs/features/packages/ibs-product-release-detection.md` for
   the full procedure. Frequency and scope are TBD.
 - `create_ticket_from_detection`: on-demand task enqueued by the
   `CodestreamReleaseDetector` or the `IBSEventConsumer` when a CVE fix
   is detected for a CVE that has no ticket in Sentinel. Fetches CVE data
   from NVD, creates the ticket, resolves packages via SMELT, and sets
   the originating codestream to `RELEASED`. See
-  `docs/features/ibs-codestream-release-detection.md` (Case C) for
+  `docs/features/packages/ibs-codestream-release-detection.md` (Case C) for
   details.
 - `check_lifecycle_phase_transitions`: periodic task (daily at 04:00 UTC)
   that detects products currently in Reactive LTSS or EOL phase with
   actionable `TicketPackageProduct` records and enqueues re-evaluation.
   Idempotent — operates on current state with no cache. See
-  `docs/features/product-lifecycle-transitions.md` for the full
+  `docs/features/packages/product-lifecycle-transitions.md` for the full
   specification.
 
 ## Security
@@ -935,6 +935,6 @@ affectedness-related conditions are summarized here for context:
   `SUSE:Channels` may be added if SMELT data is insufficient.
 - **IBS release tracking details**: both detection levels are now fully
   specified in dedicated specs. See
-  `docs/features/ibs-codestream-release-detection.md` (IBS source info
-  and diff endpoints) and `docs/features/ibs-product-release-detection.md`
+  `docs/features/packages/ibs-codestream-release-detection.md` (IBS source info
+  and diff endpoints) and `docs/features/packages/ibs-product-release-detection.md`
   (`updateinfo.xml` parsing).

@@ -8,8 +8,8 @@ programmatic clients (bots, AI agents, CI scripts) obtain durable
 credentials without interactive login flows.
 
 Sentinel supports two authentication providers — SSO via `id.suse.com`
-(see `docs/features/sso-authentication.md`) and local credentials (see
-`docs/features/local-authentication.md`). Both providers produce the
+(see `docs/features/identity/sso-authentication.md`) and local credentials (see
+`docs/features/identity/local-authentication.md`). Both providers produce the
 same artifact: a signed JWT that the client presents on subsequent
 requests. Additionally, any authenticated user can create **API keys**
 for non-interactive access.
@@ -993,13 +993,13 @@ attributed to the agent's own identity.
 
 ## Cross-references
 
-- `docs/features/local-authentication.md` — local login endpoint and
+- `docs/features/identity/local-authentication.md` — local login endpoint and
   password management
-- `docs/features/sso-authentication.md` — SSO login flow with
+- `docs/features/identity/sso-authentication.md` — SSO login flow with
   id.suse.com
-- `docs/features/user-lifecycle.md` — deactivation side effects
+- `docs/features/identity/user-lifecycle.md` — deactivation side effects
   (API key revocation, session invalidation)
-- `docs/features/user-management.md` — creating local user
+- `docs/features/identity/user-management.md` — creating local user
   accounts (including for AI agents)
-- `docs/features/rbac.md` — role-based access control and permission
+- `docs/features/identity/rbac.md` — role-based access control and permission
   model

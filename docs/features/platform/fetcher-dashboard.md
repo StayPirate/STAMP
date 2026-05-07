@@ -9,7 +9,7 @@ control (manual trigger, enable/disable, configuration) and CLI access
 for bootstrap and troubleshooting.
 
 This feature depends on the fetcher infrastructure defined in
-`docs/features/fetcher-infrastructure.md`. Read that spec first for the
+`docs/features/platform/fetcher-infrastructure.md`. Read that spec first for the
 `BaseFetcher` contract, data model (`FetcherRun`, `FetcherConfig`,
 `FetcherAuditLog`, `FetcherRunWeeklyAggregate`), concurrency control,
 and stale run detection.
@@ -24,7 +24,7 @@ GET /api/v1/ibs-consumer/status
 
 Returns the current status of the `IBSEventConsumer` by reading the
 `sentinel:ibs_consumer_status` key from Redis. See
-`docs/features/ibs-rabbitmq-integration.md`, section "Redis Heartbeat"
+`docs/features/integrations/ibs-rabbitmq-integration.md`, section "Redis Heartbeat"
 for the key format and TTL behavior.
 
 **Response when consumer is alive** (200 OK):
@@ -377,7 +377,7 @@ during ticket creation or CVE association, it triggers on-demand
 single-CVE fetches via standalone Celery tasks (not through this trigger
 endpoint). These on-demand fetches are sub-operations that do not create
 `FetcherRun` records, do not check concurrency, and do not appear in the
-dashboard. See `docs/features/cve-tracking.md`, "On-demand Single-CVE
+dashboard. See `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE
 Fetch" for details.
 
 ### Get Fetcher Config (Admin Only)
@@ -528,7 +528,7 @@ The page is divided into two sections:
 
 A dedicated card displayed **above** the fetcher card grid. It shows the
 real-time status of the `IBSEventConsumer` (see
-`docs/features/ibs-rabbitmq-integration.md`). This card is visually
+`docs/features/integrations/ibs-rabbitmq-integration.md`). This card is visually
 distinct from the fetcher cards (different layout, no schedule info, no
 admin toggle) since the consumer is not a `BaseFetcher`.
 

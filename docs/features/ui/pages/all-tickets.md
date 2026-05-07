@@ -13,7 +13,7 @@ Displays all tickets in the system with comprehensive search and filtering.
   (Critical, High, Medium, Low, None). When a CVE-ID is provided, severity
   is derived from the CVE's CVSS score and the severity selector is hidden.
   On confirmation, calls `POST /api/v1/tickets` and redirects to
-  the newly created ticket's detail page. See `docs/features/tickets.md`
+  the newly created ticket's detail page. See `docs/features/tickets/tickets.md`
   (Manual Creation) for the full creation flow
 - Search bar + filter controls
 - Sortable, paginated table

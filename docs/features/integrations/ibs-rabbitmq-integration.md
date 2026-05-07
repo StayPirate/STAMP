@@ -4,7 +4,7 @@
 
 Complement the existing polling-based codestream release detection
 (`CodestreamReleaseDetector`, documented in
-`docs/features/ibs-codestream-release-detection.md`) with a real-time event consumer that
+`docs/features/packages/ibs-codestream-release-detection.md`) with a real-time event consumer that
 listens to IBS commit events via the RabbitMQ message bus at
 `rabbit.suse.de`. This reduces codestream-level detection latency from up
 to 24 hours (polling interval) to seconds, while maintaining the periodic
@@ -22,7 +22,7 @@ fetcher as a catch-up mechanism for events missed during downtime.
 ### Non-Goals
 
 - Product-level detection: remains polling-based (see
-  `docs/features/ibs-product-release-detection.md`).
+  `docs/features/packages/ibs-product-release-detection.md`).
   The `suse.obs.repo.published` event was evaluated and rejected — its
   payload lacks the package name, triggering full `updateinfo.xml`
   re-download and re-parse.   Measured cost: ~600-800 ms total per repository (~400-470 ms download,
@@ -183,7 +183,7 @@ For each `suse.obs.package.commit` event:
    - **Case C** — no ticket exists: enqueue
      `create_ticket_from_detection` task
 
-   See `docs/features/ibs-codestream-release-detection.md`, section
+   See `docs/features/packages/ibs-codestream-release-detection.md`, section
    "Codestream Match Outcomes" for the complete specification of each case.
 
 6. **Update MD5 cache**: write the event's `srcmd5` to
@@ -266,7 +266,7 @@ The two mechanisms are fully independent:
 | Connection lost during consumption | Log WARNING, reconnect with exponential backoff. Events during disconnection are lost (caught by periodic fetcher) |
 | Invalid/unparseable message payload | Log WARNING with raw payload, acknowledge and discard |
 | IBS diff request fails (HTTP error, timeout) | Log ERROR, do NOT update MD5 cache. The periodic fetcher will retry on its next run |
-| SMELT unreachable during Case B/C | Log ERROR, package addition skipped. The MD5 cache IS updated (the IBS diff succeeded), so neither the consumer nor the periodic fetcher will re-attempt automatically. Same behavior as the periodic fetcher — the condition must be surfaced to operators via monitoring. See `docs/features/ibs-codestream-release-detection.md` error handling |
+| SMELT unreachable during Case B/C | Log ERROR, package addition skipped. The MD5 cache IS updated (the IBS diff succeeded), so neither the consumer nor the periodic fetcher will re-attempt automatically. Same behavior as the periodic fetcher — the condition must be surfaced to operators via monitoring. See `docs/features/packages/ibs-codestream-release-detection.md` error handling |
 | Active codestream set refresh fails | Log WARNING, continue using stale set. Retry refresh on next interval |
 
 ## Monitoring and Observability
@@ -279,7 +279,7 @@ not fit its continuous execution model.
 
 Instead, the consumer reports its state via a **Redis heartbeat** and is
 displayed as a dedicated card in the fetcher dashboard (see
-`docs/features/fetcher-dashboard.md`, section "IBS RabbitMQ Consumer
+`docs/features/platform/fetcher-dashboard.md`, section "IBS RabbitMQ Consumer
 Card").
 
 ### Redis Heartbeat
@@ -347,7 +347,7 @@ connection):
 The consumer state is displayed as a dedicated card in the fetcher
 dashboard, positioned above the fetcher card grid. The card is publicly
 accessible (no authentication required), consistent with the rest of the
-dashboard. See `docs/features/fetcher-dashboard.md`, section "IBS
+dashboard. See `docs/features/platform/fetcher-dashboard.md`, section "IBS
 RabbitMQ Consumer Card" for the full UI specification.
 
 ## Known Limitations
@@ -397,7 +397,7 @@ connection and process the full event stream.
 
 ## Dependencies
 
-- `docs/features/package-tracking.md`: defines the codestream-level
+- `docs/features/packages/package-tracking.md`: defines the codestream-level
   detection logic (Case A/B/C), `CodestreamPackageChecksum` cache, and
   `add_package_to_ticket` function used by the consumer
 - `docs/features/integrations/ibs-integration.md`: defines the `IBSClient` service

@@ -19,9 +19,9 @@ The page is divided into the following sections:
 - **Status badge**: color-coded current status
 - **Severity badge**: color-coded severity level. For tickets with a CVE,
   always read-only (derived from CVSS assessments via the resolution
-  cascade — see `docs/features/cvss-scoring.md`). For tickets without a
+  cascade — see `docs/features/tickets/cvss-scoring.md`). For tickets without a
   CVE, editable by the VA (sets `severity_override` — see
-  `docs/features/tickets.md`, Severity Resolution)
+  `docs/features/tickets/tickets.md`, Severity Resolution)
 - **Assignee**: current assignee with option to reassign
 - **Action buttons**: context-dependent based on current status (see below)
 
@@ -39,7 +39,7 @@ The page is divided into the following sections:
 **Copy maintainer link** (VA role only, available when ticket is in
 `Analyzed` status): copies the URL `/my-packages/ticket/:id` to the
 clipboard. The VA can then share this link with the package maintainer.
-See `docs/features/maintainer-dashboard.md` for the per-ticket view.
+See `docs/features/ui/maintainer-dashboard.md` for the per-ticket view.
 
 ### Delete Ticket (Admin only)
 
@@ -75,7 +75,7 @@ this is an error."** No ticket data is shown. The API returns 410 Gone.
 **Automatic status transitions**: transitions from Analysis to Analyzed
 and from Analyzed to Resolved happen automatically when gate conditions
 are met. There are no manual action buttons for these transitions. See
-`docs/features/tickets.md` (Centralized Status Evaluation) for details.
+`docs/features/tickets/tickets.md` (Centralized Status Evaluation) for details.
 
 ### CVE Information Card
 
@@ -92,10 +92,10 @@ without a CVE.
 
 Shown only when the ticket has an associated CVE. Hidden for tickets
 without a CVE (severity is set via `severity_override` instead — see
-`docs/features/tickets.md`, Severity Resolution).
+`docs/features/tickets/tickets.md`, Severity Resolution).
 
 A dedicated card displaying CVSS assessments from multiple providers,
-organized by CVSS version in tabs. See `docs/features/cvss-scoring.md`
+organized by CVSS version in tabs. See `docs/features/tickets/cvss-scoring.md`
 for the full specification.
 
 - **Tabs**: one per CVSS version, ordered by version ascending (e.g.,
@@ -115,12 +115,12 @@ for the full specification.
 
 **Note**: the severity badge in the header is always read-only and
 calculated from the CVSS resolution cascade (SUSE default version →
-highest default version). See `docs/features/cvss-scoring.md`.
+highest default version). See `docs/features/tickets/cvss-scoring.md`.
 
 ### References Section
 
 Dedicated section displaying all external links associated with the
-ticket. See `docs/features/references.md` for the full specification.
+ticket. See `docs/features/ui/references.md` for the full specification.
 
 - References are displayed as clickable links grouped by source (e.g.,
   NVD, MITRE, Manual)
@@ -135,7 +135,7 @@ ticket. See `docs/features/references.md` for the full specification.
 ### Affectedness Section
 
 Tree structure showing packages, codestreams, and products with their
-affectedness status. See `docs/features/package-tracking.md` (UI
+affectedness status. See `docs/features/packages/package-tracking.md` (UI
 Requirements section) for the full specification of the tree layout,
 status dropdowns, eligibility indicators, and color coding.
 
@@ -144,11 +144,11 @@ package name. For group bugowners, the group name and collective email
 are shown, with a tooltip or expandable section listing group members.
 For person bugowners, the name and email are shown. If the bugowner is
 unknown, "Unknown" is displayed in a neutral/greyed-out style. See
-`docs/features/package-bugowner.md` for details.
+`docs/features/packages/package-bugowner.md` for details.
 
 The ticket can transition to Analyzed only when all codestreams and
 products have a status other than Analysis (see
-`docs/features/package-tracking.md`, Ticket Lifecycle Integration).
+`docs/features/packages/package-tracking.md`, Ticket Lifecycle Integration).
 
 ### Duplicate Information
 
@@ -174,7 +174,7 @@ audit trail with search and filtering capabilities.
   and text search on comments
 - Paginated results
 
-See `docs/features/ticket-history.md` for the full specification, including
+See `docs/features/tickets/ticket-history.md` for the full specification, including
 API endpoint, filter parameters, event type contract, and UI details.
 
 ## Security
@@ -186,4 +186,4 @@ API endpoint, filter parameters, event type contract, and UI details.
   assignee
 - Soft-deleting and restoring tickets requires the Admin role
 - Non-admin users accessing a soft-deleted ticket receive 410 Gone
-- See `docs/features/rbac.md` for the full permission model
+- See `docs/features/identity/rbac.md` for the full permission model

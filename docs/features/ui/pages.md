@@ -7,7 +7,7 @@ a ticket-based workflow where vulnerability analysts (VAs) triage, analyze, and
 resolve security issues that affect maintained products.
 
 A **Ticket** is the primary work unit for VAs. Tickets may or may not be
-associated with a CVE. See `docs/features/tickets.md` for the full ticket
+associated with a CVE. See `docs/features/tickets/tickets.md` for the full ticket
 specification (identification, creation pathways, lifecycle, severity
 resolution, and status transition rules).
 

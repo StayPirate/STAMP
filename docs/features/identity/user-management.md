@@ -13,13 +13,13 @@ Local users serve three primary use cases:
    application workflow without depending on the SUSE internal network
 2. **AI agents and automation**: dedicated accounts for AI agents or
    bots that operate as independent identities with their own audit
-   trail (see `docs/features/authentication.md`, Use Cases: Bots and
+   trail (see `docs/features/identity/authentication.md`, Use Cases: Bots and
    AI Agents)
 3. **Environments without SSO**: deployments outside the SUSE corporate
    network where `id.suse.com` is not reachable
 
 SSO users are provisioned and maintained by the LDAP sync process (see
-`docs/features/ldap-directory.md`). Administrators can modify their
+`docs/features/identity/ldap-directory.md`). Administrators can modify their
 roles and deactivate/reactivate them, but cannot set passwords or create
 them manually.
 
@@ -28,7 +28,7 @@ sync process. They are functionally identical to LDAP-synced users for
 the purposes of authorization, ticket assignment, and API key
 management. The only difference is how they authenticate: local
 credentials instead of SSO (see
-`docs/features/local-authentication.md`).
+`docs/features/identity/local-authentication.md`).
 
 ## CLI Commands
 
@@ -92,7 +92,7 @@ command cannot be used non-interactively — a TTY is required.
    - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
    - `acting_user_id = None` (CLI action)
-   - See `docs/features/user-lifecycle.md` for the service contract
+   - See `docs/features/identity/user-lifecycle.md` for the service contract
 6. If the service raises `UserConflictError` (duplicate username or
    email), exits with error:
    `"Error: A user with username '{username}' already exists."` or
@@ -171,7 +171,7 @@ sentinel manage-user update \
 8. If `--reactivate` is provided: delegates to
    `user_service.reactivate_user()` with `acting_user_id = None`. If
    the user is already active, this is a no-op. See
-   `docs/features/user-lifecycle.md` for reactivation semantics.
+   `docs/features/identity/user-lifecycle.md` for reactivation semantics.
    Reactivation is intentionally the LAST mutation step so that the
    account is fully configured (correct email, roles, etc.) before
    becoming active again
@@ -294,7 +294,7 @@ unreachable).
 ### `sentinel manage-user set-password`
 
 Sets or resets the password for a local user. See
-`docs/features/local-authentication.md` for full details on password
+`docs/features/identity/local-authentication.md` for full details on password
 policy and hashing.
 
 ```
@@ -500,7 +500,7 @@ Displays all users (local and SSO) with columns:
 - Type (Local / SSO)
 - Status (Active / Inactive)
 - Roles — each role displays badge(s) indicating its origin(s): "Manual",
-  AD group name, or both. See `docs/features/rbac.md` (Role Origins and
+  AD group name, or both. See `docs/features/identity/rbac.md` (Role Origins and
   Coexistence) for the coexistence semantics and UI representation
 
 Filters: by type (local/SSO), by status (active/inactive), by role.
@@ -520,7 +520,7 @@ Note: local user creation is restricted to the CLI
 (`sentinel manage-user create`). This ensures that user provisioning
 requires shell access, which is an appropriate security barrier for the
 supported use cases (development, bots, non-SSO environments). See
-`docs/features/ldap-directory.md` Business Rule 1.
+`docs/features/identity/ldap-directory.md` Business Rule 1.
 
 ### Actions available for SSO users
 
@@ -580,7 +580,7 @@ an inline form (or modal) with the following fields:
   "Passwords do not match." The submit button remains disabled until
   the fields match
 - Password length must be 12–128 characters (consistent with
-  `docs/features/local-authentication.md`)
+  `docs/features/identity/local-authentication.md`)
 
 **On submit**: call `POST /api/v1/admin/users/{user}/password` with
 the new password. On success, display a confirmation message:
@@ -638,7 +638,7 @@ inactive users (see "Inactive user management principle" above).
    `{"data": ...}` envelope
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`docs/features/ldap-directory.md`, User detail, for the full schema).
+`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
 
 #### `POST /api/v1/admin/users/{user}/roles`
 
@@ -669,7 +669,7 @@ Add or remove manual roles for a user.
 - Cannot remove your own Admin role — returns HTTP 409 with code
   `USER_SELF_ROLE_REMOVAL`:
   `"Cannot remove your own Admin role."` (enforced by
-  `user_service.update_roles()` — see `docs/features/user-lifecycle.md`)
+  `user_service.update_roles()` — see `docs/features/identity/user-lifecycle.md`)
 - If both `add` and `remove` are empty arrays (or missing), the
   operation is a no-op — returns HTTP 200 with the unchanged user
   profile in the standard `{"data": ...}` envelope
@@ -677,7 +677,7 @@ Add or remove manual roles for a user.
    no-op (idempotent)
 - Adding a role that the user already holds via AD derivation creates a
   separate `_manual` record — both origins coexist independently. See
-  `docs/features/rbac.md` (Role Origins and Coexistence) for full
+  `docs/features/identity/rbac.md` (Role Origins and Coexistence) for full
   semantics
 - Creates a `UserRole` record with `ad_group_cn = '_manual'` and
   `assigned_by` set to the authenticated admin's user ID for each added
@@ -685,7 +685,7 @@ Add or remove manual roles for a user.
 
 **Response**: HTTP 200 with updated user profile including all roles,
 wrapped in the standard `{"data": ...}` envelope (see
-`docs/features/ldap-directory.md`, User detail, for the full schema).
+`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
 
 #### `POST /api/v1/admin/users/{user}/password`
 
@@ -709,7 +709,7 @@ reactivation.
 2. Delegate to `user_service.reset_password(user_id, password,
    acting_user_id=authenticated_admin.id)` — this handles SSO user
    check, validation, hashing, and session invalidation (see
-   `docs/features/user-lifecycle.md`)
+   `docs/features/identity/user-lifecycle.md`)
 3. Log the operation at INFO level: admin identity (user_id, username)
    and target user (user_id, username)
 4. Return HTTP 200
@@ -756,12 +756,12 @@ revocation, session invalidation, ticket reassignment).
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
 
-See `docs/features/user-lifecycle.md` for the full side effect contract
+See `docs/features/identity/user-lifecycle.md` for the full side effect contract
 (API key revocation, session invalidation, ticket reassignment on
 deactivation).
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`docs/features/ldap-directory.md`, User detail, for the full schema).
+`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
 
 #### `POST /api/v1/admin/users/{user}/reactivate`
 
@@ -781,7 +781,7 @@ Reactivate a previously deactivated user account.
    `{"data": ...}` envelope
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`docs/features/ldap-directory.md`, User detail, for the full schema).
+`docs/features/identity/ldap-directory.md`, User detail, for the full schema).
 
 #### `GET /api/v1/admin/users/{user}/deactivation-impact`
 
@@ -884,7 +884,7 @@ handling is required.
 2. **No "last admin" enforcement**: the system does not enforce a
    minimum admin count. However, via UI/API it is practically impossible
    for administrators to accidentally eliminate all admins — the
-   self-removal guard (see `docs/features/rbac.md`, Business Rule 1)
+   self-removal guard (see `docs/features/identity/rbac.md`, Business Rule 1)
    prevents any admin from removing their own Admin role, so at least
    the acting admin always retains the role. Via CLI or system
    operations (`acting_user_id = None`), the self-removal guard does
@@ -895,7 +895,7 @@ handling is required.
    system administrator with shell access can restore admin access via:
    `sentinel manage-user update --username <user> --add-role admin`.
    This is consistent with the LDAP sync behavior (see
-   `docs/features/ldap-directory.md`, Business Rule 6)
+   `docs/features/identity/ldap-directory.md`, Business Rule 6)
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
@@ -919,7 +919,7 @@ handling is required.
   `admin` role can access the user management pages
 - **Password policy**: minimum 12 characters, no complexity rules.
   Length is the primary defense (see
-  `docs/features/local-authentication.md`)
+  `docs/features/identity/local-authentication.md`)
 - **Audit trail**: user creation, role changes, and deactivation
   produce `TicketEvent` records where relevant (e.g., ticket
   reassignment on deactivation)
@@ -948,17 +948,17 @@ handling is required.
   Mitigations: (1) the lockout is temporary (auto-expires via Redis
   TTL); (2) an admin can unlock immediately via CLI or API; (3) existing
   sessions are NOT invalidated by lockout (see
-  `docs/features/local-authentication.md`) — a logged-in user continues
+  `docs/features/identity/local-authentication.md`) — a logged-in user continues
   working normally even if their account is locked. Future mitigation:
   per-IP rate limiting could be added if the threat model changes
 
 ## Cross-references
 
-- `docs/features/authentication.md` — authentication framework, API
+- `docs/features/identity/authentication.md` — authentication framework, API
   keys, session management
-- `docs/features/local-authentication.md` — login endpoint, password
+- `docs/features/identity/local-authentication.md` — login endpoint, password
   hashing, rate limiting
-- `docs/features/user-lifecycle.md` — service contract for create,
+- `docs/features/identity/user-lifecycle.md` — service contract for create,
   update, deactivate, reactivate
-- `docs/features/rbac.md` — role definitions and permission model
-- `docs/features/ldap-directory.md` — LDAP sync (manages SSO users)
+- `docs/features/identity/rbac.md` — role definitions and permission model
+- `docs/features/identity/ldap-directory.md` — LDAP sync (manages SSO users)
