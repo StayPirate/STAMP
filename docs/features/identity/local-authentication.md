@@ -24,7 +24,7 @@ three primary use cases:
 Local authentication is only available to users with `ldap_uid = NULL`
 (local users). Users managed by LDAP sync (`ldap_uid IS NOT NULL`)
 authenticate exclusively via SSO — see
-`docs/features/sso-authentication.md`.
+`docs/features/identity/sso-authentication.md`.
 
 ## Login Endpoint
 
@@ -69,7 +69,7 @@ session, and returns a JWT.
     return HTTP 401 with generic message
 11. On success: reset the failed attempt counter, create a `Session`
     record, update `user.last_login_at = now()`, issue a JWT (see
-    `docs/features/authentication.md` for token format and claims),
+    `docs/features/identity/authentication.md` for token format and claims),
     return the token
 
 **Success response** (200):
@@ -141,81 +141,35 @@ There is no self-service password reset or password change in the
 initial implementation. Users who need a password change must request it
 from an admin.
 
-### CLI commands
+### Password validation
 
-#### `sentinel manage-user create` (updated)
-
-The existing `create` command gains an additional required parameter for
-local users:
-
-```
-sentinel manage-user create \
-  --username <username> \
-  --email <email> \
-  [--full-name <name>] \
-  [--role <role>] ...
-```
-
-The password is collected interactively via a hidden prompt (input is not
-echoed to the terminal, like `sudo`). Passwords are never passed as CLI
-arguments — arguments are visible in process listings (`ps aux`) and
-shell history files.
-
-| Parameter    | Required | Description                           |
-|--------------|----------|---------------------------------------|
-| (prompt)     | Yes      | Initial password, collected interactively |
-
-**Password validation**:
 - Minimum 12 characters
 - Maximum 128 characters (prevents resource exhaustion via Argon2id
   hashing of arbitrarily large inputs)
 - No complexity rules (uppercase, numbers, symbols) — length is the
   primary defense
 
-If the password is too short, exit with error:
-`"Error: Password must be at least 12 characters."`
+These rules are enforced by `user_service.reset_password()` and apply
+to all password-setting paths (CLI and admin UI).
 
-If the password is too long, exit with error:
-`"Error: Password must be at most 128 characters."`
+### CLI commands
 
-#### `sentinel manage-user set-password`
-
-Sets or resets the password for a local user.
-
-```
-sentinel manage-user set-password \
-  --username <username>
-```
-
-The new password is collected interactively via a hidden prompt (input is
-not echoed to the terminal). Passwords are never passed as CLI arguments.
-
-**Behavior**:
-
-1. Look up the user by `username` — if not found, exit with error:
-   `"Error: User '{username}' not found."`
-2. Call `user_service.reset_password(user_id, new_password,
-   acting_user_id=None)` — this handles validation, hashing, and
-   session invalidation (see `docs/features/user-lifecycle.md`)
-3. Print: `"Password updated for user '{username}'. All active sessions
-   have been invalidated."`
-
-On `SSOUserPasswordError`: exit with error:
-`"Error: Cannot set password for SSO user '{username}'. SSO users
-authenticate via id.suse.com."`
-
-On `PasswordValidationError`: exit with error:
-`"Error: Password must be between 12 and 128 characters."`
-
-**Exit codes**: 0 on success, 1 on validation error.
+Passwords are managed via `sentinel manage-user create` (at user
+creation) and `sentinel manage-user set-password` (reset). Both
+commands collect the password interactively via a hidden prompt —
+passwords are never passed as CLI arguments (arguments are visible in
+process listings and shell history). See
+`docs/features/identity/user-management.md` for full CLI behavior
+(parameters, confirmation prompt, error handling, exit codes).
 
 ### Admin UI: password reset
 
 The user management page in the administration panel includes a "Reset
 password" action for local users. The admin enters the new password
-(same validation: 12–128 characters). The behavior is identical to the
-CLI `set-password` command, with `acting_user_id` set to the admin's
-user ID.
+(same validation: 12–128 characters). The behavior delegates to
+`user_service.reset_password()` with `acting_user_id` set to the admin's
+user ID. See `docs/features/identity/user-management.md` for the full
+admin UI specification.
 
 For SSO users, the "Reset password" action is not available (greyed out
 or hidden).
@@ -224,13 +178,13 @@ or hidden).
 
 API endpoint for admin password reset (used by the admin UI). The full
 endpoint specification (request/response schema, error codes) is defined
-in `docs/features/user-management.md` (Admin API endpoints).
+in `docs/features/identity/user-management.md` (Admin API endpoints).
 
 **Authentication**: required. **Permission**: `admin` role.
 
 Delegates to `user_service.reset_password()` which handles SSO user
 check, password validation, hashing, and session invalidation. See
-`docs/features/user-lifecycle.md` for the service contract.
+`docs/features/identity/user-lifecycle.md` for the service contract.
 
 ## Rate Limiting / Brute-Force Protection
 
@@ -280,7 +234,7 @@ attempts per username using a Redis counter.
 - An admin can unlock a locked account via `sentinel manage-user unlock
   --username <name>` (CLI) or the "Unlock" action in the admin user
   management page. Alternatively, the lockout expires automatically
-  after the TTL. See `docs/features/user-management.md`.
+  after the TTL. See `docs/features/identity/user-management.md`.
 - **Redis unavailability**: if Redis is unreachable, the login endpoint
   operates in **fail-open** mode — login proceeds without rate limiting.
   This prioritizes availability over brute-force protection. The
@@ -297,7 +251,7 @@ attempts per username using a Redis counter.
 The login page always displays the username/password form. The "Login
 with SUSE SSO" button is rendered only when SSO is configured — the
 frontend determines this by calling `GET /api/v1/auth/providers` (see
-`docs/features/sso-authentication.md`).
+`docs/features/identity/sso-authentication.md`).
 
 - **"Login with SUSE SSO" button** (conditional): initiates the SSO flow
 - **Username/password form** (always visible): submits to
@@ -336,10 +290,10 @@ session behavior.
 
 ## Cross-references
 
-- `docs/features/authentication.md` — shared authentication framework
+- `docs/features/identity/authentication.md` — shared authentication framework
   (JWT format, session model, API keys, middleware)
-- `docs/features/sso-authentication.md` — SSO login flow (alternative
+- `docs/features/identity/sso-authentication.md` — SSO login flow (alternative
   provider)
-- `docs/features/user-management.md` — creating and managing
+- `docs/features/identity/user-management.md` — creating and managing
   local user accounts
-- `docs/features/user-lifecycle.md` — deactivation side effects
+- `docs/features/identity/user-lifecycle.md` — deactivation side effects
