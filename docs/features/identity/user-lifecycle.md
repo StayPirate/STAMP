@@ -70,8 +70,8 @@ Creates a new User record with optional initial roles.
 
 1. Validate uniqueness of `username` and `email` across all users
    (including inactive). If violated, raise `UserConflictError`
-2. If `password` is provided, hash it with Argon2id (see
-   `docs/features/local-authentication.md` for hashing parameters)
+2. If `password` is provided, hash it with bcrypt (see
+   `docs/features/identity/local-authentication.md` for hashing parameters)
 3. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
    `ldap_synced_at = now()` if `ldap_uid` is set
@@ -265,8 +265,8 @@ Resets the password for a local user and invalidates all active sessions.
 
 1. Validate password length (12–128 characters). If invalid, raise
    `PasswordValidationError`
-2. Hash the password with Argon2id (see
-   `docs/features/local-authentication.md` for hashing parameters)
+2. Hash the password with bcrypt (see
+   `docs/features/identity/local-authentication.md` for hashing parameters)
 3. Update `User.password_hash` with the new hash
 4. Invalidate all active sessions via
    `session_service.invalidate_user_sessions(db, user_id)` — this

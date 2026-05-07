@@ -159,10 +159,10 @@ session management, API keys, and middleware behavior.
 
 ### Password Security
 
-Sentinel stores Argon2id password hashes for local users only. SSO users
-do not have local passwords. See
-`docs/features/local-authentication.md` for password policy and hashing
-parameters.
+Sentinel stores bcrypt password hashes (with SHA-256 pre-hash) for local
+users only. SSO users do not have local passwords. See
+`docs/features/identity/local-authentication.md` for password policy and
+hashing parameters.
 
 ## Data Model
 

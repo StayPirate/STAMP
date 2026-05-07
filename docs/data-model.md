@@ -399,7 +399,7 @@ the same access as an unauthenticated user (read-only on public data).
 | email          | VARCHAR     | UNIQUE, NOT NULL   | Email address (from AD `mail`)   |
 | full_name      | VARCHAR     |                    | Display name (from AD `cn`)      |
 | active         | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| password_hash  | VARCHAR     | nullable           | Argon2id hash of password. NULL for SSO users. See `docs/features/identity/local-authentication.md` |
+| password_hash  | VARCHAR     | nullable           | bcrypt hash of password (with SHA-256 pre-hash). NULL for SSO users. See `docs/features/identity/local-authentication.md` |
 | ldap_uid       | VARCHAR     | UNIQUE, nullable   | AD `sAMAccountName`. NULL for local users |
 | ldap_dn        | VARCHAR     | nullable           | Full AD distinguished name       |
 | manager_uid    | VARCHAR     | nullable           | `ldap_uid` of the direct line manager (resolved from AD `manager` DN) |

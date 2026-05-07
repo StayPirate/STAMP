@@ -908,7 +908,7 @@ attributed to the agent's own identity.
 - **JWT_SECRET_KEY** must be a cryptographically random string of at
   least 32 characters. It must never be committed to the repository or
   logged.
-- **API key hashing uses plain SHA-256**, not a slow hash like Argon2
+- **API key hashing uses plain SHA-256**, not a slow hash like bcrypt
   and not a keyed HMAC. API keys have ~190 bits of entropy (32
   alphanumeric characters generated server-side by a CSPRNG) and are
   not vulnerable to offline brute-force — the search space is
@@ -916,9 +916,9 @@ attributed to the agent's own identity.
   avoids the operational burden of a server-side secret: there is no
   key to rotate and no risk of permanently invalidating all API keys
   through a configuration change. Using a slow hash for high-entropy
-  tokens would create unnecessary CPU/memory pressure — at 100
-  requests/second with Argon2 (64 MiB/hash), the server would consume
-  ~6.4 GB of RAM solely for key validation, creating a
+  tokens would create unnecessary CPU pressure — at 100
+  requests/second with bcrypt (cost 12, ~300ms/op), the server would
+  need 30 CPU-seconds per second solely for key validation, creating a
   denial-of-service vector.
 - **API key secrets** are hashed before storage. The plaintext is never
   stored and cannot be recovered.
