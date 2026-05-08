@@ -344,6 +344,11 @@ automatically.
   for a ticket without a CVE (Vulnerability Analyst role). Returns 400 if the
   ticket has an associated CVE. See `docs/features/tickets/tickets.md`.
 - `POST /api/v1/tickets/{ticket_id}/assign` — Assign or reassign a ticket
+  (Vulnerability Analyst role). Request body: `{"user_id": "<UUID or username>"}`.
+  The target user MUST hold the `vulnerability_analyst` role. Returns 200 OK
+  with updated ticket data. Error responses: 400 (target user does not have
+  the vulnerability_analyst role), 404 (ticket or target user not found).
+  See `docs/features/tickets/tickets.md`.
 - `POST /api/v1/tickets/{ticket_id}/ignore` — Mark ticket as ignored
 - `POST /api/v1/tickets/{ticket_id}/duplicate` — Mark ticket as duplicate.
   Request body: `{"duplicate_of_id": "<UUID or SNTL-{n}>"}`. The target is

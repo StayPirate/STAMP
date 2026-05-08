@@ -54,6 +54,11 @@ capabilities must hold both roles.
 |----------------------------------|-------|-----|--------|
 | Create ticket manually           | No    | Yes | No     |
 | Assign/reassign ticket           | No    | Yes | No     |
+
+> **Assignment target constraint**: the "Assign/reassign ticket" permission
+> allows any VA to assign a ticket, but the target user MUST also hold the
+> `vulnerability_analyst` role. Assigning to a user without this role is
+> rejected with 400 Bad Request.
 | Change ticket status             | No    | Yes | No     |
 | Mark as duplicate / revert       | No    | Yes | No     |
 | Associate CVE with ticket        | No    | Yes | No     |
