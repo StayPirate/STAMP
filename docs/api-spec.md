@@ -81,7 +81,7 @@ Error codes are grouped by prefix:
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING` |
-| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE` |
+| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_LDAP_STATUS_READONLY` |
 
 Rules:
 
@@ -556,14 +556,17 @@ via local password for admin-created local users (see
   "remove": [...] }`. See `docs/features/identity/user-management.md`
 - `GET /api/v1/admin/users/{user}/deactivation-impact` — Preview side
   effects of deactivating a user (admin only). Returns counts of API keys,
-  sessions, and tickets affected. See
-  `docs/features/identity/user-management.md`
+  sessions, and tickets affected. Returns 409 (`USER_LDAP_STATUS_READONLY`)
+  for LDAP-managed users. See `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/deactivate` — Deactivate a user
   (admin only). Triggers side effects: API key revocation, session
-  invalidation, ticket unassignment. See
+  invalidation, ticket unassignment. Returns 409
+  (`USER_LDAP_STATUS_READONLY`) for LDAP-managed users — their active
+  status is controlled exclusively by directory sync. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/reactivate` — Reactivate a
-  previously deactivated user (admin only). See
+  previously deactivated user (admin only). Returns 409
+  (`USER_LDAP_STATUS_READONLY`) for LDAP-managed users. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/unlock` — Clear login lockout counter
   (admin only). See `docs/features/identity/user-management.md`

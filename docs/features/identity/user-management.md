@@ -116,11 +116,13 @@ Updates an existing user account. Identity field modifications
 (`--email`, `--full-name`) are only permitted on local users — LDAP
 users have their identity fields managed exclusively by directory sync
 (see LDAP User Data Ownership in
-`docs/features/identity/user-service.md`). Role changes and
-reactivation are permitted on both local and LDAP users. The command
-works regardless of whether the user is currently active or inactive
-(see Inactive User Management Principle in
-`docs/features/identity/user-service.md`).
+`docs/features/identity/user-service.md`). Role changes are permitted on
+both local and LDAP users. Reactivation (`--reactivate`) is permitted on
+local users only — LDAP users have their active status managed
+exclusively by directory sync (see LDAP Active Status Ownership in
+`docs/features/identity/user-service.md`). The command works regardless
+of whether the user is currently active or inactive (see Inactive User
+Management Principle in `docs/features/identity/user-service.md`).
 
 ```
 sentinel manage-user update \
@@ -152,35 +154,39 @@ sentinel manage-user update \
    `--full-name` is provided, exits with error:
    `"Error: User '{username}' is managed by directory sync. Identity
    fields cannot be modified manually."` (exit code 1). Role changes
-   and reactivation are still permitted on LDAP users.
-4. If no modification flags are provided (`--email`, `--full-name`,
+   are still permitted on LDAP users.
+4. If the user is an LDAP user (`ldap_uid IS NOT NULL`) and
+   `--reactivate` is provided, exits with error:
+   `"Error: Cannot reactivate LDAP-managed users."` (exit code 1).
+   Active status of LDAP users is managed exclusively by directory sync.
+5. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
    `"No changes specified for user '{username}'."` and exits with code 0
-5. For each role value in `--add-role` and `--remove-role`, validates that
+6. For each role value in `--add-role` and `--remove-role`, validates that
    it is a recognized role. If not, exits with error:
    `"Error: Invalid role '{value}'. Valid roles are: {list}."`
    The list of valid roles is derived from the system's role definitions
    at runtime
-6. If `--email` is provided, validates email format — if not
+7. If `--email` is provided, validates email format — if not
    syntactically valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-7. If `--email` or `--full-name` is provided, delegates to
+8. If `--email` or `--full-name` is provided, delegates to
    `user_service.update_user()` with `acting_user_id = None`. If the
    service raises `UserConflictError` (duplicate email), exits with error
-8. For role changes (`--add-role`, `--remove-role`), delegates to
+9. For role changes (`--add-role`, `--remove-role`), delegates to
    `user_service.update_roles()` with `acting_user_id = None` and
    roles as `(role, '_manual')` pairs. The service handles input
    resolution (deduplication, cancellation of conflicting entries) and
    validation (AD-derived role protection). Since `acting_user_id = None`,
    the self-removal guard does not apply (CLI is a system action)
-9. If `--reactivate` is provided: delegates to
-   `user_service.reactivate_user()` with `acting_user_id = None`. If
-   the user is already active, this is a no-op. See
-   `docs/features/identity/user-service.md` for reactivation semantics.
-   Reactivation is intentionally the LAST mutation step so that the
-   account is fully configured (correct email, roles, etc.) before
-   becoming active again
-10. Prints summary of changes. The summary lists only changes that were
+10. If `--reactivate` is provided: delegates to
+    `user_service.reactivate_user()` with `acting_user_id = None`. If
+    the user is already active, this is a no-op. See
+    `docs/features/identity/user-service.md` for reactivation semantics.
+    Reactivation is intentionally the LAST mutation step so that the
+    account is fully configured (correct email, roles, etc.) before
+    becoming active again
+11. Prints summary of changes. The summary lists only changes that were
     actually applied (not no-ops). If all requested operations resulted
     in no-ops (e.g., reactivating an already-active user, adding a role
     the user already has, removing a role the user does not have), prints:
@@ -188,7 +194,7 @@ sentinel manage-user update \
     Otherwise prints:
     `"Updated user '{username}': {list of actual changes}."`
 
-**Error handling (fail-fast)**: steps 7–9 are executed sequentially. If
+**Error handling (fail-fast)**: steps 8–10 are executed sequentially. If
 any step fails, the command exits immediately (exit code 1) WITHOUT
 attempting subsequent steps. The error message MUST clearly report:
 
@@ -240,14 +246,17 @@ sentinel manage-user deactivate \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is already inactive, prints:
+3. If the user is an LDAP user (`ldap_uid IS NOT NULL`), exits with
+   error: `"Error: Cannot deactivate LDAP-managed users."` (exit code 1).
+   Active status of LDAP users is managed exclusively by directory sync.
+4. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
-3. Queries the impact of deactivation:
+5. Queries the impact of deactivation:
    - Count of active API keys that will be revoked
    - Count of active sessions that will be invalidated
    - Count of open tickets assigned to the user that will be unassigned
    - Whether this user is the last active user with the Admin role
-4. Displays the impact summary:
+6. Displays the impact summary:
    ```
    About to deactivate user '{username}':
      - {n} active API keys will be revoked
@@ -260,13 +269,13 @@ sentinel manage-user deactivate \
    After deactivation, assign Admin to another user via:
      sentinel manage-user update --username <user> --add-role admin
    ```
-5. Unless `--yes` is passed, prompts: `Proceed? [y/N]`
+7. Unless `--yes` is passed, prompts: `Proceed? [y/N]`
    - If the user answers anything other than `y` or `Y`, exits with
      code 0 without deactivating
-6. Delegates to `user_service.deactivate_user()` with
+8. Delegates to `user_service.deactivate_user()` with
    `acting_user_id = None` and
    `reason = "deactivated via CLI (manage-user deactivate)"`
-7. Prints: `"Deactivated user '{username}'."`
+9. Prints: `"Deactivated user '{username}'."`
 
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
@@ -549,19 +558,18 @@ supported use cases (development, bots, non-SSO environments). See
 ### Actions available for SSO users
 
 - **Edit roles**: add/remove roles
-- **Deactivate**: soft delete. Shows a confirmation dialog before
-  proceeding (see "Deactivation confirmation dialog" below)
-- **Reactivate**: restore
 
 SSO users cannot have their password set or reset (they authenticate
-via id.suse.com).
+via id.suse.com). Deactivation and reactivation are not available for
+SSO users — their active status is managed exclusively by Active
+Directory via LDAP sync.
 
 ### Deactivation confirmation dialog
 
-When an admin clicks "Deactivate" for any user (local or SSO), the
-frontend calls `GET /api/v1/admin/users/{user}/deactivation-impact`
-and displays a confirmation dialog with the impact summary before
-calling `POST /api/v1/admin/users/{user}/deactivate`.
+When an admin clicks "Deactivate" for a local user, the frontend calls
+`GET /api/v1/admin/users/{user}/deactivation-impact` and displays a
+confirmation dialog with the impact summary before calling
+`POST /api/v1/admin/users/{user}/deactivate`.
 
 The dialog displays:
 
@@ -857,6 +865,9 @@ revocation, session invalidation, ticket unassignment).
 - Self-deactivation is rejected by the service layer — returns HTTP 409
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
+- LDAP user deactivation is rejected by the service layer — returns
+  HTTP 409 with code `USER_LDAP_STATUS_READONLY`:
+  `"Cannot deactivate LDAP-managed users."`
 
 See `docs/features/identity/user-service.md` for the full side effect contract
 (API key revocation, session invalidation, ticket unassignment on
@@ -883,6 +894,11 @@ Reactivate a previously deactivated user account.
 4. Return HTTP 200 with the updated user profile in the standard
    `{"data": ...}` envelope
 
+**Constraints**:
+- LDAP user reactivation is rejected by the service layer — returns
+  HTTP 409 with code `USER_LDAP_STATUS_READONLY`:
+  `"Cannot reactivate LDAP-managed users."`
+
 **Response**: user profile in `{"data": {...}}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
 response schema).
@@ -905,14 +921,19 @@ proceeding with deactivation.
    consistent — if you cannot deactivate yourself, you cannot preview
    the impact either. This prevents a confusing UX where the preview
    succeeds but the subsequent action is rejected.
-3. If the user is already inactive, return HTTP 409 with code
+3. If the user is an LDAP user (`ldap_uid IS NOT NULL`), return HTTP 409
+   with code `USER_LDAP_STATUS_READONLY`:
+   `"Cannot deactivate LDAP-managed users."`
+   Rationale: same consistency principle as self-deactivation — if the
+   deactivation endpoint rejects LDAP users, the preview should too.
+4. If the user is already inactive, return HTTP 409 with code
    `USER_ALREADY_INACTIVE`: `"User is already inactive."`
    Note: 409 is used here as a precondition check — the deactivation
    impact preview is meaningless for an already-inactive user. Returning
    409 allows the client to distinguish between a valid preview (200) and
    a state where the preview should not be presented to the admin,
    without requiring the client to inspect a response body flag.
-4. Query and return the impact summary
+5. Query and return the impact summary
 
 **Response** (HTTP 200):
 

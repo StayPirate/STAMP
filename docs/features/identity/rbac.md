@@ -32,7 +32,7 @@ Operates the triage and assessment workflow:
 ### Admin
 
 Administers the platform:
-- Manage users (update roles, deactivate)
+- Manage users (update roles, deactivate local users)
 - View and update system settings (e.g., default CVSS version)
 - Remove CVE from ticket
 - Soft-delete and restore tickets
@@ -241,8 +241,9 @@ framework and `docs/features/identity/sso-authentication.md` /
 - Table of all users with their assigned roles and role origins
 - Edit user roles (add/remove manual roles; AD-derived roles shown as
   locked)
-- Activate/deactivate user (note: deactivation is normally automatic via
-  LDAP sync)
+- Activate/deactivate local users (LDAP users have their active status
+  managed exclusively by directory sync — see
+  `docs/features/identity/user-service.md`, LDAP Active Status Ownership)
 - Users are created by the LDAP directory sync (SSO users) or by admins
   via CLI and admin UI (local users). See
   `docs/features/identity/ldap-integration.md` and
@@ -268,20 +269,25 @@ framework and `docs/features/identity/sso-authentication.md` /
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
    `docs/features/identity/user-service.md`)
-4. Deactivated users cannot authenticate. On deactivation, all API keys
+4. LDAP users cannot be manually deactivated or reactivated — their
+   active status is controlled exclusively by Active Directory via LDAP
+   sync (enforced by `user_service.deactivate_user()` and
+   `user_service.reactivate_user()` — see
+   `docs/features/identity/user-service.md`, LDAP Active Status Ownership)
+5. Deactivated users cannot authenticate. On deactivation, all API keys
    are revoked and all active sessions are invalidated (proactively,
    before marking the user inactive). Additionally, the middleware
    checks `User.active` on every request as a defense-in-depth measure.
    See `docs/features/identity/authentication.md` (Deactivation ordering) and
    `docs/features/identity/user-service.md`
-5. All authentication events are logged (login, logout, failed attempts)
-6. Session duration: JWT expires after 72 hours of inactivity (refreshed
+6. All authentication events are logged (login, logout, failed attempts)
+7. Session duration: JWT expires after 72 hours of inactivity (refreshed
    transparently via sliding session for active users). Maximum session
    lifetime is 30 days regardless of activity. See
    `docs/features/identity/authentication.md`
-7. A user with no roles has the same access as an unauthenticated user
+8. A user with no roles has the same access as an unauthenticated user
    (read-only on public data)
-8. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
+9. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
    populate users from AD, then
    `sentinel manage-user update --username <username> --add-role admin` to
    assign the first Admin role. See `docs/features/identity/ldap-integration.md`

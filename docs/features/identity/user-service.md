@@ -60,11 +60,12 @@ API or CLI — may modify these fields. The only legitimate consumer of
 `update_user()` for LDAP users is the sync process itself
 (`acting_user_id = None`).
 
-Fields managed by dedicated operations are not subject to this
-restriction:
+Fields managed by dedicated operations have their own ownership rules:
 
-- `active` — managed by `deactivate_user()` / `reactivate_user()`,
-  available to admins
+- `active` — managed by `deactivate_user()` / `reactivate_user()`. For
+  LDAP users, this field is managed exclusively by LDAP sync — manual
+  deactivation/reactivation by admins is blocked (see LDAP Active Status
+  Ownership below)
 - Roles — managed by `update_roles()`, available to admins for manual
   roles (`ad_group_cn = '_manual'`)
 - `password_hash` — managed by `reset_password()`, which independently
@@ -74,6 +75,32 @@ Conversely, for local users (`ldap_uid IS NULL`), the LDAP-specific
 fields (`ldap_dn`, `manager_uid`, `ldap_synced_at`) are not applicable
 and must not be set — they have no source of truth outside of Active
 Directory.
+
+### LDAP Active Status Ownership
+
+For LDAP users, Active Directory `EMPLOYEESTATUS` is the sole source of
+truth for the `active` field. Manual deactivation or reactivation by
+admins (via API, CLI, or UI) is not permitted — these operations are
+reserved for the LDAP sync fetcher.
+
+**Rationale**: if an admin could manually deactivate an LDAP user, the
+next sync cycle would reactivate them (because AD still reports
+`EMPLOYEESTATUS = Active`). This creates a confusing loop where
+irreversible side effects (API key revocation, session invalidation,
+ticket unassignment) are triggered by the deactivation but never restored
+by the automatic reactivation. Blocking manual deactivation eliminates
+this inconsistency entirely.
+
+**Enforcement**: `deactivate_user()` and `reactivate_user()` check
+`user.ldap_uid IS NOT NULL AND acting_user_id IS NOT NULL` and raise
+`LDAPUserStatusReadOnlyError` when both conditions are true. Since LDAP
+sync always passes `acting_user_id = None`, its calls are unaffected.
+CLI commands add an additional pre-call guard for defense in depth
+(CLI also uses `acting_user_id = None`).
+
+**If an LDAP user must be blocked from Sentinel**: deactivate the
+employee in Active Directory. The next LDAP sync cycle will propagate
+the change to Sentinel with all associated side effects.
 
 ## Inactive User Management Principle
 
@@ -257,6 +284,10 @@ Deactivates a user account and triggers all associated side effects.
 
 - User must be currently active. If already inactive, this is a no-op
   (returns the user unchanged)
+- **LDAP status guard**: if `user.ldap_uid IS NOT NULL` AND
+  `acting_user_id IS NOT NULL`, reject with
+  `LDAPUserStatusReadOnlyError`. Active status of LDAP users is managed
+  exclusively by directory sync (see LDAP Active Status Ownership above)
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
@@ -318,17 +349,17 @@ Reactivates a previously deactivated user account.
 
 - User must be currently inactive. If already active, this is a no-op
   (returns the user unchanged)
+- **LDAP status guard**: if `user.ldap_uid IS NOT NULL` AND
+  `acting_user_id IS NOT NULL`, reject with
+  `LDAPUserStatusReadOnlyError`. Active status of LDAP users is managed
+  exclusively by directory sync (see LDAP Active Status Ownership above)
 
 **Behavior**:
 
 1. Set `User.active = true`
-2. If the user is an LDAP user (`ldap_uid IS NOT NULL`), log WARNING:
-   the user will not be able to authenticate until their AD account is
-   also re-enabled. The next LDAP sync cycle will revert this
-   reactivation if `EMPLOYEESTATUS` is still not `"Active"`
-3. Log INFO for every reactivation with `user_id`, `acting_user_id`,
+2. Log INFO for every reactivation with `user_id`, `acting_user_id`,
    and the user's current roles
-4. Return updated User
+3. Return updated User
 
 **Explicitly NOT restored**:
 
@@ -442,6 +473,7 @@ for the API-layer mapping.
 | `UsernameFormatError` | Username does not conform to the format defined in `docs/conventions.md` (Username Format) |
 | `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role |
 | `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
+| `LDAPUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an LDAP user (`ldap_uid IS NOT NULL`) — active status is managed exclusively by directory sync |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
 | `LDAPFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an LDAP user — all identity fields are managed by directory sync; (2) any caller attempts to set LDAP-specific fields (`ldap_dn`, `manager_uid`, `ldap_synced_at`) on a local user — these fields are not applicable |
 | `SSOUserPasswordError` | Attempting to set or reset password for a non-local (SSO) user |

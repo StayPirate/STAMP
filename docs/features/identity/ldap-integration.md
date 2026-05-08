@@ -167,6 +167,23 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    `record_updated()` for updated users, `record_failed()` for entries
    that failed processing
 
+#### Active status ownership
+
+Active Directory `EMPLOYEESTATUS` is the sole source of truth for the
+`active` field on LDAP users. Manual deactivation or reactivation of
+LDAP users by admins (via API, CLI, or UI) is blocked by both the
+service layer (`LDAPUserStatusReadOnlyError`) and CLI-level guards. Only
+the LDAP sync fetcher may call `deactivate_user()` and
+`reactivate_user()` for LDAP users (passing `acting_user_id = None`).
+
+If an LDAP user must be blocked from accessing Sentinel, deactivate the
+employee in Active Directory. The next sync cycle will propagate the
+change with all associated side effects (API key revocation, session
+invalidation, ticket unassignment).
+
+See `docs/features/identity/user-service.md` (LDAP Active Status
+Ownership) for the full rationale and enforcement details.
+
 #### Manager resolution
 
 The `manager` attribute in AD contains a full DN (e.g.,
