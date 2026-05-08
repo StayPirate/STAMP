@@ -180,9 +180,6 @@ grows beyond these scenarios.
   disproportionate to the threat model. May be reconsidered if
   self-service password change is added in the future.
 
-These rules are enforced by `user_service.reset_password()` and apply
-to all password-setting paths (CLI and admin UI).
-
 ### CLI commands
 
 Passwords are managed via `sentinel manage-user create` (at user

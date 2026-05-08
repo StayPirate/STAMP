@@ -151,17 +151,20 @@ Creates a new User record with optional initial roles.
    use the `email-validator` library to ensure consistent acceptance
    rules across entry points.
 
-4. If `password` is provided, hash it with bcrypt (see
+4. If `password` is provided, validate length per the password policy in
+   `docs/features/identity/local-authentication.md` § Password Validation
+   (16–128 characters). If invalid, raise `PasswordValidationError`
+5. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
-5. Create User record with provided fields,
+6. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
    `ldap_synced_at = now()` if `ldap_uid` is set
-6. For each role in `roles`, create UserRole with specified `ad_group_cn`
+7. For each role in `roles`, create UserRole with specified `ad_group_cn`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `ad_group_cn`), deduplicate silently — only
    one UserRole record is created per unique `(role, ad_group_cn)` pair.
    This is consistent with the idempotency behavior of `update_roles()`.
-7. Return the created User
+8. Return the created User
 
 **TicketEvent**: none (user creation does not affect tickets)
 

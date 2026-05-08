@@ -81,9 +81,11 @@ command cannot be used non-interactively — a TTY is required.
 3. Validates email format — if the provided email is not syntactically
    valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-4. Validates password: 16–128 characters. If too short, exits with
-   error: `"Error: Password must be at least 16 characters."` If too
-   long, exits with error:
+4. Validates password per the policy in
+   `docs/features/identity/local-authentication.md` § Password Validation
+   (16–128 characters). If too short, exits with error:
+   `"Error: Password must be at least 16 characters."` If too long,
+   exits with error:
    `"Error: Password must be at most 128 characters."`
 5. Delegates to `user_service.create_user()` with:
    - `ldap_uid = None` (local user)
@@ -808,7 +810,7 @@ inactive user prepares credentials for reactivation.
 
 ```json
 {
-  "password": "string (required, 16-128 chars)"
+  "password": "string (required, see local-authentication.md § Password Validation)"
 }
 ```
 
@@ -829,7 +831,7 @@ inactive user prepares credentials for reactivation.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 400 | `USER_SSO_PASSWORD_FORBIDDEN` | Cannot set password for SSO user |
-| 400 | `VALIDATION_ERROR` | Password must be between 16 and 128 characters |
+| 400 | `VALIDATION_ERROR` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
 | 404 | `USER_NOT_FOUND` | User not found |
 
 **Response** (200):
