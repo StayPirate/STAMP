@@ -554,3 +554,8 @@ Displays a table of all configured role mappings:
   endpoint queries AD to verify the group CN exists before persisting
   the mapping. This reuses the same AD query infrastructure as the
   preview endpoint
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

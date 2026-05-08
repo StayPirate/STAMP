@@ -645,3 +645,8 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - Changing default CVSS version: Admin role only (see
   `docs/features/platform/admin.md`)
 - External CVSS data is read-only — cannot be modified through Sentinel
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

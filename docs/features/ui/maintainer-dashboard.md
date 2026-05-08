@@ -576,3 +576,8 @@ return a significant number of rows. Mitigation strategies:
   fix to signal to other group members that someone is working on it
 - **Metrics**: aggregate statistics (average time to fix, submission
   success rate) per maintainer or team
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

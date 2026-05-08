@@ -1164,3 +1164,8 @@ from the database using the `incident_number`.
 **Action**: verify empirically during implementation by running a
 manual test query against IBS for a known incident with an active RR.
 
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)
+

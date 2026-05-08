@@ -319,3 +319,8 @@ Tests for any ticket-mutating service MUST verify:
 
 See Guardrail 6 (Mandatory testing) and Guardrail 11 (Ticket event logging)
 in `AGENTS.md` for enforcement.
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

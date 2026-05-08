@@ -938,3 +938,8 @@ affectedness-related conditions are summarized here for context:
   `docs/features/packages/ibs-codestream-release-detection.md` (IBS source info
   and diff endpoints) and `docs/features/packages/ibs-product-release-detection.md`
   (`updateinfo.xml` parsing).
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

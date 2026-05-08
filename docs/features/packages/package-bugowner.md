@@ -436,3 +436,8 @@ See `docs/features/ui/pages.md` for page placement.
 - **Notification system**: automated notifications to bugowners when new
   tickets are created for their packages, or when ticket status changes
   require their attention. Will be specified in a separate feature spec.
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

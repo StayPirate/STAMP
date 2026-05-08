@@ -1111,3 +1111,5 @@ handling is required.
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
 - `docs/features/identity/ldap-integration.md` — LDAP sync (manages SSO users)
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

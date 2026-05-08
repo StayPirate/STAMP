@@ -141,3 +141,8 @@ Future administrative settings will be added to this page as needed.
 
 System settings are stored in a key-value configuration table. See
 `docs/data-model.md` for the schema.
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

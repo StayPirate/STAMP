@@ -577,3 +577,5 @@ The "or" divider is only shown when both options are present.
 - `docs/features/identity/ldap-integration.md` — LDAP sync that provisions SSO
   user accounts
 - `docs/features/identity/user-service.md` — deactivation side effects
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

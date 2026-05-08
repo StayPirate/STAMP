@@ -824,3 +824,8 @@ table:
 - Removing a CVE from a ticket: Admin role
 - Soft-deleting and restoring tickets: Admin role
 - See `docs/features/identity/rbac.md` for the full permission model
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

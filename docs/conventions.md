@@ -357,3 +357,13 @@ deterministic and mechanically verifiable.
   - `fix: correct CVSS score parsing for NVD API v2`
   - `docs: update data model with Product table`
   - `test: add integration tests for CVE sync service`
+
+## Feature Specifications
+
+### API Cross-references
+
+Feature specs that define API endpoints MUST include `docs/api-spec.md` in
+their Cross-references section. Endpoint-specific error tables document only
+errors unique to the endpoint logic; errors handled globally (Pydantic
+validation, authentication, authorization, etc.) are defined in `api-spec.md`
+and must not be repeated per-endpoint.

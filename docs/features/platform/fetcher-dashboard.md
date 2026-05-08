@@ -970,3 +970,8 @@ detail page.
 ## Open Questions
 
 None at this time.
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

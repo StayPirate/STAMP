@@ -385,3 +385,5 @@ session behavior.
 - `docs/features/identity/user-management.md` — creating and managing
   local user accounts
 - `docs/features/identity/user-service.md` — deactivation side effects
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)

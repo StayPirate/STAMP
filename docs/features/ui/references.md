@@ -404,3 +404,8 @@ does not include reference-related event types.
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` contract for
   `source_reference_url_pattern`
 - `docs/features/ui/pages.md` — Ticket Detail page displays references
+
+## Cross-references
+
+- `docs/api-spec.md` — global API conventions (envelope format, error codes,
+  pagination, shared 422 responses)
