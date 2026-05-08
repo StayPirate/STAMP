@@ -38,11 +38,12 @@ The command determines the target type in this order:
 When invoked with `fix <target>`:
 
 1. **Step 1 (data gathering)** runs normally — silently, via a Task
-   subagent — to collect spec list, tracking state, and review status.
+   subagent — to collect spec list and tracking state (from cache).
 2. **Steps 2 and 3 are skipped entirely** (no recap table, no mode
    question).
-3. **Step 4a.0 is skipped** (no "By spec / By reviewer" question).
-4. **Validation** is performed on the gathered data (see below).
+3. **Step 4a.0 is skipped** (no patterns computation, no "By spec / By
+   reviewer" question).
+4. **Validation** is performed on the cached data (see below).
 5. On success, the flow jumps directly to the fix loop:
    - **Spec target** → skip step 4a.1 (spec selection), proceed to step
      4a.2 (Load spec data) with the specified spec.
@@ -54,9 +55,9 @@ When invoked with `fix <target>`:
 
 ### Validation errors
 
-After Step 1 data gathering completes, validate the target. If
-validation fails, output the error message and stop — do NOT fall back
-to the interactive flow.
+After Step 1 data gathering completes, validate the target using the
+cached data in `.tracking.json`. If validation fails, output the error
+message and stop — do NOT fall back to the interactive flow.
 
 **If target is a spec name:**
 
@@ -67,12 +68,14 @@ to the interactive flow.
   > Errore: la spec `<name>` è disabilitata. Abilitala prima con
   > `/review-spec` → Toggle spec tracking.
 
-- Spec is enabled but has zero OPEN findings:
+- Spec is enabled but has zero OPEN findings (cache is null or all
+  open counts are 0):
   > Nessun finding OPEN per la spec `<name>`.
 
 **If target is a reviewer abbreviation:**
 
-- No OPEN findings for that reviewer across any enabled spec:
+- No OPEN findings for that reviewer across any enabled spec (sum the
+  reviewer's H+M+L across all enabled specs' caches):
   > Nessun finding OPEN per `<Reviewer Name>` su spec abilitate.
 
 ### No-argument mode (interactive)
@@ -103,61 +106,110 @@ on Glob for files under `docs/drafts/`. This applies to ALL steps below
 
 ## Step 1: Gather data (silent)
 
-Use the Task tool (subagent type `general`) to perform all of the
+Use the Task tool (subagent type `explore`) to perform all of the
 following in a single subagent session. Instruct the subagent to return
-a structured result (JSON or clearly formatted text) containing:
+the final `.tracking.json` content (or a structured summary if no
+changes were needed).
 
 1. **Spec list**: all `.md` filenames in `docs/features/` subdirectories
    (use Glob `docs/features/**/*.md` to find all specs recursively;
-   exclude `pages/*.md` sub-pages). Use the filename without extension
-   as the spec name (filenames are unique across subdirectories). Sort
-   alphabetically.
+   exclude files matching `docs/features/**/pages/*.md` — these are
+   sub-pages of a parent spec, not independent specs). Use the filename
+   without extension as the spec name (filenames are unique across
+   subdirectories). Sort alphabetically.
 2. **Tracking state**: read `docs/drafts/review/.tracking.json`. Handle
    these cases:
    - **File does not exist** (first run): create it with ALL specs
-     currently in `docs/features/**/` set to `"enabled": true`. Write the
-     file to disk immediately.
-   - **File exists**: load it. For any spec in `docs/features/**/` that is
-     NOT present in the JSON, add it as `"enabled": false` (new spec
-     discovered — disabled by default). Write the updated file back.
+     currently in `docs/features/**/` set to `"enabled": true`, with
+     auto-generated `abbr` and `"cache": null`. Write the file to disk
+     immediately.
+   - **File exists**: load it. For any spec in `docs/features/**/` that
+     is NOT present in the JSON, add it as `"enabled": false` with
+     auto-generated `abbr` and `"cache": null` (new spec discovered —
+     disabled by default). Write the updated file back only if changed.
    - For any spec listed in the JSON that no longer exists in
      `docs/features/**/`, remove it from the JSON (stale entry cleanup).
-   - Return two lists: **enabled specs** and **disabled specs**.
-3. **Review status per spec**: for each spec (enabled AND disabled),
-   check if `docs/drafts/review/<name>.md` exists. If it does, parse it
-   to extract:
-   - Last reviewed date
-   - Count of OPEN findings by severity (High, Medium, Low)
-   - Count of RESOLVED findings
-4. **Cross-spec patterns**: group OPEN findings across **enabled specs
-   only** by category and similar title/description keywords. If 2+
-   specs share findings with the same category AND overlapping keywords,
-   flag them as a common pattern (include pattern description and
-   affected specs)
-5. **Specs with no review file**: mark as "Never reviewed"
+   - Return the full `.tracking.json` content.
+3. **No review file parsing at startup**: the `cache` field in
+   `.tracking.json` is always trusted. It is updated by the command
+   itself whenever a review file is written or modified (Steps 4a.3c,
+   4b, 4c.4, 4d.2). The subagent MUST NOT read or parse review files
+   during this step.
 
-The `.tracking.json` file format:
+The subagent should return the `.tracking.json` content in a single
+message. Do NOT present anything to the user until the subagent returns.
+
+### `.tracking.json` format
 
 ```json
 {
   "specs": {
-    "tickets": { "enabled": true },
-    "rbac": { "enabled": true },
-    "pages": { "enabled": false }
+    "tickets": {
+      "enabled": true,
+      "abbr": "TKT",
+      "cache": {
+        "last_review": "2026-05-06",
+        "open": {
+          "GAP": { "H": 1, "M": 2, "L": 0 },
+          "COH": { "H": 0, "M": 1, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 1 },
+          "SEC": { "H": 1, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 8,
+        "not_reviewed": []
+      }
+    },
+    "rbac": {
+      "enabled": true,
+      "abbr": "RBAC",
+      "cache": null
+    },
+    "pages": {
+      "enabled": false,
+      "abbr": "PAG",
+      "cache": null
+    }
   }
 }
 ```
 
-The subagent should return all this data in a single message. Do NOT
-present anything to the user until the subagent returns.
+Field definitions:
+- `enabled`: whether the spec is tracked for reviews
+- `abbr`: uppercase abbreviation used in finding IDs (e.g., `TKT-GAP-01`)
+- `cache`: review status summary, or `null` if never reviewed
+  - `last_review`: date of last review (YYYY-MM-DD)
+  - `open`: OPEN finding counts per section, per severity (H/M/L)
+  - `resolved`: total count of RESOLVED findings
+  - `not_reviewed`: array of section abbreviations still showing
+    `_Not yet reviewed._` (e.g., `["SEC", "API"]`)
+
+### Abbreviation derivation rules
+
+The `abbr` field is generated automatically when a spec is first added
+to `.tracking.json` and MUST NEVER be modified afterward (finding IDs
+depend on it). Derivation rules:
+
+1. Single-word spec, ≤4 letters: full name uppercased (`rbac` → `RBAC`)
+2. Single-word spec, >4 letters: first 3 letters uppercased
+   (`tickets` → `TKT`, `admin` → `ADM`)
+3. Hyphenated spec, 4+ words: first letter of each word uppercased,
+   max 4 chars (`ibs-codestream-release-detection` → `ICRD`)
+4. Hyphenated spec, 2-3 words: take letters from each word to reach
+   3-4 chars, prioritizing recognizability
+   (`package-tracking` → `PKT`, `user-service` → `USVC`,
+   `sso-authentication` → `SSOA`)
+5. If collision with an existing `abbr`: append successive letters from
+   the last word until unique (e.g., `ICRD` collides → `ICRE`)
 
 ---
 
 ## Step 2: Display recap
 
-Using the data from Step 1, present the recap table directly to the
-user. Show only **enabled specs** — disabled specs are not displayed in
-the recap (they remain accessible via "Toggle spec tracking").
+Using the cached data from `.tracking.json` (loaded in Step 1), present
+the recap table directly to the user. Show only **enabled specs** —
+disabled specs are not displayed in the recap (they remain accessible
+via "Toggle spec tracking"). No file I/O is needed for this step.
 
 ### Enabled specs (main table)
 
@@ -174,19 +226,23 @@ two-row-per-spec format with emoji severity indicators:
 | rbac             |  —  |  —  |  —  |  —  |  —  | (never) | —         |
 | **Total**        |   5 |   1 |   2 |   2 | 🟢  |    10 | —           |
 |                  | ... |     |     |     |     |       |             |
-
-Common patterns:
-  - "Missing error path for concurrent updates" → tickets, package-tracking
-  - "Unspecified pagination limits" → rbac, tickets
 ```
 
 The **Total** row sums only enabled specs.
 
+Rendering rules (derived from `cache`):
+- `cache: null` → all cells are `—`, Last Review is `—`, Total shows
+  `(never)`
+- Section in `not_reviewed` array → cell is `—`
+- Section has all H/M/L = 0 and is NOT in `not_reviewed` → cell is `🟢`
+- Section has H+M+L > 0 → cell shows the total count; sub-row shows
+  severity breakdown
+
 ### Edge cases
 
-If no enabled specs have review files, show:
+If no enabled specs have a `cache` (all are `null`), show:
 
-> No review files found for enabled specs. You can run reviews to
+> No review data found for enabled specs. You can run reviews to
 > generate findings.
 
 If all specs are disabled, show:
@@ -198,15 +254,17 @@ If all specs are disabled, show:
 
 ## Step 3: Ask mode
 
-Use the `question` tool to ask the user what they want to do. Options:
+Use the `question` tool to ask the user what they want to do. Determine
+which options to show based on the cached data in `.tracking.json`.
+Options:
 
 - **Fix findings** — description: "Resolve open findings one at a time"
-  (only show this option if there are enabled specs with OPEN findings)
+  (only show if there are enabled specs with OPEN findings in cache)
 - **Run reviews** — description: "Run all reviewer agents on specs"
-  (only show this option if there is at least one enabled spec)
+  (only show if there is at least one enabled spec)
 - **Run single reviewer** — description: "Run one specific reviewer on
   one or all specs"
-  (only show this option if there is at least one enabled spec)
+  (only show if there is at least one enabled spec)
 - **Toggle spec tracking** — description: "Enable or disable spec
   tracking"
 
@@ -214,10 +272,31 @@ Use the `question` tool to ask the user what they want to do. Options:
 
 ## Step 4a: Fix findings flow
 
-### 4a.0. Ask grouping mode
+### 4a.0. Compute cross-spec patterns and ask grouping mode
 
-Use the `question` tool to ask how the user wants to work on findings.
-Options:
+Use the Task tool (subagent type `general`) to compute cross-spec
+patterns across **enabled specs only**:
+- Read all review files in `docs/drafts/review/` (use
+  `bash ls docs/drafts/review/` to discover them)
+- For each enabled spec that has a review file, extract all OPEN
+  findings (title, category, description keywords)
+- Group findings by category and similar title/description keywords.
+  If 2+ specs share findings with the same category AND overlapping
+  keywords, flag them as a common pattern
+- Return: list of patterns (pattern description + affected spec names)
+
+If patterns are found, present them to the user:
+
+```
+Pattern comuni tra spec:
+  - "Missing error path for concurrent updates" → tickets, package-tracking
+  - "Unspecified pagination limits" → rbac, tickets
+```
+
+If no patterns are found, skip this section (show nothing).
+
+Then use the `question` tool to ask how the user wants to work on
+findings. Options:
 
 - **By spec** — description: "Work on all findings of a specific spec"
 - **By reviewer** — description: "Work on all findings of a specific
@@ -235,8 +314,9 @@ If the user selects **By reviewer**, proceed to step 4a-R (below).
 ### 4a.1. Ask which spec to fix
 
 Use the `question` tool to present only the **enabled** specs that have
-OPEN findings. Disabled specs are never shown here. Each option label is
-the spec name; the description shows the open finding counts (e.g.,
+OPEN findings (derive from cache in `.tracking.json`). Disabled specs
+are never shown here. Each option label is the spec name; the
+description shows the open finding counts (e.g.,
 "2 High, 3 Medium, 1 Low — 6 open").
 
 Sort by total open findings descending (most findings first).
@@ -250,7 +330,12 @@ Use the Task tool (subagent type `general`) to:
   category, description)
 - Sort them by priority:
   1. Severity: High → Medium → Low
-   2. Section order: Gap Analysis → Coherence → Design → Security → API Conventions
+  2. Section order: Gap Analysis → Coherence → Design → Security → API Conventions
+
+The subagent returns ONLY the parsed findings as structured data (ID,
+title, severity, category, description text). It MUST NOT return raw
+file content of the spec or review file — those remain in the
+subagent's context only.
 
 Return the sorted list of OPEN findings with all details.
 
@@ -258,13 +343,13 @@ Return the sorted list of OPEN findings with all details.
 
 **Mode management**: the agent MUST remain in Plan mode during the
 entire analysis and presentation phase (step 4a.3a). The user will
-manually switch to Build mode when ready to apply the fix. After
-implementing the fix and updating the review file (steps 4a.3c–4a.3e),
-the agent MUST NOT present the next finding in the same message.
-Instead, it asks the user if they want to continue (step 4a.3f) and
-waits for their response. The user is responsible for switching back
-to Plan mode (Tab key) before replying. The next finding is presented
-only in the subsequent message, after the user has confirmed.
+manually switch to Build mode when ready to apply the fix. After the
+fix is implemented by the subagent (step 4a.3c), the agent MUST NOT
+present the next finding in the same message. Instead, it asks the user
+if they want to continue (step 4a.3d) and waits for their response.
+The user is responsible for switching back to Plan mode (Tab key)
+before replying. The next finding is presented only in the subsequent
+message, after the user has confirmed.
 
 For the highest-priority OPEN finding:
 
@@ -309,7 +394,7 @@ File coinvolti:
   - <file-path> — <cosa cambia>
   - ...
 
-Approvi questa soluzione? [sì / modificare / saltare]
+Approvi questa soluzione? [sì / modificare / saltare / basta]
 ```
 
 #### 4a.3b. Wait for user decision
@@ -320,54 +405,62 @@ Approvi questa soluzione? [sì / modificare / saltare]
 - **modificare**: ask what the user wants to change, adjust the
   proposal, and present it again (remain in Plan mode)
 - **saltare**: skip this finding, move to the next one (remain in Plan
-  mode)
+  mode). The finding remains OPEN with no changes.
+- **basta**: exit the fix loop. Show a brief summary of the session:
+  how many findings were resolved, how many skipped, how many remain
+  OPEN for this spec.
 
-#### 4a.3c. Implement the fix
+#### 4a.3c. Implement the fix, update review file, update README
 
-CRITICAL: This step is MANDATORY. You MUST NOT proceed to updating the
-review file (step 4a.3d) without first implementing the approved
-solution in the actual spec/documentation files. Marking a finding as
-RESOLVED without applying the fix is a bug. The implementation IS the
-fix — the review file update is merely a record of it.
+CRITICAL: This step is MANDATORY. You MUST NOT mark a finding as
+RESOLVED without implementing the approved solution in the actual
+spec/documentation files. Marking a finding as RESOLVED without
+applying the fix is a bug. The implementation IS the fix — the review
+file update is merely a record of it.
 
-Edit all affected files to implement the approved solution. This may
-include:
-- Modifying the target spec (`docs/features/**/<name>.md`)
-- Modifying other specs referenced by the finding
-- Modifying cross-cutting documents (`docs/data-model.md`,
-  `docs/api-spec.md`, `docs/architecture.md`, etc.)
-- Any other documentation file relevant to the fix
+Use the Task tool (subagent type `general`) to perform ALL of the
+following in a single subagent session:
 
-After editing, verify that every file listed in "File coinvolti" from
-the proposal has been modified. If a listed file was not changed, either
-apply the missing change or explain to the user why it was not needed.
+1. **Implement the approved solution**: read and edit all files listed
+   in "File coinvolti". Verify every listed file is modified. If a
+   listed file turns out not to need changes, skip it but include the
+   reason in the confirmation.
+2. **Update the review file**: mark the finding as RESOLVED in
+   `docs/drafts/review/<name>.md` with:
+   ```markdown
+   ### <ID> — <Title> (<Severity>)
 
-#### 4a.3d. Update the review file
+   **Category**: <category>
+   **Status**: RESOLVED
+   **Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
 
-PRECONDITION: Only mark a finding as RESOLVED after the fix has been
-implemented (step 4a.3c). If for any reason the fix was NOT applied to
-the spec/documentation files, the finding MUST remain OPEN. The
-Resolution field must reference the actual changes made (file paths and
-what was changed), not just state the intent.
+   <Original detailed description of the finding>
+   ```
+3. **Update README index**: update `docs/drafts/review/README.md`
+   following the README Index Layout rules (end of this document).
+4. **Update cache in `.tracking.json`**: recalculate the `cache` field
+   for this spec (decrement the OPEN count for the resolved finding's
+   section and severity, increment `resolved` count). Write the
+   updated `.tracking.json` to disk.
 
-Mark the finding as RESOLVED in the review file:
+Pass to the subagent:
+- The finding ID, title, severity, category, full description
+- The approved solution (from the presentation in 4a.3a)
+- The list of files to modify and what to change in each
+- The spec name, abbreviation, and review file path
 
-```markdown
-### <ID> — <Title> (<Severity>)
+The subagent returns a brief confirmation:
+- List of files modified (path + one-line summary of change)
+- New open/resolved counts for the review file
+- Any file that was NOT modified and why
 
-**Category**: <category>
-**Status**: RESOLVED
-**Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
+CRITICAL: the subagent MUST implement the fix FIRST, then update the
+review file and cache. If the fix fails for any reason, the finding
+MUST remain OPEN and the cache MUST NOT be updated.
 
-<Original detailed description of the finding>
-```
+Present the subagent's confirmation to the user.
 
-#### 4a.3e. Update README index
-
-Update `docs/drafts/review/README.md` following the layout rules in the
-"README Index Layout" section at the end of this document.
-
-#### 4a.3f. Ask to continue (do NOT present next finding yet)
+#### 4a.3d. Ask to continue (do NOT present next finding yet)
 
 After completing the fix, ask the user:
 
@@ -391,10 +484,11 @@ this session.
 ### 4a-R.1. Ask which reviewer
 
 Use the `question` tool to present only the reviewers that have at least
-one OPEN finding across **enabled** specs. Disabled specs' findings are
-excluded from this count. Each option label is the reviewer name; the
-description shows the total open finding count and number of affected
-specs (e.g., "9 open findings across 3 specs").
+one OPEN finding across **enabled** specs (derive from cache in
+`.tracking.json`). Disabled specs' findings are excluded from this
+count. Each option label is the reviewer name; the description shows
+the total open finding count and number of affected specs (e.g.,
+"9 open findings across 3 specs").
 
 Options (in this order, skipping those with zero OPEN findings):
 
@@ -419,6 +513,10 @@ Use the Task tool (subagent type `general`) to:
   1. Severity: High → Medium → Low
   2. Spec name alphabetical
 
+The subagent returns ONLY the parsed findings as structured data. It
+MUST NOT return raw file content — those remain in the subagent's
+context only.
+
 Return the sorted list grouped by spec, with all details.
 
 ### 4a-R.3. Fix loop (one finding at a time)
@@ -427,27 +525,28 @@ Return the sorted list grouped by spec, with all details.
 during analysis/presentation, user switches to Build mode for fixes.
 
 **Context management**: for each finding, the agent needs the context
-of the spec it belongs to. Context is loaded via a **fresh Task agent**
-(new session) per spec, to ensure clean context without accumulation
-from previous specs.
+of the spec it belongs to. Context is loaded via a Task agent that
+also formulates the proposal. A separate fresh Task agent handles fix
+implementation. This keeps spec content out of the main conversation.
 
 #### 4a-R.3a. Present the finding with context (in Italian)
 
-When presenting the first finding of a spec, use the Task tool (subagent
-type `general`, **new session**) to silently load:
-- The target spec (`docs/features/**/<name>.md`)
-- All specs referenced by the target
-- Cross-cutting documents (`docs/data-model.md`, `docs/api-spec.md`,
+Use the Task tool (subagent type `general`, **new session** when the
+spec changes) to silently:
+- Load the target spec (`docs/features/**/<name>.md`)
+- Load all specs referenced by the target
+- Load cross-cutting documents (`docs/data-model.md`, `docs/api-spec.md`,
   `docs/architecture.md`)
+- Apply the placement self-check from Guardrail 21 (tests A–D)
+- Analyze the finding in context and formulate:
+  1. The "Contesto del problema" explanation (in Italian)
+  2. The "Soluzione proposta" with all files involved (in Italian)
 
-Before formulating the proposed solution, apply the placement self-check
-from Guardrail 21 (tests A–D). If the fix involves adding new rules or
-patterns to a spec, verify that the proposed destination is the most
-appropriate location. If placement is ambiguous, include the options in
-the proposal for the user to decide.
+The subagent returns ONLY the formatted presentation text (context +
+proposal + file list). It does NOT return raw file contents.
 
-Then present the finding to the user in Italian, with the same format as
-step 4a.3a but with an added **Spec** line:
+Present the subagent's output to the user using the standard format
+with the added **Spec** line:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -467,19 +566,29 @@ File coinvolti:
   - <file-path> — <cosa cambia>
   - ...
 
-Approvi questa soluzione? [sì / modificare / saltare]
+Approvi questa soluzione? [sì / modificare / saltare / basta]
 ```
 
-For subsequent findings of the **same** spec, reuse the context already
-loaded (same Task agent session via `task_id`). Do NOT reload context
-unless the spec changes.
+For subsequent findings of the **same** spec, reuse the same analysis
+Task agent session (via `task_id`) to avoid reloading files. When the
+spec changes, start a **fresh** Task session.
 
-#### 4a-R.3b–3e. Fix implementation, review file update, README update
+#### 4a-R.3b. Wait for user decision
 
-Same as steps 4a.3b through 4a.3e. Apply fixes, update the review file
-of the spec the finding belongs to, update README index.
+Same options as step 4a.3b (sì / modificare / saltare / basta).
 
-#### 4a-R.3f. Ask to continue / spec transition
+#### 4a-R.3c. Implement the fix, update review file, update README
+
+Use a **FRESH** Task subagent (type `general`, new session) to
+implement the approved solution, update the review file, update README,
+and update cache — same as step 4a.3c. Do NOT reuse the analysis
+subagent's session for implementation — this keeps the analysis
+session's context clean for presenting subsequent findings of the same
+spec.
+
+Pass to the subagent the same data as step 4a.3c.
+
+#### 4a-R.3d. Ask to continue / spec transition
 
 After completing a fix, check whether the next finding belongs to the
 same spec or a different one.
@@ -495,10 +604,9 @@ same spec or a different one.
 > il contesto della nuova spec (sessione fresca). Continuo? (ricorda di
 > passare a Plan con Tab prima di rispondere)"
 
-If the user says yes and the spec is changing, load context for the new
-spec via a **fresh Task agent** (new session, do NOT reuse the previous
-`task_id`). This ensures clean context without accumulation from the
-previous spec.
+If the user says yes and the spec is changing, start a **fresh** Task
+session for the new spec (do NOT reuse the previous `task_id`). This
+ensures clean context without accumulation from the previous spec.
 
 If the user says no, show a brief summary of what was resolved in this
 session (findings resolved, grouped by spec).
@@ -536,46 +644,64 @@ spec only.
 
 ### Review procedure (for each target spec)
 
-#### Load context
+#### Run all reviewers in parallel
 
-Use the Task tool (subagent type `general`) to read:
+Launch **5 Task agents in parallel** (one per reviewer, all in a single
+message with multiple Task tool calls). Each agent independently:
 
-1. The target spec: `docs/features/**/<name>.md`
-2. All specs referenced by the target (look for links like
+1. Reads the target spec: `docs/features/**/<name>.md`
+2. Reads all specs referenced by the target (look for links like
    `docs/features/<domain>/<spec>.md` or mentions of "see <spec-name>")
-3. Cross-cutting documents (always load):
+3. Reads cross-cutting documents (always):
    - `docs/data-model.md`
    - `docs/api-spec.md`
    - `docs/architecture.md`
-4. Existing review file if present (`docs/drafts/review/<name>.md`) —
-   to identify previously RESOLVED findings
+4. Reads the existing review file if present
+   (`docs/drafts/review/<name>.md`) — to preserve RESOLVED findings
+   in its own section
+5. Executes its review
+6. Returns structured findings: list of objects with fields:
+   `id_number` (sequential within section), `title`, `severity`,
+   `category`, `description`, `status` (OPEN or RESOLVED with
+   resolution text)
 
-The subagent should return the content of all loaded files.
+Agent mapping:
 
-#### Run reviewers in sequence
+| Reviewer | Subagent type |
+|----------|---------------|
+| Gap Analysis | `spec-gap-analyzer` |
+| Coherence | `spec-coherence-reviewer` |
+| Design | `design-reviewer` |
+| Security | `security-reviewer` |
+| API Conventions | `api-convention-reviewer` |
 
-Execute each reviewer as a Task agent, one at a time, in this order:
+Each reviewer MUST also check previously RESOLVED findings in its
+section: if the resolution is still valid in the current spec, keep
+RESOLVED; if the spec has regressed (the section modified by the
+resolution was reverted or the content reintroduces the original
+problem), reopen as OPEN. Cosmetic rewording or structural
+reorganization of a correct fix does NOT constitute regression.
 
-1. **@spec-gap-analyzer** — identify uncovered functional cases: missing
-   state transitions, unspecified error paths, boundary conditions, data
-   lifecycle gaps, temporal/concurrency scenarios
-2. **@spec-coherence-reviewer** — detect contradictions, conflicting
-   business rules, and terminology inconsistencies with other specs
-3. **@design-reviewer** — evaluate architectural decisions, complexity,
-   edge cases, alternatives, long-term maintainability
-4. **@security-reviewer** — find security vulnerabilities, insecure
-   patterns, missing security controls in the spec's design
-5. **@api-convention-reviewer** — verify API endpoint definitions
-   conform to project conventions (error codes, naming, mutation
-   patterns, pagination, envelope format)
+#### Write findings file, update README, update cache
 
-For each reviewer, pass the target spec content and all loaded context.
-Collect all findings with: title, severity (High/Medium/Low), category,
-and detailed description.
+After all 5 reviewers return, use the Task tool (subagent type
+`general`) to:
 
-#### Write findings file
+1. Assemble and write (or overwrite) `docs/drafts/review/<name>.md`
+   using the findings from all 5 reviewers
+2. Use the `abbr` field from `.tracking.json` for finding IDs
+3. Update `docs/drafts/review/README.md` following the README Index
+   Layout rules (end of this document)
+4. Recalculate and update the `cache` field for this spec in
+   `.tracking.json`
+5. Return: summary (findings per section, per severity, total open,
+   total resolved)
 
-Write (or overwrite) `docs/drafts/review/<name>.md` with this structure:
+Pass to the subagent: the 5 sets of structured findings + spec name +
+abbreviation + today's date + path to the spec file (for the header).
+Do NOT pass raw spec content.
+
+The review file structure:
 
 ```markdown
 # Review: <spec-name>
@@ -633,22 +759,12 @@ Write (or overwrite) `docs/drafts/review/<name>.md` with this structure:
 ```
 
 Rules for writing the file:
-- Use uppercase abbreviation of the spec name for finding IDs (e.g.,
-  `TKT` for tickets, `PKG` for package-tracking, `RBAC` for rbac)
+- Use the `abbr` field from `.tracking.json` for finding IDs (e.g.,
+  `TKT-GAP-01`)
 - Within each section, sort findings by severity: High first, then
   Medium, then Low
-- For previously RESOLVED findings: if the resolution is still valid
-  in the current spec, keep the finding with status RESOLVED and
-  include the resolution text. If the spec has regressed, reopen it
-  as OPEN
 - Each finding MUST have enough detail for the user to understand and
   act on it without re-running the reviewer
-
-#### Update README index
-
-After writing the findings file, update `docs/drafts/review/README.md`
-following the layout rules in the "README Index Layout" section at the
-end of this document. Update the "Last Review" column with today's date.
 
 ### 4b.3. Final report
 
@@ -709,7 +825,15 @@ chosen reviewer) to:
    - `docs/architecture.md`
 4. Read existing review file if present (`docs/drafts/review/<name>.md`)
    — to identify previously RESOLVED findings in the reviewer's section
-5. Execute the review and return findings
+5. Execute the review and return structured findings (id_number, title,
+   severity, category, description, status)
+
+Each reviewer MUST also check previously RESOLVED findings in its
+section: if the resolution is still valid, keep RESOLVED; if the spec
+has regressed (the section modified by the resolution was reverted or
+the content reintroduces the original problem), reopen as OPEN.
+Cosmetic rewording or structural reorganization of a correct fix does
+NOT constitute regression.
 
 **Parallelism**: if the user selected **ALL**, launch one Task agent
 **per spec in parallel** (multiple Task tool calls in a single message).
@@ -727,26 +851,34 @@ Reviewer-to-agent mapping:
 | Security | `security-reviewer` |
 | API Conventions | `api-convention-reviewer` |
 
-### 4c.4. Write/update findings file
+### 4c.4. Write/update findings files, update README, update cache
 
-For each reviewed spec, update `docs/drafts/review/<name>.md`:
+After all reviewer Task agents return their findings, use the Task
+tool (subagent type `general`) to process ALL reviewed specs in a
+single session:
 
-#### If the file already exists
+1. For each reviewed spec, read the existing review file (if any)
+2. Replace **only** the section (`## <Section Name>`) corresponding to
+   the executed reviewer with the new findings; preserve all other
+   sections untouched
+3. Update file headers:
+   - Set `**Last reviewed**` to today's date
+   - Ensure the `**Reviewers**` line lists all sections that have been
+     populated (not placeholders)
+4. If no review file exists, create it with the standard skeleton (all
+   sections as `_Not yet reviewed._`) and populate the reviewed section
+5. Use the `abbr` field from `.tracking.json` for finding IDs
+6. After processing all specs, update `docs/drafts/review/README.md`
+   following the README Index Layout rules
+7. Recalculate and update the `cache` field for each reviewed spec in
+   `.tracking.json`
+8. Return: per-spec summary (findings count, severities)
 
-Replace **only** the section (`## <Section Name>`) corresponding to the
-executed reviewer with the new findings. All other sections remain
-untouched. Previously RESOLVED findings in the updated section are kept
-if the resolution is still valid; reopened as OPEN if the spec has
-regressed.
+Pass to the subagent: all findings grouped by spec + spec names +
+abbreviations + reviewer name + today's date. Do NOT pass raw spec
+content.
 
-Update the file header:
-- Set `**Last reviewed**` to today's date
-- Ensure the `**Reviewers**` line lists all sections that have been
-  populated (not placeholders)
-
-#### If the file does not exist
-
-Create the file with this structure:
+#### New file skeleton (when review file does not exist)
 
 ```markdown
 # Review: <spec-name>
@@ -813,19 +945,13 @@ Section-to-prefix mapping:
 | API Conventions | API |
 
 Rules:
+- Use the `abbr` field from `.tracking.json` for finding IDs
 - Within the section, sort findings by severity: High first, then
   Medium, then Low
 - Each finding MUST have enough detail for the user to understand and
   act on it without re-running the reviewer
 
-### 4c.5. Update README index
-
-After writing/updating findings files, update
-`docs/drafts/review/README.md` following the layout rules in the
-"README Index Layout" section at the end of this document. Update the
-"Last Review" column with today's date.
-
-### 4c.6. Final report
+### 4c.5. Final report
 
 Output a summary to the user:
 - Which reviewer was executed
@@ -841,7 +967,8 @@ Output a summary to the user:
 
 Use the `question` tool with `multiple: true` to allow the user to
 select one or more specs to toggle. Present ALL specs (both enabled and
-disabled), sorted alphabetically. Each option:
+disabled), sorted alphabetically. Derive descriptions from the cached
+data in `.tracking.json`. Each option:
 
 - **Label**: the spec name
 - **Description**: current state and context, e.g.:
@@ -855,48 +982,50 @@ disabled → enabled).
 
 ### 4d.2. Apply toggles
 
-For each selected spec, flip its state in `.tracking.json`:
+Use the Task tool (subagent type `general`) to perform all toggles in
+a single session. For each selected spec, flip its state:
 
 #### Enabling a spec (disabled → enabled)
 
-If the spec has an existing review file with OPEN findings:
-1. Use the Task tool (subagent type `general`) to perform a **lightweight
-   validation** of the existing findings:
-   - Read the spec (`docs/features/**/<name>.md`)
-   - Read the review file (`docs/drafts/review/<name>.md`)
-   - For each OPEN finding, check if it is still applicable to the
-     current version of the spec
-   - Findings that are no longer applicable (the spec has been changed to
-     address the issue, or the relevant section no longer exists) are
-     marked as RESOLVED with:
-     ```
-     **Status**: RESOLVED
-     **Resolution**: Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)
-     ```
-   - Findings that are still applicable remain OPEN
-   - Return: list of findings validated, how many remained OPEN, how many
-     were auto-resolved
-2. Update the review file on disk with the new statuses
-3. Update `docs/drafts/review/README.md` to reflect the re-enabled spec
-   (move it from the disabled section to the main table)
+If the spec has an existing review file with OPEN findings (check via
+cache — if cache is non-null and has open counts > 0):
+1. Read the spec (`docs/features/**/<name>.md`)
+2. Read the review file (`docs/drafts/review/<name>.md`)
+3. For each OPEN finding, check if it is still applicable to the
+   current version of the spec
+4. Findings that are no longer applicable (the spec has been changed to
+   address the issue, or the relevant section no longer exists) are
+   marked as RESOLVED with:
+   ```
+   **Status**: RESOLVED
+   **Resolution**: Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)
+   ```
+5. Findings that are still applicable remain OPEN
+6. Update the review file on disk with the new statuses
+7. Recalculate and update the `cache` field in `.tracking.json`
 
-If the spec has no review file or no OPEN findings: simply flip the
-state. No validation needed.
+If the spec has no review file or no OPEN findings (cache is null or
+all open counts are 0): simply flip the `enabled` field. No validation
+needed.
 
 #### Disabling a spec (enabled → disabled)
 
-1. Flip the state in `.tracking.json`
+1. Flip `enabled` to `false` in `.tracking.json`
 2. The review file (if it exists) is left untouched on disk — findings
    are preserved ("frozen")
-3. Update `docs/drafts/review/README.md` to move the spec to the
-   disabled section
-4. Recalculate the **Total** row (the disabled spec no longer contributes)
+3. The `cache` field is left as-is (frozen state)
 
-### 4d.3. Save state and confirm
+#### Final operations (always)
 
+After processing all toggles:
 1. Write the updated `.tracking.json` to disk
-2. Update `docs/drafts/review/README.md` with the new layout
-3. Present a summary to the user:
+2. Update `docs/drafts/review/README.md` following the README Index
+   Layout rules (recalculate Total row based on new enabled set)
+3. Return: per-spec summary (what was flipped, validation results)
+
+### 4d.3. Confirm
+
+Present the subagent's results to the user:
 
 ```
 Tracking aggiornato:
@@ -953,7 +1082,7 @@ Uses the same table structure but with **text-only severity format**
 ### When to update
 
 The README index is updated:
-- After writing/modifying any findings file (steps 4a.3e, 4b review
-  procedure, 4c.5)
+- After writing/modifying any findings file (steps 4a.3c, 4b review
+  procedure, 4c.4)
 - After toggling spec tracking (step 4d)
 - Always recalculate the Total row based on current enabled specs
