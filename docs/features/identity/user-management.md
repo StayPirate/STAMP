@@ -20,8 +20,8 @@ Local users serve three primary use cases:
 
 SSO users are provisioned and maintained by the LDAP sync process (see
 `docs/features/identity/ldap-integration.md`). Administrators can modify their
-roles and deactivate/reactivate them, but cannot set passwords or create
-them manually.
+roles, but cannot deactivate/reactivate them (active status is managed
+exclusively by directory sync), set passwords, or create them manually.
 
 Local users are created directly in the database, bypassing the LDAP
 sync process. They are functionally identical to LDAP-synced users for
@@ -393,10 +393,7 @@ sentinel manage-user unlock \
    logging, and idempotency (see
    `docs/features/identity/user-service.md`). `acting_user_id = None`
    because CLI is a system action.
-6. If the service raises `RedisUnavailableError`, exit with error:
-   `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
-   (exit code 2)
-7. Print: `"Unlocked user '{username}'."`
+6. Print: `"Unlocked user '{username}'."`
 
 The command is idempotent: if the counter does not exist (user was not
 locked), it succeeds silently.
@@ -405,7 +402,7 @@ locked), it succeeds silently.
 succeeds with a no-op and exits with code 0.
 
 **Exit codes**: 0 on success (including no-op), 1 on validation error
-(user not found), 2 on system error (Redis unreachable).
+(user not found), 2 on system error (database unreachable).
 
 **Output channels**: confirmation to stdout. `"Warning: ..."` messages
 to stderr. `"Error: ..."` messages to stderr.
@@ -1014,7 +1011,6 @@ regardless (to record that an admin attempted to unlock).
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404 | `USER_NOT_FOUND` | User not found |
-| 503 | `REDIS_UNAVAILABLE` | Lockout service unavailable |
 
 ## Interaction with LDAP Sync
 

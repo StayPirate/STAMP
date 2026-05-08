@@ -119,7 +119,26 @@ available on inactive users via both CLI and API. This allows admins to
 prepare accounts before reactivation (e.g., assign appropriate roles, set
 a new password).
 
+## User Deletion
+
+User deletion is not supported. Deactivation is the terminal state of the
+user lifecycle. This is intentional: User records are referenced by
+`TicketEvent` (audit trail), `Ticket` (historical assignments), `ApiKey`
+(revocation records), `Session`, and `UserRole`. Deleting a user would
+orphan these records or require complex cascade/anonymization logic.
+
+If a future requirement arises (e.g., GDPR right-to-erasure), it will be
+addressed as a separate feature with its own specification covering data
+anonymization, orphan handling, and audit trail preservation.
+
 ## Operations
+
+### Password handling
+
+The `password` and `new_password` parameters accepted by `create_user()`
+and `reset_password()` MUST NOT be logged, included in error messages, or
+exposed in stack traces. Implementations must treat these fields as opaque
+secrets that exist only for the duration of hashing.
 
 ### `create_user()`
 
@@ -150,7 +169,9 @@ Creates a new User record with optional initial roles.
    `SSOUserPasswordError`. If `ldap_object_guid` is NULL and `password` is not
    provided, raise `PasswordValidationError`
 3. Validate uniqueness of `username` and `email` across all users
-   (including inactive). If violated, raise `UserConflictError`
+   (including inactive). If `ldap_object_guid` is provided, also validate
+   its uniqueness — if already associated with another user, raise
+   `UserConflictError`. If violated, raise `UserConflictError`
 
    **Note on email format**: the service validates email *uniqueness* but
    not *format*. Format validation (RFC 5321/5322 compliance, including
@@ -330,10 +351,12 @@ in this specific order):
 4. Unassign open tickets: for each ticket where `assignee_id` points to
    the deactivated user and the ticket is in active status (see
    `docs/features/tickets/tickets.md` § Status Categories: New,
-   Analysis, Analyzed), set `assignee_id = NULL`. No active ticket
-   should retain an assignee pointing to an inactive user — ticket
-   history preserves the previous assignment via the TicketEvent record.
-   No attempt is made to reassign to the manager or any other user.
+   Analysis, Analyzed), set `assignee_id = NULL`. Tickets in inactive
+   statuses (Resolved, Ignored, Duplicated) retain their current
+   assignee. No active ticket should retain an assignee pointing to an
+   inactive user — ticket history preserves the previous assignment via
+   the TicketEvent record. No attempt is made to reassign to the manager
+   or any other user.
    Create a `TicketEvent` of type
    `assignment` with:
    - `user_id = NULL` (system action)
@@ -443,7 +466,8 @@ attempt local authentication.
 
 1. Load user by `user_id`. If not found, raise `UserNotFoundError`.
 2. Delete the Redis key `login_attempts:{username}` (where `username`
-   is the user's current username).
+   is the user's current username). If Redis is unreachable, log WARNING
+   and proceed — the counter will expire naturally via TTL.
 3. Log at INFO level: admin identity, target user, timestamp.
 
 **Idempotency:** if the user is not currently locked out (Redis key
@@ -455,7 +479,6 @@ with no error. This is a no-op, not a failure.
 | Exception | Condition |
 |-----------|-----------|
 | `UserNotFoundError` | `user_id` does not match any user |
-| `RedisUnavailableError` | Redis is unreachable |
 
 **Notes:**
 - No `TicketEvent` is created (not a ticket operation).
