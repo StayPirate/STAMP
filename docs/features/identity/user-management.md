@@ -64,7 +64,9 @@ The password is collected interactively via a hidden prompt (input is not
 echoed to the terminal, like `sudo`). The prompt asks for the password
 twice for confirmation. If the two entries do not match, the command exits
 with error: `"Error: Passwords do not match."` (exit code 1). This
-command cannot be used non-interactively — a TTY is required.
+command cannot be used non-interactively — a TTY is required. If no TTY
+is detected, prints to stderr `Error: This command requires an
+interactive terminal (TTY).` and exits with code 1.
 
 **Behavior**:
 
@@ -195,6 +197,10 @@ sentinel manage-user update \
     `"No changes applied to user '{username}'."` and exits with code 0.
     Otherwise prints:
     `"Updated user '{username}': {list of actual changes}."`
+    Role changes are reported as the net difference (before → after):
+    `✓ Roles updated: added 'admin'; removed 'vulnerability_analyst'`.
+    If conflicting `--add-role` and `--remove-role` cancel out (no net
+    change), no role line appears in the output (no-op, idempotent)
 
 **Error handling (fail-fast)**: steps 8–10 are executed sequentially. If
 any step fails, the command exits immediately (exit code 1) WITHOUT
@@ -209,6 +215,15 @@ Example output on partial failure:
 ```
 ✓ Email updated to new@example.com
 ✗ Role update failed: role 'nonexistent' does not exist
+— Reactivation not attempted (aborted due to previous error)
+```
+
+Example output when the service rejects a role change (AD-derived
+protection):
+
+```
+✓ Email updated to new@example.com
+✗ Role update failed: cannot remove role 'vulnerability_analyst' (derived from AD group membership)
 — Reactivation not attempted (aborted due to previous error)
 ```
 
@@ -314,7 +329,8 @@ not echoed to the terminal, like `sudo`). The prompt asks for the
 password twice for confirmation. If the two entries do not match, the
 command exits with error: `"Error: Passwords do not match."` (exit
 code 1). This command cannot be used non-interactively — a TTY is
-required.
+required. If no TTY is detected, prints to stderr `Error: This command
+requires an interactive terminal (TTY).` and exits with code 1.
 
 This command is only valid for local users (`ldap_object_guid = NULL`). The
 username is normalized (trim whitespace, lowercase) before lookup. If
@@ -639,13 +655,17 @@ User search and autocomplete. Returns a paginated list of users.
 
 Query parameters:
 - `search` (string, optional): searches across `username`, `email`, and
-  `full_name`. Minimum 2 characters. Supports partial matching
+  `full_name`. Minimum 2 characters. Maximum 100 characters. Supports
+  partial matching
+- `type` (enum, optional): filter by authentication type. Values:
+  `local`, `sso`
 - `active` (boolean, optional): filter by active status
 - `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
   least one role, `false` for users with no roles
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
-  `sort_order`)
+  `sort_order`). Valid `sort_by` fields: `username` (default),
+  `full_name`, `email`, `role`, `created_at`
 
 Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as
@@ -655,7 +675,7 @@ object). Each user object follows the same schema as
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters |
+| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters or longer than 100 characters |
 
 #### `GET /api/v1/users/{user}`
 
@@ -790,6 +810,7 @@ Add or remove manual roles for a user.
   profile in the standard `{"data": ...}` envelope
 - Adding a role that the user already has as a manual assignment is a
    no-op (idempotent)
+- Removing a role the user does not have is a no-op (idempotent)
 - Adding a role that the user already holds via AD derivation creates a
   separate `_manual` record — both origins coexist independently. See
   `docs/features/identity/rbac.md` (Role Origins and Coexistence) for full

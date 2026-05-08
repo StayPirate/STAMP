@@ -8,6 +8,12 @@ user with no roles has read-only access to public data.
 
 ## Access Levels
 
+### Anonymous (read-only)
+
+No authentication required. Available to any caller, including
+unauthenticated users:
+- View users (list and detail)
+
 ### Unauthenticated / No Roles
 
 Read-only access to public data:
@@ -110,8 +116,8 @@ here with the required access level and a link to the owning spec.
 | GET | `/api/v1/auth/providers` | Unauthenticated | [sso-authentication](sso-authentication.md) |
 | POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md) |
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md) |
-| GET | `/api/v1/users` | Public (read-only) | [ldap-integration](ldap-integration.md) |
-| GET | `/api/v1/users/{user}` | Public (read-only) | [ldap-integration](ldap-integration.md) |
+| GET | `/api/v1/users` | Anonymous (read-only) | [user-management](user-management.md) |
+| GET | `/api/v1/users/{user}` | Anonymous (read-only) | [user-management](user-management.md) |
 | GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys` | Authenticated (session only) | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md) |
@@ -134,6 +140,7 @@ here with the required access level and a link to the owning spec.
 **Notes**:
 - "Unauthenticated" = no authentication required (public login/SSO flows)
 - "Authenticated" = any logged-in user regardless of role
+- "Anonymous (read-only)" = no authentication required, available to any caller including unauthenticated users
 - "Public (read-only)" = any authenticated user, no role required
 - "Admin" = requires the `admin` role
 - User creation: SSO users are created by the LDAP directory sync (see
