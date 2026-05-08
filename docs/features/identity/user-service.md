@@ -45,6 +45,12 @@ This distinction allows the service to enforce invariants for interactive
 users while preserving the ability of system processes to perform any
 operation.
 
+**API handler rule**: API endpoint handlers MUST always pass the UUID of
+the authenticated user (obtained via `Depends()`) as `acting_user_id`.
+Passing `None` from an API handler is a bug — it would silently bypass
+all self-operation guards. `None` is reserved exclusively for system
+entry points (LDAP sync, Celery tasks, CLI commands).
+
 ## LDAP User Data Ownership
 
 For LDAP users (`ldap_uid IS NOT NULL`), all identity fields (`email`,
@@ -229,7 +235,9 @@ Adds or removes roles for a user.
 4. For each entry in `effective_add`, create UserRole if not already
    present, with `assigned_by = acting_user_id`
 5. For each entry in `effective_remove`, delete matching UserRole record
-6. Return updated User with current roles
+6. Log INFO with `user_id`, `acting_user_id`, roles added, and roles
+   removed (effective lists only — omit no-ops)
+7. Return updated User with current roles
 
 **TicketEvent**: none (role changes do not directly affect tickets)
 
@@ -289,6 +297,9 @@ interrupted at any point, a user who still appears active will have
 already lost access. The admin can safely retry the deactivation
 without risk of leaving a deactivated user with valid credentials.
 
+**Logging**: log INFO for every deactivation with `user_id`,
+`acting_user_id`, and `reason`.
+
 **TicketEvent**: yes — one `assignment` event per unassigned ticket (see
 `docs/features/tickets/ticket-history.md` for the event type contract)
 
@@ -311,7 +322,13 @@ Reactivates a previously deactivated user account.
 **Behavior**:
 
 1. Set `User.active = true`
-2. Return updated User
+2. If the user is an LDAP user (`ldap_uid IS NOT NULL`), log WARNING:
+   the user will not be able to authenticate until their AD account is
+   also re-enabled. The next LDAP sync cycle will revert this
+   reactivation if `EMPLOYEESTATUS` is still not `"Active"`
+3. Log INFO for every reactivation with `user_id`, `acting_user_id`,
+   and the user's current roles
+4. Return updated User
 
 **Explicitly NOT restored**:
 
