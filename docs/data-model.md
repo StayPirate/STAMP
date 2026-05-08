@@ -400,7 +400,7 @@ the same access as an unauthenticated user (read-only on public data).
 | full_name        | VARCHAR     |                          | Display name (from AD `cn`)      |
 | active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
 | password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for SSO users. See `docs/features/identity/local-authentication.md` |
-| ldap_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable). Used as the stable matching key during LDAP sync. NULL for local users |
+| ldap_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
 | ldap_dn          | VARCHAR     | nullable                 | Full AD distinguished name       |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
 | ldap_synced_at   | TIMESTAMP   | nullable                 | When this record was last synced from AD |

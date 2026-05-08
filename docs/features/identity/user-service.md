@@ -102,6 +102,14 @@ CLI commands add an additional pre-call guard for defense in depth
 employee in Active Directory. The next LDAP sync cycle will propagate
 the change to Sentinel with all associated side effects.
 
+### Immutability Constraints
+
+Once set, `ldap_object_guid` cannot be modified by any operation in this
+service. This field is the stable identity anchor that links a Sentinel user
+to an Active Directory object. All LDAP sync operations match by
+`ldap_object_guid` — if it were changed, the user would lose its AD
+association and historical audit trail.
+
 ## Inactive User Management Principle
 
 Deactivation blocks login and revokes active sessions/keys, but does not
@@ -200,9 +208,16 @@ their own business rules.
    `ldap_synced_at` is provided (not `_MISSING`): raise
    `LDAPFieldReadOnlyError`. These fields are LDAP-specific and have
    no source of truth for local users.
-4. If `email` is provided, validate uniqueness. If violated, raise
+4. **Username validation** (if `username` is provided): normalize and
+   validate the format per the rules in `docs/conventions.md` (section
+   "Username Format"). If invalid, raise `UserValidationError`. Verify
+   uniqueness in the database (excluding the current user, including
+   inactive users). If violated, raise `UserConflictError`. For LDAP
+   users, this step is reached only by the sync fetcher (human callers
+   are already blocked at step 2).
+5. If `email` is provided, validate uniqueness. If violated, raise
    `UserConflictError`
-5. Apply provided field updates. Optional parameters use a `_MISSING`
+6. Apply provided field updates. Optional parameters use a `_MISSING`
    sentinel as default to distinguish three states:
    - `_MISSING` (default): field is not modified
    - `None`: field is explicitly cleared to NULL in the database
@@ -216,7 +231,7 @@ their own business rules.
 
     If all optional parameters are `_MISSING`, this is a no-op: no UPDATE
    is issued. The User record returned is the one loaded in step 1.
-6. Return updated User
+7. Return updated User
 
 **TicketEvent**: none
 
@@ -411,6 +426,44 @@ Resets the password for a local user and invalidates all active sessions.
 6. Return updated User
 
 **TicketEvent**: none (password reset does not affect tickets)
+
+### `unlock_user(user_id, acting_user_id)`
+
+Clears the login lockout counter for a user, restoring their ability to
+attempt local authentication.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `user_id` | `UUID` | Target user to unlock |
+| `acting_user_id` | `UUID` | Admin performing the unlock |
+
+**Behavior:**
+
+1. Load user by `user_id`. If not found, raise `UserNotFoundError`.
+2. Delete the Redis key `login_attempts:{username}` (where `username`
+   is the user's current username).
+3. Log at INFO level: admin identity, target user, timestamp.
+
+**Idempotency:** if the user is not currently locked out (Redis key
+does not exist or counter is zero), the operation completes successfully
+with no error. This is a no-op, not a failure.
+
+**Exceptions:**
+
+| Exception | Condition |
+|-----------|-----------|
+| `UserNotFoundError` | `user_id` does not match any user |
+| `RedisUnavailableError` | Redis is unreachable |
+
+**Notes:**
+- No `TicketEvent` is created (not a ticket operation).
+- No session invalidation (unlocking does not indicate compromise).
+- No database mutation — this operation is purely Redis-based.
+- The `reset_password()` operation continues to clear the lockout
+  counter as a side effect (step 5), but `unlock_user()` provides
+  an independent path that does not force a password change.
 
 ## Transactionality
 

@@ -372,15 +372,15 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is an SSO user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
    abort)
-5. Clear the user's failed login attempt counter in Redis (see
-   `local-authentication.md` for lockout mechanism details)
-6. If Redis is unreachable, exit with error:
+5. Delegate to `asyncio.run(user_service.unlock_user(user_id,
+   acting_user_id=None))` — the service handles Redis key deletion,
+   logging, and idempotency (see
+   `docs/features/identity/user-service.md`). `acting_user_id = None`
+   because CLI is a system action.
+6. If the service raises `RedisUnavailableError`, exit with error:
    `"Error: Could not connect to Redis. Lockout state cannot be cleared."`
    (exit code 2)
-7. Log the action at INFO level: target username and timestamp (CLI
-   operations do not have an acting user identity — shell access is the
-   implicit authorization)
-8. Print: `"Unlocked user '{username}'."`
+7. Print: `"Unlocked user '{username}'."`
 
 The command is idempotent: if the counter does not exist (user was not
 locked), it succeeds silently.
@@ -978,19 +978,22 @@ Clear the login lockout counter for a user.
 
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
-2. Normalize the user's `username` (trim, lowercase)
-3. Clear the user's failed login attempt counter in Redis (see
-   `local-authentication.md` for lockout mechanism details)
-4. Log the action at INFO level: admin identity (user ID and username of
-   the acting admin), target user (user ID and username), and timestamp
-5. Return HTTP 200 with `{"data": {"detail": "Account unlocked successfully."}}`
+2. Delegate to `user_service.unlock_user(user_id,
+   acting_user_id=authenticated_admin.id)` — this handles Redis key
+   deletion, logging, and idempotency (see
+   `docs/features/identity/user-service.md`)
+3. Return HTTP 200 with `{"data": {"detail": "Account unlocked successfully."}}`
 
 The endpoint is idempotent: if the user is not locked, it returns 200
 with the same response without error. The log entry is emitted
 regardless (to record that an admin attempted to unlock).
 
-If Redis is unreachable, return HTTP 503 with code
-`REDIS_UNAVAILABLE` and message: `"Lockout service unavailable."`
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `USER_NOT_FOUND` | User not found |
+| 503 | `REDIS_UNAVAILABLE` | Lockout service unavailable |
 
 ## Interaction with LDAP Sync
 
