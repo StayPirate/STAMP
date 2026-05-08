@@ -68,9 +68,8 @@ command cannot be used non-interactively — a TTY is required.
 
 **Behavior**:
 
-1. Validates username format: must be 1-64 characters, start with a
-   letter, and contain only lowercase letters, numbers, dots, hyphens,
-   and underscores (`[a-z0-9._-]`). If invalid, exits with error:
+1. Validates username format (see `docs/conventions.md`, Username Format).
+   If invalid, exits with error:
    `"Error: Invalid username '{value}'. Username must be 1-64 characters,
    start with a letter, and contain only lowercase letters, numbers, dots,
    hyphens, and underscores."`

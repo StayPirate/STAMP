@@ -101,19 +101,26 @@ Creates a new User record with optional initial roles.
 
 **Behavior**:
 
-1. Validate uniqueness of `username` and `email` across all users
+1. Normalize `username` (trim whitespace, lowercase) and validate format
+   per `docs/conventions.md` (Username Format). If invalid, raise
+   `UsernameFormatError`
+2. Validate password/`ldap_uid` mutual exclusivity: if `ldap_uid` is
+   provided and `password` is also provided, raise
+   `SSOUserPasswordError`. If `ldap_uid` is NULL and `password` is not
+   provided, raise `PasswordValidationError`
+3. Validate uniqueness of `username` and `email` across all users
    (including inactive). If violated, raise `UserConflictError`
-2. If `password` is provided, hash it with bcrypt (see
+4. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
-3. Create User record with provided fields,
+5. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
    `ldap_synced_at = now()` if `ldap_uid` is set
-4. For each role in `roles`, create UserRole with specified `ad_group_cn`
+6. For each role in `roles`, create UserRole with specified `ad_group_cn`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `ad_group_cn`), deduplicate silently — only
    one UserRole record is created per unique `(role, ad_group_cn)` pair.
    This is consistent with the idempotency behavior of `update_roles()`.
-5. Return the created User
+7. Return the created User
 
 **TicketEvent**: none (user creation does not affect tickets)
 
@@ -395,6 +402,7 @@ for the API-layer mapping.
 |-----------|-------------|
 | `UserNotFoundError` | User lookup by ID or username finds no match |
 | `UserConflictError` | Duplicate username or email (uniqueness constraint violation) |
+| `UsernameFormatError` | Username does not conform to the format defined in `docs/conventions.md` (Username Format) |
 | `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role |
 | `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |

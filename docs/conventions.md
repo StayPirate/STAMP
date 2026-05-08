@@ -18,6 +18,15 @@
   API response format) and MUST NOT be used in application code or background
   tasks
 
+### Username Format
+
+Usernames must be 1–64 characters, start with a letter, and contain only
+lowercase letters, numbers, dots, hyphens, and underscores
+(`[a-z0-9._-]`). Usernames are stored exclusively as lowercase in the
+database. Any entry point that accepts a username for user creation MUST
+normalize it (trim whitespace, lowercase) and validate the format before
+storage.
+
 ## Python (Backend)
 
 ### Style
@@ -193,9 +202,7 @@ export function MyComponent({ title, onAction }: MyComponentProps) {
   `--role admin --role vulnerability_analyst`)
 - **Username normalization**: all CLI commands that accept a username
   argument MUST normalize it (trim whitespace, lowercase) before lookup.
-  Usernames are stored exclusively as lowercase in the database; this
-  normalization ensures operator input is always matched correctly
-  regardless of case
+  See Username Format (above) for the full format specification
 
 ### Database Access
 

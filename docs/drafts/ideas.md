@@ -8,4 +8,4 @@ specification, it should be removed from this list.
 - Some codestreams/packages will need to be tracked even if they are not shipped in any product. For example go1.25
 - Once all scheduled tasks (e.g. fetchers) are defined, review all schedule times and spread them out to avoid them all starting at the same moment
 - The project is becoming very large and is composed only of specs. Define and maintain an intelligent implementation plan — a plan that allows implementing the platform one (or more) pieces at a time that can be tested before moving to the next piece.
-- Currently we are tracking two objects: Tickets and Packages. What if there were a third object? The Update. Already partially tracked by SRs, incidents, and RRs. The "released" status would belong to the Update and not to the Package.
+- ~~Currently we are tracking two objects: Tickets and Packages. What if there were a third object? The Update. Already partially tracked by SRs, incidents, and RRs. The "released" status would belong to the Update and not to the Package.~~ → Promoted to draft: `docs/drafts/delivery-tracking-model.md`

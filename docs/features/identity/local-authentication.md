@@ -298,7 +298,7 @@ attempts per username using a Redis counter.
 - **Redis key namespace safety**: the key format
   `login_attempts:{normalized_username}` is safe from namespace
   collisions because usernames are restricted to `[a-z0-9._-]` at
-  creation time (see `docs/features/identity/user-management.md`). No
+  creation time (see `docs/conventions.md`, Username Format). No
   characters in the allowed charset conflict with Redis key delimiters.
 - **Non-existent username counters (accepted risk)**: Redis counters are
   created for every non-existent username attempted (to prevent timing
