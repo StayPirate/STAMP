@@ -15,8 +15,8 @@ corporate identity provider (`id.suse.com`) via the OpenID Connect
 employees whose accounts are managed by Active Directory and synced into
 Sentinel via the `sync_ldap_directory` fetcher.
 
-SSO authentication is available only to users with `ldap_uid IS NOT NULL`
-(LDAP-synced users). Local users (`ldap_uid = NULL`) authenticate via
+SSO authentication is available only to users with `ldap_object_guid IS NOT NULL`
+(LDAP-synced users). Local users (`ldap_object_guid = NULL`) authenticate via
 the local login endpoint — see `docs/features/identity/local-authentication.md`.
 
 ## Configuration
@@ -44,8 +44,8 @@ This allows the same application build to be deployed in both
 SSO-capable and SSO-less environments without any code changes.
 
 `SSO_USER_CLAIM` specifies which claim from the OIDC ID token is used
-to identify the user (matched against the `ldap_uid` field in the User
-table). Defaults to `sub`.
+to identify the user (matched against the `username` field in the User
+table, with a guard that the user must be LDAP-synced). Defaults to `sub`.
 
 `SSO_REDIRECT_URI` is the full URL (scheme + host + path) where the IdP
 redirects the browser after authentication. It MUST point to the
@@ -268,8 +268,10 @@ callback URL with an authorization `code` and `state` parameter.
    '{claim_name}' not found in ID token from {issuer}. Available
    claims: {list_of_claim_names}."` (claim values are never logged —
    only names, to aid debugging without leaking PII)
-6. Look up the user by matching `ldap_uid` to the extracted claim value
-   (lowercased — see Matching rules)
+6. Look up the user by matching `username` to the extracted claim value
+   (lowercased — see Matching rules). Additionally verify that
+   `ldap_object_guid IS NOT NULL` (i.e., the matched user is an
+   LDAP-synced user, not a local user)
 7. If user not found, return HTTP 401 with code `AUTH_SSO_USER_NOT_FOUND`:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
@@ -365,12 +367,14 @@ Unlike the local login endpoint, SSO error messages can be specific
 ## Identity Mapping
 
 The claim specified by `SSO_USER_CLAIM` (default: `sub`) from the IdP's
-ID token is matched against the `ldap_uid` field in the `User` table.
+ID token is matched against the `username` field in the `User` table,
+with the additional guard that the matched user must have
+`ldap_object_guid IS NOT NULL` (i.e., be an LDAP-synced user).
 
 With the default configuration (`sub`), this works because:
 
 - The `sync_ldap_directory` fetcher imports users from SUSE Active
-  Directory and stores their `sAMAccountName` as `ldap_uid`
+  Directory and stores their `sAMAccountName` as `username`
 - `id.suse.com` uses the same AD as its identity source, so its `sub`
   claim corresponds to the `sAMAccountName`
 
@@ -382,7 +386,7 @@ changes.
 ### Matching rules
 
 1. The matching is **case-insensitive**: the claim value is normalized
-   to lowercase before comparison with `ldap_uid`. This ensures
+   to lowercase before comparison with `username`. This ensures
    consistency with the `sync_ldap_directory` fetcher, which stores
    `sAMAccountName` normalized to lowercase (as required by the CLI
    conventions). Since AD `sAMAccountName` is inherently
@@ -390,15 +394,15 @@ changes.
    if the IdP returns a differently-cased value (e.g., `JDoe` vs
    `jdoe`).
 2. Log the claim value at DEBUG level on every SSO login attempt
-3. Log a WARNING when the claim value does not match any `ldap_uid`,
-   including the unmatched value for diagnostic purposes
+3. Log a WARNING when the claim value does not match any `username`
+   (for LDAP users), including the unmatched value for diagnostic purposes
 
 ### No auto-provisioning
 
-If the `sub` claim does not match any `ldap_uid` in the database, the
-login **fails**. Sentinel does not auto-create user records during SSO
-login. The user must already exist in the database (created by the LDAP
-sync process).
+If the `sub` claim does not match any `username` (with
+`ldap_object_guid IS NOT NULL`) in the database, the login **fails**.
+Sentinel does not auto-create user records during SSO login. The user
+must already exist in the database (created by the LDAP sync process).
 
 This is a deliberate design choice:
 

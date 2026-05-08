@@ -45,16 +45,16 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │              │    ┌──────────────────┐   │
        │              └───▶│      User        │◀──┘
        │                   │                  │
-       │                   │  username        │
-       │                   │  email           │
-       │                   │  full_name       │
-       │                   │  active          │
-       │                   │  password_hash   │
-       │                   │  ldap_uid        │
-       │                   │  ldap_dn         │
-       │                   │  manager_uid     │
-       │                   │  ldap_synced_at  │
-       │                   │  last_login_at   │
+        │                   │  username          │
+       │                   │  email             │
+       │                   │  full_name         │
+       │                   │  active            │
+       │                   │  password_hash     │
+       │                   │  ldap_object_guid  │
+       │                   │  ldap_dn           │
+       │                   │  manager_id (FK)   │
+       │                   │  ldap_synced_at    │
+       │                   │  last_login_at     │
        │                   └────────┬─────────┘
        │                            │
        │                            ▼ (1:N)
@@ -392,24 +392,24 @@ Active Directory via the `sync_ldap_directory` fetcher (see
 multiple roles via the UserRole junction table. A user with no roles has
 the same access as an unauthenticated user (read-only on public data).
 
-| Column         | Type        | Constraints        | Description                      |
-|----------------|-------------|--------------------|----------------------------------|
-| id             | UUID        | PK                 | Internal identifier              |
-| username       | VARCHAR     | UNIQUE, NOT NULL   | Login username (from AD `sAMAccountName`) |
-| email          | VARCHAR     | UNIQUE, NOT NULL   | Email address (from AD `mail`)   |
-| full_name      | VARCHAR     |                    | Display name (from AD `cn`)      |
-| active         | BOOLEAN     | NOT NULL, DEFAULT  | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| password_hash  | VARCHAR     | nullable           | bcrypt hash of password (with SHA-256 pre-hash). NULL for SSO users. See `docs/features/identity/local-authentication.md` |
-| ldap_uid       | VARCHAR     | UNIQUE, nullable   | AD `sAMAccountName`. NULL for local users |
-| ldap_dn        | VARCHAR     | nullable           | Full AD distinguished name       |
-| manager_uid    | VARCHAR     | nullable           | `ldap_uid` of the direct line manager (resolved from AD `manager` DN) |
-| ldap_synced_at | TIMESTAMP   | nullable           | When this record was last synced from AD |
-| last_login_at  | TIMESTAMP   | nullable           | When the user last logged in (updated on every session creation). NULL if never logged in |
-| created_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record creation timestamp        |
-| updated_at     | TIMESTAMP   | NOT NULL, DEFAULT  | Record update timestamp          |
+| Column           | Type        | Constraints              | Description                      |
+|------------------|-------------|--------------------------|----------------------------------|
+| id               | UUID        | PK                       | Internal identifier              |
+| username         | VARCHAR     | UNIQUE, NOT NULL         | Login username (from AD `sAMAccountName`). Updated by LDAP sync if `sAMAccountName` changes in AD |
+| email            | VARCHAR     | UNIQUE, NOT NULL         | Email address (from AD `mail`)   |
+| full_name        | VARCHAR     |                          | Display name (from AD `cn`)      |
+| active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
+| password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for SSO users. See `docs/features/identity/local-authentication.md` |
+| ldap_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable). Used as the stable matching key during LDAP sync. NULL for local users |
+| ldap_dn          | VARCHAR     | nullable                 | Full AD distinguished name       |
+| manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
+| ldap_synced_at   | TIMESTAMP   | nullable                 | When this record was last synced from AD |
+| last_login_at    | TIMESTAMP   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
+| created_at       | TIMESTAMP   | NOT NULL, DEFAULT        | Record creation timestamp        |
+| updated_at       | TIMESTAMP   | NOT NULL, DEFAULT        | Record update timestamp          |
 
 **Check constraint**: `chk_user_auth_exclusive` —
-`(ldap_uid IS NOT NULL AND password_hash IS NULL) OR (ldap_uid IS NULL AND password_hash IS NOT NULL)`
+`(ldap_object_guid IS NOT NULL AND password_hash IS NULL) OR (ldap_object_guid IS NULL AND password_hash IS NOT NULL)`
 — enforces mutual exclusivity: SSO users cannot have a password, local
 users must have a password. See `docs/features/identity/user-management.md`
 (Business Rule 5) and `docs/features/identity/local-authentication.md`.

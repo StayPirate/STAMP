@@ -88,7 +88,7 @@ command cannot be used non-interactively — a TTY is required.
    exits with error:
    `"Error: Password must be at most 128 characters."`
 5. Delegates to `user_service.create_user()` with:
-   - `ldap_uid = None` (local user)
+   - `ldap_object_guid = None` (local user)
    - `active = True`
    - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
@@ -152,12 +152,12 @@ sentinel manage-user update \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is an LDAP user (`ldap_uid IS NOT NULL`) and `--email` or
+3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`) and `--email` or
    `--full-name` is provided, exits with error:
    `"Error: User '{username}' is managed by directory sync. Identity
    fields cannot be modified manually."` (exit code 1). Role changes
    are still permitted on LDAP users.
-4. If the user is an LDAP user (`ldap_uid IS NOT NULL`) and
+4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`) and
    `--reactivate` is provided, exits with error:
    `"Error: Cannot reactivate LDAP-managed users."` (exit code 1).
    Active status of LDAP users is managed exclusively by directory sync.
@@ -248,7 +248,7 @@ sentinel manage-user deactivate \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is an LDAP user (`ldap_uid IS NOT NULL`), exits with
+3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), exits with
    error: `"Error: Cannot deactivate LDAP-managed users."` (exit code 1).
    Active status of LDAP users is managed exclusively by directory sync.
 4. If the user is already inactive, prints:
@@ -316,7 +316,7 @@ command exits with error: `"Error: Passwords do not match."` (exit
 code 1). This command cannot be used non-interactively — a TTY is
 required.
 
-This command is only valid for local users (`ldap_uid = NULL`). The
+This command is only valid for local users (`ldap_object_guid = NULL`). The
 username is normalized (trim whitespace, lowercase) before lookup. If
 invoked on an SSO user, exits with error:
 `"Error: Cannot set password for SSO user '{username}'. SSO users
@@ -367,7 +367,7 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is inactive. Unlock has no practical
    effect until the user is reactivated."` — then continue (do not
    abort)
-4. If the user is an SSO user (`ldap_uid IS NOT NULL`), print a warning
+4. If the user is an SSO user (`ldap_object_guid IS NOT NULL`), print a warning
    to stderr:
    `"Warning: User '{username}' is an SSO user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
@@ -626,7 +626,7 @@ invalidated."
   only shown for local users, but if it does, display the error
 
 The "Reset password" button is only visible for local users
-(`ldap_uid = NULL`). It is never shown for SSO users.
+(`ldap_object_guid = NULL`). It is never shown for SSO users.
 
 ### Public API endpoints
 
@@ -670,7 +670,8 @@ envelope:
     "email": "string",
     "full_name": "string",
     "active": true,
-    "ldap_uid": "string | null",
+    "source": "ldap | local",
+    "ldap_object_guid": "uuid | null",
     "manager": {
       "id": "uuid",
       "username": "string",
@@ -692,6 +693,9 @@ envelope:
 ```
 
 Field notes:
+- `source`: derived field — `"ldap"` if `ldap_object_guid IS NOT NULL`,
+  otherwise `"local"`
+- `ldap_object_guid`: AD `objectGUID` (immutable UUID). NULL for local users
 - `manager`: resolved manager object (from AD `manager` DN) or `null`
 - `roles`: array of all roles from both AD group mappings and manual
   assignments. `ad_group_cn` is `'_manual'` for manually assigned roles
@@ -712,7 +716,7 @@ All endpoints below require the `admin` role unless otherwise stated.
 
 #### `PATCH /api/v1/admin/users/{user}`
 
-Update a user's profile fields. Only local users (`ldap_uid IS NULL`)
+Update a user's profile fields. Only local users (`ldap_object_guid IS NULL`)
 can be modified — LDAP users have their identity fields managed by
 directory sync (see LDAP User Data Ownership in
 `docs/features/identity/user-service.md`). This endpoint operates on
@@ -736,7 +740,7 @@ in `docs/features/identity/user-service.md`).
    `VALIDATION_ERROR`: `"At least one field must be provided."`
 3. If `email` is provided, validate format — if invalid, return HTTP 422
    with code `VALIDATION_ERROR`: `"Invalid email format."`
-4. If the user is an LDAP user (`ldap_uid IS NOT NULL`), return HTTP 409
+4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), return HTTP 409
    with code `USER_LDAP_FIELD_READONLY`:
    `"Cannot modify identity fields for LDAP users. These fields are managed by the directory service."`
 5. Delegate to `user_service.update_user()` with
@@ -923,7 +927,7 @@ proceeding with deactivation.
    consistent — if you cannot deactivate yourself, you cannot preview
    the impact either. This prevents a confusing UX where the preview
    succeeds but the subsequent action is rejected.
-3. If the user is an LDAP user (`ldap_uid IS NOT NULL`), return HTTP 409
+3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), return HTTP 409
    with code `USER_LDAP_STATUS_READONLY`:
    `"Cannot deactivate LDAP-managed users."`
    Rationale: same consistency principle as self-deactivation — if the
@@ -991,7 +995,7 @@ If Redis is unreachable, return HTTP 503 with code
 ## Interaction with LDAP Sync
 
 The `sync_ldap_directory` fetcher operates exclusively on users with
-`ldap_uid IS NOT NULL`. Local users (`ldap_uid = NULL`) are invisible to
+`ldap_object_guid IS NOT NULL`. Local users (`ldap_object_guid = NULL`) are invisible to
 the sync process:
 
 - They are never deactivated by the sync
@@ -1003,7 +1007,7 @@ handling is required.
 
 ## Business Rules
 
-1. **Local users are identified by `ldap_uid = NULL`**: this is the
+1. **Local users are identified by `ldap_object_guid = NULL`**: this is the
    canonical way to distinguish local users from LDAP-synced users. No
    additional flag or column is needed
 2. **No "last admin" enforcement**: the system does not enforce a

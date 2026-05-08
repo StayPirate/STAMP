@@ -173,8 +173,8 @@ hashing parameters.
 
 See `docs/data-model.md`. Key tables:
 
-- **User**: username, email, active status, LDAP fields (ldap_uid,
-  ldap_dn, manager_uid, ldap_synced_at)
+- **User**: username, email, active status, LDAP fields (ldap_object_guid,
+  ldap_dn, manager_id, ldap_synced_at)
 - **UserRole**: junction table linking users to roles with `ad_group_cn`
   (AD group name or `_manual` for manual assignments)
 - **RoleMapping**: maps AD group names to Sentinel roles

@@ -21,8 +21,8 @@ three primary use cases:
 3. **Environments without SSO** where Sentinel is deployed outside the
    SUSE corporate network
 
-Local authentication is only available to users with `ldap_uid = NULL`
-(local users). Users managed by LDAP sync (`ldap_uid IS NOT NULL`)
+Local authentication is only available to users with `ldap_object_guid = NULL`
+(local users). Users managed by LDAP sync (`ldap_object_guid IS NOT NULL`)
 authenticate exclusively via SSO — see
 `docs/features/identity/sso-authentication.md`.
 
@@ -63,7 +63,7 @@ session, and returns a JWT.
    lockout expires
 7. If user is inactive (`active = false`), return HTTP 401 with generic
    message
-8. If user has `ldap_uid IS NOT NULL` (SSO user), return HTTP 401 with
+8. If user has `ldap_object_guid IS NOT NULL` (SSO user), return HTTP 401 with
    generic message — SSO users cannot use local login
 9. If user has no `password_hash` set (local user without password),
    return HTTP 401 with generic message
