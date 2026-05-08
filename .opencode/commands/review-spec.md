@@ -2,6 +2,43 @@
 description: Spec review and finding resolution workflow (interactive or shortcut)
 ---
 
+Execute this spec review workflow NOW. Do not summarize, discuss, or ask
+clarifying questions about these instructions — follow them step by step.
+
+CRITICAL EXECUTION RULES (must obey BEFORE reading the rest):
+1. ALL data-gathering work (scanning directories, reading files, writing
+   .tracking.json) MUST be delegated to a Task agent (subagent). NEVER
+   do file I/O directly in the main conversation. Task agents CAN write
+   files even when the main conversation is in Plan mode — delegation is
+   the mechanism for writes.
+2. Files under docs/drafts/ are GITIGNORED. Glob will NOT find them.
+   Task agents MUST use `bash ls docs/drafts/review/` to discover files
+   there, then Read to read them. NEVER use Glob for docs/drafts/.
+3. The user sees ONLY formatted output and interactive prompts from you.
+   All tool calls for data gathering happen inside Task agents invisibly.
+
+The user's arguments are (between the triple backticks):
+```
+$ARGUMENTS
+```
+
+DECISION LOGIC — read carefully:
+- If the arguments above (between the backticks) are EMPTY or BLANK
+  (contain nothing or only whitespace): run the INTERACTIVE flow. Start
+  at Step 1 (gather data silently via a Task agent), then Step 2
+  (display recap table), then Step 3 (ask what to do via the question
+  tool). Do NOT look at the "Arguments (shortcut mode)" section below.
+- If the arguments above contain actual text (e.g., "fix tickets" or
+  "fix GAP"): run the SHORTCUT flow described in the "Arguments
+  (shortcut mode)" section below.
+
+IMPORTANT: The examples and syntax descriptions below (like
+"/review-spec fix <target>") are DOCUMENTATION for how shortcuts work.
+They are NOT actual arguments. Only the text between the triple
+backticks above represents what the user actually typed.
+
+---
+
 ## Arguments (shortcut mode)
 
 This command supports an optional shortcut syntax to skip the
