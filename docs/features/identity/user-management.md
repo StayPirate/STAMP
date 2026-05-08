@@ -156,42 +156,39 @@ sentinel manage-user update \
 4. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
    `"No changes specified for user '{username}'."` and exits with code 0
-5. If any role appears in both `--add-role` and `--remove-role`, exits
-   with error:
-   `"Error: Role '{role}' cannot be both added and removed in the same
-   invocation."`
-6. For each role value in `--add-role` and `--remove-role`, validates that
+5. For each role value in `--add-role` and `--remove-role`, validates that
    it is a recognized role. If not, exits with error:
    `"Error: Invalid role '{value}'. Valid roles are: {list}."`
    The list of valid roles is derived from the system's role definitions
    at runtime
-7. If `--email` is provided, validates email format — if not
+6. If `--email` is provided, validates email format — if not
    syntactically valid, exits with error:
    `"Error: Invalid email format '{value}'."`
-8. If `--email` or `--full-name` is provided, delegates to
+7. If `--email` or `--full-name` is provided, delegates to
    `user_service.update_user()` with `acting_user_id = None`. If the
    service raises `UserConflictError` (duplicate email), exits with error
-9. For role changes (`--add-role`, `--remove-role`), delegates to
+8. For role changes (`--add-role`, `--remove-role`), delegates to
    `user_service.update_roles()` with `acting_user_id = None` and
-   roles as `(role, '_manual')` pairs. The service handles validation
-   (AD-derived role protection). Since `acting_user_id = None`, the
-   self-removal guard does not apply (CLI is a system action)
-10. If `--reactivate` is provided: delegates to
+   roles as `(role, '_manual')` pairs. The service handles input
+   resolution (deduplication, cancellation of conflicting entries) and
+   validation (AD-derived role protection). Since `acting_user_id = None`,
+   the self-removal guard does not apply (CLI is a system action)
+9. If `--reactivate` is provided: delegates to
    `user_service.reactivate_user()` with `acting_user_id = None`. If
    the user is already active, this is a no-op. See
    `docs/features/identity/user-service.md` for reactivation semantics.
    Reactivation is intentionally the LAST mutation step so that the
    account is fully configured (correct email, roles, etc.) before
    becoming active again
-11. Prints summary of changes. The summary lists only changes that were
-   actually applied (not no-ops). If all requested operations resulted
-   in no-ops (e.g., reactivating an already-active user, adding a role
-   the user already has, removing a role the user does not have), prints:
-   `"No changes applied to user '{username}'."` and exits with code 0.
-   Otherwise prints:
-   `"Updated user '{username}': {list of actual changes}."`
+10. Prints summary of changes. The summary lists only changes that were
+    actually applied (not no-ops). If all requested operations resulted
+    in no-ops (e.g., reactivating an already-active user, adding a role
+    the user already has, removing a role the user does not have), prints:
+    `"No changes applied to user '{username}'."` and exits with code 0.
+    Otherwise prints:
+    `"Updated user '{username}': {list of actual changes}."`
 
-**Error handling (fail-fast)**: steps 8–10 are executed sequentially. If
+**Error handling (fail-fast)**: steps 7–9 are executed sequentially. If
 any step fails, the command exits immediately (exit code 1) WITHOUT
 attempting subsequent steps. The error message MUST clearly report:
 

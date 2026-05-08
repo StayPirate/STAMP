@@ -602,14 +602,26 @@ auto-assignment.
 - Soft-delete is performed by setting `deleted_at` to the current
   timestamp
 - Only users with the Admin role may soft-delete or restore tickets
-- Soft-deleted tickets are excluded from all default queries and
-  background processing (CVSS sync, release detection, NVD rejection
-  handling, recalculation cascades)
+- Soft-deleted tickets (`deleted_at IS NOT NULL`) are invisible to all
+  business logic — no operation (API query, service-layer side effect,
+  or background task) queries, modifies, or produces side effects for
+  soft-deleted tickets unless it explicitly deals with deletion or
+  restoration management
 - All sub-resources of a soft-deleted ticket remain intact but are
   inaccessible to non-admin users (API returns 410 Gone)
 - A soft-deleted ticket can be restored by clearing `deleted_at`
 - Both operations create a `TicketEvent` record (see
   `docs/features/tickets/ticket-history.md`)
+
+**Automated verification**: every service-layer operation that queries
+tickets as part of its logic MUST include a parametrized test verifying
+that soft-deleted tickets are excluded. At minimum:
+
+- Create a ticket in each relevant active status (New, Analysis, Analyzed)
+- Soft-delete it (`deleted_at = now()`)
+- Execute the operation under test
+- Assert the soft-deleted ticket was NOT affected (no TicketEvents
+  created, no status changes, no unassignment, no inclusion in results)
 
 ### Status Categories
 

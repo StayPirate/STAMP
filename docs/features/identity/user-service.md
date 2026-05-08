@@ -191,10 +191,11 @@ Adds or removes roles for a user.
 **Business rules**:
 
 1. **Self-removal guard**: if `acting_user_id` is not None AND
-   `acting_user_id == user_id` AND `Admin` is in the `remove` list,
-   reject the operation with `SelfRoleRemovalError`. This prevents any
-   authenticated user from removing their own Admin role, regardless of
-   the entry point. System actions (`acting_user_id = None`) are exempt.
+   `acting_user_id == user_id` AND `Admin` is in the effective `remove`
+   list (after input resolution), reject the operation with
+   `SelfRoleRemovalError`. This prevents any authenticated user from
+   removing their own Admin role, regardless of the entry point. System
+   actions (`acting_user_id = None`) are exempt.
    For the implications of this guard on the "zero admins" scenario and
    the CLI recovery procedure, see `docs/features/identity/user-management.md`,
    Business Rule 2
@@ -209,11 +210,18 @@ Adds or removes roles for a user.
 **Behavior**:
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
-2. Validate business rules (self-removal guard, AD-derived protection)
-3. For each entry in `add`, create UserRole if not already present, with
-   `assigned_by = acting_user_id`
-4. For each entry in `remove`, delete matching UserRole record
-5. Return updated User with current roles
+2. Resolve inputs (set-based): deduplicate entries within each list
+   (treat as sets — each unique `(role, ad_group_cn)` tuple appears at
+   most once). Then cancel entries that appear in both lists:
+   `effective_add = add − remove`, `effective_remove = remove − add`.
+   If both effective lists are empty after resolution, this is a no-op:
+   return the user unchanged
+3. Validate business rules (self-removal guard, AD-derived protection)
+   against the resolved effective lists
+4. For each entry in `effective_add`, create UserRole if not already
+   present, with `assigned_by = acting_user_id`
+5. For each entry in `effective_remove`, delete matching UserRole record
+6. Return updated User with current roles
 
 **TicketEvent**: none (role changes do not directly affect tickets)
 
