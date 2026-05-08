@@ -110,6 +110,14 @@ Creates a new User record with optional initial roles.
    provided, raise `PasswordValidationError`
 3. Validate uniqueness of `username` and `email` across all users
    (including inactive). If violated, raise `UserConflictError`
+
+   **Note on email format**: the service validates email *uniqueness* but
+   not *format*. Format validation (RFC 5321/5322 compliance, including
+   `+` tag addressing) is the responsibility of the caller — Pydantic
+   schemas for the API, Click validation for the CLI. All callers MUST
+   use the `email-validator` library to ensure consistent acceptance
+   rules across entry points.
+
 4. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
 5. Create User record with provided fields,
@@ -262,9 +270,13 @@ in this specific order):
    session service contract.
 3. Set `User.active = false`
 4. Unassign open tickets: for each ticket where `assignee_id` points to
-   the deactivated user and the ticket is in an active status (Analysis,
-   Analyzed), set `assignee_id = NULL`. No attempt is made to reassign
-   to the manager or any other user. Create a `TicketEvent` of type
+   the deactivated user and the ticket is in active status (see
+   `docs/features/tickets/tickets.md` § Status Categories: New,
+   Analysis, Analyzed), set `assignee_id = NULL`. No active ticket
+   should retain an assignee pointing to an inactive user — ticket
+   history preserves the previous assignment via the TicketEvent record.
+   No attempt is made to reassign to the manager or any other user.
+   Create a `TicketEvent` of type
    `assignment` with:
    - `user_id = NULL` (system action)
    - `old_value` = deactivated user's username

@@ -166,6 +166,7 @@ At the top of the History tab, a horizontal filter bar provides:
    | `assignment`               | Assignment                 |
    | `duplicate_set`            | Duplicate set              |
    | `duplicate_removed`        | Duplicate removed          |
+   | `duplicate_target_changed` | Duplicate target changed   |
    | `package_added`            | Package added              |
    | `package_removed`          | Package removed            |
    | `codestream_status_changed`| Codestream status changed  |
