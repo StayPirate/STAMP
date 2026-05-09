@@ -14,6 +14,24 @@ API keys (programmatic access). See `docs/features/identity/authentication.md`,
 `docs/features/identity/sso-authentication.md`, and
 `docs/features/identity/local-authentication.md` for full details.
 
+### Authorization
+
+Every endpoint definition in a feature specification MUST declare its
+access level using one of:
+
+- **Unauthenticated** — no authentication required (public login/SSO flows)
+- **Anonymous (read-only)** — no authentication required, available to any
+  caller including unauthenticated users
+- **Public (read-only)** — any authenticated user, no role required
+- **Authenticated** — any logged-in user regardless of role
+- **Vulnerability Analyst** — requires the `vulnerability_analyst` role
+- **Admin** — requires the `admin` role
+
+The access level declared in the owning feature specification is the
+**authoritative source**. `docs/features/identity/rbac.md` maintains a
+derived summary index (Endpoint Permission Map) for cross-referencing —
+it is not the source of truth.
+
 ### Response Format
 
 All responses use JSON.
@@ -176,6 +194,7 @@ only endpoint-specific errors; global responses are not repeated.
 | Status | Code                     | Condition                                      | Source                         |
 |--------|--------------------------|------------------------------------------------|--------------------------------|
 | 401    | `AUTH_NOT_AUTHENTICATED` | Missing, malformed, or invalid credentials     | `get_current_user` dependency  |
+| 403    | `AUTH_INSUFFICIENT_ROLE` | User authenticated but lacks required role     | `require_role` dependency      |
 | 422    | `VALIDATION_ERROR`       | Request body/query/path fails schema validation | FastAPI automatic (Pydantic)   |
 | 500    | `INTERNAL_ERROR`         | Unhandled server error                         | Framework                      |
 

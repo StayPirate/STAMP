@@ -691,3 +691,27 @@ The goal is to keep each piece of information in the single most appropriate
 location — avoiding both fragmentation (same rule scattered across multiple
 specs) and over-centralization (feature-specific details extracted into
 cross-cutting documents where they lose context).
+
+### 22. RBAC Endpoint Permission Map maintenance
+
+After adding, removing, or modifying an API endpoint in any feature
+specification under `docs/features/`, verify that the Endpoint Permission
+Map in `docs/features/identity/rbac.md` is still accurate:
+
+1. Update the Endpoint Permission Map when:
+   - A new API endpoint is added to a feature spec (add a row with method,
+     path, access level, and owning spec link)
+   - An existing endpoint's path, HTTP method, or access level changes
+     (update the corresponding row)
+   - An endpoint is removed from a feature spec (remove the corresponding
+     row)
+2. Skip the update when:
+   - The change is purely cosmetic (typo fixes, formatting, rewording
+     without semantic change to the endpoint definition)
+   - Only request/response schemas, error codes, or behavioral details
+     change (these are owned by the feature spec, not by rbac.md)
+
+The Endpoint Permission Map is a **derived summary index** — the
+authoritative source for each endpoint's access level is the owning
+feature specification. The map exists for cross-referencing convenience;
+it must never contradict the owning spec.

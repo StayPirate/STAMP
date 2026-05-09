@@ -460,7 +460,7 @@ attempt local authentication.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `user_id` | `UUID` | Target user to unlock |
-| `acting_user_id` | `UUID` | Admin performing the unlock |
+| `acting_user_id` | `UUID \| None` | Who is performing the action (admin or system) |
 
 **Behavior:**
 

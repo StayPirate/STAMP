@@ -38,16 +38,11 @@ Operates the triage and assessment workflow:
 ### Admin
 
 Administers the platform:
-- Manage users (update roles, deactivate local users)
-- View and update system settings (e.g., default CVSS version)
+- Manage users
+- Manage system settings
+- Manage fetchers
 - Remove CVE from ticket
 - Soft-delete and restore tickets
-- View soft-deleted tickets
-- Trigger manual fetcher runs
-- Enable and disable fetchers
-- Modify fetcher configuration (schedule, parameters)
-- View fetcher audit log
-- View fetcher error tracebacks
 
 Admin does NOT inherit Vulnerability Analyst permissions. A user who needs both
 capabilities must hold both roles.
@@ -101,12 +96,15 @@ capabilities must hold both roles.
 
 ## Endpoint Permission Map
 
-This section documents access control rules only. It does NOT define
-endpoint behavior, parameters, response schemas, or error codes — those
-belong in the owning specification linked in the last column.
+This section is a **derived summary index** of access control rules. The
+authoritative source for each endpoint's access level is the owning
+specification linked in the last column. This table does NOT define
+endpoint behavior, parameters, response schemas, or error codes.
 
 When adding a new endpoint to any feature spec, add a corresponding row
 here with the required access level and a link to the owning spec.
+
+### Authentication
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
@@ -115,12 +113,112 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/auth/sso/callback` | Unauthenticated | [sso-authentication](sso-authentication.md) |
 | GET | `/api/v1/auth/providers` | Unauthenticated | [sso-authentication](sso-authentication.md) |
 | POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md) |
+
+### Users
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md) |
 | GET | `/api/v1/users` | Anonymous (read-only) | [user-management](user-management.md) |
 | GET | `/api/v1/users/{user}` | Anonymous (read-only) | [user-management](user-management.md) |
+
+### API Keys
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
 | GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys` | Authenticated (session only) | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md) |
+
+### Tickets
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/tickets` | Public (read-only) | [tickets](../tickets/tickets.md) |
+| GET | `/api/v1/tickets/{ticket_id}` | Public (read-only) | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets/{ticket_id}/associate-cve` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| DELETE | `/api/v1/tickets/{ticket_id}/cve` | Admin | [tickets](../tickets/tickets.md) |
+| PATCH | `/api/v1/tickets/{ticket_id}/severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets/{ticket_id}/assign` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets/{ticket_id}/ignore` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets/{ticket_id}/duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
+| DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md) |
+| POST | `/api/v1/tickets/{ticket_id}/restore` | Admin | [tickets](../tickets/tickets.md) |
+
+### Ticket Packages
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| POST | `/api/v1/tickets/{ticket_id}/packages` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| DELETE | `/api/v1/tickets/{ticket_id}/packages/{package_name}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_name}/codestreams/{codestream_name}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+
+### Products
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/products` | Public (read-only) | [package-tracking](../packages/package-tracking.md) |
+
+### Ticket References
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/tickets/{ticket_id}/references` | Public (read-only) | [references](../ui/references.md) |
+| POST | `/api/v1/tickets/{ticket_id}/references` | Vulnerability Analyst | [references](../ui/references.md) |
+| PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../ui/references.md) |
+| DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../ui/references.md) |
+
+### CVSS Assessments
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/tickets/{ticket_id}/cvss` | Public (read-only) | [cvss-scoring](../tickets/cvss-scoring.md) |
+| POST | `/api/v1/tickets/{ticket_id}/cvss/suse` | Vulnerability Analyst | [cvss-scoring](../tickets/cvss-scoring.md) |
+| DELETE | `/api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` | Vulnerability Analyst | [cvss-scoring](../tickets/cvss-scoring.md) |
+
+### Ticket Events
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/tickets/{ticket_id}/events` | Public (read-only) | [ticket-history](../tickets/ticket-history.md) |
+
+### Submission Tracking
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public (read-only) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md) |
+| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public (read-only) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md) |
+
+### Fetchers
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/fetchers` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| POST | `/api/v1/fetchers/{fetcher_name}/trigger` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| PATCH | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/ibs-consumer/status` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+
+### Maintainer Dashboard
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
+| GET | `/api/v1/my/packages/pending` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md) |
+| GET | `/api/v1/my/packages/in-progress` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md) |
+| GET | `/api/v1/my/packages/completed` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md) |
+| GET | `/api/v1/my/packages/ticket/{ticket_id}` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md) |
+
+### Administration
+
+| Method | Endpoint | Access | Owning Spec |
+|--------|----------|--------|-------------|
 | GET | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md) |
 | PATCH | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md) |
 | GET | `/api/v1/admin/api-keys` | Admin | [authentication](authentication.md) |

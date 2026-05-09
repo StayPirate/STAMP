@@ -66,7 +66,7 @@ twice for confirmation. If the two entries do not match, the command exits
 with error: `"Error: Passwords do not match."` (exit code 1). This
 command cannot be used non-interactively — a TTY is required. If no TTY
 is detected, prints to stderr `Error: This command requires an
-interactive terminal (TTY).` and exits with code 1.
+interactive terminal (password input).` and exits with code 1.
 
 **Behavior**:
 
@@ -175,14 +175,18 @@ sentinel manage-user update \
    syntactically valid, exits with error:
    `"Error: Invalid email format '{value}'."`
 8. If `--email` or `--full-name` is provided, delegates to
-   `user_service.update_user()` with `acting_user_id = None`. If the
-   service raises `UserConflictError` (duplicate email), exits with error
-9. For role changes (`--add-role`, `--remove-role`), delegates to
-   `user_service.update_roles()` with `acting_user_id = None` and
-   roles as `(role, '_manual')` pairs. The service handles input
-   resolution (deduplication, cancellation of conflicting entries) and
-   validation (AD-derived role protection). Since `acting_user_id = None`,
-   the self-removal guard does not apply (CLI is a system action)
+    `user_service.update_user()` with `acting_user_id = None`. If the
+    service raises `UserConflictError` (duplicate email), exits with
+    error: `"Error: A user with email '{email}' already exists."`
+9. For role changes, passes `--add-role` and `--remove-role` values
+    verbatim to `user_service.update_roles()` with
+    `acting_user_id = None` and roles as `(role, '_manual')` pairs. The
+    CLI does not pre-process or validate conflicts between add and remove
+    lists — the service handles input resolution (deduplication,
+    cancellation of conflicting entries) and validation (AD-derived role
+    protection). The service never rejects input due to add/remove
+    conflicts; it resolves them silently. Since `acting_user_id = None`,
+    the self-removal guard does not apply (CLI is a system action)
 10. If `--reactivate` is provided: delegates to
     `user_service.reactivate_user()` with `acting_user_id = None`. If
     the user is already active, this is a no-op. See
@@ -247,8 +251,7 @@ Deactivates a user account (soft delete only).
 
 ```
 sentinel manage-user deactivate \
-  --username <username> \
-  [--yes]
+  --username <username>
 ```
 
 **Parameters**:
@@ -256,7 +259,6 @@ sentinel manage-user deactivate \
 | Parameter    | Required | Description                                    |
 |--------------|----------|------------------------------------------------|
 | `--username` | Yes      | Username of the user to deactivate              |
-| `--yes`      | No       | Skip interactive confirmation prompt            |
 
 **Behavior**:
 
@@ -286,9 +288,12 @@ sentinel manage-user deactivate \
    After deactivation, assign Admin to another user via:
      sentinel manage-user update --username <user> --add-role admin
    ```
-7. Unless `--yes` is passed, prompts: `Proceed? [y/N]`
-   - If the user answers anything other than `y` or `Y`, exits with
-     code 0 without deactivating
+7. Prompts: `Proceed? [y/N]`
+    - If the user answers anything other than `y` or `Y`, exits with
+      code 0 without deactivating
+    - If no TTY is detected, prints to stderr `Error: This command
+      requires an interactive terminal (confirmation required).` and
+      exits with code 1
 8. Delegates to `user_service.deactivate_user()` with
    `acting_user_id = None` and
    `reason = "deactivated via CLI (manage-user deactivate)"`
@@ -330,7 +335,7 @@ password twice for confirmation. If the two entries do not match, the
 command exits with error: `"Error: Passwords do not match."` (exit
 code 1). This command cannot be used non-interactively — a TTY is
 required. If no TTY is detected, prints to stderr `Error: This command
-requires an interactive terminal (TTY).` and exits with code 1.
+requires an interactive terminal (password input).` and exits with code 1.
 
 This command is only valid for local users (`ldap_object_guid = NULL`). The
 username is normalized (trim whitespace, lowercase) before lookup. If
@@ -652,8 +657,8 @@ User search and autocomplete. Returns a paginated list of users.
 
 Query parameters:
 - `search` (string, optional): searches across `username`, `email`, and
-  `full_name`. Minimum 2 characters. Maximum 100 characters. Supports
-  partial matching
+  `full_name`. Minimum 2 characters. Maximum 100 characters.
+  Case-insensitive substring match (SQL `ILIKE '%query%'`)
 - `type` (enum, optional): filter by authentication type. Values:
   `local`, `sso`
 - `active` (boolean, optional): filter by active status
