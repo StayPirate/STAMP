@@ -179,7 +179,7 @@ API endpoint, filter parameters, event type contract, and UI details.
 
 ## Security
 
-- Publicly accessible (no authentication required)
+- Public (no authentication required)
 - Edit actions (assign, change status, edit affectedness, reassign, mark as
   duplicate) require the Vulnerability Analyst role
 - Reassignment is available to any Vulnerability Analyst, not just the current

@@ -445,7 +445,7 @@ When the VA clicks "Add SUSE CVSS" or "Edit SUSE CVSS":
 GET /api/v1/tickets/{ticket_id}/cvss
 ```
 
-Publicly accessible (no authentication required).
+Public (no authentication required).
 
 **Tickets without CVE**: returns 400 Bad Request with
 `{"code": "TICKET_CVE_NOT_SET", "detail": "This ticket has no associated CVE. CVSS assessments are not available."}`.

@@ -3,20 +3,15 @@
 ## Purpose
 
 Control access to platform features based on user roles. Users can hold
-zero, one, or multiple roles. An unauthenticated user or an authenticated
-user with no roles has read-only access to public data.
+zero, one, or multiple roles. Users without a role — and unauthenticated
+callers — have read-only access to public data.
 
 ## Access Levels
 
-### Anonymous (read-only)
+### Public
 
-No authentication required. Available to any caller, including
-unauthenticated users:
+No authentication required. Read-only access to platform data:
 - View users (list and detail)
-
-### Unauthenticated / No Roles
-
-Read-only access to public data:
 - View tickets, CVEs, and products
 - View fetcher dashboard (list, detail, charts, run history, error messages)
 
@@ -51,7 +46,7 @@ capabilities must hold both roles.
 
 ### Vulnerability Analyst Operations
 
-| Action                           | Admin | VA  | Unauth |
+| Action                           | Admin | VA  | Public |
 |----------------------------------|-------|-----|--------|
 | Create ticket manually           | No    | Yes | No     |
 | Assign/reassign ticket           | No    | Yes | No     |
@@ -71,7 +66,7 @@ capabilities must hold both roles.
 
 ### Admin Operations
 
-| Action                           | Admin | VA  | Unauth |
+| Action                           | Admin | VA  | Public |
 |----------------------------------|-------|-----|--------|
 | Remove CVE from ticket           | Yes   | No  | No     |
 | Manage user roles                | Yes   | No  | No     |
@@ -87,7 +82,7 @@ capabilities must hold both roles.
 
 ### Public Operations
 
-| Action                           | Admin | VA  | Unauth |
+| Action                           | Admin | VA  | Public |
 |----------------------------------|-------|-----|--------|
 | View tickets / CVEs (active)     | Yes   | Yes | Yes    |
 | View products                    | Yes   | Yes | Yes    |
@@ -108,10 +103,10 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| POST | `/api/v1/auth/login` | Unauthenticated | [local-authentication](local-authentication.md) |
-| GET | `/api/v1/auth/sso/authorize` | Unauthenticated | [sso-authentication](sso-authentication.md) |
-| POST | `/api/v1/auth/sso/callback` | Unauthenticated | [sso-authentication](sso-authentication.md) |
-| GET | `/api/v1/auth/providers` | Unauthenticated | [sso-authentication](sso-authentication.md) |
+| POST | `/api/v1/auth/login` | Public | [local-authentication](local-authentication.md) |
+| GET | `/api/v1/auth/sso/authorize` | Public | [sso-authentication](sso-authentication.md) |
+| POST | `/api/v1/auth/sso/callback` | Public | [sso-authentication](sso-authentication.md) |
+| GET | `/api/v1/auth/providers` | Public | [sso-authentication](sso-authentication.md) |
 | POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md) |
 
 ### Users
@@ -119,23 +114,23 @@ here with the required access level and a link to the owning spec.
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md) |
-| GET | `/api/v1/users` | Anonymous (read-only) | [user-management](user-management.md) |
-| GET | `/api/v1/users/{user}` | Anonymous (read-only) | [user-management](user-management.md) |
+| GET | `/api/v1/users` | Public | [user-management](user-management.md) |
+| GET | `/api/v1/users/{user}` | Public | [user-management](user-management.md) |
 
 ### API Keys
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
 | GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
-| POST | `/api/v1/api-keys` | Authenticated (session only) | [authentication](authentication.md) |
+| POST | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md) |
 | POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md) |
 
 ### Tickets
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets` | Public (read-only) | [tickets](../tickets/tickets.md) |
-| GET | `/api/v1/tickets/{ticket_id}` | Public (read-only) | [tickets](../tickets/tickets.md) |
+| GET | `/api/v1/tickets` | Public | [tickets](../tickets/tickets.md) |
+| GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md) |
 | POST | `/api/v1/tickets` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | Vulnerability Analyst | [tickets](../tickets/tickets.md) |
 | DELETE | `/api/v1/tickets/{ticket_id}/cve` | Admin | [tickets](../tickets/tickets.md) |
@@ -160,13 +155,13 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/products` | Public (read-only) | [package-tracking](../packages/package-tracking.md) |
+| GET | `/api/v1/products` | Public | [package-tracking](../packages/package-tracking.md) |
 
 ### Ticket References
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/references` | Public (read-only) | [references](../ui/references.md) |
+| GET | `/api/v1/tickets/{ticket_id}/references` | Public | [references](../ui/references.md) |
 | POST | `/api/v1/tickets/{ticket_id}/references` | Vulnerability Analyst | [references](../ui/references.md) |
 | PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../ui/references.md) |
 | DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../ui/references.md) |
@@ -175,7 +170,7 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/cvss` | Public (read-only) | [cvss-scoring](../tickets/cvss-scoring.md) |
+| GET | `/api/v1/tickets/{ticket_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md) |
 | POST | `/api/v1/tickets/{ticket_id}/cvss/suse` | Vulnerability Analyst | [cvss-scoring](../tickets/cvss-scoring.md) |
 | DELETE | `/api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` | Vulnerability Analyst | [cvss-scoring](../tickets/cvss-scoring.md) |
 
@@ -183,28 +178,28 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/events` | Public (read-only) | [ticket-history](../tickets/ticket-history.md) |
+| GET | `/api/v1/tickets/{ticket_id}/events` | Public | [ticket-history](../tickets/ticket-history.md) |
 
 ### Submission Tracking
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public (read-only) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md) |
-| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public (read-only) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md) |
+| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md) |
+| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md) |
 
 ### Fetchers
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/fetchers` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
-| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
 | POST | `/api/v1/fetchers/{fetcher_name}/trigger` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
 | GET | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
 | PATCH | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
 | GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
-| GET | `/api/v1/ibs-consumer/status` | Public (read-only) | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
+| GET | `/api/v1/ibs-consumer/status` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md) |
 
 ### Maintainer Dashboard
 
@@ -236,10 +231,8 @@ here with the required access level and a link to the owning spec.
 | DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ldap-integration](ldap-integration.md) |
 
 **Notes**:
-- "Unauthenticated" = no authentication required (public login/SSO flows)
+- "Public" = no authentication required
 - "Authenticated" = any logged-in user regardless of role
-- "Anonymous (read-only)" = no authentication required, available to any caller including unauthenticated users
-- "Public (read-only)" = any authenticated user, no role required
 - "Admin" = requires the `admin` role
 - User creation: SSO users are created by the LDAP directory sync (see
   [ldap-integration](ldap-integration.md)); local users are created by admins

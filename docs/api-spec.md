@@ -19,10 +19,7 @@ API keys (programmatic access). See `docs/features/identity/authentication.md`,
 Every endpoint definition in a feature specification MUST declare its
 access level using one of:
 
-- **Unauthenticated** — no authentication required (public login/SSO flows)
-- **Anonymous (read-only)** — no authentication required, available to any
-  caller including unauthenticated users
-- **Public (read-only)** — any authenticated user, no role required
+- **Public** — no authentication required
 - **Authenticated** — any logged-in user regardless of role
 - **Vulnerability Analyst** — requires the `vulnerability_analyst` role
 - **Admin** — requires the `admin` role

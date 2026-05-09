@@ -41,5 +41,5 @@ triage. Check back later or sync CVE sources manually."
 
 ## Security
 
-- Publicly accessible (no authentication required)
+- Public (no authentication required)
 - Edit actions (Assign to me, Ignore) require the Vulnerability Analyst role

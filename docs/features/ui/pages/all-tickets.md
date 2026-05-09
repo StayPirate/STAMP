@@ -78,7 +78,7 @@ is not used).
 
 ## Security
 
-- Publicly accessible (no authentication required)
+- Public (no authentication required)
 - "Create Ticket" button requires the Vulnerability Analyst role
 - "Deleted tickets" filter visible only to Admin role
 - Edit actions require the Vulnerability Analyst role
