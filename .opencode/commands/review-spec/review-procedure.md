@@ -42,23 +42,78 @@ resolution was reverted or the content reintroduces the original
 problem), reopen as OPEN. Cosmetic rewording or structural
 reorganization of a correct fix does NOT constitute regression.
 
+## Cross-agent deduplication
+
+Different reviewers may independently identify the same underlying
+issue from their own perspective (e.g., a gap analysis finding about a
+missing error path and a security finding about the same missing error
+path). When a finding has already been evaluated and RESOLVED in one
+reviewer's section, subsequent reviews by other reviewers must not
+reintroduce it as a new OPEN finding.
+
+This deduplication is performed by the **assembly agent** (not by
+individual reviewers) after all reviewer results are collected.
+
+### Procedure
+
+1. Load ALL RESOLVED findings from the **existing** review file
+   (across all sections, not just the section being updated)
+2. For each new OPEN finding returned by any reviewer, compare it
+   against the full pool of RESOLVED findings in **other** sections
+   (findings within the reviewer's own section are already handled by
+   the regression check above)
+3. If a new OPEN finding is semantically equivalent to a RESOLVED
+   finding from a different section, auto-resolve it:
+   - Set `status` to `RESOLVED`
+   - Set `resolution` to:
+     `Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
+     where `<ORIGINAL_ID>` is the ID of the previously resolved
+     finding and the date is today's date
+
+### Semantic equivalence criteria
+
+Two findings are semantically equivalent when they identify the
+**same underlying issue** — the same behavioral gap, concern, or risk
+in the same area of the spec — even if described from different review
+perspectives or using different terminology. Examples:
+
+- A GAP finding about a missing error response and a SEC finding about
+  the same unhandled error path → equivalent
+- A DES finding about a TOCTOU preview endpoint and a SEC finding
+  about information staleness on the same endpoint → equivalent
+- A GAP finding about unspecified CLI conflict resolution and a DES
+  finding about the same CLI conflict as an alternative design concern
+  → equivalent
+
+Findings that address the **same topic area** but raise **genuinely
+distinct concerns** (e.g., one about the error message format, another
+about the error's security implications) are NOT equivalent and must
+both be kept.
+
 ## Full review (all 5 reviewers)
 
 Launch **5 Task agents in parallel** (one per reviewer, all in a single
 message with multiple Task tool calls). After all return, use a separate
 Task agent (subagent type `general`) to assemble results:
 
-1. Assemble and write (or overwrite) `docs/drafts/review/<name>.md`
-   using the findings from all 5 reviewers (see
+1. Read the existing review file (`docs/drafts/review/<name>.md`) if
+   present — needed for cross-agent deduplication
+2. Perform **cross-agent deduplication** (see section above): for each
+   new OPEN finding from any reviewer, check if a semantically
+   equivalent RESOLVED finding exists in a **different** section of the
+   existing review file. If so, auto-resolve the new finding with
+   `Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
+3. Assemble and write (or overwrite) `docs/drafts/review/<name>.md`
+   using the (possibly deduplicated) findings from all 5 reviewers (see
    `.opencode/commands/review-spec/review-file-format.md` for the file
    structure)
-2. Use the `abbr` field from `.tracking.json` for finding IDs
-3. Update `docs/drafts/review/README.md` (see
+4. Use the `abbr` field from `.tracking.json` for finding IDs
+5. Update `docs/drafts/review/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
-4. Recalculate and update the `cache` field for this spec in
+6. Recalculate and update the `cache` field for this spec in
    `.tracking.json`
-5. Return: summary (findings per section, per severity, total open,
-   total resolved)
+7. Return: summary (findings per section, per severity, total open,
+   total resolved, cross-agent duplicates auto-resolved)
 
 Pass to the assembly subagent: the 5 sets of structured findings +
 spec name + abbreviation + today's date + path to the spec file (for
@@ -73,18 +128,25 @@ agent (subagent type `general`) to process ALL reviewed specs in a
 single session:
 
 1. For each reviewed spec, read the existing review file (if any)
-2. Replace **only** the section corresponding to the executed reviewer
-   with the new findings; preserve all other sections untouched
-3. If no review file exists, create it with the standard skeleton and
+2. Perform **cross-agent deduplication** (see section above): for each
+   new OPEN finding, check if a semantically equivalent RESOLVED
+   finding exists in any **other** section of the existing review file.
+   If so, auto-resolve the new finding with
+   `Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
+3. Replace **only** the section corresponding to the executed reviewer
+   with the (possibly deduplicated) findings; preserve all other
+   sections untouched
+4. If no review file exists, create it with the standard skeleton and
    populate the reviewed section (see
    `.opencode/commands/review-spec/review-file-format.md`)
-4. Update file headers (last reviewed date, reviewers list)
-5. Use the `abbr` field from `.tracking.json` for finding IDs
-6. Update `docs/drafts/review/README.md` (see
+5. Update file headers (last reviewed date, reviewers list)
+6. Use the `abbr` field from `.tracking.json` for finding IDs
+7. Update `docs/drafts/review/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
-7. Recalculate and update the `cache` field for each reviewed spec in
+8. Recalculate and update the `cache` field for each reviewed spec in
    `.tracking.json`
-8. Return: per-spec summary (findings count, severities)
+9. Return: per-spec summary (findings count, severities, cross-agent
+   duplicates auto-resolved)
 
 Pass to the subagent: all findings grouped by spec + spec names +
 abbreviations + reviewer name + today's date. Do NOT pass raw spec

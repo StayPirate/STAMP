@@ -28,8 +28,10 @@ $ARGUMENTS
 DECISION LOGIC — read carefully:
 - If the arguments above are EMPTY or BLANK: run the INTERACTIVE flow
   (Steps 1 → 2 → 3 → chosen step 4).
-- If the arguments contain actual text (e.g., "fix tickets" or
-  "fix GAP"): run the SHORTCUT flow below.
+- If the arguments start with `fix` (e.g., "fix tickets" or
+  "fix GAP"): run the **Fix shortcut** flow below.
+- If the arguments start with `refresh` (e.g., "refresh user-management"
+  or "refresh all"): run the **Refresh shortcut** flow below.
 
 IMPORTANT: The examples and syntax descriptions below (like
 "/review-spec fix <target>") are DOCUMENTATION for how shortcuts work.
@@ -40,10 +42,12 @@ backticks above represents what the user actually typed.
 
 ## Shortcut mode
 
+### Fix shortcut
+
 Syntax: `/review-spec fix <target>` where `<target>` is a **spec name**
 or a **reviewer abbreviation**.
 
-### Target resolution
+#### Target resolution
 
 1. If `<target>` matches (case-insensitive) a reviewer abbreviation →
    treated as a reviewer:
@@ -59,7 +63,7 @@ or a **reviewer abbreviation**.
 2. Otherwise → treated as a spec name (matched against filenames in
    `docs/features/**/` without `.md` extension)
 
-### Shortcut flow
+#### Shortcut flow
 
 1. Step 1 runs normally (data gathering via subagent).
 2. Steps 2-3 are skipped (no recap table, no mode question).
@@ -71,6 +75,25 @@ or a **reviewer abbreviation**.
    - **Reviewer has zero OPEN findings**: `Nessun finding OPEN per '<Reviewer Name>' su spec abilitate.`
 5. On success, jump to the fix loop (spec target → step 4a.2;
    reviewer target → step 4a-R.2).
+
+### Refresh shortcut
+
+Syntax: `/review-spec refresh <target>` where `<target>` is a
+**spec name** or `all`.
+
+#### Shortcut flow
+
+1. Step 1 runs normally (data gathering via subagent).
+2. Steps 2-3 are skipped (no recap table, no mode question).
+3. Step 4e.1 is skipped (no spec selection question).
+4. Validate the target against cached data in `.tracking.json`:
+   - `all` (case-insensitive) → select all enabled specs with OPEN
+     findings. If none: `Nessun finding OPEN su spec abilitate.`
+   - Otherwise → treated as a spec name:
+     - **Spec not found**: `Errore: la spec '<name>' non esiste in 'docs/features/'.`
+     - **Spec disabled**: `Errore: la spec '<name>' è disabilitata. Abilitala prima con '/review-spec' → Toggle spec tracking.`
+     - **Spec has zero OPEN findings**: `Nessun finding OPEN per la spec '<name>'.`
+5. On success, jump to step 4e.2.
 
 ---
 
@@ -123,6 +146,8 @@ Use `question` tool. Show only applicable options:
   enabled specs exist)
 - **Run single reviewer** — "Run one specific reviewer on one or all
   specs" (only if enabled specs exist)
+- **Refresh findings** — "Revalidate open findings against current spec"
+  (only if enabled specs have OPEN findings)
 - **Toggle spec tracking** — "Enable or disable spec tracking"
 
 ---
@@ -334,4 +359,104 @@ After all toggles: write `.tracking.json`, update README.
 Tracking aggiornato:
   ✓ pages: DISABLED → ENABLED (3 findings validated, 1 auto-resolved)
   ✓ references: ENABLED → DISABLED (2 findings frozen)
+```
+
+---
+
+## Step 4e: Refresh findings flow
+
+Re-evaluates all OPEN findings for selected spec(s) against the current
+spec content. Findings that are no longer applicable are auto-resolved.
+Cross-agent duplicates (OPEN findings matching RESOLVED findings in
+other sections) are also resolved.
+
+**4e.1.** Ask which spec via `question` tool. Single selection only.
+Options:
+
+1. **ALL** — "Refresh all enabled specs with open findings"
+2. Then each enabled spec with OPEN findings, sorted by open count
+   descending. Label = spec name, description = open findings count
+   (e.g., "15 open findings")
+
+**4e.2.** Execute refresh.
+
+For **single spec**: use Task tool (`general`). Instruct it to read:
+- `.opencode/commands/review-spec/review-file-format.md`
+- `.opencode/commands/review-spec/review-procedure.md` (section
+  "Cross-agent deduplication" — for semantic equivalence criteria)
+- `.opencode/commands/review-spec/readme-layout.md`
+
+The subagent MUST:
+
+1. Read the target spec (`docs/features/**/<name>.md`)
+2. Read all specs referenced by the target (follow links and
+   cross-references)
+3. Read cross-cutting documents: `docs/data-model.md`,
+   `docs/api-spec.md`, `docs/architecture.md`
+4. Read the review file (`docs/drafts/review/<name>.md`)
+5. Collect ALL RESOLVED findings from the review file (across all
+   sections) — needed for cross-agent deduplication
+6. For each OPEN finding, perform two checks:
+   - **Spec validity**: is the issue described in the finding still
+     present in the current spec? If the spec has been changed such
+     that the finding is no longer applicable (the section was
+     rewritten, the missing element was added, the contradiction was
+     resolved), the finding should be auto-resolved
+   - **Cross-agent duplicate**: is this OPEN finding semantically
+     equivalent to a RESOLVED finding in a **different** section?
+     (use the semantic equivalence criteria from
+     `review-procedure.md`)
+7. For each finding, return a verdict:
+   - `still_valid` — the issue is still present
+   - `auto_resolved` — the spec has changed and the issue no longer
+     applies. Include a brief reason
+   - `cross_agent_duplicate` — matches a RESOLVED finding in another
+     section. Include the ID of the matched finding
+8. Update the review file:
+   - Auto-resolved findings: set status to RESOLVED with resolution
+     `Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)`
+   - Cross-agent duplicates: set status to RESOLVED with resolution
+     `Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
+   - Preserve finding order and all other content unchanged
+9. Update `.tracking.json` cache (recalculate open/resolved counts)
+10. Update `docs/drafts/review/README.md`
+11. Return: per-finding verdicts + updated counts
+
+Pass to the subagent: spec name, abbreviation, today's date, paths to
+spec and review file. Do NOT pass raw spec content in the prompt.
+
+For **ALL**: launch one Task agent per spec **in parallel** (each
+performing steps 1-8 above independently and returning verdicts). After
+all return, use a single Task tool (`general`) to:
+
+1. Update `.tracking.json` cache for all refreshed specs
+2. Update `docs/drafts/review/README.md`
+3. Return: aggregated per-spec summaries
+
+**4e.3.** Present recap.
+
+Single spec:
+```
+Refresh completato per '<spec-name>':
+  ✓ <ID> — <Title>: auto-resolved (<brief reason>)
+  ✓ <ID> — <Title>: cross-agent duplicate of <OTHER_ID>
+  — <ID> — <Title>: still valid
+  — <ID> — <Title>: still valid
+
+Totale: N findings rivalutati, X auto-resolved, Y still valid
+```
+
+Multiple specs (ALL):
+```
+Refresh completato:
+  <spec-1>: N rivalutati, X auto-resolved, Y still valid
+  <spec-2>: N rivalutati, X auto-resolved, Y still valid
+  ...
+
+Totale: N findings rivalutati su K spec, X auto-resolved
+```
+
+If no findings were auto-resolved across all specs:
+```
+Refresh completato: tutti i N findings sono ancora validi.
 ```
