@@ -234,7 +234,7 @@ here with the required access level and a link to the owning spec.
 - "Public" = no authentication required
 - "Authenticated" = any logged-in user regardless of role
 - "Admin" = requires the `admin` role
-- User creation: SSO users are created by the LDAP directory sync (see
+- User creation: LDAP users are created by the LDAP directory sync (see
   [ldap-integration](ldap-integration.md)); local users are created by admins
   via CLI (see [user-management](user-management.md))
 
@@ -263,7 +263,7 @@ session management, API keys, and middleware behavior.
 ### Password Security
 
 Sentinel stores bcrypt password hashes (with SHA-256 pre-hash) for local
-users only. SSO users do not have local passwords. See
+users only. LDAP users do not have local passwords. See
 `docs/features/identity/local-authentication.md` for password policy and
 hashing parameters.
 
@@ -342,7 +342,7 @@ framework and `docs/features/identity/sso-authentication.md` /
 - Activate/deactivate local users (LDAP users have their active status
   managed exclusively by directory sync — see
   `docs/features/identity/user-service.md`, LDAP Active Status Ownership)
-- Users are created by the LDAP directory sync (SSO users) or by admins
+- Users are created by the LDAP directory sync (LDAP users) or by admins
   via CLI and admin UI (local users). See
   `docs/features/identity/ldap-integration.md` and
   `docs/features/identity/user-management.md`

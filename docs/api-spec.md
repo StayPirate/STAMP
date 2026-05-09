@@ -573,16 +573,16 @@ via local password for admin-created local users (see
 - `GET /api/v1/admin/users/{user}/deactivation-impact` — Preview side
   effects of deactivating a user (admin only). Returns counts of API keys,
   sessions, and tickets affected. Returns 409 (`USER_LDAP_STATUS_READONLY`)
-  for LDAP-managed users. See `docs/features/identity/user-management.md`
+  for LDAP users. See `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/deactivate` — Deactivate a user
   (admin only). Triggers side effects: API key revocation, session
   invalidation, ticket unassignment. Returns 409
-  (`USER_LDAP_STATUS_READONLY`) for LDAP-managed users — their active
+  (`USER_LDAP_STATUS_READONLY`) for LDAP users — their active
   status is controlled exclusively by directory sync. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/reactivate` — Reactivate a
   previously deactivated user (admin only). Returns 409
-  (`USER_LDAP_STATUS_READONLY`) for LDAP-managed users. See
+  (`USER_LDAP_STATUS_READONLY`) for LDAP users. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/unlock` — Clear login lockout counter
   (admin only). See `docs/features/identity/user-management.md`

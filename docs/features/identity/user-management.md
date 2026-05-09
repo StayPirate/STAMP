@@ -4,7 +4,7 @@
 
 Enable administrators to manage user accounts via the CLI and the
 administration panel in the web UI. This spec covers both local users
-(managed directly in Sentinel's database) and SSO users (synced from
+(managed directly in Sentinel's database) and LDAP users (synced from
 SUSE Active Directory via LDAP).
 
 Local users serve three primary use cases:
@@ -18,7 +18,7 @@ Local users serve three primary use cases:
 3. **Environments without SSO**: deployments outside the SUSE corporate
    network where `id.suse.com` is not reachable
 
-SSO users are provisioned and maintained by the LDAP sync process (see
+LDAP users are provisioned and maintained by the LDAP sync process (see
 `docs/features/identity/ldap-integration.md`). Administrators can modify their
 roles, but cannot deactivate/reactivate them (active status is managed
 exclusively by directory sync), set passwords, or create them manually.
@@ -161,7 +161,7 @@ sentinel manage-user update \
    are still permitted on LDAP users.
 4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`) and
    `--reactivate` is provided, exits with error:
-   `"Error: Cannot reactivate LDAP-managed users."` (exit code 1).
+   `"Error: Cannot reactivate LDAP users."` (exit code 1).
    Active status of LDAP users is managed exclusively by directory sync.
 5. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
@@ -266,7 +266,7 @@ sentinel manage-user deactivate \
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
 3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), exits with
-   error: `"Error: Cannot deactivate LDAP-managed users."` (exit code 1).
+   error: `"Error: Cannot deactivate LDAP users."` (exit code 1).
    Active status of LDAP users is managed exclusively by directory sync.
 4. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
@@ -339,8 +339,8 @@ requires an interactive terminal (password input).` and exits with code 1.
 
 This command is only valid for local users (`ldap_object_guid = NULL`). The
 username is normalized (trim whitespace, lowercase) before lookup. If
-invoked on an SSO user, exits with error:
-`"Error: Cannot set password for SSO user '{username}'. SSO users
+invoked on an LDAP user, exits with error:
+`"Error: Cannot set password for LDAP user '{username}'. LDAP users
 authenticate via id.suse.com."` (exit code 1)
 
 This command operates on both active and inactive local users. Setting a
@@ -356,7 +356,7 @@ On success, prints to stdout:
 new password interactively; the operation inherently changes state.
 
 **Exit codes**: 0 on success, 1 on validation error (user not found,
-SSO user, passwords don't match, password policy violation), 2 on system
+LDAP user, passwords don't match, password policy violation), 2 on system
 error (database unreachable).
 
 **Output channels**: confirmation message to stdout. All `"Error: ..."`
@@ -388,9 +388,9 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is inactive. Unlock has no practical
    effect until the user is reactivated."` — then continue (do not
    abort)
-4. If the user is an SSO user (`ldap_object_guid IS NOT NULL`), print a warning
+4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), print a warning
    to stderr:
-   `"Warning: User '{username}' is an SSO user. Local login lockout
+   `"Warning: User '{username}' is an LDAP user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
    abort)
 5. Delegate to `asyncio.run(user_service.unlock_user(user_id,
@@ -575,13 +575,13 @@ requires shell access, which is an appropriate security barrier for the
 supported use cases (development, bots, non-SSO environments). See
 `docs/features/identity/ldap-integration.md` Business Rule 1.
 
-### Actions available for SSO users
+### Actions available for LDAP users
 
 - **Edit roles**: add/remove roles
 
-SSO users cannot have their password set or reset (they authenticate
+LDAP users cannot have their password set or reset (they authenticate
 via id.suse.com). Deactivation and reactivation are not available for
-SSO users — their active status is managed exclusively by Active
+LDAP users — their active status is managed exclusively by Active
 Directory via LDAP sync.
 
 ### Deactivation confirmation dialog
@@ -640,11 +640,11 @@ invalidated."
 
 **Error handling**:
 - HTTP 400 (invalid password): display the server error message inline
-- HTTP 400 (SSO user): this case should not occur since the button is
+- HTTP 400 (LDAP user): this case should not occur since the button is
   only shown for local users, but if it does, display the error
 
 The "Reset password" button is only visible for local users
-(`ldap_object_guid = NULL`). It is never shown for SSO users.
+(`ldap_object_guid = NULL`). It is never shown for LDAP users.
 
 ### Public API endpoints
 
@@ -667,7 +667,7 @@ Query parameters:
   least one role, `false` for users with no roles
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
   `sort_order`). Valid `sort_by` fields: `username` (default),
-  `full_name`, `email`, `role`, `created_at`
+  `full_name`, `email`, `created_at`
 
 Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as
@@ -846,7 +846,7 @@ inactive user prepares credentials for reactivation.
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
 2. Delegate to `user_service.reset_password(user_id, password,
-   acting_user_id=authenticated_admin.id)` — this handles SSO user
+   acting_user_id=authenticated_admin.id)` — this handles LDAP user
    check, validation, hashing, and session invalidation (see
    `docs/features/identity/user-service.md`)
 3. Log the operation at INFO level: admin identity (user_id, username)
@@ -857,7 +857,7 @@ inactive user prepares credentials for reactivation.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `USER_SSO_PASSWORD_FORBIDDEN` | Cannot set password for SSO user |
+| 400 | `USER_LDAP_PASSWORD_FORBIDDEN` | Cannot set password for LDAP user |
 | 400 | `VALIDATION_ERROR` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
 | 404 | `USER_NOT_FOUND` | User not found |
 
@@ -896,7 +896,7 @@ revocation, session invalidation, ticket unassignment).
   `"Cannot deactivate your own account."`
 - LDAP user deactivation is rejected by the service layer — returns
   HTTP 409 with code `USER_LDAP_STATUS_READONLY`:
-  `"Cannot deactivate LDAP-managed users."`
+  `"Cannot deactivate LDAP users."`
 
 See `docs/features/identity/user-service.md` for the full side effect contract
 (API key revocation, session invalidation, ticket unassignment on
@@ -926,7 +926,7 @@ Reactivate a previously deactivated user account.
 **Constraints**:
 - LDAP user reactivation is rejected by the service layer — returns
   HTTP 409 with code `USER_LDAP_STATUS_READONLY`:
-  `"Cannot reactivate LDAP-managed users."`
+  `"Cannot reactivate LDAP users."`
 
 **Response**: user profile in `{"data": {...}}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
@@ -952,16 +952,17 @@ proceeding with deactivation.
    succeeds but the subsequent action is rejected.
 3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), return HTTP 409
    with code `USER_LDAP_STATUS_READONLY`:
-   `"Cannot deactivate LDAP-managed users."`
+   `"Cannot deactivate LDAP users."`
    Rationale: same consistency principle as self-deactivation — if the
    deactivation endpoint rejects LDAP users, the preview should too.
-4. If the user is already inactive, return HTTP 409 with code
-   `USER_ALREADY_INACTIVE`: `"User is already inactive."`
-   Note: 409 is used here as a precondition check — the deactivation
-   impact preview is meaningless for an already-inactive user. Returning
-   409 allows the client to distinguish between a valid preview (200) and
-   a state where the preview should not be presented to the admin,
-   without requiring the client to inspect a response body flag.
+4. If the user is already inactive, return HTTP 200 with a no-impact
+   response: all counts set to zero and `already_inactive` set to `true`.
+   Rationale: the actual `POST .../deactivate` endpoint is idempotent and
+   returns HTTP 200 for already-inactive users. The preview must not be
+   stricter than the action it previews — returning 409 here while the
+   action returns 200 creates an asymmetry that forces clients to
+   special-case the preview error path for a condition that the action
+   itself treats as a no-op.
 5. Query and return the impact summary
 
 **Response** (HTTP 200):
@@ -969,6 +970,7 @@ proceeding with deactivation.
 ```json
 {
   "data": {
+    "already_inactive": false,
     "api_keys_count": 3,
     "sessions_count": 2,
     "tickets_count": 5
@@ -976,8 +978,22 @@ proceeding with deactivation.
 }
 ```
 
+When the user is already inactive, the response contains zeroed counts:
+
+```json
+{
+  "data": {
+    "already_inactive": true,
+    "api_keys_count": 0,
+    "sessions_count": 0,
+    "tickets_count": 0
+  }
+}
+```
+
 | Field                  | Type          | Description                                      |
 |------------------------|---------------|--------------------------------------------------|
+| `already_inactive`     | `bool`        | `true` if the user is already inactive (no-op deactivation) |
 | `api_keys_count`       | `int`         | Active API keys that will be revoked             |
 | `sessions_count`       | `int`         | Active sessions that will be invalidated         |
 | `tickets_count`        | `int`         | Open tickets assigned to this user that will be unassigned |
@@ -1115,6 +1131,6 @@ handling is required.
 - `docs/features/identity/user-service.md` — service contract for create,
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
-- `docs/features/identity/ldap-integration.md` — LDAP sync (manages SSO users)
+- `docs/features/identity/ldap-integration.md` — LDAP sync (manages LDAP users)
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

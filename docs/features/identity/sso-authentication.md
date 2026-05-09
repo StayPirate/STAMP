@@ -410,7 +410,7 @@ This is a deliberate design choice:
   managed AD groups
 - It ensures that role mappings (based on AD group membership) are
   applied before the user can access the system
-- It keeps the LDAP sync as the single source of truth for SSO user
+- It keeps the LDAP sync as the single source of truth for LDAP user
   provisioning
 
 ## Logout
@@ -519,7 +519,7 @@ The "or" divider is only shown when both options are present.
   password attempts) applies only to the local login endpoint. SSO login
   bypasses this counter because credentials are verified by the IdP, not
   by Sentinel — brute-force protection is the IdP's responsibility. The
-  only access control that applies to SSO users is the `is_active` flag
+  only access control that applies to LDAP users is the `is_active` flag
   (deactivated users cannot log in via any method).
 - **Authorization Code flow**: the client secret is never exposed to
   the browser. Token exchange happens server-side.

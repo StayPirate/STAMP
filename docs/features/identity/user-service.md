@@ -69,7 +69,7 @@ Fields managed by dedicated operations have their own ownership rules:
 - Roles — managed by `update_roles()`, available to admins for manual
   roles (`ad_group_cn = '_manual'`)
 - `password_hash` — managed by `reset_password()`, which independently
-  blocks SSO users via `SSOUserPasswordError`
+  blocks LDAP users via `LDAPUserPasswordError`
 
 Conversely, for local users (`ldap_object_guid IS NULL`), the
 LDAP-specific fields (`ldap_dn`, `manager_id`, `ldap_synced_at`) are not
@@ -166,7 +166,7 @@ Creates a new User record with optional initial roles.
    `UsernameFormatError`
 2. Validate password/`ldap_object_guid` mutual exclusivity: if
    `ldap_object_guid` is provided and `password` is also provided, raise
-   `SSOUserPasswordError`. If `ldap_object_guid` is NULL and `password` is not
+   `LDAPUserPasswordError`. If `ldap_object_guid` is NULL and `password` is not
    provided, raise `PasswordValidationError`
 3. Validate uniqueness of `username` and `email` across all users
    (including inactive). If `ldap_object_guid` is provided, also validate
@@ -428,8 +428,8 @@ Resets the password for a local user and invalidates all active sessions.
 
 - User must exist. If not found, raise `UserNotFoundError`
 - User must be a local user (`ldap_object_guid IS NULL`). If
-  `ldap_object_guid` is set, raise `SSOUserPasswordError`: "Cannot set
-  password for SSO user. SSO users authenticate via id.suse.com."
+  `ldap_object_guid` is set, raise `LDAPUserPasswordError`: "Cannot set
+  password for LDAP user. LDAP users authenticate via id.suse.com."
 
 **Behavior**:
 
@@ -556,7 +556,7 @@ for the API-layer mapping.
 | `LDAPUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an LDAP user (`ldap_object_guid IS NOT NULL`) — active status is managed exclusively by directory sync |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
 | `LDAPFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an LDAP user — all identity fields are managed by directory sync; (2) any caller attempts to set LDAP-specific fields (`ldap_dn`, `manager_id`, `ldap_synced_at`) on a local user — these fields are not applicable |
-| `SSOUserPasswordError` | Attempting to set or reset password for a non-local (SSO) user |
+| `LDAPUserPasswordError` | Attempting to set or reset password for an LDAP user |
 | `PasswordValidationError` | Password does not meet length requirements (16–128 characters) |
 
 ## Relationship to Other Specifications

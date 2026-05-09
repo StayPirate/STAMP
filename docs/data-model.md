@@ -399,7 +399,7 @@ the same access as an unauthenticated user (read-only on public data).
 | email            | VARCHAR     | UNIQUE, NOT NULL         | Email address (from AD `mail`)   |
 | full_name        | VARCHAR     |                          | Display name (from AD `cn`)      |
 | active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for SSO users. See `docs/features/identity/local-authentication.md` |
+| password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for LDAP users. See `docs/features/identity/local-authentication.md` |
 | ldap_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
 | ldap_dn          | VARCHAR     | nullable                 | Full AD distinguished name       |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
@@ -410,7 +410,7 @@ the same access as an unauthenticated user (read-only on public data).
 
 **Check constraint**: `chk_user_auth_exclusive` —
 `(ldap_object_guid IS NOT NULL AND password_hash IS NULL) OR (ldap_object_guid IS NULL AND password_hash IS NOT NULL)`
-— enforces mutual exclusivity: SSO users cannot have a password, local
+— enforces mutual exclusivity: LDAP users cannot have a password, local
 users must have a password. See `docs/features/identity/user-management.md`
 (Business Rule 5) and `docs/features/identity/local-authentication.md`.
 
