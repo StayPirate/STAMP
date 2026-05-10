@@ -77,9 +77,17 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 #### Sync algorithm
 
 1. **Query AD**: fetch all entries under
-   `OU=User accounts,DC=corp,DC=suse,DC=com` with attributes
-   `objectGUID`, `sAMAccountName`, `cn`, `mail`, `manager`,
-   `EMPLOYEESTATUS`, `distinguishedName`, `MEMBEROF`
+   `OU=User accounts,DC=corp,DC=suse,DC=com` with filter
+   `(EMPLOYEESTATUS=active)` and attributes `objectGUID`,
+   `sAMAccountName`, `cn`, `mail`, `manager`, `EMPLOYEESTATUS`,
+   `distinguishedName`, `MEMBEROF`. The query MUST use the LDAP
+   Simple Paged Results Control (RFC 2696) with a page size of 500
+   entries. All pages MUST be fetched before proceeding to step 2.
+   This is required because Active Directory enforces a server-side
+   size limit (currently 5,000 entries for anonymous binds) — a
+   non-paged query will silently truncate the result set if the
+   directory grows beyond this limit, which would cause the safety
+   check to misidentify missing users as deactivation candidates
 2. **Safety check** (evaluated before any `active` field modification):
    - Compute the **deactivation candidate set**: existing users with
      `ldap_object_guid IS NOT NULL AND active = true` that are either absent
@@ -106,6 +114,14 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `user_service.update_user()`. The `active` field is NOT modified
      in this step — deactivations and reactivations are handled in
      steps 6 and 7 respectively
+     - If `update_user()` raises `UserConflictError` (e.g., the AD
+       `sAMAccountName` changed to a value that collides with another
+       existing user's username or email), log WARNING:
+       `"Cannot update LDAP user '{ldap_object_guid}': {field} conflicts
+       with existing user '{existing_username}'."`, call
+       `record_failed()`, and skip this entry. The admin must resolve the
+       conflict manually and re-run the sync. The sync continues
+       processing remaining entries
    - If no matching record exists, attempt to create a new `User` via
      `user_service.create_user()` with `username = sAMAccountName`,
      `email = mail`, `full_name = cn`,
@@ -224,7 +240,7 @@ Commands") for full details on the `sentinel fetcher` command group.
 ### Post-deployment bootstrap sequence
 
 ```
-1. sentinel fetcher run sync_ldap_directory                        # populate User table (~913 records)
+1. sentinel fetcher run sync_ldap_directory                        # populate User table (~3,200 records)
 2. sentinel manage-user update --username admin1 --add-role admin  # assign Admin role to first admin
 ```
 
@@ -413,7 +429,7 @@ Response (**200**):
 }
 ```
 
-Processing:
+Processing (steps 2–4 execute within a single database transaction):
 1. Look up the `RoleMapping` record by ID — return 404 if not found
 2. Count `UserRole` records where `ad_group_cn` matches the mapping's
    group CN and `role` matches the mapping's role (this is the
@@ -554,6 +570,19 @@ Displays a table of all configured role mappings:
   endpoint queries AD to verify the group CN exists before persisting
   the mapping. This reuses the same AD query infrastructure as the
   preview endpoint
+- **LDAP client configuration**: when using the `ldap3` library, the
+  `Server` object MUST be created with `get_info=NONE` (not
+  `get_info=ALL`) because `EMPLOYEESTATUS` is a custom AD attribute
+  not present in the standard LDAP schema — schema validation would
+  reject queries using this attribute. Additionally, attribute key
+  casing may vary between paged and non-paged search results; the
+  sync code MUST use case-insensitive attribute key lookups or
+  normalize keys after retrieval
+- **Optional attributes**: `manager` is absent for approximately 1%
+  of entries (top-level managers with no superior). `MEMBEROF` is
+  absent for the majority of entries (~87%) since most employees are
+  not members of relevant AD groups. The sync code MUST handle both
+  attributes as optional (use empty string or empty list as defaults)
 
 ## Cross-references
 
