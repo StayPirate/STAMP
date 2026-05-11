@@ -1,4 +1,4 @@
-# LDAP Directory Integration
+# Active Directory Integration
 
 ## Purpose
 
@@ -7,10 +7,10 @@ user pre-provisioning, autocomplete search, package bugowner enrichment,
 automatic role assignment from AD group membership, and manager-based
 ticket escalation when employees leave the organization.
 
-The LDAP sync fetcher is the **sole authority** for identity data of LDAP
-users (`username`, `email`, `full_name`, `ldap_dn`, `manager_id`,
-`ldap_synced_at`). These fields cannot be modified manually via the API or
-CLI. See LDAP User Data Ownership in `docs/features/identity/user-service.md`
+The LDAP sync fetcher is the **sole authority** for identity data of AD
+users (`username`, `email`, `full_name`, `ad_dn`, `manager_id`,
+`ad_synced_at`). These fields cannot be modified manually via the API or
+CLI. See AD User Data Ownership in `docs/features/identity/user-service.md`
 for the service-layer enforcement rules.
 
 ## Data Source
@@ -60,13 +60,13 @@ model.
 
 | AD Attribute        | Sentinel Field      | Description                          |
 |---------------------|---------------------|--------------------------------------|
-| `objectGUID`        | `ldap_object_guid`  | Immutable AD identifier (UUID). Used as the stable matching key during sync |
+| `objectGUID`        | `ad_object_guid`  | Immutable AD identifier (UUID). Used as the stable matching key during sync |
 | `sAMAccountName`    | `username`          | Username (e.g., `ggabrielli`). Updated on every sync if changed in AD |
 | `cn`                | `full_name`         | Full display name                    |
 | `mail`              | `email`             | Primary email (`.com`)               |
 | `manager`           | `manager_id`        | DN of the direct line manager (resolved to `user.id` FK) |
 | `EMPLOYEESTATUS`    | `active`            | Employee status (`Active` or other)  |
-| `distinguishedName` | `ldap_dn`           | Full DN in Active Directory          |
+| `distinguishedName` | `ad_dn`           | Full DN in Active Directory          |
 
 The `MEMBEROF` attribute is read during sync to apply role mappings but
 is not persisted in the database.
@@ -74,8 +74,8 @@ is not persisted in the database.
 ## Data Model
 
 See `docs/data-model.md` for the complete schema of the User, UserRole,
-and RoleMapping tables. The LDAP-specific columns (`ldap_object_guid`,
-`ldap_dn`, `manager_id`, `ldap_synced_at`) are documented there along with
+and RoleMapping tables. The AD-specific columns (`ad_object_guid`,
+`ad_dn`, `manager_id`, `ad_synced_at`) are documented there along with
 the `ad_group_cn` and `assigned_by` columns on UserRole. The Attributes
 Consumed table above shows how AD attributes map to these fields during
 sync.
@@ -106,7 +106,7 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    check to misidentify missing users as deactivation candidates
 2. **Safety check** (evaluated before any `active` field modification):
    - Compute the **deactivation candidate set**: existing users with
-     `ldap_object_guid IS NOT NULL AND active = true` that are either absent
+     `ad_object_guid IS NOT NULL AND active = true` that are either absent
      from the AD results or have `EMPLOYEESTATUS != Active`
    - If the AD query returned **zero results**, abort the entire sync
      immediately with status `failure` and log ERROR:
@@ -138,15 +138,15 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    `sentinel fetcher run sync_ldap_directory`, verifies the result, and
    restores the original threshold value.
 3. **Upsert users**: for each AD entry:
-   - If a `User` record with matching `ldap_object_guid` exists, update
-     `username`, `full_name`, `email`, `ldap_dn`, `ldap_synced_at` via
+   - If a `User` record with matching `ad_object_guid` exists, update
+     `username`, `full_name`, `email`, `ad_dn`, `ad_synced_at` via
      `user_service.update_user()`. The `active` field is NOT modified
      in this step — deactivations and reactivations are handled in
      steps 6 and 7 respectively
      - If `update_user()` raises `UserConflictError` (e.g., the AD
        `sAMAccountName` changed to a value that collides with another
        existing user's username or email), log WARNING:
-       `"Cannot update LDAP user '{ldap_object_guid}': {field} conflicts
+       `"Cannot update AD user '{ad_object_guid}': {field} conflicts
        with existing user '{existing_username}'."`, call
        `record_failed()`, and skip this entry. The admin must resolve the
        conflict manually and re-run the sync. The sync continues
@@ -154,20 +154,20 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    - If no matching record exists, attempt to create a new `User` via
      `user_service.create_user()` with `username = sAMAccountName`,
      `email = mail`, `full_name = cn`,
-     `ldap_object_guid = objectGUID`,
-     `ldap_dn = distinguishedName`,
+     `ad_object_guid = objectGUID`,
+     `ad_dn = distinguishedName`,
      `active = (EMPLOYEESTATUS == "Active")`, `acting_user_id = None`.
      Note: new user creation always sets `active` regardless of the
      safety check — the check protects existing users only
    - If creation raises `UserConflictError` (collision with an existing
-     local user that has `ldap_object_guid = NULL`), log WARNING:
-     `"Cannot create LDAP user '{sAMAccountName}': {field} conflicts
+     local user that has `ad_object_guid = NULL`), log WARNING:
+     `"Cannot create AD user '{sAMAccountName}': {field} conflicts
      with existing local user '{existing_username}'."`, call
      `record_failed()`, and skip this entry. The admin must resolve the
      conflict manually (e.g., rename or delete the local user) and
      re-run the sync. The sync continues processing remaining entries
-   - **Only if the safety check passed**: identify existing LDAP users
-     (`ldap_object_guid IS NOT NULL`) that should be deactivated (absent from AD
+   - **Only if the safety check passed**: identify existing AD users
+     (`ad_object_guid IS NOT NULL`) that should be deactivated (absent from AD
      results or `EMPLOYEESTATUS != Active` while currently `active = true`)
      and add them to the `newly_deactivated` list. Also identify users
      with `active = false` that now have `EMPLOYEESTATUS == Active` and
@@ -178,7 +178,7 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    user with a `manager` DN in AD:
    - Look up the manager's DN in the current sync batch to find the
      corresponding `objectGUID`
-   - Find the User record with that `ldap_object_guid` and set
+   - Find the User record with that `ad_object_guid` and set
      `manager_id` to that user's `id` (FK)
    - If the manager is not found in the User table (e.g., the manager
      is outside the synced OU), set `manager_id = NULL`
@@ -215,7 +215,7 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 6. **Deactivation side effects**: for each user in the
    `newly_deactivated` list (identified in step 3), call
    `user_service.deactivate_user()` with
-   `reason = "employee deactivated in LDAP"` and
+    `reason = "employee deactivated in Active Directory"` and
    `acting_user_id = None`. The service sets `active = false` and
    executes all side effects atomically. See
     `docs/features/identity/user-service.md` for the full contract (ticket
@@ -235,18 +235,18 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 #### Active status ownership
 
 Active Directory `EMPLOYEESTATUS` is the sole source of truth for the
-`active` field on LDAP users. Manual deactivation or reactivation of
-LDAP users by admins (via API, CLI, or UI) is blocked by both the
-service layer (`LDAPUserStatusReadOnlyError`) and CLI-level guards. Only
+`active` field on AD users. Manual deactivation or reactivation of
+AD users by admins (via API, CLI, or UI) is blocked by both the
+service layer (`ADUserStatusReadOnlyError`) and CLI-level guards. Only
 the LDAP sync fetcher may call `deactivate_user()` and
-`reactivate_user()` for LDAP users (passing `acting_user_id = None`).
+`reactivate_user()` for AD users (passing `acting_user_id = None`).
 
-If an LDAP user must be blocked from accessing Sentinel, deactivate the
+If an AD user must be blocked from accessing Sentinel, deactivate the
 employee in Active Directory. The next sync cycle will propagate the
 change with all associated side effects (API key revocation, session
 invalidation, ticket unassignment).
 
-See `docs/features/identity/user-service.md` (LDAP Active Status
+See `docs/features/identity/user-service.md` (AD Active Status
 Ownership) for the full rationale and enforcement details.
 
 #### Username rename impact
@@ -277,7 +277,7 @@ sync, the fetcher resolves this to a `manager_id` foreign key by:
 
 1. Looking up the DN in the current sync batch to find the
    corresponding `objectGUID` (preferred, avoids extra AD queries)
-2. Finding the User record with that `ldap_object_guid` and using its
+2. Finding the User record with that `ad_object_guid` and using its
    `id` as `manager_id`
 
 The `manager_id` field is a proper foreign key to `user.id`. Since

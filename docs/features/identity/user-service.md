@@ -51,39 +51,39 @@ Passing `None` from an API handler is a bug — it would silently bypass
 all self-operation guards. `None` is reserved exclusively for system
 entry points (LDAP sync, Celery tasks, CLI commands).
 
-## LDAP User Data Ownership
+## AD User Data Ownership
 
-For LDAP users (`ldap_object_guid IS NOT NULL`), all identity fields
-(`username`, `email`, `full_name`, `ldap_dn`, `manager_id`,
-`ldap_synced_at`) are managed exclusively by the LDAP sync fetcher. No
+For AD users (`ad_object_guid IS NOT NULL`), all identity fields
+(`username`, `email`, `full_name`, `ad_dn`, `manager_id`,
+`ad_synced_at`) are managed exclusively by the LDAP sync fetcher. No
 human caller — whether via API or CLI — may modify these fields. The only
-legitimate consumer of `update_user()` for LDAP users is the sync process
+legitimate consumer of `update_user()` for AD users is the sync process
 itself (`acting_user_id = None`).
 
 Fields managed by dedicated operations have their own ownership rules:
 
 - `active` — managed by `deactivate_user()` / `reactivate_user()`. For
-  LDAP users, this field is managed exclusively by LDAP sync — manual
-  deactivation/reactivation by admins is blocked (see LDAP Active Status
+  AD users, this field is managed exclusively by LDAP sync — manual
+  deactivation/reactivation by admins is blocked (see AD Active Status
   Ownership below)
 - Roles — managed by `update_roles()`, available to admins for manual
   roles (`ad_group_cn = '_manual'`)
 - `password_hash` — managed by `reset_password()`, which independently
-  blocks LDAP users via `LDAPUserPasswordError`
+  blocks AD users via `ADUserPasswordError`
 
-Conversely, for local users (`ldap_object_guid IS NULL`), the
-LDAP-specific fields (`ldap_dn`, `manager_id`, `ldap_synced_at`) are not
+Conversely, for local users (`ad_object_guid IS NULL`), the
+AD-specific fields (`ad_dn`, `manager_id`, `ad_synced_at`) are not
 applicable and must not be set — they have no source of truth outside of
 Active Directory.
 
-### LDAP Active Status Ownership
+### AD Active Status Ownership
 
-For LDAP users, Active Directory `EMPLOYEESTATUS` is the sole source of
+For AD users, Active Directory `EMPLOYEESTATUS` is the sole source of
 truth for the `active` field. Manual deactivation or reactivation by
 admins (via API, CLI, or UI) is not permitted — these operations are
 reserved for the LDAP sync fetcher.
 
-**Rationale**: if an admin could manually deactivate an LDAP user, the
+**Rationale**: if an admin could manually deactivate an AD user, the
 next sync cycle would reactivate them (because AD still reports
 `EMPLOYEESTATUS = Active`). This creates a confusing loop where
 irreversible side effects (API key revocation, session invalidation,
@@ -92,22 +92,22 @@ by the automatic reactivation. Blocking manual deactivation eliminates
 this inconsistency entirely.
 
 **Enforcement**: `deactivate_user()` and `reactivate_user()` check
-`user.ldap_object_guid IS NOT NULL AND acting_user_id IS NOT NULL` and raise
-`LDAPUserStatusReadOnlyError` when both conditions are true. Since LDAP
+`user.ad_object_guid IS NOT NULL AND acting_user_id IS NOT NULL` and raise
+`ADUserStatusReadOnlyError` when both conditions are true. Since LDAP
 sync always passes `acting_user_id = None`, its calls are unaffected.
 CLI commands add an additional pre-call guard for defense in depth
 (CLI also uses `acting_user_id = None`).
 
-**If an LDAP user must be blocked from Sentinel**: deactivate the
+**If an AD user must be blocked from Sentinel**: deactivate the
 employee in Active Directory. The next LDAP sync cycle will propagate
 the change to Sentinel with all associated side effects.
 
 ### Immutability Constraints
 
-Once set, `ldap_object_guid` cannot be modified by any operation in this
+Once set, `ad_object_guid` cannot be modified by any operation in this
 service. This field is the stable identity anchor that links a Sentinel user
 to an Active Directory object. All LDAP sync operations match by
-`ldap_object_guid` — if it were changed, the user would lose its AD
+`ad_object_guid` — if it were changed, the user would lose its AD
 association and historical audit trail.
 
 ## Inactive User Management Principle
@@ -152,10 +152,10 @@ Creates a new User record with optional initial roles.
 | `email`          | `str`                       | Yes      | Unique email address                 |
 | `full_name`      | `str \| None`               | No       | Display name                         |
 | `active`         | `bool`                      | No       | Default: `True`                      |
-| `ldap_object_guid` | `UUID \| None`            | No       | AD `objectGUID` (immutable). NULL for local users |
-| `ldap_dn`        | `str \| None`               | No       | Full AD distinguished name           |
+| `ad_object_guid` | `UUID \| None`            | No       | AD `objectGUID` (immutable). NULL for local users |
+| `ad_dn`        | `str \| None`               | No       | Full AD distinguished name           |
 | `manager_id`     | `UUID \| None`              | No       | FK to user.id of the direct line manager |
-| `password`       | `str \| None`               | No       | Plain-text password (hashed before storage). Required for local users, must be NULL for LDAP users |
+| `password`       | `str \| None`               | No       | Plain-text password (hashed before storage). Required for local users, must be NULL for AD users |
 | `roles`          | `list[tuple[Role, str]]`    | No       | List of (role, ad_group_cn) pairs    |
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
 
@@ -164,12 +164,12 @@ Creates a new User record with optional initial roles.
 1. Normalize `username` (trim whitespace, lowercase) and validate format
    per `docs/conventions.md` (Username Format). If invalid, raise
    `UsernameFormatError`
-2. Validate password/`ldap_object_guid` mutual exclusivity: if
-   `ldap_object_guid` is provided and `password` is also provided, raise
-   `LDAPUserPasswordError`. If `ldap_object_guid` is NULL and `password` is not
+2. Validate password/`ad_object_guid` mutual exclusivity: if
+   `ad_object_guid` is provided and `password` is also provided, raise
+   `ADUserPasswordError`. If `ad_object_guid` is NULL and `password` is not
    provided, raise `PasswordValidationError`
 3. Validate uniqueness of `username` and `email` across all users
-   (including inactive). If `ldap_object_guid` is provided, also validate
+   (including inactive). If `ad_object_guid` is provided, also validate
    its uniqueness — if already associated with another user, raise
    `UserConflictError`. If violated, raise `UserConflictError`
 
@@ -187,7 +187,7 @@ Creates a new User record with optional initial roles.
    `docs/features/identity/local-authentication.md` for hashing parameters)
 6. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
-   `ldap_synced_at = now()` if `ldap_object_guid` is set
+   `ad_synced_at = now()` if `ad_object_guid` is set
 7. For each role in `roles`, create UserRole with specified `ad_group_cn`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `ad_group_cn`), deduplicate silently — only
@@ -213,21 +213,21 @@ their own business rules.
 | `email`          | `str \| None`               | No       | New email (uniqueness validated)     |
 | `full_name`      | `str \| None`               | No       | New display name                     |
 | `manager_id`     | `UUID \| None`              | No       | New manager (FK to user.id)          |
-| `ldap_dn`        | `str \| None`               | No       | Updated AD distinguished name        |
-| `ldap_synced_at` | `datetime \| None`          | No       | Sync timestamp                       |
+| `ad_dn`        | `str \| None`               | No       | Updated AD distinguished name        |
+| `ad_synced_at` | `datetime \| None`          | No       | Sync timestamp                       |
 
 **Behavior**:
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
-2. If `user.ldap_object_guid IS NOT NULL` and `acting_user_id` is not None:
-   raise `LDAPFieldReadOnlyError`. Identity fields of LDAP users are
-   managed exclusively by directory sync (see LDAP User Data Ownership
+2. If `user.ad_object_guid IS NOT NULL` and `acting_user_id` is not None:
+   raise `ADFieldReadOnlyError`. Identity fields of AD users are
+   managed exclusively by directory sync (see AD User Data Ownership
    above). The entire `update_user()` operation is blocked for human
-   callers on LDAP users — there is no identity field that an admin
+   callers on AD users — there is no identity field that an admin
    should modify manually.
-3. If `user.ldap_object_guid IS NULL` and any of `ldap_dn`, `manager_id`, or
-   `ldap_synced_at` is provided (not `_MISSING`): raise
-   `LDAPFieldReadOnlyError`. These fields are LDAP-specific and have
+3. If `user.ad_object_guid IS NULL` and any of `ad_dn`, `manager_id`, or
+   `ad_synced_at` is provided (not `_MISSING`): raise
+   `ADFieldReadOnlyError`. These fields are AD-specific and have
    no source of truth for local users.
 4. **Username validation** (if `username` is provided): normalize and
    validate the format per the rules in `docs/conventions.md` (section
@@ -245,7 +245,7 @@ their own business rules.
    - Any other value: field is updated to the new value
 
    This is necessary because nullable fields (`full_name`,
-   `manager_id`, `ldap_dn`) may need to be explicitly cleared — e.g.,
+   `manager_id`, `ad_dn`) may need to be explicitly cleared — e.g.,
    when LDAP sync discovers that an AD attribute has been removed. The
    pattern follows Python's standard sentinel convention
    (`dataclasses.MISSING`).
@@ -324,10 +324,10 @@ Deactivates a user account and triggers all associated side effects.
 
 - User must be currently active. If already inactive, this is a no-op
   (returns the user unchanged)
-- **LDAP status guard**: if `user.ldap_object_guid IS NOT NULL` AND
+- **AD status guard**: if `user.ad_object_guid IS NOT NULL` AND
   `acting_user_id IS NOT NULL`, reject with
-  `LDAPUserStatusReadOnlyError`. Active status of LDAP users is managed
-  exclusively by directory sync (see LDAP Active Status Ownership above)
+  `ADUserStatusReadOnlyError`. Active status of AD users is managed
+  exclusively by directory sync (see AD Active Status Ownership above)
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
@@ -391,10 +391,10 @@ Reactivates a previously deactivated user account.
 
 - User must be currently inactive. If already active, this is a no-op
   (returns the user unchanged)
-- **LDAP status guard**: if `user.ldap_object_guid IS NOT NULL` AND
+- **AD status guard**: if `user.ad_object_guid IS NOT NULL` AND
   `acting_user_id IS NOT NULL`, reject with
-  `LDAPUserStatusReadOnlyError`. Active status of LDAP users is managed
-  exclusively by directory sync (see LDAP Active Status Ownership above)
+  `ADUserStatusReadOnlyError`. Active status of AD users is managed
+  exclusively by directory sync (see AD Active Status Ownership above)
 
 **Behavior**:
 
@@ -427,9 +427,9 @@ Resets the password for a local user and invalidates all active sessions.
 **Preconditions**:
 
 - User must exist. If not found, raise `UserNotFoundError`
-- User must be a local user (`ldap_object_guid IS NULL`). If
-  `ldap_object_guid` is set, raise `LDAPUserPasswordError`: "Cannot set
-  password for LDAP user. LDAP users authenticate via id.suse.com."
+- User must be a local user (`ad_object_guid IS NULL`). If
+  `ad_object_guid` is set, raise `ADUserPasswordError`: "Cannot set
+  password for AD user. AD users authenticate via id.suse.com."
 
 **Behavior**:
 
@@ -553,10 +553,10 @@ for the API-layer mapping.
 | `UsernameFormatError` | Username does not conform to the format defined in `docs/conventions.md` (Username Format) |
 | `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role |
 | `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
-| `LDAPUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an LDAP user (`ldap_object_guid IS NOT NULL`) — active status is managed exclusively by directory sync |
+| `ADUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an AD user (`ad_object_guid IS NOT NULL`) — active status is managed exclusively by directory sync |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
-| `LDAPFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an LDAP user — all identity fields are managed by directory sync; (2) any caller attempts to set LDAP-specific fields (`ldap_dn`, `manager_id`, `ldap_synced_at`) on a local user — these fields are not applicable |
-| `LDAPUserPasswordError` | Attempting to set or reset password for an LDAP user |
+| `ADFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an AD user — all identity fields are managed by directory sync; (2) any caller attempts to set AD-specific fields (`ad_dn`, `manager_id`, `ad_synced_at`) on a local user — these fields are not applicable |
+| `ADUserPasswordError` | Attempting to set or reset password for an AD user |
 | `PasswordValidationError` | Password does not meet length requirements (16–128 characters) |
 
 ## Relationship to Other Specifications
@@ -564,7 +564,7 @@ for the API-layer mapping.
 | Spec | Relationship |
 |---|---|
 | `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
-| `docs/features/identity/ldap-integration.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
+| `docs/features/identity/ad-integration.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |

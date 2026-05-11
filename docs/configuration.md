@@ -51,7 +51,7 @@ At startup, the application logs an INFO message indicating SSO status:
 | `SSO_CLIENT_ID` | string | — | OIDC client ID. Required for SSO. | `docs/features/identity/sso-authentication.md` |
 | `SSO_CLIENT_SECRET` | string | — | OIDC client secret. Required for SSO. | `docs/features/identity/sso-authentication.md` |
 | `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL. Required for SSO. | `docs/features/identity/sso-authentication.md` |
-| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `username` for LDAP-synced users). Only relevant when SSO is enabled. | `docs/features/identity/sso-authentication.md` |
+| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `username` for AD-synced users). Only relevant when SSO is enabled. | `docs/features/identity/sso-authentication.md` |
 
 ## Authentication
 
@@ -86,9 +86,9 @@ At startup, the application logs an INFO message indicating SSO status:
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ldap-integration.md` |
-| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ldap-integration.md` |
-| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/identity/ldap-integration.md` |
+| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ad-integration.md` |
+| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ad-integration.md` |
+| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/identity/ad-integration.md` |
 
 ## External APIs
 

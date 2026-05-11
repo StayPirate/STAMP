@@ -15,8 +15,8 @@ corporate identity provider (`id.suse.com`) via the OpenID Connect
 employees whose accounts are managed by Active Directory and synced into
 Sentinel via the `sync_ldap_directory` fetcher.
 
-SSO authentication is available only to users with `ldap_object_guid IS NOT NULL`
-(LDAP-synced users). Local users (`ldap_object_guid = NULL`) authenticate via
+SSO authentication is available only to users with `ad_object_guid IS NOT NULL`
+(AD-synced users). Local users (`ad_object_guid = NULL`) authenticate via
 the local login endpoint — see `docs/features/identity/local-authentication.md`.
 
 ## Configuration
@@ -45,7 +45,7 @@ SSO-capable and SSO-less environments without any code changes.
 
 `SSO_USER_CLAIM` specifies which claim from the OIDC ID token is used
 to identify the user (matched against the `username` field in the User
-table, with a guard that the user must be LDAP-synced). Defaults to `sub`.
+table, with a guard that the user must be AD-synced). Defaults to `sub`.
 
 `SSO_REDIRECT_URI` is the full URL (scheme + host + path) where the IdP
 redirects the browser after authentication. It MUST point to the
@@ -270,8 +270,8 @@ callback URL with an authorization `code` and `state` parameter.
    only names, to aid debugging without leaking PII)
 6. Look up the user by matching `username` to the extracted claim value
    (lowercased — see Matching rules). Additionally verify that
-   `ldap_object_guid IS NOT NULL` (i.e., the matched user is an
-   LDAP-synced user, not a local user)
+   `ad_object_guid IS NOT NULL` (i.e., the matched user is an
+   AD-synced user, not a local user)
 7. If user not found, return HTTP 401 with code `AUTH_SSO_USER_NOT_FOUND`:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
@@ -369,7 +369,7 @@ Unlike the local login endpoint, SSO error messages can be specific
 The claim specified by `SSO_USER_CLAIM` (default: `sub`) from the IdP's
 ID token is matched against the `username` field in the `User` table,
 with the additional guard that the matched user must have
-`ldap_object_guid IS NOT NULL` (i.e., be an LDAP-synced user).
+`ad_object_guid IS NOT NULL` (i.e., be an AD-synced user).
 
 With the default configuration (`sub`), this works because:
 
@@ -395,12 +395,12 @@ changes.
    `jdoe`).
 2. Log the claim value at DEBUG level on every SSO login attempt
 3. Log a WARNING when the claim value does not match any `username`
-   (for LDAP users), including the unmatched value for diagnostic purposes
+   (for AD users), including the unmatched value for diagnostic purposes
 
 ### No auto-provisioning
 
 If the `sub` claim does not match any `username` (with
-`ldap_object_guid IS NOT NULL`) in the database, the login **fails**.
+`ad_object_guid IS NOT NULL`) in the database, the login **fails**.
 Sentinel does not auto-create user records during SSO login. The user
 must already exist in the database (created by the LDAP sync process).
 
@@ -410,7 +410,7 @@ This is a deliberate design choice:
   managed AD groups
 - It ensures that role mappings (based on AD group membership) are
   applied before the user can access the system
-- It keeps the LDAP sync as the single source of truth for LDAP user
+- It keeps the LDAP sync as the single source of truth for AD user
   provisioning
 
 ## Logout
@@ -519,7 +519,7 @@ The "or" divider is only shown when both options are present.
   password attempts) applies only to the local login endpoint. SSO login
   bypasses this counter because credentials are verified by the IdP, not
   by Sentinel — brute-force protection is the IdP's responsibility. The
-  only access control that applies to LDAP users is the `is_active` flag
+  only access control that applies to AD users is the `is_active` flag
   (deactivated users cannot log in via any method).
 - **Authorization Code flow**: the client secret is never exposed to
   the browser. Token exchange happens server-side.
@@ -574,7 +574,7 @@ The "or" divider is only shown when both options are present.
   (JWT format, session model, API keys, middleware)
 - `docs/features/identity/local-authentication.md` — local login (alternative
   provider)
-- `docs/features/identity/ldap-integration.md` — LDAP sync that provisions SSO
+- `docs/features/identity/ad-integration.md` — LDAP sync that provisions SSO
   user accounts
 - `docs/features/identity/user-service.md` — deactivation side effects
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,

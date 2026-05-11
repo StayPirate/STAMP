@@ -226,17 +226,17 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/admin/users/{user}/reactivate` | Admin | [user-management](user-management.md) |
 | GET | `/api/v1/admin/users/{user}/deactivation-impact` | Admin | [user-management](user-management.md) |
 | POST | `/api/v1/admin/users/{user}/unlock` | Admin | [user-management](user-management.md) |
-| GET | `/api/v1/admin/role-mappings` | Admin | [ldap-integration](ldap-integration.md) |
-| POST | `/api/v1/admin/role-mappings` | Admin | [ldap-integration](ldap-integration.md) |
-| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ldap-integration](ldap-integration.md) |
-| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ldap-integration](ldap-integration.md) |
+| GET | `/api/v1/admin/role-mappings` | Admin | [ad-integration](ad-integration.md) |
+| POST | `/api/v1/admin/role-mappings` | Admin | [ad-integration](ad-integration.md) |
+| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ad-integration](ad-integration.md) |
+| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ad-integration](ad-integration.md) |
 
 **Notes**:
 - "Public" = no authentication required
 - "Authenticated" = any logged-in user regardless of role
 - "Admin" = requires the `admin` role
-- User creation: LDAP users are created by the LDAP directory sync (see
-  [ldap-integration](ldap-integration.md)); local users are created by admins
+- User creation: AD users are created by the LDAP directory sync (see
+  [ad-integration](ad-integration.md)); local users are created by admins
   via CLI (see [user-management](user-management.md))
 
 ## Implementation Details
@@ -264,7 +264,7 @@ session management, API keys, and middleware behavior.
 ### Password Security
 
 Sentinel stores bcrypt password hashes (with SHA-256 pre-hash) for local
-users only. LDAP users do not have local passwords. See
+users only. AD users do not have local passwords. See
 `docs/features/identity/local-authentication.md` for password policy and
 hashing parameters.
 
@@ -272,8 +272,8 @@ hashing parameters.
 
 See `docs/data-model.md`. Key tables:
 
-- **User**: username, email, active status, LDAP fields (ldap_object_guid,
-  ldap_dn, manager_id, ldap_synced_at)
+- **User**: username, email, active status, AD fields (ad_object_guid,
+  ad_dn, manager_id, ad_synced_at)
 - **UserRole**: junction table linking users to roles with `ad_group_cn`
   (AD group name or `_manual` for manual assignments)
 - **RoleMapping**: maps AD group names to Sentinel roles
@@ -287,7 +287,7 @@ A user can acquire a role from two independent sources (origins):
   or API. Can be removed by an admin at any time.
 - **AD-derived** (`ad_group_cn = <group CN>`): derived from AD group
   membership during LDAP sync. Managed exclusively by the sync process
-  — cannot be removed via UI or API. See `docs/features/identity/ldap-integration.md`.
+  — cannot be removed via UI or API. See `docs/features/identity/ad-integration.md`.
 
 ### Coexistence rules
 
@@ -297,7 +297,7 @@ A user can acquire a role from two independent sources (origins):
 2. **Manual assignment when role already exists via AD**: creates a new
    `UserRole` record with `ad_group_cn = '_manual'`. The user now holds
    the role from both sources. If the AD group is later revoked, only
-   the `ldap_sync` record is removed — the manual assignment persists.
+   the `ad_sync` record is removed — the manual assignment persists.
 3. **AD derivation when role already exists manually**: the LDAP sync
    creates a new `UserRole` record with the AD group's `ad_group_cn`.
    The user now holds the role from both sources. If the admin later
@@ -340,12 +340,12 @@ framework and `docs/features/identity/sso-authentication.md` /
 - Table of all users with their assigned roles and role origins
 - Edit user roles (add/remove manual roles; AD-derived roles shown as
   locked)
-- Activate/deactivate local users (LDAP users have their active status
+- Activate/deactivate local users (AD users have their active status
   managed exclusively by directory sync — see
-  `docs/features/identity/user-service.md`, LDAP Active Status Ownership)
-- Users are created by the LDAP directory sync (LDAP users) or by admins
+  `docs/features/identity/user-service.md`, AD Active Status Ownership)
+- Users are created by the LDAP directory sync (AD users) or by admins
   via CLI and admin UI (local users). See
-  `docs/features/identity/ldap-integration.md` and
+  `docs/features/identity/ad-integration.md` and
   `docs/features/identity/user-management.md`
 
 ### User Profile
@@ -368,11 +368,11 @@ framework and `docs/features/identity/sso-authentication.md` /
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
    `docs/features/identity/user-service.md`)
-4. LDAP users cannot be manually deactivated or reactivated — their
+4. AD users cannot be manually deactivated or reactivated — their
    active status is controlled exclusively by Active Directory via LDAP
    sync (enforced by `user_service.deactivate_user()` and
    `user_service.reactivate_user()` — see
-   `docs/features/identity/user-service.md`, LDAP Active Status Ownership)
+   `docs/features/identity/user-service.md`, AD Active Status Ownership)
 5. Deactivated users cannot authenticate. On deactivation, all API keys
    are revoked and all active sessions are invalidated (proactively,
    before marking the user inactive). Additionally, the middleware
@@ -389,4 +389,4 @@ framework and `docs/features/identity/sso-authentication.md` /
 9. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
    populate users from AD, then
    `sentinel manage-user update --username <username> --add-role admin` to
-   assign the first Admin role. See `docs/features/identity/ldap-integration.md`
+   assign the first Admin role. See `docs/features/identity/ad-integration.md`

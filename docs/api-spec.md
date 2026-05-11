@@ -96,7 +96,7 @@ Error codes are grouped by prefix:
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING` |
-| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_LDAP_STATUS_READONLY` |
+| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_AD_STATUS_READONLY` |
 
 Rules:
 
@@ -519,7 +519,7 @@ specifications.
 ### Users and Auth
 
 See `docs/features/identity/rbac.md` for access control details,
-`docs/features/identity/ldap-integration.md` for LDAP integration details,
+`docs/features/identity/ad-integration.md` for AD integration details,
 `docs/features/identity/authentication.md` for session/API key management,
 `docs/features/identity/local-authentication.md` for local login, and
 `docs/features/identity/sso-authentication.md` for SSO login.
@@ -554,7 +554,7 @@ Users are populated from SUSE Active Directory via the
 `sync_ldap_directory` fetcher. There is no public user self-registration
 endpoint. Local users are created by admins via CLI or admin UI (see
 `docs/features/identity/local-authentication.md`). Authentication is provided via
-SSO (see `docs/features/identity/sso-authentication.md`) for directory users, or
+SSO (see `docs/features/identity/sso-authentication.md`) for AD users, or
 via local password for admin-created local users (see
 `docs/features/identity/local-authentication.md`).
 
@@ -572,17 +572,17 @@ via local password for admin-created local users (see
   "remove": [...] }`. See `docs/features/identity/user-management.md`
 - `GET /api/v1/admin/users/{user}/deactivation-impact` — Preview side
   effects of deactivating a user (admin only). Returns counts of API keys,
-  sessions, and tickets affected. Returns 409 (`USER_LDAP_STATUS_READONLY`)
-  for LDAP users. See `docs/features/identity/user-management.md`
+  sessions, and tickets affected. Returns 409 (`USER_AD_STATUS_READONLY`)
+  for AD users. See `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/deactivate` — Deactivate a user
   (admin only). Triggers side effects: API key revocation, session
   invalidation, ticket unassignment. Returns 409
-  (`USER_LDAP_STATUS_READONLY`) for LDAP users — their active
+  (`USER_AD_STATUS_READONLY`) for AD users — their active
   status is controlled exclusively by directory sync. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/reactivate` — Reactivate a
   previously deactivated user (admin only). Returns 409
-  (`USER_LDAP_STATUS_READONLY`) for LDAP users. See
+  (`USER_AD_STATUS_READONLY`) for AD users. See
   `docs/features/identity/user-management.md`
 - `POST /api/v1/admin/users/{user}/unlock` — Clear login lockout counter
   (admin only). See `docs/features/identity/user-management.md`
@@ -592,7 +592,7 @@ via local password for admin-created local users (see
 
 ### Role Mappings
 
-See `docs/features/identity/ldap-integration.md` for detailed specifications.
+See `docs/features/identity/ad-integration.md` for detailed specifications.
 
 - `GET /api/v1/admin/role-mappings` — List all AD group → role mappings
   (admin only)

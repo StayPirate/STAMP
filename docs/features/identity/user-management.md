@@ -4,7 +4,7 @@
 
 Enable administrators to manage user accounts via the CLI and the
 administration panel in the web UI. This spec covers both local users
-(managed directly in Sentinel's database) and LDAP users (synced from
+(managed directly in Sentinel's database) and AD users (synced from
 SUSE Active Directory via LDAP).
 
 Local users serve three primary use cases:
@@ -18,13 +18,13 @@ Local users serve three primary use cases:
 3. **Environments without SSO**: deployments outside the SUSE corporate
    network where `id.suse.com` is not reachable
 
-LDAP users are provisioned and maintained by the LDAP sync process (see
-`docs/features/identity/ldap-integration.md`). Administrators can modify their
+AD users are provisioned and maintained by the LDAP sync process (see
+`docs/features/identity/ad-integration.md`). Administrators can modify their
 roles, but cannot deactivate/reactivate them (active status is managed
 exclusively by directory sync), set passwords, or create them manually.
 
 Local users are created directly in the database, bypassing the LDAP
-sync process. They are functionally identical to LDAP-synced users for
+sync process. They are functionally identical to AD-synced users for
 the purposes of authorization, ticket assignment, and API key
 management. The only difference is how they authenticate: local
 credentials instead of SSO (see
@@ -90,7 +90,7 @@ interactive terminal (password input).` and exits with code 1.
    exits with error:
    `"Error: Password must be at most 128 characters."`
 5. Delegates to `user_service.create_user()` with:
-   - `ldap_object_guid = None` (local user)
+   - `ad_object_guid = None` (local user)
    - `active = True`
    - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
@@ -117,13 +117,13 @@ messages to stderr.
 ### `sentinel manage-user update`
 
 Updates an existing user account. Identity field modifications
-(`--email`, `--full-name`) are only permitted on local users — LDAP
+(`--email`, `--full-name`) are only permitted on local users — AD
 users have their identity fields managed exclusively by directory sync
-(see LDAP User Data Ownership in
+(see AD User Data Ownership in
 `docs/features/identity/user-service.md`). Role changes are permitted on
-both local and LDAP users. Reactivation (`--reactivate`) is permitted on
-local users only — LDAP users have their active status managed
-exclusively by directory sync (see LDAP Active Status Ownership in
+both local and AD users. Reactivation (`--reactivate`) is permitted on
+local users only — AD users have their active status managed
+exclusively by directory sync (see AD Active Status Ownership in
 `docs/features/identity/user-service.md`). The command works regardless
 of whether the user is currently active or inactive (see Inactive User
 Management Principle in `docs/features/identity/user-service.md`).
@@ -154,15 +154,15 @@ sentinel manage-user update \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`) and `--email` or
+3. If the user is an AD user (`ad_object_guid IS NOT NULL`) and `--email` or
    `--full-name` is provided, exits with error:
-   `"Error: User '{username}' is managed by directory sync. Identity
+   `"Error: User '{username}' is managed by Active Directory sync. Identity
    fields cannot be modified manually."` (exit code 1). Role changes
-   are still permitted on LDAP users.
-4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`) and
+   are still permitted on AD users.
+4. If the user is an AD user (`ad_object_guid IS NOT NULL`) and
    `--reactivate` is provided, exits with error:
-   `"Error: Cannot reactivate LDAP users."` (exit code 1).
-   Active status of LDAP users is managed exclusively by directory sync.
+   `"Error: Cannot reactivate AD users."` (exit code 1).
+   Active status of AD users is managed exclusively by directory sync.
 5. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
    `"No changes specified for user '{username}'."` and exits with code 0
@@ -265,9 +265,9 @@ sentinel manage-user deactivate \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), exits with
-   error: `"Error: Cannot deactivate LDAP users."` (exit code 1).
-   Active status of LDAP users is managed exclusively by directory sync.
+3. If the user is an AD user (`ad_object_guid IS NOT NULL`), exits with
+   error: `"Error: Cannot deactivate AD users."` (exit code 1).
+   Active status of AD users is managed exclusively by directory sync.
 4. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
 5. Queries the impact of deactivation:
@@ -337,10 +337,10 @@ code 1). This command cannot be used non-interactively — a TTY is
 required. If no TTY is detected, prints to stderr `Error: This command
 requires an interactive terminal (password input).` and exits with code 1.
 
-This command is only valid for local users (`ldap_object_guid = NULL`). The
+This command is only valid for local users (`ad_object_guid = NULL`). The
 username is normalized (trim whitespace, lowercase) before lookup. If
-invoked on an LDAP user, exits with error:
-`"Error: Cannot set password for LDAP user '{username}'. LDAP users
+invoked on an AD user, exits with error:
+`"Error: Cannot set password for AD user '{username}'. AD users
 authenticate via id.suse.com."` (exit code 1)
 
 This command operates on both active and inactive local users. Setting a
@@ -356,7 +356,7 @@ On success, prints to stdout:
 new password interactively; the operation inherently changes state.
 
 **Exit codes**: 0 on success, 1 on validation error (user not found,
-LDAP user, passwords don't match, password policy violation), 2 on system
+AD user, passwords don't match, password policy violation), 2 on system
 error (database unreachable).
 
 **Output channels**: confirmation message to stdout. All `"Error: ..."`
@@ -388,9 +388,9 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is inactive. Unlock has no practical
    effect until the user is reactivated."` — then continue (do not
    abort)
-4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), print a warning
+4. If the user is an AD user (`ad_object_guid IS NOT NULL`), print a warning
    to stderr:
-   `"Warning: User '{username}' is an LDAP user. Local login lockout
+   `"Warning: User '{username}' is an AD user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
    abort)
 5. Delegate to `asyncio.run(user_service.unlock_user(user_id,
@@ -420,7 +420,7 @@ Lists all users in the system with their key attributes.
 sentinel manage-user list \
   [--active | --inactive] \
   [--role <role>] ... \
-  [--type local|sso]
+  [--type local|ad]
 ```
 
 **Parameters**:
@@ -430,7 +430,7 @@ sentinel manage-user list \
 | `--active`   | No       | No         | Show only active users                         |
 | `--inactive` | No       | No         | Show only inactive users                       |
 | `--role`     | No       | Yes        | Filter by role: `admin`, `vulnerability_analyst` |
-| `--type`     | No       | No         | Filter by type: `local` or `sso`               |
+| `--type`     | No       | No         | Filter by type: `local` or `ad`                |
 
 `--active` and `--inactive` are mutually exclusive. If neither is
 provided, all users are shown regardless of status.
@@ -444,7 +444,7 @@ provided, all users are shown regardless of status.
 ```
 USERNAME        FULL NAME            EMAIL                    TYPE   STATUS    ROLES
 jdoe            John Doe             jdoe@example.com         local  active    admin, vulnerability_analyst
-mrossi          Mario Rossi          mrossi@suse.com          sso    active    vulnerability_analyst
+mrossi          Mario Rossi          mrossi@suse.com          ad     active    vulnerability_analyst
 olduser         Old User             old@example.com          local  inactive  —
 ```
 
@@ -525,7 +525,7 @@ Columns:
 - Full name
 - Username
 - Email
-- Type (Local / SSO)
+- Type (Local / AD)
 - Roles — each role displays badge(s) indicating its origin(s): lock
   icon for AD-derived, pencil icon for manual. See
   `docs/features/identity/rbac.md` (Role Origins and Coexistence) for
@@ -536,11 +536,11 @@ Columns:
 Features:
 - Search field with autocomplete (min 2 characters, searches name/email/
   username)
-- Filter by type (local/SSO), role, active status
+- Filter by type (local/AD), role, active status
 - Click row to navigate to user detail page
 
 Admin-specific actions available on each user row are described in
-"Actions available for local users" and "Actions available for SSO
+"Actions available for local users" and "Actions available for AD
 users" below.
 
 ### User detail page
@@ -548,7 +548,7 @@ users" below.
 Accessible to all users (read-only for non-admins). Shows:
 
 - **Profile section**: full name, username, email, active status, manager
-  (linked to their profile), LDAP sync timestamp
+  (linked to their profile), AD sync timestamp
 - **Roles section** (editable by Admin only):
   - AD-derived roles: displayed with a lock icon and the source group
     name (e.g., `Vulnerability Analyst` lock icon `from "O SUSE
@@ -573,15 +573,15 @@ Note: local user creation is restricted to the CLI
 (`sentinel manage-user create`). This ensures that user provisioning
 requires shell access, which is an appropriate security barrier for the
 supported use cases (development, bots, non-SSO environments). See
-`docs/features/identity/ldap-integration.md` Business Rule 1.
+`docs/features/identity/ad-integration.md` Business Rule 1.
 
-### Actions available for LDAP users
+### Actions available for AD users
 
 - **Edit roles**: add/remove roles
 
-LDAP users cannot have their password set or reset (they authenticate
+AD users cannot have their password set or reset (they authenticate
 via id.suse.com). Deactivation and reactivation are not available for
-LDAP users — their active status is managed exclusively by Active
+AD users — their active status is managed exclusively by Active
 Directory via LDAP sync.
 
 ### Deactivation confirmation dialog
@@ -640,11 +640,11 @@ invalidated."
 
 **Error handling**:
 - HTTP 400 (invalid password): display the server error message inline
-- HTTP 400 (LDAP user): this case should not occur since the button is
+- HTTP 400 (AD user): this case should not occur since the button is
   only shown for local users, but if it does, display the error
 
 The "Reset password" button is only visible for local users
-(`ldap_object_guid = NULL`). It is never shown for LDAP users.
+(`ad_object_guid = NULL`). It is never shown for AD users.
 
 ### Public API endpoints
 
@@ -660,7 +660,7 @@ Query parameters:
   `full_name`. Minimum 2 characters. Maximum 100 characters.
   Case-insensitive substring match (SQL `ILIKE '%query%'`)
 - `type` (enum, optional): filter by authentication type. Values:
-  `local`, `sso`
+  `local`, `ad`
 - `active` (boolean, optional): filter by active status
 - `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
@@ -692,8 +692,8 @@ envelope:
     "email": "string",
     "full_name": "string",
     "active": true,
-    "source": "ldap | local",
-    "ldap_object_guid": "uuid | null",
+    "source": "ad | local",
+    "ad_object_guid": "uuid | null",
     "manager": {
       "id": "uuid",
       "username": "string",
@@ -715,9 +715,9 @@ envelope:
 ```
 
 Field notes:
-- `source`: derived field — `"ldap"` if `ldap_object_guid IS NOT NULL`,
+- `source`: derived field — `"ad"` if `ad_object_guid IS NOT NULL`,
   otherwise `"local"`
-- `ldap_object_guid`: AD `objectGUID` (immutable UUID). NULL for local users
+- `ad_object_guid`: AD `objectGUID` (immutable UUID). NULL for local users
 - `manager`: resolved manager object (from AD `manager` DN) or `null`
 - `roles`: array of all roles from both AD group mappings and manual
   assignments. `ad_group_cn` is `'_manual'` for manually assigned roles
@@ -738,9 +738,9 @@ All endpoints below require the `admin` role unless otherwise stated.
 
 #### `PATCH /api/v1/admin/users/{user}`
 
-Update a user's profile fields. Only local users (`ldap_object_guid IS NULL`)
-can be modified — LDAP users have their identity fields managed by
-directory sync (see LDAP User Data Ownership in
+Update a user's profile fields. Only local users (`ad_object_guid IS NULL`)
+can be modified — AD users have their identity fields managed by
+directory sync (see AD User Data Ownership in
 `docs/features/identity/user-service.md`). This endpoint operates on
 both active and inactive users (see Inactive User Management Principle
 in `docs/features/identity/user-service.md`).
@@ -762,9 +762,9 @@ in `docs/features/identity/user-service.md`).
    `VALIDATION_ERROR`: `"At least one field must be provided."`
 3. If `email` is provided, validate format — if invalid, return HTTP 422
    with code `VALIDATION_ERROR`: `"Invalid email format."`
-4. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), return HTTP 409
-   with code `USER_LDAP_FIELD_READONLY`:
-   `"Cannot modify identity fields for LDAP users. These fields are managed by the directory service."`
+4. If the user is an AD user (`ad_object_guid IS NOT NULL`), return HTTP 409
+   with code `USER_AD_FIELD_READONLY`:
+   `"Cannot modify identity fields for AD users. These fields are managed by Active Directory."`
 5. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
 6. If the service raises `UserConflictError` (duplicate email), return
@@ -846,7 +846,7 @@ inactive user prepares credentials for reactivation.
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
 2. Delegate to `user_service.reset_password(user_id, password,
-   acting_user_id=authenticated_admin.id)` — this handles LDAP user
+   acting_user_id=authenticated_admin.id)` — this handles AD user
    check, validation, hashing, and session invalidation (see
    `docs/features/identity/user-service.md`)
 3. Log the operation at INFO level: admin identity (user_id, username)
@@ -857,7 +857,7 @@ inactive user prepares credentials for reactivation.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `USER_LDAP_PASSWORD_FORBIDDEN` | Cannot set password for LDAP user |
+| 400 | `USER_AD_PASSWORD_FORBIDDEN` | Cannot set password for AD user |
 | 400 | `VALIDATION_ERROR` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
 | 404 | `USER_NOT_FOUND` | User not found |
 
@@ -894,9 +894,9 @@ revocation, session invalidation, ticket unassignment).
 - Self-deactivation is rejected by the service layer — returns HTTP 409
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
-- LDAP user deactivation is rejected by the service layer — returns
-  HTTP 409 with code `USER_LDAP_STATUS_READONLY`:
-  `"Cannot deactivate LDAP users."`
+- AD user deactivation is rejected by the service layer — returns
+  HTTP 409 with code `USER_AD_STATUS_READONLY`:
+  `"Cannot deactivate AD users."`
 
 See `docs/features/identity/user-service.md` for the full side effect contract
 (API key revocation, session invalidation, ticket unassignment on
@@ -924,9 +924,9 @@ Reactivate a previously deactivated user account.
    `{"data": ...}` envelope
 
 **Constraints**:
-- LDAP user reactivation is rejected by the service layer — returns
-  HTTP 409 with code `USER_LDAP_STATUS_READONLY`:
-  `"Cannot reactivate LDAP users."`
+- AD user reactivation is rejected by the service layer — returns
+  HTTP 409 with code `USER_AD_STATUS_READONLY`:
+  `"Cannot reactivate AD users."`
 
 **Response**: user profile in `{"data": {...}}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
@@ -950,11 +950,11 @@ proceeding with deactivation.
    consistent — if you cannot deactivate yourself, you cannot preview
    the impact either. This prevents a confusing UX where the preview
    succeeds but the subsequent action is rejected.
-3. If the user is an LDAP user (`ldap_object_guid IS NOT NULL`), return HTTP 409
-   with code `USER_LDAP_STATUS_READONLY`:
-   `"Cannot deactivate LDAP users."`
+3. If the user is an AD user (`ad_object_guid IS NOT NULL`), return HTTP 409
+   with code `USER_AD_STATUS_READONLY`:
+   `"Cannot deactivate AD users."`
    Rationale: same consistency principle as self-deactivation — if the
-   deactivation endpoint rejects LDAP users, the preview should too.
+   deactivation endpoint rejects AD users, the preview should too.
 4. If the user is already inactive, return HTTP 200 with a no-impact
    response: all counts set to zero and `already_inactive` set to `true`.
    Rationale: the actual `POST .../deactivate` endpoint is idempotent and
@@ -1036,7 +1036,7 @@ regardless (to record that an admin attempted to unlock).
 ## Interaction with LDAP Sync
 
 The `sync_ldap_directory` fetcher operates exclusively on users with
-`ldap_object_guid IS NOT NULL`. Local users (`ldap_object_guid = NULL`) are invisible to
+`ad_object_guid IS NOT NULL`. Local users (`ad_object_guid = NULL`) are invisible to
 the sync process:
 
 - They are never deactivated by the sync
@@ -1048,8 +1048,8 @@ handling is required.
 
 ## Business Rules
 
-1. **Local users are identified by `ldap_object_guid = NULL`**: this is the
-   canonical way to distinguish local users from LDAP-synced users. No
+1. **Local users are identified by `ad_object_guid = NULL`**: this is the
+   canonical way to distinguish local users from AD-synced users. No
    additional flag or column is needed
 2. **No "last admin" enforcement**: the system does not enforce a
    minimum admin count. However, via UI/API it is practically impossible
@@ -1065,7 +1065,7 @@ handling is required.
    system administrator with shell access can restore admin access via:
    `sentinel manage-user update --username <user> --add-role admin`.
    This is consistent with the LDAP sync behavior (see
-   `docs/features/identity/ldap-integration.md`, Business Rule 6)
+   `docs/features/identity/ad-integration.md`, Business Rule 6)
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
@@ -1131,6 +1131,6 @@ handling is required.
 - `docs/features/identity/user-service.md` — service contract for create,
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
-- `docs/features/identity/ldap-integration.md` — LDAP sync (manages LDAP users)
+- `docs/features/identity/ad-integration.md` — LDAP sync (manages AD users)
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

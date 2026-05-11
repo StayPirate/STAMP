@@ -50,10 +50,10 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  full_name         │
        │                   │  active            │
        │                   │  password_hash     │
-       │                   │  ldap_object_guid  │
-       │                   │  ldap_dn           │
+       │                   │  ad_object_guid  │
+       │                   │  ad_dn           │
        │                   │  manager_id (FK)   │
-       │                   │  ldap_synced_at    │
+       │                   │  ad_synced_at    │
        │                   │  last_login_at     │
        │                   └────────┬─────────┘
        │                            │
@@ -388,7 +388,7 @@ Used by both TicketPackageCodestream and TicketPackageProduct.
 
 Platform users with role-based access. Users are populated from SUSE
 Active Directory via the `sync_ldap_directory` fetcher (see
-`docs/features/identity/ldap-integration.md`). Users can hold zero, one, or
+`docs/features/identity/ad-integration.md`). Users can hold zero, one, or
 multiple roles via the UserRole junction table. A user with no roles has
 the same access as an unauthenticated user (read-only on public data).
 
@@ -399,18 +399,18 @@ the same access as an unauthenticated user (read-only on public data).
 | email            | VARCHAR     | UNIQUE, NOT NULL         | Email address (from AD `mail`)   |
 | full_name        | VARCHAR     |                          | Display name (from AD `cn`)      |
 | active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for LDAP users. See `docs/features/identity/local-authentication.md` |
-| ldap_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
-| ldap_dn          | VARCHAR     | nullable                 | Full AD distinguished name       |
+| password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for AD users. See `docs/features/identity/local-authentication.md` |
+| ad_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
+| ad_dn          | VARCHAR     | nullable                 | Full AD distinguished name       |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
-| ldap_synced_at   | TIMESTAMP   | nullable                 | When this record was last synced from AD |
+| ad_synced_at   | TIMESTAMP   | nullable                 | When this record was last synced from AD |
 | last_login_at    | TIMESTAMP   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
 | created_at       | TIMESTAMP   | NOT NULL, DEFAULT        | Record creation timestamp        |
 | updated_at       | TIMESTAMP   | NOT NULL, DEFAULT        | Record update timestamp          |
 
 **Check constraint**: `chk_user_auth_exclusive` —
-`(ldap_object_guid IS NOT NULL AND password_hash IS NULL) OR (ldap_object_guid IS NULL AND password_hash IS NOT NULL)`
-— enforces mutual exclusivity: LDAP users cannot have a password, local
+`(ad_object_guid IS NOT NULL AND password_hash IS NULL) OR (ad_object_guid IS NULL AND password_hash IS NOT NULL)`
+— enforces mutual exclusivity: AD users cannot have a password, local
 users must have a password. See `docs/features/identity/user-management.md`
 (Business Rule 5) and `docs/features/identity/local-authentication.md`.
 
@@ -423,7 +423,7 @@ was derived from that group's RoleMapping; if it contains the sentinel
 value `_manual`, the role was assigned directly by an admin or CLI.
 Roles with `ad_group_cn != '_manual'` are managed by the LDAP sync
 process and cannot be removed via the API. See
-`docs/features/identity/ldap-integration.md`.
+`docs/features/identity/ad-integration.md`.
 
 | Column       | Type        | Constraints                  | Description                      |
 |--------------|-------------|------------------------------|----------------------------------|
@@ -456,7 +456,7 @@ Stores the mapping rules between Active Directory groups and Sentinel roles.
 Configured by admins via the UI or API. When a mapping is created or
 deleted, roles are applied or revoked immediately. During the daily LDAP
 sync, existing mappings are re-evaluated against current AD group
-membership. See `docs/features/identity/ldap-integration.md`.
+membership. See `docs/features/identity/ad-integration.md`.
 
 | Column       | Type        | Constraints                  | Description                        |
 |--------------|-------------|------------------------------|------------------------------------|

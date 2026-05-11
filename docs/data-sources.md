@@ -518,7 +518,7 @@ perspective the distinction is mostly transparent — the proxy speaks
 standard LDAPv3 and relays AD responses including AD-specific attributes
 (`sAMAccountName`, `objectGUID`, `MEMBEROF`, etc.) — but it has
 implications for schema discovery, error diagnostics, caching behavior,
-and TLS termination (see `docs/features/identity/ldap-integration.md`,
+and TLS termination (see `docs/features/identity/ad-integration.md`,
 Implementation Notes).
 
 The directory contains records for all active SUSE employees with detailed
@@ -546,7 +546,7 @@ source for identity data in Sentinel over the OpenLDAP instance at
 - **Integration status**: **Active**. Sentinel syncs employee data daily via
   the `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
   `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
-  role mapping). See `docs/features/identity/ldap-integration.md` for the full
+  role mapping). See `docs/features/identity/ad-integration.md` for the full
   specification
 - **Documentation**: Internal — no public documentation available
 

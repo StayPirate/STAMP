@@ -309,7 +309,7 @@ use these endpoints for automated health monitoring.
 4. Check logs for `"SSO callback: expected claim ... not found"` — the
    configured `SSO_USER_CLAIM` does not exist in the ID token
 5. Verify the user exists in the Sentinel database with a matching
-   `username` and `ldap_object_guid IS NOT NULL` (run LDAP sync first)
+   `username` and `ad_object_guid IS NOT NULL` (run LDAP sync first)
 
 ### LDAP Sync Not Working
 

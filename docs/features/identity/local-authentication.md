@@ -21,8 +21,8 @@ three primary use cases:
 3. **Environments without SSO** where Sentinel is deployed outside the
    SUSE corporate network
 
-Local authentication is only available to users with `ldap_object_guid = NULL`
-(local users). Users managed by LDAP sync (`ldap_object_guid IS NOT NULL`)
+Local authentication is only available to users with `ad_object_guid = NULL`
+(local users). Users managed by LDAP sync (`ad_object_guid IS NOT NULL`)
 authenticate exclusively via SSO — see
 `docs/features/identity/sso-authentication.md`.
 
@@ -63,8 +63,8 @@ session, and returns a JWT.
    lockout expires
 7. If user is inactive (`active = false`), return HTTP 401 with generic
    message
-8. If user has `ldap_object_guid IS NOT NULL` (LDAP user), return HTTP 401 with
-   generic message — LDAP users cannot use local login
+8. If user has `ad_object_guid IS NOT NULL` (AD user), return HTTP 401 with
+   generic message — AD users cannot use local login
 9. If user has no `password_hash` set (local user without password),
    return HTTP 401 with generic message
 10. Verify the provided password against the stored `password_hash`
@@ -91,7 +91,7 @@ session, and returns a JWT.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 401 | `AUTH_INVALID_CREDENTIALS` | Invalid username or password (also covers: user not found, inactive user, LDAP user, no password set) |
+| 401 | `AUTH_INVALID_CREDENTIALS` | Invalid username or password (also covers: user not found, inactive user, AD user, no password set) |
 | 429 | `AUTH_ACCOUNT_LOCKED` | Account temporarily locked due to too many failed attempts. Includes `Retry-After` header |
 
 Error response format:
@@ -104,7 +104,7 @@ Error response format:
 ```
 
 The 401 error message is intentionally generic and identical for all failure
-cases (user not found, wrong password, inactive user, LDAP user) to
+cases (user not found, wrong password, inactive user, AD user) to
 prevent username enumeration.
 
 ## Password Management
@@ -113,7 +113,7 @@ prevent username enumeration.
 
 Passwords are stored as bcrypt hashes (with SHA-256 pre-hash) in the
 `password_hash` column of the `User` table. This column is nullable — it
-is `NULL` for LDAP users (who authenticate via id.suse.com and never have
+is `NULL` for AD users (who authenticate via id.suse.com and never have
 a local password). Local users always have a `password_hash` set
 (required at creation). This mutual exclusivity is enforced by a database
 CHECK constraint (`chk_user_auth_exclusive`) — see `docs/data-model.md`.
@@ -199,7 +199,7 @@ password" action for local users. The admin enters the new password
 user ID. See `docs/features/identity/user-management.md` for the full
 admin UI specification.
 
-For LDAP users, the "Reset password" action is not available (greyed out
+For AD users, the "Reset password" action is not available (greyed out
 or hidden).
 
 ### `POST /api/v1/admin/users/{user}/password`
@@ -210,7 +210,7 @@ in `docs/features/identity/user-management.md` (Admin API endpoints).
 
 **Authentication**: required. **Permission**: `admin` role.
 
-Delegates to `user_service.reset_password()` which handles LDAP user
+Delegates to `user_service.reset_password()` which handles AD user
 check, password validation, hashing, and session invalidation. See
 `docs/features/identity/user-service.md` for the service contract.
 
