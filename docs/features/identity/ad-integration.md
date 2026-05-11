@@ -93,17 +93,23 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 #### Sync algorithm
 
 1. **Query AD**: fetch all entries under
-   `OU=User accounts,DC=corp,DC=suse,DC=com` with filter
-   `(EMPLOYEESTATUS=active)` and attributes `objectGUID`,
-   `sAMAccountName`, `cn`, `mail`, `manager`, `EMPLOYEESTATUS`,
-   `distinguishedName`, `MEMBEROF`. The query MUST use the LDAP
-   Simple Paged Results Control (RFC 2696) with a page size of 500
-   entries. All pages MUST be fetched before proceeding to step 2.
-   This is required because Active Directory enforces a server-side
-   size limit (currently 5,000 entries for anonymous binds) — a
-    non-paged query will silently truncate the result set if the
-    directory grows beyond this limit, which would cause the pre-flight
-    checks to misidentify the truncation as a data quality issue
+   `OU=User accounts,DC=corp,DC=suse,DC=com` with attributes
+   `objectGUID`, `sAMAccountName`, `cn`, `mail`, `manager`,
+   `EMPLOYEESTATUS`, `distinguishedName`, `MEMBEROF`. No
+   `EMPLOYEESTATUS` filter is applied — the query returns all users
+   (active and inactive) so that pre-flight checks can operate on
+   the complete dataset. The query MUST use the LDAP Simple Paged
+   Results Control (RFC 2696) with a page size of 500 entries. All
+   pages MUST be fetched before proceeding to step 2. This is
+   required because Active Directory enforces a server-side size
+   limit (currently 5,000 entries for anonymous binds) — a non-paged
+   query will silently truncate the result set if the directory grows
+   beyond this limit, which would cause the pre-flight checks to
+   misidentify the truncation as a data quality issue.
+   After pre-flight checks pass (step 2), entries with
+   `EMPLOYEESTATUS != Active` are used only for building the
+   deactivation candidate list (step 3) and are excluded from the
+   upsert, manager resolution, and role mapping steps (steps 3–5)
 2. **Pre-flight checks** (all evaluated before any database modification):
    three safety checks run in sequence. If ANY check fails, the entire
    sync aborts immediately with status `failure` — no partial execution,
@@ -115,28 +121,18 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    - If ANY previously known user (by `ad_object_guid`) is absent from
      the AD results → ABORT the entire sync
    - Rationale: in SUSE AD, users are never deleted — they are marked
-     inactive via `EMPLOYEESTATUS`. A user disappearing from results
-     indicates a technical problem (LDAP result truncation, replication
-     lag, network issue) or an AD policy violation
+     inactive via `EMPLOYEESTATUS` but remain in the directory. A user
+     disappearing entirely from results indicates a technical problem
+     (LDAP result truncation, replication lag, network issue) or an AD
+     policy violation. Because the query fetches all users regardless of
+     `EMPLOYEESTATUS`, a missing user cannot be explained by a status
+     change — it is always anomalous
    - Log ERROR: `"Pre-flight check failed: {n} previously known users
      missing from AD results. Missing ad_object_guid values:
      [{guid_list}]. Aborting sync — this likely indicates an LDAP
      infrastructure issue."`
 
-   **Level 2 — Mass Deactivation Threshold (configurable block)**:
-   - Count users present in the AD results whose `EMPLOYEESTATUS`
-     indicates inactivity but who are currently `active = true` in
-     Sentinel
-   - If count exceeds `LDAP_SYNC_MAX_DEACTIVATIONS` (env var, default:
-     **20**) → ABORT the entire sync
-   - This catches anomalous mass status changes in AD (different from
-     Level 1 which catches missing records)
-   - Log ERROR: `"Pre-flight check failed: {n} users would be
-     deactivated (threshold: {max}). Affected usernames:
-     [{username_list}]. Aborting sync — review manually and increase
-     LDAP_SYNC_MAX_DEACTIVATIONS if intentional."`
-
-   **Level 3 — Group Membership Sanity (hard block)**:
+   **Level 2 — Group Membership Sanity (hard block)**:
    - Check whether ANY user in the AD results has at least one
      `MEMBEROF` entry
    - If ZERO users have any `MEMBEROF` entries → ABORT the entire sync
@@ -147,6 +143,23 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    - Log ERROR: `"Pre-flight check failed: 0 out of {total} users have
      MEMBEROF entries. Aborting sync — MEMBEROF attribute is likely not
      being returned by the LDAP server."`
+
+   **Level 3 — Mass Deactivation Threshold (configurable block)**:
+   - Count users present in the AD results whose `EMPLOYEESTATUS`
+     indicates inactivity (i.e., `EMPLOYEESTATUS != Active`) but who
+     are currently `active = true` in Sentinel
+   - If count exceeds `LDAP_SYNC_MAX_DEACTIVATIONS` (env var, default:
+     **20**) → ABORT the entire sync
+   - Rationale: because the query returns all users (active and
+     inactive), this check can accurately count how many existing
+     Sentinel users would be deactivated in this sync cycle. An
+     anomalously high number suggests a mass status change in AD
+     (organizational restructuring, data migration error) that should
+     be reviewed before processing
+   - Log ERROR: `"Pre-flight check failed: {n} users would be
+     deactivated (threshold: {max}). Affected usernames:
+     [{username_list}]. Aborting sync — review manually and increase
+     LDAP_SYNC_MAX_DEACTIVATIONS if intentional."`
 
    **Step 2 flow**:
    1. Run Level 1 check → if fails, log + abort
@@ -176,7 +189,8 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    managers resolved against an incomplete dataset, etc. A full abort
    is safer: the previous sync's data remains intact, and the admin
    can investigate the root cause before re-running.
-3. **Upsert users**: for each AD entry:
+3. **Upsert users**: process only AD entries with
+   `EMPLOYEESTATUS == Active`. For each active AD entry:
    - If a `User` record with matching `ad_object_guid` exists, update
      `username`, `full_name`, `email`, `ad_dn`, `ad_synced_at` via
      `user_service.update_user()`. The `active` field is NOT modified
@@ -195,26 +209,28 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `email = mail`, `full_name = cn`,
      `ad_object_guid = objectGUID`,
      `ad_dn = distinguishedName`,
-     `active = (EMPLOYEESTATUS == "Active")`, `acting_user_id = None`.
-      Note: new user creation always sets `active` based on
-      `EMPLOYEESTATUS` regardless of any threshold — pre-flight checks
-       protect existing users only
-      - If `create_user()` raises `UserConflictError` (e.g., the AD
-        `sAMAccountName` collides with an existing local user's username
-        or email), log WARNING:
-        `"Cannot create AD user '{ad_object_guid}': {field} conflicts
-        with existing user '{existing_username}'."`, call
-        `record_failed()`, and skip this entry. The admin must resolve
-        the conflict manually (e.g., rename or remove the local user,
-        or merge accounts). The sync continues processing remaining
-        entries
-    - Identify existing AD users (`ad_object_guid IS NOT NULL`) that
-      should be deactivated (absent from AD results or
-      `EMPLOYEESTATUS != Active` while currently `active = true`) and
-      add them to the `newly_deactivated` list. Also identify users
-      with `active = false` that now have `EMPLOYEESTATUS == Active` and
-      add them to the `newly_reactivated` list. No `active` field writes
-      happen in this step
+     `active = true`, `acting_user_id = None`.
+     Note: only active AD entries reach this step, so new users are
+     always created as active
+     - If `create_user()` raises `UserConflictError` (e.g., the AD
+       `sAMAccountName` collides with an existing local user's username
+       or email), log WARNING:
+       `"Cannot create AD user '{ad_object_guid}': {field} conflicts
+       with existing user '{existing_username}'."`, call
+       `record_failed()`, and skip this entry. The admin must resolve
+       the conflict manually (e.g., rename or remove the local user,
+       or merge accounts). The sync continues processing remaining
+       entries
+
+   After upsert, build the deactivation and reactivation candidate
+   lists from the full AD result set (including inactive entries):
+   - **`newly_deactivated`**: existing AD users (`ad_object_guid IS NOT
+     NULL`) who are currently `active = true` in Sentinel but have
+     `EMPLOYEESTATUS != Active` in the AD results
+   - **`newly_reactivated`**: existing AD users who are currently
+     `active = false` in Sentinel but have `EMPLOYEESTATUS == Active`
+     in the AD results
+   - No `active` field writes happen in this step
 4. **Resolve managers** (two-pass): after all users have been
    created/updated in step 3, resolve manager relationships. For each
    user with a `manager` DN in AD:
