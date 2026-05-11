@@ -156,7 +156,7 @@ sentinel manage-user update \
    error: `"Error: User '{username}' not found."`
 3. If the user is an AD user (`ad_object_guid IS NOT NULL`) and `--email` or
    `--full-name` is provided, exits with error:
-   `"Error: User '{username}' is managed by Active Directory sync. Identity
+   `"Error: User '{username}' is managed by Active Directory via LDAP sync. Identity
    fields cannot be modified manually."` (exit code 1). Role changes
    are still permitted on AD users.
 4. If the user is an AD user (`ad_object_guid IS NOT NULL`) and

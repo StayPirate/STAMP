@@ -123,7 +123,7 @@ Examples:
 | Code | Dependency |
 |------|------------|
 | `REDIS_UNAVAILABLE` | Redis cache/session store |
-| `AD_UNAVAILABLE` | Active Directory (LDAP) |
+| `AD_UNAVAILABLE` | Active Directory (via LDAP) |
 | `SMELT_UNAVAILABLE` | SMELT API |
 | `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
 
