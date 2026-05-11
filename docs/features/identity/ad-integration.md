@@ -106,6 +106,22 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    query will silently truncate the result set if the directory grows
    beyond this limit, which would cause the pre-flight checks to
    misidentify the truncation as a data quality issue.
+
+   **Retry on transient LDAP failures**: if the LDAP connection or
+   query fails with a connection timeout or operation timeout, the
+   fetcher retries internally before propagating the failure:
+   - Maximum **2 retries** (3 total attempts)
+   - Delay between attempts: **30 seconds** after the 1st failure,
+     **60 seconds** after the 2nd failure
+   - Log INFO at each retry: `"LDAP query failed (attempt {n}/3),
+     retrying in {delay}s: {error_message}"`
+   - If all 3 attempts fail, the exception propagates to
+     `BaseFetcher.run()` which marks the run as `failure`
+   - Only connection timeouts and operation timeouts trigger retries.
+     Other exceptions (e.g., TLS certificate validation failure,
+     authentication errors) fail immediately without retry — these
+     indicate configuration problems, not transient issues
+
    After pre-flight checks pass (step 2), entries with
    `EMPLOYEESTATUS != Active` are used only for building the
    deactivation candidate list (step 3) and are excluded from the
@@ -189,6 +205,12 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    managers resolved against an incomplete dataset, etc. A full abort
    is safer: the previous sync's data remains intact, and the admin
    can investigate the root cause before re-running.
+
+   **No retry on pre-flight failures**: pre-flight check failures
+   indicate data quality or infrastructure issues that require manual
+   investigation — they are not transient. The retry mechanism in step 1
+   covers only LDAP connection/operation timeouts. If a pre-flight check
+   fails, the sync aborts immediately without retry.
 3. **Upsert users**: process only AD entries with
    `EMPLOYEESTATUS == Active`. For each active AD entry:
    - If a `User` record with matching `ad_object_guid` exists, update
@@ -198,12 +220,17 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      steps 6 and 7 respectively
      - If `update_user()` raises `UserConflictError` (e.g., the AD
        `sAMAccountName` changed to a value that collides with another
-       existing user's username or email), log WARNING:
-       `"Cannot update AD user '{ad_object_guid}': {field} conflicts
-       with existing user '{existing_username}'."`, call
-       `record_failed()`, and skip this entry. The admin must resolve the
-       conflict manually and re-run the sync. The sync continues
-       processing remaining entries
+       existing user's username or email), `UserValidationError` (e.g.,
+       the new `sAMAccountName` fails Sentinel's username format rules),
+       or `UserNotFoundError` (race condition — user was deleted between
+       lookup and update), log WARNING:
+       `"Cannot update AD user '{ad_object_guid}': {error_message}."`,
+       call `record_failed()`, and skip this entry. The admin must
+       resolve the conflict manually and re-run the sync. The sync
+       continues processing remaining entries. Any other exception from
+       `update_user()` (e.g., `ADUserFieldReadOnlyError`) indicates a
+       bug in the sync caller and is NOT caught — it propagates to
+       `BaseFetcher.run()` to abort the sync
    - If no matching record exists, attempt to create a new `User` via
      `user_service.create_user()` with `username = sAMAccountName`,
      `email = mail`, `full_name = cn`,
@@ -214,13 +241,17 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      always created as active
      - If `create_user()` raises `UserConflictError` (e.g., the AD
        `sAMAccountName` collides with an existing local user's username
-       or email), log WARNING:
-       `"Cannot create AD user '{ad_object_guid}': {field} conflicts
-       with existing user '{existing_username}'."`, call
-       `record_failed()`, and skip this entry. The admin must resolve
-       the conflict manually (e.g., rename or remove the local user,
-       or merge accounts). The sync continues processing remaining
-       entries
+       or email) or `UsernameFormatError` (e.g., the AD
+       `sAMAccountName` contains characters not allowed by Sentinel's
+       username format rules), log WARNING:
+       `"Cannot create AD user '{ad_object_guid}': {error_message}."`,
+       call `record_failed()`, and skip this entry. The admin must
+       resolve the conflict manually (e.g., rename or remove the local
+       user, or merge accounts). The sync continues processing
+       remaining entries. Any other exception from `create_user()`
+       (e.g., `ADUserPasswordError`) indicates a bug in the sync caller
+       and is NOT caught — it propagates to `BaseFetcher.run()` to
+       abort the sync
 
    After upsert, build the deactivation and reactivation candidate
    lists from the full AD result set (including inactive entries):
@@ -240,6 +271,12 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `manager_id` to that user's `id` (FK)
    - If the manager is not found in the User table (e.g., the manager
      is outside the synced OU), set `manager_id = NULL`
+   - Note: `manager_id` may point to an inactive user — this is by
+     design, as the reporting relationship in AD persists regardless of
+     `EMPLOYEESTATUS`. Future features that use `manager_id` for
+     operational purposes (notification escalation, task delegation)
+     must handle the case of an inactive manager (e.g., walk up the
+     manager chain until an active manager is found)
 5. **Apply role mappings** (incremental per mapping): for each
    `RoleMapping(ad_group_cn, role)` in the database:
    - Identify all users whose `MEMBEROF` (from the AD data already in
@@ -287,6 +324,18 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    `record_updated()` for updated users (including deactivations and
    reactivations from steps 6–7), `record_failed()` for entries that
    failed processing
+
+   **Step ordering rationale (5→6→7)**: steps 5, 6, and 7 operate on
+   independent data and produce independent side effects. Step 5
+   manages `UserRole` records (no TicketEvents). Step 6 manages
+   `active` status, API keys, sessions, and ticket assignments (with
+   TicketEvents). Step 7 sets `active = true` (no TicketEvents). Roles
+   are not affected by deactivation or reactivation — they persist
+   across status changes. The `newly_deactivated` and
+   `newly_reactivated` lists are mutually exclusive by construction
+   (a user cannot be both `active = true` and `active = false` in the
+   DB). Therefore the ordering of these steps does not affect
+   correctness or TicketEvent content.
 
 #### Active status ownership
 
@@ -576,9 +625,13 @@ Processing (all steps execute within a **single database transaction**):
 2. Create the `RoleMapping` record
 3. For each member found in the User table, create a `UserRole` with
    `ad_group_cn` set to the mapping's group CN and `assigned_by = NULL`
-   (if not already present for that user/role/group combination)
-4. Commit the transaction and return the created mapping with the count
-    of affected users
+   (if not already present for that user/role/group combination).
+   Duplicates are silently skipped — the unique constraint on
+   `(user_id, role, ad_group_cn)` serves as the authoritative guard
+4. Commit the transaction and return the created mapping.
+   `affected_users_count` reflects only **newly created** `UserRole`
+   records, not pre-existing ones (e.g., if a concurrent sync already
+   applied the same mapping, those users are not counted)
 5. Emit a structured audit log entry (INFO level, JSON format) containing:
    `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
    `affected_users_count`, `timestamp`. This log line follows the
@@ -805,8 +858,9 @@ deletions that is unlikely to occur accidentally.
   `ldap3.utils.dn.parse_dn()`) to extract the CN component. Do NOT use
   naive string splitting — DNs may contain escaped commas within values
   (e.g., `CN=Rossi\, Mario`)
-- **API endpoint timeouts**: the fetcher timeout (300s) is appropriate for
-  the daily background sync. However, API endpoints that query AD live
+- **API endpoint timeouts**: the fetcher timeout (900s) is appropriate for
+  the daily background sync (including retry attempts). However, API
+  endpoints that query AD live
   (preview, mapping creation, mapping deletion) are synchronous HTTP
   requests and MUST set a short LDAP operation timeout (10–15 seconds).
   If AD is unreachable, these endpoints should return 503 with a clear
@@ -855,7 +909,7 @@ deletions that is unlikely to occur accidentally.
     complete (including paged result fetching). Covers server-side
     processing delays and network stalls during data transfer
   - These timeouts are distinct from and subordinate to the Celery task
-    timeout (300s), which serves as the last-resort safety net. The LDAP
+    timeout (900s), which serves as the last-resort safety net. The LDAP
     timeouts provide faster, more specific failure detection
   - On connection timeout: the fetcher fails with ERROR:
     `"LDAP connection timeout after {n}s — unable to establish
