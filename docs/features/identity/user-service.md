@@ -220,20 +220,20 @@ their own business rules.
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
 2. If `user.ad_object_guid IS NOT NULL` and `acting_user_id` is not None:
-   raise `ADFieldReadOnlyError`. Identity fields of AD users are
+   raise `ADUserFieldReadOnlyError`. Identity fields of AD users are
    managed exclusively by directory sync (see AD User Data Ownership
    above). The entire `update_user()` operation is blocked for human
    callers on AD users — there is no identity field that an admin
    should modify manually.
 3. If `user.ad_object_guid IS NULL` and any of `ad_dn`, `manager_id`, or
    `ad_synced_at` is provided (not `_MISSING`): raise
-   `ADFieldReadOnlyError`. These fields are AD-specific and have
+   `ADUserFieldReadOnlyError`. These fields are AD-specific and have
    no source of truth for local users.
 4. **Username validation** (if `username` is provided): normalize and
    validate the format per the rules in `docs/conventions.md` (section
    "Username Format"). If invalid, raise `UserValidationError`. Verify
    uniqueness in the database (excluding the current user, including
-   inactive users). If violated, raise `UserConflictError`. For LDAP
+   inactive users). If violated, raise `UserConflictError`. For AD
    users, this step is reached only by the sync fetcher (human callers
    are already blocked at step 2).
 5. If `email` is provided, validate uniqueness. If violated, raise
@@ -555,7 +555,7 @@ for the API-layer mapping.
 | `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
 | `ADUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an AD user (`ad_object_guid IS NOT NULL`) — active status is managed exclusively by directory sync |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
-| `ADFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an AD user — all identity fields are managed by directory sync; (2) any caller attempts to set AD-specific fields (`ad_dn`, `manager_id`, `ad_synced_at`) on a local user — these fields are not applicable |
+| `ADUserFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an AD user — all identity fields are managed by directory sync; (2) any caller attempts to set AD-specific fields (`ad_dn`, `manager_id`, `ad_synced_at`) on a local user — these fields are not applicable |
 | `ADUserPasswordError` | Attempting to set or reset password for an AD user |
 | `PasswordValidationError` | Password does not meet length requirements (16–128 characters) |
 

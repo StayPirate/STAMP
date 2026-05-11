@@ -27,6 +27,25 @@ database. Any entry point that accepts a username for user creation MUST
 normalize it (trim whitespace, lowercase) and validate the format before
 storage.
 
+### Active Directory / LDAP / SSO Terminology
+
+These three terms have distinct meanings in the Sentinel codebase and
+documentation. They MUST NOT be used interchangeably:
+
+| Term | Scope | Usage |
+|------|-------|-------|
+| **AD** (Active Directory) | Data origin | Prefix for columns, error classes, error codes, and CLI/API values that identify data originating from Active Directory. Examples: `ad_object_guid`, `ad_dn`, `ad_synced_at`, `ADUserStatusReadOnlyError`, `USER_AD_STATUS_READONLY`, `--type ad`, `"source": "ad"` |
+| **LDAP** | Protocol / transport | Used only for the network protocol and infrastructure: environment variables (`LDAP_URI`, `LDAP_CA_CERT_PATH`), the fetcher name (`sync_ldap_directory`), and prose describing the connection layer ("LDAP sync", "LDAPS port 636"). Never as a user type or data-origin label |
+| **SSO** | Authentication method | Used only for the browser-based single sign-on flow (OIDC/OAuth2). Never as a user type — AD users authenticate via SSO, but their identity source is AD |
+| **directory** | Generic category only | Never used alone as a synonym for Active Directory. Acceptable only in generic phrasing like "directory sync" (shorthand for `sync_ldap_directory`) where context is unambiguous |
+
+Rules:
+- A user whose `ad_object_guid IS NOT NULL` is an "AD user" (not "LDAP
+  user", "SSO user", or "directory user")
+- A user whose `ad_object_guid IS NULL` is a "local user"
+- The `source` field in API responses returns `"ad"` or `"local"` (never
+  `"ldap"` or `"sso"`)
+
 ## Python (Backend)
 
 ### Style

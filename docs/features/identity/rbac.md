@@ -297,7 +297,7 @@ A user can acquire a role from two independent sources (origins):
 2. **Manual assignment when role already exists via AD**: creates a new
    `UserRole` record with `ad_group_cn = '_manual'`. The user now holds
    the role from both sources. If the AD group is later revoked, only
-   the `ad_sync` record is removed — the manual assignment persists.
+    the AD-derived record (identified by its `ad_group_cn` value) is removed — the manual assignment persists.
 3. **AD derivation when role already exists manually**: the LDAP sync
    creates a new `UserRole` record with the AD group's `ad_group_cn`.
    The user now holds the role from both sources. If the admin later
