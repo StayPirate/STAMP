@@ -308,8 +308,9 @@ only.
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
    ```
-3. A hardcoded delay of 2 seconds is added between requests to avoid
-   overloading the Red Hat API. Speed is not important.
+3. A configurable delay (controlled by the `throttle_delay_seconds`
+   custom setting, default: **2 seconds**) is added between requests to
+   avoid overloading the Red Hat API. Speed is not important.
 4. Compare the fetched score and vector with the stored values
 5. If different → update the assessment and trigger recalculation
 6. `last_redhat_sync_at` is derived from the `started_at` timestamp of
@@ -633,7 +634,17 @@ response. The task:
 | Task                     | Schedule    | Description                                  |
 |--------------------------|-------------|----------------------------------------------|
 | `sync_cves_nvd`          | Every 6h    | Incremental NVD CVE sync. Extracts all CVSS assessments (Primary + Secondary). Resolves CNA names via NVD Source API. |
-| `sync_cvss_redhat`       | Daily       | Re-fetches Red Hat CVSS for all CVEs with active tickets. Configurable delay between requests (default: 2s). |
+| `sync_cvss_redhat`       | Daily       | Re-fetches Red Hat CVSS for all CVEs with active tickets. |
+
+### sync_cvss_redhat — Custom Settings
+
+This fetcher declares the following custom settings (see
+`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
+Schema" for the schema structure and validation rules):
+
+| Setting | Type | Default | Range | Description |
+|---------|------|---------|-------|-------------|
+| `throttle_delay_seconds` | float | 2.0 | 0.1–30.0 | Delay between consecutive Red Hat API requests |
 
 ## Data Model
 

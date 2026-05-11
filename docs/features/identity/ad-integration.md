@@ -90,6 +90,23 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 - **Description**: Syncs SUSE employee data from Active Directory
 - **Default schedule**: daily at 04:00 UTC
 
+**Custom Settings**
+
+This fetcher declares the following custom settings (see
+`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
+Schema" for the schema structure and validation rules):
+
+| Setting | Type | Default | Range | Warning | Description |
+|---------|------|---------|-------|---------|-------------|
+| `max_deactivations` | int | 20 | 1–100 | Yes | Maximum number of users that can be deactivated in a single sync run. If exceeded, the sync aborts as a safety measure |
+| `ldap_connect_timeout` | int | 30 | 5–120 | — | LDAP connection timeout in seconds (TCP/TLS handshake) |
+| `ldap_operation_timeout` | int | 120 | 30–600 | — | LDAP search operation timeout in seconds |
+| `retry_max_attempts` | int | 3 | 1–5 | — | Total LDAP connection attempts on transient failure (initial + retries) |
+
+Warning text for `max_deactivations`: "Safety threshold. Raising this
+value allows more users to be deactivated in a single sync run. Change
+only if you understand the impact."
+
 #### Sync algorithm
 
 1. **Query AD**: fetch all entries under
@@ -110,12 +127,14 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    **Retry on transient LDAP failures**: if the LDAP connection or
    query fails with a connection timeout or operation timeout, the
    fetcher retries internally before propagating the failure:
-   - Maximum **2 retries** (3 total attempts)
-   - Delay between attempts: **30 seconds** after the 1st failure,
-     **60 seconds** after the 2nd failure
-   - Log INFO at each retry: `"LDAP query failed (attempt {n}/3),
+   - Maximum attempts controlled by the `retry_max_attempts` custom
+     setting (default: **3** total attempts, configurable 1–5)
+   - Delay between attempts uses exponential backoff: **30 seconds**
+     after the 1st failure, **60 seconds** after the 2nd failure
+     (delays scale proportionally if `retry_max_attempts` is changed)
+   - Log INFO at each retry: `"LDAP query failed (attempt {n}/{max}),
      retrying in {delay}s: {error_message}"`
-   - If all 3 attempts fail, the exception propagates to
+   - If all attempts fail, the exception propagates to
      `BaseFetcher.run()` which marks the run as `failure`
    - Only connection timeouts and operation timeouts trigger retries.
      Other exceptions (e.g., TLS certificate validation failure,
@@ -164,8 +183,9 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    - Count users present in the AD results whose `EMPLOYEESTATUS`
      indicates inactivity (i.e., `EMPLOYEESTATUS != Active`) but who
      are currently `active = true` in Sentinel
-   - If count exceeds `LDAP_SYNC_MAX_DEACTIVATIONS` (env var, default:
-     **20**) → ABORT the entire sync
+   - If count exceeds the `max_deactivations` custom setting (default:
+     **20**, configurable 1–100 via the admin dashboard) → ABORT the
+     entire sync
    - Rationale: because the query returns all users (active and
      inactive), this check can accurately count how many existing
      Sentinel users would be deactivated in this sync cycle. An
@@ -175,7 +195,7 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    - Log ERROR: `"Pre-flight check failed: {n} users would be
      deactivated (threshold: {max}). Affected usernames:
      [{username_list}]. Aborting sync — review manually and increase
-     LDAP_SYNC_MAX_DEACTIVATIONS if intentional."`
+     max_deactivations via the fetcher configuration if intentional."`
 
    **Step 2 flow**:
    1. Run Level 1 check → if fails, log + abort
@@ -183,19 +203,24 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    3. Run Level 3 check → if fails, log + abort
    4. All checks pass → proceed to step 3
 
-   **Design rationale — static threshold**: the use of a static
-   environment variable for `LDAP_SYNC_MAX_DEACTIVATIONS` (rather than a
-   runtime override via API or CLI flag) is deliberate. A runtime
-   override would reduce the barrier to disabling a critical
-   mass-deactivation protection — an impulsive click or a scripted call
-   could bypass the safety net. Requiring a worker restart to modify
-   `LDAP_SYNC_MAX_DEACTIVATIONS` is "friction by design": it forces a
-   conscious infrastructure action rather than an in-application
-   shortcut. In case of a legitimate organizational change (e.g., a
-   known mass departure), the admin modifies the environment variable,
-   runs the sync manually via
-   `sentinel fetcher run sync_ldap_directory`, verifies the result, and
-   restores the original threshold value.
+   **Design rationale — deactivation threshold protection**: the
+   `max_deactivations` setting is a custom setting (configurable via
+   the admin dashboard) rather than a static environment variable
+   requiring a worker restart. This provides operational flexibility
+   while maintaining adequate safety through multiple layers:
+   - **Bounded range** (1–100): the schema enforces hard limits,
+     preventing an admin from disabling the threshold entirely or
+     setting it to an unreasonably high value
+   - **Visual warning**: the admin UI displays a persistent safety
+     warning (yellow triangle + amber box) explaining the impact of
+     changing this value, ensuring the admin makes an informed decision
+   - **Audit trail**: every change is recorded in `FetcherAuditLog`
+     with old and new values, providing accountability
+   - **Immediate effect**: the updated value takes effect on the next
+     sync run without requiring a worker restart, which is advantageous
+     in legitimate scenarios (e.g., a known mass departure) where the
+     admin needs to adjust the threshold, run the sync, verify the
+     result, and restore the original value — all through the dashboard
 
    **Design rationale — all-or-nothing**: the pre-flight checks use an
    all-or-nothing strategy rather than partial execution. If any check
@@ -899,15 +924,17 @@ deletions that is unlikely to occur accidentally.
   not members of relevant AD groups. The sync code MUST handle both
   attributes as optional (use empty string or empty list as defaults)
 - **LDAP operation-level timeouts**: the LDAP connection used by the
-  sync fetcher MUST enforce two distinct timeouts:
-  - **Connection timeout** (`LDAP_CONNECT_TIMEOUT`, default: **30**
-    seconds): maximum time to establish the TCP/TLS connection to
-    `pan.suse.de`. Covers DNS resolution, TCP handshake, and TLS
-    negotiation
-  - **Operation timeout** (`LDAP_OPERATION_TIMEOUT`, default: **120**
-    seconds): maximum time for a single LDAP search operation to
-    complete (including paged result fetching). Covers server-side
-    processing delays and network stalls during data transfer
+  sync fetcher MUST enforce two distinct timeouts, both configurable
+  via custom settings:
+  - **Connection timeout** (`ldap_connect_timeout` custom setting,
+    default: **30** seconds, range: 5–120): maximum time to establish
+    the TCP/TLS connection to `pan.suse.de`. Covers DNS resolution,
+    TCP handshake, and TLS negotiation
+  - **Operation timeout** (`ldap_operation_timeout` custom setting,
+    default: **120** seconds, range: 30–600): maximum time for a
+    single LDAP search operation to complete (including paged result
+    fetching). Covers server-side processing delays and network
+    stalls during data transfer
   - These timeouts are distinct from and subordinate to the Celery task
     timeout (900s), which serves as the last-resort safety net. The LDAP
     timeouts provide faster, more specific failure detection

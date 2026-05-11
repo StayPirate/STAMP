@@ -167,8 +167,8 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  schedule_override   │   │  duration_seconds               │
 │  timeout_seconds     │   │  status                         │
 │  rate_limit          │   │  items_created/updated/failed   │
-└──────────────────────┘   │  error_message                  │
-                           │  error_traceback                │
+│  custom_settings     │   │  error_message                  │
+└──────────────────────┘   │  error_traceback                │
 ┌──────────────────────┐   │  triggered_by                   │
 │  FetcherAuditLog     │   │  triggered_by_user_id (FK)      │
 │                      │   └─────────────────────────────────┘
@@ -750,6 +750,7 @@ startup if not present.
 | schedule_override | VARCHAR     | nullable           | Cron expression to override the default schedule |
 | timeout_seconds   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds. Also used as stale run detection threshold. 0 disables both. |
 | rate_limit        | VARCHAR     | nullable           | Rate limit (e.g., `"2/s"`, `"100/m"`) |
+| custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `custom_settings_schema` (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
 | updated_at        | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp        |
 
 ### FetcherAuditLog

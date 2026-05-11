@@ -63,6 +63,11 @@ class MyConcreteFetcher(BaseFetcher):
     # See docs/features/ui/references.md for details.
     source_reference_url_pattern: str | None = None
 
+    # Optional: per-fetcher operational parameters configurable at
+    # runtime via the admin dashboard. See "Custom Settings Schema"
+    # section below for the schema format and validation rules.
+    custom_settings_schema: dict | None = None
+
     async def execute(self, session: AsyncSession) -> None:
         """Fetch data from the external source.
 
@@ -100,6 +105,160 @@ The `fetch_single` method does NOT create a `FetcherRun` record. It is
 a sub-operation invoked as a standalone Celery task, not a full fetcher
 execution. Metric reporting (`record_created`, etc.) is not used.
 
+## Custom Settings Schema
+
+Fetcher-specific operational parameters (throttle delays, retry counts,
+lookback windows, retention periods) can be declared by each fetcher and
+managed at runtime through the admin dashboard without worker restart.
+
+This mechanism complements the generic `FetcherConfig` fields (`enabled`,
+`schedule_override`, `timeout_seconds`, `rate_limit`) which apply
+uniformly to all fetchers. Custom settings are fetcher-specific — each
+fetcher declares its own schema and reads its own values.
+
+### What belongs in custom_settings
+
+Operational parameters that:
+
+- Are safe to change at runtime without security implications
+- May need tuning based on workload or external service behavior
+- Benefit from visibility and changeability through the admin dashboard
+
+### What stays as environment variables
+
+| Category | Examples | Reason |
+|----------|----------|--------|
+| Credentials | `IBS_USERNAME`, `IBS_PASSWORD`, `NVD_API_KEY` | Secrets — managed via env vars / Kubernetes Secrets |
+| Connection URIs | `LDAP_URI`, `IBS_API_URL` | Infrastructure — changes with deployment environment |
+| TLS configuration | `LDAP_CA_CERT_PATH` | Infrastructure — tied to certificate management |
+
+### Schema declaration
+
+Each `BaseFetcher` subclass MAY declare a `custom_settings_schema` class
+attribute. If not declared (or `None`), the fetcher accepts no custom
+settings and the `custom_settings` JSONB column in `FetcherConfig`
+remains `{}`.
+
+```python
+class SyncCvssRedhat(BaseFetcher):
+    name = "sync_cvss_redhat"
+    description = "Re-fetches Red Hat CVSS for active tickets"
+    default_schedule = "0 3 * * *"
+
+    custom_settings_schema = {
+        "throttle_delay_seconds": {
+            "type": "float",
+            "default": 2.0,
+            "min": 0.1,
+            "max": 30.0,
+            "description": "Delay between consecutive Red Hat API requests.",
+        },
+    }
+```
+
+### Schema field properties
+
+Each entry in `custom_settings_schema` is a dictionary with the following
+properties:
+
+| Property | Type | Required | Applies to | Description |
+|----------|------|----------|------------|-------------|
+| `type` | string | Yes | all | One of: `int`, `float`, `str`, `bool` |
+| `default` | any | Yes | all | Default value used when the setting is not explicitly configured |
+| `description` | string | Yes | all | Human-readable description shown in the admin UI |
+| `min` | number | No | `int`, `float` | Minimum allowed value |
+| `max` | number | No | `int`, `float` | Maximum allowed value |
+| `choices` | list | No | `str`, `int` | Allowed values (renders as dropdown in UI) |
+| `warning` | string | No | all | Safety warning displayed with visual emphasis in the UI. Use for settings where incorrect values could have significant operational impact |
+
+### Schema validation rules
+
+The following rules are enforced at **import time** by
+`BaseFetcher.__init_subclass__`. If any rule is violated, the worker
+fails to start with a clear error message identifying the fetcher and
+the invalid schema entry.
+
+1. Every entry MUST have `type`, `default`, and `description`
+2. `type` MUST be one of: `int`, `float`, `str`, `bool`
+3. `default` MUST match the declared `type`
+4. `default` MUST respect `min`/`max` bounds if declared
+5. `default` MUST be in `choices` if declared
+6. Schema keys MUST be `snake_case` (lowercase letters, digits, and
+   underscores only)
+7. Values are limited to scalars — nested objects, lists, or complex
+   structures are not supported in the JSONB column
+8. `min` and `max` are ignored if `type` is not `int` or `float`
+9. `choices` is ignored if `type` is not `str` or `int`
+
+### Accessing settings at runtime
+
+`BaseFetcher` provides a `get_setting(key)` method that resolves values
+with a clear precedence:
+
+1. Value in `FetcherConfig.custom_settings` (DB) — if the key exists
+2. Default from `custom_settings_schema` — if the key is declared
+3. `KeyError` — if the key is not declared in the schema
+
+```python
+# Inside execute():
+delay = self.get_setting("throttle_delay_seconds")  # returns DB value or 2.0
+```
+
+Settings are read from the DB at the start of each `run()` invocation
+(not cached across runs). This means an admin can change a setting and
+the next run picks it up immediately.
+
+### Schema registration
+
+The `BaseFetcher` registry (populated at import time via
+`__init_subclass__`) collects `custom_settings_schema` from each
+subclass. This registry is used by:
+
+- The API validation layer (PATCH endpoint validates submitted values
+  against the fetcher's schema)
+- The dashboard UI (dynamic form rendering based on `settings_schema`
+  in the GET config response)
+- The `sentinel fetcher config` CLI command (settings display)
+
+### Design decisions
+
+- **All settings have defaults**: a `required` flag (settings with no
+  default that must be configured before the fetcher can run) is not
+  supported. Every setting must have a `default` value so that fetchers
+  work out of the box. If a parameter has no reasonable default, it
+  likely belongs as an environment variable, not a custom setting.
+- **Orphaned keys are ignored silently**: when a setting is removed from
+  a fetcher's schema in a future version, old values in the JSONB column
+  become orphaned. `get_setting()` only reads declared keys, so orphaned
+  keys are inert. The PATCH endpoint rejects unknown keys, preventing
+  new writes to orphaned settings. No cleanup migration is needed.
+- **No environment variable override**: there is no mechanism to override
+  custom_settings values via environment variables. The purpose of
+  custom_settings is to avoid the env-var-requires-restart pattern. If
+  deployment-level defaults are needed, an init script can call the
+  PATCH API after deployment.
+
+### Referencing custom settings in fetcher specifications
+
+Feature specifications that define fetchers with custom settings MUST
+include a "Custom Settings" section with a table of settings and a
+cross-reference to this document for the schema structure and validation
+rules. The specification MUST NOT repeat the schema format, validation
+rules, or `get_setting()` behavior inline — it should only list the
+fetcher's specific settings with their values.
+
+Example:
+
+> **Custom Settings**
+>
+> This fetcher declares the following custom settings (see
+> `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
+> Schema" for the schema structure and validation rules):
+>
+> | Setting | Type | Default | Range | Description |
+> |---------|------|---------|-------|-------------|
+> | `my_setting` | int | 10 | 1–100 | Description of the setting |
+
 ## Registry
 
 The global registry is a module-level dictionary in
@@ -117,6 +276,8 @@ is used by:
 - The dashboard frontend (indirectly, via the list endpoint)
 - The on-demand single-CVE fetch system to discover fetchers that
   implement `fetch_single`
+- The custom settings validation layer (schema lookup for PATCH
+  endpoint and CLI display)
 
 A fetcher class that is imported but should NOT be registered (e.g., an
 intermediate abstract subclass) can set `abstract = True` as a class
@@ -289,6 +450,7 @@ one does not already exist.
 | schedule_override | VARCHAR | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
 | timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
 | rate_limit | VARCHAR | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
+| custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `custom_settings_schema` (see "Custom Settings Schema" above). |
 | updated_at | TIMESTAMP | NOT NULL, DEFAULT | Last modification timestamp |
 
 **Notes**:
@@ -338,13 +500,17 @@ Audit trail for administrative actions on fetchers.
 
 ## Data Retention
 
-Individual `FetcherRun` records are retained for **90 days**. After 90
-days, runs are aggregated into weekly summaries and individual records
-are deleted.
+Individual `FetcherRun` records are retained for a configurable number
+of days (default: **90 days**). After the retention period, runs are
+aggregated into weekly summaries and individual records are deleted. The
+retention period is controlled by the `retention_days` custom setting of
+the `aggregate_fetcher_runs` fetcher (see
+`docs/features/platform/fetcher-dashboard.md`, "Background Tasks").
 
 ### FetcherRunWeeklyAggregate
 
-Stores weekly summaries of fetcher runs after the 90-day retention window.
+Stores weekly summaries of fetcher runs after the retention window
+(default: 90 days, configurable via `retention_days` custom setting).
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
@@ -369,11 +535,13 @@ Stores weekly summaries of fetcher runs after the 90-day retention window.
 
 A Celery periodic task `aggregate_fetcher_runs` runs daily and:
 
-1. Selects all `FetcherRun` records older than 90 days
-2. Groups them by `fetcher_name` and ISO week
-3. Creates or updates `FetcherRunWeeklyAggregate` records with the computed
+1. Reads the `retention_days` custom setting (default: 90) to determine
+   the retention window
+2. Selects all `FetcherRun` records older than `retention_days`
+3. Groups them by `fetcher_name` and ISO week
+4. Creates or updates `FetcherRunWeeklyAggregate` records with the computed
    summaries
-4. Deletes the original `FetcherRun` records that were aggregated
+5. Deletes the original `FetcherRun` records that were aggregated
 
 This task is itself a fetcher (inherits `BaseFetcher`) so its execution
 is also tracked in the dashboard.

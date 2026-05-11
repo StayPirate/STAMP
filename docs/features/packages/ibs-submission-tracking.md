@@ -561,9 +561,10 @@ recover events missed during consumer downtime and reconcile state
 drift. This is the only mechanism for detecting request reopens
 (declined -> new/review).
 
-The 25-hour lookback window in Step 1b ensures overlap across
-consecutive fetcher runs, covering total platform outages of up to
-25 hours (consumer + fetcher both down).
+The lookback window (controlled by the `lookback_hours` custom setting,
+default: **25 hours**) ensures overlap across consecutive fetcher runs,
+covering total platform outages of up to 25 hours (consumer + fetcher
+both down).
 
 #### Procedure
 
@@ -1052,8 +1053,19 @@ on-demand, no independent schedule, no dashboard presence.
 |---------------------------------|-------------------------|------------|--------------------------------------------------------------|
 | `RequestSyncFetcher` schedule   | Cron (BaseFetcher)      | Every 24h  | Overridable via fetcher config API                           |
 | Consumer routing keys           | Static (code)           | `suse.obs.request.create`, `suse.obs.request.state_change` | Added to existing `IBSEventConsumer` bindings |
-| Catch-up lookback window        | Constant                | 25h        | `created_at_from` for Step 1b temporal query                 |
-| Retroactive discovery window    | Constant                | 14d        | `created_at_from` for Pipeline 3 discovery                   |
+| Catch-up lookback window        | Custom setting (`sync_requests`) | 25h | `lookback_hours` — configurable via admin dashboard |
+| Retroactive discovery window    | Custom setting (`sync_requests`) | 14d | `retroactive_discovery_days` — configurable via admin dashboard |
+
+### sync_requests — Custom Settings
+
+This fetcher declares the following custom settings (see
+`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
+Schema" for the schema structure and validation rules):
+
+| Setting | Type | Default | Range | Description |
+|---------|------|---------|-------|-------------|
+| `lookback_hours` | int | 25 | 1–168 | Hours to look back for missed events during catch-up |
+| `retroactive_discovery_days` | int | 14 | 1–90 | Days to look back for retroactive SR/RR discovery |
 
 ## Security
 

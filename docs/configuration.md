@@ -88,7 +88,14 @@ At startup, the application logs an INFO message indicating SSO status:
 |---------|------|---------|-------------|------------|
 | `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ad-integration.md` |
 | `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ad-integration.md` |
-| `LDAP_SYNC_MAX_DEACTIVATIONS` | int | `20` | Safety limit: max users to deactivate per sync run | `docs/features/identity/ad-integration.md` |
+
+Note: operational parameters for the `sync_ldap_directory` fetcher
+(`max_deactivations`, `ldap_connect_timeout`, `ldap_operation_timeout`,
+`retry_max_attempts`) are configured via custom settings in the admin
+dashboard, not via environment variables. See
+`docs/features/identity/ad-integration.md` for details and
+`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
+Schema" for the configuration mechanism.
 
 ## External APIs
 

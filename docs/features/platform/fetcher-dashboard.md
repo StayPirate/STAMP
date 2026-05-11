@@ -157,6 +157,10 @@ Client-controlled sorting is not supported.
 - `last_run`: the most recent `FetcherRun` record, or `null` if never run.
   Does NOT include `error_traceback` (admin-only, available on the detail
   endpoint).
+- `custom_settings`: included in each fetcher's data (current values from
+  DB). `settings_schema` is NOT included in the list response to keep the
+  payload compact — the UI fetches it only when opening the configuration
+  panel for a specific fetcher (via the GET config endpoint).
 
 **Permissions**: publicly accessible (no authentication required).
 
@@ -386,24 +390,47 @@ Fetch" for details.
 GET /api/v1/fetchers/{fetcher_name}/config
 ```
 
-Returns the current configuration for a fetcher.
+Returns the current configuration for a fetcher, including any
+fetcher-specific custom settings and the schema that describes them.
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "fetcher_name": "sync_cves_nvd",
+    "fetcher_name": "sync_cvss_redhat",
     "enabled": true,
     "schedule_override": null,
-    "default_schedule": "0 */6 * * *",
-    "effective_schedule": "0 */6 * * *",
+    "default_schedule": "0 3 * * *",
+    "effective_schedule": "0 3 * * *",
     "timeout_seconds": 3600,
     "rate_limit": null,
+    "custom_settings": {
+      "throttle_delay_seconds": 5.0
+    },
+    "settings_schema": {
+      "throttle_delay_seconds": {
+        "type": "float",
+        "default": 2.0,
+        "min": 0.1,
+        "max": 30.0,
+        "description": "Delay between consecutive Red Hat API requests."
+      }
+    },
     "updated_at": "2025-04-20T10:00:00Z"
   }
 }
 ```
+
+**Fields**:
+- `custom_settings`: current values stored in the DB. Keys not explicitly
+  set by an admin are absent (the fetcher code falls back to schema
+  defaults via `get_setting()`). An empty object `{}` means all settings
+  use their defaults.
+- `settings_schema`: the schema declared by the fetcher class (read-only,
+  not stored in DB). Included so the UI can render the settings form
+  without hardcoding field definitions. `null` if the fetcher declares no
+  custom settings.
 
 **Permissions**: Admin only.
 
@@ -429,7 +456,10 @@ include the fields to change.
   "enabled": false,
   "schedule_override": "0 */4 * * *",
   "timeout_seconds": 600,
-  "rate_limit": "2/s"
+  "rate_limit": "2/s",
+  "custom_settings": {
+    "throttle_delay_seconds": 5.0
+  }
 }
 ```
 
@@ -442,6 +472,34 @@ include the fields to change.
 - `rate_limit`: must match the pattern `"<number>/<unit>"` where unit is
   `s`, `m`, or `h`, or `null` to disable
 
+**Validation rules for `custom_settings`**:
+- Each key MUST exist in the fetcher's `custom_settings_schema`. Unknown
+  keys → 422 with code `FETCHER_SETTING_UNKNOWN` and message
+  `"Unknown setting '{key}' for fetcher '{name}'. Available settings:
+  [{valid_keys}]."`
+- Each value MUST match the declared type. Type mismatch → 422 with
+  code `FETCHER_SETTING_INVALID` and message `"Invalid value for
+  '{key}': expected {type}, got {actual_type}."`
+- Numeric values MUST respect `min`/`max` bounds if declared. Out of
+  range → 422 with code `FETCHER_SETTING_INVALID` and message
+  `"Value for '{key}' must be between {min} and {max}."`
+- String values MUST be in `choices` if declared. Invalid choice → 422
+  with code `FETCHER_SETTING_INVALID` and message `"Value for '{key}'
+  must be one of: [{choices}]."`
+- Partial updates are supported: only the keys included in the request
+  are updated. Omitted keys retain their current value. To reset a
+  setting to its default, the key must be explicitly set to `null`:
+  `{"custom_settings": {"throttle_delay_seconds": null}}` — this
+  removes the key from the JSONB column, causing `get_setting()` to
+  fall back to the schema default.
+- If the fetcher declares no `custom_settings_schema` and the request
+  includes `custom_settings` with any keys → 422 with code
+  `FETCHER_SETTING_UNKNOWN` and message `"Fetcher '{name}' does not
+  accept custom settings."`
+- **Merge semantics**: `custom_settings` is merged (not replaced) with
+  the existing JSONB value. This is consistent with the partial-update
+  semantics of the other fields.
+
 **Response** (200 OK): the updated config object (same as GET response).
 
 **Side effects**:
@@ -449,6 +507,18 @@ include the fields to change.
   - If `enabled` changed: action `disabled` or `enabled`
   - If any other field changed: action `config_changed` with `details`
     containing old and new values
+  - If `custom_settings` changed: action `config_changed` with `details`
+    in the format:
+    ```json
+    {
+      "field": "custom_settings",
+      "changes": {
+        "throttle_delay_seconds": {"old": 2.0, "new": 5.0}
+      }
+    }
+    ```
+    When a key is reset to default (set to `null`): `{"old": 5.0, "new": null}`.
+    When a key is set for the first time: `{"old": null, "new": 5.0}`.
 - If `enabled` changed to `false` and the fetcher is currently running:
   the current run is allowed to complete. The next scheduled run will not
   start.
@@ -700,14 +770,61 @@ Contains:
 1. **Enable/Disable toggle**: same behavior as on the card
 2. **Schedule**: editable cron expression input with human-readable
    preview. Shows "(default)" label when no override is set. A "Reset to
-   default" button when an override is active.
+   default" button when an override is active. Help text: "Cron expression
+   (5-field) to override the default schedule. Leave empty to use the
+   default."
 3. **Timeout**: numeric input in seconds. Default: 3600 (1 hour). Set to
-   0 to disable timeout enforcement and stale run detection. A help text
-   explains: "Controls both the maximum execution time (Celery soft time
-   limit) and the stale run detection threshold. Set to 0 to disable."
-4. **Rate limit**: text input with format hint (`"2/s"`, `"100/m"`)
-5. **Save button**: PATCHes the config. Shows confirmation dialog if
+   0 to disable timeout enforcement and stale run detection. Help text:
+   "Controls both the maximum execution time (Celery soft time limit)
+   and the stale run detection threshold. Set to 0 to disable."
+4. **Rate limit**: text input with format hint (`"2/s"`, `"100/m"`).
+   Help text: "Maximum execution frequency for this task (e.g., '2/s',
+   '100/m'). This controls how often the task can run, not the delay
+   between individual HTTP requests within a run."
+5. **Fetcher-specific settings**: a dynamic form section that appears
+   only for fetchers that declare a `custom_settings_schema` (see below)
+6. **Save button**: PATCHes the config. Shows confirmation dialog if
    changing the schedule.
+
+###### Fetcher-specific settings
+
+This section appears only for fetchers that declare a
+`custom_settings_schema`. If a fetcher has no schema (or an empty one),
+the section is not rendered — no "this fetcher has no custom settings"
+placeholder, just absence.
+
+The section is visually separated from the standard config fields with a
+subheading: **"Fetcher-specific settings"**.
+
+The form is rendered dynamically based on `settings_schema` from the
+GET config response:
+
+| Schema type | UI control |
+|-------------|------------|
+| `int` | Number input (step 1, with min/max if declared) |
+| `float` | Number input with decimal step (step 0.1, with min/max if declared) |
+| `str` | Text input, or select dropdown if `choices` is declared |
+| `bool` | Toggle switch |
+
+Each field shows:
+
+- **Label**: the setting key formatted for display (underscores replaced
+  with spaces, title case — e.g., `throttle_delay_seconds` becomes
+  "Throttle Delay Seconds")
+- **Description**: from the `description` property in the schema, shown
+  as help text below the input
+- **Current value**: from `custom_settings` in the config response. If
+  the key is not present (not explicitly configured), the input shows
+  the schema default as a placeholder
+- **Reset button**: per-field button that sends `null` for that key to
+  reset it to the schema default
+- **Warning** (conditional): if the schema entry includes a `warning`
+  property, the field is rendered with:
+  - A yellow triangle icon next to the label
+  - The warning text displayed in a visually distinct box (amber/yellow
+    background) below the description
+  - The field remains editable — no extra confirmation dialog, but the
+    warning is always visible
 
 ##### Admin Audit Log
 
@@ -757,11 +874,21 @@ summaries.
 |---|---|
 | Task name | `aggregate_fetcher_runs` |
 | Schedule | Daily at 03:00 UTC |
-| Retention | 90 days for individual runs |
+| Retention | Configurable via `retention_days` custom setting (default: 90 days) |
 | Aggregation | Weekly (ISO week, Monday start) |
 
 The aggregation task is itself a fetcher (`AggregationFetcher` inheriting
 `BaseFetcher`) so its own execution is tracked in the dashboard.
+
+**Custom Settings**
+
+This fetcher declares the following custom settings (see
+`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
+Schema" for the schema structure and validation rules):
+
+| Setting | Type | Default | Range | Description |
+|---------|------|---------|-------|-------------|
+| `retention_days` | int | 90 | 7–365 | Days to retain individual FetcherRun records before aggregation |
 
 ## CLI Commands
 
@@ -783,14 +910,21 @@ sentinel fetcher list
 Output (human-readable table to stdout):
 
 ```
-Name                       Enabled   Last Run              Status
-sync_ldap_directory        yes       2026-04-27 04:00 UTC  success (3m 12s)
-sync_cves_nvd              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)
-sync_products_smelt        yes       2026-04-26 06:00 UTC  success (45s)
-check_codestream_releases  no        2026-04-25 02:00 UTC  failure
-sync_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)
-aggregate_fetcher_runs     yes       —                     never run
+Name                       Enabled   Last Run              Status                       Settings
+sync_ldap_directory        yes       2026-04-27 04:00 UTC  success (3m 12s)             2 custom
+sync_cves_nvd              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)     —
+sync_products_smelt        yes       2026-04-26 06:00 UTC  success (45s)                —
+check_codestream_releases  no        2026-04-25 02:00 UTC  failure                      —
+sync_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)             —
+aggregate_fetcher_runs     yes       —                     never run                    —
 ```
+
+**Settings column logic**:
+- Shows the count of explicitly configured (non-default) custom settings
+  from `FetcherConfig.custom_settings` — e.g., `2 custom` means 2 keys
+  are set to non-default values
+- Shows `—` if the fetcher has no `custom_settings_schema` or if all
+  settings use their defaults (JSONB is `{}`)
 
 **Status column logic**:
 
@@ -947,6 +1081,81 @@ the fetcher and produces side effects intentionally.
 
 **Output channels**: progress and summary to stdout. `"Warning: ..."`
 and `"Error: ..."` messages to stderr.
+
+### `sentinel fetcher config <name>`
+
+Displays the full configuration of a fetcher, including custom settings
+with their current values, defaults, and descriptions.
+
+```
+sentinel fetcher config sync_cvss_redhat
+```
+
+Output (to stdout):
+
+```
+Fetcher: sync_cvss_redhat
+Enabled: yes
+Schedule: 0 3 * * * (default)
+Timeout: 3600s
+Rate limit: —
+
+Custom settings:
+  throttle_delay_seconds = 5.0  (default: 2.0, range: 0.1–30.0)
+    Delay between consecutive Red Hat API requests.
+```
+
+For a fetcher with settings at their defaults (no explicit
+configuration):
+
+```
+Fetcher: aggregate_fetcher_runs
+Enabled: yes
+Schedule: 0 3 * * * (default)
+Timeout: 3600s
+Rate limit: —
+
+Custom settings:
+  retention_days = 90  (default, range: 7–365)
+    Days to retain individual FetcherRun records before aggregation.
+```
+
+For a fetcher with no custom settings schema:
+
+```
+Fetcher: sync_cves_nvd
+Enabled: yes
+Schedule: 0 */6 * * * (default)
+Timeout: 3600s
+Rate limit: —
+
+No custom settings available for this fetcher.
+```
+
+**Value display logic**:
+- If a setting is explicitly configured (key exists in JSONB): show
+  `key = value  (default: X, range: Y–Z)`
+- If a setting uses its default (key absent from JSONB): show
+  `key = value  (default, range: Y–Z)`
+- `range` is shown only for `int`/`float` with `min`/`max` declared
+- `choices` are shown as `choices: a, b, c` for `str`/`int` with choices
+
+**Data source**: queries `FetcherConfig` from the database and
+`custom_settings_schema` from the fetcher registry.
+
+**Idempotency**: Idempotent. Read-only command; safe to re-run at any
+time.
+
+**Exit codes**:
+
+| Code | Meaning |
+|------|---------|
+| 0    | Success |
+| 1    | User error: unknown fetcher name |
+| 2    | System error: database unreachable |
+
+**Output channels**: configuration to stdout. `"Error: ..."` messages
+to stderr.
 
 ## System Metrics (Future Iteration)
 
