@@ -241,8 +241,8 @@ relationships.
 This convention applies to:
 
 - Path parameters (e.g., `/api/v1/users/{user}`)
-- Query parameters (e.g., `?assignee=ggabrielli`)
-- Request body fields (e.g., `{"user_id": "ggabrielli"}`)
+- Query parameters (e.g., `?assignee=jdoe`)
+- Request body fields (e.g., `{"user_id": "jdoe"}`)
 
 The special filter value `none` (used in query parameters like `assignee`)
 is not subject to user resolution — it is handled as a literal keyword

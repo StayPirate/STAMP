@@ -61,7 +61,7 @@ model.
 | AD Attribute        | Sentinel Field      | Description                          |
 |---------------------|---------------------|--------------------------------------|
 | `objectGUID`        | `ad_object_guid`  | Immutable AD identifier (UUID). Used as the stable matching key during sync |
-| `sAMAccountName`    | `username`          | Username (e.g., `ggabrielli`). Updated on every sync if changed in AD |
+| `sAMAccountName`    | `username`          | Username (e.g., `jdoe`). Updated on every sync if changed in AD |
 | `cn`                | `full_name`         | Full display name                    |
 | `mail`              | `email`             | Primary email (`.com`)               |
 | `manager`           | `manager_id`        | DN of the direct line manager (resolved to `user.id` FK) |
@@ -410,7 +410,7 @@ implications:
 #### Manager resolution
 
 The `manager` attribute in AD contains a full DN (e.g.,
-`cn=Stoyan Manolov,ou=User accounts,dc=corp,dc=suse,dc=com`). During
+`cn=John Doe,ou=User accounts,dc=corp,dc=suse,dc=com`). During
 sync, the fetcher resolves this to a `manager_id` foreign key by:
 
 1. Looking up the DN in the current sync batch to find the
@@ -556,8 +556,8 @@ Response:
     "ad_group_cn": "O SUSE Security",
     "role": "vulnerability_analyst",
     "affected_users": [
-      { "id": "uuid", "username": "ggabrielli", "full_name": "Gianluca Gabrielli", "email": "..." },
-      { "id": "uuid", "username": "jsegitz", "full_name": "Johannes Segitz", "email": "..." }
+      { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "email": "..." },
+      { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "email": "..." }
     ],
     "affected_count": 22,
     "unknown_users": ["newemployee"]
@@ -886,11 +886,11 @@ deletions that is unlikely to occur accidentally.
 ## Implementation Notes
 
 - **DN parsing**: the `manager` attribute contains a full Distinguished
-  Name (e.g., `CN=Mario Rossi,OU=User accounts,DC=corp,DC=suse,DC=com`).
+  Name (e.g., `CN=Bob Wilson,OU=User accounts,DC=corp,DC=suse,DC=com`).
   Implementations MUST use a standards-compliant DN parser (e.g.,
   `ldap3.utils.dn.parse_dn()`) to extract the CN component. Do NOT use
   naive string splitting — DNs may contain escaped commas within values
-  (e.g., `CN=Rossi\, Mario`)
+  (e.g., `CN=Wilson\, Bob`)
 - **API endpoint timeouts**: the fetcher timeout (900s) is appropriate for
   the daily background sync (including retry attempts). However, API
   endpoints that query AD live

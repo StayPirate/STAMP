@@ -444,7 +444,7 @@ provided, all users are shown regardless of status.
 ```
 USERNAME        FULL NAME            EMAIL                    TYPE   STATUS    ROLES
 jdoe            John Doe             jdoe@example.com         local  active    admin, vulnerability_analyst
-mrossi          Mario Rossi          mrossi@suse.com          ad     active    vulnerability_analyst
+bwilson          Bob Wilson           bob.wilson@suse.com      ad     active    vulnerability_analyst
 olduser         Old User             old@example.com          local  inactive  —
 ```
 
@@ -492,7 +492,7 @@ Status:       active
 Roles:        admin (manual), vulnerability_analyst (O SUSE Security)
 Created:      2025-03-15 10:30:00 UTC
 Last login:   2025-06-01 14:22:00 UTC
-Manager:      mrossi
+Manager:      bwilson
 ```
 
 The ROLES field shows each role with its origin in parentheses:
