@@ -15,9 +15,16 @@ for the service-layer enforcement rules.
 
 ## Data Source
 
-Sentinel uses the SUSE Active Directory instance at `pan.suse.de` as the
-single source of truth for employee identity data. See
-`docs/data-sources.md` for connection details.
+Sentinel uses the SUSE Active Directory as the single source of truth for
+employee identity data. The LDAP endpoint at `pan.suse.de` is an OpenLDAP
+proxy (`back-ldap` backend with `pcache` overlay) that forwards queries to
+the underlying Microsoft Active Directory domain controllers. See
+`docs/data-sources.md` for the full infrastructure description.
+
+From Sentinel's perspective the proxy is mostly transparent — it speaks
+standard LDAPv3 and relays AD attributes and errors — but it affects
+schema discovery, caching of "live" queries, and TLS scope (see
+Implementation Notes below).
 
 - **Server**: `ldaps://pan.suse.de`
 - **Base DN**: `OU=User accounts,DC=corp,DC=suse,DC=com`
@@ -39,6 +46,15 @@ inject forged `MEMBEROF` values in LDAP responses, causing the sync process
 to grant arbitrary roles (including `admin`) to attacker-controlled
 accounts. LDAPS with server certificate validation ensures response
 authenticity and eliminates this privilege escalation vector.
+
+**TLS scope**: the LDAPS connection terminates at the OpenLDAP proxy
+(`pan.suse.de`). The connection between the proxy and the backend AD
+domain controllers is managed by the proxy infrastructure and is outside
+Sentinel's control. The MITM protection described above covers the
+Sentinel → proxy segment. The proxy → AD segment is on the SUSE
+internal network and managed by SUSE infrastructure; compromising it
+would require internal network access beyond the application's threat
+model.
 
 ### Attributes consumed
 
@@ -106,8 +122,21 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      - Mark the run as `partial`
      - Steps 3–6 proceed normally but **skip the `active` field**
      - Step 7 is skipped entirely (no `active` transitions occurred)
-   - If the safety check passes (candidate count within threshold),
-     `active` field updates are enabled for this run
+    - If the safety check passes (candidate count within threshold),
+      `active` field updates are enabled for this run
+
+   **Design rationale — static threshold**: the use of a static
+   environment variable (rather than a runtime override via API or CLI
+   flag) is deliberate. A runtime override would reduce the barrier to
+   disabling a critical mass-deactivation protection — an impulsive click
+   or a scripted call could bypass the safety net. Requiring a worker
+   restart to modify `LDAP_SYNC_MAX_DEACTIVATIONS` is "friction by
+   design": it forces a conscious infrastructure action rather than an
+   in-application shortcut. In case of a legitimate organizational change
+   (e.g., a known mass departure), the admin modifies the environment
+   variable, runs the sync manually via
+   `sentinel fetcher run sync_ldap_directory`, verifies the result, and
+   restores the original threshold value.
 3. **Upsert users**: for each AD entry:
    - If a `User` record with matching `ldap_object_guid` exists, update
      `username`, `full_name`, `email`, `ldap_dn`, `ldap_synced_at` via
@@ -156,7 +185,21 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
 5. **Apply role mappings** (incremental per mapping): for each
    `RoleMapping(ad_group_cn, role)` in the database:
    - Identify all users whose `MEMBEROF` (from the AD data already in
-     memory) includes this mapping's `ad_group_cn`
+     memory) includes this mapping's `ad_group_cn`. Matching extracts
+     the first `CN=` component from each `MEMBEROF` DN using a
+     standards-compliant DN parser (e.g., `ldap3.utils.dn.parse_dn()`)
+     and compares it to `ad_group_cn` **case-insensitively** (consistent
+     with Active Directory's case-insensitive CN semantics). Example: a
+     `MEMBEROF` value of
+     `CN=O SUSE Security,OU=Groups,DC=corp,DC=suse,DC=com` matches
+     `ad_group_cn = "O SUSE Security"` because the extracted CN
+     (`O SUSE Security`) equals the mapping value under case-insensitive
+     comparison.
+     **Design note**: matching on the CN component alone (rather than
+     the full DN) carries a theoretical risk of collision if two groups
+     in different OUs share the same CN. In the current SUSE AD (~85
+     relevant groups), zero such collisions exist. Full-DN matching
+     support is deferred unless a real collision emerges
    - **Add**: for each user in the AD group who does not have a
      `UserRole(user_id, role, ad_group_cn)` record in the DB, create
      one with `assigned_by = NULL`
@@ -206,6 +249,26 @@ invalidation, ticket unassignment).
 See `docs/features/identity/user-service.md` (LDAP Active Status
 Ownership) for the full rationale and enforcement details.
 
+#### Username rename impact
+
+If an employee's `sAMAccountName` changes in Active Directory, the sync
+updates the `username` field in Sentinel. This has the following
+implications:
+
+- **External references break**: bookmarked URLs, external links, or
+  cached API responses that use the old username will return 404. This
+  is a known side-effect of the sync — username stability is not
+  guaranteed
+- **Internal identification is not affected**: all database
+  relationships, tickets, historical data, and TicketEvent records use
+  UUID primary keys, not usernames. No data integrity is lost
+- **Active sessions are not affected**: JWT tokens use UUID as the
+  subject (`sub` claim), not the username. Existing sessions continue
+  to work after a rename
+- **Tracking**: the rename is recorded in the fetcher execution log via
+  `record_updated()` and a log entry reporting the old and new username
+  (e.g., `"Username changed: 'jdoe' → 'jsmith'"`)
+
 #### Manager resolution
 
 The `manager` attribute in AD contains a full DN (e.g.,
@@ -223,6 +286,23 @@ created/updated (step 4), the manager record is guaranteed to exist if
 they are in the synced OU. If the manager is outside the synced OU (e.g.,
 a senior executive in a different organizational unit), `manager_id` is
 set to NULL.
+
+## Concurrency Considerations
+
+### Role mapping creation during a running sync
+
+If an admin creates a role mapping (POST /api/v1/admin/role-mappings) while a
+sync is in progress, the current sync may not process the new mapping in
+step 5 — depending on whether step 5 has already iterated past the point
+where the new RoleMapping record was inserted.
+
+This does not cause inconsistency: the POST endpoint applies roles immediately
+to all matching users (processing step 3), so affected users receive the role
+at creation time. The next scheduled sync will reconcile any users that were
+missed (e.g., users created between the POST and the next sync).
+
+No locking mechanism is needed between role mapping creation and the sync
+process.
 
 ## CLI Usage
 
@@ -403,13 +483,16 @@ group "O SUSE Security" can be mapped to both `admin` and
 `vulnerability_analyst` simultaneously. Each mapping operates
 independently — creating or deleting one does not affect the other.
 
-Processing:
-1. Create the `RoleMapping` record
-2. Query AD live for members of the specified group
+Processing (all steps execute within a **single database transaction**):
+1. Query AD live for members of the specified group. If AD is unreachable,
+   the transaction is not committed — no RoleMapping or UserRole records
+   are created (the global `AD_UNAVAILABLE` / 503 convention applies)
+2. Create the `RoleMapping` record
 3. For each member found in the User table, create a `UserRole` with
    `ad_group_cn` set to the mapping's group CN and `assigned_by = NULL`
    (if not already present for that user/role/group combination)
-4. Return the created mapping with the count of affected users
+4. Commit the transaction and return the created mapping with the count
+   of affected users
 
 ```
 DELETE /api/v1/admin/role-mappings/{id}
@@ -572,12 +655,28 @@ Displays a table of all configured role mappings:
   preview endpoint
 - **LDAP client configuration**: when using the `ldap3` library, the
   `Server` object MUST be created with `get_info=NONE` (not
-  `get_info=ALL`) because `EMPLOYEESTATUS` is a custom AD attribute
-  not present in the standard LDAP schema — schema validation would
-  reject queries using this attribute. Additionally, attribute key
-  casing may vary between paged and non-paged search results; the
-  sync code MUST use case-insensitive attribute key lookups or
-  normalize keys after retrieval
+  `get_info=ALL`). The schema exposed by `pan.suse.de` is the OpenLDAP
+  proxy's own schema (standard RFC object classes and attributes) — it
+  does not include any AD-specific attributes (`sAMAccountName`,
+  `objectGUID`, `MEMBEROF`, `EMPLOYEESTATUS`, etc.). Fetching schema
+  from the proxy would provide a completely irrelevant attribute set and
+  schema validation would reject every query that references AD
+  attributes. Additionally, attribute key casing may vary between paged
+  and non-paged search results; the sync code MUST use case-insensitive
+  attribute key lookups or normalize keys after retrieval
+- **Proxy cache (`pcache`) and "live" queries**: the OpenLDAP proxy at
+  `pan.suse.de` is configured with a `pcache` overlay that may cache
+  query results. For the daily background sync (`sync_ldap_directory`)
+  this is harmless — the cache improves performance and staleness within
+  a 24-hour window is acceptable. However, API endpoints that are
+  described as querying AD "live" (`POST /role-mappings/preview`,
+  `POST /role-mappings` group existence check) may receive cached
+  results from the proxy rather than real-time data from AD. In practice
+  this means recently created AD groups or recently modified group
+  memberships may not be immediately visible. Implementations should
+  document this caveat to administrators but do NOT need to attempt
+  cache bypass — there is no reliable client-side mechanism to force a
+  cache miss through an LDAP proxy
 - **Optional attributes**: `manager` is absent for approximately 1%
   of entries (top-level managers with no superior). `MEMBEROF` is
   absent for the majority of entries (~87%) since most employees are

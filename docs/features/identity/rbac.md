@@ -70,6 +70,7 @@ capabilities must hold both roles.
 |----------------------------------|-------|-----|--------|
 | Remove CVE from ticket           | Yes   | No  | No     |
 | Manage user roles                | Yes   | No  | No     |
+| Manage role mappings             | Yes   | No  | No     |
 | View/update system settings      | Yes   | No  | No     |
 | Soft-delete ticket               | Yes   | No  | No     |
 | Restore deleted ticket           | Yes   | No  | No     |

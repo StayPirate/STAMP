@@ -509,16 +509,27 @@ security update.
 
 ### SUSE Active Directory (`pan.suse.de`)
 
-SUSE operates a corporate Active Directory instance at `pan.suse.de` that
-serves as the authoritative source for employee identity data across the
-organization. It contains records for all active SUSE employees with
-detailed profile information including organizational hierarchy, group
-memberships, and employment status.
+SUSE operates a corporate Active Directory environment that serves as the
+authoritative source for employee identity data across the organization.
+The LDAP endpoint at `pan.suse.de` is an **OpenLDAP proxy** (using the
+`back-ldap` backend with a `pcache` overlay) that forwards queries to the
+underlying Microsoft Active Directory domain controllers. From a client
+perspective the distinction is mostly transparent — the proxy speaks
+standard LDAPv3 and relays AD responses including AD-specific attributes
+(`sAMAccountName`, `objectGUID`, `MEMBEROF`, etc.) — but it has
+implications for schema discovery, error diagnostics, caching behavior,
+and TLS termination (see `docs/features/identity/ldap-integration.md`,
+Implementation Notes).
+
+The directory contains records for all active SUSE employees with detailed
+profile information including organizational hierarchy, group memberships,
+and employment status.
 
 Active Directory is the only directory service that provides the correct
 **direct line manager** for each employee (single-value `manager`
 attribute pointing to the manager's DN). This makes it the preferred
-source for identity data in Sentinel over the OpenLDAP instance.
+source for identity data in Sentinel over the OpenLDAP instance at
+`ldap.suse.de`.
 
 - **Relevant data**: Employee identity (`sAMAccountName`, `cn`, `mail`),
   direct line manager (`manager` — single-value DN reference), employment
