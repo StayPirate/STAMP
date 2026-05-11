@@ -198,7 +198,16 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `active = (EMPLOYEESTATUS == "Active")`, `acting_user_id = None`.
       Note: new user creation always sets `active` based on
       `EMPLOYEESTATUS` regardless of any threshold — pre-flight checks
-      protect existing users only
+       protect existing users only
+      - If `create_user()` raises `UserConflictError` (e.g., the AD
+        `sAMAccountName` collides with an existing local user's username
+        or email), log WARNING:
+        `"Cannot create AD user '{ad_object_guid}': {field} conflicts
+        with existing user '{existing_username}'."`, call
+        `record_failed()`, and skip this entry. The admin must resolve
+        the conflict manually (e.g., rename or remove the local user,
+        or merge accounts). The sync continues processing remaining
+        entries
     - Identify existing AD users (`ad_object_guid IS NOT NULL`) that
       should be deactivated (absent from AD results or
       `EMPLOYEESTATUS != Active` while currently `active = true`) and
@@ -259,8 +268,9 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      reactivation semantics (previously unassigned tickets and API keys
     are NOT restored)
 8. **Metrics**: report `record_created()` for new users,
-   `record_updated()` for updated users, `record_failed()` for entries
-   that failed processing
+   `record_updated()` for updated users (including deactivations and
+   reactivations from steps 6–7), `record_failed()` for entries that
+   failed processing
 
 #### Active status ownership
 
@@ -461,6 +471,20 @@ The `unknown_users` field lists AD usernames found in the group but not
 yet present in the User table (e.g., employees hired after the last
 sync). These users will receive the role at the next sync.
 
+**Zero-member group**: if the AD group exists but currently has zero
+members, the response is valid with `affected_users: []`,
+`unknown_users: []`, and `affected_count: 0`. This is not an error — an
+admin may create a role mapping for a group that is not yet populated, in
+preparation for future members.
+
+**UI rendering notes**:
+
+- The `unknown_users` list is displayed in the UI only when non-empty.
+  When empty, the section is hidden to avoid confusing administrators.
+- When displayed, a tooltip (info icon or mouse-over) provides a brief
+  explanation: "Users found in the AD group but not yet synced to
+  Sentinel. They will receive the role at the next directory sync."
+
 **Validation**:
 
 - `ad_group_cn` MUST contain only characters valid for an Active Directory
@@ -517,6 +541,7 @@ Response (`201 Created`):
     "id": "uuid",
     "ad_group_cn": "O SUSE Security",
     "role": "vulnerability_analyst",
+    "created_by": { "id": "uuid", "username": "admin1", "full_name": "Admin User" },
     "created_at": "2026-05-06T12:00:00Z",
     "affected_users_count": 22
   }
