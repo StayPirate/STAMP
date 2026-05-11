@@ -236,6 +236,14 @@ only if you understand the impact."
    investigation — they are not transient. The retry mechanism in step 1
    covers only LDAP connection/operation timeouts. If a pre-flight check
    fails, the sync aborts immediately without retry.
+
+   **First sync (empty database)**: on the very first sync run, the
+   Sentinel database contains zero AD users. Level 1 (Missing User
+   Detection) and Level 3 (Mass Deactivation Threshold) pass vacuously
+   — there are no previously known users to be missing and no existing
+   active users to be deactivated. This is the intended behavior: there
+   is no data to protect yet. Level 2 (Group Membership Sanity) operates
+   normally because it inspects only the AD results, not the database.
 3. **Upsert users**: process only AD entries with
    `EMPLOYEESTATUS == Active`. For each active AD entry:
    - If a `User` record with matching `ad_object_guid` exists, update
