@@ -45,8 +45,8 @@ A bugowner can be either a **person** or a **group**:
 
 | Type   | Description                                   | Example                  |
 |--------|-----------------------------------------------|--------------------------|
-| person | Individual IBS user with a `userid` and email | `mschreiner` (`martin.schreiner@suse.com`) |
-| group  | Team with a collective email and member list   | `kernel-maintainers` (`kernel-bugs@suse.de`) |
+| person | Individual IBS user with a `userid` and email | `jdoe` (`john.doe@suse.com`) |
+| group  | Team with a collective email and member list   | `kernel-team` (`kernel-team@suse.de`) |
 
 When the bugowner is a group, Sentinel stores both the group-level
 information (name and collective email) and the individual members of
@@ -128,7 +128,7 @@ Returns an XML response:
 ```xml
 <collection>
   <owner rootproject="SUSE" project="SUSE:ALP:Source:Standard:1.0" package="curl">
-    <group name="crypto-maintainers" role="bugowner"/>
+    <group name="pkg-maintainers" role="bugowner"/>
   </owner>
 </collection>
 ```
@@ -138,7 +138,7 @@ Or for a person:
 ```xml
 <collection>
   <owner rootproject="SUSE" project="SUSE:SLE-15:GA" package="apache2">
-    <person name="mschreiner" role="bugowner"/>
+    <person name="jdoe" role="bugowner"/>
   </owner>
 </collection>
 ```
@@ -160,9 +160,9 @@ Returns the email and real name of an IBS user:
 
 ```xml
 <person>
-  <login>mschreiner</login>
-  <email>martin.schreiner@suse.com</email>
-  <realname>Martin Schreiner</realname>
+  <login>jdoe</login>
+  <email>john.doe@suse.com</email>
+  <realname>John Doe</realname>
   <state>confirmed</state>
 </person>
 ```
@@ -177,15 +177,15 @@ Returns the group email and full member list:
 
 ```xml
 <group>
-  <title>crypto-maintainers</title>
-  <email>crypto-maintainers@suse.de</email>
-  <maintainer userid="pmonrealgonzalez"/>
-  <maintainer userid="ayankov"/>
-  <maintainer userid="lmulling"/>
+  <title>pkg-maintainers</title>
+  <email>pkg-maintainers@suse.de</email>
+  <maintainer userid="asmith"/>
+  <maintainer userid="bwilson"/>
+  <maintainer userid="cjones"/>
   <person>
-    <person userid="pmonrealgonzalez"/>
-    <person userid="ayankov"/>
-    <person userid="lmulling"/>
+    <person userid="asmith"/>
+    <person userid="bwilson"/>
+    <person userid="cjones"/>
   </person>
 </group>
 ```
@@ -328,8 +328,8 @@ GET /api/v1/tickets?bugowner={email_or_name}
   `PackageBugownerMember.email` or `PackageBugownerMember.userid`.
 
 This enables queries like:
-- "All tickets for packages maintained by `kernel-bugs@suse.de`"
-- "All tickets for packages where `mschreiner` is the bugowner or a
+- "All tickets for packages maintained by `kernel-team@suse.de`"
+- "All tickets for packages where `jdoe` is the bugowner or a
   member of the bugowner group"
 
 ### Ticket Detail (extended)
@@ -343,12 +343,12 @@ ticket, the response includes:
   "package_name": "curl",
   "bugowner": {
     "type": "group",
-    "name": "crypto-maintainers",
-    "email": "crypto-maintainers@suse.de",
+    "name": "pkg-maintainers",
+    "email": "pkg-maintainers@suse.de",
     "members": [
-      {"userid": "pmonrealgonzalez", "email": "pmonrealgonzalez@suse.com"},
-      {"userid": "ayankov", "email": "ayankov@suse.com"},
-      {"userid": "lmulling", "email": "lmulling@suse.com"}
+      {"userid": "asmith", "email": "alice.smith@suse.com"},
+      {"userid": "bwilson", "email": "bob.wilson@suse.com"},
+      {"userid": "cjones", "email": "carol.jones@suse.com"}
     ]
   }
 }
@@ -361,8 +361,8 @@ For a person bugowner:
   "package_name": "apache2",
   "bugowner": {
     "type": "person",
-    "name": "mschreiner",
-    "email": "martin.schreiner@suse.com",
+    "name": "jdoe",
+    "email": "john.doe@suse.com",
     "members": null
   }
 }
@@ -392,7 +392,7 @@ next to each package name:
 
 ```
 Package: curl
-Bugowner: crypto-maintainers (crypto-maintainers@suse.de)
+Bugowner: pkg-maintainers (pkg-maintainers@suse.de)
 Codestreams:
   ├── SUSE:SLE-15-SP5:Update  [Analysis]
   ├── SUSE:SLE-15-SP6:Update  [Affected]

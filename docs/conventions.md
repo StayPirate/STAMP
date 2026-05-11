@@ -18,6 +18,29 @@
   API response format) and MUST NOT be used in application code or background
   tasks
 
+### Example Data in Documentation
+
+All examples, API response samples, test fixtures, and documentation
+snippets MUST use fictional placeholder data. Never copy real personal
+identifiers — names, email addresses, usernames, Distinguished Names, or
+any other PII — from external systems (IBS, SMELT, AD, Bugzilla, NVD,
+etc.) into the repository.
+
+Approved placeholder patterns:
+
+| Type          | Examples                                             |
+|---------------|------------------------------------------------------|
+| Person names  | `John Doe`, `Alice Smith`, `Bob Wilson`              |
+| Usernames     | `jdoe`, `asmith`, `bwilson`                          |
+| Emails        | `john.doe@suse.com`, `alice.smith@example.com`       |
+| Groups        | `pkg-maintainers`, `kernel-team`                     |
+| Group emails  | `pkg-maintainers@suse.de`                            |
+| LDAP DNs      | `CN=John Doe,OU=User accounts,DC=corp,DC=suse,DC=com` |
+
+When documenting API response formats from external services, first
+sanitize the response by replacing all real identifiers with fictional
+equivalents before inserting it into a specification or documentation file.
+
 ### Username Format
 
 Usernames must be 1–64 characters, start with a letter, and contain only

@@ -715,3 +715,40 @@ The Endpoint Permission Map is a **derived summary index** — the
 authoritative source for each endpoint's access level is the owning
 feature specification. The map exists for cross-referencing convenience;
 it must never contradict the owning spec.
+
+### 23. No real personal data in repository
+
+CRITICAL: ALL content written to files in this repository MUST use
+fictional placeholder data for personal identifiers. This applies to:
+
+- Feature specifications with API response examples
+- Test fixtures and seed data
+- Documentation snippets illustrating external system responses
+- Comments and inline examples
+
+Specifically FORBIDDEN:
+
+- Real email addresses of individuals (e.g., `firstname.lastname@suse.com`)
+- Real IBS/OBS userids that map to actual employees
+- Real names from AD, IBS, Bugzilla, or any external system
+- Real Distinguished Names containing personal information
+- Any identifier copied verbatim from an external API response that
+  identifies a real person
+
+ALLOWED:
+
+- Obviously fictional names (`John Doe`, `Alice Smith`, `jdoe`, `asmith`)
+- Organizational/team addresses (`security-team@suse.de`) only when they
+  are also sanitized to generic equivalents
+- Service hostnames (`build.suse.de`, `smelt.suse.de`) — these are not PII
+
+Before inserting any API response snippet or data sample from an external
+system into a specification or documentation file:
+
+1. Identify all personal identifiers in the snippet
+2. Replace each with a fictional equivalent from the approved placeholder
+   list (see `docs/conventions.md`, "Example Data in Documentation")
+3. Verify that no real personal data remains before saving the file
+
+If you are unsure whether a value constitutes PII, treat it as PII and
+replace it.
