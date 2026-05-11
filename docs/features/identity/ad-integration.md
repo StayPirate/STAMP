@@ -101,42 +101,81 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
    entries. All pages MUST be fetched before proceeding to step 2.
    This is required because Active Directory enforces a server-side
    size limit (currently 5,000 entries for anonymous binds) — a
-   non-paged query will silently truncate the result set if the
-   directory grows beyond this limit, which would cause the safety
-   check to misidentify missing users as deactivation candidates
-2. **Safety check** (evaluated before any `active` field modification):
-   - Compute the **deactivation candidate set**: existing users with
-     `ad_object_guid IS NOT NULL AND active = true` that are either absent
-     from the AD results or have `EMPLOYEESTATUS != Active`
-   - If the AD query returned **zero results**, abort the entire sync
-     immediately with status `failure` and log ERROR:
-     `"AD returned zero entries. Aborting sync to prevent mass
-     deactivation. Verify AD connectivity."`
-   - If the deactivation candidate count exceeds
-     `LDAP_SYNC_MAX_DEACTIVATIONS` (env var, default: **20**), **freeze
-     all `active` field changes** for this run (both deactivations and
-     reactivations):
-     - Log ERROR: `"LDAP sync would deactivate {n} users (threshold:
-       {max}). All active-status changes frozen for this run. Review
-       manually and re-run with increased threshold if intentional."`
-     - Mark the run as `partial`
-     - Steps 3–6 proceed normally but **skip the `active` field**
-     - Step 7 is skipped entirely (no `active` transitions occurred)
-    - If the safety check passes (candidate count within threshold),
-      `active` field updates are enabled for this run
+    non-paged query will silently truncate the result set if the
+    directory grows beyond this limit, which would cause the pre-flight
+    checks to misidentify the truncation as a data quality issue
+2. **Pre-flight checks** (all evaluated before any database modification):
+   three safety checks run in sequence. If ANY check fails, the entire
+   sync aborts immediately with status `failure` — no partial execution,
+   no database writes.
+
+   **Level 1 — Missing User Detection (hard block)**:
+   - Compare all `ad_object_guid` values of existing AD users in Sentinel
+     against those present in the AD results
+   - If ANY previously known user (by `ad_object_guid`) is absent from
+     the AD results → ABORT the entire sync
+   - Rationale: in SUSE AD, users are never deleted — they are marked
+     inactive via `EMPLOYEESTATUS`. A user disappearing from results
+     indicates a technical problem (LDAP result truncation, replication
+     lag, network issue) or an AD policy violation
+   - Log ERROR: `"Pre-flight check failed: {n} previously known users
+     missing from AD results. Missing ad_object_guid values:
+     [{guid_list}]. Aborting sync — this likely indicates an LDAP
+     infrastructure issue."`
+
+   **Level 2 — Mass Deactivation Threshold (configurable block)**:
+   - Count users present in the AD results whose `EMPLOYEESTATUS`
+     indicates inactivity but who are currently `active = true` in
+     Sentinel
+   - If count exceeds `LDAP_SYNC_MAX_DEACTIVATIONS` (env var, default:
+     **20**) → ABORT the entire sync
+   - This catches anomalous mass status changes in AD (different from
+     Level 1 which catches missing records)
+   - Log ERROR: `"Pre-flight check failed: {n} users would be
+     deactivated (threshold: {max}). Affected usernames:
+     [{username_list}]. Aborting sync — review manually and increase
+     LDAP_SYNC_MAX_DEACTIVATIONS if intentional."`
+
+   **Level 3 — Group Membership Sanity (hard block)**:
+   - Check whether ANY user in the AD results has at least one
+     `MEMBEROF` entry
+   - If ZERO users have any `MEMBEROF` entries → ABORT the entire sync
+   - Rationale: in a corporate AD like SUSE, it is statistically
+     impossible for no employee to belong to any group. Zero group
+     memberships indicates the `MEMBEROF` attribute is not being
+     returned (LDAP server misconfiguration, replication issue)
+   - Log ERROR: `"Pre-flight check failed: 0 out of {total} users have
+     MEMBEROF entries. Aborting sync — MEMBEROF attribute is likely not
+     being returned by the LDAP server."`
+
+   **Step 2 flow**:
+   1. Run Level 1 check → if fails, log + abort
+   2. Run Level 2 check → if fails, log + abort
+   3. Run Level 3 check → if fails, log + abort
+   4. All checks pass → proceed to step 3
 
    **Design rationale — static threshold**: the use of a static
-   environment variable (rather than a runtime override via API or CLI
-   flag) is deliberate. A runtime override would reduce the barrier to
-   disabling a critical mass-deactivation protection — an impulsive click
-   or a scripted call could bypass the safety net. Requiring a worker
-   restart to modify `LDAP_SYNC_MAX_DEACTIVATIONS` is "friction by
-   design": it forces a conscious infrastructure action rather than an
-   in-application shortcut. In case of a legitimate organizational change
-   (e.g., a known mass departure), the admin modifies the environment
-   variable, runs the sync manually via
+   environment variable for `LDAP_SYNC_MAX_DEACTIVATIONS` (rather than a
+   runtime override via API or CLI flag) is deliberate. A runtime
+   override would reduce the barrier to disabling a critical
+   mass-deactivation protection — an impulsive click or a scripted call
+   could bypass the safety net. Requiring a worker restart to modify
+   `LDAP_SYNC_MAX_DEACTIVATIONS` is "friction by design": it forces a
+   conscious infrastructure action rather than an in-application
+   shortcut. In case of a legitimate organizational change (e.g., a
+   known mass departure), the admin modifies the environment variable,
+   runs the sync manually via
    `sentinel fetcher run sync_ldap_directory`, verifies the result, and
    restores the original threshold value.
+
+   **Design rationale — all-or-nothing**: the pre-flight checks use an
+   all-or-nothing strategy rather than partial execution. If any check
+   indicates a data quality issue, running the sync with restrictions
+   (e.g., skipping deactivations but processing other changes) could
+   produce an inconsistent state — users updated with stale role data,
+   managers resolved against an incomplete dataset, etc. A full abort
+   is safer: the previous sync's data remains intact, and the admin
+   can investigate the root cause before re-running.
 3. **Upsert users**: for each AD entry:
    - If a `User` record with matching `ad_object_guid` exists, update
      `username`, `full_name`, `email`, `ad_dn`, `ad_synced_at` via
@@ -157,22 +196,16 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
      `ad_object_guid = objectGUID`,
      `ad_dn = distinguishedName`,
      `active = (EMPLOYEESTATUS == "Active")`, `acting_user_id = None`.
-     Note: new user creation always sets `active` regardless of the
-     safety check — the check protects existing users only
-   - If creation raises `UserConflictError` (collision with an existing
-     local user that has `ad_object_guid = NULL`), log WARNING:
-     `"Cannot create AD user '{sAMAccountName}': {field} conflicts
-     with existing local user '{existing_username}'."`, call
-     `record_failed()`, and skip this entry. The admin must resolve the
-     conflict manually (e.g., rename or delete the local user) and
-     re-run the sync. The sync continues processing remaining entries
-   - **Only if the safety check passed**: identify existing AD users
-     (`ad_object_guid IS NOT NULL`) that should be deactivated (absent from AD
-     results or `EMPLOYEESTATUS != Active` while currently `active = true`)
-     and add them to the `newly_deactivated` list. Also identify users
-     with `active = false` that now have `EMPLOYEESTATUS == Active` and
-     add them to the `newly_reactivated` list. No `active` field writes
-     happen in this step
+      Note: new user creation always sets `active` based on
+      `EMPLOYEESTATUS` regardless of any threshold — pre-flight checks
+      protect existing users only
+    - Identify existing AD users (`ad_object_guid IS NOT NULL`) that
+      should be deactivated (absent from AD results or
+      `EMPLOYEESTATUS != Active` while currently `active = true`) and
+      add them to the `newly_deactivated` list. Also identify users
+      with `active = false` that now have `EMPLOYEESTATUS == Active` and
+      add them to the `newly_reactivated` list. No `active` field writes
+      happen in this step
 4. **Resolve managers** (two-pass): after all users have been
    created/updated in step 3, resolve manager relationships. For each
    user with a `manager` DN in AD:
@@ -218,16 +251,13 @@ A `BaseFetcher` subclass registered in the fetcher dashboard.
     `reason = "employee deactivated in Active Directory"` and
    `acting_user_id = None`. The service sets `active = false` and
    executes all side effects atomically. See
-    `docs/features/identity/user-service.md` for the full contract (ticket
-    unassignment, API key revocation, TicketEvent creation). This step
-   is skipped entirely when the safety check froze `active` changes
-   (the `newly_deactivated` list is empty)
+     `docs/features/identity/user-service.md` for the full contract (ticket
+     unassignment, API key revocation, TicketEvent creation)
 7. **Reactivation**: for each user in the `newly_reactivated` list
    (identified in step 3), call `user_service.reactivate_user()` with
    `acting_user_id = None`. See `docs/features/identity/user-service.md` for
-    reactivation semantics (previously unassigned tickets and API keys
-   are NOT restored). This step is skipped entirely when the safety
-   check froze `active` changes
+     reactivation semantics (previously unassigned tickets and API keys
+    are NOT restored)
 8. **Metrics**: report `record_created()` for new users,
    `record_updated()` for updated users, `record_failed()` for entries
    that failed processing
@@ -431,11 +461,20 @@ The `unknown_users` field lists AD usernames found in the group but not
 yet present in the User table (e.g., employees hired after the last
 sync). These users will receive the role at the next sync.
 
+**Validation**:
+
+- `ad_group_cn` MUST contain only characters valid for an Active Directory
+  group CN: letters (any script), numbers, spaces, hyphens, underscores,
+  and dots. Values containing any other characters (including LDAP
+  metacharacters `*`, `(`, `)`, `\`, NUL per RFC 4515) MUST be rejected
+  with 422 / `ROLE_MAPPING_INVALID_GROUP_CN`
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
 | 422 | `VALIDATION_ERROR` | Invalid request body (missing or empty `ad_group_cn`, unrecognized `role`) |
+| 422 | `ROLE_MAPPING_INVALID_GROUP_CN` | `ad_group_cn` contains characters invalid for an AD group CN |
 | 503 | `AD_UNAVAILABLE` | AD is unreachable or the connection timed out (10–15 s timeout) |
 
 ```
@@ -454,6 +493,12 @@ Request body:
 ```
 
 Validation:
+- Returns 422 with code `ROLE_MAPPING_INVALID_GROUP_CN` if `ad_group_cn`
+  contains characters invalid for an AD group CN. Valid characters:
+  letters (any script), numbers, spaces, hyphens, underscores, and dots.
+  This rejects LDAP metacharacters (`*`, `(`, `)`, `\`, NUL per RFC 4515)
+  and any other special characters at the input boundary, preventing LDAP
+  injection before the value is used in any query
 - Returns 422 with code `VALIDATION_ERROR` if `ad_group_cn` exceeds 256
   characters (maximum length matching Active Directory CN limits)
 - Returns 422 with code `ROLE_MAPPING_GROUP_NOT_FOUND` if the AD group
@@ -492,7 +537,11 @@ Processing (all steps execute within a **single database transaction**):
    `ad_group_cn` set to the mapping's group CN and `assigned_by = NULL`
    (if not already present for that user/role/group combination)
 4. Commit the transaction and return the created mapping with the count
-   of affected users
+    of affected users
+5. Emit a structured audit log entry (INFO level, JSON format) containing:
+   `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
+   `affected_users_count`, `timestamp`. This log line follows the
+   application's structured logging conventions (JSON log lines)
 
 ```
 DELETE /api/v1/admin/role-mappings/{id}
@@ -519,7 +568,11 @@ Processing (steps 2–4 execute within a single database transaction):
    `affected_users_count` in the response)
 3. Remove those `UserRole` records
 4. Delete the `RoleMapping` record
-5. Return 200 with the impact summary
+5. Emit a structured audit log entry (INFO level, JSON format) containing:
+   `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
+   `revoked_users_count`, `timestamp`. This log line follows the
+   application's structured logging conventions (JSON log lines)
+6. Return 200 with the impact summary
 
 This endpoint returns 200 with an impact summary instead of 204 because
 the deletion has side effects (role revocation from affected users) that
@@ -618,7 +671,36 @@ Displays a table of all configured role mappings:
   — see the Security rationale section above for the full threat model
 - LDAP queries use anonymous bind — no credentials are stored or
   transmitted. This is consistent with the current AD configuration at
-  `pan.suse.de`
+  `pan.suse.de`. See the Anonymous Bind Risk Acceptance subsection below
+  for the full risk analysis
+### Anonymous Bind Risk Acceptance
+
+Anonymous bind is a deliberate choice imposed by the SUSE AD infrastructure.
+The OpenLDAP proxy at `pan.suse.de` allows anonymous bind and does not require
+service credentials — there is no mechanism to authenticate with a dedicated
+service account.
+
+**Acknowledged risk**: any host with network access to `pan.suse.de:636` can
+read the synced attributes (`sAMAccountName`, `cn`, `mail`, `manager`,
+`EMPLOYEESTATUS`, `MEMBEROF`) without authentication.
+
+**Existing mitigations**:
+
+- **Network access control**: `pan.suse.de` is accessible only from the SUSE
+  internal network. External access requires a VPN or equivalent
+- **Mandatory TLS**: all connections use LDAPS (port 636) with server
+  certificate validation, preventing eavesdropping and man-in-the-middle
+  attacks on the network path
+- **Low sensitivity of synced data**: the attributes retrieved are
+  organizational directory data (names, emails, group memberships, employment
+  status). No passwords, financial data, or other high-sensitivity PII is
+  accessed or stored
+
+**Future adaptation**: if the AD infrastructure is updated to require service
+credentials in the future, the connection should adapt via environment
+variables (`LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`) without code changes. These
+variables are not currently defined because anonymous bind does not use them.
+
 - The `manager` field in AD is trusted as the authoritative source for
   the line manager relationship
 - Role mapping creation validates that the AD group exists before saving
@@ -631,9 +713,48 @@ Displays a table of all configured role mappings:
   amount of AD data stored locally
 - Employee personal data (name, email) is stored locally for operational
   purposes. No additional PII (phone, address, etc.) is imported
+- **Audit logging for role mapping operations**: all role mapping CRUD
+  operations (creation and deletion) are audit-logged via structured
+  logging (JSON log lines at INFO level), capturing the admin identity,
+  mapping details, affected user counts, and timestamps
 - The CLI `manage-user` commands require shell access to the server,
   which is an appropriate security barrier for administrative operations.
   See `docs/features/identity/user-management.md`
+
+### Admin Lockout Risk
+
+If role mappings change such that the LDAP sync removes the `admin` role
+from all users (e.g., the AD group mapped to `admin` is deleted or
+emptied, or the role mapping is deleted), no user will have admin access
+to the web UI or API admin endpoints.
+
+The system does **NOT** enforce a minimum admin count. This is a
+deliberate design choice — adding such enforcement would increase
+complexity across multiple code paths (sync, role mapping deletion,
+manual role removal) with diminishing returns, given that CLI recovery
+is always available.
+
+**Mitigations**:
+
+- **CLI recovery**: the `sentinel manage-user update --username <user>
+  --add-role admin` command is always available to restore admin roles.
+  CLI commands are not subject to RBAC — they require shell access,
+  which is an appropriate security barrier
+- **Safety check (partial coverage)**: the pre-flight safety check in
+  the sync algorithm (Level 2 — mass deactivation threshold) limits
+  the risk of mass user deactivation but does not specifically cover
+  role removal. Role mapping changes that revoke admin from all users
+  will proceed without blocking
+- **Admin self-removal protection**: an admin cannot remove their own
+  Admin role via the API (Business Rule 6), which prevents accidental
+  lockout during manual role management. However, this does not protect
+  against LDAP sync removing the role based on AD group membership
+  changes
+
+A minimum admin count enforcement was evaluated and rejected for
+simplicity — the CLI is a sufficient recovery path, and the scenario
+requires a specific combination of AD group changes or role mapping
+deletions that is unlikely to occur accidentally.
 
 ## Implementation Notes
 
@@ -682,6 +803,25 @@ Displays a table of all configured role mappings:
   absent for the majority of entries (~87%) since most employees are
   not members of relevant AD groups. The sync code MUST handle both
   attributes as optional (use empty string or empty list as defaults)
+- **LDAP operation-level timeouts**: the LDAP connection used by the
+  sync fetcher MUST enforce two distinct timeouts:
+  - **Connection timeout** (`LDAP_CONNECT_TIMEOUT`, default: **30**
+    seconds): maximum time to establish the TCP/TLS connection to
+    `pan.suse.de`. Covers DNS resolution, TCP handshake, and TLS
+    negotiation
+  - **Operation timeout** (`LDAP_OPERATION_TIMEOUT`, default: **120**
+    seconds): maximum time for a single LDAP search operation to
+    complete (including paged result fetching). Covers server-side
+    processing delays and network stalls during data transfer
+  - These timeouts are distinct from and subordinate to the Celery task
+    timeout (300s), which serves as the last-resort safety net. The LDAP
+    timeouts provide faster, more specific failure detection
+  - On connection timeout: the fetcher fails with ERROR:
+    `"LDAP connection timeout after {n}s — unable to establish
+    connection to {uri}. Verify network connectivity and DNS resolution."`
+  - On operation timeout: the fetcher fails with ERROR:
+    `"LDAP operation timeout after {n}s — search operation did not
+    complete. This may indicate server overload or network issues."`
 
 ## Cross-references
 
