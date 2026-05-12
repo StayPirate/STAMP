@@ -246,6 +246,25 @@ only if you understand the impact."
    normally because it inspects only the AD results, not the database.
 3. **Upsert users**: process only AD entries with
    `EMPLOYEESTATUS == Active`. For each active AD entry:
+   - **objectGUID attribute validation**: if the `objectGUID` attribute
+     is missing or empty, log WARNING:
+     `"Skipping AD entry: missing objectGUID attribute (DN:
+     '{distinguishedName}')."`, call `record_failed()`, and skip this
+     entry. The sync continues processing remaining entries. Without
+     `objectGUID`, no matching to local User records is possible and no
+     other attribute validation is meaningful. This per-entry check is
+     complementary to the Level 1 pre-flight safety check: Level 1
+     detects wholesale data loss (known users disappearing from the
+     result set), while this check catches individual entry corruption
+     (e.g., proxy issues, replication lag, corrupted entries) that
+     Level 1 is blind to
+   - **Mail attribute validation**: if the `mail` attribute is missing
+     or empty (after trimming whitespace), log WARNING:
+     `"Skipping AD entry '{sAMAccountName}': missing or empty mail
+     attribute (User.email has a UNIQUE NOT NULL constraint)."`, call
+     `record_failed()`, and skip this entry. The sync continues
+     processing remaining entries. This is a defensive check — as of
+     2026-05, zero active employees in SUSE AD are missing email
    - If a `User` record with matching `ad_object_guid` exists, update
      `username`, `full_name`, `email`, `ad_dn`, `ad_synced_at` via
      `user_service.update_user()`. The `active` field is NOT modified
