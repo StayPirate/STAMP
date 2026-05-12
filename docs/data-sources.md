@@ -548,6 +548,15 @@ source for identity data in Sentinel over the OpenLDAP instance at
   `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
   role mapping). See `docs/features/identity/ad-integration.md` for the full
   specification
+- **Proxy caching**: the `pcache` overlay on `pan.suse.de` caches query
+  results transparently. For the daily background sync this is harmless —
+  staleness within a 24-hour window is acceptable. However, on-demand
+  queries (e.g., verifying whether an AD group exists) may receive cached
+  results rather than real-time data from AD. In practice this means
+  recently created AD groups or recently modified group memberships may not
+  be immediately visible. There is no reliable client-side mechanism to
+  force a cache miss through an LDAP proxy — callers should be aware of
+  this limitation during development and debugging
 - **Documentation**: Internal — no public documentation available
 
 ### SUSE OpenLDAP (`ldap.suse.de`)

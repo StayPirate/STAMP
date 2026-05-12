@@ -363,10 +363,7 @@ only if you understand the impact."
      `update_user()` treats it as a no-op
    - Note: `manager_id` may point to an inactive user — this is by
      design, as the reporting relationship in AD persists regardless of
-     `EMPLOYEESTATUS`. Future features that use `manager_id` for
-     operational purposes (notification escalation, task delegation)
-     must handle the case of an inactive manager (e.g., walk up the
-     manager chain until an active manager is found)
+     `EMPLOYEESTATUS`
 5. **Apply role mappings** (delegated to user service): for each
    `RoleMapping(ad_group_cn, role)` in the database:
    - Identify all users whose `MEMBEROF` (from the AD data already in
@@ -1017,19 +1014,13 @@ deletions that is unlikely to occur accidentally.
   attributes. Additionally, attribute key casing may vary between paged
   and non-paged search results; the sync code MUST use case-insensitive
   attribute key lookups or normalize keys after retrieval
-- **Proxy cache (`pcache`) and "live" queries**: the OpenLDAP proxy at
-  `pan.suse.de` is configured with a `pcache` overlay that may cache
-  query results. For the daily background sync (`sync_ldap_directory`)
-  this is harmless — the cache improves performance and staleness within
-  a 24-hour window is acceptable. However, API endpoints that are
-  described as querying AD "live" (`POST /role-mappings/preview`,
-  `POST /role-mappings` group existence check) may receive cached
-  results from the proxy rather than real-time data from AD. In practice
-  this means recently created AD groups or recently modified group
-  memberships may not be immediately visible. Implementations should
-  document this caveat to administrators but do NOT need to attempt
-  cache bypass — there is no reliable client-side mechanism to force a
-  cache miss through an LDAP proxy
+- **Proxy cache (`pcache`) and "live" queries**: API endpoints described as
+  querying AD "live" (`POST /role-mappings/preview`, `POST /role-mappings`
+  group existence check) may not reflect very recent AD changes. This is a
+  known limitation of the LDAP proxy infrastructure — see
+  `docs/data-sources.md` (SUSE Active Directory section) for technical
+  details. Implementations do NOT need to attempt cache bypass or surface
+  this detail to administrators
 - **Optional attributes**: `manager` is absent for approximately 1%
    of entries (top-level managers with no superior). `MEMBEROF` is
    absent for the majority of entries (~87%) since most employees are
