@@ -65,7 +65,7 @@ model.
 | `cn`                | `full_name`         | Full display name                    |
 | `mail`              | `email`             | Primary email (`.com`)               |
 | `manager`           | `manager_id`        | DN of the direct line manager (resolved to `user.id` FK) |
-| `EMPLOYEESTATUS`    | `active`            | Employee status (`Active` or other)  |
+| `EMPLOYEESTATUS`    | `active`            | Employee status (`Active` or other; absent = skipped)  |
 | `distinguishedName` | `ad_dn`           | Full DN in Active Directory          |
 
 The `MEMBEROF` attribute is read during sync to apply role mappings but
@@ -186,7 +186,10 @@ only if you understand the impact."
    - If count exceeds the `max_deactivations` custom setting (default:
      **20**, configurable 1–100 via the admin dashboard) → ABORT the
      entire sync
-   - Rationale: because the query returns all users (active and
+    - Entries with a missing `EMPLOYEESTATUS` attribute are excluded from
+      this count — only entries with an explicit non-`Active` value are
+      considered deactivation candidates
+    - Rationale: because the query returns all users (active and
      inactive), this check can accurately count how many existing
      Sentinel users would be deactivated in this sync cycle. An
      anomalously high number suggests a mass status change in AD
@@ -244,28 +247,58 @@ only if you understand the impact."
    active users to be deactivated. This is the intended behavior: there
    is no data to protect yet. Level 2 (Group Membership Sanity) operates
    normally because it inspects only the AD results, not the database.
-3. **Upsert users**: process only AD entries with
-   `EMPLOYEESTATUS == Active`. For each active AD entry:
-   - **objectGUID attribute validation**: if the `objectGUID` attribute
-     is missing or empty, log WARNING:
-     `"Skipping AD entry: missing objectGUID attribute (DN:
-     '{distinguishedName}')."`, call `record_failed()`, and skip this
-     entry. The sync continues processing remaining entries. Without
-     `objectGUID`, no matching to local User records is possible and no
-     other attribute validation is meaningful. This per-entry check is
-     complementary to the Level 1 pre-flight safety check: Level 1
-     detects wholesale data loss (known users disappearing from the
-     result set), while this check catches individual entry corruption
-     (e.g., proxy issues, replication lag, corrupted entries) that
-     Level 1 is blind to
-   - **Mail attribute validation**: if the `mail` attribute is missing
-     or empty (after trimming whitespace), log WARNING:
-     `"Skipping AD entry '{sAMAccountName}': missing or empty mail
-     attribute (User.email has a UNIQUE NOT NULL constraint)."`, call
-     `record_failed()`, and skip this entry. The sync continues
-     processing remaining entries. This is a defensive check — as of
-     2026-05, zero active employees in SUSE AD are missing email
-   - If a `User` record with matching `ad_object_guid` exists, update
+    **Step 2b — Entry normalization**: after all pre-flight checks pass,
+    the complete AD result set is validated and separated into three
+    disjoint sets. The order of checks matters — `EMPLOYEESTATUS` is
+    evaluated first because entries without it should not be classified
+    as active or inactive.
+
+    For each entry in the AD result set:
+    1. If `EMPLOYEESTATUS` is missing → add to **skipped** set. Log
+       WARNING: `"AD entry '{sAMAccountName or objectGUID}' has no
+       EMPLOYEESTATUS — skipping."` Call `record_failed()`
+    2. If `EMPLOYEESTATUS` is present and `!= Active` → add to
+       **inactive entries** set
+    3. If `EMPLOYEESTATUS == Active` → check required attributes
+       (`objectGUID`, `sAMAccountName`, `mail`). If any required
+       attribute is missing or empty (after trimming whitespace) → add
+       to **skipped** set. Log WARNING identifying the entry by whatever
+       attributes ARE present (e.g., `"Skipping AD entry: missing
+       objectGUID (DN: '{distinguishedName}')."` or `"AD entry has no
+       sAMAccountName — skipping (ad_object_guid: {objectGUID})."` or
+       `"Skipping AD entry '{sAMAccountName}': missing or empty mail
+       attribute (User.email has a UNIQUE NOT NULL constraint)."`). Call
+       `record_failed()` for each skipped entry
+    4. If `EMPLOYEESTATUS == Active` and all required attributes are
+       present → add to **active entries** set
+
+    After processing all entries, log an aggregated report at INFO level:
+    `"Entry normalization: {N} active, {M} inactive, {K} skipped
+    ({details})."` where `{details}` summarizes skip reasons (e.g.,
+    `"2 missing EMPLOYEESTATUS, 1 missing mail"`).
+
+    The three sets are consumed by subsequent steps:
+    - **Active entries** → steps 3 (upsert), 4 (manager resolution),
+      5 (role mappings)
+    - **Inactive entries** → steps 6 (deactivation) and 7 (reactivation)
+      for building candidate lists
+    - **Skipped entries** → not processed further (already counted via
+      `record_failed()`)
+
+    Pre-flight checks (step 2) operate on the complete, unfiltered AD
+    result set. Normalization runs after pre-flight checks pass and
+    before any database modification.
+
+    **Design note**: entry normalization is complementary to the Level 1
+    pre-flight safety check. Level 1 detects wholesale data loss (known
+    users disappearing from the result set), while normalization catches
+    individual entry corruption (e.g., proxy issues, replication lag,
+    corrupted entries) that Level 1 is blind to.
+
+3. **Upsert users**: process only the **active entries** set from step
+    2b (entries with `EMPLOYEESTATUS == Active` and all required
+    attributes validated). For each active entry:
+    - If a `User` record with matching `ad_object_guid` exists, update
      `username`, `full_name`, `email`, `ad_dn`, `ad_synced_at` via
      `user_service.update_user()`. The `active` field is NOT modified
      in this step — deactivations and reactivations are handled in
@@ -306,14 +339,15 @@ only if you understand the impact."
        abort the sync
 
    After upsert, build the deactivation and reactivation candidate
-   lists from the full AD result set (including inactive entries):
-   - **`newly_deactivated`**: existing AD users (`ad_object_guid IS NOT
-     NULL`) who are currently `active = true` in Sentinel but have
-     `EMPLOYEESTATUS != Active` in the AD results
-   - **`newly_reactivated`**: existing AD users who are currently
-     `active = false` in Sentinel but have `EMPLOYEESTATUS == Active`
-     in the AD results
-   - No `active` field writes happen in this step
+    lists from the **inactive entries** set (step 2b) and the **active
+    entries** set (step 2b):
+    - **`newly_deactivated`**: existing AD users (`ad_object_guid IS NOT
+      NULL`) who are currently `active = true` in Sentinel and appear in
+      the **inactive entries** set
+    - **`newly_reactivated`**: existing AD users who are currently
+      `active = false` in Sentinel and appear in the **active entries**
+      set
+    - No `active` field writes happen in this step
 4. **Resolve managers** (two-pass): after all users have been
    created/updated in step 3, resolve manager relationships. For each
    user with a `manager` DN in AD:
@@ -363,7 +397,8 @@ only if you understand the impact."
      assignments coexist independently, see `docs/features/identity/rbac.md`
      (Role Origins and Coexistence)
 6. **Deactivation side effects**: for each user in the
-   `newly_deactivated` list (identified in step 3), call
+    `newly_deactivated` list (built in step 3 from the **inactive
+    entries** set produced by step 2b), call
    `user_service.deactivate_user()` with
     `reason = "employee deactivated in Active Directory"` and
    `acting_user_id = None`. The service sets `active = false` and
@@ -371,7 +406,8 @@ only if you understand the impact."
      `docs/features/identity/user-service.md` for the full contract (ticket
      unassignment, API key revocation, TicketEvent creation)
 7. **Reactivation**: for each user in the `newly_reactivated` list
-   (identified in step 3), call `user_service.reactivate_user()` with
+    (built in step 3 from the **active entries** set produced by step
+    2b), call `user_service.reactivate_user()` with
    `acting_user_id = None`. See `docs/features/identity/user-service.md` for
      reactivation semantics (previously unassigned tickets and API keys
     are NOT restored)
@@ -957,10 +993,17 @@ deletions that is unlikely to occur accidentally.
   cache bypass — there is no reliable client-side mechanism to force a
   cache miss through an LDAP proxy
 - **Optional attributes**: `manager` is absent for approximately 1%
-  of entries (top-level managers with no superior). `MEMBEROF` is
-  absent for the majority of entries (~87%) since most employees are
-  not members of relevant AD groups. The sync code MUST handle both
-  attributes as optional (use empty string or empty list as defaults)
+   of entries (top-level managers with no superior). `MEMBEROF` is
+   absent for the majority of entries (~87%) since most employees are
+   not members of relevant AD groups. `EMPLOYEESTATUS` may be absent
+   for a small number of entries — these are classified as **skipped**
+   during entry normalization (step 2b) and excluded from all
+   subsequent processing; they remain in the complete result set for
+   pre-flight checks (Level 1 uses the full set). `sAMAccountName`
+   and `mail` may be absent for corrupted entries — also handled by
+   entry normalization (step 2b). The sync code MUST handle all of
+   these attributes as optional (use empty string or empty list as
+   defaults)
 - **LDAP operation-level timeouts**: the LDAP connection used by the
   sync fetcher MUST enforce two distinct timeouts, both configurable
   via custom settings:
