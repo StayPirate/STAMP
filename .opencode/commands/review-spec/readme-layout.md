@@ -54,12 +54,17 @@ after the last review date, signaling the review may be outdated.
 
 Computation (at README generation time):
 
-1. For each spec, get the last commit date of the spec file:
-   `git log -1 --format='%Y-%m-%d' -- docs/features/**/<spec-name>.md`
-2. Compare with `cache.date` from `.tracking.json`:
-   - `git_date > cache.date` → `⚠️`
-   - `git_date <= cache.date` → cell empty (review is current)
+1. For each spec, get the last commit timestamp of the spec file:
+   `git log -1 --date=format:'%Y-%m-%dT%H:%M:%S%z' --format='%cd' -- docs/features/**/<spec-name>.md`
+2. Compare with `cache.last_review` from `.tracking.json` (both are
+   ISO 8601 strings with timezone — lexicographic comparison is correct):
+   - `git_timestamp > cache.last_review` → `⚠️`
+   - `git_timestamp <= cache.last_review` → cell empty (review is current)
    - `cache` is `null` (never reviewed) → `—`
+
+The README table still displays the **date only** (`YYYY-MM-DD`) in the
+"Last Review" column for readability. The full-precision timestamp is
+used only for the stale comparison.
 
 The Stale cell in sub-rows and the Total row is always empty.
 

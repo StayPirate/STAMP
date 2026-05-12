@@ -124,13 +124,21 @@ Task agent (subagent type `general`) to assemble results:
 5. Update `docs/drafts/review/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
 6. Recalculate and update the `cache` field for this spec in
-   `.tracking.json`
+   `.tracking.json`. Set `cache.last_review` to the current ISO 8601
+   timestamp with timezone (e.g., `2026-05-06T14:30:00+0200`) — NOT
+   just `YYYY-MM-DD`
 7. Return: summary (findings per section, per severity, total open,
    total resolved, cross-agent duplicates auto-resolved)
 
 Pass to the assembly subagent: the 5 sets of structured findings +
 spec name + abbreviation + today's date + path to the spec file (for
 the header). Do NOT pass raw spec content.
+
+IMPORTANT: the subagent must generate the ISO 8601 timestamp at
+execution time (e.g., via `date '+%Y-%m-%dT%H:%M:%S%z'`) for
+`cache.last_review`. The `YYYY-MM-DD` date passed in the prompt is
+used only for display purposes (review file headers, finding resolution
+text).
 
 ## Single reviewer
 
@@ -158,10 +166,17 @@ single session:
 7. Update `docs/drafts/review/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
 8. Recalculate and update the `cache` field for each reviewed spec in
-   `.tracking.json`
+   `.tracking.json`. Set `cache.last_review` to the current ISO 8601
+   timestamp with timezone — NOT just `YYYY-MM-DD`
 9. Return: per-spec summary (findings count, severities, cross-agent
    duplicates auto-resolved)
 
 Pass to the subagent: all findings grouped by spec + spec names +
 abbreviations + reviewer name + today's date. Do NOT pass raw spec
 content.
+
+IMPORTANT: the subagent must generate the ISO 8601 timestamp at
+execution time (e.g., via `date '+%Y-%m-%dT%H:%M:%S%z'`) for
+`cache.last_review`. The `YYYY-MM-DD` date passed in the prompt is
+used only for display purposes (review file headers, finding resolution
+text).

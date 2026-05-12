@@ -13,7 +13,7 @@ This document defines the `.tracking.json` schema used by the
       "enabled": true,
       "abbr": "TKT",
       "cache": {
-        "last_review": "2026-05-06",
+        "last_review": "2026-05-06T14:30:00+0200",
         "open": {
           "GAP": { "H": 1, "M": 2, "L": 0 },
           "COH": { "H": 0, "M": 1, "L": 0 },
@@ -44,7 +44,10 @@ This document defines the `.tracking.json` schema used by the
 - `enabled`: whether the spec is tracked for reviews
 - `abbr`: uppercase abbreviation used in finding IDs (e.g., `TKT-GAP-01`)
 - `cache`: review status summary, or `null` if never reviewed
-  - `last_review`: date of last review (YYYY-MM-DD)
+  - `last_review`: timestamp of last review (ISO 8601 with timezone:
+    `YYYY-MM-DDTHH:MM:SS±HHMM`, e.g., `2026-05-06T14:30:00+0200`).
+    This precision is required so that stale detection can identify
+    spec modifications committed on the same day as the review
   - `open`: OPEN finding counts per section, per severity (H/M/L)
   - `resolved`: total count of RESOLVED findings
   - `not_reviewed`: array of section abbreviations still showing
