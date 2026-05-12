@@ -32,6 +32,8 @@ DECISION LOGIC — read carefully:
   "fix GAP"): run the **Fix shortcut** flow below.
 - If the arguments start with `refresh` (e.g., "refresh user-management"
   or "refresh all"): run the **Refresh shortcut** flow below.
+- If the arguments start with `compact` (e.g., "compact all" or
+  "compact user-management"): run the **Compact shortcut** flow below.
 
 IMPORTANT: The examples and syntax descriptions below (like
 "/review-spec fix <target>") are DOCUMENTATION for how shortcuts work.
@@ -94,6 +96,76 @@ Syntax: `/review-spec refresh <target>` where `<target>` is a
      - **Spec disabled**: `Errore: la spec '<name>' è disabilitata. Abilitala prima con '/review-spec' → Toggle spec tracking.`
      - **Spec has zero OPEN findings**: `Nessun finding OPEN per la spec '<name>'.`
 5. On success, jump to step 4e.2.
+
+### Compact shortcut
+
+Syntax: `/review-spec compact <target>` where `<target>` is a
+**spec name** or `all`.
+
+Migrates RESOLVED findings from the legacy verbose format (with
+`**Category**`, separate `**Resolution**` line, and description body)
+to the compact format (single `**Status**: RESOLVED — ...` line). Use
+this to compact existing review files. All future resolution flows
+(fix, auto-resolve, cross-agent dedup, refresh) already write compact
+format natively, so this shortcut is only needed for legacy migration.
+
+#### Shortcut flow
+
+1. Step 1 runs normally (data gathering via subagent).
+2. Steps 2-3 are skipped (no recap table, no mode question).
+3. Validate the target against cached data in `.tracking.json`:
+   - `all` (case-insensitive) → select all enabled specs with
+     `cache.resolved > 0`. If none:
+     `Nessun finding RESOLVED da compattare su spec abilitate.`
+   - Otherwise → treated as a spec name:
+     - **Spec not found**: `Errore: la spec '<name>' non esiste in 'docs/features/'.`
+     - **Spec disabled**: `Errore: la spec '<name>' è disabilitata. Abilitala prima con '/review-spec' → Toggle spec tracking.`
+     - **Spec has zero RESOLVED findings**: `Nessun finding RESOLVED da compattare per la spec '<name>'.`
+4. Execute compaction.
+
+For **single spec**: use Task tool (`general`). Instruct it to read:
+- `.opencode/commands/review-spec/review-file-format.md`
+
+The subagent MUST:
+
+1. Read the review file (`docs/drafts/review/<name>.md`)
+2. Identify all RESOLVED findings still in verbose format. A finding is
+   in verbose format if it has any of: a `**Category**` line, a
+   separate `**Resolution**` line, or a description body below the
+   status/resolution lines
+3. For each verbose RESOLVED finding, rewrite to compact format:
+   - Keep the finding header exactly as-is:
+     `### <ID> — <Title> (<Severity>)`
+   - Merge status and resolution into a single line:
+     `**Status**: RESOLVED — <resolution text> (<date>)`
+   - Remove the `**Category**` line
+   - Remove the original description body
+4. Leave all OPEN findings and already-compact RESOLVED findings
+   untouched
+5. Write the updated review file
+6. `.tracking.json` does NOT change (open/resolved counts are the same)
+7. `README.md` does NOT change (open/resolved counts are the same)
+8. Return: count of findings compacted, approximate line reduction
+
+Pass to the subagent: spec name, review file path.
+
+For **ALL**: launch one Task agent per spec **in parallel** (each
+performing steps 1-8 above independently). After all return, present
+the aggregated recap.
+
+#### Recap
+
+```
+Compattazione completata:
+  <spec-1>: N findings compattati
+  <spec-2>: N findings compattati
+  ...
+
+Totale: N findings compattati su K spec
+```
+
+If a spec has no verbose RESOLVED findings (all already compact):
+`<spec>: già compattata (nessun finding da convertire)`
 
 ---
 
@@ -345,8 +417,8 @@ read:
 
 **Enabling** (disabled → enabled): if cache has OPEN findings, read
 spec + review file, validate each OPEN finding (auto-resolve if no
-longer applicable with resolution
-`Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)`).
+longer applicable using the compact RESOLVED format:
+`**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)`).
 If no OPEN findings, just flip `enabled`.
 
 **Disabling** (enabled → disabled): flip `enabled` to `false`. Leave
@@ -412,11 +484,14 @@ The subagent MUST:
      applies. Include a brief reason
    - `cross_agent_duplicate` — matches a RESOLVED finding in another
      section. Include the ID of the matched finding
-8. Update the review file:
-   - Auto-resolved findings: set status to RESOLVED with resolution
-     `Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)`
-   - Cross-agent duplicates: set status to RESOLVED with resolution
-     `Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
+8. Update the review file using the compact RESOLVED format (see
+   `review-file-format.md`):
+   - Auto-resolved findings:
+     `**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)`
+   - Cross-agent duplicates:
+     `**Status**: RESOLVED — Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
+   - Remove `**Category**` line and description body for each resolved
+     finding
    - Preserve finding order and all other content unchanged
 9. Update `.tracking.json` cache (recalculate open/resolved counts)
 10. Update `docs/drafts/review/README.md`

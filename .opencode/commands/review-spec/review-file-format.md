@@ -81,17 +81,25 @@ to `docs/drafts/review/<spec-name>.md` by the `/review-spec` command.
 <Detailed description of the finding>
 ```
 
-## Finding format — RESOLVED
+## Finding format — RESOLVED (compact)
+
+RESOLVED findings use a compact single-line format. The original
+detailed description and category are removed — only the identity
+(ID, title, severity) and the resolution are preserved. This keeps
+review files lean while retaining enough information for cross-agent
+deduplication and regression checks.
 
 ```markdown
 ### <ABBR>-<PREFIX>-<NN> — <Title> (<Severity>)
 
-**Category**: <category>
-**Status**: RESOLVED
-**Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
-
-<Original detailed description of the finding>
+**Status**: RESOLVED — <Short description of what was changed and where> (<YYYY-MM-DD>)
 ```
+
+Every flow that marks a finding as RESOLVED (fix, auto-resolve,
+cross-agent dedup, refresh) MUST write the compact format. The verbose
+format (with `**Category**`, `**Resolution**` on a separate line, and
+full description body) is legacy and MUST be compacted when encountered
+during a write operation on the review file.
 
 ## New file skeleton
 

@@ -22,17 +22,18 @@ it but include the reason in the confirmation.
 
 ## Step 2: Update the review file
 
-Mark the finding as RESOLVED in `docs/drafts/review/<name>.md`:
+Mark the finding as RESOLVED in `docs/drafts/review/<name>.md` using
+the compact format (see `review-file-format.md`):
 
 ```markdown
 ### <ID> — <Title> (<Severity>)
 
-**Category**: <category>
-**Status**: RESOLVED
-**Resolution**: <Short description of what was changed and where> (<YYYY-MM-DD>)
-
-<Original detailed description of the finding>
+**Status**: RESOLVED — <Short description of what was changed and where> (<YYYY-MM-DD>)
 ```
+
+Remove the `**Category**` line and the original detailed description.
+Only the finding header (ID, title, severity) and the single-line
+status with resolution text are kept.
 
 ## Step 3: Update README index
 
