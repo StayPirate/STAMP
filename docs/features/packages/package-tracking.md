@@ -7,213 +7,118 @@ SUSE products in the context of tickets. See
 `docs/features/tickets/tickets.md` for the ticket specification
 (identification, creation, lifecycle).
 
-## Motivation
+## Design Rationale
 
-The current model conflates three orthogonal concepts in a single
-`PackageStatus` enum:
+The package tracking model separates three orthogonal concepts into
+independent dimensions:
 
-1. **Affectedness** — is the source code vulnerable? (`AFFECTED` vs
-   `NOT_AFFECTED`)
-2. **Eligibility** — will this product receive the fix? (`AFFECTED` vs
-   `AFFECTED_RESOLVED`)
-3. **Delivery** — has the fix been distributed? (`RELEASED`)
+1. **Affectedness** — is the source code vulnerable?
+2. **Eligibility** — will this product receive the fix?
+3. **Delivery** — has the fix been distributed?
 
-Additionally, the model is tightly coupled to the IBS codestream workflow.
-A new workflow is emerging for future SUSE products (SLFO) where packages
-live on git (`src.suse.de`) instead of IBS. The model must support both
-workflows transparently.
+Each dimension has its own status values, update rules, and override
+mechanisms. This separation keeps business logic simple: status
+propagation never needs to consider eligibility, eligibility never
+changes the status label, and delivery tracking is fully independent
+from both.
 
-This redesign separates the three concepts into independent dimensions,
-introduces a workflow-agnostic entity hierarchy, and simplifies
-propagation logic.
+The entity hierarchy (Ticket → Package → Track → Product) uses a
+workflow-agnostic abstraction ("track") that covers both IBS codestreams
+and git branches, allowing the same business logic to operate
+transparently across both workflows.
 
 ## Design Decisions
 
-### 1. New explicit entity: TicketPackage
+### 1. Explicit TicketPackage entity
 
-A `TicketPackage` table is introduced as the first level under Ticket.
-Today the "package" is an implicit grouping by `package_name` across
-`TicketPackageCodestream` records. With two workflows potentially
-coexisting under the same package, an explicit entity provides:
+A `TicketPackage` table anchors a source package within a ticket,
+providing:
 
 - A clear anchor for package-level metadata (bugowner join, future notes)
 - A single grouping point for tracks of both workflows
 - Cleaner API design (`/tickets/{id}/packages/{id}/tracks`)
 
-### 2. TicketPackageTrack replaces TicketPackageCodestream
+### 2. Workflow-agnostic "track" abstraction
 
-The intermediate level is renamed from "codestream" to "track" — a
-neutral term that describes "a maintenance track for a package that serves
-one or more products." This abstraction covers:
-
-- IBS codestreams (e.g., `SUSE:SLE-15-SP6:Update`)
-- Git branches (e.g., `slfo-main`, `slfo-1.2` on `src.suse.de/pool/{package}`)
-
-### 3. Single table with workflow_type discriminator
-
-A single `TicketPackageTrack` table with a `workflow_type` enum (`ibs` |
-`git`) discriminates between workflows. This was chosen over separate
-tables or base+satellite patterns because:
-
-- The differences between workflows are minimal at the data level
-- Business logic (status propagation, eligibility, rollup) is identical
-- Separate tables would duplicate logic everywhere (queries, propagation, UI)
-
-### 4. Generic reference field
+The intermediate level is called "track" — a neutral term for "a
+maintenance track for a package that serves one or more products." A
+single `TicketPackageTrack` table with a `workflow_type` enum (`ibs` |
+`git`) discriminates between IBS codestreams and git branches. This was
+chosen over separate tables because the differences are minimal at the
+data level and all business logic (status propagation, eligibility,
+gates) is identical.
 
 A single `reference` VARCHAR field identifies the track in its external
-system:
-
-- IBS: the codestream project name (e.g., `SUSE:SLE-15-SP6:Update`)
-- Git: the branch name (e.g., `slfo-main`)
-
-No separate `name` field — the reference is already human-readable in
-both cases. For git, the full repository URL is derivable from
+system (IBS codestream project name or git branch name). Both are
+human-readable. For git, the full repository URL is derivable from
 `package_name` (convention: `src.suse.de/pool/{package_name}`).
-
-### 5. workflow_type inferred by Sentinel
 
 SMELT will serve both IBS and git tracks but will not provide an explicit
 workflow type indicator. Sentinel infers `workflow_type` at ingestion time
-(e.g., IBS codestreams match `^(SUSE|openSUSE):.*`) and persists it. The
-heuristic is centralized in the SMELT ingestion service.
+(e.g., IBS codestreams match `^(SUSE|openSUSE):.*`). Both workflows can
+coexist under the same package.
 
-### 6. Both workflows can coexist under the same package
+### 3. Eligibility as a separate dimension
 
-A single package in a ticket can have both IBS tracks (for legacy
-products) and git tracks (for SLFO products). This is expected during the
-transition period and possibly long-term.
-
-### 7. SMELT handles both workflows
-
-The resolution flow (package → tracks → products) remains unified through
-SMELT's `maintainedpackage` endpoint (or its future evolution). No
-separate API is needed for git track discovery.
-
-### 8. Separate eligibility from affectedness (remove AFFECTED_RESOLVED)
-
-The `AFFECTED_RESOLVED` value is removed from the `PackageStatus` enum.
-Product eligibility (whether a product will receive the fix) becomes a
+Product eligibility (whether a product will receive the fix) is a
 separate persisted boolean (`eligible`) on `TicketPackageProduct`, with
-its own override mechanism (`is_eligible_override`).
+its own override mechanism (`is_eligible_override`). This keeps status
+propagation unidirectional (track → product) with no rollup: the track
+stays `AFFECTED` regardless of whether any product is eligible. CVSS
+score changes only flip the `eligible` flag — no status changes, no
+rollup cascades.
 
-#### Historical Context
+### 4. Delivery as a separate dimension
 
-The original model used `AFFECTED_RESOLVED` to represent "the product is
-affected, but no fix will be delivered because the product is not
-eligible" — encoding two orthogonal concepts in a single status value.
+Delivery progress is tracked independently from affectedness:
 
-#### Problems Solved
-
-1. **Codestream eligibility rollup eliminated** — the most complex piece
-   of status propagation. When all products under a codestream became
-   `AFFECTED_RESOLVED`, the codestream itself was set to
-   `AFFECTED_RESOLVED`. This bidirectional rollup between track and
-   product levels is eliminated entirely. The track stays `AFFECTED` and
-   the question "is there work to do on this track?" is answered by
-   checking whether any product under it is eligible.
-
-2. **Status ping-pong eliminated** — CVSS score changes caused products
-   to flip between `AFFECTED` and `AFFECTED_RESOLVED`, which triggered
-   the codestream rollup, which triggered ticket gate re-evaluation.
-   With the new model, only the `eligible` flag changes. No status
-   change, no rollup, direct gate re-evaluation.
-
-3. **Semantic confusion resolved** — a VA setting "Affected" on a track
-   would see some products turn green. With the new model, `AFFECTED`
-   means `AFFECTED` everywhere — ineligible products are visually
-   distinguished (greyed out) without changing the status label.
-
-4. **Gate simplified** — the Resolved gate no longer treats
-   `AFFECTED_RESOLVED` as a final state. The new gate is explicit: "all
-   records in a final status, OR AFFECTED and not eligible."
-
-### 9. Separate delivery from affectedness (remove RELEASED from PackageStatus)
-
-The `RELEASED` status is removed from the `PackageStatus` enum and
-replaced by two independent mechanisms:
-
-- **Delivery status** (`delivery_status` column on `TicketPackageTrack`):
-  tracks the progress of the fix through the maintenance pipeline
-  (PENDING → IN_PROGRESS → RELEASED), derived from SR/RR tracking data
+- **Delivery status** (`delivery_status` on `TicketPackageTrack`):
+  tracks the fix through the maintenance pipeline (PENDING →
+  IN_PROGRESS → RELEASED), derived from SR/RR tracking data
 - **Product release confirmation** (`released_at` on
-  `TicketPackageProduct`): confirms that the fix has appeared in the
-  product's update repository via `updateinfo.xml` verification
+  `TicketPackageProduct`): confirms the fix appeared in the product's
+  update repository via `updateinfo.xml` verification
 
-Source code is either affected or not affected. Once a fix is applied, the
-code is no longer vulnerable — calling it "Released" describes where the
-fix went, not what the code is.
+The `delivery_status` is persisted as a column (not computed from SR/RR
+joins) because the ticket resolution gate queries it frequently and
+anomaly detection benefits from having both axes on the same record.
+Disalignment risk is mitigated by `ticket_mutations` and the
+`RequestSyncFetcher` reconciliation phase (see
+[Delivery Reconciliation](#delivery-reconciliation)).
 
-### 10. FIXED as a new affectedness state
+### 5. FIXED as a distinct affectedness state
 
-A new `FIXED` value is added to `PackageStatus` to distinguish "was
-vulnerable, now remediated" from "was never vulnerable"
-(`NOT_AFFECTED`):
+`FIXED` distinguishes "was vulnerable, now remediated" from "was never
+vulnerable" (`NOT_AFFECTED`). Both mean the code is not currently
+vulnerable, but they carry different history and workload implications.
 
-- `NOT_AFFECTED` — no action was ever necessary (analysis only)
-- `FIXED` — action was taken, vulnerability has been remediated
+- The VA can set `FIXED` manually via the dropdown
+- The system sets `FIXED` automatically when delivery reaches `RELEASED`
+  (one-shot event, not continuous reconciliation)
+- The VA can change `FIXED` back to `AFFECTED` if the fix is insufficient
+- No `is_status_override` flag is needed on tracks — the VA has direct
+  control via the dropdown
 
-Both mean "the code today is not vulnerable," but they carry different
-history and workload implications.
+### 6. Affectedness and delivery are independent axes
 
-**Transition behavior**:
+Neither axis resets nor constrains the other. "Anomalous" combinations
+(e.g., `AFFECTED` + `RELEASED`) are valid system states that signal
+situations requiring VA attention. See
+[Anomaly Detection](#anomaly-detection-future-review-queue).
 
-- The VA can set `FIXED` manually at any time via the dropdown (e.g.,
-  when they know the fix exists but has not been released yet)
-- The system sets `FIXED` automatically when it detects a release (RR
-  accepted) — this is a one-shot event, not a continuous reconciliation
-- The VA can change `FIXED` back to `AFFECTED` if they determine the
-  fix is insufficient
-- No `is_status_override` flag is needed on the track — the VA has
-  direct control via the dropdown and the automatic transition only
-  fires on discrete release events
+### 7. Soft-deletion instead of IGNORED status
 
-### 11. Delivery status persisted as a column
+Spurious tracks or products are handled by soft-deletion rather than a
+special `IGNORED` status. A record that should not exist is removed, not
+marked with a status value. See [Soft-Deletion](#soft-deletion).
 
-The `delivery_status` is persisted as a column on `TicketPackageTrack`
-rather than computed at query time. Reasons:
+### 8. Soft-deleted records continue to receive updates
 
-- With the decision to keep affectedness and delivery as independent axes
-  (Decision 12), the delivery status is first-class data
-- The ticket resolution gate is a frequent and critical operation — it
-  should not require complex joins with SR/RR tables
-- Anomaly detection (future Review Queue) is simpler with both values
-  as columns on the same record
-- Disalignment risk is mitigated: updates go through `ticket_mutations`,
-  and the `RequestSyncFetcher` includes a reconciliation phase (see
-  [Delivery Reconciliation](#delivery-reconciliation))
-
-### 12. Affectedness and delivery are independent axes
-
-The affectedness status (set by the VA) and the delivery status (derived
-from IBS SR/RR tracking) are tracked independently. Neither axis resets
-or constrains the other.
-
-This means "anomalous" combinations are possible (e.g., `AFFECTED` +
-`RELEASED`). These combinations are valid system states that carry
-diagnostic meaning — they signal situations requiring VA attention.
-See [Anomaly Detection](#anomaly-detection-future-review-queue).
-
-### 13. Remove IGNORED, replace with soft-deletion
-
-The `IGNORED` status is removed from `PackageStatus`. Its use case
-(marking spurious tracks or products that should not be in the ticket)
-is handled by a soft-deletion mechanism that is more semantically
-correct: a track that should not exist is removed, not marked with a
-special status.
-
-See [Soft-Deletion](#soft-deletion) for the full mechanism.
-
-### 14. Soft-deleted records continue to receive updates
-
-Records that have been soft-deleted by a VA are excluded from normal
-views, gates, and anomaly detection, but they **continue to receive
-updates** from propagation, delivery tracking, eligibility recalculation,
-and release detection. Their state is always current.
-
-This eliminates the need for special reconciliation logic at restore
-time — restoring a record simply sets `deleted_by = NULL`, and the
-record's state already reflects the current reality.
+Soft-deleted records are excluded from normal views, gates, and anomaly
+detection, but they **continue to receive updates** from propagation,
+delivery tracking, eligibility recalculation, and release detection.
+Their state is always current, eliminating the need for reconciliation
+logic at restore time.
 
 ---
 
