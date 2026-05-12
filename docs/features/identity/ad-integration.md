@@ -300,17 +300,21 @@ only if you understand the impact."
    user with a `manager` DN in AD:
    - Look up the manager's DN in the current sync batch to find the
      corresponding `objectGUID`
-   - Find the User record with that `ad_object_guid` and set
-     `manager_id` to that user's `id` (FK)
+   - Find the User record with that `ad_object_guid` and resolve the
+     target `manager_id` (the manager's `user.id`)
    - If the manager is not found in the User table (e.g., the manager
-     is outside the synced OU), set `manager_id = NULL`
+     is outside the synced OU), the target `manager_id` is `NULL`
+   - Call `user_service.update_user(user_id=user.id,
+     manager_id=resolved_manager_id, acting_user_id=None)` to apply
+     the resolved value. If the user's `manager_id` is already correct,
+     `update_user()` treats it as a no-op
    - Note: `manager_id` may point to an inactive user — this is by
      design, as the reporting relationship in AD persists regardless of
      `EMPLOYEESTATUS`. Future features that use `manager_id` for
      operational purposes (notification escalation, task delegation)
      must handle the case of an inactive manager (e.g., walk up the
      manager chain until an active manager is found)
-5. **Apply role mappings** (incremental per mapping): for each
+5. **Apply role mappings** (delegated to user service): for each
    `RoleMapping(ad_group_cn, role)` in the database:
    - Identify all users whose `MEMBEROF` (from the AD data already in
      memory) includes this mapping's `ad_group_cn`. Matching extracts
@@ -328,12 +332,11 @@ only if you understand the impact."
      in different OUs share the same CN. In the current SUSE AD (~85
      relevant groups), zero such collisions exist. Full-DN matching
      support is deferred unless a real collision emerges
-   - **Add**: for each user in the AD group who does not have a
-     `UserRole(user_id, role, ad_group_cn)` record in the DB, create
-     one with `assigned_by = NULL`
-   - **Remove**: for each `UserRole` record in the DB with this
-     specific `(role, ad_group_cn)` whose `user_id` is no longer in
-     the AD group, delete the record
+   - Call `user_service.sync_role_mapping(role, ad_group_cn,
+     current_member_user_ids, acting_user_id=None)`. The service
+     creates `UserRole` records for users newly in the group and
+     removes records for users no longer in the group (see
+     `docs/features/identity/user-service.md` for the full contract)
    - Each mapping operates exclusively on records tagged with its own
      `ad_group_cn`. Manual roles (`_manual`) and records from other
      mappings are never touched. Processing order is irrelevant
@@ -656,15 +659,18 @@ Processing (all steps execute within a **single database transaction**):
    the transaction is not committed — no RoleMapping or UserRole records
    are created (the global `AD_UNAVAILABLE` / 503 convention applies)
 2. Create the `RoleMapping` record
-3. For each member found in the User table, create a `UserRole` with
-   `ad_group_cn` set to the mapping's group CN and `assigned_by = NULL`
-   (if not already present for that user/role/group combination).
-   Duplicates are silently skipped — the unique constraint on
-   `(user_id, role, ad_group_cn)` serves as the authoritative guard
+3. Call `user_service.sync_role_mapping(role, ad_group_cn,
+   member_user_ids, acting_user_id=acting_admin.id)` where
+   `member_user_ids` is the set of User IDs matching the AD group
+   members. The service creates `UserRole` records for each member
+   and returns `(added_count, removed_count)` (see
+   `docs/features/identity/user-service.md` for the full contract).
+   For a new mapping, `removed_count` is always 0
 4. Commit the transaction and return the created mapping.
-   `affected_users_count` reflects only **newly created** `UserRole`
-   records, not pre-existing ones (e.g., if a concurrent sync already
-   applied the same mapping, those users are not counted)
+   `affected_users_count` reflects the `added_count` returned by
+   the service — only newly created `UserRole` records, not
+   pre-existing ones (e.g., if a concurrent sync already applied the
+   same mapping, those users are not counted)
 5. Emit a structured audit log entry (INFO level, JSON format) containing:
    `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
    `affected_users_count`, `timestamp`. This log line follows the
@@ -690,16 +696,20 @@ Response (**200**):
 
 Processing (steps 2–4 execute within a single database transaction):
 1. Look up the `RoleMapping` record by ID — return 404 if not found
-2. Count `UserRole` records where `ad_group_cn` matches the mapping's
-   group CN and `role` matches the mapping's role (this is the
-   `affected_users_count` in the response)
-3. Remove those `UserRole` records
-4. Delete the `RoleMapping` record
-5. Emit a structured audit log entry (INFO level, JSON format) containing:
+2. Call `user_service.delete_role_mapping_roles(role, ad_group_cn,
+   acting_user_id=acting_admin.id)`. The service removes all `UserRole`
+   records tagged with this mapping's `(role, ad_group_cn)` and returns
+   `affected_users_count`. If the acting admin would lose their only
+   source of admin role, the service rejects with
+   `SelfRoleRemovalError` — the endpoint maps this to 409 /
+   `USER_SELF_ROLE_REMOVAL` (see
+   `docs/features/identity/user-service.md` for the full contract)
+3. Delete the `RoleMapping` record
+4. Emit a structured audit log entry (INFO level, JSON format) containing:
    `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
    `revoked_users_count`, `timestamp`. This log line follows the
    application's structured logging conventions (JSON log lines)
-6. Return 200 with the impact summary
+5. Return 200 with the impact summary
 
 This endpoint returns 200 with an impact summary instead of 204 because
 the deletion has side effects (role revocation from affected users) that
@@ -710,6 +720,7 @@ the admin needs to confirm in the response.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404 | `RESOURCE_NOT_FOUND` | Role mapping not found |
+| 409 | `USER_SELF_ROLE_REMOVAL` | Deleting this mapping would remove the acting user's only source of admin role (via `user_service.delete_role_mapping_roles()`) |
 
 Note: users who also have the same role via a different AD group mapping
 or with `ad_group_cn = '_manual'` will retain the role.

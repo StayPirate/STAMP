@@ -66,8 +66,10 @@ Fields managed by dedicated operations have their own ownership rules:
   AD users, this field is managed exclusively by LDAP sync — manual
   deactivation/reactivation by admins is blocked (see AD Active Status
   Ownership below)
-- Roles — managed by `update_roles()`, available to admins for manual
-  roles (`ad_group_cn = '_manual'`)
+- Roles — managed by `update_roles()` for per-user assignment,
+    `sync_role_mapping()` and `delete_role_mapping_roles()` for
+    AD group mapping operations. Available to admins for manual roles
+    (`ad_group_cn = '_manual'`)
 - `password_hash` — managed by `reset_password()`, which independently
   blocks AD users via `ADUserPasswordError`
 
@@ -111,6 +113,19 @@ to an Active Directory object. All LDAP sync operations match by
 association and historical audit trail.
 
 ## Inactive User Management Principle
+
+### Excluded fields
+
+The `last_login_at` field is exempt from `user_service` centralization.
+It is a login-path auditing timestamp managed directly by the
+authentication layer (local login endpoint and SSO callback handler).
+It has no business rules, no side effects, and no guards — routing it
+through the service would add indirection with no value. See
+`docs/features/identity/local-authentication.md` and
+`docs/features/identity/sso-authentication.md` for where this field is
+updated.
+
+### Deactivation and management
 
 Deactivation blocks login and revokes active sessions/keys, but does not
 prevent administrative modifications to the account. All management
@@ -308,6 +323,86 @@ Adds or removes roles for a user.
 
 **TicketEvent**: none (role changes do not directly affect tickets)
 
+### `sync_role_mapping()`
+
+Synchronizes `UserRole` records for a specific role mapping against the
+current set of AD group members. Creates missing records for users in
+the group and removes records for users no longer in the group.
+
+This function centralizes all bulk role operations triggered by AD group
+membership. It is called by the LDAP sync fetcher (step 5) and by the
+`POST /api/v1/admin/role-mappings` endpoint when a new mapping is
+created.
+
+**Parameters**:
+
+| Parameter                 | Type            | Required | Description                          |
+|---------------------------|-----------------|----------|--------------------------------------|
+| `role`                    | `Role`          | Yes      | The role to sync                     |
+| `ad_group_cn`             | `str`           | Yes      | The AD group CN that tags these roles |
+| `current_member_user_ids` | `set[UUID]`     | Yes      | User IDs currently in the AD group   |
+| `acting_user_id`          | `UUID \| None`  | No       | Who is performing the action         |
+
+**Behavior**:
+
+1. Query all existing `UserRole` records where `role` and `ad_group_cn`
+   match the provided values. Collect their `user_id` values as
+   `existing_user_ids`
+2. Compute:
+   - `to_add = current_member_user_ids - existing_user_ids`
+   - `to_remove = existing_user_ids - current_member_user_ids`
+3. **Self-admin guard**: if `acting_user_id` is not None, `role` is
+   `Admin`, and `acting_user_id` is in `to_remove`: check whether the
+   acting user has any other `UserRole` granting `Admin` (from a
+   different `ad_group_cn` or from `_manual`). If not, reject with
+   `SelfRoleRemovalError`
+4. For each user in `to_add`, create `UserRole(user_id, role,
+   ad_group_cn)` with `assigned_by = NULL` (AD-derived roles are
+   system-assigned regardless of the initiator)
+5. Delete all `UserRole` records where `user_id` is in `to_remove`,
+   `role` matches, and `ad_group_cn` matches
+6. Log INFO: mapping details, added count, removed count
+7. Return `(added_count, removed_count)`
+
+**Idempotency**: calling this function twice with the same
+`current_member_user_ids` produces the same result — the second call
+finds nothing to add or remove. The UNIQUE constraint on
+`(user_id, role, ad_group_cn)` prevents duplicate records.
+
+**TicketEvent**: none (role changes do not directly affect tickets)
+
+### `delete_role_mapping_roles()`
+
+Removes all `UserRole` records associated with a specific role mapping.
+Used when a role mapping is deleted via
+`DELETE /api/v1/admin/role-mappings/{id}`.
+
+**Parameters**:
+
+| Parameter        | Type            | Required | Description                          |
+|------------------|-----------------|----------|--------------------------------------|
+| `role`           | `Role`          | Yes      | The role to remove                   |
+| `ad_group_cn`    | `str`           | Yes      | The AD group CN that tags these roles |
+| `acting_user_id` | `UUID \| None`  | No       | Who is performing the action         |
+
+**Behavior**:
+
+1. Query all `UserRole` records where `role` and `ad_group_cn` match.
+   Collect their `user_id` values as `affected_user_ids`
+2. **Self-admin guard**: if `acting_user_id` is not None, `role` is
+   `Admin`, and `acting_user_id` is in `affected_user_ids`: check
+   whether the acting user has any other `UserRole` granting `Admin`
+   (from a different `ad_group_cn` or from `_manual`). If not, reject
+   the entire operation with `SelfRoleRemovalError`: "Cannot delete
+   this role mapping because it is the sole source of your admin role.
+   Assign admin via another mapping or manually before retrying."
+   No `UserRole` records are removed — the operation is atomic
+3. Delete all matching `UserRole` records
+4. Log INFO: mapping details, affected users count
+5. Return `affected_users_count`
+
+**TicketEvent**: none (role changes do not directly affect tickets)
+
 ### `deactivate_user()`
 
 Deactivates a user account and triggers all associated side effects.
@@ -497,7 +592,8 @@ a partially-deactivated state (e.g., marked inactive but tickets not
 unassigned).
 
 Operations without side effects (`create_user`, `update_user`,
-`update_roles`, `reactivate_user`) are also transactional but the
+`update_roles`, `sync_role_mapping`, `delete_role_mapping_roles`,
+`reactivate_user`) are also transactional but the
 atomicity requirement is less critical since they perform a single
 logical write.
 
@@ -551,7 +647,7 @@ for the API-layer mapping.
 | `UserNotFoundError` | User lookup by ID or username finds no match |
 | `UserConflictError` | Duplicate username or email (uniqueness constraint violation) |
 | `UsernameFormatError` | Username does not conform to the format defined in `docs/conventions.md` (Username Format) |
-| `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role |
+| `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role — raised by `update_roles()`, `sync_role_mapping()`, and `delete_role_mapping_roles()` when the operation would leave the acting user without any Admin role source |
 | `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
 | `ADUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an AD user (`ad_object_guid IS NOT NULL`) — active status is managed exclusively by directory sync |
 | `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
@@ -564,7 +660,7 @@ for the API-layer mapping.
 | Spec | Relationship |
 |---|---|
 | `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
-| `docs/features/identity/ad-integration.md` | LDAP sync fetcher calls `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` for each synced employee |
+| `docs/features/identity/ad-integration.md` | LDAP sync fetcher calls `create_user`, `update_user`, `sync_role_mapping`, `deactivate_user`, `reactivate_user`. Role mapping CRUD endpoints call `sync_role_mapping` and `delete_role_mapping_roles` |
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
