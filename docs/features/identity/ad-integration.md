@@ -305,7 +305,7 @@ only if you understand the impact."
      steps 6 and 7 respectively
      - If `update_user()` raises `UserConflictError` (e.g., the AD
        `sAMAccountName` changed to a value that collides with another
-       existing user's username or email), `UserValidationError` (e.g.,
+       existing user's username or email), `UsernameFormatError` (e.g.,
        the new `sAMAccountName` fails Sentinel's username format rules),
        or `UserNotFoundError` (race condition — user was deleted between
        lookup and update), log WARNING:
@@ -426,7 +426,45 @@ only if you understand the impact."
    `newly_reactivated` lists are mutually exclusive by construction
    (a user cannot be both `active = true` and `active = false` in the
    DB). Therefore the ordering of these steps does not affect
-   correctness or TicketEvent content.
+    correctness or TicketEvent content.
+
+#### Transaction boundaries
+
+Steps 3–7 use **per-service-call transactions** — each invocation of a
+`user_service` function (`create_user`, `update_user`, `deactivate_user`,
+`reactivate_user`, `sync_role_mapping`) commits independently. There is
+no single transaction wrapping the entire sync run.
+
+**Crash recovery**: if the sync process crashes mid-execution (e.g.,
+after upserting 1,500 of 3,200 users), the database contains a partially
+updated state — some users reflect the latest AD data while others
+retain data from the previous sync. This is safe because:
+
+1. **Idempotency** (Business Rule 8): re-running the sync with the same
+   AD data produces the same final state regardless of the starting
+   point. Users already processed are updated to the same values (no-op),
+   and unprocessed users are brought up to date
+2. **No cross-user dependencies within a step**: each user's upsert,
+   manager resolution, role mapping, deactivation, or reactivation is
+   independent of other users' processing state. A partially completed
+   step does not leave any individual user in an inconsistent state
+3. **Manager resolution convergence**: step 4 (manager resolution) may
+   set `manager_id = NULL` for users whose manager was not yet upserted
+   in a partial run. On re-run, the manager will exist and the FK is
+   resolved correctly
+
+A single wrapping transaction is not used because: (a) the sync
+processes thousands of users — holding a transaction open for the full
+duration would risk lock contention, memory pressure, and long rollback
+times on failure; (b) the skip-and-continue error handling in step 3
+(logging a warning and proceeding to the next entry) is incompatible
+with a single transaction that rolls back entirely on failure.
+
+This model contrasts with the role mapping CRUD endpoints (POST / DELETE
+`/role-mappings`), which wrap all their operations — rule persistence,
+user re-evaluation, and TicketEvent creation — in a **single atomic
+transaction**. CRUD operations are short, admin-initiated, and expected
+to either succeed fully or roll back entirely.
 
 #### Active status ownership
 

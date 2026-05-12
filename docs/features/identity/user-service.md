@@ -246,7 +246,7 @@ their own business rules.
    no source of truth for local users.
 4. **Username validation** (if `username` is provided): normalize and
    validate the format per the rules in `docs/conventions.md` (section
-   "Username Format"). If invalid, raise `UserValidationError`. Verify
+   "Username Format"). If invalid, raise `UsernameFormatError`. Verify
    uniqueness in the database (excluding the current user, including
    inactive users). If violated, raise `UserConflictError`. For AD
    users, this step is reached only by the sync fetcher (human callers
