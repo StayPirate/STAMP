@@ -259,7 +259,7 @@ any active ticket.
 2. For each `package_name`, check if there exists at least one
    `TicketPackage` record where:
    - `TicketPackage.package_name` matches, AND
-   - `TicketPackage.deleted_by IS NULL` (not soft-deleted), AND
+   - `TicketPackage.deleted_at IS NULL` (not soft-deleted), AND
    - The parent `Ticket` is **active** (status in `New`, `Analysis`,
      `Analyzed` and `deleted_at IS NULL`)
 3. If no active ticket references the package, delete the
@@ -291,7 +291,7 @@ Populate bugowner data for packages in active tickets that are missing
 from the cache.
 
 1. Query all distinct `package_name` values from
-   `TicketPackage` where `TicketPackage.deleted_by IS NULL` and the
+   `TicketPackage` where `TicketPackage.deleted_at IS NULL` and the
    parent `Ticket` is **active**
 2. For each `package_name` that does NOT have a corresponding
    `PackageBugowner` record:

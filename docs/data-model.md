@@ -102,7 +102,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │                            │     │        Product          │
 │  ticket_id (FK)            │     │                         │
 │  package_name              │     │  smelt_id               │
-│  deleted_by (FK)           │     │  name                   │
+│  deleted_at                │     │  name                   │
 └──────────┬─────────────────┘     │  version                │
            │                       │  display_name           │
            ▼ (1:N)                 │  cpe                    │
@@ -114,7 +114,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  reference                 │     │  end_of_espos           │
 │  status                    │     │  end_of_reactive_ltss   │
 │  delivery_status           │     └──────┬──────────────────┘
-│  deleted_by (FK)           │            │
+│  deleted_at                │            │
 └──────────┬─────────────────┘            │
            │                              │
            ▼ (1:N)                        │
@@ -128,7 +128,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  eligible                  │     │  product_id (FK)        │
 │  is_eligible_override      │     │  repo_name              │
 │  released_at               │     └─────────────────────────┘
-│  deleted_by (FK)           │
+│  deleted_at                │
 └────────────────────────────┘     ┌─────────────────────────┐
                                    │   ProductRepository     │
 ┌──────────────────┐               │                         │
@@ -345,7 +345,7 @@ entity for tracks and products. See
 | id           | UUID      | PK                           | Internal identifier                |
 | ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
 | package_name | VARCHAR   | NOT NULL                     | Source package name                |
-| deleted_by   | UUID      | FK(user.id), nullable        | Soft-deletion: user who excluded this package. NULL = active |
+| deleted_at   | TIMESTAMP | nullable                     | Soft-deletion timestamp. NULL = active |
 | created_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -369,7 +369,7 @@ delivery).
 | reference         | VARCHAR   | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
 | status            | ENUM      | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
 | delivery_status   | ENUM      | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
-| deleted_by        | UUID      | FK(user.id), nullable                 | Soft-deletion: user who excluded this track. NULL = active |
+| deleted_at        | TIMESTAMP | nullable                              | Soft-deletion timestamp. NULL = active |
 | created_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record creation timestamp          |
 | updated_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record update timestamp            |
 
@@ -392,7 +392,7 @@ status inheritance, eligibility rules, and override model.
 | eligible                 | BOOLEAN   | NOT NULL                                    | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
 | released_at              | TIMESTAMP | nullable                                    | When Sentinel detected the fix in the product's update repository |
-| deleted_by               | UUID      | FK(user.id), nullable                       | Soft-deletion: user who excluded this product. NULL = active |
+| deleted_at               | TIMESTAMP | nullable                                    | Soft-deletion timestamp. NULL = active |
 | created_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record creation timestamp          |
 | updated_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record update timestamp            |
 

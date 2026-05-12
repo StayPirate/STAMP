@@ -265,7 +265,7 @@ the implicit grouping by `package_name` across
 | `id` | UUID | PK | Internal identifier |
 | `ticket_id` | UUID | FK(ticket.id), NOT NULL | Related ticket |
 | `package_name` | VARCHAR | NOT NULL | Source package name |
-| `deleted_by` | UUID | FK(user.id), nullable | Soft-deletion: user who excluded this package. NULL = active |
+| `deleted_at` | TIMESTAMP | nullable | Soft-deletion timestamp. NULL = active |
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMP | NOT NULL, DEFAULT | Record update timestamp |
 
@@ -286,7 +286,7 @@ by the system based on IBS SR/RR tracking data.
 | `reference` | VARCHAR | NOT NULL | Track identifier: IBS codestream name or git branch name |
 | `status` | PackageStatus | NOT NULL, DEFAULT ANALYSIS | Affectedness status |
 | `delivery_status` | DeliveryStatus | NOT NULL, DEFAULT PENDING | Delivery pipeline status |
-| `deleted_by` | UUID | FK(user.id), nullable | Soft-deletion: user who excluded this track. NULL = active |
+| `deleted_at` | TIMESTAMP | nullable | Soft-deletion timestamp. NULL = active |
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMP | NOT NULL, DEFAULT | Record update timestamp |
 
@@ -314,44 +314,19 @@ the VA.
 | `eligible` | BOOLEAN | NOT NULL | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the eligibility |
 | `released_at` | TIMESTAMP | nullable | When Sentinel detected the fix in the product's update repository |
-| `deleted_by` | UUID | FK(user.id), nullable | Soft-deletion: user who excluded this product. NULL = active |
+| `deleted_at` | TIMESTAMP | nullable | Soft-deletion timestamp. NULL = active |
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMP | NOT NULL, DEFAULT | Record update timestamp |
 
 **Unique constraint**: `(ticket_package_track_id, product_id)`
 
-### PackageStatus Enum
+### Enums
 
-The affectedness status enum, used by both `TicketPackageTrack` and
-`TicketPackageProduct`.
-
-| Value | UI Label | Color | Type | Set by |
-|-------|----------|-------|------|--------|
-| `ANALYSIS` | Analysis | Neutral | Non-final | Automatic (default) |
-| `AFFECTED` | Affected | Red | Non-final | VA (as "Affected") |
-| `NOT_AFFECTED` | Not Affected | Green | Final | VA |
-| `FIXED` | Fixed | Green | Final | Automatic (release detected) or VA |
-| `WONT_FIX` | Won't Fix | Green | Final | VA only |
-
-**UI note**: the VA dropdown shows the following options: Analysis,
-Affected, Not Affected, Fixed, Won't Fix.
-
-### DeliveryStatus Enum
-
-The delivery pipeline status, used by `TicketPackageTrack`.
-
-| Value | UI Label | Color | Condition |
-|-------|----------|-------|-----------|
-| `PENDING` | Pending | Grey | No SR created |
-| `IN_PROGRESS` | In Progress | Orange | SR created, until RR accepted |
-| `RELEASED` | Released | Green | RR accepted |
-
-### WorkflowType Enum
-
-| Value | Meaning | Example reference |
-|-------|---------|-------------------|
-| `ibs` | IBS project (traditional) | `SUSE:SLE-15-SP6:Update` |
-| `git` | Git branch on src.suse.de | `slfo-main`, `slfo-1.2` |
+See `docs/data-model.md` for the full definitions of `PackageStatus`,
+`DeliveryStatus`, and `WorkflowType` enums (values, UI labels, colors).
+The semantic meaning of each value in the context of package tracking is
+described in [Three Orthogonal Dimensions](#three-orthogonal-dimensions)
+below.
 
 ---
 
@@ -507,44 +482,33 @@ The affectedness status and the delivery status are tracked as
 independent axes. Neither resets nor constrains the other. All
 combinations are valid system states:
 
-| Affectedness | Delivery | Typical meaning |
-|-------------|----------|-----------------|
-| `ANALYSIS` | `PENDING` | Normal: not yet analyzed, no SR |
-| `ANALYSIS` | `IN_PROGRESS` | SR exists before VA analyzed the track |
-| `ANALYSIS` | `RELEASED` | Fix released before VA analyzed the track |
-| `AFFECTED` | `PENDING` | Normal: affected, no SR yet |
-| `AFFECTED` | `IN_PROGRESS` | Normal: fix in the pipeline |
-| `AFFECTED` | `RELEASED` | Anomalous: fix released but VA considers it insufficient |
-| `NOT_AFFECTED` | `PENDING` | Normal: not affected, nothing to deliver |
-| `NOT_AFFECTED` | `IN_PROGRESS` | Anomalous: SR in progress for unaffected code |
-| `NOT_AFFECTED` | `RELEASED` | Anomalous: fix released for unaffected code |
-| `FIXED` | `PENDING` | VA set FIXED manually, no SR detected yet |
-| `FIXED` | `IN_PROGRESS` | Fix confirmed, SR still in pipeline |
-| `FIXED` | `RELEASED` | Normal: fix confirmed and delivered |
-| `WONT_FIX` | `PENDING` | Normal: decided not to fix, nothing in pipeline |
-| `WONT_FIX` | `IN_PROGRESS` | Anomalous: SR in progress for a won't-fix decision |
-| `WONT_FIX` | `RELEASED` | Anomalous: fix released despite won't-fix decision |
+| Affectedness | Delivery | Anomaly | Meaning |
+|-------------|----------|---------|---------|
+| `ANALYSIS` | `PENDING` | | Not yet analyzed, no SR |
+| `ANALYSIS` | `IN_PROGRESS` | | SR exists before VA analyzed the track |
+| `ANALYSIS` | `RELEASED` | | Fix released before VA analyzed the track |
+| `AFFECTED` | `PENDING` | | Affected, no SR yet |
+| `AFFECTED` | `IN_PROGRESS` | | Fix in the pipeline |
+| `AFFECTED` | `RELEASED` | Yes | Fix released but VA considers it insufficient — needs review |
+| `NOT_AFFECTED` | `PENDING` | | Not affected, nothing to deliver |
+| `NOT_AFFECTED` | `IN_PROGRESS` | Yes | SR in progress for unaffected code — possible confusion |
+| `NOT_AFFECTED` | `RELEASED` | Yes | Fix released for unaffected code — possible confusion |
+| `FIXED` | `PENDING` | | VA set FIXED manually, no SR detected yet |
+| `FIXED` | `IN_PROGRESS` | | Fix confirmed, SR still in pipeline |
+| `FIXED` | `RELEASED` | | Fix confirmed and delivered |
+| `WONT_FIX` | `PENDING` | | Decided not to fix, nothing in pipeline |
+| `WONT_FIX` | `IN_PROGRESS` | Yes | SR in progress despite won't-fix decision — conflicting |
+| `WONT_FIX` | `RELEASED` | Yes | Fix released despite won't-fix decision — conflicting |
 
 ### Anomaly Detection (future: Review Queue)
 
-Combinations where affectedness and delivery are incongruent indicate
-situations that require VA attention — a possible bug, a maintainer not
-following the workflow, or an outdated VA assessment. These combinations
-are:
-
-| Affectedness | Delivery | Signal |
-|-------------|----------|--------|
-| `AFFECTED` | `RELEASED` | Fix released but VA considers it insufficient — needs review |
-| `NOT_AFFECTED` | `IN_PROGRESS` | SR in progress for code not affected — possible confusion |
-| `NOT_AFFECTED` | `RELEASED` | Fix released for code not affected — possible confusion |
-| `WONT_FIX` | `IN_PROGRESS` | SR in progress despite won't-fix decision — conflicting |
-| `WONT_FIX` | `RELEASED` | Fix released despite won't-fix decision — conflicting |
-
-These combinations are destined to be integrated into the future
-**Review Queue** — a mechanism that will automatically tag tickets
-presenting anomalies, making them visible to VAs for review. The
-specification of the Review Queue and the tagging mechanism will be
-defined in a dedicated specification.
+Anomalous combinations (marked in the table above) indicate situations
+that require VA attention — a possible bug, a maintainer not following
+the workflow, or an outdated VA assessment. These combinations are
+destined to be integrated into the future **Review Queue** — a mechanism
+that will automatically tag tickets presenting anomalies, making them
+visible to VAs for review. The specification of the Review Queue and the
+tagging mechanism will be defined in a dedicated specification.
 
 ---
 
@@ -636,15 +600,14 @@ change the delivery status — it is system-managed.
 ### Mechanism
 
 The VA can soft-delete packages, tracks, or products to exclude them
-from the ticket. Soft-deletion is indicated by a non-null `deleted_by`
-column (FK to User) on the record:
+from the ticket. Soft-deletion is indicated by a non-null `deleted_at`
+timestamp on the record:
 
-- `deleted_by IS NOT NULL` → record is soft-deleted (excluded)
-- `deleted_by IS NULL` → record is active
+- `deleted_at IS NOT NULL` → record is soft-deleted (excluded)
+- `deleted_at IS NULL` → record is active
 
-The timestamp of the deletion is recorded in the corresponding
-`TicketEvent`, not on the record itself (avoids drift between
-`deleted_at` and `deleted_by`).
+The identity of the user who performed the deletion is recorded in the
+corresponding `TicketEvent` (`user_id` field), not on the record itself.
 
 ### Cascade
 
@@ -655,7 +618,7 @@ Soft-deletion cascades downward:
 - **Track soft-deleted** → all products under it are soft-deleted
 - **Product soft-deleted** → only the product itself
 
-All cascaded records are marked with the same `deleted_by` user.
+All cascaded records are marked with the same `deleted_at` timestamp.
 
 ### Continued Updates
 
@@ -688,17 +651,16 @@ panel that displays:
 
 - Each excluded item with its **current state** (not the state at
   deletion time)
-- Who excluded it (from `deleted_by`)
-- When it was excluded (derived from the `TicketEvent` timestamp)
+- When it was excluded (from `deleted_at`)
 - A "Restore" button for each item
 
 ### Restore
 
 When the VA restores a soft-deleted record:
 
-1. `deleted_by` is set to `NULL` on the record
+1. `deleted_at` is set to `NULL` on the record
 2. If restoring a track: all products under it are also restored
-   (`deleted_by = NULL`)
+   (`deleted_at = NULL`)
 3. If restoring a package: all tracks and products under it are also
    restored
 4. The record's state is already current (no recalculation needed)
@@ -866,7 +828,8 @@ The VA manages packages at the **package level only**:
 When a VA removes a package from a ticket, Sentinel performs a
 **soft-deletion** (see [Soft-Deletion](#soft-deletion)): the
 `TicketPackage` record and all its child `TicketPackageTrack` and
-`TicketPackageProduct` records are marked with `deleted_by`.
+`TicketPackageProduct` records have `deleted_at` set to the current
+timestamp.
 
 **UI confirmation**: if any of the records being removed are in a final
 status (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), the UI must display a
@@ -1703,8 +1666,7 @@ When the ticket has soft-deleted records, a discrete indicator is shown
 (e.g., "3 excluded items"). Clicking it opens a panel showing:
 
 - Each excluded item with its **current state** (updated in real-time)
-- Who excluded it (username from `deleted_by`)
-- When it was excluded (from `TicketEvent` timestamp)
+- When it was excluded (from `deleted_at`)
 - A "Restore" button for each item
 
 ---
@@ -1770,50 +1732,6 @@ When the ticket has soft-deleted records, a discrete indicator is shown
 
 ---
 
-## Migration Path
-
-When this redesign is implemented, the following data migration is
-required:
-
-| Current state | New state |
-|---------------|-----------|
-| `TicketPackageCodestream` records | Create `TicketPackage` per unique `(ticket_id, package_name)`, then create `TicketPackageTrack` with `workflow_type = 'ibs'`, `reference = codestream_name` |
-| `TicketPackageCodestream.status = RELEASED` | `TicketPackageTrack.status = FIXED`, `delivery_status = RELEASED` |
-| `TicketPackageCodestream.status = AFFECTED_RESOLVED` | `TicketPackageTrack.status = AFFECTED` (rollup is eliminated) |
-| `TicketPackageCodestream.status = IGNORED` | Soft-delete the `TicketPackageTrack` (set `deleted_by` to a system migration user) |
-| `TicketPackageProduct.status = RELEASED` | `TicketPackageProduct.status = FIXED`, `released_at` preserved |
-| `TicketPackageProduct.status = AFFECTED_RESOLVED` | `TicketPackageProduct.status = AFFECTED`, `eligible = false` |
-| `TicketPackageProduct.status = IGNORED` | Soft-delete the `TicketPackageProduct` |
-| `TicketPackageProduct.is_override = true` | `is_status_override = true`, `is_eligible_override = false` (override was always on status) |
-| `TicketPackageProduct.is_override = false` | `is_status_override = false`, `is_eligible_override = false` |
-| `CodestreamPackageChecksum.codestream_name` | No change (this table is keyed by the codestream project name, which is now stored as `TicketPackageTrack.reference`) |
-| `SubmissionRequest.codestream_name` | No change (SR/RR tables reference the track by codestream name string) |
-| `SubmissionRequestCodestream.ticket_package_codestream_id` | Rename FK to `ticket_package_track_id` |
-
----
-
-## Specs Impacted
-
-When this design is finalized, the following documents need updating:
-
-| Document | Change |
-|----------|--------|
-| `docs/data-model.md` | Remove TicketPackageCodestream, add TicketPackage + TicketPackageTrack. Update PackageStatus enum (remove AFFECTED_RESOLVED, IGNORED, RELEASED; add FIXED). Add DeliveryStatus enum. Add WorkflowType enum. Update TicketPackageProduct (add eligible, is_status_override, is_eligible_override, deleted_by; rename is_override). Add deleted_by to all three entities. Update TicketEventType (rename codestream_* to track_*, add exclude/restore events). |
-| `docs/features/packages/package-tracking.md` | Replaced by this document |
-| `docs/features/packages/ibs-codestream-release-detection.md` | Update entity references (TicketPackageCodestream → TicketPackageTrack), update status changes (RELEASED → FIXED + delivery_status = RELEASED), update protected state (WONT_FIX only, not IGNORED) |
-| `docs/features/packages/ibs-product-release-detection.md` | Update entity references, update status changes (RELEASED → set released_at), update protected state |
-| `docs/features/integrations/ibs-rabbitmq-integration.md` | Update entity references, update status changes |
-| `docs/features/packages/ibs-submission-tracking.md` | Reference TicketPackageTrack, update SR/RR → delivery_status mapping, document reconciliation phase |
-| `docs/features/tickets/tickets.md` | Update gate definitions (new resolution gate), update ticket_mutations module (new record creation logic, no codestream rollup, eligibility as separate dimension), update orphan cleanup (TicketPackage level). Rename codestream references to track |
-| `docs/features/tickets/ticket-history.md` | Update event types (rename codestream_* to track_*, add exclude/restore events, add product_eligibility_changed) |
-| `docs/features/tickets/cvss-scoring.md` | Update recalculation cascade — flips `eligible` flag instead of status AFFECTED ↔ AFFECTED_RESOLVED |
-| `docs/features/packages/product-lifecycle-transitions.md` | EOL: soft-delete AFFECTED products instead of transitioning to AFFECTED_RESOLVED. Reactive LTSS: set eligible=false instead of status change |
-| `docs/architecture.md` | Update data flow sections |
-| `docs/features/ui/pages/ticket-detail.md` | Update package section (track terminology, delivery badge, eligibility indicator, excluded items panel) |
-| `docs/features/packages/package-bugowner.md` | Join moves from TicketPackageCodestream.package_name to TicketPackage.package_name |
-
----
-
 ## Future Considerations
 
 - **openSUSE / OBS public**: tracking packages in build.opensuse.org for
@@ -1841,6 +1759,9 @@ When this design is finalized, the following documents need updating:
 - [ ] Inference heuristic for workflow_type — define the exact pattern
       matching rules
 - [ ] Submission tracking (SR/RR) equivalent for git workflow, if any
+- [ ] Override reset mechanism — define how a VA can reset a product
+      status or eligibility override back to automatic inheritance from
+      the parent track
 
 ---
 

@@ -481,10 +481,10 @@ updates:
    - package_name = extract from sourcepackage by stripping the
      codestream suffix (see Package Name Extraction in Data Sources)
 4. Is codestream_name an active codestream with at least one
-   TicketPackageTrack (where deleted_by IS NULL) in ANALYSIS or
+   TicketPackageTrack (where deleted_at IS NULL) in ANALYSIS or
    AFFECTED? If no -> skip
 5. Is package_name tracked in at least one ticket for that
-   codestream (filtered by deleted_by IS NULL)? If no -> skip
+   codestream (filtered by deleted_at IS NULL)? If no -> skip
 6. Create SubmissionRequest record (state = open)
 7. Enqueue Celery task: correlate_submission_request(submission_id)
 ```
@@ -499,7 +499,7 @@ updates:
 4. For each CVE-ID:
    a. Find the ticket with that CVE
    b. Find the TicketPackageTrack for (ticket, codestream, package)
-      — filtered by deleted_by IS NULL
+      — filtered by deleted_at IS NULL
    c. Create SubmissionRequestTrack join record (idempotent:
       skip if unique constraint already satisfied)
 5. If no correlations EXIST for this SR (total count of join records
@@ -583,7 +583,7 @@ both down).
 Step 1 — Discover missed open SRs and reconcile known ones:
 
   1. Identify active codestreams (distinct codestream_name values from
-     TicketPackageTrack records where deleted_by IS NULL and status is
+     TicketPackageTrack records where deleted_at IS NULL and status is
      ANALYSIS or AFFECTED)
 
   2. For each active codestream:
@@ -595,7 +595,7 @@ Step 1 — Discover missed open SRs and reconcile known ones:
 
        For SRs:
        b. Filter: is the targetpackage tracked in at least one ticket
-          for this codestream (filtered by deleted_by IS NULL)?
+          for this codestream (filtered by deleted_at IS NULL)?
           If no -> skip
        c. If NOT present in SubmissionRequest table:
           -> Create SubmissionRequest (state = open)
@@ -623,7 +623,7 @@ Step 1b — Discover missed accepted SRs (temporal lookback):
      For each SR in the response:
        a. Already in SubmissionRequest table? -> skip
        b. targetpackage tracked in at least one ticket for this
-          codestream (filtered by deleted_by IS NULL)? If no -> skip
+          codestream (filtered by deleted_at IS NULL)? If no -> skip
         c. Create SubmissionRequest (state=accepted)
         d. Call set_sr_incident_number(SR, extracted incident_number)
         e. Enqueue correlate_submission_request
@@ -651,7 +651,7 @@ Step 2 — Reconcile requests no longer in new/review:
 Step 3 — Delivery status reconciliation:
 
   8. Query all TicketPackageTrack records where:
-     - deleted_by IS NULL
+     - deleted_at IS NULL
      - track type is IBS (codestream-based)
      - delivery_status != RELEASED
      - the parent ticket is in an open state
@@ -716,7 +716,7 @@ release detection Case B/C).
 ```
 1. Retrieve the ticket's CVE-ID
 2. Retrieve ALL TicketPackageTrack records for (ticket, package)
-   — filtered by deleted_by IS NULL, no status filter (includes
+   — filtered by deleted_at IS NULL, no status filter (includes
    ANALYSIS, AFFECTED, FIXED, etc.)
 3. For each track:
    a. Query IBS:
@@ -744,7 +744,7 @@ release detection Case B/C).
 
 - **No status filter on tracks**: all tracks are checked regardless of
   their `PackageStatus` (only soft-deleted tracks are excluded via
-  `deleted_by IS NULL`). This ensures SR/RR data is captured even for
+  `deleted_at IS NULL`). This ensures SR/RR data is captured even for
   tracks already in `FIXED` state (e.g., Case C tickets created by
   `create_ticket_from_detection`). The data is not displayed in the UI
   for final-status tracks but is retained for audit and future use.

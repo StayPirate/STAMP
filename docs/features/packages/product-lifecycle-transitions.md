@@ -47,13 +47,13 @@ re-evaluation.
 1. Find all products currently in **Reactive LTSS** phase
    (`end_of_ltss < today < end_of_reactive_ltss`)
    - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     in active tickets (status New, Analysis, or Analyzed; `deleted_by IS NULL`)
+     in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
 2. Find all products currently in **EOL** phase (past all applicable
    lifecycle dates)
    - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     or `ANALYSIS` in active tickets (status New, Analysis, or Analyzed; `deleted_by IS NULL`)
+     or `ANALYSIS` in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
 3. If no actionable records found for a product, no sub-task is enqueued
@@ -99,8 +99,8 @@ tickets with non-final, non-protected status:
 
 | Current status | Action |
 |----------------|--------|
-| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record, deleted_by=system_user)` with a `TicketEvent` (`comment` includes `eol` reason) |
-| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record, deleted_by=system_user)` with a `TicketEvent` (`comment` includes `eol` reason) |
+| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 
 Records in final status (`NOT_AFFECTED`, `FIXED`) or protected status
 (`WONT_FIX`) are not modified.
@@ -117,7 +117,7 @@ When `re_evaluate_product_eligibility` soft-deletes a `TicketPackageProduct`
 `docs/features/tickets/tickets.md` (Ticket Mutations Module, "Orphan Cleanup
 Invariants") automatically cascade: if the parent track has zero
 remaining active (non-soft-deleted) products it is soft-deleted (with
-`deleted_by` set to the system user), and if the parent package has zero
+`deleted_at` set to the current timestamp), and if the parent package has zero
 remaining active tracks it is soft-deleted. Each step produces
 a `TicketEvent` and calls `evaluate_ticket_status`.
 

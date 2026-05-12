@@ -76,7 +76,7 @@ by the real-time `IBSEventConsumer` during downtime — see
 
 1. **Identify active codestreams**: query the distinct `reference`
    values from `TicketPackageTrack` records that are active
-   (`deleted_by IS NULL`) with `status` in (`ANALYSIS`, `AFFECTED`) and
+   (`deleted_at IS NULL`) with `status` in (`ANALYSIS`, `AFFECTED`) and
    `delivery_status != RELEASED`. Only codestreams with at least one
    active track are scanned.
 
@@ -192,7 +192,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 - **Role**: catch-up mechanism for events missed by the real-time
   `IBSEventConsumer` (see `docs/features/integrations/ibs-rabbitmq-integration.md`)
 - **Scope**: scans all codestreams that have at least one active
-  `TicketPackageTrack` record (`deleted_by IS NULL`) with `status` in
+  `TicketPackageTrack` record (`deleted_at IS NULL`) with `status` in
   (`ANALYSIS`, `AFFECTED`) and `delivery_status != RELEASED`
 
 ## Open Items

@@ -148,7 +148,7 @@ For each `suse.obs.package.commit` event:
 2. **Filter by active codestream**: check if `project` is in the set of
    active codestreams. This set is built from the distinct
    `codestream_name` values of `TicketPackageTrack` records that are
-   active (`deleted_by IS NULL`) with status `ANALYSIS` or `AFFECTED`.
+   active (`deleted_at IS NULL`) with status `ANALYSIS` or `AFFECTED`.
    The set is cached in memory and refreshed periodically (every 5
    minutes) or on cache miss.
    If the project is not in the set → **acknowledge and discard** the
@@ -357,7 +357,7 @@ RabbitMQ Consumer Card" for the full UI specification.
 ### Unmonitored codestreams
 
 If a maintainer commits a CVE fix to a codestream that has no active
-tickets (no active `TicketPackageTrack` records with `deleted_by IS NULL`
+tickets (no active `TicketPackageTrack` records with `deleted_at IS NULL`
 in `ANALYSIS` or `AFFECTED` status across any ticket), the event is
 discarded by the codestream filter. This applies equally to the RabbitMQ
 consumer and the periodic fetcher — neither monitors codestreams without
