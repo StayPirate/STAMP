@@ -169,3 +169,8 @@ reviewer:
   Medium, then Low
 - Each finding MUST have enough detail for the user to understand and
   act on it without re-running the reviewer
+- Subagents MUST perform all review file edits directly using Read,
+  Edit, and Write tools. They MUST NOT create auxiliary scripts (.py,
+  .sh, .js, etc.), temporary programs, or helper files to perform
+  transformations. All compaction and resolution formatting must be done
+  inline
