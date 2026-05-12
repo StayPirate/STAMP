@@ -69,7 +69,7 @@ or a **reviewer abbreviation**.
 
 1. Step 1 runs normally (data gathering via subagent).
 2. Steps 2-3 are skipped (no recap table, no mode question).
-3. Step 4a.0 is skipped (no patterns, no grouping question).
+3. The grouping question (step 4a.0) is skipped.
 4. Validate the target against cached data in `.tracking.json`:
    - **Spec not found**: `Errore: la spec '<name>' non esiste in 'docs/features/'.`
    - **Spec disabled**: `Errore: la spec '<name>' è disabilitata. Abilitala prima con '/review-spec' → Toggle spec tracking.`
@@ -226,23 +226,10 @@ Use `question` tool. Show only applicable options:
 
 ## Step 4a: Fix findings flow
 
-### 4a.0. Cross-spec patterns + grouping mode
+### 4a.0. Grouping mode
 
-Use Task tool (`general`) to read all review files of enabled specs
-(use `bash ls docs/drafts/review/`), extract OPEN findings, and group
-by category + similar keywords across specs. Return list of patterns.
-
-If patterns found, present them:
-
-```
-Pattern comuni tra spec:
-  - "Missing error path for concurrent updates" → tickets, package-tracking
-  - "Unspecified pagination limits" → rbac, tickets
-```
-
-If no patterns found, skip this section (show nothing).
-
-Then ask via `question` tool:
+Ask via `question` tool (no file reading — use `.tracking.json` counts
+to determine available options):
 - **By spec** — "Work on all findings of a specific spec"
 - **By reviewer** — "Work on all findings of a specific reviewer, across all specs"
 
@@ -315,9 +302,11 @@ in this order (skipping those with zero OPEN findings):
 Label = reviewer name, description = total open + affected spec count
 (e.g., "9 open findings across 3 specs").
 
-**4a-R.2.** Use Task tool (`general`) to read all review files of
-enabled specs, extract OPEN findings for the chosen reviewer, sort by
-severity then spec name. Return parsed findings (not raw content).
+**4a-R.2.** Use Task tool (`general`) to read review files of enabled
+specs that have OPEN findings in the chosen reviewer's section (per
+`.tracking.json` cache — skip specs with zero open in that section).
+Extract OPEN findings for the chosen reviewer, sort by severity then
+spec name. Return parsed findings (not raw content).
 
 **4a-R.3. Fix loop** — same mode management as by-spec flow.
 
