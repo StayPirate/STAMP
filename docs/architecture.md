@@ -44,8 +44,8 @@ coordination across multiple maintained distribution versions.
 ┌──────────────────┐     ┌──────────────────────────────────┐
 │  IBS RabbitMQ    │────▶│      IBSEventConsumer            │
 │ (rabbit.suse.de) │     │                                  │
-└──────────────────┘     │  Consumes suse.obs.package.commit│
-                        │  events for real-time codestream  │
+└──────────────────┘                             │  Consumes suse.obs.package.commit│
+                        │  events for real-time track-level │
                         │  release detection. Shares MD5    │
                         │  cache with periodic fetcher.     │
                         └──────────────────────────────────┘
@@ -129,10 +129,10 @@ active source. See the data sources catalog for the full picture.
 - Source packages are maintained in codestream projects (e.g.,
   `SUSE:SLE-15-SP6:Update`)
 - Sentinel queries IBS to detect when security fixes have been released to
-  codestream and product repositories
+  track and product repositories
 - **Real-time event consumer**: Sentinel connects to the IBS RabbitMQ message
   bus (`rabbit.suse.de`) and consumes `suse.obs.package.commit` events for
-  near-real-time codestream-level release detection. The periodic polling
+  near-real-time track-level release detection. The periodic polling
   fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
   serves as a catch-up mechanism for events missed during downtime. See
   `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification.
@@ -146,7 +146,7 @@ active source. See the data sources catalog for the full picture.
   bugowner (maintainer) of each source package tracked in tickets. This
   data is cached locally and maintained by a periodic fetcher. See
   `docs/features/packages/package-bugowner.md`.
-- See `docs/features/packages/package-tracking.md` for codestream/product concepts
+- See `docs/features/packages/package-tracking.md` for track/product concepts
 
 #### SMELT
 
@@ -157,7 +157,7 @@ active source. See the data sources catalog for the full picture.
     table with name, version, CPE, and repository project names
   - `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
     (paginated): on-demand query when adding a package to a ticket. Returns
-    codestreams and target repositories for the package. The
+    tracks (codestreams) and target repositories for the package. The
     `include_reactive=1` parameter MUST always be used to include products
     in Reactive LTSS phase. All pages MUST be fetched.
 - Target repository names from `maintainedpackage` are matched to local
@@ -212,9 +212,9 @@ active source. See the data sources catalog for the full picture.
 3. New/updated CVEs are stored in PostgreSQL
 4. A Ticket is created automatically for each new CVE
 5. Sentinel attempts to map CPE data to source package names
-6. For mapped packages, SMELT is queried to resolve codestreams and products
-7. TicketPackageCodestream and TicketPackageProduct records are created
-   automatically with status ANALYSIS
+6. For mapped packages, SMELT is queried to resolve tracks and products
+7. TicketPackage, TicketPackageTrack, and TicketPackageProduct records are
+   created automatically with status ANALYSIS
 
 ### Manual Ticket Creation
 
@@ -226,48 +226,43 @@ the full ticket specification.
 
 ### Package Affectedness Flow
 
-1. VA analyzes a ticket and sets affectedness status per codestream
-2. Sentinel propagates codestream status to products, adjusting for eligibility
-   only when the propagated status is AFFECTED (CVSS score vs product
-   threshold from AIMAAS)
-3. Products not eligible that inherit AFFECTED status receive
-   AFFECTED_RESOLVED (green) automatically — other inherited statuses are
-   not modified by eligibility
-4. Products in Reactive LTSS phase that inherit AFFECTED status receive
-   AFFECTED_RESOLVED (green) automatically — regardless of CVSS score
-5. If all products under a codestream are AFFECTED_RESOLVED (no eligible
-   product), the codestream itself is set to AFFECTED_RESOLVED automatically;
-   if a product later becomes eligible again, the codestream reverts to
-   AFFECTED
-6. VA can override individual product statuses when needed
-7. See `docs/features/packages/package-tracking.md` for full status propagation rules
+1. VA analyzes a ticket and sets affectedness status per track
+2. Sentinel propagates track status to products. Products inherit the track
+   status directly; eligibility is evaluated as a boolean flag (`eligible`)
+   based on CVSS score vs product threshold from AIMAAS
+3. Products not eligible (CVSS below threshold, Reactive LTSS phase, etc.)
+   are marked `eligible=false` but retain the inherited status (e.g.,
+   AFFECTED with `eligible=false` — no separate AFFECTED_RESOLVED status)
+4. VA can override individual product statuses when needed
+5. See `docs/features/packages/package-tracking.md` for full status propagation rules
 
 ### Release Tracking Flow
 
-Release detection runs on two **independent** levels — codestream and
+Release detection runs on two **independent** levels — track and
 product — through different mechanisms. See
 `docs/features/packages/ibs-codestream-release-detection.md` and
 `docs/features/packages/ibs-product-release-detection.md` for the
 authoritative details.
 
-1. Codestream-level detection uses two complementary mechanisms:
+1. Track-level detection uses two complementary mechanisms:
    the `IBSEventConsumer` (real-time via IBS RabbitMQ) and the periodic
    `check_codestream_releases` fetcher (catch-up every 24 hours at
    02:00 UTC). Both share the same MD5 cache to avoid duplicate work.
    See `docs/features/integrations/ibs-rabbitmq-integration.md`.
-2. **Codestream level**: the consumer or fetcher queries IBS diff endpoints
+2. **Track level**: the consumer or fetcher queries IBS diff endpoints
    (see `docs/features/integrations/ibs-integration.md` and
    `docs/features/packages/ibs-codestream-release-detection.md`) to detect whether
    the fix for the ticket's CVE has landed in the codestream IBS project.
-   When detected, `TicketPackageCodestream.status` is set to `RELEASED`.
+   When detected, `TicketPackageTrack.status` is set to `FIXED` and
+   `TicketPackageTrack.delivery_status` is set to `RELEASED`.
 3. **Product level**: workers fetch `updateinfo.xml` from each product's
    update repository and look for advisories that reference the ticket's
    CVE. A package match cascade (title → heuristic → `primary.xml`)
    identifies the specific source package fixed by the advisory. When
-   matched, `TicketPackageProduct.status` is set to `RELEASED` and
-   `released_at` is set to the advisory's `<issued date>`.
-4. Both levels honor the protected states `WONT_FIX` and `IGNORED`, which
-   are never modified automatically.
+   matched, `TicketPackageProduct.released_at` is set to the advisory's
+   `<issued date>`.
+4. Both levels honor the protected state `WONT_FIX`, which is never
+   modified automatically.
 5. When all packages in a ticket reach a final status, the ticket can
    transition to Resolved.
 

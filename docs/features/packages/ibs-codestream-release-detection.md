@@ -22,13 +22,14 @@ package:
 2. **Product level** (separate spec): the fix has been published to the
    product's update repository.
 
-The codestream level updates `TicketPackageCodestream.status` to `RELEASED`
-as soon as the fix appears in the codestream IBS project, **regardless of
-the status of the products under it**.
+The codestream level updates `TicketPackageTrack.status` to `FIXED` and
+`TicketPackageTrack.delivery_status` to `RELEASED` as soon as the fix
+appears in the codestream IBS project, **regardless of the status of the
+products under it**.
 
-The automatic transition to `RELEASED` is suppressed when the current status
-is `WONT_FIX` or `IGNORED` (protected states — see
-`docs/features/packages/package-tracking.md`, "Status Behavior").
+The automatic transition is suppressed when the current status is `WONT_FIX`
+(protected state — see `docs/features/packages/package-tracking.md`, "Status
+Behavior").
 
 ## Detection Mechanism
 
@@ -73,10 +74,11 @@ This periodic fetcher serves as a catch-up mechanism for events missed
 by the real-time `IBSEventConsumer` during downtime — see
 `docs/features/integrations/ibs-rabbitmq-integration.md`.
 
-1. **Identify active codestreams**: query the distinct `codestream_name`
-   values from `TicketPackageCodestream` records with a non-final,
-   non-protected status (`ANALYSIS` or `AFFECTED`). Only codestreams with
-   at least one active ticket package are scanned.
+1. **Identify active codestreams**: query the distinct `reference`
+   values from `TicketPackageTrack` records that are active
+   (`deleted_by IS NULL`) with `status` in (`ANALYSIS`, `AFFECTED`) and
+   `delivery_status != RELEASED`. Only codestreams with at least one
+   active track are scanned.
 
 2. **Fetch current MD5 checksums**: for each active codestream, call
    `GET /source/{codestream}?view=info` via the `IBSClient` service. This
@@ -114,27 +116,28 @@ codestream C, the detector evaluates three cases:
 
 ### Case A — Ticket exists, package tracked in that codestream
 
-A `TicketPackageCodestream` record exists for the ticket's CVE with
-`package_name = P` and `codestream_name = C`.
+A `TicketPackageTrack` record exists for the ticket's CVE with
+`package_name = P` and `reference = C`.
 
-- Set `TicketPackageCodestream.status` to `RELEASED` through the
-  `ticket_mutations` module (unless current status is `WONT_FIX` or
-  `IGNORED`).
-- Create a `TicketEvent` with `event_type = codestream_released`,
+- Set `TicketPackageTrack.status` to `FIXED` and
+  `TicketPackageTrack.delivery_status` to `RELEASED` through the
+  `ticket_mutations` module (unless current status is `WONT_FIX`).
+- Create a `TicketEvent` with `event_type = track_released`,
   `user_id = NULL` (system action).
 
 ### Case B — Ticket exists, package NOT tracked in the ticket
 
-A ticket exists for the CVE, but no `TicketPackageCodestream` record
-exists for package P (in any codestream).
+A ticket exists for the CVE, but no `TicketPackageTrack` record exists
+for package P (in any codestream).
 
 - Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
-  and products via SMELT and create the records with status `ANALYSIS`
-  (record creation goes through `ticket_mutations`). See
+  and products via SMELT and create the `TicketPackage` +
+  `TicketPackageTrack` records with status `ANALYSIS` (record creation
+  goes through `ticket_mutations`). See
   `docs/features/packages/package-tracking.md`, "Adding Packages to a Ticket".
-- Set the `TicketPackageCodestream` for codestream C to `RELEASED`
-  through `ticket_mutations` (the specific codestream where the fix
-  was detected).
+- Set the `TicketPackageTrack` for codestream C to `status = FIXED` and
+  `delivery_status = RELEASED` through `ticket_mutations` (the specific
+  codestream where the fix was detected).
 - Create a `TicketEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
   detected in `{C}`".
@@ -155,10 +158,12 @@ No ticket exists in Sentinel for the extracted CVE-ID.
    2. Create the CVE record.
    3. Create a Ticket with status `New`, no assignee.
    4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
-      all codestreams and products via SMELT and create the records with
-      status `ANALYSIS` (record creation goes through `ticket_mutations`).
-   5. Set the `TicketPackageCodestream` for the originating codestream to
-      `RELEASED` through `ticket_mutations`.
+      all codestreams and products via SMELT and create the
+      `TicketPackage` + `TicketPackageTrack` records with status
+      `ANALYSIS` (record creation goes through `ticket_mutations`).
+   5. Set the `TicketPackageTrack` for the originating codestream to
+      `status = FIXED` and `delivery_status = RELEASED` through
+      `ticket_mutations`.
    6. Create a `TicketEvent` with `event_type = ticket_created`,
        `user_id = NULL`, comment: `"CVE fix detected in {package}
        ({codestream})"`.
@@ -186,8 +191,9 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 - **Schedule**: every 24 hours at 02:00 UTC (`0 2 * * *`)
 - **Role**: catch-up mechanism for events missed by the real-time
   `IBSEventConsumer` (see `docs/features/integrations/ibs-rabbitmq-integration.md`)
-- **Scope**: scans all codestreams that have at least one
-  `TicketPackageCodestream` record in a non-final, non-protected status
+- **Scope**: scans all codestreams that have at least one active
+  `TicketPackageTrack` record (`deleted_by IS NULL`) with `status` in
+  (`ANALYSIS`, `AFFECTED`) and `delivery_status != RELEASED`
 
 ## Open Items
 

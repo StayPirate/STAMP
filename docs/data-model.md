@@ -97,37 +97,38 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │
        │
        ▼ (1:N)
-┌──────────────────┐
-│ TicketReference  │
-│                  │
-│  ticket_id (FK)  │
-│  url             │
-│  title           │
-│  source          │
-│  tags            │
-│  created_by (FK)─────────────────────────┐
-└──────────────────┘                       │
-       │                                   │
-       ▼ (1:N)                             │
 ┌────────────────────────────┐             │
-│  TicketPackageCodestream   │     ┌───────┴─────────────────┐
+│  TicketPackage             │     ┌───────┴─────────────────┐
 │                            │     │        Product          │
 │  ticket_id (FK)            │     │                         │
 │  package_name              │     │  smelt_id               │
-│  codestream_name           │     │  name                   │
-│  status                    │     │  version                │
-│                            │     │  display_name           │
-└──────────┬─────────────────┘     │  cpe                    │
-           │                       │  cvss_threshold         │
-           ▼ (1:N)                 │  active                 │
-┌────────────────────────────┐     │  fcs                    │
-│   TicketPackageProduct     │────▶│  end_of_gs              │
-│                            │     │  end_of_ltss            │
-│  tpc_id (FK) *             │     │  end_of_espos           │
-│  product_id (FK)           │     │  end_of_reactive_ltss   │
-│  status                    │     └──────┬──────────────────┘
-│  is_override               │            │
-│  released_at               │            ▼ (1:N)
+│  deleted_by (FK)           │     │  name                   │
+└──────────┬─────────────────┘     │  version                │
+           │                       │  display_name           │
+           ▼ (1:N)                 │  cpe                    │
+┌────────────────────────────┐     │  cvss_threshold         │
+│  TicketPackageTrack        │     │  active                 │
+│                            │     │  fcs                    │
+│  ticket_package_id (FK)    │     │  end_of_gs              │
+│  workflow_type             │     │  end_of_ltss            │
+│  reference                 │     │  end_of_espos           │
+│  status                    │     │  end_of_reactive_ltss   │
+│  delivery_status           │     └──────┬──────────────────┘
+│  deleted_by (FK)           │            │
+└──────────┬─────────────────┘            │
+           │                              │
+           ▼ (1:N)                        │
+┌────────────────────────────┐            │
+│   TicketPackageProduct     │────▶───────┘
+│                            │
+│  tpt_id (FK) *             │            ▼ (1:N)
+│  product_id (FK)           │     ┌─────────────────────────┐
+│  status                    │     │   ProductRepository     │
+│  is_status_override        │     │                         │
+│  eligible                  │     │  product_id (FK)        │
+│  is_eligible_override      │     │  repo_name              │
+│  released_at               │     └─────────────────────────┘
+│  deleted_by (FK)           │
 └────────────────────────────┘     ┌─────────────────────────┐
                                    │   ProductRepository     │
 ┌──────────────────┐               │                         │
@@ -191,10 +192,10 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  request_number (UQ)             │      │
 │  package_name                    │      ▼
 │  codestream_name                 │  ┌──────────────────────────────────┐
-│  state                           │  │  SubmissionRequestCodestream     │
+│  state                           │  │  SubmissionRequestTrack          │
 │  author                          │  │                                  │
 │  incident_number ─ ─ ─ ─ ─ ─ ┐  │  │  submission_request_id (FK)      │
-│  superseded_by                │  │  │  ticket_package_codestream_id(FK)│
+│  superseded_by                │  │  │  ticket_package_track_id (FK)    │
 └──────────────────────────────────┘  └──────────────────────────────────┘
                                 │
                                 ▼ (implicit link via incident_number)
@@ -208,7 +209,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  incident_number                 │
 └──────────────────────────────────┘
 
-* tpc_id = ticket_package_codestream_id (abbreviated for diagram readability)
+* tpt_id = ticket_package_track_id (abbreviated for diagram readability)
 ```
 
 ## Tables
@@ -311,7 +312,7 @@ full details.
 | end_of_gs            | DATE         | nullable             | End of General Support (from AIMAAS) |
 | end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
 | end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
-| end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, Affected status is always green (AFFECTED_RESOLVED) regardless of CVSS. |
+| end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, products have `eligible = false` regardless of CVSS score. |
 | active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/packages/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
 | smelt_synced_at      | TIMESTAMP    |                      | Last sync from SMELT               |
 | aimaas_synced_at     | TIMESTAMP    |                      | Last sync from AIMAAS              |
@@ -333,56 +334,99 @@ Product records. Synced from SMELT alongside products.
 | repo_name  | VARCHAR   | UNIQUE, NOT NULL             | SMELT repository project name (e.g., `SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64`) |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
 
-### TicketPackageCodestream
+### TicketPackage
 
-Records the affectedness status of a source package in a specific codestream
-within the context of a ticket. See `docs/features/packages/package-tracking.md` for
-status propagation rules.
+Anchors a source package within a ticket. Provides an explicit grouping
+entity for tracks and products. See
+`docs/features/packages/package-tracking.md` for full specification.
 
-| Column          | Type      | Constraints                  | Description                        |
-|-----------------|-----------|------------------------------|------------------------------------|
-| id              | UUID      | PK                           | Internal identifier                |
-| ticket_id       | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
-| package_name    | VARCHAR   | NOT NULL                     | Source package name                |
-| codestream_name | VARCHAR   | NOT NULL                     | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`). Stored as a string — codestreams are not maintained as a separate table because SMELT does not provide an independent codestream listing. |
-| status          | ENUM      | NOT NULL, DEFAULT ANALYSIS   | PackageStatus enum                 |
-| created_at      | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at      | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
+| Column       | Type      | Constraints                  | Description                        |
+|--------------|-----------|------------------------------|------------------------------------|
+| id           | UUID      | PK                           | Internal identifier                |
+| ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
+| package_name | VARCHAR   | NOT NULL                     | Source package name                |
+| deleted_by   | UUID      | FK(user.id), nullable        | Soft-deletion: user who excluded this package. NULL = active |
+| created_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
 
-**Unique constraint**: (ticket_id, package_name, codestream_name)
+**Unique constraint**: (ticket_id, package_name)
+
+### TicketPackageTrack
+
+Records the affectedness and delivery status of a source package in a
+specific maintenance track within the context of a ticket. The VA sets
+the affectedness status at this level. The delivery status is maintained
+by the system based on IBS SR/RR tracking data. See
+`docs/features/packages/package-tracking.md` for status propagation
+rules and the three orthogonal dimensions (affectedness, eligibility,
+delivery).
+
+| Column            | Type      | Constraints                           | Description                        |
+|-------------------|-----------|---------------------------------------|------------------------------------|
+| id                | UUID      | PK                                    | Internal identifier                |
+| ticket_package_id | UUID      | FK(ticket_package.id), NOT NULL       | Parent package record              |
+| workflow_type     | ENUM      | NOT NULL                              | WorkflowType enum (`ibs` or `git`) |
+| reference         | VARCHAR   | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
+| status            | ENUM      | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
+| delivery_status   | ENUM      | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
+| deleted_by        | UUID      | FK(user.id), nullable                 | Soft-deletion: user who excluded this track. NULL = active |
+| created_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record creation timestamp          |
+| updated_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record update timestamp            |
+
+**Unique constraint**: (ticket_package_id, reference)
 
 ### TicketPackageProduct
 
-Records the affectedness status of a source package for a specific product
-within the context of a ticket and codestream. See
-`docs/features/packages/package-tracking.md` for status inheritance and override rules.
+Records the affectedness status, eligibility, and release confirmation
+of a source package for a specific product within the context of a
+ticket and track. See `docs/features/packages/package-tracking.md` for
+status inheritance, eligibility rules, and override model.
 
-| Column                        | Type      | Constraints                                | Description                        |
-|-------------------------------|-----------|--------------------------------------------|------------------------------------|
-| id                            | UUID      | PK                                         | Internal identifier                |
-| ticket_package_codestream_id  | UUID      | FK(ticket_package_codestream.id), NOT NULL | Parent codestream record           |
-| product_id                    | UUID      | FK(product.id), NOT NULL                   | Related product                    |
-| status                        | ENUM      | NOT NULL, DEFAULT ANALYSIS                 | PackageStatus enum                 |
-| is_override                   | BOOLEAN   | NOT NULL, DEFAULT false                    | True if VA manually overrode the inherited status |
-| released_at                   | TIMESTAMP | nullable                                  | When Sentinel detected the fix in the product's repository |
-| created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
-| updated_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record update timestamp            |
+| Column                   | Type      | Constraints                                 | Description                        |
+|--------------------------|-----------|---------------------------------------------|------------------------------------|
+| id                       | UUID      | PK                                          | Internal identifier                |
+| ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL       | Parent track record                |
+| product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
+| status                   | ENUM      | NOT NULL, DEFAULT ANALYSIS                  | PackageStatus enum (affectedness)  |
+| is_status_override       | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the status |
+| eligible                 | BOOLEAN   | NOT NULL                                    | Whether the product will receive the fix |
+| is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
+| released_at              | TIMESTAMP | nullable                                    | When Sentinel detected the fix in the product's update repository |
+| deleted_by               | UUID      | FK(user.id), nullable                       | Soft-deletion: user who excluded this product. NULL = active |
+| created_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record creation timestamp          |
+| updated_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record update timestamp            |
 
-**Unique constraint**: (ticket_package_codestream_id, product_id)
+**Unique constraint**: (ticket_package_track_id, product_id)
 
 ### PackageStatus Enum
 
-Used by both TicketPackageCodestream and TicketPackageProduct.
+Affectedness status, used by both TicketPackageTrack and
+TicketPackageProduct.
 
-| Value             | UI Label      | Color      | Type       |
-|-------------------|---------------|------------|------------|
-| ANALYSIS          | Analysis      | Neutral    | Non-final  |
-| AFFECTED          | Affected      | Red        | Non-final  |
-| AFFECTED_RESOLVED | Affected      | Green      | Final      |
-| NOT_AFFECTED      | Not Affected  | Green      | Final      |
-| WONT_FIX          | Won't Fix     | Green      | Final      |
-| IGNORED           | Ignored       | Greyed-out | Final      |
-| RELEASED          | Released      | Green      | Final      |
+| Value        | UI Label     | Color   | Type      |
+|--------------|-------------|---------|-----------|
+| ANALYSIS     | Analysis    | Neutral | Non-final |
+| AFFECTED     | Affected    | Red     | Non-final |
+| NOT_AFFECTED | Not Affected| Green   | Final     |
+| FIXED        | Fixed       | Green   | Final     |
+| WONT_FIX     | Won't Fix   | Green   | Final     |
+
+### DeliveryStatus Enum
+
+Delivery pipeline status, used by TicketPackageTrack.
+
+| Value       | UI Label    | Color  |
+|-------------|-------------|--------|
+| PENDING     | Pending     | Grey   |
+| IN_PROGRESS | In Progress | Orange |
+| RELEASED    | Released    | Green  |
+
+### WorkflowType Enum
+
+| Value | Meaning                    | Example reference          |
+|-------|----------------------------|----------------------------|
+| ibs   | IBS project (traditional)  | `SUSE:SLE-15-SP6:Update`  |
+| git   | Git branch on src.suse.de  | `slfo-main`, `slfo-1.2`   |
 
 ### User
 
@@ -542,7 +586,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 Soft-delete is performed by setting `deleted_at` to the current timestamp.
 Only users with the Admin role may soft-delete or restore tickets.
 Soft-deleted tickets are excluded from all default queries. All sub-resources
-of a soft-deleted ticket (references, events, packages, codestreams, products)
+of a soft-deleted ticket (references, events, packages, tracks, products)
 remain intact in the database but are inaccessible to non-admin users.
 
 **Status transitions**: see `docs/features/tickets/tickets.md` (Ticket Lifecycle)
@@ -552,7 +596,7 @@ Summary:
 - New -> Analysis (manual: assignment or any modifying operation)
 - New -> Ignored (manual or automatic: NVD rejection)
 - Analysis -> Analyzed (automatic: all gates met — at least one package,
-  no codestream or product records in ANALYSIS, severity set, SUSE CVSS
+  no track or product records in ANALYSIS, severity set, SUSE CVSS
   provided if CVE present)
 - Analysis -> Ignored (manual)
 - Analyzed -> Resolved (automatic: all packages in final status)
@@ -631,20 +675,23 @@ system action).
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
 | duplicate_target_changed   | Cascade update: the ticket's `duplicate_of_id` was re-pointed because its previous original was itself marked as duplicate. `old_value` is the previous original identifier (`SNTL-{n}`). `new_value` is the new original identifier. `user_id` is NULL (system action). |
-| package_added              | Package added to the ticket (manual by VA or automatic via CPE match / codestream detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
-| package_removed            | Package removed from ticket. `user_id` is set for VA-initiated removal, NULL for automatic removal (orphan cleanup when all codestreams removed). `old_value` contains the package name. `new_value` is NULL. `comment` is NULL for manual removal, `no_codestreams_remaining` for automatic. |
-| codestream_status_changed  | Codestream affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic eligibility rollup (all products AFFECTED_RESOLVED or a product returns to AFFECTED). |
+| package_added              | Package added to the ticket (manual by VA or automatic via CPE match / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
+| package_excluded           | Package soft-deleted from ticket by VA. `old_value` contains the package name. `user_id` is the VA who performed the action. |
+| package_restored           | Soft-deleted package restored by VA. `old_value` contains the package name. `user_id` is the VA who performed the action. |
+| track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). |
+| track_excluded             | Track soft-deleted from ticket by VA. `old_value` contains the track reference. `user_id` is the VA. |
+| track_restored             | Soft-deleted track restored by VA. `old_value` contains the track reference. `user_id` is the VA. |
+| track_released             | Track release detected by `IBSEventConsumer` (real-time) or `CodestreamReleaseDetector` (periodic catch-up) — Case A. Sets `delivery_status = RELEASED` and `status = FIXED`. |
 | product_status_overridden  | VA overrode product affectedness status             |
-| codestream_released        | Codestream release detected by `IBSEventConsumer` (real-time) or `CodestreamReleaseDetector` (periodic catch-up) — Case A |
 | product_released           | Product release detected via updateinfo.xml advisory |
+| product_excluded           | Product soft-deleted from ticket by VA. `old_value` contains the product display name. `user_id` is the VA. |
+| product_restored           | Soft-deleted product restored by VA. `old_value` contains the product display name. `user_id` is the VA. |
 | ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
 | cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the VA who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
 | cve_removed                | Admin removed the CVE association from a ticket. `user_id` is the Admin who performed the action. `old_value` is the CVE-ID string. `new_value` is NULL. `comment` is an optional admin note. |
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
-| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS, EOL), or threshold change. `old_value` and `new_value` contain the product status. `user_id` is NULL (always system-triggered). `comment` format: `package_name:product_id:reason` where reason is `reactive_ltss`, `eol`, `threshold`, or `cvss`. |
-| product_removed             | Product removed from ticket automatically (EOL with status ANALYSIS) or by orphan cleanup. `old_value` contains the product display name. `new_value` is NULL. `user_id` is NULL (system-triggered). `comment` format: `package_name:product_id:eol`. |
-| codestream_removed          | Codestream removed from ticket because it has zero remaining products (orphan cleanup). `old_value` contains the codestream name. `new_value` is NULL. `user_id` is NULL (system-triggered). `comment` format: `package_name:no_products_remaining`. |
+| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `comment` format: `package_name:product_id:reason` where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
 | ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 | ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 
@@ -674,7 +721,7 @@ of the release detection mechanism.
 ### PackageBugowner
 
 Caches the current IBS bugowner for each source package actively tracked
-in Sentinel tickets. Shared across all tickets — all `TicketPackageCodestream`
+in Sentinel tickets. Shared across all tickets — all `TicketPackage`
 records with the same `package_name` reference the same bugowner. Records
 are created on-demand when a package is first added to a ticket, maintained
 by the `sync_package_bugowners` fetcher, and removed when the package no
@@ -684,7 +731,7 @@ longer appears in any active ticket. See
 | Column         | Type        | Constraints          | Description                        |
 |----------------|-------------|----------------------|------------------------------------|
 | id             | UUID        | PK                   | Internal identifier                |
-| package_name   | VARCHAR     | UNIQUE, NOT NULL     | Source package name (matches `TicketPackageCodestream.package_name`) |
+| package_name   | VARCHAR     | UNIQUE, NOT NULL     | Source package name (matches `TicketPackage.package_name`) |
 | bugowner_type  | ENUM        | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
 | bugowner_name  | VARCHAR     | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
 | bugowner_email | VARCHAR     | nullable             | Email of the person or collective email of the group. NULL if unresolved |
@@ -835,19 +882,19 @@ to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 ReleaseRequest.incident_number` — the maintenance incident is not a
 separate entity but an implicit linking concept.
 
-### SubmissionRequestCodestream
+### SubmissionRequestTrack
 
-Links a `SubmissionRequest` to the specific `TicketPackageCodestream`
+Links a `SubmissionRequest` to the specific `TicketPackageTrack`
 records whose CVEs are mentioned in the request's diff.
 
-| Column                        | Type      | Constraints                                | Description                        |
-|-------------------------------|-----------|--------------------------------------------|------------------------------------|
-| id                            | UUID      | PK                                         | Internal identifier                |
-| submission_request_id         | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
-| ticket_package_codestream_id  | UUID      | FK(ticket_package_codestream.id), NOT NULL | Related codestream record          |
-| created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
+| Column                   | Type      | Constraints                                | Description                        |
+|--------------------------|-----------|--------------------------------------------|------------------------------------|
+| id                       | UUID      | PK                                         | Internal identifier                |
+| submission_request_id    | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
+| ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL      | Related track record               |
+| created_at               | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
 
-**Unique constraint**: (submission_request_id, ticket_package_codestream_id)
+**Unique constraint**: (submission_request_id, ticket_package_track_id)
 
 ## Indexes
 
@@ -860,7 +907,7 @@ TBD — will be defined based on query patterns during implementation.
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditLog`,
-  `FetcherRunWeeklyAggregate`, `SubmissionRequestCodestream`, and `RoleMapping`
+  `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, and `RoleMapping`
   only have `created_at` because they are immutable write-once records or are
   replaced rather than updated in place —
   `ProductRepository` records are replaced during SMELT sync, never updated

@@ -337,28 +337,22 @@ with an active ticket, Sentinel performs the following recalculation:
 1. **Recalculate severity**: apply the resolution cascade to determine the
    new severity. If severity changed, update the CVE's `severity` field.
 2. **Recalculate product eligibility**: for every
-   `TicketPackageProduct` linked to the ticket, re-evaluate eligibility
-   using the new score:
+   `TicketPackageProduct` linked to the ticket, re-evaluate the `eligible`
+   flag using the new score:
    - If the new score is **above** a product's threshold (and the product
-     was previously below): `AFFECTED_RESOLVED` → `AFFECTED`
+     was previously below): set `eligible = true`
    - If the new score is **below** a product's threshold (and the product
-     was previously above): `AFFECTED` → `AFFECTED_RESOLVED`
-   - Products with `is_override = true` are not modified
-   - Products in protected states (`WONT_FIX`, `IGNORED`) are not modified
-   - Products in Reactive LTSS phase remain `AFFECTED_RESOLVED` regardless
-3. **Codestream and ticket status re-evaluation**: product status changes
-   in step 2 MUST be applied through the `ticket_mutations` module, which
-   evaluates the codestream eligibility rollup (see
-   `docs/features/packages/package-tracking.md`, Automatic transitions) and then
-   calls `evaluate_ticket_status` to re-evaluate the ticket status (see
-   `docs/features/tickets/tickets.md`, Centralized Status Evaluation). In
-   practice, a CVSS recalculation that moves products from
-   `AFFECTED_RESOLVED` to `AFFECTED` may also move the parent codestream
-   from `AFFECTED_RESOLVED` back to `AFFECTED`, and the ticket from
-   Resolved to Analyzed. The centralized evaluator determines the correct
-   target status.
-   **Note**: this rollback can only occur when an VA manually modifies a
-   SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
+     was previously above): set `eligible = false`
+   - Products whose status was set directly by a VA are not modified
+   - Products in the protected state `WONT_FIX` are not modified
+   - Products in Reactive LTSS phase remain `eligible = false` regardless
+3. **Ticket status re-evaluation**: eligibility changes in step 2 MUST be
+   applied through the `ticket_mutations` module, which then calls
+   `evaluate_ticket_status` to re-evaluate the ticket status (see
+   `docs/features/tickets/tickets.md`, Centralized Status Evaluation).
+   The centralized evaluator determines the correct target status.
+   **Note**: this re-evaluation can only occur when a VA manually modifies
+   a SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
    Hat) and default CVSS version changes only process active tickets
    (New, Analysis, Analyzed) — Resolved tickets are excluded from those
    scopes.
@@ -366,7 +360,7 @@ with an active ticket, Sentinel performs the following recalculation:
    - Severity change: `event_type = "severity_changed"`, `old_value` and
      `new_value` with severity labels
    - Product eligibility change: `event_type = "product_eligibility_changed"`,
-     `old_value` and `new_value` with status labels
+      `old_value` and `new_value` with eligibility boolean values
    - Ticket status change (if the ticket status changed as a result
      of re-evaluation): `event_type = "status_change"`, with `old_value` and
      `new_value` reflecting the actual transition, `user_id = NULL`

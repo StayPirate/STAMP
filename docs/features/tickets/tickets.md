@@ -110,14 +110,15 @@ An Admin can remove a CVE from a ticket via
 - A `TicketEvent` with `event_type = cve_removed` is created (see
   `docs/features/tickets/ticket-history.md`)
 - CVSS sync and release tracking cease applying to the ticket
-- Existing `TicketPackageCodestream` and `TicketPackageProduct` records
+- Existing `TicketPackageTrack` and `TicketPackageProduct` records
   are preserved. However, without an associated CVE, automatic release
-  detection (both codestream-level and product-level) cannot function —
+  detection (both track-level and product-level) cannot function —
   there is no CVE-ID to match in IBS diffs or `updateinfo.xml`
   advisories. The VA must manually set these records to a final status
-  (`RELEASED`, `WONT_FIX`, or `IGNORED`) for the ticket to progress
-  toward Resolved. If a CVE is later re-associated with the ticket
-  (via `POST .../associate-cve`), automatic release detection resumes
+  (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`) or soft-delete them for the
+  ticket to progress toward Resolved. If a CVE is later re-associated
+  with the ticket (via `POST .../associate-cve`), automatic release
+  detection resumes
 - `evaluate_ticket_status` is called after the dissociation: if severity
   becomes `None` and the Analyzed gate requires severity, the ticket may
   regress to Analysis
@@ -285,10 +286,10 @@ The system automatically transitions a ticket from Analysis to Analyzed
 when ALL of the following conditions are met:
 
 1. **At least one package**: the ticket must have at least one package
-   added (at least one `TicketPackageCodestream` record exists)
-2. **All codestream affectedness decided**: no `TicketPackageCodestream`
+   added (at least one active `TicketPackageTrack` record exists)
+2. **All track affectedness decided**: no active `TicketPackageTrack`
    records in `ANALYSIS` status
-3. **All product affectedness decided**: no `TicketPackageProduct`
+3. **All product affectedness decided**: no active `TicketPackageProduct`
    records in `ANALYSIS` status
 4. **Severity set**: the ticket must have a determined severity (not
    `None`). For tickets with CVE, this is derived from CVSS. For tickets
@@ -304,24 +305,29 @@ every operation that modifies gate-relevant data. There is no manual
 conditions are satisfied.
 
 Conversely, if any of these conditions ceases to be met (e.g., a package
-is added with codestreams or products in ANALYSIS, a SUSE CVSS assessment
+is added with tracks or products in ANALYSIS, a SUSE CVSS assessment
 is deleted, or severity becomes undetermined), the ticket automatically
 transitions back from Analyzed to Analysis.
 
 ### Gate: Analyzed → Resolved
 
 The system automatically transitions a ticket from Analyzed to Resolved
-when all `TicketPackageCodestream` and `TicketPackageProduct` records
-have a final status: `RELEASED`, `NOT_AFFECTED`, `WONT_FIX`, `IGNORED`,
-or `AFFECTED_RESOLVED`.
+when ALL of the following conditions are met (only active,
+non-soft-deleted records are considered):
+
+1. Every active `TicketPackageTrack` has a terminal affectedness status:
+   `FIXED`, `NOT_AFFECTED`, or `WONT_FIX`
+2. Every active track with status `FIXED` has
+   `delivery_status = RELEASED`
+3. Every eligible product (`eligible = true`) under a `FIXED` track has
+   `released_at IS NOT NULL` (confirmed receipt of the update)
 
 This evaluation is performed by the centralized status evaluation
 function after every operation that modifies package or product statuses.
 There is no manual "Mark as Resolved" action.
 
-Conversely, if any package or product transitions to a non-final status
-(e.g., CVSS recalculation causes a product to move from
-`AFFECTED_RESOLVED` to `AFFECTED`, or an VA resets a product status
+Conversely, if any of these conditions ceases to be met (e.g., CVSS
+recalculation changes product eligibility, or a VA resets a track status
 from a final state to `AFFECTED`), the ticket automatically transitions
 back from Resolved to Analyzed (or to Analysis, if the "Analyzed" gates
 are also no longer met).
@@ -337,14 +343,14 @@ This means reverse transitions are not special cases — they emerge
 naturally when gate conditions are no longer met:
 
 - **Analyzed → Analysis**: any "Analyzed" gate ceases to be met (e.g.,
-  package added with codestreams in ANALYSIS, SUSE CVSS assessment
-  deleted, codestream status reset to ANALYSIS, severity cleared)
-- **Resolved → Analyzed**: any package or product transitions to a
-  non-final status while "Analyzed" gates remain met (e.g., CVSS
-  recalculation moves a product from AFFECTED_RESOLVED to AFFECTED —
+  package added with tracks in ANALYSIS, SUSE CVSS assessment
+  deleted, track status reset to ANALYSIS, severity cleared)
+- **Resolved → Analyzed**: any resolved gate condition ceases to be met
+  while "Analyzed" gates remain met (e.g., CVSS recalculation changes
+  product eligibility, causing a previously satisfied gate to fail —
   see `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
 - **Resolved → Analysis**: both "Resolved" and "Analyzed" gates are
-  broken (e.g., a new package is added with codestreams in ANALYSIS)
+  broken (e.g., a new package is added with tracks in ANALYSIS)
 
 All automatic transitions create a `TicketEvent` with `user_id = NULL`
 (system action), even when the underlying data change was initiated by
@@ -387,11 +393,12 @@ modify data relevant to ticket status gates are centralized in a
 dedicated service module (`ticket_mutations`). This module exposes
 functions for every type of ticket-relevant mutation:
 
-- Codestream status changes
+- Track status changes
 - Product status changes (including eligibility overrides)
+- Product eligibility changes
 - CVSS assessment creation, update, and deletion
 - Severity changes (`severity_override`)
-- Package addition and removal
+- Package addition and soft-deletion/restore
 
 Each function in the module calls `evaluate_ticket_status` internally
 at the end of the operation, within the same database transaction.
@@ -409,76 +416,68 @@ Architecture) for the full responsibility split between the two modules.
 **Relationship with `add_package_to_ticket`**: the centralized package
 addition function defined in `docs/features/packages/package-tracking.md` handles
 SMELT resolution and external I/O. It delegates the actual creation of
-`TicketPackageCodestream` and `TicketPackageProduct` records to
-`ticket_mutations` functions. Similarly, package removal delegates
-record deletion to the module. The SMELT query logic does not belong
-in `ticket_mutations` — only the record mutations do.
+`TicketPackage`, `TicketPackageTrack`, and `TicketPackageProduct` records
+to `ticket_mutations` functions. Similarly, package soft-deletion
+delegates record updates to the module. The SMELT query logic does not
+belong in `ticket_mutations` — only the record mutations do.
 
 **Idempotency**: the record creation functions in `ticket_mutations` are
-idempotent. If a `TicketPackageCodestream` or `TicketPackageProduct`
-record already exists for the given combination, it is skipped without
-modification. Only missing records are created.
+idempotent. If a `TicketPackageTrack` or `TicketPackageProduct`
+record already exists for the given combination (including soft-deleted
+records), it is skipped without modification. Only missing records are
+created.
 
 **Record creation logic**: when `ticket_mutations` creates a new
-`TicketPackageCodestream` record, the initial status is always `ANALYSIS`.
-When it creates a new `TicketPackageProduct` record, it determines the
-initial status by inheriting from the parent `TicketPackageCodestream`:
+`TicketPackageTrack` record, the initial status is always `ANALYSIS`
+and `delivery_status` is `PENDING`. When it creates a new
+`TicketPackageProduct` record, it determines the initial status by
+inheriting from the parent `TicketPackageTrack`:
 
 - Parent in `ANALYSIS` → `ANALYSIS`
-- Parent in `AFFECTED` → apply eligibility rules (CVSS threshold,
-  Reactive LTSS override): if the product is not eligible, set status
-  to `AFFECTED_RESOLVED`; otherwise set status to `AFFECTED`
-- Parent in any other status (`NOT_AFFECTED`, `WONT_FIX`, `IGNORED`,
-  `RELEASED`, `AFFECTED_RESOLVED`) → inherit the same status
+- Parent in `AFFECTED` → status is set to `AFFECTED`; eligibility is
+  calculated separately (CVSS threshold, Reactive LTSS override) and
+  stored in the `eligible` boolean
+- Parent in any other status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) →
+  inherit the same status
 
 This logic is internal to `ticket_mutations` — callers (including
 `add_package_to_ticket`) do not specify the initial status.
 
-After creating a `TicketPackageProduct` with status `AFFECTED_RESOLVED`
-(inherited from an `AFFECTED` parent where the product is not eligible),
-the codestream eligibility rollup is evaluated: if all products under the
-parent codestream are now `AFFECTED_RESOLVED`, the codestream itself is
-set to `AFFECTED_RESOLVED` (see `docs/features/packages/package-tracking.md`,
-Automatic transitions).
-
 Operations that do NOT modify gate-relevant data (assignment, duplicate
-set/remove, CVE association/removal, soft-delete, restore) are NOT
-required to go through this module — they create `TicketEvent` records
-in their own services.
+set/remove, CVE association/removal, ticket-level soft-delete/restore)
+are NOT required to go through this module — they create `TicketEvent`
+records in their own services.
 
 #### Orphan Cleanup Invariants
 
 The `ticket_mutations` module enforces automatic cleanup of empty parent
 records. These are generic rules that apply regardless of the trigger —
-any current or future feature that removes a product or codestream
+any current or future feature that soft-deletes a product or track
 automatically benefits from these invariants.
 
-**Invariant 1 — Codestream orphan rule**: after every
-`remove_ticket_package_product` call, `ticket_mutations` checks whether
-the parent `TicketPackageCodestream` has zero remaining
-`TicketPackageProduct` records. If zero products remain, it calls
-`remove_ticket_package_codestream(codestream_record)`.
+**Invariant 1 — Track orphan rule**: after every product soft-deletion,
+`ticket_mutations` checks whether the parent `TicketPackageTrack` has
+zero remaining active `TicketPackageProduct` records. If zero active
+products remain, the track is also soft-deleted.
 
-**Invariant 2 — Package orphan rule**: after every
-`remove_ticket_package_codestream` call, `ticket_mutations` checks
-whether the parent package in the ticket has zero remaining
-`TicketPackageCodestream` records. If zero codestreams remain, it calls
-`remove_package_from_ticket(ticket_id, package_name)`.
+**Invariant 2 — Package orphan rule**: after every track soft-deletion,
+`ticket_mutations` checks whether the parent `TicketPackage` has zero
+remaining active `TicketPackageTrack` records. If zero active tracks
+remain, the package is also soft-deleted.
 
-**Cascading composition**: the invariants compose naturally through
-function calls:
+**Cascading composition**: the invariants compose naturally:
 
 ```
-remove_ticket_package_product(record)
-  → TicketEvent (product removed)
+soft_delete_ticket_package_product(record, user)
+  → TicketEvent (product_excluded)
   → evaluate_ticket_status()
-  → _enforce_codestream_orphan_rule()
-      → if 0 products: remove_ticket_package_codestream(...)
-          → TicketEvent (codestream removed)
+  → _enforce_track_orphan_rule()
+      → if 0 active products: soft_delete_ticket_package_track(...)
+          → TicketEvent (track_excluded)
           → evaluate_ticket_status()
           → _enforce_package_orphan_rule()
-              → if 0 codestreams: remove_package_from_ticket(...)
-                  → TicketEvent (package removed)
+              → if 0 active tracks: soft_delete_ticket_package(...)
+                  → TicketEvent (package_excluded)
                   → evaluate_ticket_status()
 ```
 
@@ -492,19 +491,20 @@ transaction.
 
 Every service-layer operation that modifies data relevant to ticket
 status gates MUST go through the `ticket_mutations` module. Direct
-modification of `TicketPackageCodestream`, `TicketPackageProduct`,
+modification of `TicketPackageTrack`, `TicketPackageProduct`,
 or `CVECVSSAssessment` records outside this module is a bug — it
 bypasses status re-evaluation and may leave the ticket in an
 inconsistent state.
 
 Relevant data includes:
 
-- `TicketPackageCodestream` records (creation, deletion, status change)
-- `TicketPackageProduct` records (creation, deletion, status change,
+- `TicketPackageTrack` records (creation, soft-deletion, status change,
+  delivery status change)
+- `TicketPackageProduct` records (creation, soft-deletion, status change,
   eligibility change)
 - `CVECVSSAssessment` records (creation, update, deletion)
 - Ticket severity (`severity_override` or CVSS-derived severity)
-- Package addition or removal
+- Package addition or soft-deletion/restore
 
 #### Architectural Test Requirement
 
@@ -519,7 +519,7 @@ every type of relevant mutation. The test must cover:
   Resolved → Analysis)
 - **No-op cases**: mutations that do not affect gate conditions
 - **Edge cases**: ticket with no packages, ticket without CVE (no SUSE
-  CVSS gate), all codestreams in final status but severity not set
+  CVSS gate), all tracks in final status but severity not set
 
 This test serves as a permanent architectural fitness function: if a
 new service operation modifies gate-relevant data without going through
@@ -649,8 +649,8 @@ features behave differently:
 | CVSS scoring | Not applicable — no CVE means no CVSS assessments |
 | CVSS sync (NVD, Red Hat) | Not applicable — ticket is skipped |
 | Severity | Manual via `severity_override` (editable by VA) |
-| Release tracking (codestream) | Not applicable — codestream detection relies on CVE-ID in IBS diffs |
-| Release tracking (product) | Not applicable — product detection relies on CVE-ID in `updateinfo.xml` |
+| Release tracking (track) | Not applicable — track-level detection relies on CVE-ID in IBS diffs |
+| Release tracking (product) | Not applicable — product-level detection relies on CVE-ID in `updateinfo.xml` |
 | NVD rejection handling | Not applicable — no CVE means no `vulnStatus` changes |
 | NVD rejection revert handling | Not applicable |
 | CVE Information UI section | Hidden |
@@ -658,7 +658,7 @@ features behave differently:
 | Gate: SUSE CVSS required | Not applicable — severity is set via `severity_override` instead |
 | Critical CVE notification | Not applicable |
 
-Packages, codestreams, and products can still be added and managed
+Packages, tracks, and products can still be added and managed
 normally. The VA can set affectedness statuses and the ticket can
 progress through the full lifecycle.
 

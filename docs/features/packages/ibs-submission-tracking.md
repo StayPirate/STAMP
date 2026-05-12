@@ -7,12 +7,12 @@ parallel to the package affectedness status, giving Vulnerability Analysts
 visibility into the progression of fixes without altering the existing
 `PackageStatus` model.
 
-Today the codestream status jumps directly from `AFFECTED` to `RELEASED`
-with no visibility into what happens in between. A maintainer may have
-already submitted a fix days ago, but the VA has no way to know until the
-fix lands in the codestream project (detected by `CodestreamReleaseDetector`
-or `IBSEventConsumer`). This feature fills that gap by tracking both SRs
-and RRs and showing them alongside the codestream affectedness status.
+Today the track status stays `AFFECTED` with no visibility into what
+happens between fix submission and delivery. A maintainer may have
+already submitted a fix days ago, but the VA has no way to know until
+the system sets `delivery_status` to `RELEASED` (when the RR is
+accepted). This feature fills that gap by tracking both SRs and RRs
+and showing them alongside the track affectedness status.
 
 ## Domain Concepts
 
@@ -98,20 +98,22 @@ Sentinel must handle this by transitioning the record back to `open` state.
 ## Design Principle: Parallel Tracking
 
 SRs and RRs are tracked as **separate entities** with their own lifecycle,
-not as modifications to `PackageStatus`. The codestream remains `AFFECTED`
-until the fix is actually released — SR/RR status is purely informational.
+not as modifications to `PackageStatus`. The track remains `AFFECTED`
+until the system sets it to `FIXED` when `delivery_status` reaches
+`RELEASED` — SR/RR status is purely informational for tracking the
+MU progression.
 
 **Why not a new PackageStatus value?** Adding an intermediate status (e.g.,
-`FIX_IN_PROGRESS`) between `AFFECTED` and `RELEASED` was considered and
+`FIX_IN_PROGRESS`) between `AFFECTED` and `FIXED` was considered and
 rejected because:
 
 - It would impact the ticket gate logic (is the new status final?
   non-final? does it block progression?)
-- It would complicate the codestream-to-product propagation rules
+- It would complicate the track-to-product propagation rules
 - It would require handling regression (submission declined -> revert to
   `AFFECTED`)
-- The PackageStatus enum is shared between codestream and product levels,
-  but submissions only exist at the codestream level
+- The PackageStatus enum is shared between track and product levels,
+  but submissions only exist at the track level
 
 **Why SR + RR instead of SR + MaintenanceIncident?** The VA's mental model
 is centered on requests: "is there an SR? what state is it in? is there a
@@ -214,23 +216,23 @@ Sentinel.
 | declined    | No     | RR rejected, but can be reopened. On reopen, transitions back to `open`. |
 | revoked     | Yes    | RR revoked (must be revoked before a new RR can be created from the same incident) |
 
-### SubmissionRequestCodestream (Join Table)
+### SubmissionRequestTrack (Join Table)
 
-Links a `SubmissionRequest` to the specific `TicketPackageCodestream`
+Links a `SubmissionRequest` to the specific `TicketPackageTrack`
 records whose CVEs are mentioned in the request's diff.
 
 | Column                        | Type      | Constraints                                | Description                        |
 |-------------------------------|-----------|--------------------------------------------|------------------------------------|
 | id                            | UUID      | PK                                         | Internal identifier                |
 | submission_request_id         | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
-| ticket_package_codestream_id  | UUID      | FK(ticket_package_codestream.id), NOT NULL | Related codestream record          |
+| ticket_package_track_id       | UUID      | FK(ticket_package_track.id), NOT NULL      | Related track record               |
 | created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
 
-**Unique constraint**: (submission_request_id, ticket_package_codestream_id)
+**Unique constraint**: (submission_request_id, ticket_package_track_id)
 
 ### Why Explicit Correlation (Join Table)
 
-Implicit matching (querying `TicketPackageCodestream` by codestream_name +
+Implicit matching (querying `TicketPackageTrack` by codestream_name +
 package_name at display time) was considered and rejected because it would
 create **false positives**: if package `curl` on `SLE-15-SP6:Update` is
 tracked by 3 tickets (CVE-A, CVE-B, CVE-C) but a submission only fixes
@@ -242,7 +244,7 @@ CVEs are actually mentioned in the request's diff (changelog).
 ### Why No Join Table for ReleaseRequest
 
 The RR does not need its own join table. Its correlation to tickets is
-derived from the SR: given a `TicketPackageCodestream`, find the correlated
+derived from the SR: given a `TicketPackageTrack`, find the correlated
 SRs via the join table, collect their `incident_number` values, then find
 the RRs with matching `incident_number`.
 
@@ -460,6 +462,13 @@ by the submission tracking pipelines below (real-time consumer for
 conclusive state changes, catch-up fetcher for missed events and
 reopens).
 
+SR and RR state changes also drive `TicketPackageTrack.delivery_status`
+updates:
+- When an SR is created for a track, `delivery_status` transitions from
+  `PENDING` to `IN_PROGRESS`
+- When the RR is accepted, `delivery_status` transitions from
+  `IN_PROGRESS` to `RELEASED`
+
 ### Pipeline 1: Real-Time (IBSEventConsumer)
 
 #### On `request.create` (type = maintenance_incident) — New SR
@@ -472,9 +481,10 @@ reopens).
    - package_name = extract from sourcepackage by stripping the
      codestream suffix (see Package Name Extraction in Data Sources)
 4. Is codestream_name an active codestream with at least one
-   TicketPackageCodestream in ANALYSIS or AFFECTED? If no -> skip
+   TicketPackageTrack (where deleted_by IS NULL) in ANALYSIS or
+   AFFECTED? If no -> skip
 5. Is package_name tracked in at least one ticket for that
-   codestream? If no -> skip
+   codestream (filtered by deleted_by IS NULL)? If no -> skip
 6. Create SubmissionRequest record (state = open)
 7. Enqueue Celery task: correlate_submission_request(submission_id)
 ```
@@ -488,8 +498,9 @@ reopens).
 3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
 4. For each CVE-ID:
    a. Find the ticket with that CVE
-   b. Find the TicketPackageCodestream for (ticket, codestream, package)
-   c. Create SubmissionRequestCodestream join record (idempotent:
+   b. Find the TicketPackageTrack for (ticket, codestream, package)
+      — filtered by deleted_by IS NULL
+   c. Create SubmissionRequestTrack join record (idempotent:
       skip if unique constraint already satisfied)
 5. If no correlations EXIST for this SR (total count of join records
    in the database = 0, not just those created in this run) -> delete
@@ -557,9 +568,9 @@ fetcher handles this case (see Pipeline 2).
 ### Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)
 
 A `BaseFetcher` subclass that runs every **24 hours** (02:30 UTC) to
-recover events missed during consumer downtime and reconcile state
-drift. This is the only mechanism for detecting request reopens
-(declined -> new/review).
+recover events missed during consumer downtime, reconcile state
+drift, and verify delivery status consistency. This is the only
+mechanism for detecting request reopens (declined -> new/review).
 
 The lookback window (controlled by the `lookback_hours` custom setting,
 default: **25 hours**) ensures overlap across consecutive fetcher runs,
@@ -572,7 +583,8 @@ both down).
 Step 1 — Discover missed open SRs and reconcile known ones:
 
   1. Identify active codestreams (distinct codestream_name values from
-     TicketPackageCodestream records with status ANALYSIS or AFFECTED)
+     TicketPackageTrack records where deleted_by IS NULL and status is
+     ANALYSIS or AFFECTED)
 
   2. For each active codestream:
      GET /request?view=collection&project={codestream}&states=new,review
@@ -583,7 +595,8 @@ Step 1 — Discover missed open SRs and reconcile known ones:
 
        For SRs:
        b. Filter: is the targetpackage tracked in at least one ticket
-          for this codestream? If no -> skip
+          for this codestream (filtered by deleted_by IS NULL)?
+          If no -> skip
        c. If NOT present in SubmissionRequest table:
           -> Create SubmissionRequest (state = open)
           -> Enqueue correlate_submission_request task
@@ -610,7 +623,7 @@ Step 1b — Discover missed accepted SRs (temporal lookback):
      For each SR in the response:
        a. Already in SubmissionRequest table? -> skip
        b. targetpackage tracked in at least one ticket for this
-          codestream? If no -> skip
+          codestream (filtered by deleted_by IS NULL)? If no -> skip
         c. Create SubmissionRequest (state=accepted)
         d. Call set_sr_incident_number(SR, extracted incident_number)
         e. Enqueue correlate_submission_request
@@ -634,6 +647,20 @@ Step 2 — Reconcile requests no longer in new/review:
      GET /request/{number}
      -> Update state to the current IBS state (accepted, declined,
        revoked)
+
+Step 3 — Delivery status reconciliation:
+
+  8. Query all TicketPackageTrack records where:
+     - deleted_by IS NULL
+     - track type is IBS (codestream-based)
+     - delivery_status != RELEASED
+     - the parent ticket is in an open state
+  9. For each such track, verify that delivery_status is consistent
+     with the current SR/RR state:
+     - If an SR is correlated and in open or accepted state but
+       delivery_status is PENDING -> set to IN_PROGRESS
+     - If an accepted RR exists for the correlated incident but
+       delivery_status is not RELEASED -> set to RELEASED
 ```
 
 #### Why This Approach
@@ -679,7 +706,7 @@ an on-demand task triggered by a parent operation, with no independent
 schedule or dashboard presence.
 
 **Trigger**: `add_package_to_ticket` enqueues this task as its final step,
-after all `TicketPackageCodestream` and `TicketPackageProduct` records have
+after all `TicketPackageTrack` and `TicketPackageProduct` records have
 been created and the bugowner has been resolved. The task runs regardless of
 what triggered the package addition (VA manual action, CPE mapping,
 release detection Case B/C).
@@ -688,9 +715,10 @@ release detection Case B/C).
 
 ```
 1. Retrieve the ticket's CVE-ID
-2. Retrieve ALL TicketPackageCodestream records for (ticket, package)
-   — no status filter (includes ANALYSIS, AFFECTED, RELEASED, etc.)
-3. For each codestream:
+2. Retrieve ALL TicketPackageTrack records for (ticket, package)
+   — filtered by deleted_by IS NULL, no status filter (includes
+   ANALYSIS, AFFECTED, FIXED, etc.)
+3. For each track:
    a. Query IBS:
       GET /request?view=collection&project={codestream}
           &package={package}&states=new,review,accepted
@@ -698,9 +726,9 @@ release detection Case B/C).
           &created_at_from={now - 14d}
    b. For each SR in the response:
       - Already in SubmissionRequest AND a join record exists for
-        (this SR, this TicketPackageCodestream)? → skip
+        (this SR, this TicketPackageTrack)? → skip
       - Already in SubmissionRequest but no join record for
-        (this SR, this TicketPackageCodestream)?
+        (this SR, this TicketPackageTrack)?
         → Re-enqueue correlate_submission_request(submission_id)
       - Not in SubmissionRequest?
         → Create SubmissionRequest record (state mapped from IBS)
@@ -714,12 +742,12 @@ release detection Case B/C).
 
 #### Design Decisions
 
-- **No status filter on codestreams**: all codestreams are checked
-  regardless of their `PackageStatus`. This ensures SR/RR data is captured
-  even for codestreams already in `RELEASED` state (e.g., Case C tickets
-  created by `create_ticket_from_detection`). The data is not displayed in
-  the UI for final-status codestreams but is retained for audit and future
-  use.
+- **No status filter on tracks**: all tracks are checked regardless of
+  their `PackageStatus` (only soft-deleted tracks are excluded via
+  `deleted_by IS NULL`). This ensures SR/RR data is captured even for
+  tracks already in `FIXED` state (e.g., Case C tickets created by
+  `create_ticket_from_detection`). The data is not displayed in the UI
+  for final-status tracks but is retained for audit and future use.
 - **14-day lookback window**: limits the volume of accepted SRs returned
   by IBS for long-lived packages. An SR older than 14 days whose ticket is
   only being created now is an extreme edge case with low informational
@@ -785,7 +813,7 @@ with a given maintenance incident. Called automatically by
 
 ### Visualization Format
 
-In the ticket detail view, within the affectedness tree, each codestream
+In the ticket detail view, within the affectedness tree, each track
 in `AFFECTED` (or `ANALYSIS`) status shows the update progression as a
 chain:
 
@@ -818,7 +846,7 @@ The incident (SM) is always grey — it has no state of its own.
 
 ### Display Logic
 
-The chain shown for a given ticket/codestream/package is determined by:
+The chain shown for a given ticket/track is determined by:
 
 1. **If an incident exists** (at least one accepted SR with an
    `incident_number`): show the chain based on the **most recent
@@ -845,14 +873,14 @@ Package: curl                                         [Remove]
 +-- SUSE:SLE-15-SP5:Update        [Affected]
 |   |  SR#407180
 |   +-- ...
-+-- SUSE:SLE-15-SP4:Update        [Released]
++-- SUSE:SLE-15-SP4:Update        [Fixed]
     +-- ...
 ```
 
 The VA sees immediately:
 - SP6: SR accepted (green), incident created (grey), RR in QA (yellow)
 - SP5: SR pending (yellow), no incident yet
-- SP4: released, no chain shown
+- SP4: fixed, no chain shown
 
 ### Progression Examples
 
@@ -868,7 +896,7 @@ Phase 3 — RR created, in QA:
 
 Phase 4 — RR accepted, released:
   SR#407175 → SM#43894 → RR#407225       (green → grey → green)
-  (codestream will transition to RELEASED shortly)
+  (delivery_status transitions to RELEASED; track status set to FIXED)
 
 SR declined, no incident:
   SR#407175                              (red)
@@ -885,9 +913,9 @@ SR superseded:
 ### General Rules
 
 - The chain is **read-only** — no VA interaction required
-- The chain is only shown for non-final codestream statuses (`ANALYSIS`,
-  `AFFECTED`). Released codestreams do not show the chain (though the
-  data remains in the database).
+- The chain is only shown for non-final track statuses (`ANALYSIS`,
+  `AFFECTED`). Tracks with `FIXED` or `WONT_FIX` status do not show the
+  chain (though the data remains in the database).
 - All elements are clickable links to IBS
 
 ## API Endpoints
@@ -903,7 +931,7 @@ than 20 records per ticket, similar to ticket references).
 ### `GET /api/v1/tickets/{ticket_id}/submission-requests`
 
 List all submission requests correlated to the ticket via the
-`SubmissionRequestCodestream` join table.
+`SubmissionRequestTrack` join table.
 
 **Query parameters** (all optional):
 
@@ -1025,7 +1053,7 @@ SR correlation: find SRs correlated to the ticket, collect their
 
 | Task                                         | Type                       | Schedule           | Purpose                                                              |
 |----------------------------------------------|----------------------------|--------------------|----------------------------------------------------------------------|
-| `RequestSyncFetcher`                         | BaseFetcher (periodic)     | Every 24h (02:30 UTC) | Catch-up: discover missed SRs/RRs, reconcile states, detect reopens |
+| `RequestSyncFetcher`                         | BaseFetcher (periodic)     | Every 24h (02:30 UTC) | Catch-up: discover missed SRs/RRs, reconcile states, detect reopens, verify delivery status |
 | `correlate_submission_request`               | Celery task (on-demand)    | —                  | Call IBS diff API, extract CVE-IDs, create join records              |
 | `discover_submissions_for_ticket_package`    | Celery task (sub-operation)| —                  | Retroactive SR/RR discovery when a package is added to a ticket      |
 
@@ -1044,7 +1072,7 @@ on-demand, no independent schedule, no dashboard presence.
 | IBS diff API returns 4xx/5xx                                 | Same as above.                                                                               |
 | IBS REST API unreachable (`RequestSyncFetcher`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
 | RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
-| SR/RR references a codestream not tracked in Sentinel           | Silent skip (not relevant to Sentinel).                                                         |
+| SR/RR references a codestream not tracked in any active ticket  | Silent skip (not relevant to Sentinel).                                                         |
 | IBS diff API returns no CVE-IDs for an SR                    | SR is deleted (silent discard — see Pipeline 1, `correlate_submission_request` step 3).      |
 
 ## Configuration
@@ -1085,7 +1113,7 @@ mechanisms or credentials:
 - `ibs-rabbitmq-integration.md` — consumer architecture, connection
   management, routing key bindings
 - `ibs-integration.md` — IBS REST API and diff API
-- `package-tracking.md` — `TicketPackageCodestream` model,
+- `package-tracking.md` — `TicketPackageTrack` model,
   `add_package_to_ticket` trigger
 - `tickets.md` — ticket model and access rules
 - `fetcher-infrastructure.md` — `BaseFetcher` base class contract

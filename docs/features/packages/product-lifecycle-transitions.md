@@ -5,9 +5,11 @@
 Define the automated behavior when a product transitions to the Reactive
 LTSS phase or reaches End of Life (EOL) while it has non-final
 `TicketPackageProduct` records in active tickets. This specification
-relies on the orphan cleanup invariants in `ticket_mutations` (defined in
-`docs/features/tickets/tickets.md`) that ensure codestreams and packages are
-automatically removed when they no longer have children.
+relies on the soft-deletion mechanism and track orphan cleanup invariants
+in `ticket_mutations` (defined in `docs/features/tickets/tickets.md` and
+`docs/features/packages/package-tracking.md`) that ensure tracks and
+packages are automatically soft-deleted when they no longer have active
+children.
 
 ## Terminology
 
@@ -15,8 +17,8 @@ automatically removed when they no longer have children.
 |------|------------|
 | **Lifecycle phase transition** | A product crossing a lifecycle date boundary (e.g., `today` exceeds `end_of_ltss`, moving from LTSS to Reactive LTSS) |
 | **EOL** | End of Life — a product that has passed all applicable lifecycle dates. Determined exclusively by AIMAAS lifecycle dates, NOT by the `active` flag from SMELT |
-| **Orphan codestream** | A `TicketPackageCodestream` with zero remaining `TicketPackageProduct` records |
-| **Orphan package** | A package in a ticket with zero remaining `TicketPackageCodestream` records |
+| **Orphan track** | A `TicketPackageTrack` with zero remaining active (non-soft-deleted) `TicketPackageProduct` records |
+| **Orphan package** | A `TicketPackage` with zero remaining active (non-soft-deleted) `TicketPackageTrack` records |
 
 ## EOL Determination
 
@@ -45,13 +47,13 @@ re-evaluation.
 1. Find all products currently in **Reactive LTSS** phase
    (`end_of_ltss < today < end_of_reactive_ltss`)
    - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
+     in active tickets (status New, Analysis, or Analyzed; `deleted_by IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
 2. Find all products currently in **EOL** phase (past all applicable
    lifecycle dates)
    - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     or `ANALYSIS` in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
+     or `ANALYSIS` in active tickets (status New, Analysis, or Analyzed; `deleted_by IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
 3. If no actionable records found for a product, no sub-task is enqueued
@@ -83,9 +85,12 @@ triggered by parent fetchers, with no independent schedule).
 For all `TicketPackageProduct` records referencing this product in open
 tickets with status `AFFECTED`:
 
-- Call `ticket_mutations.set_product_status(record, AFFECTED_RESOLVED)`
+- Call `ticket_mutations.set_product_eligibility(record, eligible=false)`
 
-Records in other statuses are not modified.
+The product status remains `AFFECTED`. Only the `eligible` flag is
+changed. Records with `is_eligible_override = true` are not modified.
+Records in other statuses are not modified (eligibility is meaningful
+only when status is `AFFECTED`).
 
 #### Reason: `eol`
 
@@ -94,11 +99,11 @@ tickets with non-final, non-protected status:
 
 | Current status | Action |
 |----------------|--------|
-| `AFFECTED` | Call `ticket_mutations.set_product_status(record, AFFECTED_RESOLVED)` |
-| `ANALYSIS` | Call `ticket_mutations.remove_ticket_package_product(record)` |
+| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record, deleted_by=system_user)` with a `TicketEvent` (`comment` includes `eol` reason) |
+| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record, deleted_by=system_user)` with a `TicketEvent` (`comment` includes `eol` reason) |
 
-Records in final status (`NOT_AFFECTED`, `RELEASED`, `AFFECTED_RESOLVED`)
-or protected status (`WONT_FIX`, `IGNORED`) are not modified.
+Records in final status (`NOT_AFFECTED`, `FIXED`) or protected status
+(`WONT_FIX`) are not modified.
 
 #### Reason: `threshold_change` / `cvss_change`
 
@@ -107,31 +112,35 @@ Existing behavior as specified in `docs/features/packages/package-tracking.md` a
 
 ## Cascading Cleanup
 
-When `re_evaluate_product_eligibility` removes a `TicketPackageProduct`
-(ANALYSIS → delete for EOL), the orphan cleanup invariants defined in
+When `re_evaluate_product_eligibility` soft-deletes a `TicketPackageProduct`
+(for EOL), the track orphan cleanup invariants defined in
 `docs/features/tickets/tickets.md` (Ticket Mutations Module, "Orphan Cleanup
-Invariants") automatically cascade: if the parent codestream has zero
-remaining products it is removed, and if the parent package has zero
-remaining codestreams it is removed from the ticket. Each step produces
+Invariants") automatically cascade: if the parent track has zero
+remaining active (non-soft-deleted) products it is soft-deleted (with
+`deleted_by` set to the system user), and if the parent package has zero
+remaining active tracks it is soft-deleted. Each step produces
 a `TicketEvent` and calls `evaluate_ticket_status`.
 
 ## TicketEvent Records
 
-All automated transitions and removals produce `TicketEvent` records
-with `user_id = NULL` (system action).
+All automated transitions and soft-deletions produce `TicketEvent`
+records with `user_id = NULL` (system action).
 
 | Action | `event_type` | `old_value` | `new_value` | `comment` |
 |--------|--------------|-------------|-------------|-----------|
-| Product AFFECTED → AFFECTED_RESOLVED (Reactive LTSS) | `product_eligibility_changed` | `AFFECTED` | `AFFECTED_RESOLVED` | `package_name:product_id:reactive_ltss` |
-| Product AFFECTED → AFFECTED_RESOLVED (EOL) | `product_eligibility_changed` | `AFFECTED` | `AFFECTED_RESOLVED` | `package_name:product_id:eol` |
-| Product removed (ANALYSIS, EOL) | `product_removed` | Product display name | `NULL` | `package_name:product_id:eol` |
-| Codestream removed (orphan) | `codestream_removed` | Codestream name | `NULL` | `package_name:no_products_remaining` |
-| Package removed (orphan) | `package_removed` | Package name | `NULL` | `no_codestreams_remaining` |
+| Product eligibility set to false (Reactive LTSS) | `product_eligibility_changed` | `true` | `false` | `package_name:product_id:reactive_ltss` |
+| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | `NULL` | `NULL` | `package_name:product_id:eol` |
+| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | `NULL` | `NULL` | `package_name:product_id:eol` |
+| Track soft-deleted (orphan) | `track_excluded` | `NULL` | `NULL` | `package_name:reference:no_products_remaining` |
+| Package soft-deleted (orphan) | `package_excluded` | `NULL` | `NULL` | `package_name:no_tracks_remaining` |
 
 **Event types used**: `product_eligibility_changed` (existing),
-`product_removed`, `codestream_removed`, and `package_removed` (existing).
-See `docs/data-model.md` for the full enum definition and
-`docs/features/tickets/ticket-history.md` for the field contract.
+`product_excluded`, `track_excluded`, and `package_excluded` (existing
+soft-deletion event types). For system-initiated soft-deletions,
+`user_id` is `NULL` (distinguishing them from VA-initiated exclusions
+where `user_id` identifies the VA). See `docs/data-model.md` for the
+full enum definition and `docs/features/tickets/ticket-history.md` for
+the field contract.
 
 ## Integration with Existing Tasks
 
@@ -148,8 +157,9 @@ perform re-evaluation — phase detection is handled by
 
 ## Protected States
 
-Consistent with the rest of the system, `WONT_FIX` and `IGNORED` are
-NEVER modified by automatic transitions.
+Consistent with the rest of the system, `WONT_FIX` is NEVER modified
+by automatic transitions. Records with status `WONT_FIX` are not
+soft-deleted or have their eligibility changed by lifecycle transitions.
 
 ## Security
 

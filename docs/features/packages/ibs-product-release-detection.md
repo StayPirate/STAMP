@@ -22,13 +22,14 @@ package:
    product's update repository (e.g., the SLES 15 SP6 update repository
    consumed by `zypper`).
 
-The product level updates `TicketPackageProduct.status` to `RELEASED` and
-sets `released_at` as soon as the fix appears in that specific product's
-update repository.
+The product level sets `TicketPackageProduct.released_at` as soon as the
+fix appears in that specific product's update repository. The product's
+affectedness status is NOT changed — release confirmation is tracked
+exclusively via the `released_at` timestamp.
 
-The automatic transition to `RELEASED` is suppressed when the current status
-is `WONT_FIX` or `IGNORED` (protected states — see
-`docs/features/packages/package-tracking.md`, "Status Behavior").
+Products with status `WONT_FIX` (protected state — see
+`docs/features/packages/package-tracking.md`, "Status Behavior") are
+excluded from scanning.
 
 ## Detection Mechanism
 
@@ -51,7 +52,8 @@ below for how `<repo_url>` is constructed):
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
    matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-   records reference P and are in a non-final, non-protected status.
+   records reference P, have `deleted_by IS NULL`, `eligible = true`, and
+   `released_at IS NULL`.
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received
@@ -59,11 +61,9 @@ below for how `<repo_url>` is constructed):
 
 ### Outcome per matched (ticket, product, package)
 
-- `TicketPackageProduct.status` is set to `RELEASED` through the
-  `ticket_mutations` module (unless current status is `WONT_FIX` or
-  `IGNORED`).
 - `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
-  of the advisory.
+  of the advisory through the `ticket_mutations` module.
+- The product's affectedness status is NOT changed.
 
 ### Update Repository URL Resolution
 
@@ -109,8 +109,8 @@ SMELT repository names fall into two categories:
   repository.
   Example: `SUSE:Updates:openSUSE-SLE:15.6`.
 
-Sentinel does NOT track release status per architecture — a match on any
-architecture is sufficient to set the status to `RELEASED`.
+   Sentinel does NOT track release status per architecture — a match on any
+   architecture is sufficient to set `released_at`.
 
 **Scanning strategy per product**:
 
@@ -122,8 +122,8 @@ architecture is sufficient to set the status to `RELEASED`.
 3. If no match was found (or no multi-arch repo exists), scan single-arch
    repos: `x86_64` first (primary architecture), then remaining
    architectures in alphabetical order.
-4. As soon as a match is found on any repo, set status to `RELEASED` and
-   stop — do not scan remaining repos.
+4. As soon as a match is found on any repo, set `released_at` and stop —
+   do not scan remaining repos.
 
 This approach handles the common case efficiently (most advisories land on
 x86_64) while also covering arch-specific packages like `s390-tools` that
@@ -163,7 +163,7 @@ binding packages (e.g., a CVE in a Go or Rust library that impacts
 `containerd`, `podman`, `golang-1.21`, and others — each requiring its own
 independent fix). Sentinel must identify **which specific source package** of
 the ticket has been fixed by a given advisory, so that only the
-corresponding `TicketPackageProduct` record is transitioned to `RELEASED`,
+corresponding `TicketPackageProduct` record has its `released_at` set,
 leaving the others untouched until their own fixes land.
 
 The match is a cascade — the first step that produces a positive match
@@ -229,11 +229,11 @@ Then:
 
 ### Positive match (source package S of the ticket on product P)
 
-- `TicketPackageProduct(S, P).status` → `RELEASED`.
 - `TicketPackageProduct(S, P).released_at` = advisory's `<issued date>`.
-- The transition is suppressed when the current status is `WONT_FIX` or
-  `IGNORED` (protected states, see `docs/features/packages/package-tracking.md`,
-  "Status Behavior").
+- The product's affectedness status is NOT changed.
+- Products with status `WONT_FIX` (protected state) are excluded from
+  scanning and will never reach this outcome (see scope filter in
+  [Background Task](#background-task)).
 
 ### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
 
@@ -254,8 +254,9 @@ not tracked in ticket, or no ticket exists at all) is described in
 - **Task name**: `check_product_releases`
 - **Type**: `BaseFetcher` subclass
 - **Schedule**: TBD (see [Open Items](#open-items))
-- **Scope**: scans products that have at least one `TicketPackageProduct`
-  record in a non-final, non-protected status
+- **Scope**: scans active products (`deleted_by IS NULL`) with
+  `eligible = true` and `released_at IS NULL`, excluding those with
+  status `WONT_FIX` (protected state)
 
 ## Open Items
 
@@ -270,8 +271,8 @@ sessions before implementation begins.
   parsing) to avoid redundant downloads.
 - **Backfill of pre-existing advisories** — Behavior when a new ticket is
   opened for a CVE for which an advisory already exists in the product
-  repository (mark `RELEASED` retroactively with a historical
-  `released_at`, or ignore advisories older than the ticket).
+  repository (set `released_at` retroactively with a historical date, or
+  ignore advisories older than the ticket).
 - **Formal definition of "relevant advisory"** — Edge cases (e.g.,
   `<update status>` values other than `stable`, advisories with empty
   `<pkglist>`, retracted advisories) need formalization.
@@ -279,7 +280,7 @@ sessions before implementation begins.
 ### Cross-cutting
 
 - **Released advisory persistence** — Whether to store a reference to the
-  advisory that caused the automatic `RELEASED` transition (e.g., a
+  advisory that caused the `released_at` to be set (e.g., a
   `released_advisory_id` field on `TicketPackageProduct` holding the
   `SUSE-SU-YYYY:NNNN` identifier) for traceability and UI display, or to
   rely solely on `released_at` plus the audit log.

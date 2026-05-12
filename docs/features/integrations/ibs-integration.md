@@ -166,8 +166,8 @@ IBS-related data is stored in the following tables (see `docs/data-model.md`):
   `IBSEventConsumer` (real-time) and the `CodestreamReleaseDetector`
   (periodic catch-up) to detect source changes. See
   `docs/features/integrations/ibs-rabbitmq-integration.md`.
-- `TicketPackageCodestream.codestream_name`: stores the IBS project name
-  (e.g., `SUSE:SLE-15-SP6:Update`) as a string. Codestreams are not
+- `TicketPackageTrack.reference`: stores the IBS project name
+  (e.g., `SUSE:SLE-15-SP6:Update`) as a string. Tracks are not
   maintained as a separate table.
 - `ProductRepository.repo_name`: stores SMELT repository project names
   that map to IBS download URLs. Used by the `ProductReleaseDetector`.
@@ -241,7 +241,7 @@ Full procedure is documented in
 2. IBS API calls use retry logic with exponential backoff
 3. All IBS operations are logged for audit purposes
 4. The `CodestreamReleaseDetector` never modifies records with protected
-   status (`WONT_FIX`, `IGNORED`)
+   status (`WONT_FIX`) or soft-deleted records
 
 ## OBS Public Integration
 

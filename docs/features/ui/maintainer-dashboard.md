@@ -73,11 +73,11 @@ body shows an empty state message.
 Shows codestreams where:
 
 1. The user is bugowner of the package (direct or via group membership)
-2. The `TicketPackageCodestream.status` is `AFFECTED`
+2. The `TicketPackageTrack.status` is `AFFECTED`
 3. The parent ticket status is `Analyzed` (the VA has confirmed that
    fixes are needed)
 4. There is no `SubmissionRequest` correlated to this
-   `TicketPackageCodestream` record (via `SubmissionRequestCodestream`
+   `TicketPackageTrack` record (via `SubmissionRequestTrack`
    join table), OR all correlated SRs are in a final negative state
    (`revoked`, `superseded`, `declined` with no reopen)
 
@@ -106,7 +106,7 @@ Shows codestreams where:
 
 1. The user is bugowner of the package (direct or via group membership)
 2. There is at least one active `SubmissionRequest` correlated to this
-   `TicketPackageCodestream` (via `SubmissionRequestCodestream`) in a
+   `TicketPackageTrack` (via `SubmissionRequestTrack`) in a
    non-final or progressing state
 
 The "Progress" column shows the most advanced submission chain for that
@@ -142,9 +142,10 @@ potentially stuck).
 Shows codestreams where:
 
 1. The user is bugowner of the package (direct or via group membership)
-2. The `TicketPackageCodestream.status` is `RELEASED`, OR
+2. The `TicketPackageTrack.status` is `FIXED` with
+   `delivery_status = RELEASED`, OR
 3. There is a `ReleaseRequest` in `accepted` state correlated to this
-   codestream
+   track
 
 These represent finished work.
 
@@ -156,7 +157,7 @@ These represent finished work.
 | CVE         | CVE-ID (monospace), links to ticket detail page        |
 | Codestream  | Target codestream name                                 |
 | Progress    | Full chain: SR → SM → RR ✓ (all green/accepted)        |
-| Released    | Date the fix was released (derived from the accepted `ReleaseRequest.updated_at`, or `TicketPackageCodestream.updated_at` when status is `RELEASED` if no RR exists) |
+| Released    | Date the fix was released (derived from the accepted `ReleaseRequest.updated_at`, or `TicketPackageTrack.updated_at` when status is `FIXED` with `delivery_status = RELEASED` if no RR exists) |
 
 **Default sort**: by released date descending (most recent first).
 
@@ -233,7 +234,7 @@ is an active submission chain.
 #### Card: Completed
 
 Shows codestreams for this ticket where the user is bugowner and the
-codestream is `RELEASED` or has an accepted RR.
+track is `FIXED` (with `delivery_status = RELEASED`) or has an accepted RR.
 
 **Table columns:**
 
@@ -242,7 +243,7 @@ codestream is `RELEASED` or has an accepted RR.
 | Package     | Source package name (monospace)                         |
 | Codestream  | Target codestream name                                 |
 | Progress    | Full chain: SR → SM → RR ✓                             |
-| Released    | Release date (from accepted RR `updated_at`, or `TicketPackageCodestream.updated_at` when `RELEASED`) |
+| Released    | Release date (from accepted RR `updated_at`, or `TicketPackageTrack.updated_at` when `FIXED` with `delivery_status = RELEASED`) |
 
 **Empty state**: "No completed releases for this ticket."
 
@@ -314,7 +315,7 @@ Returns pending fixes for the authenticated user.
   "ticket_sequence_id": 42,
   "cve_id": "CVE-2026-1234",
   "severity": "high",
-  "codestream_name": "SLE-15-SP6",
+  "reference": "SLE-15-SP6",
   "analyzed_at": "2026-04-15T10:30:00Z"
 }
 ```
@@ -326,7 +327,7 @@ Returns pending fixes for the authenticated user.
 | ticket_sequence_id | integer | Ticket sequence number (for `SNTL-{n}` display) |
 | cve_id | string \| null | CVE identifier (null if ticket has no CVE) |
 | severity | string | Resolved severity: critical, high, moderate, low |
-| codestream_name | string | Target codestream name |
+| reference | string | Target codestream name |
 | analyzed_at | datetime | When the ticket entered `Analyzed` status (frontend computes "Waiting" from this) |
 
 ### GET /api/v1/my/packages/in-progress
@@ -354,7 +355,7 @@ details, using the standard `{"data": [...], "meta": {"total", "page", "per_page
   "ticket_id": "550e8400-e29b-41d4-a716-446655440000",
   "ticket_sequence_id": 42,
   "cve_id": "CVE-2026-1234",
-  "codestream_name": "SLE-15-SP6",
+  "reference": "SLE-15-SP6",
   "submission_chain": {
     "sr": {"number": 12345, "state": "accepted"},
     "incident": {"number": 67890},
@@ -370,7 +371,7 @@ details, using the standard `{"data": [...], "meta": {"total", "page", "per_page
 | ticket_id | uuid | Ticket UUID |
 | ticket_sequence_id | integer | Ticket sequence number |
 | cve_id | string \| null | CVE identifier |
-| codestream_name | string | Target codestream name |
+| reference | string | Target codestream name |
 | submission_chain | object | Most advanced submission chain for this codestream |
 | submission_chain.sr | object | Submission request: `number` (int), `state` (string) |
 | submission_chain.incident | object \| null | Maintenance incident: `number` (int) |
@@ -403,7 +404,7 @@ and release date, using the standard `{"data": [...], "meta": {"total", "page", 
   "ticket_id": "550e8400-e29b-41d4-a716-446655440000",
   "ticket_sequence_id": 42,
   "cve_id": "CVE-2026-1234",
-  "codestream_name": "SLE-15-SP6",
+  "reference": "SLE-15-SP6",
   "submission_chain": {
     "sr": {"number": 12345, "state": "accepted"},
     "incident": {"number": 67890},
@@ -419,7 +420,7 @@ and release date, using the standard `{"data": [...], "meta": {"total", "page", 
 | ticket_id | uuid | Ticket UUID |
 | ticket_sequence_id | integer | Ticket sequence number |
 | cve_id | string \| null | CVE identifier |
-| codestream_name | string | Target codestream name |
+| reference | string | Target codestream name |
 | submission_chain | object | Full submission chain (all elements in accepted/final state) |
 | released_at | datetime | When the fix was released |
 
@@ -447,14 +448,14 @@ using a reduced item schema (ticket-level fields like `severity` and
     "pending": [
       {
         "package_name": "kernel-default",
-        "codestream_name": "SLE-15-SP6",
+        "reference": "SLE-15-SP6",
         "status": "AFFECTED"
       }
     ],
     "in_progress": [
       {
         "package_name": "kernel-default",
-        "codestream_name": "SLE-15-SP6",
+        "reference": "SLE-15-SP6",
         "submission_chain": {
           "sr": {"number": 12345, "state": "accepted"},
           "incident": {"number": 67890},
@@ -466,7 +467,7 @@ using a reduced item schema (ticket-level fields like `severity` and
     "completed": [
       {
         "package_name": "kernel-default",
-        "codestream_name": "SLE-15-SP6",
+        "reference": "SLE-15-SP6",
       "submission_chain": {
         "sr": {"number": 12345, "state": "accepted"},
         "incident": {"number": 67890},
@@ -553,9 +554,9 @@ The "Pending Fixes" query involves a multi-table join:
 ```
 User.email
   → PackageBugowner (bugowner_email) OR PackageBugownerMember (email)
-    → TicketPackageCodestream (package_name match, status = AFFECTED)
+    → TicketPackageTrack (package_name match, status = AFFECTED)
       → Ticket (status = Analyzed)
-        → LEFT JOIN SubmissionRequestCodestream (absence of active SR)
+        → LEFT JOIN SubmissionRequestTrack (absence of active SR)
 ```
 
 For users who maintain many packages (e.g., kernel team), this could
@@ -563,7 +564,7 @@ return a significant number of rows. Mitigation strategies:
 
 - **Pagination**: all endpoints are paginated (default 20 items per page)
 - **Indexes**: ensure indexes exist on `PackageBugowner.bugowner_email`,
-  `PackageBugownerMember.email`, `TicketPackageCodestream.package_name`,
+  `PackageBugownerMember.email`, `TicketPackageTrack.package_name`,
   and `Ticket.status`
 - **Future**: if performance becomes an issue, consider a materialized
   view or periodic pre-computation of the maintainer work queue

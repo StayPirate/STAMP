@@ -147,9 +147,10 @@ For each `suse.obs.package.commit` event:
 
 2. **Filter by active codestream**: check if `project` is in the set of
    active codestreams. This set is built from the distinct
-   `codestream_name` values of `TicketPackageCodestream` records with
-   status `ANALYSIS` or `AFFECTED`. The set is cached in memory and
-   refreshed periodically (every 5 minutes) or on cache miss.
+   `codestream_name` values of `TicketPackageTrack` records that are
+   active (`deleted_by IS NULL`) with status `ANALYSIS` or `AFFECTED`.
+   The set is cached in memory and refreshed periodically (every 5
+   minutes) or on cache miss.
    If the project is not in the set → **acknowledge and discard** the
    message. No further processing.
 
@@ -174,12 +175,13 @@ For each `suse.obs.package.commit` event:
    `state="added"` and `tracker="cve"`, apply the same match logic as the
    periodic fetcher:
    - **Case A** — ticket exists, package tracked in the codestream:
-     set `TicketPackageCodestream.status` to `RELEASED` via
-     `ticket_mutations` (unless protected status)
+     set `TicketPackageTrack.status` to `FIXED` and
+     `TicketPackageTrack.delivery_status` to `RELEASED` via
+     `ticket_mutations` (unless protected status `WONT_FIX`)
    - **Case B** — ticket exists, package not tracked: call
      `add_package_to_ticket(ticket_id, package_name)` to resolve
-     codestreams/products via SMELT, then set the originating codestream
-     to `RELEASED`
+     codestreams/products via SMELT, then set the originating track's
+     status to `FIXED` and `delivery_status` to `RELEASED`
    - **Case C** — no ticket exists: enqueue
      `create_ticket_from_detection` task
 
@@ -355,13 +357,14 @@ RabbitMQ Consumer Card" for the full UI specification.
 ### Unmonitored codestreams
 
 If a maintainer commits a CVE fix to a codestream that has no active
-tickets (no `TicketPackageCodestream` records in `ANALYSIS` or `AFFECTED`
-status across any ticket), the event is discarded by the codestream
-filter. This applies equally to the RabbitMQ consumer and the periodic
-fetcher — neither monitors codestreams without active tickets.
+tickets (no active `TicketPackageTrack` records with `deleted_by IS NULL`
+in `ANALYSIS` or `AFFECTED` status across any ticket), the event is
+discarded by the codestream filter. This applies equally to the RabbitMQ
+consumer and the periodic fetcher — neither monitors codestreams without
+active tickets.
 
 Sentinel does not maintain an independent table of all active codestreams.
-Codestream names exist only as strings in `TicketPackageCodestream`
+Codestream names exist only as strings in `TicketPackageTrack`
 records, populated when packages are resolved via SMELT. Monitoring all
 codestreams would require a new data source (e.g., deriving codestreams
 from `ProductRepository` names), which is not pursued at this time

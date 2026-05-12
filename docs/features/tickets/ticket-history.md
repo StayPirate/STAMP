@@ -4,7 +4,7 @@
 
 Provide a complete, searchable audit trail for every ticket in Sentinel. Every
 modification to a ticket or its related data (status, assignee, duplicate
-links, packages, codestreams, products) MUST produce a `TicketEvent` record.
+links, packages, tracks, products) MUST produce a `TicketEvent` record.
 Users can browse, filter, and search the history through a dedicated "History"
 tab on the Ticket Detail page.
 
@@ -26,20 +26,23 @@ fields populated according to this table:
 | `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `SNTL-{n}` identifier of the original ticket | Optional VA note |
 | `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | Optional VA note |
 | `duplicate_target_changed` | Cascade update: the original ticket was itself marked as duplicate, so this ticket's `duplicate_of_id` was re-pointed to the ultimate original | `NULL` | `SNTL-{n}` identifier of the previous original | `SNTL-{n}` identifier of the new original | `NULL` |
-| `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in codestream SUSE:SLE-15-SP6:Update"`) |
-| `package_removed` | Package removed from ticket (manual or automatic orphan cleanup) | VA user for manual, `NULL` for automatic | Package name | `NULL` | `NULL` for manual; `no_codestreams_remaining` for automatic |
-| `codestream_status_changed` | Codestream status changed (VA action or eligibility rollup) | VA user for manual changes, `NULL` for automatic eligibility rollup | Old status | New status | `package_name:codestream_name` |
+| `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in track SUSE:SLE-15-SP6:Update"`) |
+| `package_excluded` | Package soft-deleted (excluded) from ticket | VA user for manual, `NULL` for automatic | Package name | `NULL` | Optional VA note for manual; contextual description for automatic |
+| `package_restored` | Previously excluded package restored to ticket | VA user | `NULL` | Package name | Optional VA note |
+| `track_status_changed` | Track status changed (VA action or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | `package_name:track_name` |
 | `product_status_overridden` | VA overrides product status | VA user | Old status | New status | `package_name:product_id` |
-| `codestream_released` | CodestreamReleaseDetector (Case A) | `NULL` | `NULL` | `RELEASED` | `package_name:codestream_name` |
+| `track_released` | Track release detected | `NULL` | `NULL` | `RELEASED` | `package_name:track_name` |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `package_name:product_id:advisory_id` |
-| `ticket_created` | Ticket created (CVE ingestion, codestream detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) |
+| `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) |
 | `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` |
 | `cve_removed` | Admin removed CVE association from a ticket | Admin user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | Optional admin note |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
-| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS, EOL), or threshold change | `NULL` | Old status | New status | `package_name:product_id:reason` (reason: `reactive_ltss`, `eol`, `threshold`, `cvss`) |
-| `product_removed` | Product removed from ticket automatically (EOL cleanup) | `NULL` | Product display name | `NULL` | `package_name:product_id:eol` |
-| `codestream_removed` | Codestream removed from ticket (orphan cleanup — zero products remaining) | `NULL` | Codestream name | `NULL` | `package_name:no_products_remaining` |
+| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `package_name:product_id:reason` (reason: `reactive_ltss`, `threshold`, `cvss`, `va_override`) |
+| `track_excluded` | Track soft-deleted (excluded) from ticket | VA user for manual, `NULL` for automatic | Track name | `NULL` | `package_name:reason` |
+| `track_restored` | Previously excluded track restored to ticket | VA user | `NULL` | Track name | Optional VA note |
+| `product_excluded` | Product soft-deleted (excluded) from ticket | VA user for manual, `NULL` for automatic | Product display name | `NULL` | `package_name:product_id:reason` |
+| `product_restored` | Previously excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note |
 | `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 | `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 
@@ -106,7 +109,7 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
     {
       "id": "uuid",
       "ticket_id": "uuid",
-      "event_type": "codestream_released",
+      "event_type": "track_released",
       "old_value": null,
       "new_value": "RELEASED",
       "comment": "openssl:SUSE:SLE-15-SP6:Update",
@@ -168,10 +171,11 @@ At the top of the History tab, a horizontal filter bar provides:
    | `duplicate_removed`        | Duplicate removed          |
    | `duplicate_target_changed` | Duplicate target changed   |
    | `package_added`            | Package added              |
-   | `package_removed`          | Package removed            |
-   | `codestream_status_changed`| Codestream status changed  |
-   | `product_status_overridden`| Product status overridden  |
-   | `codestream_released`      | Codestream released        |
+   | `package_excluded`         | Package excluded            |
+   | `package_restored`         | Package restored            |
+   | `track_status_changed`     | Track status changed        |
+   | `product_status_overridden`| Product status overridden   |
+   | `track_released`           | Track released              |
    | `product_released`         | Product released           |
    | `ticket_created`           | Ticket created             |
    | `cve_associated`           | CVE associated             |
@@ -181,8 +185,10 @@ At the top of the History tab, a horizontal filter bar provides:
    | `product_eligibility_changed` | Product eligibility changed |
     | `ticket_deleted`           | Ticket deleted              |
     | `ticket_restored`          | Ticket restored             |
-    | `product_removed`          | Product removed             |
-    | `codestream_removed`       | Codestream removed          |
+    | `track_excluded`           | Track excluded              |
+    | `track_restored`           | Track restored              |
+    | `product_excluded`         | Product excluded            |
+    | `product_restored`         | Product restored            |
 
 2. **Actor filter**: single-select dropdown with options:
    - "All" (default — no filter applied)
@@ -214,9 +220,9 @@ first). Each event entry displays:
    | Assignment | user | `assignment` |
    | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
    | Creation | plus-circle | `ticket_created`, `cve_associated`, `cve_removed` |
-    | Package | package | `package_added`, `package_removed`, `product_removed`, `codestream_removed` |
-   | Affectedness | shield | `codestream_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
-   | Release | check-circle | `codestream_released`, `product_released` |
+    | Package | package | `package_added`, `package_excluded`, `package_restored`, `track_excluded`, `track_restored`, `product_excluded`, `product_restored` |
+   | Affectedness | shield | `track_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
+   | Release | check-circle | `track_released`, `product_released` |
    | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
    | Deletion | trash | `ticket_deleted`, `ticket_restored` |
 
@@ -237,10 +243,11 @@ first). Each event entry displays:
    | `duplicate_set` | Marked as duplicate of **{new_value}** |
    | `duplicate_removed` | Duplicate mark removed (was duplicate of **{old_value}**) |
    | `package_added` | Added package **{new_value}** (if `comment` present: "Added package **{new_value}** — **{comment}**") |
-   | `package_removed` | Removed package **{old_value}** |
-   | `codestream_status_changed` | Changed codestream status from **{old_value}** to **{new_value}** for **{comment}** |
+   | `package_excluded` | Excluded package **{old_value}** (if `comment` present: "Excluded package **{old_value}** — **{comment}**") |
+   | `package_restored` | Restored package **{new_value}** (if `comment` present: "Restored package **{new_value}** — **{comment}**") |
+   | `track_status_changed` | Changed track status from **{old_value}** to **{new_value}** for **{comment}** |
    | `product_status_overridden` | Overrode product status from **{old_value}** to **{new_value}** for **{comment}** |
-   | `codestream_released` | Codestream release detected for **{comment}** |
+   | `track_released` | Track release detected for **{comment}** |
    | `product_released` | Product release detected for **{comment}** |
    | `ticket_created` | Ticket created — **{comment}** |
    | `cve_associated` | CVE **{new_value}** associated with this ticket |
@@ -250,8 +257,10 @@ first). Each event entry displays:
    | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
     | `ticket_deleted` | Ticket deleted (if `comment` present: "Ticket deleted — **{comment}**") |
     | `ticket_restored` | Ticket restored (if `comment` present: "Ticket restored — **{comment}**") |
-    | `product_removed` | Product **{old_value}** removed — **{comment}** |
-    | `codestream_removed` | Codestream **{old_value}** removed — **{comment}** |
+    | `track_excluded` | Track **{old_value}** excluded — **{comment}** |
+    | `track_restored` | Track **{new_value}** restored (if `comment` present: "Track **{new_value}** restored — **{comment}**") |
+    | `product_excluded` | Product **{old_value}** excluded — **{comment}** |
+    | `product_restored` | Product **{new_value}** restored (if `comment` present: "Product **{new_value}** restored — **{comment}**") |
 
 5. **Comment**: if present, displayed below the description in a muted style.
 

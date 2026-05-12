@@ -134,10 +134,56 @@ ticket. See `docs/features/ui/references.md` for the full specification.
 
 ### Affectedness Section
 
-Tree structure showing packages, codestreams, and products with their
+Tree structure showing packages, tracks, and products with their
 affectedness status. See `docs/features/packages/package-tracking.md` (UI
 Requirements section) for the full specification of the tree layout,
 status dropdowns, eligibility indicators, and color coding.
+
+#### Status Dropdown
+
+Each track and product node has a status dropdown with the following
+options:
+
+- Analysis
+- Affected
+- Not Affected
+- Fixed
+- Won't Fix
+
+#### Delivery Badge
+
+Each track node displays a **delivery badge** next to its status
+dropdown, indicating the delivery state of the fix:
+
+- **Pending** — no delivery activity detected
+- **In Progress** — fix is being delivered
+- **Released** — fix has been released to the track
+
+#### Eligibility Indicator
+
+Each product node displays a separate **eligibility indicator** next to
+its status dropdown:
+
+- **Eligible** — the product meets the eligibility criteria for receiving
+  a fix
+- **Not eligible** — the product does not meet the eligibility criteria;
+  the indicator is displayed in a greyed-out style
+
+Eligibility is shown as a standalone indicator, not encoded in the status
+color. Products with status "Affected" always show "Affected" in red
+regardless of eligibility — a product that is not eligible shows
+"Affected" in red with the "not eligible" indicator greyed out beside it.
+
+#### Excluded Items Panel
+
+When a ticket has soft-deleted `TicketPackageTrack` or
+`TicketPackageProduct` records (excluded items), an indicator is shown in
+the affectedness section header. Clicking the indicator opens a panel
+listing all excluded items with their details and a "Restore" button for
+each item. See `docs/features/packages/package-tracking.md` for the full
+specification of exclusion and restoration.
+
+#### Bugowner Display
 
 Each package node in the tree displays the **bugowner** next to the
 package name. For group bugowners, the group name and collective email
@@ -146,7 +192,9 @@ For person bugowners, the name and email are shown. If the bugowner is
 unknown, "Unknown" is displayed in a neutral/greyed-out style. See
 `docs/features/packages/package-bugowner.md` for details.
 
-The ticket can transition to Analyzed only when all codestreams and
+#### Gate Condition
+
+The ticket can transition to Analyzed only when all tracks and
 products have a status other than Analysis (see
 `docs/features/packages/package-tracking.md`, Ticket Lifecycle Integration).
 
