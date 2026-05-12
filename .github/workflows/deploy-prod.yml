@@ -1,14 +1,17 @@
 name: Deploy to Production
 
+# NOTE: Automatic triggers disabled during specification phase.
+# Restore original triggers when implementation begins:
+#   workflow_dispatch:
+#     inputs:
+#       image_tag:
+#         description: "Docker image tag to deploy (e.g., v1.0.0 or sha-abc1234)"
+#         required: true
+#         type: string
+#   push:
+#     tags: ["v*"]
 on:
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "Docker image tag to deploy (e.g., v1.0.0 or sha-abc1234)"
-        required: true
-        type: string
-  push:
-    tags: ["v*"]
 
 jobs:
   deploy:

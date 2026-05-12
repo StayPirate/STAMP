@@ -1,10 +1,13 @@
 name: Deploy to Staging
 
+# NOTE: Automatic triggers disabled during specification phase.
+# Restore original triggers when implementation begins:
+#   workflow_run:
+#     workflows: ["Build Docker Images"]
+#     branches: [master]
+#     types: [completed]
 on:
-  workflow_run:
-    workflows: ["Build Docker Images"]
-    branches: [master]
-    types: [completed]
+  workflow_dispatch:
 
 jobs:
   deploy:

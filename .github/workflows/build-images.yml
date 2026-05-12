@@ -1,9 +1,12 @@
 name: Build Docker Images
 
+# NOTE: Automatic triggers disabled during specification phase.
+# Restore original triggers when implementation begins:
+#   push:
+#     branches: [master]
+#     tags: ["v*"]
 on:
-  push:
-    branches: [master]
-    tags: ["v*"]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io

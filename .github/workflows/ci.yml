@@ -1,10 +1,13 @@
 name: CI
 
+# NOTE: Automatic triggers disabled during specification phase.
+# Restore original triggers when implementation begins:
+#   push:
+#     branches: [master]
+#   pull_request:
+#     branches: [master]
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 jobs:
   backend-lint:
