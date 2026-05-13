@@ -1090,9 +1090,11 @@ handling is required.
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)
-- **Audit trail**: user creation, role changes, and deactivation
-   produce `TicketEvent` records where relevant (e.g., ticket
-   unassignment on deactivation)
+- **Audit trail**: user operations are logged at INFO level (user
+   creation, role changes, password resets). Deactivation additionally
+   creates `TicketEvent` records for ticket unassignment. Role changes
+   do not produce `TicketEvent` records (see
+   `docs/features/identity/user-service.md`)
 - **Admin password reset is logged**: every admin-initiated password
   reset is logged at INFO level with the acting admin's identity and
   the target user. No rate limiting or step-up authentication is applied

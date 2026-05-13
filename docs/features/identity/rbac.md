@@ -403,8 +403,9 @@ framework and `docs/features/identity/sso-authentication.md` /
    acting admin always retains the role. For the full "zero admins"
    scenario (possible only via CLI/system operations) and recovery
    procedure, see `docs/features/identity/user-management.md`, Business Rule 2
-2. Users cannot add roles to themselves (only admins can modify other
-   users' roles)
+2. Only users with the Admin role can manage roles. Admins can manage
+   any user's roles, including their own (subject to the self-removal
+   guard in Business Rule 1)
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
    `docs/features/identity/user-service.md`)
