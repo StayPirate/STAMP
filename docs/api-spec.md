@@ -410,7 +410,7 @@ that checks `deleted_at` and the caller's role.
 
 ### Products
 
-See `docs/features/packages/package-tracking.md` for detailed specifications.
+See `docs/features/packages/product-catalog.md` for detailed specifications.
 
 - `GET /api/v1/products` — List products (synced from SMELT)
 

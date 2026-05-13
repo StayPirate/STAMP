@@ -26,7 +26,7 @@ Operates the triage and assessment workflow:
 - Associate a CVE with a ticket (see `docs/features/tickets/tickets.md`)
 - Set and update severity override for tickets without CVE
 - Add and remove packages from tickets
-- Change codestream and product affectedness status
+- Change track and product affectedness status
 - Add, edit, and delete SUSE CVSS assessments
 - Add, edit, and delete ticket references
 
@@ -60,7 +60,7 @@ capabilities must hold both roles.
 | Associate CVE with ticket        | No    | Yes | No     |
 | Set/update severity override     | No    | Yes | No     |
 | Add/remove packages              | No    | Yes | No     |
-| Change codestream/product status | No    | Yes | No     |
+| Change track/product status     | No    | Yes | No     |
 | Add/edit/delete SUSE CVSS        | No    | Yes | No     |
 | Add/edit/delete references       | No    | Yes | No     |
 
@@ -148,15 +148,20 @@ here with the required access level and a link to the owning spec.
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
 | POST | `/api/v1/tickets/{ticket_id}/packages` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
-| DELETE | `/api/v1/tickets/{ticket_id}/packages/{package_name}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_name}/codestreams/{codestream_name}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_name}/products/{product_id}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/exclude` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md) |
 
 ### Products
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/products` | Public | [package-tracking](../packages/package-tracking.md) |
+| GET | `/api/v1/products` | Public | [product-catalog](../packages/product-catalog.md) |
 
 ### Ticket References
 

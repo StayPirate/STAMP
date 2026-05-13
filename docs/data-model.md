@@ -296,7 +296,7 @@ Key-value store for system-wide configuration. See
 Represents a SUSE product (base products, LTSS variants, ESPOS variants,
 etc.). Each variant is a separate product with its own CPE. Synced
 periodically from SMELT (product list and repositories) and enriched with
-lifecycle data from AIMAAS. See `docs/features/packages/package-tracking.md` for
+lifecycle data from AIMAAS. See `docs/features/packages/product-catalog.md` for
 full details.
 
 | Column               | Type         | Constraints          | Description                        |

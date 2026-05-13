@@ -163,16 +163,10 @@ propagation, eligibility, gates) operates on tracks regardless of
 ### Product
 
 A SUSE product with its own repositories from which end users receive
-updates via the package manager. Products include base products (e.g.,
-SLES 15 SP6), LTSS variants (e.g., SLES-LTSS 15-SP4), ESPOS variants
-(e.g., HPC ESPOS 15-SP5), and SAP variants. Each variant is a
-**separate product** in both SMELT and AIMAAS, with its own CPE
-identifier.
-
-A product receives binary packages from one or more tracks. The same
-track can feed multiple products. The mapping between a track's packages
-and the products that receive them is resolved by SMELT on a per-package
-basis.
+updates via the package manager. Each variant (base, LTSS, ESPOS, SAP)
+is a separate product with its own CPE identifier. See
+`docs/features/packages/product-catalog.md` for the full product
+definition, lifecycle phases, and AIMAAS integration.
 
 ### Channel File
 
@@ -187,8 +181,9 @@ An internal SUSE aggregator service (REST API at `smelt.suse.de/api`)
 that provides:
 
 1. **Product listing** (`GET /api/v1/basic/products/`): paginated list of
-   all SUSE products with name, version, CPE, end-of-life date, and
-   repository project names.
+   all SUSE products with name, version, CPE, and repository project
+   names. See `docs/features/packages/product-catalog.md` (SMELT
+   Integration) for the product sync specification.
 2. **Per-package maintenance info**
    (`GET /api/v1/basic/maintainedpackage/`): given a source package name,
    returns the list of tracks where the package is maintained and the
@@ -198,36 +193,10 @@ SMELT reads from IBS, channel files, and other sources internally.
 
 ### AIMAAS
 
-An internal SUSE service (REST API at `aimaas.suse.de/api`) that
-provides:
-
-1. **Product lifecycle data** (`GET /api/entity/products/{slug}`): dates
-   for each lifecycle phase — `fcs` (first customer shipment),
-   `end_of_gs` (end of General Support), `end_of_ltss`, `end_of_espos`,
-   and `end_of_reactive_ltss`.
-2. **CVSS thresholds** (`GET /api/entity/cvss-threshold`): the minimum
-   CVSS score for which a product is eligible to receive a security
-   update. Only products with a non-zero threshold have an entry
-   (currently ~24 products, mostly LTSS/ESPOS variants).
-
-### Product Lifecycle Phases
-
-Products go through different support phases. The applicable phase
-depends on the product type:
-
-| Phase | Determined by | Description |
-|-------|--------------|-------------|
-| **Pre-release** | `today < fcs` | Not yet shipped to customers |
-| **General Support** | `fcs <= today < end_of_gs` | Full support, all CVEs eligible |
-| **ESPOS** | `end_of_gs <= today < end_of_espos` | Extended Service Pack Overlap Support |
-| **LTSS** | `end_of_gs <= today < end_of_ltss` | Long Term Service Pack Support |
-| **Reactive LTSS** | `end_of_ltss <= today < end_of_reactive_ltss` | On-demand support only |
-| **EOL** | Past all applicable dates | End of life, no updates |
-
-Not all products go through all phases. Some products have ESPOS but no
-LTSS (e.g., SAP Application modules), some have both (e.g., HPC), some
-have neither. LTSS variants (separate products) may have a Reactive LTSS
-phase after their LTSS phase ends.
+See `docs/features/packages/product-catalog.md` (Domain Concepts:
+AIMAAS) for the full description of the AIMAAS service and its
+endpoints. AIMAAS provides product lifecycle data and CVSS thresholds
+used by the eligibility rules in this spec.
 
 ---
 
@@ -236,23 +205,12 @@ phase after their LTSS phase ends.
 See `docs/data-model.md` for the full schema. The tables defined by this
 feature are:
 
-### Product
+### Product / ProductRepository
 
-Represents a SUSE product (base products, LTSS variants, ESPOS variants,
-etc.). Each variant is a separate product with its own CPE. Synced from
-SMELT and enriched with lifecycle data from AIMAAS.
-
-See `docs/data-model.md` for the full column listing.
-
-### ProductRepository
-
-Maps SMELT repository project names to products. Used to resolve the
-`target` values returned by SMELT's `maintainedpackage` endpoint to
-local Product records. A single product typically has multiple repository
-entries (one per architecture, plus separate entries for
-`SUSE:Products:*` and `SUSE:Updates:*` namespaces).
-
-See `docs/data-model.md` for the full column listing.
+See `docs/features/packages/product-catalog.md` (Data Model) for the
+Product and ProductRepository tables. These are owned by the product
+catalog feature and consumed here for track-to-product mapping and
+eligibility evaluation.
 
 ### TicketPackage
 
@@ -945,65 +903,20 @@ affectedness status is `WONT_FIX` (protected state).
 
 ---
 
-## Ticket Resolution Gate
+## Ticket Lifecycle Integration
 
-A ticket transitions to Resolved automatically when ALL of the following
-conditions are met (only active, non-soft-deleted records are
-considered):
+All track and product status changes go through the `ticket_mutations`
+module, which automatically re-evaluates ticket status after each change.
+See `docs/features/tickets/tickets.md` (Ticket Lifecycle, Centralized
+Status Evaluation) for the authoritative gate conditions and status
+transition rules, including:
 
-1. **Every track** has a terminal affectedness status:
-   - `FIXED`, `NOT_AFFECTED`, or `WONT_FIX`
-
-2. **Every track with status `FIXED`** has `delivery_status = RELEASED`
-
-3. **Every eligible product** (`eligible = true`) under a `FIXED` track
-   has confirmed receipt of the update (`released_at IS NOT NULL`,
-   verified via `updateinfo.xml` in the product's update repository)
-
-If any of these conditions is not met, the ticket remains open. The VA
-can inspect which component is blocking resolution.
-
-### Anomaly Indicator
-
-When a track has `status = FIXED` and `delivery_status = RELEASED` but
-a specific eligible product has NOT received the fix (no `released_at`),
-that product displays a warning indicator in the UI:
-
-```
-kernel-default (SLE-15-SP6)  [FIXED]         Released
-   SLES 15 SP6              (normal)
-   SLED 15 SP6              ! update not received    <-- blocks ticket
-   SLES 15 SP5 LTSS         (greyed out, not eligible)
-```
-
-This is an exceptional case (possible causes: product not enabled in
-incident by mistake, repository sync delay, operational error). It gives
-the VA immediate visibility into what is blocking ticket resolution.
-
-### Ticket Lifecycle Integration
-
-See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the
-authoritative gate conditions and status transition rules. All track and
-product status changes go through the `ticket_mutations` module, which
-automatically re-evaluates ticket status after each change (see
-`docs/features/tickets/tickets.md`, Centralized Status Evaluation). The
-affectedness-related conditions are summarized here for context:
-
-- **Analysis → Analyzed** (automatic): at least one package must be
-  added, no active `TicketPackageTrack` or `TicketPackageProduct`
-  records may be in `ANALYSIS` status. Additional gate conditions
-  (severity, CVSS) are defined in `docs/features/tickets/tickets.md`.
-- **Analyzed → Resolved** (automatic): all active `TicketPackageTrack`
-  and `TicketPackageProduct` records must satisfy the resolution gate
-  (see above).
-- **Analyzed → Analysis** (automatic): gate conditions for Analyzed no
-  longer met (e.g., package added with tracks in `ANALYSIS`, or VA
-  resets a track status to `ANALYSIS`).
-- **Resolved → Analyzed** (automatic): resolved gate conditions no
-  longer met but analyzed gates still met (e.g., CVSS recalculation
-  changes eligibility, causing a previously satisfied gate to fail).
-- **Resolved → Analysis** (automatic): both resolved and analyzed gate
-  conditions no longer met.
+- **Analysis → Analyzed**: requires at least one package, all tracks and
+  products decided, severity set, SUSE CVSS provided
+- **Analyzed → Resolved**: requires all tracks in terminal status, all
+  `FIXED` tracks with `delivery_status = RELEASED`, all eligible
+  products with `released_at IS NOT NULL`
+- Reverse transitions when gate conditions are no longer met
 
 ---
 
@@ -1021,9 +934,8 @@ The following concerns are identical regardless of `workflow_type`:
 - Product eligibility (CVSS threshold, Reactive LTSS phase)
 - Soft-deletion and restore
 - UI — VA sees packages → tracks → products with no workflow distinction
-- Bugowner — `PackageBugowner` cache keyed by `package_name`; join moves
-  from `TicketPackageCodestream.package_name` to
-  `TicketPackage.package_name` (cleaner)
+- Bugowner — `PackageBugowner` cache keyed by `package_name`; joined via
+  `TicketPackage.package_name`
 
 The following concerns are workflow-specific (service layer only):
 
@@ -1041,91 +953,13 @@ The following concerns are workflow-specific (service layer only):
 
 ## External Data Sources
 
-### SMELT Integration
-
-#### Product Sync (periodic)
-
-- **Endpoint**: `GET /api/v1/basic/products/` (paginated)
-- **Base URL**: `https://smelt.suse.de/api`
-- **Response fields used**: `id`, `name`, `version`, `cpe`, `repos`
-- **Sync behavior**:
-  1. Iterate all pages of the products endpoint
-  2. For each product, upsert a `Product` record using `smelt_id` as the
-     match key, setting `name`, `version`, `cpe`
-  3. For each product, replace the `ProductRepository` entries with the
-     current `repos` list from SMELT
-  4. Products no longer reported by SMELT are marked `active = false`
-  5. Update `smelt_synced_at` timestamp on each synced product
-
-#### Package Query (on-demand)
-
-- **Endpoint**:
-  `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
-  (paginated)
-- **CRITICAL**: The `include_reactive=1` parameter MUST always be
-  included. Without it, products currently in the Reactive LTSS phase
-  are excluded from results.
-- **CRITICAL**: Results are paginated. Sentinel MUST iterate all pages by
-  following the `next` URL until it is `null`.
-- **Response structure** (per result):
-  ```json
-  {
-    "package": "openssl-3",
-    "codestream": "SUSE:SLE-15-SP6:Update",
-    "channel": {
-      "name": "channel-name",
-      "status": "enabled",
-      "targets": [
-        {
-          "status": "enabled",
-          "target": "SUSE:Updates:SLE-Module-Basesystem:15-SP7:x86_64"
-        }
-      ]
-    }
-  }
-  ```
-- **Target resolution**: the `target` value is a SMELT repository
-  project name. It is matched against the `ProductRepository.repo_name`
-  column to find the corresponding `Product`. Multiple targets may map
-  to the same product (one per architecture) — deduplicate by product.
-
-### AIMAAS Integration
-
-#### Product Lifecycle Sync (periodic)
-
-- **Endpoint**: `GET /api/entity/products/{slug}` (individual product)
-  or `GET /api/entity/products?limit=100&page={n}` (paginated list)
-- **Base URL**: `https://aimaas.suse.de/api`
-- **Matching**: AIMAAS products are matched to local `Product` records
-  via `cpe`. Both SMELT and AIMAAS use identical CPE identifiers.
-- **Response fields used**: `name` (used as `display_name` in Sentinel),
-  `cpe`, `fcs`, `end_of_gs`, `end_of_ltss`, `end_of_espos`,
-  `end_of_reactive_ltss`
-- **Note**: the list endpoint returns a subset of fields (no `cpe`, no
-  lifecycle dates). To get full details, fetch each product individually
-  by slug, or use the list endpoint to discover slugs and then fetch
-  details.
-- **Sync behavior**:
-  1. For each local `Product` with a known CPE, find the matching
-     AIMAAS product and update `display_name` and lifecycle date fields
-  2. Update `aimaas_synced_at` timestamp
-
-#### CVSS Threshold Sync (periodic)
-
-- **Endpoint**: `GET /api/entity/cvss-threshold` (paginated)
-- **Response fields used**: `product` (AIMAAS product ID), `threshold`
-- **Matching**: each cvss-threshold entry has a `product` field
-  containing an AIMAAS product ID. Fetch that product's details to
-  obtain its CPE, then match to the local `Product` record via CPE.
-- **Sync behavior**:
-  1. Fetch all cvss-threshold entries
-  2. For each entry, resolve the `product` ID to a CPE (via AIMAAS
-     products endpoint)
-  3. Update the corresponding local `Product.cvss_threshold`
-  4. If a product's threshold changes, re-evaluate eligibility for all
-     open tickets referencing that product
-- **Note**: only ~24 products currently have a threshold entry. Products
-  without an entry have an implicit threshold of 0 (all CVEs eligible).
+- **SMELT product sync** (periodic): see
+  `docs/features/packages/product-catalog.md` (SMELT Integration)
+- **SMELT package query** (on-demand): see
+  [SMELT Query for Package Resolution](#smelt-query-for-package-resolution)
+  above
+- **AIMAAS lifecycle and threshold sync** (periodic): see
+  `docs/features/packages/product-catalog.md` (AIMAAS Integration)
 
 ---
 
@@ -1564,62 +1398,6 @@ endpoint above — single-field update from the client's perspective.
 
 ---
 
-### List Products
-
-```
-GET /api/v1/products
-```
-
-List all products synced from SMELT. Paginated.
-
-**Query parameters**:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `page` | int | 1 | Page number |
-| `per_page` | int | 20 | Items per page (max: 100) |
-| `sort_by` | string | `name` | Sort field. Valid values: `name`, `version`, `cpe`, `created_at` |
-| `sort_order` | string | `asc` | Sort direction: `asc` or `desc` |
-| `search` | string | — | Filter by name (case-insensitive substring match) |
-| `active` | boolean | — | Filter by active status. If omitted, returns all products |
-| `lifecycle_phase` | string | — | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `espos`, `ltss`, `reactive_ltss`, `eol` |
-
-**Response** (200 OK):
-
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "name": "SUSE Linux Enterprise Server",
-      "version": "15 SP6",
-      "cpe": "cpe:/o:suse:sles:15:sp6",
-      "display_name": "SLES 15 SP6",
-      "active": true,
-      "lifecycle_phase": "general_support",
-      "cvss_threshold": null,
-      "smelt_synced_at": "2025-01-15T02:00:00Z",
-      "aimaas_synced_at": "2025-01-15T03:00:00Z"
-    }
-  ],
-  "meta": {
-    "total": 142,
-    "page": 1,
-    "per_page": 20
-  }
-}
-```
-
-**Permissions**: public endpoint (no authentication required).
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | Invalid query parameter value (e.g., non-integer `page`, unknown `sort_by` field, unknown `lifecycle_phase` value) |
-
----
-
 ## UI Requirements
 
 ### Ticket Detail — Affectedness Section
@@ -1669,21 +1447,31 @@ When the ticket has soft-deleted records, a discrete indicator is shown
 - When it was excluded (from `deleted_at`)
 - A "Restore" button for each item
 
+### Product Release Anomaly Indicator
+
+When a track has `status = FIXED` and `delivery_status = RELEASED` but
+a specific eligible product has NOT received the fix (no `released_at`),
+that product displays a warning indicator in the UI:
+
+```
+kernel-default (SLE-15-SP6)  [FIXED]         Released
+   SLES 15 SP6              (normal)
+   SLED 15 SP6              ! update not received    <-- blocks ticket
+   SLES 15 SP5 LTSS         (greyed out, not eligible)
+```
+
+This is an exceptional case (possible causes: product not enabled in
+incident by mistake, repository sync delay, operational error). It gives
+the VA immediate visibility into what is blocking ticket resolution.
+
 ---
 
 ## Background Tasks
 
-- `sync_smelt_products`: periodic task to sync products and their
-  repositories from SMELT `GET /api/v1/basic/products/`. Iterates all
-  pages. Products no longer reported by SMELT are marked
-  `active = false`.
-- `sync_aimaas_lifecycle`: periodic task to sync product lifecycle data
-  (`fcs`, `end_of_gs`, `end_of_ltss`, `end_of_espos`,
-  `end_of_reactive_ltss`) from AIMAAS. Matches to local products via
-  CPE.
-- `sync_aimaas_thresholds`: periodic task to sync CVSS thresholds from
-  AIMAAS `GET /api/entity/cvss-threshold`. When thresholds change,
-  re-evaluates eligibility for active tickets.
+Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
+`sync_aimaas_thresholds`) are specified in
+`docs/features/packages/product-catalog.md` (Background Tasks).
+
 - `check_codestream_releases`: periodic task (every 24 hours at 02:00
   UTC via Celery Beat) that invokes the `CodestreamReleaseDetector`
   service. Serves as a catch-up mechanism for events missed by the
@@ -1727,8 +1515,6 @@ When the ticket has soft-deleted records, a discrete indicator is shown
   Vulnerability Analyst role
 - Viewing affectedness data is publicly accessible (no authentication
   required)
-- SMELT and AIMAAS credentials are stored as environment variables,
-  never in code
 
 ---
 
@@ -1769,6 +1555,8 @@ When the ticket has soft-deleted records, a discrete indicator is shown
 
 - `docs/api-spec.md` — global API conventions (envelope format, error
   codes, pagination, shared 422 responses)
+- `docs/features/packages/product-catalog.md` — product catalog, SMELT
+  product sync, AIMAAS lifecycle/threshold sync, `GET /api/v1/products`
 - `docs/features/tickets/tickets.md` — ticket lifecycle, status gates,
   ticket mutations module
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,

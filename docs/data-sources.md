@@ -475,7 +475,8 @@ belong to which codestreams, and which repositories serve each product.
   from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
 - **Documentation**: https://smelt.suse.de (internal)
-- **See also**: `docs/features/packages/package-tracking.md`
+- **See also**: `docs/features/packages/product-catalog.md` (product
+  sync), `docs/features/packages/package-tracking.md` (package query)
 
 ### AIMAAS
 
@@ -500,7 +501,7 @@ security update.
   change, Sentinel re-evaluates eligibility for all active tickets
   referencing the affected products
 - **Documentation**: https://aimaas.suse.de (internal)
-- **See also**: `docs/features/packages/package-tracking.md`,
+- **See also**: `docs/features/packages/product-catalog.md`,
   `docs/features/tickets/cvss-scoring.md`
 
 ---

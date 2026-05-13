@@ -97,6 +97,17 @@ dashboard, not via environment variables. See
 `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
 Schema" for the configuration mechanism.
 
+## SMELT / AIMAAS
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `SMELT_API_URL` | string | `https://smelt.suse.de/api` | SMELT API base URL for product catalog sync and package resolution | `docs/features/packages/product-catalog.md` |
+| `AIMAAS_API_URL` | string | `https://aimaas.suse.de/api` | AIMAAS API base URL for product lifecycle and CVSS threshold sync | `docs/features/packages/product-catalog.md` |
+
+Note: authentication requirements for SMELT and AIMAAS are TBD (see
+`docs/data-sources.md`). When defined, credential env vars will be added
+here.
+
 ## External APIs
 
 | Env Var | Type | Default | Description | Defined in |
