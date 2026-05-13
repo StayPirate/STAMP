@@ -532,9 +532,10 @@ A ticket can be reassigned to a different VA at any time, regardless of
 its current status. Reassignment does not change the ticket status. All
 reassignments are logged in the ticket event history.
 
-**Target constraint**: the assignment target MUST be a user holding the
-`vulnerability_analyst` role. Attempting to assign a ticket to a user
-without this role fails with 400 Bad Request. This applies to the
+**Target constraint**: the assignment target MUST be an **active** user
+holding the `vulnerability_analyst` role. Attempting to assign a ticket
+to a user without this role, or to an inactive user, fails with 400 Bad
+Request. This applies to the
 explicit assignment endpoint (`POST /assign`); auto-assignment is
 inherently safe because only VAs can perform modifying operations on
 tickets.
@@ -878,6 +879,7 @@ Error responses:
 
 - 400 with code `TICKET_ASSIGNEE_NOT_VA`: target user does not hold the
   Vulnerability Analyst role
+- 400 with code `TICKET_ASSIGNEE_INACTIVE`: target user is inactive
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 404 with code `USER_NOT_FOUND`: target user not found
 

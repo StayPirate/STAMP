@@ -38,6 +38,16 @@ Operates the triage and assessment workflow:
 - Add, edit, and delete SUSE CVSS assessments
 - Add, edit, and delete ticket references
 
+> **Design note — VA role granularity**: the VA role intentionally bundles
+> triage, assessment, and package management into a single role. Sentinel
+> targets a small security team where all analysts perform the full
+> triage-to-resolution workflow. Introducing sub-roles (e.g., separate
+> "triager" and "assessor" roles) would increase complexity in permission
+> checks, AD role mappings, and test surface for a scenario that has no
+> current demand. If organizational needs change, the role can be split by
+> adding new roles to the `Role` enum and reassigning endpoints in the
+> permission matrix — no architectural change is required.
+
 ### Admin
 
 Administers the platform:
@@ -69,8 +79,8 @@ capabilities must hold both roles.
 
 > **Assignment target constraint**: the "Assign/reassign ticket" permission
 > allows any VA to assign a ticket, but the target user MUST also hold the
-> `vulnerability_analyst` role. Assigning to a user without this role is
-> rejected with 400 Bad Request.
+> `vulnerability_analyst` role **and be active**. Assigning to a user without
+> this role or to an inactive user is rejected with 400 Bad Request.
 
 ### Admin Operations
 
@@ -79,6 +89,14 @@ capabilities must hold both roles.
 | Remove CVE from ticket           | Yes   | No  | No            | No     |
 | Manage user roles                | Yes   | No  | No            | No     |
 | Manage role mappings             | Yes   | No  | No            | No     |
+| Update user fields               | Yes   | No  | No            | No     |
+| Reset user password              | Yes   | No  | No            | No     |
+| Deactivate user                  | Yes   | No  | No            | No     |
+| Reactivate user                  | Yes   | No  | No            | No     |
+| View deactivation impact         | Yes   | No  | No            | No     |
+| Unlock user                      | Yes   | No  | No            | No     |
+| View all API keys                | Yes   | No  | No            | No     |
+| Revoke other users' API keys     | Yes   | No  | No            | No     |
 | View/update system settings      | Yes   | No  | No            | No     |
 | Soft-delete ticket               | Yes   | No  | No            | No     |
 | Restore deleted ticket           | Yes   | No  | No            | No     |
