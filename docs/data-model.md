@@ -681,7 +681,7 @@ system action).
 | track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). |
 | track_excluded             | Track soft-deleted from ticket by VA. `old_value` contains the track reference. `user_id` is the VA. |
 | track_restored             | Soft-deleted track restored by VA. `old_value` contains the track reference. `user_id` is the VA. |
-| track_released             | Track release detected by `IBSEventConsumer` (real-time) or `CodestreamReleaseDetector` (periodic catch-up) — Case A. Sets `delivery_status = RELEASED` and `status = FIXED`. |
+| track_released             | Track release detected by `IBSEventConsumer` (real-time) or `IBSTrackReleaseDetector` (periodic catch-up) — Case A. Sets `delivery_status = RELEASED` and `status = FIXED`. |
 | product_status_overridden  | VA overrode product affectedness status             |
 | product_released           | Product release detected via updateinfo.xml advisory |
 | product_excluded           | Product soft-deleted from ticket by VA. `old_value` contains the product display name. `user_id` is the VA. |
@@ -698,7 +698,7 @@ system action).
 ### CodestreamPackageChecksum
 
 Operational cache table shared by the `IBSEventConsumer` (real-time) and
-the `CodestreamReleaseDetector` (periodic catch-up) to track source MD5
+the `IBSTrackReleaseDetector` (periodic catch-up) to track source MD5
 checksums of packages in IBS codestream projects. By comparing the
 current `srcmd5` from IBS with the cached value, both mechanisms
 identify which packages have changed and need a diff analysis. The shared

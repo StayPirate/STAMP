@@ -133,7 +133,7 @@ active source. See the data sources catalog for the full picture.
 - **Real-time event consumer**: Sentinel connects to the IBS RabbitMQ message
   bus (`rabbit.suse.de`) and consumes `suse.obs.package.commit` events for
   near-real-time track-level release detection. The periodic polling
-  fetcher (`check_codestream_releases`, every 24 hours at 02:00 UTC)
+  fetcher (`check_ibs_track_releases`, every 24 hours at 02:00 UTC)
   serves as a catch-up mechanism for events missed during downtime. See
   `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification.
 - **Submission tracking**: the same RabbitMQ consumer also processes
@@ -240,18 +240,18 @@ the full ticket specification.
 
 Release detection runs on two **independent** levels — track and
 product — through different mechanisms. See
-`docs/features/packages/ibs-codestream-release-detection.md` and
+`docs/features/packages/ibs-track-release-detection.md` and
 `docs/features/packages/ibs-product-release-detection.md` for the
 authoritative details.
 
 1. Track-level detection uses two complementary mechanisms:
    the `IBSEventConsumer` (real-time via IBS RabbitMQ) and the periodic
-   `check_codestream_releases` fetcher (catch-up every 24 hours at
+   `check_ibs_track_releases` fetcher (catch-up every 24 hours at
    02:00 UTC). Both share the same MD5 cache to avoid duplicate work.
    See `docs/features/integrations/ibs-rabbitmq-integration.md`.
 2. **Track level**: the consumer or fetcher queries IBS diff endpoints
    (see `docs/features/integrations/ibs-integration.md` and
-   `docs/features/packages/ibs-codestream-release-detection.md`) to detect whether
+   `docs/features/packages/ibs-track-release-detection.md`) to detect whether
    the fix for the ticket's CVE has landed in the codestream IBS project.
    When detected, `TicketPackageTrack.status` is set to `FIXED` and
    `TicketPackageTrack.delivery_status` is set to `RELEASED`.

@@ -1,7 +1,7 @@
 # Git Track-Level Release Detection
 
 Release detection at the track level for the git workflow — the equivalent
-of `ibs-codestream-release-detection.md` for IBS tracks.
+of `ibs-track-release-detection.md` for IBS tracks.
 
 **Status**: TBD — mechanism not yet defined.
 
@@ -28,13 +28,13 @@ specification extends.
   (`CodestreamPackageChecksum`) for git, or is the detection mechanism
   fundamentally different?
 - What is the periodic catch-up strategy? (equivalent of the 24h
-  `check_codestream_releases` fetcher for IBS)
+  `check_ibs_track_releases` fetcher for IBS)
 
 ## Cross-references
 
 - `docs/features/packages/package-tracking.md` — package tracking model
   (owning specification)
-- `docs/features/packages/ibs-codestream-release-detection.md` — IBS
+- `docs/features/packages/ibs-track-release-detection.md` — IBS
   equivalent of this specification
 - `docs/data-model.md` — TicketPackageTrack entity with `workflow_type`
   discriminator

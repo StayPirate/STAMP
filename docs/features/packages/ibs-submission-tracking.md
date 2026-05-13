@@ -444,7 +444,7 @@ Returns `<issues>` block with structured entries:
 Only issues with `state="added"` and `tracker="cve"` are processed.
 Issues with `state="changed"` (pre-existing CVE references in diff
 context) and `state="deleted"` (removed references) are skipped. This
-filtering is consistent with `CodestreamReleaseDetector` on the source
+filtering is consistent with `IBSTrackReleaseDetector` on the source
 diff endpoint (see `docs/features/integrations/ibs-integration.md`).
 
 Verified empirically on IBS (2026-04-29) with SR#407603: a changelog
@@ -455,7 +455,7 @@ containing six pre-existing CVE references correctly reports them as
 ## Processing Pipelines
 
 Submission tracking is **independent** from release detection.
-`CodestreamReleaseDetector` and the existing `IBSEventConsumer`
+`IBSTrackReleaseDetector` and the existing `IBSEventConsumer`
 `package.commit` handler do NOT update `ReleaseRequest` records when
 they detect a codestream release. The RR state is updated exclusively
 by the submission tracking pipelines below (real-time consumer for
@@ -666,7 +666,7 @@ Step 3 — Delivery status reconciliation:
 #### Why This Approach
 
 The catch-up problem for request tracking differs from the
-`package.commit` catch-up (handled by `CodestreamReleaseDetector`):
+`package.commit` catch-up (handled by `IBSTrackReleaseDetector`):
 
 - For `package.commit`, the MD5 checksum cache
   (`CodestreamPackageChecksum`) provides a "known good state" to diff
@@ -1103,7 +1103,7 @@ mechanisms or credentials:
 - **API endpoints**: same access rules as
   `GET /api/v1/tickets/{ticket_id}` — no additional role required.
 - **IBS API calls**: use the same IBS credentials already configured
-  for `CodestreamReleaseDetector` and the existing `IBSEventConsumer`
+  for `IBSTrackReleaseDetector` and the existing `IBSEventConsumer`
   (see `ibs-rabbitmq-integration.md` and `ibs-integration.md`).
 - **No sensitive data exposed**: endpoints return only IBS request
   numbers, package names, codestream names, and states.

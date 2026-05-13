@@ -28,7 +28,7 @@ and release detection. Sentinel interacts with two separate OBS instances:
 ### Key API Operations
 
 The following IBS API endpoints are used by Sentinel for codestream-level
-release detection (see `docs/features/packages/ibs-codestream-release-detection.md`),
+release detection (see `docs/features/packages/ibs-track-release-detection.md`),
 product-level release detection (see
 `docs/features/packages/ibs-product-release-detection.md`), package
 bugowner resolution (see `docs/features/packages/package-bugowner.md`), and
@@ -86,7 +86,7 @@ Parameters:
 - `orev` — the old source MD5 (baseline revision)
 - `rev` — the new source MD5 (current revision)
 
-The `CodestreamReleaseDetector` filters for issues with `state="added"`
+The `IBSTrackReleaseDetector` filters for issues with `state="added"`
 and `tracker` equal to `cve` or `bnc`.
 
 #### Package Bugowner Resolution
@@ -163,7 +163,7 @@ IBS-related data is stored in the following tables (see `docs/data-model.md`):
 
 - `CodestreamPackageChecksum`: operational cache storing the last known
   `srcmd5` for each `(codestream_name, package_name)` pair. Shared by the
-  `IBSEventConsumer` (real-time) and the `CodestreamReleaseDetector`
+  `IBSEventConsumer` (real-time) and the `IBSTrackReleaseDetector`
   (periodic catch-up) to detect source changes. See
   `docs/features/integrations/ibs-rabbitmq-integration.md`.
 - `TicketPackageTrack.reference`: stores the IBS project name
@@ -189,7 +189,7 @@ Methods:
   parses the XML response, filters for issues with `state="added"` and
   `tracker` equal to `cve` or `bnc`, and returns the filtered list. The
   filtering is performed here in the client so the
-  `CodestreamReleaseDetector` receives pre-filtered results.
+  `IBSTrackReleaseDetector` receives pre-filtered results.
 - `get_request_diff_issues(request_number: int) -> list[DiffIssue]`: calls
   `POST /request/{id}?cmd=diff&withissues=1&view=xml`, parses the XML
   response, filters for issues with `state="added"` and `tracker="cve"`,
@@ -205,16 +205,16 @@ Methods:
 Configuration is injected via the application settings (`IBS_API_URL`,
 `IBS_USERNAME`, `IBS_PASSWORD`).
 
-#### CodestreamReleaseDetector (`backend/app/services/codestream_release_detector.py`)
+#### IBSTrackReleaseDetector (`backend/app/services/ibs_track_release_detector.py`)
 
 Orchestrates codestream-level release detection using the `IBSClient`.
 Full procedure is documented in
-`docs/features/packages/ibs-codestream-release-detection.md`.
+`docs/features/packages/ibs-track-release-detection.md`.
 
 ### Background Tasks
 
-- `check_codestream_releases`: periodic task (every 24 hours at 02:00
-  UTC via Celery Beat) that invokes `CodestreamReleaseDetector.run()`.
+- `check_ibs_track_releases`: periodic task (every 24 hours at 02:00
+  UTC via Celery Beat) that invokes `IBSTrackReleaseDetector.run()`.
   This task is a `BaseFetcher` subclass with `name`, `description`, and
   `default_schedule` attributes. Serves as a catch-up mechanism for
   events missed by the `IBSEventConsumer`. See
@@ -240,7 +240,7 @@ Full procedure is documented in
 1. IBS credentials are validated at startup; warn if not configured
 2. IBS API calls use retry logic with exponential backoff
 3. All IBS operations are logged for audit purposes
-4. The `CodestreamReleaseDetector` never modifies records with protected
+4. The `IBSTrackReleaseDetector` never modifies records with protected
    status (`WONT_FIX`) or soft-deleted records
 
 ## OBS Public Integration

@@ -756,12 +756,12 @@ The following scenarios invoke `add_package_to_ticket`:
    `add_package_to_ticket` to add all tracks and products, then sets
    the specific track where the fix was detected to `FIXED` and
    `delivery_status` to `RELEASED`. See
-   `docs/features/packages/ibs-codestream-release-detection.md` (Case B).
+   `docs/features/packages/ibs-track-release-detection.md` (Case B).
 4. **Ticket auto-creation (Case C)**: a CVE fix is detected for a CVE
    with no existing ticket. After creating the ticket,
    `add_package_to_ticket` is called, then the originating track is
    set to `FIXED` and `delivery_status` to `RELEASED`. See
-   `docs/features/packages/ibs-codestream-release-detection.md` (Case C).
+   `docs/features/packages/ibs-track-release-detection.md` (Case C).
 5. **Restore from soft-deletion**: when a VA restores a soft-deleted
    package, track, or product, `add_package_to_ticket` is called to
    add any new tracks/products that appeared on SMELT since the
@@ -879,7 +879,7 @@ affected package:
 
 1. **Track level**: the fix has been added to the track's IBS project
    (e.g., `SUSE:SLE-15-SP6:Update`). See
-   `docs/features/packages/ibs-codestream-release-detection.md` for the
+   `docs/features/packages/ibs-track-release-detection.md` for the
    full detection mechanism (MD5 cache, IBS diff analysis, match
    outcomes).
 2. **Product level**: the fix has been published to the product's update
@@ -1472,12 +1472,12 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 `sync_aimaas_thresholds`) are specified in
 `docs/features/packages/product-catalog.md` (Background Tasks).
 
-- `check_codestream_releases`: periodic task (every 24 hours at 02:00
-  UTC via Celery Beat) that invokes the `CodestreamReleaseDetector`
+- `check_ibs_track_releases`: periodic task (every 24 hours at 02:00
+  UTC via Celery Beat) that invokes the `IBSTrackReleaseDetector`
   service. Serves as a catch-up mechanism for events missed by the
   real-time `IBSEventConsumer` (see
   `docs/features/integrations/ibs-rabbitmq-integration.md`). See
-  `docs/features/packages/ibs-codestream-release-detection.md` for the
+  `docs/features/packages/ibs-track-release-detection.md` for the
   full procedure. When a release is detected, sets
   `TicketPackageTrack.delivery_status = RELEASED` and
   `TicketPackageTrack.status = FIXED`.
@@ -1487,12 +1487,12 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `docs/features/packages/ibs-product-release-detection.md` for the
   full procedure. Frequency and scope are TBD.
 - `create_ticket_from_detection`: on-demand task enqueued by the
-  `CodestreamReleaseDetector` or the `IBSEventConsumer` when a CVE fix
+  `IBSTrackReleaseDetector` or the `IBSEventConsumer` when a CVE fix
   is detected for a CVE that has no ticket in Sentinel. Fetches CVE
   data from NVD, creates the ticket, resolves packages via SMELT, and
   sets the originating track to `FIXED` with
   `delivery_status = RELEASED`. See
-  `docs/features/packages/ibs-codestream-release-detection.md` (Case C)
+  `docs/features/packages/ibs-track-release-detection.md` (Case C)
   for details.
 - `check_lifecycle_phase_transitions`: periodic task (daily at 04:00
   UTC) that detects products currently in Reactive LTSS or EOL phase
@@ -1562,7 +1562,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
 - `docs/features/tickets/ticket-history.md` — TicketEvent field mapping
-- `docs/features/packages/ibs-codestream-release-detection.md` — IBS
+- `docs/features/packages/ibs-track-release-detection.md` — IBS
   track-level release detection
 - `docs/features/packages/ibs-product-release-detection.md` — IBS
   product-level release detection

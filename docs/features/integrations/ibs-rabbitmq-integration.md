@@ -3,8 +3,8 @@
 ## Purpose
 
 Complement the existing polling-based codestream release detection
-(`CodestreamReleaseDetector`, documented in
-`docs/features/packages/ibs-codestream-release-detection.md`) with a real-time event consumer that
+(`IBSTrackReleaseDetector`, documented in
+`docs/features/packages/ibs-track-release-detection.md`) with a real-time event consumer that
 listens to IBS commit events via the RabbitMQ message bus at
 `rabbit.suse.de`. This reduces codestream-level detection latency from up
 to 24 hours (polling interval) to seconds, while maintaining the periodic
@@ -185,7 +185,7 @@ For each `suse.obs.package.commit` event:
    - **Case C** — no ticket exists: enqueue
      `create_ticket_from_detection` task
 
-   See `docs/features/packages/ibs-codestream-release-detection.md`, section
+   See `docs/features/packages/ibs-track-release-detection.md`, section
    "Codestream Match Outcomes" for the complete specification of each case.
 
 6. **Update MD5 cache**: write the event's `srcmd5` to
@@ -218,7 +218,7 @@ codestreams. The ratio of relevant to irrelevant events is low.
 
 ### Shared MD5 Cache
 
-The `IBSEventConsumer` and the `CodestreamReleaseDetector` (periodic
+The `IBSEventConsumer` and the `IBSTrackReleaseDetector` (periodic
 fetcher) share the same `CodestreamPackageChecksum` table. This is the
 key mechanism that prevents duplicate work:
 
@@ -268,7 +268,7 @@ The two mechanisms are fully independent:
 | Connection lost during consumption | Log WARNING, reconnect with exponential backoff. Events during disconnection are lost (caught by periodic fetcher) |
 | Invalid/unparseable message payload | Log WARNING with raw payload, acknowledge and discard |
 | IBS diff request fails (HTTP error, timeout) | Log ERROR, do NOT update MD5 cache. The periodic fetcher will retry on its next run |
-| SMELT unreachable during Case B/C | Log ERROR, package addition skipped. The MD5 cache IS updated (the IBS diff succeeded), so neither the consumer nor the periodic fetcher will re-attempt automatically. Same behavior as the periodic fetcher — the condition must be surfaced to operators via monitoring. See `docs/features/packages/ibs-codestream-release-detection.md` error handling |
+| SMELT unreachable during Case B/C | Log ERROR, package addition skipped. The MD5 cache IS updated (the IBS diff succeeded), so neither the consumer nor the periodic fetcher will re-attempt automatically. Same behavior as the periodic fetcher — the condition must be surfaced to operators via monitoring. See `docs/features/packages/ibs-track-release-detection.md` error handling |
 | Active codestream set refresh fails | Log WARNING, continue using stale set. Retry refresh on next interval |
 
 ## Monitoring and Observability

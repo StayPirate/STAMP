@@ -268,7 +268,7 @@ whether update advisories have been published to product repositories.
 - **Integration status**: **Active**. Codestream-level release detection
   uses two complementary mechanisms: the `IBSEventConsumer` (real-time
   via IBS RabbitMQ, see `docs/features/integrations/ibs-rabbitmq-integration.md`) and
-  the periodic `check_codestream_releases` fetcher (catch-up every 24
+  the periodic `check_ibs_track_releases` fetcher (catch-up every 24
   hours at 02:00 UTC). Product-level release detection
   (`check_product_releases`) runs as a periodic `BaseFetcher` subclass.
   Package bugowner resolution uses the owner search, person, and group
@@ -285,7 +285,7 @@ whether update advisories have been published to product repositories.
   for route definitions) rather than relying solely on the published docs
 - **See also**: `docs/features/integrations/ibs-integration.md`,
   `docs/features/packages/package-tracking.md`,
-  `docs/features/packages/ibs-codestream-release-detection.md`,
+  `docs/features/packages/ibs-track-release-detection.md`,
   `docs/features/packages/ibs-product-release-detection.md`,
   `docs/features/packages/package-bugowner.md`
 
@@ -417,7 +417,7 @@ near-real-time reactivity.
 - **Integration status**: **Active**. Sentinel consumes
   `suse.obs.package.commit` events from IBS for near-real-time
   codestream-level release detection. The periodic polling fetcher
-  (`check_codestream_releases`, every 24 hours at 02:00 UTC) serves as
+  (`check_ibs_track_releases`, every 24 hours at 02:00 UTC) serves as
   a catch-up mechanism for events missed during consumer downtime, since
   queues are exclusive and transient. See
   `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification
@@ -746,7 +746,7 @@ details.
 | `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates |
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product |
-| `check_codestream_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) |
+| `check_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) |
 | `check_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) |
 | `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) |
 | `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping |

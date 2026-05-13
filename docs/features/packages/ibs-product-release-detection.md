@@ -9,7 +9,7 @@ the **product-level** release detection mechanism.
 For the overall release tracking architecture (two independent levels —
 codestream and product), see `docs/features/packages/package-tracking.md`, section
 "Release Tracking". For codestream-level detection, see
-`docs/features/packages/ibs-codestream-release-detection.md`.
+`docs/features/packages/ibs-track-release-detection.md`.
 
 ## Context
 
@@ -155,7 +155,7 @@ The codestream-level detector does not use this match chain — the IBS diff
 endpoint (`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
 already provides an explicit `CVE -> source package` link via the `<issues>`
 response, so the package that received the fix is known directly. See
-`docs/features/packages/ibs-codestream-release-detection.md`.
+`docs/features/packages/ibs-track-release-detection.md`.
 
 **Why this matters**: a single CVE can affect multiple distinct source
 packages, typically when a vulnerable library is statically linked into
@@ -247,7 +247,7 @@ Then:
 
 Note: codestream-level no-match behavior (CVE found in diff but package
 not tracked in ticket, or no ticket exists at all) is described in
-`docs/features/packages/ibs-codestream-release-detection.md` (Cases B and C).
+`docs/features/packages/ibs-track-release-detection.md` (Cases B and C).
 
 ## Background Task
 

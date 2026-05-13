@@ -36,7 +36,7 @@ reflect temporary SMELT data issues and is not a reliable EOL signal.
 ### Background Task: `check_lifecycle_phase_transitions`
 
 A `BaseFetcher` subclass that runs daily (recommended schedule: 04:00 UTC,
-after `sync_aimaas_lifecycle` and `check_codestream_releases`).
+after `sync_aimaas_lifecycle` and `check_ibs_track_releases`).
 
 **Responsibility**: find products currently in Reactive LTSS or EOL phase
 that still have actionable `TicketPackageProduct` records, and enqueue

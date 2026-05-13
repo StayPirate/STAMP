@@ -82,7 +82,7 @@ depend on it). Derivation rules:
 2. Single-word spec, >4 letters: first 3 letters uppercased
    (`tickets` → `TKT`, `admin` → `ADM`)
 3. Hyphenated spec, 4+ words: first letter of each word uppercased,
-   max 4 chars (`ibs-codestream-release-detection` → `ICRD`)
+   max 4 chars (`ibs-track-release-detection` → `ITRD`)
 4. Hyphenated spec, 2-3 words: take letters from each word to reach
    3-4 chars, prioritizing recognizability
    (`package-tracking` → `PKT`, `user-service` → `USVC`,

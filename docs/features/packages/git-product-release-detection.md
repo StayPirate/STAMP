@@ -1,7 +1,7 @@
 # Git Product-Level Release Detection
 
 Release detection at the product level for the git workflow — the
-equivalent of `ibs-product-release-detection.md` for IBS tracks.
+equivalent of `ibs-product-release-detection.md` for IBS products.
 
 **Status**: TBD — mechanism not yet defined.
 

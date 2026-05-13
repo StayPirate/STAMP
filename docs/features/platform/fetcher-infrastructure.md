@@ -566,7 +566,7 @@ independent periodic sync) are exempt from `BaseFetcher`. These tasks:
 - Their metrics are not tracked independently
 
 Example: `create_ticket_from_detection` is enqueued by the
-`check_codestream_releases` fetcher (Case C) and fetches CVE data from
+`check_ibs_track_releases` fetcher (Case C) and fetches CVE data from
 NVD and package data from SMELT. It is a standalone Celery task, not a
 `BaseFetcher` subclass, because it is a reaction to a discovery made by
 the parent fetcher, not an independent sync process.

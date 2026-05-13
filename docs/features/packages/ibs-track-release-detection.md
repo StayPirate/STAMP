@@ -1,11 +1,15 @@
-# IBS Codestream Release Detection
+# IBS Track-Level Release Detection
 
 ## Purpose
 
 Detect when CVE fixes land in IBS codestream projects (e.g.,
 `SUSE:SLE-15-SP6:Update`) by monitoring source package changes via MD5
-checksum comparison and IBS diff analysis. This is the **codestream-level**
-release detection mechanism.
+checksum comparison and IBS diff analysis. This is the **track-level**
+release detection mechanism for the IBS workflow.
+
+In the IBS workflow, the track-level unit is the **codestream** — an IBS
+project where source packages are maintained and built. This specification
+uses "codestream" throughout to refer to this IBS-specific concept.
 
 For the overall release tracking architecture (two independent levels —
 codestream and product), see `docs/features/packages/package-tracking.md`, section
@@ -33,7 +37,7 @@ Behavior").
 
 ## Detection Mechanism
 
-Sentinel uses a `CodestreamReleaseDetector` service that monitors IBS codestream
+Sentinel uses an `IBSTrackReleaseDetector` service that monitors IBS codestream
 projects for package source changes and detects CVE fixes by analyzing diffs.
 The mechanism is based on MD5 checksum comparison (inspired by SMASH's
 `TrackedReleaseFetcher`).
@@ -68,7 +72,7 @@ real-time are not re-processed by the periodic fetcher.
 
 ### Procedure
 
-The `CodestreamReleaseDetector` runs on a periodic schedule (every 24
+The `IBSTrackReleaseDetector` runs on a periodic schedule (every 24
 hours at 02:00 UTC via Celery Beat) and executes the following steps.
 This periodic fetcher serves as a catch-up mechanism for events missed
 by the real-time `IBSEventConsumer` during downtime — see
@@ -186,7 +190,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 
 ## Background Task
 
-- **Task name**: `check_codestream_releases`
+- **Task name**: `check_ibs_track_releases`
 - **Type**: `BaseFetcher` subclass
 - **Schedule**: every 24 hours at 02:00 UTC (`0 2 * * *`)
 - **Role**: catch-up mechanism for events missed by the real-time

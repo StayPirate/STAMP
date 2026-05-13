@@ -33,7 +33,7 @@ Index of all feature specification domains.
 ### Packages
 
 - [package-tracking.md](packages/package-tracking.md) — Status model, eligibility, add/remove packages
-- [ibs-codestream-release-detection.md](packages/ibs-codestream-release-detection.md) — MD5 cache, IBS diff
+- [ibs-track-release-detection.md](packages/ibs-track-release-detection.md) — MD5 cache, IBS diff
 - [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — updateinfo.xml, advisory match
 - [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive LTSS / EOL automation
 - [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — SR/RR tracking via RabbitMQ + periodic sync

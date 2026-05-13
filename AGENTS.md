@@ -431,7 +431,7 @@ ingestion) MUST:
 external sources as a sub-operation of an existing fetcher are exempt.
 These are on-demand tasks triggered by a parent fetcher (not by Celery
 Beat), with no independent schedule or dashboard presence. Example:
-`create_ticket_from_detection` is enqueued by `check_codestream_releases`
+`create_ticket_from_detection` is enqueued by `check_ibs_track_releases`
 and fetches from NVD/SMELT, but is not a `BaseFetcher` subclass.
 
 If there is a compelling reason to bypass `BaseFetcher` for a specific

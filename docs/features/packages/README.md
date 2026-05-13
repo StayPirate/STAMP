@@ -7,10 +7,10 @@ tracking.
 
 ```
 package-tracking.md                      Status model, eligibility, delivery, soft-deletion
-├── ibs-codestream-release-detection.md  IBS track-level: MD5 cache, IBS diff, Cases A/B/C
+├── ibs-track-release-detection.md       IBS track-level: MD5 cache, IBS diff, Cases A/B/C
 ├── ibs-product-release-detection.md     IBS product-level: updateinfo.xml, advisory match chain
-├── git-release-detection-track.md       Git track-level release detection (TBD)
-├── git-release-detection-product.md     Git product-level release detection (TBD)
+├── git-track-release-detection.md       Git track-level release detection (TBD)
+├── git-product-release-detection.md     Git product-level release detection (TBD)
 └── product-lifecycle-transitions.md     Reactive LTSS / EOL automation
 
 product-catalog.md                       Product/ProductRepository, SMELT/AIMAAS sync, lifecycle phases

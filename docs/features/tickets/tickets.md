@@ -146,9 +146,9 @@ sources), a ticket is created automatically. See
 
 ### Automatic: Codestream Release Detection (Case C)
 
-When the `CodestreamReleaseDetector` finds a CVE fix in IBS for a CVE
+When the `IBSTrackReleaseDetector` finds a CVE fix in IBS for a CVE
 that has no ticket in Sentinel, a `create_ticket_from_detection` task
-creates the ticket. See `docs/features/packages/ibs-codestream-release-detection.md`
+creates the ticket. See `docs/features/packages/ibs-track-release-detection.md`
 (Case C) for the full flow.
 
 - `cve_id`: set to the created/fetched CVE
