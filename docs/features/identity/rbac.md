@@ -15,6 +15,14 @@ No authentication required. Read-only access to platform data:
 - View tickets, CVEs, and products
 - View fetcher dashboard (list, detail, charts, run history, error messages)
 
+### Authenticated
+
+Any logged-in user, regardless of role. Includes all Public access plus:
+- Logout (terminate own session)
+- View own profile (`/api/v1/users/me`)
+- Manage own API keys (list, create, revoke)
+- View maintainer dashboard (own pending, in-progress, and completed packages)
+
 ### Vulnerability Analyst
 
 Operates the triage and assessment workflow:
@@ -46,49 +54,58 @@ capabilities must hold both roles.
 
 ### Vulnerability Analyst Operations
 
-| Action                           | Admin | VA  | Public |
-|----------------------------------|-------|-----|--------|
-| Create ticket manually           | No    | Yes | No     |
-| Assign/reassign ticket           | No    | Yes | No     |
+| Action                           | Admin | VA  | Authenticated | Public |
+|----------------------------------|-------|-----|---------------|--------|
+| Create ticket manually           | No    | Yes | No            | No     |
+| Assign/reassign ticket           | No    | Yes | No            | No     |
+| Change ticket status             | No    | Yes | No            | No     |
+| Mark as duplicate / revert       | No    | Yes | No            | No     |
+| Associate CVE with ticket        | No    | Yes | No            | No     |
+| Set/update severity override     | No    | Yes | No            | No     |
+| Add/remove packages              | No    | Yes | No            | No     |
+| Change track/product status      | No    | Yes | No            | No     |
+| Add/edit/delete SUSE CVSS        | No    | Yes | No            | No     |
+| Add/edit/delete references       | No    | Yes | No            | No     |
 
 > **Assignment target constraint**: the "Assign/reassign ticket" permission
 > allows any VA to assign a ticket, but the target user MUST also hold the
 > `vulnerability_analyst` role. Assigning to a user without this role is
 > rejected with 400 Bad Request.
-| Change ticket status             | No    | Yes | No     |
-| Mark as duplicate / revert       | No    | Yes | No     |
-| Associate CVE with ticket        | No    | Yes | No     |
-| Set/update severity override     | No    | Yes | No     |
-| Add/remove packages              | No    | Yes | No     |
-| Change track/product status     | No    | Yes | No     |
-| Add/edit/delete SUSE CVSS        | No    | Yes | No     |
-| Add/edit/delete references       | No    | Yes | No     |
 
 ### Admin Operations
 
-| Action                           | Admin | VA  | Public |
-|----------------------------------|-------|-----|--------|
-| Remove CVE from ticket           | Yes   | No  | No     |
-| Manage user roles                | Yes   | No  | No     |
-| Manage role mappings             | Yes   | No  | No     |
-| View/update system settings      | Yes   | No  | No     |
-| Soft-delete ticket               | Yes   | No  | No     |
-| Restore deleted ticket           | Yes   | No  | No     |
-| View deleted tickets             | Yes   | No  | No     |
-| Trigger manual fetcher run       | Yes   | No  | No     |
-| Enable/disable fetchers          | Yes   | No  | No     |
-| Modify fetcher config            | Yes   | No  | No     |
-| View fetcher audit log           | Yes   | No  | No     |
-| View fetcher error tracebacks    | Yes   | No  | No     |
+| Action                           | Admin | VA  | Authenticated | Public |
+|----------------------------------|-------|-----|---------------|--------|
+| Remove CVE from ticket           | Yes   | No  | No            | No     |
+| Manage user roles                | Yes   | No  | No            | No     |
+| Manage role mappings             | Yes   | No  | No            | No     |
+| View/update system settings      | Yes   | No  | No            | No     |
+| Soft-delete ticket               | Yes   | No  | No            | No     |
+| Restore deleted ticket           | Yes   | No  | No            | No     |
+| View deleted tickets             | Yes   | No  | No            | No     |
+| Trigger manual fetcher run       | Yes   | No  | No            | No     |
+| Enable/disable fetchers          | Yes   | No  | No            | No     |
+| Modify fetcher config            | Yes   | No  | No            | No     |
+| View fetcher audit log           | Yes   | No  | No            | No     |
+| View fetcher error tracebacks    | Yes   | No  | No            | No     |
+
+### Authenticated Operations
+
+| Action                           | Admin | VA  | Authenticated | Public |
+|----------------------------------|-------|-----|---------------|--------|
+| Logout                           | Yes   | Yes | Yes           | No     |
+| View own profile                 | Yes   | Yes | Yes           | No     |
+| Manage own API keys              | Yes   | Yes | Yes           | No     |
+| View maintainer dashboard        | Yes   | Yes | Yes           | No     |
 
 ### Public Operations
 
-| Action                           | Admin | VA  | Public |
-|----------------------------------|-------|-----|--------|
-| View tickets / CVEs (active)     | Yes   | Yes | Yes    |
-| View products                    | Yes   | Yes | Yes    |
-| View ticket references           | Yes   | Yes | Yes    |
-| View fetcher dashboard           | Yes   | Yes | Yes    |
+| Action                           | Admin | VA  | Authenticated | Public |
+|----------------------------------|-------|-----|---------------|--------|
+| View tickets / CVEs (active)     | Yes   | Yes | Yes           | Yes    |
+| View products                    | Yes   | Yes | Yes           | Yes    |
+| View ticket references           | Yes   | Yes | Yes           | Yes    |
+| View fetcher dashboard           | Yes   | Yes | Yes           | Yes    |
 
 ## Endpoint Permission Map
 
