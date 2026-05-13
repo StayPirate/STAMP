@@ -147,18 +147,18 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets` | Public | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
-| GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
+| GET | `/api/v1/tickets` | Public | [tickets](../tickets/tickets.md#list-tickets) |
+| GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#get-ticket) |
 | POST | `/api/v1/tickets` | Vulnerability Analyst | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | Vulnerability Analyst | [tickets](../tickets/tickets.md#associate-cve) |
 | DELETE | `/api/v1/tickets/{ticket_id}/cve` | Admin | [tickets](../tickets/tickets.md#remove-cve-from-ticket-admin-only) |
 | PATCH | `/api/v1/tickets/{ticket_id}/severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md#update-severity-override) |
-| POST | `/api/v1/tickets/{ticket_id}/assign` | Vulnerability Analyst | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
-| POST | `/api/v1/tickets/{ticket_id}/ignore` | Vulnerability Analyst | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
-| POST | `/api/v1/tickets/{ticket_id}/duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
-| POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
-| DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
-| POST | `/api/v1/tickets/{ticket_id}/restore` | Admin | [tickets](../tickets/tickets.md#other-ticket-endpoints) |
+| POST | `/api/v1/tickets/{ticket_id}/assign` | Vulnerability Analyst | [tickets](../tickets/tickets.md#assign-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/ignore` | Vulnerability Analyst | [tickets](../tickets/tickets.md#ignore-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#mark-ticket-as-duplicate) |
+| POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revert-duplicate-status) |
+| DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md#soft-delete-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/restore` | Admin | [tickets](../tickets/tickets.md#restore-ticket) |
 
 ### Ticket Packages
 
@@ -248,10 +248,10 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/admin/users/{user}/reactivate` | Admin | [user-management](user-management.md#post-apiv1adminusersuserreactivate) |
 | GET | `/api/v1/admin/users/{user}/deactivation-impact` | Admin | [user-management](user-management.md#get-apiv1adminusersuserdeactivation-impact) |
 | POST | `/api/v1/admin/users/{user}/unlock` | Admin | [user-management](user-management.md#post-apiv1adminusersuserunlock) |
-| GET | `/api/v1/admin/role-mappings` | Admin | [ad-integration](ad-integration.md#role-mapping-management) |
-| POST | `/api/v1/admin/role-mappings` | Admin | [ad-integration](ad-integration.md#role-mapping-management) |
-| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ad-integration](ad-integration.md#role-mapping-management) |
-| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ad-integration](ad-integration.md#role-mapping-management) |
+| GET | `/api/v1/admin/role-mappings` | Admin | [ad-integration](ad-integration.md#list-role-mappings) |
+| POST | `/api/v1/admin/role-mappings` | Admin | [ad-integration](ad-integration.md#create-role-mapping) |
+| POST | `/api/v1/admin/role-mappings/preview` | Admin | [ad-integration](ad-integration.md#preview-role-mapping) |
+| DELETE | `/api/v1/admin/role-mappings/{id}` | Admin | [ad-integration](ad-integration.md#delete-role-mapping) |
 
 **Notes**:
 - "Public" = no authentication required

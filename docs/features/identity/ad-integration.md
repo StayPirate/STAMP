@@ -598,6 +598,8 @@ Key rules (defined in detail in user-management.md):
 
 ### Role Mapping management
 
+### List Role Mappings
+
 ```
 GET /api/v1/admin/role-mappings
 ```
@@ -626,6 +628,8 @@ Response:
   ]
 }
 ```
+
+### Preview Role Mapping
 
 ```
 POST /api/v1/admin/role-mappings/preview
@@ -691,6 +695,8 @@ preparation for future members.
 | 422 | `VALIDATION_ERROR` | Invalid request body (missing or empty `ad_group_cn`, unrecognized `role`) |
 | 422 | `ROLE_MAPPING_INVALID_GROUP_CN` | `ad_group_cn` contains characters invalid for an AD group CN |
 | 503 | `AD_UNAVAILABLE` | AD is unreachable or the connection timed out (10–15 s timeout) |
+
+### Create Role Mapping
 
 ```
 POST /api/v1/admin/role-mappings
@@ -765,6 +771,8 @@ Processing (all steps execute within a **single database transaction**):
    `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
    `affected_users_count`, `timestamp`. This log line follows the
    application's structured logging conventions (JSON log lines)
+
+### Delete Role Mapping
 
 ```
 DELETE /api/v1/admin/role-mappings/{id}

@@ -664,6 +664,67 @@ progress through the full lifecycle.
 
 ## API Endpoints
 
+### List Tickets
+
+```
+GET /api/v1/tickets
+```
+
+Lists tickets with filtering, search, pagination, and sorting.
+
+Query parameters:
+
+- `search` (string, optional): free-text search across `SNTL-{n}`
+  identifier, CVE ID, CVE description, and package names. See
+  [Search](#search) for search behavior across fields.
+- `status` (string, repeatable, optional): filter by ticket status.
+  Accepts one or more values from: `new`, `analysis`, `analyzed`,
+  `resolved`, `ignored`, `duplicated`. When multiple values are provided,
+  tickets matching any of the specified statuses are returned.
+- `assignee` (string, optional): filter by assignee. Accepts a user UUID,
+  a username, or the special value `none` to return only unassigned
+  tickets.
+- `severity` (string, repeatable, optional): filter by severity level.
+  Accepts one or more values from: `critical`, `high`, `medium`, `low`,
+  `none`.
+- `bugowner` (string, optional): filter tickets to those containing at
+  least one package whose bugowner matches the value (matches against
+  bugowner email, name, or group member email/userid — see
+  `docs/features/packages/package-bugowner.md`).
+- `include_deleted` (string, optional): `true` or `only`. Accepted from
+  any caller, but soft-deleted tickets are included only if the caller
+  holds the Admin role. For non-admin callers the parameter is silently
+  ignored. Values: `true` (include active and deleted tickets), `only`
+  (return only deleted tickets). Default (absent or `false`): return only
+  active tickets.
+- `page` (integer, optional): page number for pagination (default: 1).
+- `per_page` (integer, optional): items per page (default: 20).
+- `sort_by` (string, optional): field to sort by (default: `created_at`).
+- `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
+
+Response: paginated list in `{"data": [...], "meta": {...}}` envelope
+(200 OK).
+
+### Get Ticket
+
+```
+GET /api/v1/tickets/{ticket_id}
+```
+
+Returns a single ticket by UUID or `SNTL-{n}`. The response includes
+bugowner information for each package (type, name, email, and group
+members when applicable — see
+`docs/features/packages/package-bugowner.md`). See
+[Soft-Delete](#soft-delete) for soft-deleted ticket visibility rules.
+
+Response: ticket object in `{"data": ...}` envelope (200 OK).
+
+Error responses:
+
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 410 with code `TICKET_DELETED`: ticket is soft-deleted and caller is
+  not an Admin
+
 ### Create Ticket
 
 ```
@@ -788,13 +849,159 @@ Error responses:
 
 Requires the Vulnerability Analyst role.
 
-### Other Ticket Endpoints
+### Assign Ticket
 
-All other ticket endpoints (list, detail, assign, ignore, duplicate,
-revert-duplicate, soft-delete, restore, packages, CVSS, references,
-events) are documented in `docs/api-spec.md` and their respective
-feature specifications. All endpoints that accept `{ticket_id}` support
-dual lookup (UUID or `SNTL-{n}`).
+```
+POST /api/v1/tickets/{ticket_id}/assign
+```
+
+Assigns or reassigns a ticket to a VA. See
+[Reassignment](#reassignment) for reassignment rules and
+[Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)
+for auto-assignment behavior.
+
+Request body:
+
+```json
+{
+  "user_id": "jdoe"
+}
+```
+
+- `user_id` (string, required): UUID or username of the target user. The
+  target must hold the `vulnerability_analyst` role.
+
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK).
+
+Error responses:
+
+- 400 with code `TICKET_ASSIGNEE_NOT_VA`: target user does not hold the
+  Vulnerability Analyst role
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 404 with code `USER_NOT_FOUND`: target user not found
+
+Requires the Vulnerability Analyst role.
+
+### Ignore Ticket
+
+```
+POST /api/v1/tickets/{ticket_id}/ignore
+```
+
+Marks a ticket as Ignored. Allowed transitions: New → Ignored,
+Analysis → Ignored (see [Status Transitions](#status-transitions)). If
+the ticket has no assignee, auto-assignment applies (see
+[Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
+
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK).
+
+Error responses:
+
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_INVALID_TRANSITION`: current status does not
+  allow transition to Ignored
+
+Requires the Vulnerability Analyst role.
+
+### Mark Ticket as Duplicate
+
+```
+POST /api/v1/tickets/{ticket_id}/duplicate
+```
+
+Marks a ticket as a duplicate of another ticket. The target is resolved
+following the chain if it is itself Duplicated. Existing tickets pointing
+to this ticket are cascade-updated to the resolved target. See
+[Duplicate Handling](#duplicate-handling) for chain resolution, cascade
+updates, and invariants.
+
+Request body:
+
+```json
+{
+  "duplicate_of_id": "SNTL-42"
+}
+```
+
+- `duplicate_of_id` (string, required): UUID or `SNTL-{n}` of the
+  target ticket
+
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK).
+
+Error responses:
+
+- 400 with code `TICKET_SELF_DUPLICATE`: resolved target is the same
+  ticket (self-reference after chain resolution)
+- 404 with code `TICKET_NOT_FOUND`: ticket or target ticket not found
+- 409 with code `TICKET_DUPLICATE_CHAIN_DEPTH`: chain depth exceeded
+  (indicates data corruption requiring manual intervention)
+
+Requires the Vulnerability Analyst role.
+
+### Revert Duplicate Status
+
+```
+POST /api/v1/tickets/{ticket_id}/revert-duplicate
+```
+
+Reverts a Duplicated ticket to its previous status. The ticket is
+reassigned to the VA who performed the revert. After restoring the
+status, `evaluate_ticket_status` reconciles with current gate conditions.
+See [Duplicate Handling](#duplicate-handling) for revert behavior and
+status reconciliation.
+
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK).
+
+Error responses:
+
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Duplicated
+  status
+
+Requires the Vulnerability Analyst role.
+
+### Soft-Delete Ticket
+
+```
+DELETE /api/v1/tickets/{ticket_id}
+```
+
+Soft-deletes a ticket by setting `deleted_at`. Creates a `ticket_deleted`
+TicketEvent. See [Soft-Delete](#soft-delete) for visibility rules and
+sub-resource behavior.
+
+Response: 204 No Content.
+
+Error responses:
+
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_ALREADY_DELETED`: ticket is already soft-deleted
+
+Requires the Admin role.
+
+### Restore Ticket
+
+```
+POST /api/v1/tickets/{ticket_id}/restore
+```
+
+Restores a soft-deleted ticket by clearing `deleted_at`. Creates a
+`ticket_restored` TicketEvent. See [Soft-Delete](#soft-delete) for
+soft-delete lifecycle.
+
+Response: the restored ticket object wrapped in the standard
+`{"data": ...}` envelope (200 OK).
+
+Error responses:
+
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_NOT_DELETED`: ticket is not soft-deleted
+
+Requires the Admin role.
 
 ## Data Model
 
