@@ -35,6 +35,7 @@ API conventions so that implementation can proceed without design ambiguity.
    read those for context (first level of depth only)
 4. Read `docs/data-model.md` if the spec defines endpoints that return or
    mutate data entities — verify field names and types are consistent
+5. Read the **Endpoint Permission Map** in `docs/features/identity/rbac.md`
 
 ## What to check
 
@@ -101,6 +102,22 @@ API conventions so that implementation can proceed without design ambiguity.
 - If the endpoint is new, verify it follows the naming and structural
   patterns of existing endpoints in the same resource group
 - Flag any contradictions between the feature spec and `api-spec.md`
+
+### Endpoint Permission Map completeness
+
+The Endpoint Permission Map in `docs/features/identity/rbac.md` is a derived
+summary index of access control rules. Every endpoint defined in any feature
+spec must have a corresponding row in this table.
+
+- For every endpoint defined in the spec under review, verify that a
+  matching row exists in the Endpoint Permission Map with the correct HTTP
+  method, path, and access level (Public / Authenticated / Vulnerability
+  Analyst / Admin)
+- Conversely, for every row in the Endpoint Permission Map that links to
+  the spec under review as its owning spec, verify that the endpoint is
+  actually defined in the spec (detect stale rows)
+- Flag any mismatch between the access level declared in the spec and the
+  access level listed in the Endpoint Permission Map
 
 ## What NOT to check
 
