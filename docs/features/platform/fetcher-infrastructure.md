@@ -35,7 +35,9 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    - Automatic `started_at` timestamp capture
    - Automatic `finished_at` timestamp and `duration_seconds` calculation
    - Exception handling: if `execute()` raises, the run is marked `failure`
-     with `error_message` and `error_traceback` populated
+     with `error_message`, `error_detail`, and `error_traceback` populated
+     (see "Error Message Sanitization" for the three-tier field
+     architecture)
    - Final status set to `success` or `partial` (if `items_failed > 0`)
 3. **Metric helpers**: methods that concrete fetchers call within their
    `execute()` to report work done:
@@ -104,6 +106,86 @@ on-demand fetch is needed (see `docs/features/tickets/cve-tracking.md`,
 The `fetch_single` method does NOT create a `FetcherRun` record. It is
 a sub-operation invoked as a standalone Celery task, not a full fetcher
 execution. Metric reporting (`record_created`, etc.) is not used.
+
+## Error Message Sanitization
+
+The `error_message` field in `FetcherRun` is visible to **all users**
+(including unauthenticated callers via the fetcher dashboard). Raw Python
+exception messages often contain infrastructure details — internal
+hostnames, IP addresses, file paths, connection strings, or service
+names — that MUST NOT be exposed publicly.
+
+Sentinel uses a **three-tier error field architecture**:
+
+| Field | Audience | Content |
+|-------|----------|---------|
+| `error_message` | All users (public) | Intentional, sanitized message written by the developer or by BaseFetcher's generic fallback |
+| `error_detail` | Admin only | Raw exception message (`str(exception)`) |
+| `error_traceback` | Admin only | Full Python traceback |
+
+### Fetcher responsibilities
+
+Each concrete fetcher MUST catch known exceptions in its `execute()`
+method and raise a `FetcherError` with a sanitized message that describes
+the failure without revealing infrastructure details:
+
+```python
+async def execute(self, session: AsyncSession) -> None:
+    try:
+        response = await self.http_client.get(IBS_API_URL)
+    except ConnectionError as e:
+        raise FetcherError("Failed to connect to IBS") from e
+    except HTTPStatusError as e:
+        raise FetcherError(f"IBS returned HTTP {e.response.status_code}") from e
+```
+
+`FetcherError` is a dedicated exception class provided by the fetcher
+infrastructure module. When `BaseFetcher.run()` catches a `FetcherError`,
+it stores the exception message in `error_message` (public) and
+`str(exception.__cause__)` in `error_detail` (admin-only). If
+`__cause__` is `None` (no chained exception), `error_detail` is set to
+`NULL`.
+
+### BaseFetcher fallback
+
+When `execute()` raises an exception that is NOT a `FetcherError` (i.e.,
+an unhandled exception), `BaseFetcher.run()` applies a **generic category
+fallback** — it maps the exception type to a safe, generic message:
+
+| Exception category | `error_message` |
+|--------------------|-----------------|
+| `ConnectionError`, `Timeout` | `"External service unreachable"` |
+| `HTTPStatusError` (4xx) | `"External service rejected request"` |
+| `HTTPStatusError` (5xx) | `"External service returned server error"` |
+| `SoftTimeLimitExceeded` | `"Execution timed out"` |
+| Any other exception | `"Unexpected error"` |
+
+In all cases, `error_detail` receives `str(exception)` and
+`error_traceback` receives the full traceback.
+
+### What constitutes infrastructure details
+
+Error messages MUST NOT contain:
+
+- Internal hostnames (e.g., `build.suse.de`, `pan.suse.de`,
+  `smelt.suse.de`)
+- IP addresses or port numbers
+- File system paths
+- Database or Redis connection strings
+- API keys, tokens, or credentials
+- Internal URL paths beyond the service name
+
+### Referencing error handling in fetcher specifications
+
+Feature specifications that define fetchers SHOULD include an "Error
+Handling" section documenting which exceptions the fetcher catches and
+what sanitized messages it produces. The `@fetcher-compliance-reviewer`
+agent verifies this documentation exists.
+
+Fetchers that only interact with the local database (e.g.,
+`aggregate_fetcher_runs`, `check_lifecycle_phase_transitions`) are exempt
+from this requirement — their failure modes do not involve external
+service details.
 
 ## Custom Settings Schema
 
@@ -407,7 +489,8 @@ the dashboard charts.
 | items_created | INTEGER | NOT NULL, DEFAULT 0 | Number of new records created |
 | items_updated | INTEGER | NOT NULL, DEFAULT 0 | Number of existing records updated |
 | items_failed | INTEGER | NOT NULL, DEFAULT 0 | Number of items that failed processing |
-| error_message | TEXT | nullable | Short error description (for all users) |
+| error_message | TEXT | nullable | Sanitized error description (for all users). Written explicitly by the fetcher (`FetcherError`) or by BaseFetcher's generic fallback (see "Error Message Sanitization") |
+| error_detail | TEXT | nullable | Raw exception message — `str(exception)` (admin-only visibility) |
 | error_traceback | TEXT | nullable | Full Python traceback (admin-only visibility) |
 | triggered_by | ENUM | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
@@ -416,8 +499,8 @@ the dashboard charts.
 **Notes**:
 - `finished_at` is NULL while a run is in progress (status `running`).
   This can be used to detect stale runs (running for too long).
-- `error_traceback` is stored for debugging but MUST NOT be exposed to
-  non-admin users via the API.
+- `error_detail` and `error_traceback` are stored for debugging but MUST
+  NOT be exposed to non-admin users via the API.
 - `duration_seconds` is stored (not computed at query time) because it is
   the primary Y-axis value for timeline charts and benefits from indexing.
 
@@ -542,6 +625,12 @@ A Celery periodic task `aggregate_fetcher_runs` runs daily and:
 4. Creates or updates `FetcherRunWeeklyAggregate` records with the computed
    summaries
 5. Deletes the original `FetcherRun` records that were aggregated
+
+Error diagnostic fields (`error_message`, `error_detail`,
+`error_traceback`) are intentionally not preserved in weekly aggregates.
+Only run counts and duration statistics survive aggregation. Operators
+should investigate failures within the retention window (default: 90
+days) before individual run records are deleted.
 
 This task is itself a fetcher (inherits `BaseFetcher`) so its execution
 is also tracked in the dashboard.

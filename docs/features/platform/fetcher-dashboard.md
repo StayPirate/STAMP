@@ -220,7 +220,7 @@ run first). Follows the project-wide default sorting convention.
 ```
 
 **Notes**:
-- `error_traceback` is NOT included in list responses
+- `error_detail` and `error_traceback` are NOT included in list responses
 - `triggered_by_user` is an object `{"id": "uuid", "username": "admin1"}`
   when `triggered_by` is `manual`, otherwise `null`
 
@@ -243,6 +243,8 @@ Returns full detail for a single run.
 **Response** (200 OK):
 
 Same fields as the list response, plus:
+- `error_detail`: included ONLY if the requesting user has the Admin
+  role. Omitted (or `null`) for non-admin users.
 - `error_traceback`: included ONLY if the requesting user has the Admin
   role. Omitted (or `null`) for non-admin users.
 
@@ -846,6 +848,7 @@ A simple chronological list of admin actions from `FetcherAuditLog`:
 | View fetcher detail + charts | Yes | Yes | Yes |
 | View run history | Yes | Yes | Yes |
 | View error messages | Yes | Yes | Yes |
+| View error details | Yes | No | No |
 | View error tracebacks | Yes | No | No |
 | Trigger manual run | Yes | No | No |
 | Enable/disable fetcher | Yes | No | No |

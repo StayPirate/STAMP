@@ -169,9 +169,10 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  timeout_seconds     │   │  status                         │
 │  rate_limit          │   │  items_created/updated/failed   │
 │  custom_settings     │   │  error_message                  │
-└──────────────────────┘   │  error_traceback                │
-┌──────────────────────┐   │  triggered_by                   │
-│  FetcherAuditLog     │   │  triggered_by_user_id (FK)      │
+└──────────────────────┘   │  error_detail                   │
+┌──────────────────────┐   │  error_traceback                │
+│  FetcherAuditLog     │   │  triggered_by                   │
+│                      │   │  triggered_by_user_id (FK)      │
 │                      │   └─────────────────────────────────┘
 │  fetcher_name        │
 │  action              │   ┌─────────────────────────────────┐
@@ -779,7 +780,8 @@ specification.
 | items_created        | INTEGER     | NOT NULL, DEFAULT 0      | New records created                |
 | items_updated        | INTEGER     | NOT NULL, DEFAULT 0      | Existing records updated           |
 | items_failed         | INTEGER     | NOT NULL, DEFAULT 0      | Items that failed processing       |
-| error_message        | TEXT        | nullable                 | Short error description            |
+| error_message        | TEXT        | nullable                 | Sanitized error description (for all users). See `docs/features/platform/fetcher-infrastructure.md`, "Error Message Sanitization" |
+| error_detail         | TEXT        | nullable                 | Raw exception message (admin-only visibility in API) |
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
 | triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |

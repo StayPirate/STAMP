@@ -120,6 +120,7 @@ capabilities must hold both roles.
 
 | Action                           | Admin | VA  | Authenticated | Public |
 |----------------------------------|-------|-----|---------------|--------|
+| View users (list and detail)     | Yes   | Yes | Yes           | Yes    |
 | View tickets / CVEs (active)     | Yes   | Yes | Yes           | Yes    |
 | View products                    | Yes   | Yes | Yes           | Yes    |
 | View ticket references           | Yes   | Yes | Yes           | Yes    |

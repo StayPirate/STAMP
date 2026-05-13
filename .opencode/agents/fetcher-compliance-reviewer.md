@@ -73,6 +73,20 @@ infrastructure. You do NOT write or modify code.
 - Is partial failure handled correctly? If some items fail but the fetcher
   continues, are failed items reported via `self.record_failed()`?
 
+### Error message sanitization
+
+- Does the `execute()` method catch known exceptions (connection errors,
+  HTTP errors, timeouts) and raise a `FetcherError` with a sanitized
+  message that does not contain infrastructure details (internal
+  hostnames, IP addresses, file paths, connection strings)?
+- Are there code paths where a raw exception message could reach
+  `error_message` without going through `BaseFetcher`'s generic fallback?
+- If the fetcher has a feature specification in `docs/features/`, does
+  the spec include an "Error Handling" section documenting which
+  exceptions are caught and what sanitized messages are produced?
+- See `docs/features/platform/fetcher-infrastructure.md`, "Error Message
+  Sanitization" for the full requirements.
+
 ### Test coverage
 
 - Do tests exist for the fetcher in `backend/tests/`?
@@ -102,7 +116,8 @@ Provide a structured summary with these sections:
 2. **Integration issues**: problems with base class inheritance,
    registration, or metric reporting
 3. **Error handling concerns**: issues with exception handling that could
-   cause silent failures
+   cause silent failures or expose infrastructure details in public
+   error messages
 4. **Test gaps**: missing test coverage for fetcher run tracking
 5. **Verdict**: one of:
    - **Clean** — the fetcher is correctly integrated with the dashboard
