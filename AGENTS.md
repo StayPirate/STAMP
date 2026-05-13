@@ -700,9 +700,13 @@ Map in `docs/features/identity/rbac.md` is still accurate:
 
 1. Update the Endpoint Permission Map when:
    - A new API endpoint is added to a feature spec (add a row with method,
-     path, access level, and owning spec link)
+     path, access level, and owning spec link with anchor to the endpoint's
+     definition header — e.g.,
+     `[spec-name](path/to/spec.md#endpoint-header)`)
    - An existing endpoint's path, HTTP method, or access level changes
      (update the corresponding row)
+   - An endpoint's definition header is renamed in the feature spec
+     (update the anchor fragment in the owning spec link)
    - An endpoint is removed from a feature spec (remove the corresponding
      row)
 2. Skip the update when:
@@ -711,10 +715,10 @@ Map in `docs/features/identity/rbac.md` is still accurate:
    - Only request/response schemas, error codes, or behavioral details
      change (these are owned by the feature spec, not by rbac.md)
 
-The Endpoint Permission Map is a **derived summary index** — the
-authoritative source for each endpoint's access level is the owning
-feature specification. The map exists for cross-referencing convenience;
-it must never contradict the owning spec.
+The Endpoint Permission Map is the **single cross-cutting index** of all
+API endpoints — the authoritative source for each endpoint's access level
+is the owning feature specification. The map exists for cross-referencing
+convenience; it must never contradict the owning spec.
 
 ### 23. No real personal data in repository
 

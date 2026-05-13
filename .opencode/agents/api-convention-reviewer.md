@@ -95,19 +95,19 @@ API conventions so that implementation can proceed without design ambiguity.
 - Endpoints that trigger long-running or background operations should note
   how the client tracks progress (polling endpoint, webhook, etc.)
 
-### Consistency with api-spec.md endpoint catalog
+### Consistency with api-spec.md conventions
 
-- If the endpoint already exists in `docs/api-spec.md`, verify the spec's
-  definition matches (method, path, parameters, error codes)
-- If the endpoint is new, verify it follows the naming and structural
-  patterns of existing endpoints in the same resource group
-- Flag any contradictions between the feature spec and `api-spec.md`
+- Verify the endpoint follows the naming and structural patterns defined
+  in the General Conventions section of `docs/api-spec.md` (path naming,
+  mutation patterns, error codes, response envelope, pagination)
+- If the endpoint introduces a new pattern not covered by General
+  Conventions, flag it for explicit documentation in `api-spec.md`
 
 ### Endpoint Permission Map completeness
 
-The Endpoint Permission Map in `docs/features/identity/rbac.md` is a derived
-summary index of access control rules. Every endpoint defined in any feature
-spec must have a corresponding row in this table.
+The Endpoint Permission Map in `docs/features/identity/rbac.md` is the
+single cross-cutting index of all API endpoints. Every endpoint defined
+in any feature spec must have a corresponding row in this table.
 
 - For every endpoint defined in the spec under review, verify that a
   matching row exists in the Endpoint Permission Map with the correct HTTP
@@ -118,6 +118,10 @@ spec must have a corresponding row in this table.
   actually defined in the spec (detect stale rows)
 - Flag any mismatch between the access level declared in the spec and the
   access level listed in the Endpoint Permission Map
+- Verify that the Owning Spec link in each matching row includes an anchor
+  fragment pointing to the endpoint's definition header in the feature
+  spec (e.g., `[spec-name](path/to/spec.md#endpoint-header)`), not just
+  the file. Flag links that point only to the file without an anchor
 
 ## What NOT to check
 
