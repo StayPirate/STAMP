@@ -1208,4 +1208,14 @@ manual test query against IBS for a known incident with an active RR.
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
+- `docs/data-model.md` — full database schema
+- `docs/features/packages/package-tracking.md` — `TicketPackageTrack` model,
+  `add_package_to_ticket` trigger, delivery status dimension
+- `docs/features/tickets/tickets.md` — ticket model and access rules
+- `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints
+  and diff API
+- `docs/features/integrations/ibs-rabbitmq-integration.md` — consumer
+  architecture, connection management, routing key bindings
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` base
+  class contract, custom settings
 

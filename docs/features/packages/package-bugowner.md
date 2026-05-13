@@ -443,3 +443,10 @@ See `docs/features/ui/pages.md` for page placement.
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
+- `docs/data-model.md` — full database schema (bugowner tables)
+- `docs/features/packages/package-tracking.md` — `TicketPackage` model,
+  package lifecycle context
+- `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints
+  (bugowner resolution endpoint)
+- `docs/features/identity/rbac.md` — access control for fetcher operations
+- `docs/features/ui/pages.md` — page placement for bugowner display
