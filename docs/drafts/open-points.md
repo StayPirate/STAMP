@@ -19,7 +19,7 @@ features are added:
 | Enum | Current values | Growth driver |
 |------|---------------|---------------|
 | Role | 2 | New roles as platform matures |
-| TicketAuditEventType | 21 | Every new ticket mutation type |
+| TicketAuditEventType | 24 | Every new ticket mutation type |
 | CVESourceType | 2 | New data source integrations |
 | FetcherAuditEventType | 4 | New admin operations on fetchers |
 

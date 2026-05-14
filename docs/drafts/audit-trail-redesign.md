@@ -193,12 +193,9 @@ This is the **model-layer** companion to the service-layer `BaseAuditLog`.
 | `user_id` | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
 
 **Nullability of `user_id`**: the mixin defines `user_id` as nullable at
-the database level for all audit event models. For audit trails where
-only human actions are possible (SettingAuditEvent, FetcherAuditEvent),
-the NOT NULL constraint is enforced in the service layer (via
-`BaseAuditLog.log_event()` or the calling service function), not at the
-database level. This allows a single uniform mixin without per-model
-overrides.
+the database level for all audit event models. Subclasses of
+`BaseAuditLog` that only record human-initiated actions may override
+`log_event()` to validate that `user_id` is always provided.
 
 **Relationship to BaseAuditLog**:
 
@@ -225,16 +222,20 @@ service-layer interface).
 
 ---
 
-## Change 1: Conventions — Audit Trail Conventions section
+## Change 1: Audit Trail Infrastructure spec
 
-**Target file**: `docs/conventions.md`
+**Target file**: `docs/features/platform/audit-trail-infrastructure.md`
+(new)
 
-**Action**: add a new top-level section "Audit Trail Conventions" with the
-following content.
+**Action**: create a new specification containing the audit trail
+infrastructure: `BaseAuditLog` base class, `AuditEventMixin` mixin,
+naming conventions, atomicity rules, actor field semantics, date
+filtering convention, and the Audit Trail Index. This is the single
+canonical source for all cross-cutting audit trail rules.
 
-### Audit Trail Conventions
+Content:
 
-#### AuditEventMixin
+### AuditEventMixin
 
 Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
 (`backend/app/models/mixins.py`). The mixin provides the columns common
@@ -250,7 +251,7 @@ All audit event models inherit these columns from the mixin and add
 their own domain-specific columns (e.g., `ticket_id`, `event_type`,
 `target_user_id`).
 
-#### BaseAuditLog class
+### BaseAuditLog class
 
 Every audit trail in Sentinel MUST be implemented as a subclass of
 `BaseAuditLog` (`backend/app/services/base_audit_log.py`). The base class
@@ -261,7 +262,9 @@ defines:
 - **Retention**: `default_retention_days: int | None` — `None` means
   indefinite retention. Subclasses override as needed
 - **Event creation**: `log_event()` class method inserts a record within
-  the caller's database transaction
+  the caller's database transaction. Subclasses may override to add
+  domain-specific validation (e.g., ensuring `user_id` is provided for
+  admin-only trails)
 - **Date filtering**: `apply_date_filters()` class method applies
   `from_date` / `to_date` filters on `created_at`. Every audit trail API
   endpoint MUST use this method for uniform date filtering behavior
@@ -271,7 +274,7 @@ defines:
   lookup via JOIN. Every audit trail API endpoint with an `actor` filter
   MUST use this method
 
-#### Naming
+### Naming
 
 | Element | Pattern | Example |
 |---|---|---|
@@ -280,30 +283,28 @@ defines:
 | Enum | `{Domain}AuditEventType` | `TicketAuditEventType`, `IdentityAuditEventType` |
 | BaseAuditLog subclass | `{Domain}AuditLog` | `TicketAuditLog`, `IdentityAuditLog` |
 | Spec file (standalone) | `{domain}-audit-log.md` | `ticket-audit-log.md`, `identity-audit-log.md` |
-| API endpoint suffix | `/{resource-scope}/audit-log` | `/tickets/{id}/audit-log`, `/admin/settings/audit-log` |
 
-#### Atomicity
+Endpoint naming convention: see `docs/api-spec.md` (Audit Trail Endpoint
+Naming section).
+
+### Atomicity
 
 Every audit event MUST be created in the same database transaction as the
 mutation it records. If the mutation is rolled back, the audit event must
 not persist. This is enforced by using `BaseAuditLog.log_event()` with the
 same `AsyncSession` as the mutation.
 
-#### Actor field
+### Actor field
 
-- `user_id` is inherited from `AuditEventMixin` and is **nullable at the
-  database level** in all audit event models
+- `user_id` is inherited from `AuditEventMixin` and is nullable at the
+  database level in all audit event models
 - `user_id` is set when the action was initiated by a human user
 - `user_id` is `NULL` when the action was initiated by the system (e.g.,
   background task, AD sync, automated detection)
-- For audit trails where only human actions are possible (e.g.,
-  SettingAuditEvent, FetcherAuditEvent — only admins can act), the NOT
-  NULL constraint is enforced in the **service layer** (inside
-  `log_event()` or the calling service function), not at the database
-  level. This allows all models to share the same `AuditEventMixin`
-  without per-model column overrides
+- Subclasses that only record human-initiated actions may override
+  `log_event()` to validate that `user_id` is provided
 
-#### Date filtering
+### Date filtering
 
 Every audit trail API endpoint MUST support `from_date` and `to_date`
 query parameters (ISO 8601 date or datetime, both optional, inclusive
@@ -315,17 +316,7 @@ class method to ensure uniform behavior across all audit trails:
 - Both → records in the inclusive range
 - Neither → no date filter applied
 
-#### Endpoint naming
-
-Every audit trail retrieval endpoint MUST use the `/audit-log` suffix.
-The general pattern is `/{resource-scope}/audit-log`:
-
-- Entity-scoped: `GET /api/v1/tickets/{ticket_id}/audit-log`
-- Admin-scoped: `GET /api/v1/admin/identity/audit-log`
-- Nested: `GET /api/v1/admin/settings/audit-log`
-- Named resource: `GET /api/v1/fetchers/{fetcher_name}/audit-log`
-
-#### Audit Trail Index
+### Audit Trail Index
 
 When adding a new audit trail, update this index.
 
@@ -335,6 +326,55 @@ When adding a new audit trail, update this index.
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
 | Identity | `identity_audit_event` | 16 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
+
+### Cross-references
+
+- `docs/conventions.md` — Audit Trail reference paragraph
+- `docs/api-spec.md` — `/audit-log` endpoint suffix convention
+- `docs/data-model.md` — table definitions for all audit event models
+
+---
+
+## Change 1b: Conventions — Audit Trail reference
+
+**Target file**: `docs/conventions.md`
+
+**Action**: add a brief "Audit Trail" subsection under a suitable
+location (e.g., after "SQLAlchemy Conventions") with the following
+content:
+
+### Audit Trail
+
+Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
+(`backend/app/models/mixins.py`). Every audit trail MUST be implemented
+as a `BaseAuditLog` subclass
+(`backend/app/services/base_audit_log.py`).
+
+See `docs/features/platform/audit-trail-infrastructure.md` for the
+full specification: base class interface, mixin columns, naming
+conventions, atomicity rules, and the Audit Trail Index.
+
+---
+
+## Change 1c: API spec — Audit Trail Endpoint Naming
+
+**Target file**: `docs/api-spec.md`
+
+**Action**: add a subsection "Audit Trail Endpoint Naming" under the
+General Conventions section with the following content:
+
+### Audit Trail Endpoint Naming
+
+Every audit trail retrieval endpoint MUST use the `/audit-log` suffix.
+The general pattern is `/{resource-scope}/audit-log`:
+
+- Entity-scoped: `GET /api/v1/tickets/{ticket_id}/audit-log`
+- Admin-scoped: `GET /api/v1/admin/identity/audit-log`
+- Nested: `GET /api/v1/admin/settings/audit-log`
+- Named resource: `GET /api/v1/fetchers/{fetcher_name}/audit-log`
+
+See `docs/features/platform/audit-trail-infrastructure.md` for the full
+audit trail specification.
 
 ---
 
@@ -637,10 +677,8 @@ setting update.
 **Notes**:
 
 - `id`, `created_at`, and `user_id` are inherited from `AuditEventMixin`
-- `user_id` is nullable at the database level (mixin convention). The
-  service layer validates that `user_id` is always provided for setting
-  changes, since only admins can modify settings (no system-initiated
-  changes)
+- `user_id` is always present because only admins can modify settings
+  (no system-initiated changes)
 - `setting_key` identifies which setting was changed (e.g.,
   `default_cvss_version`)
 
@@ -670,6 +708,7 @@ descending.
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
 | `setting_key` | string | -- | Filter by setting key |
+| `actor` | string | -- | Filter by actor: user UUID, username, or `system` for automated events |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
@@ -717,6 +756,12 @@ showing the history of changes.
 #### Data Retention
 
 Indefinite. SettingAuditEvent records are never automatically deleted.
+
+#### Cross-references
+
+- `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
+  AuditEventMixin
+- `docs/api-spec.md` — global API conventions
 
 ---
 
@@ -789,10 +834,23 @@ INFO-level logging.
 4. Rename the column `performed_by_user_id` to `user_id` — the column is
    now inherited from `AuditEventMixin`. Update all spec references to
    this column in `fetcher-infrastructure.md` and `fetcher-dashboard.md`
-5. Change `user_id` constraint from NOT NULL to nullable (mixin
-   convention). Add note that NOT NULL is enforced in the service layer
-6. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
+5. Change `user_id` constraint from NOT NULL to nullable (inherited from
+   `AuditEventMixin`)
+6. Rename the API response field `performed_by` to `actor` in
+   `fetcher-dashboard.md` to align with the standard response format
+   used by all audit trail endpoints
+7. Add `from_date`, `to_date`, and `actor` query parameters to the
+   `GET /api/v1/fetchers/{fetcher_name}/audit-log` endpoint in
+   `fetcher-dashboard.md`, in compliance with the audit trail conventions
+   in `docs/features/platform/audit-trail-infrastructure.md`
+8. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
    audit trail in the global registry at implementation time
+
+**Note**: no database migration is needed for these renames. The fetcher
+audit trail has no implementation code yet — these are spec-level changes
+only (model names, enum names, table names, column names in
+documentation). The actual database objects will be created with the
+standard names from the start.
 
 The Fetcher audit trail is already included in the Audit Trail Index
 (Change 1).
@@ -808,11 +866,14 @@ from Change 2)
 
 1. Rename the API endpoint from `GET /api/v1/tickets/{ticket_id}/events`
    to `GET /api/v1/tickets/{ticket_id}/audit-log` to conform to the
-   `/audit-log` suffix convention (see Change 1, Endpoint naming)
+   `/audit-log` suffix convention (see `docs/api-spec.md`, Audit Trail
+   Endpoint Naming)
 2. Add `from_date` and `to_date` query parameters to the endpoint, with
    the same semantics defined in the BaseAuditLog date filtering
    convention
-3. Update the Endpoint Permission Map in `rbac.md` to reflect the new
+3. Update the `actor` query parameter to accept UUID, username, or
+   `system` (aligned with `BaseAuditLog.filter_by_actor()` convention)
+4. Update the Endpoint Permission Map in `rbac.md` to reflect the new
    path
 
 **Cross-reference updates required** (files that reference the old
@@ -844,11 +905,12 @@ The following were considered and explicitly excluded:
 
 ## Implementation order (suggested)
 
-0. **Name standardization (prerequisite)**: rename all legacy audit trail
-   names across specifications, data model, conventions, guardrails, and
-   agent definitions to follow the standard `{Domain}AuditEvent` /
-   `{Domain}AuditEventType` / `{domain}_audit_event` pattern. This is a
-   spec-only change (no implementation code exists yet). Renames:
+0. **Name standardization (prerequisite)** — covers renames from Changes
+   5 and 7. Rename all legacy audit trail names across specifications,
+   data model, conventions, guardrails, and agent definitions to follow
+   the standard `{Domain}AuditEvent` / `{Domain}AuditEventType` /
+   `{domain}_audit_event` pattern. This is a spec-only change (no
+   implementation code exists yet). Renames:
    - `TicketEvent` → `TicketAuditEvent`
    - `TicketEventType` → `TicketAuditEventType`
    - `ticket_event` (table) → `ticket_audit_event`
@@ -857,23 +919,37 @@ The following were considered and explicitly excluded:
    - `fetcher_audit_log` (table) → `fetcher_audit_event`
    - `create_ticket_event()` (helper) → `TicketAuditLog.log_event()`
    - Endpoint path: `/tickets/{id}/events` → `/tickets/{id}/audit-log`
-1. `BaseAuditLog` base class (including `apply_date_filters()`)
-2. Conventions section in `conventions.md` (including date filtering and
-   endpoint naming rules)
-3. Rename `ticket-history.md` and refactor (TicketAuditLog subclass) +
-   add `from_date`/`to_date` to the ticket audit log endpoint (Change 8)
-4. `IdentityAuditLog` + spec updates
-5. `SettingAuditLog` + admin.md updates
-6. Fetcher audit trail alignment (renames + FetcherAuditLog subclass)
-7. Data model updates
-8. Cross-reference updates (including endpoint path renames)
-9. Endpoint Permission Map updates
+1. **Audit Trail Infrastructure spec** (Change 1) — create
+   `docs/features/platform/audit-trail-infrastructure.md` with
+   `BaseAuditLog`, `AuditEventMixin`, naming conventions, atomicity
+   rules, actor field semantics, date filtering, and Audit Trail Index
+2. **Conventions reference** (Change 1b) — add brief "Audit Trail"
+   subsection in `docs/conventions.md` pointing to the infrastructure
+   spec
+3. **API spec endpoint naming** (Change 1c) — add "Audit Trail Endpoint
+   Naming" subsection in `docs/api-spec.md` with the `/audit-log` suffix
+   convention
+4. **Ticket audit log** (Changes 2 + 8) — rename `ticket-history.md` to
+   `ticket-audit-log.md`, refactor content, create `TicketAuditLog`
+   subclass, add `from_date`/`to_date`/`actor` to the endpoint
+5. **Identity audit log** (Change 3) — create
+   `identity-audit-log.md` + update identity specs to replace INFO
+   logging with audit events
+6. **Setting audit log** (Change 4) — add section to `admin.md`
+7. **Fetcher audit trail alignment** (Change 7) — apply remaining
+   renames not covered by step 0, create `FetcherAuditLog` subclass,
+   add filter params and response field rename
+8. **Data model updates** (Change 5) — add `AuditEventMixin`
+   documentation, new tables, updated table/column names
+9. **Cross-reference and permission updates** (Change 6) — update all
+   file references, endpoint paths, and Endpoint Permission Map in
+   `rbac.md`
 
 ---
 
 ## Open questions
 
-1. ~~**Event type mancante: `user_updated` per campi generici**~~ —
+1. ~~**Missing event type: `user_updated` for generic field changes**~~ —
    **RESOLVED**: added per-field event types (`email_changed`,
    `full_name_changed`, `manager_changed`) consistent with the existing
    `username_changed` pattern. `ad_dn_changed` is NOT created because
@@ -892,13 +968,12 @@ The following were considered and explicitly excluded:
 3. ~~**Actor field naming inconsistency**~~ — **RESOLVED**:
    `performed_by_user_id` is replaced by `user_id`, inherited from
    `AuditEventMixin`. All audit event models share the same nullable
-   `user_id` column via the mixin. For audit trails where only human
-   actions are possible (SettingAuditEvent, FetcherAuditEvent), NOT NULL
-   validation is enforced in the service layer, not at the database level.
-   `BaseAuditLog` provides a `filter_by_actor()` method that operates on
-   the uniform `user_id` column. `FetcherRun.triggered_by_user_id` is NOT
-   renamed — it is not an audit trail and its descriptive name is
-   appropriate for its domain.
+   `user_id` column via the mixin. Subclasses that only record
+   human-initiated actions may override `log_event()` to validate that
+   `user_id` is provided. `BaseAuditLog` provides a `filter_by_actor()`
+   method that operates on the uniform `user_id` column.
+   `FetcherRun.triggered_by_user_id` is NOT renamed — it is not an audit
+   trail and its descriptive name is appropriate for its domain.
 
 4. **No retrieval endpoint for fetcher audit log** — The
    `fetcher-infrastructure.md` spec does not define a retrieval API for
@@ -920,6 +995,6 @@ The following were considered and explicitly excluded:
    cover all audit trails (e.g., "every identity mutation MUST create an
    `IdentityAuditEvent`"), or should separate guardrails be created?
 
-7. **Event type count: 25 vs 24** — The Audit Trail Index (Change 1) lists
-   24 event types for tickets, but `ticket-history.md` defines 25 values in
-   `TicketEventType`. The index must be corrected to match the actual count.
+7. ~~**Event type count: 25 vs 24**~~ — **RESOLVED**: the count is 24
+   in both `ticket-history.md` and the Audit Trail Index. No discrepancy
+   exists — the original count of 25 was incorrect.
