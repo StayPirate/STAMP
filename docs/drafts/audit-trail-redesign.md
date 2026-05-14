@@ -189,7 +189,7 @@ When adding a new audit trail, update this index.
 |---|---|---|---|---|
 | Ticket | `ticket_audit_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
-| Identity | `identity_audit_event` | 12 | Indefinite | `docs/features/identity/identity-audit-log.md` |
+| Identity | `identity_audit_event` | 13 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
 
 ---
@@ -289,6 +289,7 @@ database record is the authoritative audit source.
 | `role_removed` | Admin or AD sync removes role | Admin for manual, `NULL` for AD sync | Target user | Role name (e.g., `admin`) | `NULL` | For AD sync: `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
 | `role_mapping_created` | Admin creates AD group-to-role mapping | Admin | `NULL` | `NULL` | `"{ad_group} -> {role}"` | `{"ad_group_cn": "...", "role": "...", "affected_users": N}` |
 | `role_mapping_deleted` | Admin deletes AD group-to-role mapping | Admin | `NULL` | `"{ad_group} -> {role}"` | `NULL` | `{"ad_group_cn": "...", "role": "...", "affected_users": N}` |
+| `username_changed` | AD sync detects sAMAccountName change for existing user (matched via objectGUID) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
 | `api_key_created` | User or admin creates API key | Acting user | Key owner | `NULL` | Key name/label | `{"key_id": "uuid"}` |
 | `api_key_revoked` | User or admin revokes API key | Acting user | Key owner | Key name/label | `NULL` | `{"key_id": "uuid"}` |
 
@@ -309,6 +310,7 @@ these operations. Each must be updated to reference the
 | `docs/features/identity/user-management.md` | 852-853 | Admin password reset | INFO log |
 | `docs/features/identity/ad-integration.md` | 770-773 | Role mapping creation | INFO log (JSON) |
 | `docs/features/identity/ad-integration.md` | 806-809 | Role mapping deletion | INFO log (JSON) |
+| `docs/features/identity/ad-integration.md` | 499-500 | Username rename (AD sync) | Fetcher execution log + log entry |
 | `docs/features/identity/user-management.md` | 1093-1097 | Audit trail summary | References INFO logs |
 
 Each of these locations must be updated to:
