@@ -108,6 +108,24 @@ class BaseAuditLog:
         - neither:        no filter applied
         """
         ...
+
+    @classmethod
+    def filter_by_actor(
+        cls,
+        query: Select,
+        actor: str | None = None,
+    ) -> Select:
+        """Filter audit events by actor (user_id column).
+
+        - actor is None:     no filter applied
+        - actor == "system": WHERE user_id IS NULL
+        - actor is a UUID:   WHERE user_id = <uuid>
+        - actor is a string: JOIN User, WHERE username = <actor>
+
+        Relies on the uniform user_id column provided by
+        AuditEventMixin across all audit event models.
+        """
+        ...
 ```
 
 **Concrete subclasses**:
@@ -141,6 +159,12 @@ class FetcherAuditLog(BaseAuditLog):
     default_retention_days = None  # indefinite
 ```
 
+**Note**: these subclasses define only service-layer attributes (name,
+description, model reference, retention). Database columns (`id`,
+`created_at`, `user_id`, and domain-specific columns) are defined in the
+SQLAlchemy models pointed to by `model_class`, which inherit from
+`AuditEventMixin` for the common columns.
+
 ### Retention policy
 
 Default retention is **indefinite** (`None`). Each subclass can override
@@ -151,6 +175,53 @@ introduced — but this is deferred (YAGNI).
 A future cleanup task could iterate the `BaseAuditLog` registry and
 delete records older than `default_retention_days` for each trail where
 the value is not `None`.
+
+### AuditEventMixin — shared SQLAlchemy columns
+
+Every audit event model MUST inherit from `AuditEventMixin`, a SQLAlchemy
+mixin class that provides the columns common to all audit trail tables.
+This is the **model-layer** companion to the service-layer `BaseAuditLog`.
+
+**Location**: `backend/app/models/mixins.py`
+
+**Columns provided**:
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | UUID | PK | Internal identifier |
+| `created_at` | TIMESTAMP | NOT NULL, server default | When the event occurred |
+| `user_id` | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
+
+**Nullability of `user_id`**: the mixin defines `user_id` as nullable at
+the database level for all audit event models. For audit trails where
+only human actions are possible (SettingAuditEvent, FetcherAuditEvent),
+the NOT NULL constraint is enforced in the service layer (via
+`BaseAuditLog.log_event()` or the calling service function), not at the
+database level. This allows a single uniform mixin without per-model
+overrides.
+
+**Relationship to BaseAuditLog**:
+
+```
+Service layer (behavior)               Model layer (data structure)
+─────────────────────────               ────────────────────────────
+BaseAuditLog                            AuditEventMixin (id, created_at, user_id)
+  │  - log_event()                          │
+  │  - apply_date_filters()                 │
+  │  - filter_by_actor()                    │
+  │  - registry                             │
+  │                                         │
+  ├── TicketAuditLog ──model_class──▶  TicketAuditEvent (Base + Mixin)
+  ├── IdentityAuditLog ─model_class─▶  IdentityAuditEvent (Base + Mixin)
+  ├── SettingAuditLog ──model_class──▶  SettingAuditEvent (Base + Mixin)
+  └── FetcherAuditLog ─model_class──▶  FetcherAuditEvent (Base + Mixin)
+```
+
+`BaseAuditLog` references the model via `model_class` and provides
+behavioral methods. `AuditEventMixin` provides the structural columns.
+Together they ensure that all audit trails are both structurally
+consistent (same base columns) and behaviorally consistent (same
+service-layer interface).
 
 ---
 
@@ -163,16 +234,28 @@ following content.
 
 ### Audit Trail Conventions
 
+#### AuditEventMixin
+
+Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
+(`backend/app/models/mixins.py`). The mixin provides the columns common
+to all audit trail tables:
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | UUID | PK | Internal identifier |
+| `created_at` | TIMESTAMP | NOT NULL, server default | When the event occurred |
+| `user_id` | UUID | FK(user.id), nullable | Actor. NULL for system-initiated actions |
+
+All audit event models inherit these columns from the mixin and add
+their own domain-specific columns (e.g., `ticket_id`, `event_type`,
+`target_user_id`).
+
 #### BaseAuditLog class
 
 Every audit trail in Sentinel MUST be implemented as a subclass of
 `BaseAuditLog` (`backend/app/services/base_audit_log.py`). The base class
 defines:
 
-- **Mandatory fields**: `id` (UUID PK), `created_at` (TIMESTAMP, database
-  default), actor field (FK to User, nullability determined by the
-  subclass — nullable when system actions are possible, NOT NULL when
-  only human actions are recorded)
 - **Auto-registration**: all subclasses are automatically registered in a
   global registry, keyed by `name`
 - **Retention**: `default_retention_days: int | None` — `None` means
@@ -182,6 +265,11 @@ defines:
 - **Date filtering**: `apply_date_filters()` class method applies
   `from_date` / `to_date` filters on `created_at`. Every audit trail API
   endpoint MUST use this method for uniform date filtering behavior
+- **Actor filtering**: `filter_by_actor()` class method filters by
+  `user_id` column (inherited from `AuditEventMixin`). Accepts `"system"`
+  for NULL actor, a UUID string for direct match, or a username for
+  lookup via JOIN. Every audit trail API endpoint with an `actor` filter
+  MUST use this method
 
 #### Naming
 
@@ -203,11 +291,17 @@ same `AsyncSession` as the mutation.
 
 #### Actor field
 
+- `user_id` is inherited from `AuditEventMixin` and is **nullable at the
+  database level** in all audit event models
 - `user_id` is set when the action was initiated by a human user
 - `user_id` is `NULL` when the action was initiated by the system (e.g.,
   background task, AD sync, automated detection)
-- Audit trails where only human actions are possible (e.g.,
-  FetcherAuditEvent — only admins can act) use NOT NULL for the actor field
+- For audit trails where only human actions are possible (e.g.,
+  SettingAuditEvent, FetcherAuditEvent — only admins can act), the NOT
+  NULL constraint is enforced in the **service layer** (inside
+  `log_event()` or the calling service function), not at the database
+  level. This allows all models to share the same `AuditEventMixin`
+  without per-model column overrides
 
 #### Date filtering
 
@@ -304,17 +398,18 @@ database record is the authoritative audit source.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Internal identifier |
+| id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType |
-| user_id | UUID | FK(user.id), nullable | Admin/user who performed the action. NULL for system actions (AD sync, auto-lock) |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync, auto-lock) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events (which affect configuration, not a specific user) |
 | old_value | VARCHAR | nullable | Previous state (human-readable) |
 | new_value | VARCHAR | nullable | New state (human-readable) |
 | detail | JSONB | nullable | Additional structured context when old_value/new_value are insufficient |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT | When the event occurred |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
 **Notes**:
 
+- `id`, `created_at`, and `user_id` are inherited from `AuditEventMixin`
 - `target_user_id` distinguishes "who acted" from "who was affected". For
   example, when an admin resets another user's password: `user_id` = admin,
   `target_user_id` = target user
@@ -531,18 +626,21 @@ setting update.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Internal identifier |
+| id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See SettingAuditEventType |
 | setting_key | VARCHAR | NOT NULL | Which setting was changed |
-| user_id | UUID | FK(user.id), NOT NULL | Admin who changed the setting |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who changed the setting |
 | old_value | VARCHAR | nullable | Previous value |
 | new_value | VARCHAR | NOT NULL | New value |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT | When the change occurred |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
 **Notes**:
 
-- `user_id` is NOT NULL because only admins can modify settings (no
-  system-initiated changes)
+- `id`, `created_at`, and `user_id` are inherited from `AuditEventMixin`
+- `user_id` is nullable at the database level (mixin convention). The
+  service layer validates that `user_id` is always provided for setting
+  changes, since only admins can modify settings (no system-initiated
+  changes)
 - `setting_key` identifies which setting was changed (e.g.,
   `default_cvss_version`)
 
@@ -628,14 +726,19 @@ Indefinite. SettingAuditEvent records are never automatically deleted.
 
 **Actions**:
 
-1. Add `IdentityAuditEvent` table and `IdentityAuditEventType` enum
-2. Add `SettingAuditEvent` table and `SettingAuditEventType` enum
-3. Rename `TicketEvent` to `TicketAuditEvent`, `TicketEventType` to
+1. Add `AuditEventMixin` documentation — describe the shared mixin with
+   columns `id`, `created_at`, `user_id` (nullable), and note that all
+   audit event models inherit from it
+2. Add `IdentityAuditEvent` table and `IdentityAuditEventType` enum
+3. Add `SettingAuditEvent` table and `SettingAuditEventType` enum
+4. Rename `TicketEvent` to `TicketAuditEvent`, `TicketEventType` to
    `TicketAuditEventType`, table `ticket_event` to `ticket_audit_event`
-4. Rename `FetcherAuditLog` to `FetcherAuditEvent`, `FetcherAuditAction`
+5. Rename `FetcherAuditLog` to `FetcherAuditEvent`, `FetcherAuditAction`
    to `FetcherAuditEventType`, table `fetcher_audit_log` to
    `fetcher_audit_event`
-5. Add a note referencing `BaseAuditLog` and the Audit Trail Conventions
+6. Rename `FetcherAuditEvent.performed_by_user_id` to `user_id`
+   (inherited from `AuditEventMixin`, nullable at DB level)
+7. Add a note referencing `BaseAuditLog` and the Audit Trail Conventions
    in `conventions.md`
 
 ---
@@ -676,14 +779,19 @@ INFO-level logging.
 ## Change 7: Fetcher audit trail alignment
 
 **Target files**: `docs/features/platform/fetcher-infrastructure.md`,
-`docs/data-model.md`
+`docs/features/platform/fetcher-dashboard.md`, `docs/data-model.md`
 
 **Actions**:
 
 1. Rename the model from `FetcherAuditLog` to `FetcherAuditEvent`
 2. Rename the enum from `FetcherAuditAction` to `FetcherAuditEventType`
 3. Rename the table from `fetcher_audit_log` to `fetcher_audit_event`
-4. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
+4. Rename the column `performed_by_user_id` to `user_id` — the column is
+   now inherited from `AuditEventMixin`. Update all spec references to
+   this column in `fetcher-infrastructure.md` and `fetcher-dashboard.md`
+5. Change `user_id` constraint from NOT NULL to nullable (mixin
+   convention). Add note that NOT NULL is enforced in the service layer
+6. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
    audit trail in the global registry at implementation time
 
 The Fetcher audit trail is already included in the Audit Trail Index
@@ -781,12 +889,16 @@ The following were considered and explicitly excluded:
    `{"reason": "user_deactivated"}` to the `detail` JSONB. Session
    invalidation remains excluded from the audit trail.
 
-3. **Actor field naming inconsistency** — `FetcherAuditLog` uses
-   `performed_by_user_id` while all other audit tables use `user_id`.
-   Change 7 (fetcher alignment) renames the model and enum but does not
-   currently rename the column. Should `performed_by_user_id` be renamed
-   to `user_id` as part of Change 7 for consistency with the
-   `BaseAuditLog` convention?
+3. ~~**Actor field naming inconsistency**~~ — **RESOLVED**:
+   `performed_by_user_id` is replaced by `user_id`, inherited from
+   `AuditEventMixin`. All audit event models share the same nullable
+   `user_id` column via the mixin. For audit trails where only human
+   actions are possible (SettingAuditEvent, FetcherAuditEvent), NOT NULL
+   validation is enforced in the service layer, not at the database level.
+   `BaseAuditLog` provides a `filter_by_actor()` method that operates on
+   the uniform `user_id` column. `FetcherRun.triggered_by_user_id` is NOT
+   renamed — it is not an audit trail and its descriptive name is
+   appropriate for its domain.
 
 4. **No retrieval endpoint for fetcher audit log** — The
    `fetcher-infrastructure.md` spec does not define a retrieval API for
