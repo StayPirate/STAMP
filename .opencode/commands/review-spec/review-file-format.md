@@ -1,7 +1,7 @@
 # Review File Format Reference
 
 This document defines the structure and format of review files written
-to `docs/drafts/review/<spec-name>.md` by the `/review-spec` command.
+to `docs/reviews/<spec-name>.md` by the `/review-spec` command.
 
 ## Full review file structure
 

@@ -25,7 +25,7 @@ Each reviewer agent independently:
    - `docs/api-spec.md`
    - `docs/architecture.md`
 4. Reads the existing review file if present
-   (`docs/drafts/review/<name>.md`) — to preserve RESOLVED findings
+   (`docs/reviews/<name>.md`) — to preserve RESOLVED findings
    in its own section
 5. Executes its review
 6. Returns structured findings: list of objects with fields:
@@ -108,7 +108,7 @@ Launch **5 Task agents in parallel** (one per reviewer, all in a single
 message with multiple Task tool calls). After all return, use a separate
 Task agent (subagent type `general`) to assemble results:
 
-1. Read the existing review file (`docs/drafts/review/<name>.md`) if
+1. Read the existing review file (`docs/reviews/<name>.md`) if
    present — needed for cross-agent deduplication
 2. Perform **cross-agent deduplication** (see section above): for each
    new OPEN finding from any reviewer, check if a semantically
@@ -116,12 +116,12 @@ Task agent (subagent type `general`) to assemble results:
    existing review file. If so, auto-resolve the new finding with the
    compact format:
    `**Status**: RESOLVED — Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
-3. Assemble and write (or overwrite) `docs/drafts/review/<name>.md`
+3. Assemble and write (or overwrite) `docs/reviews/<name>.md`
    using the (possibly deduplicated) findings from all 5 reviewers (see
    `.opencode/commands/review-spec/review-file-format.md` for the file
    structure). All RESOLVED findings MUST use the compact format
 4. Use the `abbr` field from `.tracking.json` for finding IDs
-5. Update `docs/drafts/review/README.md` (see
+5. Update `docs/reviews/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
 6. Recalculate and update the `cache` field for this spec in
    `.tracking.json`. Set `cache.last_review` to the current ISO 8601
@@ -163,7 +163,7 @@ single session:
    `.opencode/commands/review-spec/review-file-format.md`)
 5. Update file headers (last reviewed date, reviewers list)
 6. Use the `abbr` field from `.tracking.json` for finding IDs
-7. Update `docs/drafts/review/README.md` (see
+7. Update `docs/reviews/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
 8. Recalculate and update the `cache` field for each reviewed spec in
    `.tracking.json`. Set `cache.last_review` to the current ISO 8601

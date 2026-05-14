@@ -1,7 +1,7 @@
 # README Index Layout Reference
 
 This document defines the canonical layout rules for
-`docs/drafts/review/README.md`. All steps that update the README index
+`docs/reviews/README.md`. All steps that update the README index
 MUST follow these rules.
 
 ## Structure

@@ -95,7 +95,7 @@ When checking for existing files or directories, ALWAYS inspect the
 actual filesystem (using `ls`, `Read`, or `Glob` tools) rather than
 relying solely on git-tracked files. Files and directories listed in
 `.gitignore` are not versioned but may contain important local work
-products (e.g., review findings in `docs/drafts/review/`, build
+products (e.g., review findings in `docs/reviews/`, build
 artifacts, local configuration). Never assume a file does not exist
 just because it is untracked by git. When overwriting a file, first
 check its current content on disk to avoid losing existing data.
@@ -167,7 +167,7 @@ the location is correct according to this map:
 | Backend tests              | `backend/tests/`                  |
 | Frontend tests             | `frontend/tests/`                 |
 | Draft documents            | `docs/drafts/`                    |
-| Review findings            | `docs/drafts/review/`             |
+| Review findings            | `docs/reviews/`                   |
 
 If the user asks to create a file in a location that does not match this map,
 STOP and notify: "This file should go in [correct location] according to the

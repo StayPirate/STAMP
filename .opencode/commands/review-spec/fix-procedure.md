@@ -22,7 +22,7 @@ it but include the reason in the confirmation.
 
 ## Step 2: Update the review file
 
-Mark the finding as RESOLVED in `docs/drafts/review/<name>.md` using
+Mark the finding as RESOLVED in `docs/reviews/<name>.md` using
 the compact format (see `review-file-format.md`):
 
 ```markdown
@@ -37,7 +37,7 @@ status with resolution text are kept.
 
 ## Step 3: Update README index
 
-Update `docs/drafts/review/README.md` following the rules in
+Update `docs/reviews/README.md` following the rules in
 `.opencode/commands/review-spec/readme-layout.md`.
 
 ## Step 4: Update cache in `.tracking.json`

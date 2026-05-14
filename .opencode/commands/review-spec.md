@@ -11,9 +11,10 @@ CRITICAL EXECUTION RULES (must obey BEFORE reading the rest):
    do file I/O directly in the main conversation. Task agents CAN write
    files even when the main conversation is in Plan mode — delegation is
    the mechanism for writes.
-2. Files under docs/drafts/ are GITIGNORED. Glob will NOT find them.
-   Task agents MUST use `bash ls docs/drafts/review/` to discover files
-   there, then Read to read them. NEVER use Glob for docs/drafts/.
+2. Files under docs/reviews/ may not all be git-tracked (e.g.,
+   .tracking.json is gitignored). Task agents MUST use
+   `bash ls docs/reviews/` to discover files there, then Read to
+   read them. NEVER use Glob for docs/reviews/.
 3. The user sees ONLY formatted output and interactive prompts from you.
    All tool calls for data gathering happen inside Task agents invisibly.
 4. Reference files for subagent procedures are in
@@ -128,7 +129,7 @@ For **single spec**: use Task tool (`general`). Instruct it to read:
 
 The subagent MUST:
 
-1. Read the review file (`docs/drafts/review/<name>.md`)
+1. Read the review file (`docs/reviews/<name>.md`)
 2. Identify all RESOLVED findings still in verbose format. A finding is
    in verbose format if it has any of: a `**Category**` line, a
    separate `**Resolution**` line, or a description body below the
@@ -177,8 +178,8 @@ Use Task tool (subagent `explore`). Instruct it to:
 2. Find all `.md` files in `docs/features/` (Glob `docs/features/**/*.md`,
    exclude `docs/features/**/pages/*.md`). Use filename without extension
    as spec name. Sort alphabetically.
-3. Read `docs/drafts/review/.tracking.json` (use
-   `bash ls docs/drafts/review/` first). Handle init/sync/cleanup per
+3. Read `docs/reviews/.tracking.json` (use
+   `bash ls docs/reviews/` first). Handle init/sync/cleanup per
    the tracking format reference. Write to disk if changed.
 4. Do NOT read or parse review files — trust the cache.
 5. Return the full `.tracking.json` content.
@@ -454,7 +455,7 @@ The subagent MUST:
    cross-references)
 3. Read cross-cutting documents: `docs/data-model.md`,
    `docs/api-spec.md`, `docs/architecture.md`
-4. Read the review file (`docs/drafts/review/<name>.md`)
+4. Read the review file (`docs/reviews/<name>.md`)
 5. Collect ALL RESOLVED findings from the review file (across all
    sections) — needed for cross-agent deduplication
 6. For each OPEN finding, perform two checks:
@@ -483,7 +484,7 @@ The subagent MUST:
      finding
    - Preserve finding order and all other content unchanged
 9. Update `.tracking.json` cache (recalculate open/resolved counts)
-10. Update `docs/drafts/review/README.md`
+10. Update `docs/reviews/README.md`
 11. Return: per-finding verdicts + updated counts
 
 Pass to the subagent: spec name, abbreviation, today's date, paths to
@@ -494,7 +495,7 @@ performing steps 1-8 above independently and returning verdicts). After
 all return, use a single Task tool (`general`) to:
 
 1. Update `.tracking.json` cache for all refreshed specs
-2. Update `docs/drafts/review/README.md`
+2. Update `docs/reviews/README.md`
 3. Return: aggregated per-spec summaries
 
 **4e.3.** Present recap.

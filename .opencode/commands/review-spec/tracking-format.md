@@ -2,7 +2,7 @@
 
 This document defines the `.tracking.json` schema used by the
 `/review-spec` command. The file is stored at
-`docs/drafts/review/.tracking.json`.
+`docs/reviews/.tracking.json`.
 
 ## Schema
 
