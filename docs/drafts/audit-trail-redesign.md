@@ -9,7 +9,7 @@
 
 Sentinel currently has two database-level audit trail mechanisms:
 
-- **TicketAuditEvent** — comprehensive (24 event types), covers all ticket
+- **TicketEvent** — comprehensive (24 event types), covers all ticket
   mutations
 - **FetcherAuditEvent** — lightweight (4 action types), covers admin actions
   on fetchers
@@ -33,7 +33,7 @@ type-safe schemas, domain-specific queries, no catch-all blob table.
 
 | Component | Location | Content |
 |---|---|---|
-| Common conventions + index | `docs/conventions.md`, section "Audit Trail Conventions" | Process rules, BaseAuditLog reference, audit trail index |
+| Common conventions + index | `docs/conventions.md`, section "Audit Trail" | Process rules, BaseAuditLog reference, audit trail index |
 | BaseAuditLog class | `backend/app/services/base_audit_log.py` | Common fields, registry, retention, helper |
 | Ticket audit log | `docs/features/tickets/ticket-audit-log.md` (renamed) | TicketAuditEvent contract, API, service rules |
 | Identity audit log | `docs/features/identity/identity-audit-log.md` (new) | User lifecycle, roles, API keys, role mappings |
@@ -396,7 +396,10 @@ audit trail specification.
 5. Add a reference to `BaseAuditLog`: "The `TicketAuditLog` subclass of
    `BaseAuditLog` provides the event creation helper and registers this
    audit trail in the global registry."
-6. Update cross-references section to include `docs/conventions.md`
+6. Replace the `create_ticket_event()` helper function with
+   `TicketAuditLog.log_event()` — the service-layer helper is now
+   provided by the `BaseAuditLog` subclass
+7. Update cross-references section to include `docs/conventions.md`
    (Audit Trail Conventions)
 
 **Cross-reference updates required** (files that reference
@@ -406,14 +409,19 @@ The following files contain references to `ticket-history.md` and must be
 updated to point to `ticket-audit-log.md`:
 
 - `AGENTS.md` (Guardrail 11)
-- `docs/data-model.md`
 - `docs/features/tickets/tickets.md`
-- `docs/features/tickets/cvss-scoring.md`
+- `docs/features/tickets/cve-tracking.md`
 - `docs/features/packages/package-tracking.md`
 - `docs/features/packages/product-lifecycle-transitions.md`
 - `docs/features/identity/user-service.md`
+- `docs/features/identity/rbac.md` (Endpoint Permission Map)
 - `docs/features/ui/pages/ticket-detail.md`
-- Any other file found via grep at application time
+- `docs/features/README.md`
+- `docs/features/tickets/README.md`
+- `docs/system-map.md`
+- `docs/reviews/user-service.md`
+- `.opencode/agents/ticket-integrity-reviewer.md`
+- `.opencode/agents/test-reviewer.md`
 
 ---
 
@@ -564,7 +572,7 @@ Returns a paginated list of identity audit events, ordered by
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
 | `event_type` | string | -- | Comma-separated list of event types |
-| `actor` | string | -- | Filter by actor: user UUID, or `system` for automated events |
+| `actor` | string | -- | Filter by actor: user UUID, username, or `system` for automated events |
 | `target_user` | string | -- | Filter by target user (UUID or username) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
@@ -635,6 +643,8 @@ Tests for any identity-mutating service MUST verify:
 
 ### Cross-references
 
+- `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
+  AuditEventMixin, naming conventions
 - `docs/conventions.md` — Audit Trail Conventions
 - `docs/api-spec.md` — global API conventions
 - `docs/features/identity/user-service.md` — service operations that
@@ -762,6 +772,8 @@ Indefinite. SettingAuditEvent records are never automatically deleted.
 - `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
   AuditEventMixin
 - `docs/api-spec.md` — global API conventions
+- `docs/features/identity/rbac.md` — Endpoint Permission Map (add new
+  endpoint)
 
 ---
 
@@ -793,16 +805,22 @@ Indefinite. SettingAuditEvent records are never automatically deleted.
 ### Files referencing ticket-history.md (rename to ticket-audit-log.md)
 
 All references to `ticket-history.md` must be updated to
-`ticket-audit-log.md`. Known locations:
+`ticket-audit-log.md`. Known locations (same list as Change 2):
 
 - `AGENTS.md` (Guardrail 11)
-- `docs/data-model.md`
 - `docs/features/tickets/tickets.md`
-- `docs/features/tickets/cvss-scoring.md`
+- `docs/features/tickets/cve-tracking.md`
 - `docs/features/packages/package-tracking.md`
 - `docs/features/packages/product-lifecycle-transitions.md`
 - `docs/features/identity/user-service.md`
+- `docs/features/identity/rbac.md` (Endpoint Permission Map)
 - `docs/features/ui/pages/ticket-detail.md`
+- `docs/features/README.md`
+- `docs/features/tickets/README.md`
+- `docs/system-map.md`
+- `docs/reviews/user-service.md`
+- `.opencode/agents/ticket-integrity-reviewer.md`
+- `.opencode/agents/test-reviewer.md`
 
 ### Endpoint Permission Map (rbac.md)
 
@@ -906,11 +924,11 @@ The following were considered and explicitly excluded:
 ## Implementation order (suggested)
 
 0. **Name standardization (prerequisite)** — covers renames from Changes
-   5 and 7. Rename all legacy audit trail names across specifications,
-   data model, conventions, guardrails, and agent definitions to follow
-   the standard `{Domain}AuditEvent` / `{Domain}AuditEventType` /
-   `{domain}_audit_event` pattern. This is a spec-only change (no
-   implementation code exists yet). Renames:
+   2, 5, 7, and 8. Rename all legacy audit trail names across
+   specifications, data model, conventions, guardrails, and agent
+   definitions to follow the standard `{Domain}AuditEvent` /
+   `{Domain}AuditEventType` / `{domain}_audit_event` pattern. This is a
+   spec-only change (no implementation code exists yet). Renames:
    - `TicketEvent` → `TicketAuditEvent`
    - `TicketEventType` → `TicketAuditEventType`
    - `ticket_event` (table) → `ticket_audit_event`
