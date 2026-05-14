@@ -62,6 +62,13 @@ enforces a common pattern without orchestrating complex lifecycles.
 4. **Event creation helper**: a `log_event()` class method that creates
    an audit record within the current database transaction, enforcing
    atomicity
+5. **Standard date filtering**: an `apply_date_filters(query, from_date,
+   to_date)` class method that applies `WHERE created_at` filters to a
+   SQLAlchemy query. Semantics: `from_date` only → `>= from_date`;
+   `to_date` only → `<= to_date`; both → inclusive range; neither → no
+   date filter. Parameters accept ISO 8601 date or datetime values.
+   Every audit trail API endpoint MUST call this method to ensure
+   uniform date filtering behavior
 
 **Abstract interface**:
 
@@ -82,6 +89,23 @@ class BaseAuditLog:
         """Create an audit record in the current transaction.
 
         Subclasses may override to add domain-specific validation.
+        """
+        ...
+
+    @classmethod
+    def apply_date_filters(
+        cls,
+        query: Select,
+        from_date: date | datetime | None = None,
+        to_date: date | datetime | None = None,
+    ) -> Select:
+        """Apply created_at date range filters to a query.
+
+        - from_date only: WHERE created_at >= from_date
+        - to_date only:   WHERE created_at <= to_date
+        - both:           WHERE created_at >= from_date
+                            AND created_at <= to_date
+        - neither:        no filter applied
         """
         ...
 ```
@@ -155,6 +179,9 @@ defines:
   indefinite retention. Subclasses override as needed
 - **Event creation**: `log_event()` class method inserts a record within
   the caller's database transaction
+- **Date filtering**: `apply_date_filters()` class method applies
+  `from_date` / `to_date` filters on `created_at`. Every audit trail API
+  endpoint MUST use this method for uniform date filtering behavior
 
 #### Naming
 
@@ -165,6 +192,7 @@ defines:
 | Enum | `{Domain}AuditEventType` | `TicketAuditEventType`, `IdentityAuditEventType` |
 | BaseAuditLog subclass | `{Domain}AuditLog` | `TicketAuditLog`, `IdentityAuditLog` |
 | Spec file (standalone) | `{domain}-audit-log.md` | `ticket-audit-log.md`, `identity-audit-log.md` |
+| API endpoint suffix | `/{resource-scope}/audit-log` | `/tickets/{id}/audit-log`, `/admin/settings/audit-log` |
 
 #### Atomicity
 
@@ -181,6 +209,28 @@ same `AsyncSession` as the mutation.
 - Audit trails where only human actions are possible (e.g.,
   FetcherAuditEvent — only admins can act) use NOT NULL for the actor field
 
+#### Date filtering
+
+Every audit trail API endpoint MUST support `from_date` and `to_date`
+query parameters (ISO 8601 date or datetime, both optional, inclusive
+bounds). Filtering is provided by the `BaseAuditLog.apply_date_filters()`
+class method to ensure uniform behavior across all audit trails:
+
+- `from_date` only → records where `created_at >= from_date`
+- `to_date` only → records where `created_at <= to_date`
+- Both → records in the inclusive range
+- Neither → no date filter applied
+
+#### Endpoint naming
+
+Every audit trail retrieval endpoint MUST use the `/audit-log` suffix.
+The general pattern is `/{resource-scope}/audit-log`:
+
+- Entity-scoped: `GET /api/v1/tickets/{ticket_id}/audit-log`
+- Admin-scoped: `GET /api/v1/admin/identity/audit-log`
+- Nested: `GET /api/v1/admin/settings/audit-log`
+- Named resource: `GET /api/v1/fetchers/{fetcher_name}/audit-log`
+
 #### Audit Trail Index
 
 When adding a new audit trail, update this index.
@@ -189,7 +239,7 @@ When adding a new audit trail, update this index.
 |---|---|---|---|---|
 | Ticket | `ticket_audit_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
-| Identity | `identity_audit_event` | 13 | Indefinite | `docs/features/identity/identity-audit-log.md` |
+| Identity | `identity_audit_event` | 16 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
 
 ---
@@ -291,7 +341,10 @@ database record is the authoritative audit source.
 | `role_mapping_deleted` | Admin deletes AD group-to-role mapping | Admin | `NULL` | `"{ad_group} -> {role}"` | `NULL` | `{"ad_group_cn": "...", "role": "...", "affected_users": N}` |
 | `username_changed` | AD sync detects sAMAccountName change for existing user (matched via objectGUID) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
 | `api_key_created` | User or admin creates API key | Acting user | Key owner | `NULL` | Key name/label | `{"key_id": "uuid"}` |
-| `api_key_revoked` | User or admin revokes API key | Acting user | Key owner | Key name/label | `NULL` | `{"key_id": "uuid"}` |
+| `api_key_revoked` | User, admin, or system revokes API key | Acting user or `NULL` (system) | Key owner | Key name/label | `NULL` | `{"key_id": "uuid", "reason": "user_deactivated"}` (reason only for bulk revocation during deactivation) |
+| `email_changed` | Email address updated (admin or AD sync) | Admin for manual, `NULL` for AD sync | Target user | Old email | New email | `NULL` |
+| `full_name_changed` | Full name updated (admin or AD sync) | Admin for manual, `NULL` for AD sync | Target user | Old full name | New full name | `NULL` |
+| `manager_changed` | Direct manager updated (AD sync) | `NULL` (system) | Target user | Old manager username (or `NULL`) | New manager username (or `NULL`) | `NULL` |
 
 ### Spec updates required
 
@@ -318,12 +371,52 @@ Each of these locations must be updated to:
    helper) in the same transaction as the mutation
 2. Optionally retain the INFO-level log line for operational monitoring
 
+Additionally, the following specs contain TBD audit placeholders that
+must be resolved by this redesign:
+
+| Spec | Lines | Operation | Current state |
+|---|---|---|---|
+| `docs/features/identity/api-key-service.md` | 104-105 | API key creation | TBD placeholder |
+| `docs/features/identity/api-key-service.md` | 139-140 | API key revocation (single) | TBD placeholder |
+| `docs/features/identity/api-key-service.md` | 171-174 | API key revocation (bulk) | TBD placeholder |
+
+**API key audit events**: the `api_key_service` is the centralized
+location for all API key mutations. Audit events are created inside the
+service functions, not in the calling endpoints:
+
+- `create_key()` → creates 1 `api_key_created` event
+- `revoke_key()` → creates 1 `api_key_revoked` event
+- `revoke_all_user_keys()` → creates N `api_key_revoked` events (one per
+  revoked key). Each event includes `{"reason": "user_deactivated"}` in
+  the `detail` JSONB field to distinguish bulk revocation during
+  deactivation from individual manual revocations
+
+Session invalidation during deactivation does NOT produce audit events
+(sessions are excluded from the audit trail scope).
+
+**Field-change events**: the `user_service.update_user()` function
+produces one audit event per changed field. If a single `update_user()`
+call modifies both `email` and `full_name`, two events are created
+(`email_changed` + `full_name_changed`) in the same transaction.
+
+**AD sync coverage**: the `user_created` event type applies to ALL user
+creation regardless of source (manual admin creation AND AD sync). On
+initial AD sync this may produce hundreds of `user_created` events —
+this is intentional to maintain a complete, coherent history for every
+user. Field-change events (`email_changed`, `full_name_changed`,
+`manager_changed`, `username_changed`) are likewise produced by AD sync
+when the corresponding fields change in Active Directory.
+
+**Future fields**: if a new mutable field is added to the User table in
+the future, a corresponding `{field}_changed` event type MUST be added
+to `IdentityAuditEventType`. This is expected to be rare.
+
 ### API
 
 #### List Identity Audit Events
 
 ```
-GET /api/v1/admin/identity-audit-log
+GET /api/v1/admin/identity/audit-log
 ```
 
 Returns a paginated list of identity audit events, ordered by
@@ -338,6 +431,8 @@ Returns a paginated list of identity audit events, ordered by
 | `event_type` | string | -- | Comma-separated list of event types |
 | `actor` | string | -- | Filter by actor: user UUID, or `system` for automated events |
 | `target_user` | string | -- | Filter by target user (UUID or username) |
+| `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
 **Permissions**: Admin role required.
 
@@ -411,6 +506,9 @@ Tests for any identity-mutating service MUST verify:
   produce identity audit events
 - `docs/features/identity/ad-integration.md` — AD sync operations that
   produce identity audit events
+- `docs/features/identity/api-key-service.md` — centralized API key
+  lifecycle service; produces `api_key_created` and `api_key_revoked`
+  events
 - `docs/features/identity/rbac.md` — Endpoint Permission Map (add new
   endpoint)
 
@@ -474,6 +572,8 @@ descending.
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
 | `setting_key` | string | -- | Filter by setting key |
+| `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
 **Permissions**: Admin role required.
 
@@ -562,7 +662,7 @@ Add new endpoints:
 
 | Method | Path | Access Level | Owning Spec |
 |---|---|---|---|
-| GET | `/api/v1/admin/identity-audit-log` | Admin | `identity/identity-audit-log.md` |
+| GET | `/api/v1/admin/identity/audit-log` | Admin | `identity/identity-audit-log.md` |
 | GET | `/api/v1/admin/settings/audit-log` | Admin | `platform/admin.md` |
 
 ### Identity specs (replace app logging with audit trail)
@@ -591,6 +691,35 @@ The Fetcher audit trail is already included in the Audit Trail Index
 
 ---
 
+## Change 8: Ticket audit log endpoint alignment
+
+**Target file**: `docs/features/tickets/ticket-audit-log.md` (after rename
+from Change 2)
+
+**Actions**:
+
+1. Rename the API endpoint from `GET /api/v1/tickets/{ticket_id}/events`
+   to `GET /api/v1/tickets/{ticket_id}/audit-log` to conform to the
+   `/audit-log` suffix convention (see Change 1, Endpoint naming)
+2. Add `from_date` and `to_date` query parameters to the endpoint, with
+   the same semantics defined in the BaseAuditLog date filtering
+   convention
+3. Update the Endpoint Permission Map in `rbac.md` to reflect the new
+   path
+
+**Cross-reference updates required** (files that reference the old
+endpoint path `/tickets/{ticket_id}/events`):
+
+A `grep` must be run at application time to find all references to the
+old endpoint path. Known locations:
+
+- `docs/features/tickets/ticket-history.md` (being renamed)
+- `docs/features/ui/pages/ticket-detail.md`
+- `docs/api-spec.md` (if the endpoint is listed)
+- `docs/features/identity/rbac.md` (Endpoint Permission Map)
+
+---
+
 ## Excluded from scope
 
 The following were considered and explicitly excluded:
@@ -598,10 +727,10 @@ The following were considered and explicitly excluded:
 | Item | Reason |
 |---|---|
 | Session events (login/logout) | App-level logging is sufficient; sessions are cleaned up weekly and the audit value is low compared to the volume |
-| User creation via AD sync | AD is the source of truth; bulk-logging hundreds of `user_created` events on first sync adds noise without value |
 | Product lifecycle changes (SMELT/AIMAAS) | External systems are the source of truth |
 | SubmissionRequest / ReleaseRequest state changes | IBS is the source of truth |
 | Runtime-configurable retention via SystemSetting | YAGNI — can be added later if needed; the `BaseAuditLog.default_retention_days` attribute provides the extension point |
+| `ad_dn` field changes | Field is under evaluation for removal from the data model; no `ad_dn_changed` event type is created. If the field is retained in the future, an event type can be added at that time |
 
 ---
 
@@ -619,18 +748,66 @@ The following were considered and explicitly excluded:
    - `FetcherAuditAction` (enum) → `FetcherAuditEventType`
    - `fetcher_audit_log` (table) → `fetcher_audit_event`
    - `create_ticket_event()` (helper) → `TicketAuditLog.log_event()`
-1. `BaseAuditLog` base class
-2. Conventions section in `conventions.md`
-3. Rename `ticket-history.md` and refactor (TicketAuditLog subclass)
+   - Endpoint path: `/tickets/{id}/events` → `/tickets/{id}/audit-log`
+1. `BaseAuditLog` base class (including `apply_date_filters()`)
+2. Conventions section in `conventions.md` (including date filtering and
+   endpoint naming rules)
+3. Rename `ticket-history.md` and refactor (TicketAuditLog subclass) +
+   add `from_date`/`to_date` to the ticket audit log endpoint (Change 8)
 4. `IdentityAuditLog` + spec updates
 5. `SettingAuditLog` + admin.md updates
 6. Fetcher audit trail alignment (renames + FetcherAuditLog subclass)
 7. Data model updates
-8. Cross-reference updates
+8. Cross-reference updates (including endpoint path renames)
 9. Endpoint Permission Map updates
 
 ---
 
 ## Open questions
 
-- None at this time. All design decisions have been discussed and agreed.
+1. ~~**Event type mancante: `user_updated` per campi generici**~~ —
+   **RESOLVED**: added per-field event types (`email_changed`,
+   `full_name_changed`, `manager_changed`) consistent with the existing
+   `username_changed` pattern. `ad_dn_changed` is NOT created because
+   the field is under evaluation for removal. `user_created` now applies
+   to ALL users including AD sync (removed from "Excluded from scope").
+   Total IdentityAuditEventType values: 16.
+
+2. ~~**Side effects of deactivation not explicitly audited**~~ —
+   **RESOLVED**: each API key revocation produces an individual
+   `api_key_revoked` event, created by the centralized
+   `api_key_service` (see `docs/features/identity/api-key-service.md`).
+   Bulk revocation during deactivation adds
+   `{"reason": "user_deactivated"}` to the `detail` JSONB. Session
+   invalidation remains excluded from the audit trail.
+
+3. **Actor field naming inconsistency** — `FetcherAuditLog` uses
+   `performed_by_user_id` while all other audit tables use `user_id`.
+   Change 7 (fetcher alignment) renames the model and enum but does not
+   currently rename the column. Should `performed_by_user_id` be renamed
+   to `user_id` as part of Change 7 for consistency with the
+   `BaseAuditLog` convention?
+
+4. **No retrieval endpoint for fetcher audit log** — The
+   `fetcher-infrastructure.md` spec does not define a retrieval API for
+   fetcher audit events. `fetcher-dashboard.md` defines
+   `GET /api/v1/fetchers/{fetcher_name}/audit-log`. Verify that this
+   endpoint exists, supports the standard `from_date`/`to_date` parameters,
+   and conforms to the `/audit-log` suffix convention. If not, align it as
+   part of Change 7.
+
+5. **Indexes not defined for new tables** — `data-model.md` has a global
+   "TBD" for indexes. Audit log tables have predictable query patterns
+   (filter by `created_at`, `event_type`, `target_user_id`, `setting_key`).
+   Should Change 5 (data model updates) define indexes for all audit tables,
+   or is this deferred to implementation time?
+
+6. **Guardrail 11 covers only tickets** — Guardrail 11 (AGENTS.md) mandates
+   `TicketEvent` creation for every ticket mutation but has no equivalent
+   for identity or setting mutations. Should Guardrail 11 be expanded to
+   cover all audit trails (e.g., "every identity mutation MUST create an
+   `IdentityAuditEvent`"), or should separate guardrails be created?
+
+7. **Event type count: 25 vs 24** — The Audit Trail Index (Change 1) lists
+   24 event types for tickets, but `ticket-history.md` defines 25 values in
+   `TicketEventType`. The index must be corrected to match the actual count.
