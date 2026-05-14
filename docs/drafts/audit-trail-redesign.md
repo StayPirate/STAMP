@@ -25,8 +25,8 @@ establish a consistent audit trail architecture across the platform.
 ### Approach: domain-specific tables (Option A)
 
 Each audit trail has its own database table with a domain-specific enum.
-This is consistent with the existing pattern (TicketAuditEvent and
-FetcherAuditEvent are separate tables with separate enums). Rationale:
+This is consistent with the existing pattern (TicketEvent and
+FetcherAuditLog are separate tables with separate enums). Rationale:
 type-safe schemas, domain-specific queries, no catch-all blob table.
 
 ### Organization of specifications
@@ -420,6 +420,7 @@ updated to point to `ticket-audit-log.md`:
 - `docs/features/tickets/README.md`
 - `docs/system-map.md`
 - `docs/reviews/user-service.md`
+- `docs/reviews/README.md`
 - `.opencode/agents/ticket-integrity-reviewer.md`
 - `.opencode/agents/test-reviewer.md`
 
@@ -649,6 +650,8 @@ Tests for any identity-mutating service MUST verify:
 - `docs/api-spec.md` — global API conventions
 - `docs/features/identity/user-service.md` — service operations that
   produce identity audit events
+- `docs/features/identity/user-management.md` — admin password reset
+  and audit trail summary references
 - `docs/features/identity/ad-integration.md` — AD sync operations that
   produce identity audit events
 - `docs/features/identity/api-key-service.md` — centralized API key
@@ -718,7 +721,7 @@ descending.
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
 | `setting_key` | string | -- | Filter by setting key |
-| `actor` | string | -- | Filter by actor: user UUID, username, or `system` for automated events |
+| `actor` | string | -- | Filter by actor: user UUID or username. `system` is accepted but will return no results (all setting changes are user-initiated) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
@@ -819,6 +822,7 @@ All references to `ticket-history.md` must be updated to
 - `docs/features/tickets/README.md`
 - `docs/system-map.md`
 - `docs/reviews/user-service.md`
+- `docs/reviews/README.md`
 - `.opencode/agents/ticket-integrity-reviewer.md`
 - `.opencode/agents/test-reviewer.md`
 
@@ -897,12 +901,8 @@ from Change 2)
 **Cross-reference updates required** (files that reference the old
 endpoint path `/tickets/{ticket_id}/events`):
 
-A `grep` must be run at application time to find all references to the
-old endpoint path. Known locations:
-
-- `docs/features/tickets/ticket-history.md` (being renamed)
-- `docs/features/ui/pages/ticket-detail.md`
-- `docs/api-spec.md` (if the endpoint is listed)
+- `docs/features/tickets/ticket-history.md` (being renamed to
+  `ticket-audit-log.md` — endpoint path updated as part of this change)
 - `docs/features/identity/rbac.md` (Endpoint Permission Map)
 
 ---
