@@ -8,7 +8,7 @@ automatic role assignment from AD group membership, and manager-based
 ticket escalation when employees leave the organization.
 
 The LDAP sync fetcher is the **sole authority** for identity data of AD
-users (`username`, `email`, `full_name`, `ad_dn`, `manager_id`,
+users (`username`, `email`, `full_name`, `manager_id`,
 `ad_synced_at`). These fields cannot be modified manually via the API or
 CLI. See AD User Data Ownership in `docs/features/identity/user-service.md`
 for the service-layer enforcement rules.
@@ -66,7 +66,7 @@ model.
 | `mail`              | `email`             | Primary email (`.com`)               |
 | `manager`           | `manager_id`        | DN of the direct line manager (resolved to `user.id` FK) |
 | `EMPLOYEESTATUS`    | `active`            | Employee status (`Active` or other; absent = skipped)  |
-| `distinguishedName` | `ad_dn`           | Full DN in Active Directory          |
+| `distinguishedName` | *(not persisted)*   | Fetched for in-memory manager resolution (DN to `objectGUID` mapping) and diagnostic logging. Not stored in the database |
 
 The `MEMBEROF` attribute is read during sync to apply role mappings but
 is not persisted in the database.
@@ -75,7 +75,7 @@ is not persisted in the database.
 
 See `docs/data-model.md` for the complete schema of the User, UserRole,
 and RoleMapping tables. The AD-specific columns (`ad_object_guid`,
-`ad_dn`, `manager_id`, `ad_synced_at`) are documented there along with
+`manager_id`, `ad_synced_at`) are documented there along with
 the `ad_group_cn` and `assigned_by` columns on UserRole. The Attributes
 Consumed table above shows how AD attributes map to these fields during
 sync.
@@ -299,7 +299,7 @@ only if you understand the impact."
     2b (entries with `EMPLOYEESTATUS == Active` and all required
     attributes validated). For each active entry:
     - If a `User` record with matching `ad_object_guid` exists, update
-     `username`, `full_name`, `email`, `ad_dn`, `ad_synced_at` via
+     `username`, `full_name`, `email`, `ad_synced_at` via
      `user_service.update_user()`. The `active` field is NOT modified
      in this step — deactivations and reactivations are handled in
      steps 6 and 7 respectively
@@ -319,9 +319,8 @@ only if you understand the impact."
    - If no matching record exists, attempt to create a new `User` via
      `user_service.create_user()` with `username = sAMAccountName`,
      `email = mail`, `full_name = cn`,
-     `ad_object_guid = objectGUID`,
-     `ad_dn = distinguishedName`,
-     `active = true`, `acting_user_id = None`.
+      `ad_object_guid = objectGUID`,
+      `active = true`, `acting_user_id = None`.
      Note: only active AD entries reach this step, so new users are
      always created as active
      - If `create_user()` raises `UserConflictError` (e.g., the AD

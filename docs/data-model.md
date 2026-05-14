@@ -50,9 +50,8 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │                   │  full_name         │
        │                   │  active            │
        │                   │  password_hash     │
-       │                   │  ad_object_guid  │
-       │                   │  ad_dn           │
-       │                   │  manager_id (FK)   │
+        │                   │  ad_object_guid  │
+        │                   │  manager_id (FK)   │
        │                   │  ad_synced_at    │
        │                   │  last_login_at     │
        │                   └────────┬─────────┘
@@ -446,7 +445,6 @@ the same access as an unauthenticated user (read-only on public data).
 | active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
 | password_hash    | VARCHAR     | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for AD users. See `docs/features/identity/local-authentication.md` |
 | ad_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
-| ad_dn          | VARCHAR     | nullable                 | Full AD distinguished name       |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
 | ad_synced_at   | TIMESTAMP   | nullable                 | When this record was last synced from AD |
 | last_login_at    | TIMESTAMP   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |

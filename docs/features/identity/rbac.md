@@ -314,7 +314,7 @@ hashing parameters.
 See `docs/data-model.md`. Key tables:
 
 - **User**: username, email, active status, AD fields (ad_object_guid,
-  ad_dn, manager_id, ad_synced_at)
+  manager_id, ad_synced_at)
 - **UserRole**: junction table linking users to roles with `ad_group_cn`
   (AD group name or `_manual` for manual assignments)
 - **RoleMapping**: maps AD group names to Sentinel roles
