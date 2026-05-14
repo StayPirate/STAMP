@@ -312,8 +312,10 @@ transitions back from Analyzed to Analysis.
 ### Gate: Analyzed → Resolved
 
 The system automatically transitions a ticket from Analyzed to Resolved
-when ALL of the following conditions are met (only active,
-non-soft-deleted records are considered):
+when ALL of the following conditions are met (only records that are not
+effectively excluded are considered — see
+`docs/features/packages/package-tracking.md`, "Hierarchical Exclusion
+Model"):
 
 1. Every active `TicketPackageTrack` has a terminal affectedness status:
    `FIXED`, `NOT_AFFECTED`, or `WONT_FIX`
@@ -418,8 +420,11 @@ addition function defined in `docs/features/packages/package-tracking.md` handle
 SMELT resolution and external I/O. It delegates the actual creation of
 `TicketPackage`, `TicketPackageTrack`, and `TicketPackageProduct` records
 to `ticket_mutations` functions. Similarly, package soft-deletion
-delegates record updates to the module. The SMELT query logic does not
-belong in `ticket_mutations` — only the record mutations do.
+delegates record updates to the module. Soft-deletion follows the
+hierarchical exclusion model — only the directly targeted record
+receives `deleted_at`; child records are not modified. The SMELT query
+logic does not belong in `ticket_mutations` — only the record mutations
+do.
 
 **Idempotency**: the record creation functions in `ticket_mutations` are
 idempotent. If a `TicketPackageTrack` or `TicketPackageProduct`
@@ -453,33 +458,46 @@ records in their own services.
 The `ticket_mutations` module enforces automatic cleanup of empty parent
 records. These are generic rules that apply regardless of the trigger —
 any current or future feature that soft-deletes a product or track
-automatically benefits from these invariants.
+automatically benefits from these invariants. The orphan rule triggers
+**only on soft-deletion events**, not on restore or other mutations.
 
 **Invariant 1 — Track orphan rule**: after every product soft-deletion,
 `ticket_mutations` checks whether the parent `TicketPackageTrack` has
-zero remaining active `TicketPackageProduct` records. If zero active
-products remain, the track is also soft-deleted.
+zero remaining products with `deleted_at IS NULL` (direct check). If
+zero directly-active products remain, the track receives its own
+`deleted_at` (direct soft-deletion). Products under the track are NOT
+modified — they already have their own `deleted_at`.
 
 **Invariant 2 — Package orphan rule**: after every track soft-deletion,
 `ticket_mutations` checks whether the parent `TicketPackage` has zero
-remaining active `TicketPackageTrack` records. If zero active tracks
-remain, the package is also soft-deleted.
+remaining tracks with `deleted_at IS NULL` (direct check). If zero
+directly-active tracks remain, the package receives its own `deleted_at`.
+Tracks and products under the package are NOT modified.
 
-**Cascading composition**: the invariants compose naturally:
+**Cascading composition**: the invariants compose naturally. Soft-deleting
+a product may trigger the track orphan rule, which may trigger the
+package orphan rule:
 
 ```
 soft_delete_ticket_package_product(record, user)
   → TicketEvent (product_excluded)
   → evaluate_ticket_status()
   → _enforce_track_orphan_rule()
-      → if 0 active products: soft_delete_ticket_package_track(...)
-          → TicketEvent (track_excluded)
+      → if 0 directly-active products:
+          set track.deleted_at (direct)
+          → TicketEvent (track_excluded, user_id=NULL)
           → evaluate_ticket_status()
           → _enforce_package_orphan_rule()
-              → if 0 active tracks: soft_delete_ticket_package(...)
-                  → TicketEvent (package_excluded)
+              → if 0 directly-active tracks:
+                  set package.deleted_at (direct)
+                  → TicketEvent (package_excluded, user_id=NULL)
                   → evaluate_ticket_status()
 ```
+
+Note: orphan-triggered soft-deletions create `TicketEvent` records with
+`user_id = NULL` (system action), distinguishing them from VA-initiated
+exclusions. Each orphan soft-deletion sets `deleted_at` only on the
+parent — no cascade to children (per the hierarchical exclusion model).
 
 Each public function in `ticket_mutations` calls
 `evaluate_ticket_status` at the end of its execution. This ensures the

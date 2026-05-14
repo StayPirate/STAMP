@@ -147,8 +147,10 @@ For each `suse.obs.package.commit` event:
 
 2. **Filter by active codestream**: check if `project` is in the set of
    active codestreams. This set is built from the distinct
-   `codestream_name` values of `TicketPackageTrack` records that are
-   active (`deleted_at IS NULL`) with status `ANALYSIS` or `AFFECTED`.
+   `codestream_name` values of `TicketPackageTrack` records with status
+   `ANALYSIS` or `AFFECTED`. Soft-deleted tracks are included — release
+   detection applies regardless of exclusion status (see hierarchical
+   exclusion model in `docs/features/packages/package-tracking.md`).
    The set is cached in memory and refreshed periodically (every 5
    minutes) or on cache miss.
    If the project is not in the set → **acknowledge and discard** the
@@ -174,14 +176,14 @@ For each `suse.obs.package.commit` event:
 5. **Process CVE references**: for each CVE-ID in the diff response with
    `state="added"` and `tracker="cve"`, apply the same match logic as the
    periodic fetcher:
-   - **Case A** — ticket exists, package tracked in the codestream:
-     set `TicketPackageTrack.status` to `FIXED` and
-     `TicketPackageTrack.delivery_status` to `RELEASED` via
-     `ticket_mutations` (unless protected status `WONT_FIX`)
-   - **Case B** — ticket exists, package not tracked: call
-     `add_package_to_ticket(ticket_id, package_name)` to resolve
-     codestreams/products via SMELT, then set the originating track's
-     status to `FIXED` and `delivery_status` to `RELEASED`
+     - **Case A** — ticket exists, package tracked in the codestream:
+       set `TicketPackageTrack.status` to `FIXED` and
+       `TicketPackageTrack.delivery_status` to `RELEASED` via
+       `ticket_mutations` (unless protected status `WONT_FIX`)
+     - **Case B** — ticket exists, package not tracked: call
+       `add_package_to_ticket(ticket_id, package_name)` to resolve
+       codestreams/products via SMELT, then set the originating track's
+       status to `FIXED` and `delivery_status` to `RELEASED`
    - **Case C** — no ticket exists: enqueue
      `create_ticket_from_detection` task
 
@@ -356,9 +358,9 @@ RabbitMQ Consumer Card" for the full UI specification.
 
 ### Unmonitored codestreams
 
-If a maintainer commits a CVE fix to a codestream that has no active
-tickets (no active `TicketPackageTrack` records with `deleted_at IS NULL`
-in `ANALYSIS` or `AFFECTED` status across any ticket), the event is
+If a maintainer commits a CVE fix to a codestream that has no
+tickets (no `TicketPackageTrack` records in `ANALYSIS` or `AFFECTED`
+status across any ticket), the event is
 discarded by the codestream filter. This applies equally to the RabbitMQ
 consumer and the periodic fetcher — neither monitors codestreams without
 active tickets.

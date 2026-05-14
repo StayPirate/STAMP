@@ -27,8 +27,8 @@ fields populated according to this table:
 | `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | Optional VA note |
 | `duplicate_target_changed` | Cascade update: the original ticket was itself marked as duplicate, so this ticket's `duplicate_of_id` was re-pointed to the ultimate original | `NULL` | `SNTL-{n}` identifier of the previous original | `SNTL-{n}` identifier of the new original | `NULL` |
 | `package_added` | Package added to ticket (manual or automatic) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in track SUSE:SLE-15-SP6:Update"`) |
-| `package_excluded` | Package soft-deleted (excluded) from ticket | VA user for manual, `NULL` for automatic | Package name | `NULL` | Optional VA note for manual; contextual description for automatic |
-| `package_restored` | Previously excluded package restored to ticket | VA user | `NULL` | Package name | Optional VA note |
+| `package_excluded` | Package directly soft-deleted (excluded) from ticket. One event per action — child tracks and products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Package name | `NULL` | Optional VA note for manual; `package_name:reason` for automatic (e.g., `"openssl:no_tracks_remaining"`) |
+| `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | Optional VA note |
 | `track_status_changed` | Track status changed (VA action or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | `package_name:track_name` |
 | `product_status_overridden` | VA overrides product status | VA user | Old status | New status | `package_name:product_id` |
 | `track_released` | Track release detected | `NULL` | `NULL` | `RELEASED` | `package_name:track_name` |
@@ -39,10 +39,10 @@ fields populated according to this table:
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `package_name:product_id:reason` (reason: `reactive_ltss`, `threshold`, `cvss`, `va_override`) |
-| `track_excluded` | Track soft-deleted (excluded) from ticket | VA user for manual, `NULL` for automatic | Track name | `NULL` | `package_name:reason` |
-| `track_restored` | Previously excluded track restored to ticket | VA user | `NULL` | Track name | Optional VA note |
-| `product_excluded` | Product soft-deleted (excluded) from ticket | VA user for manual, `NULL` for automatic | Product display name | `NULL` | `package_name:product_id:reason` |
-| `product_restored` | Previously excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note |
+| `track_excluded` | Track directly soft-deleted (excluded) from ticket. One event per action — child products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Track name | `NULL` | `package_name:reason` |
+| `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | Optional VA note |
+| `product_excluded` | Product directly soft-deleted (excluded) from ticket | VA user for manual, `NULL` for system (EOL, orphan cleanup) | Product display name | `NULL` | `package_name:product_id:reason` |
+| `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note |
 | `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 | `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note |
 

@@ -481,10 +481,10 @@ updates:
    - package_name = extract from sourcepackage by stripping the
      codestream suffix (see Package Name Extraction in Data Sources)
 4. Is codestream_name an active codestream with at least one
-   TicketPackageTrack (where deleted_at IS NULL) in ANALYSIS or
-   AFFECTED? If no -> skip
+   TicketPackageTrack in ANALYSIS or AFFECTED?
+   If no -> skip
 5. Is package_name tracked in at least one ticket for that
-   codestream (filtered by deleted_at IS NULL)? If no -> skip
+   codestream? If no -> skip
 6. Create SubmissionRequest record (state = open)
 7. Enqueue Celery task: correlate_submission_request(submission_id)
 ```
@@ -498,8 +498,7 @@ updates:
 3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
 4. For each CVE-ID:
    a. Find the ticket with that CVE
-   b. Find the TicketPackageTrack for (ticket, codestream, package)
-      — filtered by deleted_at IS NULL
+    b. Find the TicketPackageTrack for (ticket, codestream, package)
    c. Create SubmissionRequestTrack join record (idempotent:
       skip if unique constraint already satisfied)
 5. If no correlations EXIST for this SR (total count of join records
@@ -583,8 +582,9 @@ both down).
 Step 1 — Discover missed open SRs and reconcile known ones:
 
   1. Identify active codestreams (distinct codestream_name values from
-     TicketPackageTrack records where deleted_at IS NULL and status is
-     ANALYSIS or AFFECTED)
+     TicketPackageTrack records with status ANALYSIS or AFFECTED).
+     Soft-deleted tracks are included — submission tracking applies
+     regardless of exclusion status.
 
   2. For each active codestream:
      GET /request?view=collection&project={codestream}&states=new,review
@@ -594,9 +594,9 @@ Step 1 — Discover missed open SRs and reconcile known ones:
           maintenance_release (RR)
 
        For SRs:
-       b. Filter: is the targetpackage tracked in at least one ticket
-          for this codestream (filtered by deleted_at IS NULL)?
-          If no -> skip
+        b. Filter: is the targetpackage tracked in at least one ticket
+           for this codestream?
+           If no -> skip
        c. If NOT present in SubmissionRequest table:
           -> Create SubmissionRequest (state = open)
           -> Enqueue correlate_submission_request task
@@ -622,8 +622,8 @@ Step 1b — Discover missed accepted SRs (temporal lookback):
 
      For each SR in the response:
        a. Already in SubmissionRequest table? -> skip
-       b. targetpackage tracked in at least one ticket for this
-          codestream (filtered by deleted_at IS NULL)? If no -> skip
+        b. targetpackage tracked in at least one ticket for this
+           codestream? If no -> skip
         c. Create SubmissionRequest (state=accepted)
         d. Call set_sr_incident_number(SR, extracted incident_number)
         e. Enqueue correlate_submission_request
@@ -651,10 +651,9 @@ Step 2 — Reconcile requests no longer in new/review:
 Step 3 — Delivery status reconciliation:
 
   8. Query all TicketPackageTrack records where:
-     - deleted_at IS NULL
-     - track type is IBS (codestream-based)
-     - delivery_status != RELEASED
-     - the parent ticket is in an open state
+      - track type is IBS (codestream-based)
+      - delivery_status != RELEASED
+      - the parent ticket is in an open state
   9. For each such track, verify that delivery_status is consistent
      with the current SR/RR state:
      - If an SR is correlated and in open or accepted state but
@@ -716,8 +715,8 @@ release detection Case B/C).
 ```
 1. Retrieve the ticket's CVE-ID
 2. Retrieve ALL TicketPackageTrack records for (ticket, package)
-   — filtered by deleted_at IS NULL, no status filter (includes
-   ANALYSIS, AFFECTED, FIXED, etc.)
+   — no status filter (includes ANALYSIS, AFFECTED, FIXED, etc.)
+   and no soft-deletion filter (includes soft-deleted tracks)
 3. For each track:
    a. Query IBS:
       GET /request?view=collection&project={codestream}
@@ -743,11 +742,14 @@ release detection Case B/C).
 #### Design Decisions
 
 - **No status filter on tracks**: all tracks are checked regardless of
-  their `PackageStatus` (only soft-deleted tracks are excluded via
-  `deleted_at IS NULL`). This ensures SR/RR data is captured even for
-  tracks already in `FIXED` state (e.g., Case C tickets created by
-  `create_ticket_from_detection`). The data is not displayed in the UI
-  for final-status tracks but is retained for audit and future use.
+  their `PackageStatus` or soft-deletion status. Soft-deleted tracks are
+  included because submission tracking applies regardless of exclusion
+  status (see hierarchical exclusion model in
+  `docs/features/packages/package-tracking.md`). This ensures SR/RR data
+  is captured even for tracks already in `FIXED` state (e.g., Case C
+  tickets created by `create_ticket_from_detection`) or tracks excluded
+  by the VA. The data is not displayed in the UI for final-status or
+  excluded tracks but is retained for audit and future use.
 - **14-day lookback window**: limits the volume of accepted SRs returned
   by IBS for long-lived packages. An SR older than 14 days whose ticket is
   only being created now is an extreme edge case with low informational

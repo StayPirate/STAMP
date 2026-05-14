@@ -118,7 +118,8 @@ Soft-deleted records are excluded from normal views, gates, and anomaly
 detection, but they **continue to receive updates** from propagation,
 delivery tracking, eligibility recalculation, and release detection.
 Their state is always current, eliminating the need for reconciliation
-logic at restore time.
+logic at restore time. Exclusion is determined hierarchically — see
+[Hierarchical Exclusion Model](#hierarchical-exclusion-model).
 
 ---
 
@@ -480,8 +481,8 @@ ensures automatic ticket status re-evaluation after each change.
 ### VA Sets "Affected" on a Track
 
 1. Track status is set to `AFFECTED` (via `ticket_mutations`)
-2. Sentinel propagates to all active (non-soft-deleted) products under
-   that track:
+2. Sentinel propagates to all active (not effectively excluded) products
+   under that track:
    - Products with `is_status_override = true` are not modified
    - For remaining products: status is set to `AFFECTED`
 3. Eligibility is calculated separately for each product (see
@@ -567,16 +568,47 @@ timestamp on the record:
 The identity of the user who performed the deletion is recorded in the
 corresponding `TicketEvent` (`user_id` field), not on the record itself.
 
-### Cascade
+### Hierarchical Exclusion Model
 
-Soft-deletion cascades downward:
+Soft-deletion follows a **hierarchical** model: `deleted_at` is set
+**only** on the record where the VA (or the system) acts. Child records
+are NOT modified — they are implicitly excluded through the hierarchy.
 
-- **Package soft-deleted** → all tracks under it are soft-deleted → all
-  products under those tracks are soft-deleted
-- **Track soft-deleted** → all products under it are soft-deleted
-- **Product soft-deleted** → only the product itself
+- **Package soft-deleted** → only the `TicketPackage` record receives
+  `deleted_at`. All tracks and products under it are **effectively
+  excluded** via the parent, but their own `deleted_at` remains `NULL`.
+- **Track soft-deleted** → only the `TicketPackageTrack` record receives
+  `deleted_at`. All products under it are effectively excluded via the
+  parent track.
+- **Product soft-deleted** → only the `TicketPackageProduct` record
+  receives `deleted_at`.
 
-All cascaded records are marked with the same `deleted_at` timestamp.
+When a soft-deletion leaves a parent record with no remaining children
+that have `deleted_at IS NULL`, the orphan cleanup invariants (defined in
+`docs/features/tickets/tickets.md`, Ticket Mutations Module, "Orphan
+Cleanup Invariants") apply upward: the parent is also soft-deleted. See
+also `docs/features/packages/product-lifecycle-transitions.md` for the
+EOL-triggered cascade.
+
+#### Effectively Excluded
+
+A record is **effectively excluded** if any of the following is true:
+
+- Its own `deleted_at IS NOT NULL` (directly excluded), OR
+- Its parent's `deleted_at IS NOT NULL`, OR
+- Its grandparent's `deleted_at IS NOT NULL`
+
+Concretely:
+
+| Record type | Effectively excluded when |
+|-------------|--------------------------|
+| Package | `package.deleted_at IS NOT NULL` |
+| Track | `track.deleted_at IS NOT NULL` OR `package.deleted_at IS NOT NULL` |
+| Product | `product.deleted_at IS NOT NULL` OR `track.deleted_at IS NOT NULL` OR `package.deleted_at IS NOT NULL` |
+
+All system operations that need to determine whether a record is excluded
+(gates, UI filtering, anomaly detection) MUST use the hierarchical check,
+not just the record's own `deleted_at`.
 
 ### Continued Updates
 
@@ -614,43 +646,71 @@ panel that displays:
 
 ### Restore
 
+Restore operates **only on the directly excluded record** — there is no
+cascade to child records. The VA can only restore a record that has its
+own `deleted_at IS NOT NULL`.
+
 When the VA restores a soft-deleted record:
 
-1. `deleted_at` is set to `NULL` on the record
-2. If restoring a track: all products under it are also restored
-   (`deleted_at = NULL`)
-3. If restoring a package: all tracks and products under it are also
-   restored
-4. The record's state is already current (no recalculation needed)
-5. `add_package_to_ticket` is called for the package — this adds any
-   new tracks/products that appeared on SMELT since the deletion
-   (idempotent: existing records are skipped)
-6. `TicketEvent` records are created for each restored element
+1. **Pre-check (tracks and packages only)**: verify that the record will
+   have at least one active child after restoration:
+   - Restoring a **track**: at least 1 product under it must have
+     `deleted_at IS NULL` (directly). If all products are directly
+     excluded, return error `PACKAGE_RESTORE_BLOCKED`.
+   - Restoring a **package**: at least 1 track under it must have
+     `deleted_at IS NULL` (directly), and that track must have at least
+     1 product with `deleted_at IS NULL` (directly). If no such
+     track-product chain exists, return error `PACKAGE_RESTORE_BLOCKED`.
+   - Restoring a **product**: no pre-check needed (products have no
+     children).
+2. `deleted_at` is set to `NULL` on the record.
+3. The record's state is already current (no recalculation needed —
+   soft-deleted records continue to receive updates).
+4. A single `TicketEvent` is created for the restored record.
+
+**Restore is permitted even when an ancestor is excluded** (per design
+decision D2). Clearing a product's `deleted_at` while its parent track
+is excluded means the product is no longer directly excluded, but remains
+effectively excluded via the track. When the track is later restored, the
+product becomes fully active.
 
 ### Interaction with add_package_to_ticket
 
-The `add_package_to_ticket` function checks for record existence
-including soft-deleted records. If a `TicketPackageTrack` or
-`TicketPackageProduct` record already exists (whether active or
-soft-deleted), it is skipped — a soft-deleted record is NOT recreated.
-This prevents automatic processes (SMELT sync, release detection
-Case B/C) from overriding a VA's explicit exclusion decision.
+The `add_package_to_ticket` function proceeds normally regardless of
+whether the `TicketPackage` is soft-deleted. It queries SMELT, and
+creates any missing `TicketPackageTrack` and `TicketPackageProduct`
+records. Existing records (active or soft-deleted) are skipped.
+
+New records are created with `deleted_at = NULL`. If the parent package
+or track is soft-deleted, these new records are **effectively excluded**
+via the hierarchy — no special logic is needed.
+
+The **API handler** for `POST /api/v1/tickets/{ticket_id}/packages` is
+responsible for checking whether the `TicketPackage` is soft-deleted
+(`deleted_at IS NOT NULL`) **before** calling the function. If it is,
+the handler returns `409 PACKAGE_ALREADY_EXCLUDED` without invoking the
+function. Internal callers (CPE mapping, release detection) call the
+function directly and benefit from the automatic exclusion via hierarchy.
 
 ### Ticket Events for Soft-Deletion
 
-A separate `TicketEvent` is created for **every** element affected by a
-soft-deletion or restore operation. When a VA soft-deletes a track with
-5 products, 6 events are created (1 for the track + 5 for the products).
-This supports filtering by individual products in audit queries.
+A single `TicketEvent` is created for each soft-deletion or restore
+operation — only for the **directly affected record**. Child records
+that become effectively excluded via the hierarchy do not generate
+separate events.
+
+When a VA soft-deletes a track, 1 event is created (`track_excluded`).
+Products under the track are implicitly excluded via the hierarchy but
+do not produce individual events.
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
+| VA soft-deletes a package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes a track | `track_excluded` | VA user | `package_name`, `reference` |
 | VA soft-deletes a product | `product_excluded` | VA user | `package_name`, `reference`, `product_id` |
-| VA soft-deletes a package | `package_excluded` | VA user | `package_name` |
+| VA restores a package | `package_restored` | VA user | `package_name` |
 | VA restores a track | `track_restored` | VA user | `package_name`, `reference` |
 | VA restores a product | `product_restored` | VA user | `package_name`, `reference`, `product_id` |
-| VA restores a package | `package_restored` | VA user | `package_name` |
 
 ---
 
@@ -706,8 +766,8 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 **Behavior**:
 
 1. Create a `TicketPackage` record for the package if one does not
-   already exist (including soft-deleted — a soft-deleted
-   `TicketPackage` is considered "existing" and is skipped).
+   already exist. If a record already exists (active or soft-deleted),
+   skip creation and proceed to step 2.
 2. Query SMELT to resolve all currently maintained tracks and products
    for the given package (see
    [SMELT Query](#smelt-query-for-package-resolution) below).
@@ -729,18 +789,24 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
    retroactively discover IBS submission requests (SRs) and release
    requests (RRs) for the ticket's CVE created within the last 14 days.
    See `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
-8. Return a result indicating which records were created and which were
-   skipped (already existed or soft-deleted).
+8. Return an `AddPackageResult` containing:
+   - `tracks_created`, `tracks_skipped`, `products_created`,
+     `products_skipped`: counts of records created vs. skipped.
 
 `ticket_mutations` handles idempotency (skipping existing records,
 including soft-deleted), initial status determination, and eligibility
 logic internally — see `docs/features/tickets/tickets.md`, Ticket
 Mutations Module.
 
+New records are created with `deleted_at = NULL`. If the parent package
+or track is soft-deleted, these records are automatically **effectively
+excluded** via the hierarchy — no special handling is needed. See
+[Hierarchical Exclusion Model](#hierarchical-exclusion-model).
+
 **Idempotency**: the function is safe to call multiple times for the
 same package. If SMELT adds new tracks or products for a package after
 the initial addition, calling the function again will add only the new
-records. Existing records (including soft-deleted) are skipped.
+records. Existing records (active or soft-deleted) are skipped.
 
 ### Triggers
 
@@ -762,10 +828,11 @@ The following scenarios invoke `add_package_to_ticket`:
    `add_package_to_ticket` is called, then the originating track is
    set to `FIXED` and `delivery_status` to `RELEASED`. See
    `docs/features/packages/ibs-track-release-detection.md` (Case C).
-5. **Restore from soft-deletion**: when a VA restores a soft-deleted
-   package, track, or product, `add_package_to_ticket` is called to
-   add any new tracks/products that appeared on SMELT since the
-   deletion.
+5. **Restore from soft-deletion**: restoring a package, track, or
+   product clears its `deleted_at` only. New tracks/products that
+   appeared on SMELT since the deletion are picked up by subsequent
+   automatic calls to `add_package_to_ticket` (CPE mapping, release
+   detection Case B) — no explicit call is needed at restore time.
 
 ### Package Management Constraints
 
@@ -784,10 +851,10 @@ The VA manages packages at the **package level only**:
 ### Removing a Package from a Ticket
 
 When a VA removes a package from a ticket, Sentinel performs a
-**soft-deletion** (see [Soft-Deletion](#soft-deletion)): the
-`TicketPackage` record and all its child `TicketPackageTrack` and
-`TicketPackageProduct` records have `deleted_at` set to the current
-timestamp.
+**soft-deletion** (see [Soft-Deletion](#soft-deletion)): `deleted_at`
+is set on the `TicketPackage` record only. Child `TicketPackageTrack`
+and `TicketPackageProduct` records are not modified — they become
+effectively excluded via the hierarchy.
 
 **UI confirmation**: if any of the records being removed are in a final
 status (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), the UI must display a
@@ -1016,14 +1083,17 @@ added, all counts will be zero in the `created` fields.
 |--------|------|-----------|
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
+| 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `VALIDATION_ERROR` | Missing or empty `package_name` |
 | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
 | 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
 
-**Idempotency**: safe to call multiple times for the same package. If the
-package is already fully resolved, the response will report zero created
-records.
+**Idempotency**: safe to call multiple times for the same **active**
+package. If the package is already fully resolved, the response will
+report zero created records. If the package is soft-deleted, the endpoint
+returns 409 `PACKAGE_ALREADY_EXCLUDED` — the VA must use the restore
+endpoint to re-include it.
 
 ---
 
@@ -1033,18 +1103,17 @@ records.
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/exclude
 ```
 
-Soft-delete a package and all its tracks and products from the ticket.
-Creates `TicketEvent` records for each affected element. See
-[Soft-Deletion](#soft-deletion) for the full behavior.
+Soft-delete a package from the ticket. Sets `deleted_at` on the package
+record only — tracks and products are not modified but become
+effectively excluded via the hierarchy. Creates a single `TicketEvent`.
+See [Soft-Deletion](#soft-deletion) for the full behavior.
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "package_name": "openssl-3",
-    "tracks_excluded": 3,
-    "products_excluded": 7
+    "package_name": "openssl-3"
   }
 }
 ```
@@ -1059,7 +1128,7 @@ Creates `TicketEvent` records for each affected element. See
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
-| 422 | `ALREADY_EXCLUDED` | Package is already soft-deleted |
+| 422 | `PACKAGE_ALREADY_EXCLUDED` | Package is already soft-deleted |
 
 ---
 
@@ -1069,21 +1138,20 @@ Creates `TicketEvent` records for each affected element. See
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/restore
 ```
 
-Restore a soft-deleted package and all its tracks and products. Calls
-`add_package_to_ticket` to add any new tracks/products from SMELT.
-Creates `TicketEvent` records for each restored element. See
-[Soft-Deletion — Restore](#restore).
+Restore a soft-deleted package. Clears `deleted_at` on the package
+record only — child records are not modified. Creates a single
+`TicketEvent`. See [Soft-Deletion — Restore](#restore).
+
+**Pre-check**: the package must have at least one track with
+`deleted_at IS NULL` that itself has at least one product with
+`deleted_at IS NULL`. If not, returns `422 PACKAGE_RESTORE_BLOCKED`.
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "package_name": "openssl-3",
-    "tracks_restored": 3,
-    "products_restored": 7,
-    "new_tracks_added": 1,
-    "new_products_added": 2
+    "package_name": "openssl-3"
   }
 }
 ```
@@ -1098,7 +1166,8 @@ Creates `TicketEvent` records for each restored element. See
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
-| 422 | `NOT_EXCLUDED` | Package is not soft-deleted |
+| 422 | `PACKAGE_NOT_EXCLUDED` | Package is not directly soft-deleted |
+| 422 | `PACKAGE_RESTORE_BLOCKED` | Package has no active tracks with active products. Restore at least one track (with active products) first. |
 
 ---
 
@@ -1108,16 +1177,16 @@ Creates `TicketEvent` records for each restored element. See
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude
 ```
 
-Soft-delete a track and all its products. Creates `TicketEvent` records
-for the track and each product.
+Soft-delete a track from the ticket. Sets `deleted_at` on the track
+record only — products under it are not modified but become effectively
+excluded via the hierarchy. Creates a single `TicketEvent`.
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "reference": "SUSE:SLE-15-SP6:Update",
-    "products_excluded": 3
+    "reference": "SUSE:SLE-15-SP6:Update"
   }
 }
 ```
@@ -1132,7 +1201,7 @@ for the track and each product.
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
-| 422 | `ALREADY_EXCLUDED` | Track is already soft-deleted |
+| 422 | `PACKAGE_ALREADY_EXCLUDED` | Track is already soft-deleted |
 
 ---
 
@@ -1142,17 +1211,19 @@ for the track and each product.
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore
 ```
 
-Restore a soft-deleted track and all its products. Calls
-`add_package_to_ticket` to add any new tracks/products from SMELT.
+Restore a soft-deleted track. Clears `deleted_at` on the track record
+only — products under it are not modified. Creates a single
+`TicketEvent`.
+
+**Pre-check**: the track must have at least one product with
+`deleted_at IS NULL`. If not, returns `422 PACKAGE_RESTORE_BLOCKED`.
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "reference": "SUSE:SLE-15-SP6:Update",
-    "products_restored": 3,
-    "new_products_added": 1
+    "reference": "SUSE:SLE-15-SP6:Update"
   }
 }
 ```
@@ -1167,7 +1238,8 @@ Restore a soft-deleted track and all its products. Calls
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
-| 422 | `NOT_EXCLUDED` | Track is not soft-deleted |
+| 422 | `PACKAGE_NOT_EXCLUDED` | Track is not directly soft-deleted |
+| 422 | `PACKAGE_RESTORE_BLOCKED` | Track has no active products. Restore at least one product first. |
 
 ---
 
@@ -1200,7 +1272,7 @@ Soft-delete a single product from a track.
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
-| 422 | `ALREADY_EXCLUDED` | Product is already soft-deleted |
+| 422 | `PACKAGE_ALREADY_EXCLUDED` | Product is already soft-deleted |
 
 ---
 
@@ -1210,8 +1282,9 @@ Soft-delete a single product from a track.
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore
 ```
 
-Restore a soft-deleted product. Calls `add_package_to_ticket` to add any
-new tracks/products from SMELT.
+Restore a soft-deleted product. Clears `deleted_at` on the product
+record. No pre-check needed (products have no children). Creates a
+single `TicketEvent`.
 
 **Response** (200 OK):
 
@@ -1234,7 +1307,7 @@ new tracks/products from SMELT.
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
 | 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
-| 422 | `NOT_EXCLUDED` | Product is not soft-deleted |
+| 422 | `PACKAGE_NOT_EXCLUDED` | Product is not directly soft-deleted |
 
 ---
 
@@ -1440,12 +1513,19 @@ Package: openssl-3                              [Exclude]
 
 ### Excluded Items Panel
 
-When the ticket has soft-deleted records, a discrete indicator is shown
-(e.g., "3 excluded items"). Clicking it opens a panel showing:
+When the ticket has excluded records (directly or via hierarchy), a
+discrete indicator is shown (e.g., "3 excluded items"). Clicking it
+opens a panel showing:
 
 - Each excluded item with its **current state** (updated in real-time)
-- When it was excluded (from `deleted_at`)
-- A "Restore" button for each item
+- Whether it was excluded **directly** (`deleted_at` on the record
+  itself) or **indirectly** (via a parent's `deleted_at`), and at which
+  level (package or track)
+- When it was excluded (from the relevant `deleted_at` timestamp —
+  the record's own or the ancestor's)
+- A "Restore" button for **directly excluded** items only (items
+  excluded via hierarchy cannot be restored individually — the parent
+  must be restored first)
 
 ### Product Release Anomaly Indicator
 

@@ -113,13 +113,19 @@ Existing behavior as specified in `docs/features/packages/package-tracking.md` a
 ## Cascading Cleanup
 
 When `re_evaluate_product_eligibility` soft-deletes a `TicketPackageProduct`
-(for EOL), the track orphan cleanup invariants defined in
+(for EOL), the orphan cleanup invariants defined in
 `docs/features/tickets/tickets.md` (Ticket Mutations Module, "Orphan Cleanup
-Invariants") automatically cascade: if the parent track has zero
-remaining active (non-soft-deleted) products it is soft-deleted (with
-`deleted_at` set to the current timestamp), and if the parent package has zero
-remaining active tracks it is soft-deleted. Each step produces
-a `TicketEvent` and calls `evaluate_ticket_status`.
+Invariants") apply upward: if the parent track has zero remaining products
+with `deleted_at IS NULL` (not directly excluded), the track itself is
+soft-deleted (`deleted_at` set on the track record only), and if the parent
+package has zero remaining tracks with `deleted_at IS NULL`, the package
+itself is soft-deleted. Each step produces a `TicketEvent` (with
+`user_id = NULL`) and calls `evaluate_ticket_status`.
+
+This is an upward cascade only — child records are never modified. Each
+soft-deletion sets `deleted_at` on the targeted record; descendants become
+effectively excluded via the hierarchical exclusion model (see
+`docs/features/packages/package-tracking.md`).
 
 ## TicketEvent Records
 
@@ -129,10 +135,10 @@ records with `user_id = NULL` (system action).
 | Action | `event_type` | `old_value` | `new_value` | `comment` |
 |--------|--------------|-------------|-------------|-----------|
 | Product eligibility set to false (Reactive LTSS) | `product_eligibility_changed` | `true` | `false` | `package_name:product_id:reactive_ltss` |
-| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | `NULL` | `NULL` | `package_name:product_id:eol` |
-| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | `NULL` | `NULL` | `package_name:product_id:eol` |
-| Track soft-deleted (orphan) | `track_excluded` | `NULL` | `NULL` | `package_name:reference:no_products_remaining` |
-| Package soft-deleted (orphan) | `package_excluded` | `NULL` | `NULL` | `package_name:no_tracks_remaining` |
+| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | Product display name | `NULL` | `package_name:product_id:eol` |
+| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | Product display name | `NULL` | `package_name:product_id:eol` |
+| Track soft-deleted (orphan) | `track_excluded` | Track reference | `NULL` | `package_name:no_products_remaining` |
+| Package soft-deleted (orphan) | `package_excluded` | Package name | `NULL` | `package_name:no_tracks_remaining` |
 
 **Event types used**: `product_eligibility_changed` (existing),
 `product_excluded`, `track_excluded`, and `package_excluded` (existing

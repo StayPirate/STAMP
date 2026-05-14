@@ -52,8 +52,10 @@ below for how `<repo_url>` is constructed):
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
    matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-   records reference P, have `deleted_at IS NULL`, `eligible = true`, and
-   `released_at IS NULL`.
+   records reference P, have `eligible = true`, and
+   `released_at IS NULL`. Soft-deleted products are included — release
+   detection applies regardless of exclusion status (see hierarchical
+   exclusion model in `docs/features/packages/package-tracking.md`).
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received
@@ -254,9 +256,9 @@ not tracked in ticket, or no ticket exists at all) is described in
 - **Task name**: `check_product_releases`
 - **Type**: `BaseFetcher` subclass
 - **Schedule**: TBD (see [Open Items](#open-items))
-- **Scope**: scans active products (`deleted_at IS NULL`) with
-  `eligible = true` and `released_at IS NULL`, excluding those with
-  status `WONT_FIX` (protected state)
+- **Scope**: scans products with `eligible = true` and `released_at IS NULL`,
+  excluding those with status `WONT_FIX` (protected state). Soft-deleted
+  products are included (see hierarchical exclusion model)
 
 ## Open Items
 

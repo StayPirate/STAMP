@@ -346,7 +346,7 @@ entity for tracks and products. See
 | id           | UUID      | PK                           | Internal identifier                |
 | ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
 | package_name | VARCHAR   | NOT NULL                     | Source package name                |
-| deleted_at   | TIMESTAMP | nullable                     | Soft-deletion timestamp. NULL = active |
+| deleted_at   | TIMESTAMP | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
 | created_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -370,7 +370,7 @@ delivery).
 | reference         | VARCHAR   | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
 | status            | ENUM      | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
 | delivery_status   | ENUM      | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
-| deleted_at        | TIMESTAMP | nullable                              | Soft-deletion timestamp. NULL = active |
+| deleted_at        | TIMESTAMP | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
 | created_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record creation timestamp          |
 | updated_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record update timestamp            |
 
@@ -393,7 +393,7 @@ status inheritance, eligibility rules, and override model.
 | eligible                 | BOOLEAN   | NOT NULL                                    | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
 | released_at              | TIMESTAMP | nullable                                    | When Sentinel detected the fix in the product's update repository |
-| deleted_at               | TIMESTAMP | nullable                                    | Soft-deletion timestamp. NULL = active |
+| deleted_at               | TIMESTAMP | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
 | created_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record creation timestamp          |
 | updated_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record update timestamp            |
 
@@ -677,16 +677,16 @@ system action).
 | duplicate_removed          | Duplicate mark was reverted                        |
 | duplicate_target_changed   | Cascade update: the ticket's `duplicate_of_id` was re-pointed because its previous original was itself marked as duplicate. `old_value` is the previous original identifier (`SNTL-{n}`). `new_value` is the new original identifier. `user_id` is NULL (system action). |
 | package_added              | Package added to the ticket (manual by VA or automatic via CPE match / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
-| package_excluded           | Package soft-deleted from ticket by VA. `old_value` contains the package name. `user_id` is the VA who performed the action. |
-| package_restored           | Soft-deleted package restored by VA. `old_value` contains the package name. `user_id` is the VA who performed the action. |
+| package_excluded           | Package directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the package name. `user_id` is the VA who performed the action, or NULL for system (orphan cleanup). Child records are not modified — they become effectively excluded via the hierarchy. |
+| package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |
 | track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). |
-| track_excluded             | Track soft-deleted from ticket by VA. `old_value` contains the track reference. `user_id` is the VA. |
-| track_restored             | Soft-deleted track restored by VA. `old_value` contains the track reference. `user_id` is the VA. |
+| track_excluded             | Track directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the track reference. `user_id` is the VA, or NULL for system (orphan cleanup). Child products are not modified — they become effectively excluded via the hierarchy. |
+| track_restored             | Directly soft-deleted track restored by VA. `new_value` contains the track reference. `user_id` is the VA. Only the track record is restored — child products are not modified. |
 | track_released             | Track release detected by `IBSEventConsumer` (real-time) or `IBSTrackReleaseDetector` (periodic catch-up) — Case A. Sets `delivery_status = RELEASED` and `status = FIXED`. |
 | product_status_overridden  | VA overrode product affectedness status             |
 | product_released           | Product release detected via updateinfo.xml advisory |
-| product_excluded           | Product soft-deleted from ticket by VA. `old_value` contains the product display name. `user_id` is the VA. |
-| product_restored           | Soft-deleted product restored by VA. `old_value` contains the product display name. `user_id` is the VA. |
+| product_excluded           | Product directly soft-deleted from ticket by VA or lifecycle transition (EOL). `old_value` contains the product display name. `user_id` is the VA, or NULL for system (EOL, orphan). |
+| product_restored           | Directly soft-deleted product restored by VA. `new_value` contains the product display name. `user_id` is the VA. |
 | ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
 | cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the VA who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
 | cve_removed                | Admin removed the CVE association from a ticket. `user_id` is the Admin who performed the action. `old_value` is the CVE-ID string. `new_value` is NULL. `comment` is an optional admin note. |
