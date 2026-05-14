@@ -9,9 +9,9 @@
 
 Sentinel currently has two database-level audit trail mechanisms:
 
-- **TicketEvent** — comprehensive (24 event types), covers all ticket
+- **TicketAuditEvent** — comprehensive (24 event types), covers all ticket
   mutations
-- **FetcherAuditLog** — lightweight (4 action types), covers admin actions
+- **FetcherAuditEvent** — lightweight (4 action types), covers admin actions
   on fetchers
 
 All other auditable operations (user lifecycle, role changes, API keys,
@@ -25,8 +25,8 @@ establish a consistent audit trail architecture across the platform.
 ### Approach: domain-specific tables (Option A)
 
 Each audit trail has its own database table with a domain-specific enum.
-This is consistent with the existing pattern (TicketEvent and
-FetcherAuditLog are separate tables with separate enums). Rationale:
+This is consistent with the existing pattern (TicketAuditEvent and
+FetcherAuditEvent are separate tables with separate enums). Rationale:
 type-safe schemas, domain-specific queries, no catch-all blob table.
 
 ### Organization of specifications
@@ -35,10 +35,10 @@ type-safe schemas, domain-specific queries, no catch-all blob table.
 |---|---|---|
 | Common conventions + index | `docs/conventions.md`, section "Audit Trail Conventions" | Process rules, BaseAuditLog reference, audit trail index |
 | BaseAuditLog class | `backend/app/services/base_audit_log.py` | Common fields, registry, retention, helper |
-| Ticket audit log | `docs/features/tickets/ticket-audit-log.md` (renamed) | TicketEvent contract, API, service rules |
+| Ticket audit log | `docs/features/tickets/ticket-audit-log.md` (renamed) | TicketAuditEvent contract, API, service rules |
 | Identity audit log | `docs/features/identity/identity-audit-log.md` (new) | User lifecycle, roles, API keys, role mappings |
 | Setting audit log | `docs/features/platform/admin.md`, new section (new) | System setting modifications |
-| Fetcher audit log | `docs/features/platform/fetcher-infrastructure.md` (unchanged) | FetcherAuditLog — no changes needed |
+| Fetcher audit log | `docs/features/platform/fetcher-infrastructure.md` | FetcherAuditEvent contract, renames to standard pattern |
 
 ### BaseAuditLog — lightweight base class
 
@@ -72,7 +72,7 @@ class BaseAuditLog:
     # Subclass MUST define:
     name: str                          # e.g., "ticket", "identity", "setting"
     description: str                   # human-readable purpose
-    model_class: type                  # SQLAlchemy model (e.g., TicketEvent)
+    model_class: type                  # SQLAlchemy model (e.g., TicketAuditEvent)
     default_retention_days: int | None = None  # None = indefinite
 
     # Auto-registration in global registry (populated by __init_subclass__)
@@ -92,7 +92,7 @@ class BaseAuditLog:
 class TicketAuditLog(BaseAuditLog):
     name = "ticket"
     description = "Ticket lifecycle and mutation events"
-    model_class = TicketEvent
+    model_class = TicketAuditEvent
     default_retention_days = None  # indefinite
 
 
@@ -113,7 +113,7 @@ class SettingAuditLog(BaseAuditLog):
 class FetcherAuditLog(BaseAuditLog):
     name = "fetcher"
     description = "Administrative actions on fetchers"
-    model_class = FetcherAuditLogEntry
+    model_class = FetcherAuditEvent
     default_retention_days = None  # indefinite
 ```
 
@@ -160,14 +160,11 @@ defines:
 
 | Element | Pattern | Example |
 |---|---|---|
-| Database table | `{domain}_audit_event` or legacy name | `identity_audit_event`, `ticket_event` |
-| SQLAlchemy model | `{Domain}AuditEvent` or legacy name | `IdentityAuditEvent`, `TicketEvent` |
-| Enum | `{Domain}AuditEventType` or legacy name | `IdentityAuditEventType`, `TicketEventType` |
-| BaseAuditLog subclass | `{Domain}AuditLog` | `IdentityAuditLog`, `TicketAuditLog` |
-| Spec file (standalone) | `{domain}-audit-log.md` | `identity-audit-log.md`, `ticket-audit-log.md` |
-
-Legacy names (TicketEvent, FetcherAuditLog) are preserved to avoid
-unnecessary churn; new audit trails follow the standard pattern.
+| Database table | `{domain}_audit_event` | `ticket_audit_event`, `identity_audit_event` |
+| SQLAlchemy model | `{Domain}AuditEvent` | `TicketAuditEvent`, `IdentityAuditEvent` |
+| Enum | `{Domain}AuditEventType` | `TicketAuditEventType`, `IdentityAuditEventType` |
+| BaseAuditLog subclass | `{Domain}AuditLog` | `TicketAuditLog`, `IdentityAuditLog` |
+| Spec file (standalone) | `{domain}-audit-log.md` | `ticket-audit-log.md`, `identity-audit-log.md` |
 
 #### Atomicity
 
@@ -182,7 +179,7 @@ same `AsyncSession` as the mutation.
 - `user_id` is `NULL` when the action was initiated by the system (e.g.,
   background task, AD sync, automated detection)
 - Audit trails where only human actions are possible (e.g.,
-  FetcherAuditLog — only admins can act) use NOT NULL for the actor field
+  FetcherAuditEvent — only admins can act) use NOT NULL for the actor field
 
 #### Audit Trail Index
 
@@ -190,8 +187,8 @@ When adding a new audit trail, update this index.
 
 | Audit Trail | Table | Event Types | Retention | Owning Spec |
 |---|---|---|---|---|
-| Ticket | `ticket_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
-| Fetcher | `fetcher_audit_log` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
+| Ticket | `ticket_audit_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
+| Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
 | Identity | `identity_audit_event` | 12 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
 
@@ -210,7 +207,7 @@ When adding a new audit trail, update this index.
    to `docs/features/ui/pages/ticket-detail.md`, expanding the existing
    "Event History (Tab)" section (current lines 215-226) with the full
    UI specification
-4. Add a data retention statement: "Retention: indefinite. TicketEvent
+4. Add a data retention statement: "Retention: indefinite. TicketAuditEvent
    records are never automatically deleted."
 5. Add a reference to `BaseAuditLog`: "The `TicketAuditLog` subclass of
    `BaseAuditLog` provides the event creation helper and registers this
@@ -531,7 +528,12 @@ Indefinite. SettingAuditEvent records are never automatically deleted.
 
 1. Add `IdentityAuditEvent` table and `IdentityAuditEventType` enum
 2. Add `SettingAuditEvent` table and `SettingAuditEventType` enum
-3. Add a note referencing `BaseAuditLog` and the Audit Trail Conventions
+3. Rename `TicketEvent` to `TicketAuditEvent`, `TicketEventType` to
+   `TicketAuditEventType`, table `ticket_event` to `ticket_audit_event`
+4. Rename `FetcherAuditLog` to `FetcherAuditEvent`, `FetcherAuditAction`
+   to `FetcherAuditEventType`, table `fetcher_audit_log` to
+   `fetcher_audit_event`
+5. Add a note referencing `BaseAuditLog` and the Audit Trail Conventions
    in `conventions.md`
 
 ---
@@ -569,15 +571,21 @@ INFO-level logging.
 
 ---
 
-## Change 7: FetcherAuditLog alignment
+## Change 7: Fetcher audit trail alignment
 
-No changes to the FetcherAuditLog specification or data model are
-required. The existing `FetcherAuditLog` will be registered in the
-`BaseAuditLog` registry by creating a `FetcherAuditLog(BaseAuditLog)`
-subclass at implementation time.
+**Target files**: `docs/features/platform/fetcher-infrastructure.md`,
+`docs/data-model.md`
 
-The only update is adding FetcherAuditLog to the Audit Trail Index in
-`conventions.md` (already included in Change 1).
+**Actions**:
+
+1. Rename the model from `FetcherAuditLog` to `FetcherAuditEvent`
+2. Rename the enum from `FetcherAuditAction` to `FetcherAuditEventType`
+3. Rename the table from `fetcher_audit_log` to `fetcher_audit_event`
+4. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
+   audit trail in the global registry at implementation time
+
+The Fetcher audit trail is already included in the Audit Trail Index
+(Change 1).
 
 ---
 
@@ -597,12 +605,24 @@ The following were considered and explicitly excluded:
 
 ## Implementation order (suggested)
 
+0. **Name standardization (prerequisite)**: rename all legacy audit trail
+   names across specifications, data model, conventions, guardrails, and
+   agent definitions to follow the standard `{Domain}AuditEvent` /
+   `{Domain}AuditEventType` / `{domain}_audit_event` pattern. This is a
+   spec-only change (no implementation code exists yet). Renames:
+   - `TicketEvent` → `TicketAuditEvent`
+   - `TicketEventType` → `TicketAuditEventType`
+   - `ticket_event` (table) → `ticket_audit_event`
+   - `FetcherAuditLog` (model) → `FetcherAuditEvent`
+   - `FetcherAuditAction` (enum) → `FetcherAuditEventType`
+   - `fetcher_audit_log` (table) → `fetcher_audit_event`
+   - `create_ticket_event()` (helper) → `TicketAuditLog.log_event()`
 1. `BaseAuditLog` base class
 2. Conventions section in `conventions.md`
 3. Rename `ticket-history.md` and refactor (TicketAuditLog subclass)
 4. `IdentityAuditLog` + spec updates
 5. `SettingAuditLog` + admin.md updates
-6. FetcherAuditLog subclass registration
+6. Fetcher audit trail alignment (renames + FetcherAuditLog subclass)
 7. Data model updates
 8. Cross-reference updates
 9. Endpoint Permission Map updates

@@ -19,9 +19,9 @@ features are added:
 | Enum | Current values | Growth driver |
 |------|---------------|---------------|
 | Role | 2 | New roles as platform matures |
-| TicketEventType | 21 | Every new ticket mutation type |
+| TicketAuditEventType | 21 | Every new ticket mutation type |
 | CVESourceType | 2 | New data source integrations |
-| FetcherAuditAction | 4 | New admin operations on fetchers |
+| FetcherAuditEventType | 4 | New admin operations on fetchers |
 
 With PostgreSQL ENUM, adding a value requires an Alembic migration
 (`ALTER TYPE ... ADD VALUE`) that must run before the new application
