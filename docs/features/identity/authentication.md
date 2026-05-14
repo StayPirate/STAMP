@@ -254,7 +254,10 @@ regardless of activity.
 When a user is deactivated (via `user_service.deactivate_user()`), the
 operations execute in this order:
 
-1. Revoke all API keys for the user
+1. Revoke all API keys for the user via
+   `api_key_service.revoke_all_user_keys(session, user_id,
+   acting_user_id=None)`. See
+   `docs/features/identity/api-key-service.md`
 2. Invalidate all active sessions via
    `session_service.invalidate_user_sessions()` (DB + Redis)
 3. Mark the user as inactive
@@ -515,11 +518,15 @@ includes: prefix, name, created_at, last_used_at, expires_at, status
 sentinel api-key revoke --username <username> --key-id <uuid>
 ```
 
-Revokes the specified key. Sets `revoked_at = now()` and
-`revoked_by = NULL` (CLI action, displayed as "System" in the UI).
+Revokes the specified key. Delegates to
+`api_key_service.revoke_key(session, key_id, acting_user_id=None)`. See
+`docs/features/identity/api-key-service.md`.
+
+`acting_user_id` is `None` (CLI/system action), so `revoked_by` is set
+to `NULL` (displayed as "System" in the UI).
 
 If the key is already revoked, prints a message and exits with code 0
-(idempotent).
+(idempotent — handled by the service's idempotency guarantee).
 
 ### Automatic revocation
 
@@ -648,7 +655,7 @@ returned in creation order, newest first).
 Creates a new API key for the current user.
 
 **Authentication**: required (JWT session only). API-key-authenticated
-requests receive HTTP 403 (see Validation below).
+requests receive HTTP 403 (see Authentication restriction below).
 
 **Request body**:
 
@@ -659,23 +666,25 @@ requests receive HTTP 403 (see Validation below).
 }
 ```
 
-**Validation**:
-
-- `name` must be 1–128 characters. If the name is empty or exceeds 128
-  characters, return HTTP 422 with code `VALIDATION_ERROR`
-- `name` must be unique among the user's non-revoked keys. If a
-  non-revoked key with the same name already exists, return HTTP 409
-  with code `AUTH_API_KEY_NAME_CONFLICT`:
-  `"A non-revoked API key with this name already exists. Revoke it
-  first to reuse the name."`
-- If `expires_at` is provided, it must be in the future. If it is in the
-  past, return HTTP 400 with code `AUTH_API_KEY_INVALID_EXPIRY`:
-  `"expires_at must be in the future."`
-
 **Authentication restriction**: API-key-authenticated requests receive
 HTTP 403 with code `AUTH_SESSION_REQUIRED` and message: `"API key
 creation requires session authentication."` — this prevents a
 compromised API key from self-replicating by generating additional keys.
+This check is performed in the endpoint handler before delegation.
+
+**Behavior**:
+
+1. Verify the request is authenticated via JWT session (not API key).
+   If not, return HTTP 403 with code `AUTH_SESSION_REQUIRED`
+2. Delegate to `api_key_service.create_key(session, user_id=current_user.id,
+   name=name, expires_at=expires_at, acting_user_id=current_user.id)`.
+   See `docs/features/identity/api-key-service.md`
+3. Return HTTP 201 with the created key (including the plaintext secret)
+
+The service performs all validation (label format, label uniqueness,
+expiry) and raises typed exceptions that the handler maps to HTTP
+responses. See `docs/features/identity/api-key-service.md`
+(Exception-to-HTTP mapping).
 
 **Response** (201):
 
@@ -695,6 +704,14 @@ compromised API key from self-replicating by generating additional keys.
 The `key` field contains the full secret and is returned **only** in
 this response. It is never returned again by any other endpoint.
 
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 403 | `AUTH_SESSION_REQUIRED` | Request authenticated via API key instead of session |
+| 409 | `AUTH_API_KEY_NAME_CONFLICT` | Non-revoked key with the same name exists |
+| 400 | `AUTH_API_KEY_INVALID_EXPIRY` | `expires_at` is in the past |
+
 ### `POST /api/v1/api-keys/{key_id}/revoke`
 
 Revokes an API key belonging to the current user. The key record is
@@ -706,10 +723,14 @@ endpoints with `revoked_at` populated.
 **Behavior**:
 
 1. Look up the key by `key_id` — if not found or belongs to a different
-   user, return HTTP 404 with code `AUTH_API_KEY_NOT_FOUND`
-2. If already revoked, return HTTP 200 (idempotent)
-3. Set `revoked_at = now()`, `revoked_by = current_user.id`
-4. Return HTTP 200
+   user, return HTTP 404 with code `AUTH_API_KEY_NOT_FOUND`. The
+   ownership check (`key.user_id == current_user.id`) is performed in
+   the endpoint handler before delegation
+2. Delegate to `api_key_service.revoke_key(session, key_id,
+   acting_user_id=current_user.id)`. The service handles idempotency
+   (already-revoked keys are returned unchanged). See
+   `docs/features/identity/api-key-service.md`
+3. Return HTTP 200
 
 **Response** (200):
 
@@ -787,11 +808,13 @@ the database (not deleted) and remains visible in list endpoints with
 
 **Behavior**:
 
-1. Look up the key by `key_id` — if not found, return HTTP 404 with
-   code `AUTH_API_KEY_NOT_FOUND`
-2. If already revoked, return HTTP 200 (idempotent)
-3. Set `revoked_at = now()`, `revoked_by = current_user.id` (the admin)
-4. Return HTTP 200
+1. Delegate to `api_key_service.revoke_key(session, key_id,
+   acting_user_id=current_user.id)`. The service handles idempotency
+   (already-revoked keys are returned unchanged) and raises
+   `ApiKeyNotFoundError` if the key does not exist. See
+   `docs/features/identity/api-key-service.md`
+2. No ownership check — admins can revoke any key
+3. Return HTTP 200
 
 **Self-revocation**: an admin may revoke the API key authenticating the
 current request. This succeeds because authentication validation occurs
@@ -993,6 +1016,8 @@ attributed to the agent's own identity.
 
 ## Cross-references
 
+- `docs/features/identity/api-key-service.md` — centralized API key
+  lifecycle service (create, revoke, bulk-revoke)
 - `docs/features/identity/local-authentication.md` — local login endpoint and
   password management
 - `docs/features/identity/sso-authentication.md` — SSO login flow with

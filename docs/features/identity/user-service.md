@@ -427,10 +427,10 @@ Deactivates a user account and triggers all associated side effects.
 **Side effects** (executed atomically in the same database transaction,
 in this specific order):
 
-1. Revoke all API keys belonging to this user: set `revoked_at = now()`
-   and `revoked_by = NULL` (system action) on all active keys. Keys are
-   not deleted — preserves audit trail. See
-   `docs/features/identity/authentication.md` (API Keys) for the data model.
+1. Revoke all API keys belonging to this user via
+   `api_key_service.revoke_all_user_keys(session, user_id,
+   acting_user_id=None)`. Keys are not deleted — preserves audit trail.
+   See `docs/features/identity/api-key-service.md`.
 2. Invalidate all active sessions for this user via
    `session_service.invalidate_user_sessions(db, user_id)`. This sets
    `Session.is_active = false` in the database AND deletes the
@@ -657,7 +657,8 @@ for the API-layer mapping.
 
 | Spec | Relationship |
 |---|---|
-| `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` revokes keys and calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
+| `docs/features/identity/api-key-service.md` | Centralized API key lifecycle service. `deactivate_user` calls `api_key_service.revoke_all_user_keys()` as step 1 of the deactivation side effects |
+| `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
 | `docs/features/identity/ad-integration.md` | LDAP sync fetcher calls `create_user`, `update_user`, `sync_role_mapping`, `deactivate_user`, `reactivate_user`. Role mapping CRUD endpoints call `sync_role_mapping` and `delete_role_mapping_roles` |
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
