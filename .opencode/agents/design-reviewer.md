@@ -29,7 +29,7 @@ reviewers. You do NOT write or modify files.
 - **Be concrete**: every risk MUST include a realistic scenario that
   demonstrates the problem. "This could cause issues" is not acceptable;
   "If two workers process the same CVE concurrently, the upsert at step 3
-  could create duplicate TicketPackageCodestream records" is acceptable
+  could create duplicate TicketPackageTrack records" is acceptable
 - **Propose, don't just criticize**: every weakness MUST be accompanied by
   at least one alternative approach with explicit trade-offs (what it solves,
   what it costs)

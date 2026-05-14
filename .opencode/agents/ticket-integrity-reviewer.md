@@ -54,7 +54,7 @@ or `backend/app/tasks/` that mutate tickets or their related data.
 #### Mutation completeness
 
 - Identify every code path that modifies a `Ticket` or its related records
-  (`TicketPackageCodestream`, `TicketPackageProduct`, ticket status,
+  (`TicketPackageTrack`, `TicketPackageProduct`, ticket status,
   assignee, duplicate links, packages, CVSS assessments, severity)
 - For each mutation, verify that a `TicketEvent` is created with the
   correct `event_type` per the contract table in
@@ -107,14 +107,14 @@ For each `TicketEvent` creation, verify:
 #### Ticket mutations module compliance
 
 - Identify every code path that modifies gate-relevant data:
-  `TicketPackageCodestream` records (creation, deletion, status change),
+  `TicketPackageTrack` records (creation, deletion, status change),
   `TicketPackageProduct` records (creation, deletion, status change,
   eligibility change), `CVECVSSAssessment` records (creation, update,
   deletion), ticket severity (`severity_override` or CVSS-derived), and
   package addition or removal
 - For each modification, verify that it goes through a function in the
   `ticket_mutations` module — NOT via direct model attribute assignment
-  (e.g., `codestream.status = X`) outside the module
+  (e.g., `track.status = X`) outside the module
 - Flag any direct modification of gate-relevant data outside
   `ticket_mutations` as a defect
 - If a new type of gate-relevant mutation is needed and no suitable

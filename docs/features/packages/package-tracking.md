@@ -217,7 +217,7 @@ eligibility evaluation.
 
 An explicit entity that anchors a source package within a ticket. Replaces
 the implicit grouping by `package_name` across
-`TicketPackageCodestream` records.
+`TicketPackageTrack` records.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|

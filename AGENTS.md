@@ -476,11 +476,11 @@ after modifying cross-cutting documents (`docs/data-model.md`,
 
 CRITICAL: Every service-layer function that modifies data relevant to
 ticket status gates MUST go through the `ticket_mutations` module.
-Direct modification of `TicketPackageCodestream`,
+Direct modification of `TicketPackageTrack`,
 `TicketPackageProduct`, `CVECVSSAssessment` records, or ticket
 severity outside this module is a bug.
 
-Relevant data includes: `TicketPackageCodestream` records,
+Relevant data includes: `TicketPackageTrack` records,
 `TicketPackageProduct` records, `CVECVSSAssessment` records, ticket
 severity, and package addition/removal.
 
