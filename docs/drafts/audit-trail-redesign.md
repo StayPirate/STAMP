@@ -124,6 +124,12 @@ class BaseAuditLog:
 
         Relies on the uniform user_id column provided by
         AuditEventMixin across all audit event models.
+
+        This method operates exclusively on the `user_id` column
+        (the actor). Domain-specific filters on other user FK columns
+        (e.g., `target_user_id` in IdentityAuditEvent) are the
+        responsibility of the endpoint implementation, not the base
+        class.
         """
         ...
 ```
@@ -194,8 +200,10 @@ This is the **model-layer** companion to the service-layer `BaseAuditLog`.
 
 **Nullability of `user_id`**: the mixin defines `user_id` as nullable at
 the database level for all audit event models. Subclasses of
-`BaseAuditLog` that only record human-initiated actions may override
-`log_event()` to validate that `user_id` is always provided.
+`BaseAuditLog` that only record human-initiated actions (e.g.,
+`SettingAuditLog`, `FetcherAuditLog`) MUST override `log_event()` to
+validate that `user_id` is provided, raising `ValueError` if it is
+`None`.
 
 **Relationship to BaseAuditLog**:
 
@@ -272,7 +280,10 @@ defines:
   `user_id` column (inherited from `AuditEventMixin`). Accepts `"system"`
   for NULL actor, a UUID string for direct match, or a username for
   lookup via JOIN. Every audit trail API endpoint with an `actor` filter
-  MUST use this method
+  MUST use this method. **Note**: this method operates exclusively on the
+  `user_id` column (the actor). Domain-specific filters on other user FK
+  columns (e.g., `target_user_id` in `IdentityAuditEvent`) are the
+  responsibility of the endpoint implementation, not the base class
 
 ### Naming
 
@@ -283,6 +294,8 @@ defines:
 | Enum | `{Domain}AuditEventType` | `TicketAuditEventType`, `IdentityAuditEventType` |
 | BaseAuditLog subclass | `{Domain}AuditLog` | `TicketAuditLog`, `IdentityAuditLog` |
 | Spec file (standalone) | `{domain}-audit-log.md` | `ticket-audit-log.md`, `identity-audit-log.md` |
+| Event type column | `event_type` | All audit event tables |
+| JSONB context column | `detail` (singular) | `IdentityAuditEvent.detail`, `FetcherAuditEvent.detail` |
 
 Endpoint naming convention: see `docs/api-spec.md` (Audit Trail Endpoint
 Naming section).
@@ -301,8 +314,10 @@ same `AsyncSession` as the mutation.
 - `user_id` is set when the action was initiated by a human user
 - `user_id` is `NULL` when the action was initiated by the system (e.g.,
   background task, AD sync, automated detection)
-- Subclasses that only record human-initiated actions may override
-  `log_event()` to validate that `user_id` is provided
+- Subclasses that only record human-initiated actions (e.g.,
+  `SettingAuditLog`, `FetcherAuditLog`) MUST override `log_event()` to
+  validate that `user_id` is provided, raising `ValueError` if it is
+  `None`
 
 ### Date filtering
 
@@ -316,6 +331,25 @@ class method to ensure uniform behavior across all audit trails:
 - Both → records in the inclusive range
 - Neither → no date filter applied
 
+### Indexing
+
+Every audit event table MUST have indexes on:
+
+1. `created_at` — all audit trail endpoints support date range filtering
+2. Every column used as a mandatory scope filter (e.g., `ticket_id` for
+   ticket audit events, `fetcher_name` for fetcher audit events)
+3. Every nullable FK column used as an optional filter (e.g.,
+   `target_user_id`, `user_id`)
+
+The `event_type` column does NOT require a dedicated index — its low
+cardinality makes it ineffective as a standalone index. When filtered
+alongside `created_at` or a scope column, the existing indexes provide
+sufficient selectivity.
+
+Specific index definitions per table are left to implementation. This
+convention provides the criteria; the developer applies them to each
+concrete table.
+
 ### Audit Trail Index
 
 When adding a new audit trail, update this index.
@@ -326,6 +360,15 @@ When adding a new audit trail, update this index.
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
 | Identity | `identity_audit_event` | 16 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
+
+### Access level
+
+Most audit trail endpoints are restricted to **Admin** role. The ticket
+audit log (`GET /api/v1/tickets/{ticket_id}/audit-log`) is the exception:
+it is **Public** because ticket event history is part of the normal VA
+workflow, not an admin-only auditing feature. This asymmetry is
+intentional — the ticket audit log is entity-scoped (always filtered by
+`ticket_id`) and does not expose cross-entity audit data.
 
 ### Cross-references
 
@@ -498,6 +541,8 @@ these operations. Each must be updated to reference the
 
 | Spec | Lines | Operation | Current logging |
 |---|---|---|---|
+| `docs/features/identity/user-service.md` | 159-211 | User creation (`create_user()`) | No audit event |
+| `docs/features/identity/user-service.md` | 214-268 | User update (`update_user()`) — field-change events | No audit event |
 | `docs/features/identity/user-service.md` | 320-321 | Role changes | INFO log |
 | `docs/features/identity/user-service.md` | 364 | Role mapping sync | INFO log |
 | `docs/features/identity/user-service.md` | 401 | Role mapping deletion | INFO log |
@@ -505,6 +550,7 @@ these operations. Each must be updated to reference the
 | `docs/features/identity/user-service.md` | 497-498 | User reactivation | INFO log |
 | `docs/features/identity/user-service.md` | 566 | User unlock | INFO log |
 | `docs/features/identity/user-management.md` | 852-853 | Admin password reset | INFO log |
+| `docs/features/identity/ad-integration.md` | 427-431 | AD sync step 3 — user upsert (creates `user_created` events) | No audit event |
 | `docs/features/identity/ad-integration.md` | 770-773 | Role mapping creation | INFO log (JSON) |
 | `docs/features/identity/ad-integration.md` | 806-809 | Role mapping deletion | INFO log (JSON) |
 | `docs/features/identity/ad-integration.md` | 499-500 | Username rename (AD sync) | Fetcher execution log + log entry |
@@ -720,6 +766,7 @@ descending.
 |---|---|---|---|
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
+| `event_type` | string | -- | Comma-separated list of event types (currently only `setting_changed`) |
 | `setting_key` | string | -- | Filter by setting key |
 | `actor` | string | -- | Filter by actor: user UUID or username. `system` is accepted but will return no results (all setting changes are user-initiated) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
@@ -841,6 +888,18 @@ The specs listed in Change 3 "Spec updates required" must be updated to
 reference the `IdentityAuditLog` instead of (or in addition to)
 INFO-level logging.
 
+### Files referencing FetcherAuditLog by name
+
+All references to `FetcherAuditLog`, `FetcherAuditAction`,
+`fetcher_audit_log`, `action` (column), `details` (column), and
+`performed_by_user_id` must be updated to the new names. Known
+locations:
+
+- `docs/features/platform/fetcher-infrastructure.md`
+- `docs/features/platform/fetcher-dashboard.md`
+- `docs/features/identity/ad-integration.md` (line 221)
+- `docs/data-model.md`
+
 ---
 
 ## Change 7: Fetcher audit trail alignment
@@ -853,20 +912,26 @@ INFO-level logging.
 1. Rename the model from `FetcherAuditLog` to `FetcherAuditEvent`
 2. Rename the enum from `FetcherAuditAction` to `FetcherAuditEventType`
 3. Rename the table from `fetcher_audit_log` to `fetcher_audit_event`
-4. Rename the column `performed_by_user_id` to `user_id` — the column is
+4. Rename the column `action` to `event_type` — aligns with the standard
+   column name used by all other audit event models
+5. Rename the column `performed_by_user_id` to `user_id` — the column is
    now inherited from `AuditEventMixin`. Update all spec references to
    this column in `fetcher-infrastructure.md` and `fetcher-dashboard.md`
-5. Change `user_id` constraint from NOT NULL to nullable (inherited from
-   `AuditEventMixin`)
-6. Rename the API response field `performed_by` to `actor` in
-   `fetcher-dashboard.md` to align with the standard response format
-   used by all audit trail endpoints
-7. Add `from_date`, `to_date`, and `actor` query parameters to the
-   `GET /api/v1/fetchers/{fetcher_name}/audit-log` endpoint in
+6. Change `user_id` constraint from NOT NULL to nullable (inherited from
+   `AuditEventMixin`). `FetcherAuditLog.log_event()` MUST validate that
+   `user_id` is provided (all fetcher admin actions are human-initiated)
+7. Rename the column `details` to `detail` — aligns with the standard
+   column name used by `IdentityAuditEvent` (see F4 standardization)
+8. Rename the API response field `performed_by` to `actor` in
+   `fetcher-dashboard.md` and add `full_name` to the response object to
+   align with the standard `actor` schema used by all audit trail
+   endpoints (see F7)
+9. Add `from_date`, `to_date`, `actor`, and `event_type` query parameters
+   to the `GET /api/v1/fetchers/{fetcher_name}/audit-log` endpoint in
    `fetcher-dashboard.md`, in compliance with the audit trail conventions
    in `docs/features/platform/audit-trail-infrastructure.md`
-8. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
-   audit trail in the global registry at implementation time
+10. Create a `FetcherAuditLog(BaseAuditLog)` subclass to register this
+    audit trail in the global registry at implementation time
 
 **Note**: no database migration is needed for these renames. The fetcher
 audit trail has no implementation code yet — these are spec-level changes
@@ -907,6 +972,103 @@ endpoint path `/tickets/{ticket_id}/events`):
 
 ---
 
+## Change 9: Guardrail restructuring
+
+**Target files**: `AGENTS.md`, `.opencode/agents/identity-integrity-reviewer.md`
+(new)
+
+**Motivation**: Guardrail 11 mandates audit event creation for every
+ticket mutation but has no equivalent for identity or setting mutations.
+With the introduction of new audit trails, enforcement must be
+systematized.
+
+**Approach**: a generic cross-cutting guardrail establishes the universal
+rule; domain-specific guardrails add enforcement details only where
+complexity warrants it. Domains with trivial audit coverage (settings,
+fetcher) rely on the generic guardrail alone.
+
+**Actions**:
+
+### 1. New generic guardrail — Audit trail atomicity
+
+Add a new guardrail (numbered before the current Guardrail 11) to
+`AGENTS.md`:
+
+> **Audit trail atomicity**: every service operation that modifies data
+> covered by an audit trail registered in `BaseAuditLog` MUST create the
+> corresponding audit event record in the same database transaction. The
+> absence of an audit event for a covered mutation is a bug.
+>
+> See `docs/features/platform/audit-trail-infrastructure.md` for the
+> Audit Trail Index (which audit trails exist and what they cover),
+> naming conventions, and the `BaseAuditLog` / `AuditEventMixin`
+> contracts.
+
+This guardrail does NOT prescribe a specific reviewer agent — it is a
+universal principle. The domain-specific guardrails below add agent
+invocations where appropriate.
+
+### 2. Update existing Guardrail 11 — Ticket audit trail
+
+Guardrail 11 remains ticket-specific but is updated to:
+
+- Reference the generic audit trail atomicity guardrail
+- Use the new naming (`TicketAuditEvent`, `TicketAuditEventType`,
+  `TicketAuditLog.log_event()`)
+- Reference `docs/features/tickets/ticket-audit-log.md` (renamed)
+- Continue invoking `@ticket-integrity-reviewer`
+
+### 3. New guardrail — Identity audit trail
+
+Add a new guardrail to `AGENTS.md`:
+
+> **Identity audit trail**: every service operation that modifies
+> identity-related data (user lifecycle, roles, API keys, role mappings)
+> MUST create an `IdentityAuditEvent` via
+> `IdentityAuditLog.log_event()` in the same database transaction.
+>
+> Before considering any identity-related code change complete:
+>
+> 1. Identify which identity mutations the code performs
+> 2. Verify that an `IdentityAuditEvent` is created for each mutation
+> 3. Verify that tests assert `IdentityAuditEvent` creation (correct
+>    event count, event type, user_id, target_user_id, old/new values)
+> 4. After implementation, invoke `@identity-integrity-reviewer`
+>
+> See `docs/features/identity/identity-audit-log.md` for the event type
+> contract.
+
+### 4. New agent — `@identity-integrity-reviewer`
+
+Create `.opencode/agents/identity-integrity-reviewer.md`:
+
+- Purpose: reviews identity-related code changes to verify that every
+  mutation produces a corresponding `IdentityAuditEvent` with correct
+  field values
+- Trigger: invoked by the identity audit trail guardrail after modifying
+  services that mutate identity data (`user_service`, `api_key_service`,
+  AD sync tasks)
+- Read-only: does not modify files
+
+### 5. No dedicated guardrails for settings and fetcher
+
+The **setting audit trail** has a single event type (`setting_changed`)
+produced in a single endpoint. The **fetcher audit trail** has 4 event
+types produced in admin dashboard actions. Both are sufficiently simple
+that the generic audit trail atomicity guardrail provides adequate
+coverage without dedicated guardrails or agents.
+
+### Cross-reference updates
+
+- `AGENTS.md`: add generic guardrail, update Guardrail 11, add identity
+  guardrail
+- `.opencode/agents/`: add `identity-integrity-reviewer.md`
+- `.opencode/README.md`: add new agent entry
+- `docs/features/platform/audit-trail-infrastructure.md`: reference the
+  guardrails in Cross-references
+
+---
+
 ## Excluded from scope
 
 The following were considered and explicitly excluded:
@@ -935,6 +1097,8 @@ The following were considered and explicitly excluded:
    - `FetcherAuditLog` (model) → `FetcherAuditEvent`
    - `FetcherAuditAction` (enum) → `FetcherAuditEventType`
    - `fetcher_audit_log` (table) → `fetcher_audit_event`
+   - `action` (column) → `event_type` (fetcher audit)
+   - `details` (column) → `detail` (fetcher audit)
    - `create_ticket_event()` (helper) → `TicketAuditLog.log_event()`
    - Endpoint path: `/tickets/{id}/events` → `/tickets/{id}/audit-log`
 1. **Audit Trail Infrastructure spec** (Change 1) — create
@@ -962,6 +1126,10 @@ The following were considered and explicitly excluded:
 9. **Cross-reference and permission updates** (Change 6) — update all
    file references, endpoint paths, and Endpoint Permission Map in
    `rbac.md`
+10. **Guardrail restructuring** (Change 9) — add generic audit trail
+    atomicity guardrail, update Guardrail 11 for tickets, add identity
+    audit trail guardrail with `@identity-integrity-reviewer` agent,
+    update `.opencode/README.md`
 
 ---
 
@@ -993,25 +1161,28 @@ The following were considered and explicitly excluded:
    `FetcherRun.triggered_by_user_id` is NOT renamed — it is not an audit
    trail and its descriptive name is appropriate for its domain.
 
-4. **No retrieval endpoint for fetcher audit log** — The
-   `fetcher-infrastructure.md` spec does not define a retrieval API for
-   fetcher audit events. `fetcher-dashboard.md` defines
-   `GET /api/v1/fetchers/{fetcher_name}/audit-log`. Verify that this
-   endpoint exists, supports the standard `from_date`/`to_date` parameters,
-   and conforms to the `/audit-log` suffix convention. If not, align it as
-   part of Change 7.
+4. ~~**No retrieval endpoint for fetcher audit log**~~ — **RESOLVED**:
+   verified that `fetcher-dashboard.md` defines
+   `GET /api/v1/fetchers/{fetcher_name}/audit-log` (line 539) with the
+   correct `/audit-log` suffix. However, the endpoint only supports
+   `page`/`per_page` parameters — it lacks `from_date`, `to_date`, and
+   `actor` filters, and the response uses `performed_by` instead of
+   `actor`. Change 7 covers all necessary alignment.
 
-5. **Indexes not defined for new tables** — `data-model.md` has a global
-   "TBD" for indexes. Audit log tables have predictable query patterns
-   (filter by `created_at`, `event_type`, `target_user_id`, `setting_key`).
-   Should Change 5 (data model updates) define indexes for all audit tables,
-   or is this deferred to implementation time?
+5. ~~**Indexes not defined for new tables**~~ — **RESOLVED**: a generic
+   indexing convention is defined in the Audit Trail Infrastructure spec
+   (Change 1, "Indexing" section) instead of per-table index definitions
+   in `data-model.md`. This avoids asymmetry with the rest of the data
+   model (which has a global TBD for indexes) while providing clear,
+   mechanically applicable criteria for implementation.
 
-6. **Guardrail 11 covers only tickets** — Guardrail 11 (AGENTS.md) mandates
-   `TicketEvent` creation for every ticket mutation but has no equivalent
-   for identity or setting mutations. Should Guardrail 11 be expanded to
-   cover all audit trails (e.g., "every identity mutation MUST create an
-   `IdentityAuditEvent`"), or should separate guardrails be created?
+6. ~~**Guardrail 11 covers only tickets**~~ — **RESOLVED**: Option C
+   adopted. A generic cross-cutting guardrail establishes the universal
+   audit trail atomicity rule. Domain-specific guardrails are added only
+   for ticket (existing, updated) and identity (new, with
+   `@identity-integrity-reviewer` agent). Settings and fetcher rely on
+   the generic guardrail alone — their audit coverage is too simple to
+   warrant dedicated guardrails or agents. See Change 9.
 
 7. ~~**Event type count: 25 vs 24**~~ — **RESOLVED**: the count is 24
    in both `ticket-history.md` and the Audit Trail Index. No discrepancy
