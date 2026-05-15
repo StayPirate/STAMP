@@ -30,17 +30,11 @@
 
 ### ATI-GAP-006 — Retention Cleanup No Mechanism Specified (Low)
 
-**Category**: Operational
-**Status**: OPEN
-
-All trails have indefinite retention. No archival or cleanup path specified. Tables will grow unbounded with no performance mitigation noted beyond indexes.
+**Status**: RESOLVED — Retention Policy consolidated as permanently indefinite; all cleanup/archival/partitioning references removed from spec (2026-05-15)
 
 ### ATI-GAP-007 — log_event() Kwargs Validation (Low)
 
-**Category**: Validation
-**Status**: OPEN
-
-Base log_event() accepts **kwargs. Misspelled or unexpected kwargs behavior at base class level unspecified.
+**Status**: RESOLVED — Base log_event() kwargs column-name validation rule added to docstring (2026-05-15)
 
 ---
 
@@ -70,10 +64,7 @@ _No findings._
 
 ### ATI-DES-005 — filter_by_actor JOIN Path Index Dependency (Low)
 
-**Category**: Performance
-**Status**: OPEN
-
-Method joins User table on username but doesn't document dependency on User.username UNIQUE index.
+**Status**: RESOLVED — Non-issue: User.username UNIQUE constraint in data-model.md already guarantees index; documenting external index dependencies is not a project pattern (2026-05-15)
 
 ---
 
@@ -93,17 +84,11 @@ Method joins User table on username but doesn't document dependency on User.user
 
 ### ATI-SEC-004 — No Rate Limiting on Audit Endpoints (Low)
 
-**Category**: Denial of service
-**Status**: OPEN
-
-Public audit endpoints have no rate limiting mentioned. Repeated queries for resource exhaustion.
+**Status**: RESOLVED — Non-issue: rate limiting is a cross-cutting infrastructure concern in api-spec.md; 3/4 audit endpoints require Admin; consistent with UMGT-SEC-04, ADIN-SEC-07 (2026-05-15)
 
 ### ATI-SEC-005 — Retention Cleanup Without Integrity Safeguards (Low)
 
-**Category**: Integrity
-**Status**: OPEN
-
-Future cleanup could destroy forensic evidence without archival or authorization requirements.
+**Status**: RESOLVED — Moot after ATI-GAP-006: all cleanup/archival references removed; retention is permanently indefinite (2026-05-15)
 
 ### ATI-SEC-006 — log_event() Accepts Arbitrary Kwargs (Low)
 

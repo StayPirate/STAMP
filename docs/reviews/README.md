@@ -20,8 +20,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
 | [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-12 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 2 | 🟢 | 1 | 2 | 🟢 | 5 | 2026-05-15 | ⚠️ |
-|  | 2:🟡 |  | 1:🟡 | 2:🟡 |  |  |  |  |
+| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | — | — | — | — | — | 0 | — | — |
@@ -38,8 +38,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **0** | **1** | **3** | **0** | **6** |  |  |
-|  | 2:🟡 |  | 1:🟡 | 1:🟠 2:🟡 |  |  |  |  |
+| **Total** | **0** | **0** | **0** | **1** | **0** | **1** |  |  |
+|  |  |  |  | 1:🟠 |  |  |  |  |
 
 ### Disabled specs
 

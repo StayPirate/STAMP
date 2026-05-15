@@ -45,8 +45,6 @@ defines:
   global registry, keyed by `name`. If a subclass attempts to register
   with a `name` that already exists in the registry, a `ValueError` MUST
   be raised at startup to prevent silent overwrites
-- **Retention**: `default_retention_days: int | None` — `None` means
-  indefinite retention. Subclasses override as needed
 - **Event creation**: `log_event()` class method inserts a record within
   the caller's database transaction. Subclasses may override to add
   domain-specific validation (e.g., ensuring `user_id` is provided for
@@ -73,7 +71,6 @@ class BaseAuditLog:
     name: str                          # e.g., "ticket", "identity", "setting"
     description: str                   # human-readable purpose
     model_class: type                  # SQLAlchemy model (e.g., TicketAuditEvent)
-    default_retention_days: int | None = None  # None = indefinite
 
     # Auto-registration in global registry (populated by __init_subclass__)
 
@@ -85,8 +82,13 @@ class BaseAuditLog:
         The base class uses **kwargs for flexibility (each trail has
         different fields). Subclasses SHOULD override with a typed
         signature that validates expected fields for their event types
-        before calling super().log_event(). Database NOT NULL constraints
-        serve as a last safety net for required fields.
+        before calling super().log_event(). The base implementation
+        MUST validate that all kwargs correspond to column names on
+        model_class — any kwarg that does not match a mapped column
+        MUST raise ValueError immediately, preventing misspelled or
+        unexpected fields from being silently ignored. Database NOT
+        NULL constraints serve as an additional safety net for required
+        fields.
         """
         ...
 
@@ -144,28 +146,24 @@ class TicketAuditLog(BaseAuditLog):
     name = "ticket"
     description = "Ticket lifecycle and mutation events"
     model_class = TicketAuditEvent
-    default_retention_days = None  # indefinite
 
 
 class IdentityAuditLog(BaseAuditLog):
     name = "identity"
     description = "User lifecycle, roles, API keys, and role mappings"
     model_class = IdentityAuditEvent
-    default_retention_days = None  # indefinite
 
 
 class SettingAuditLog(BaseAuditLog):
     name = "setting"
     description = "System setting modifications"
     model_class = SettingAuditEvent
-    default_retention_days = None  # indefinite
 
 
 class FetcherAuditLog(BaseAuditLog):
     name = "fetcher"
     description = "Administrative actions on fetchers"
     model_class = FetcherAuditEvent
-    default_retention_days = None  # indefinite
 ```
 
 **Note**: these subclasses define only service-layer attributes (name,
@@ -176,14 +174,11 @@ SQLAlchemy models pointed to by `model_class`, which inherit from
 
 ### Retention Policy
 
-Default retention is **indefinite** (`None`). Each subclass can override
-`default_retention_days` with an integer value. If in the future a
-runtime-configurable retention is needed, a `SystemSetting` can be
-introduced — but this is deferred (YAGNI).
-
-A future cleanup task could iterate the `BaseAuditLog` registry and
-delete records older than `default_retention_days` for each trail where
-the value is not `None`.
+Retention is **permanently indefinite** for all audit trails. Audit
+records are compliance and forensic evidence that must remain available
+at all times — there is no plan for cleanup, archival, or deletion.
+The expected volume of audit events over the lifetime of the system
+does not justify a retention mechanism.
 
 ### Relationship to AuditEventMixin
 
@@ -308,18 +303,16 @@ Audit event tables are append-only. No application-level UPDATE or DELETE
 operations are permitted on these tables. This is a project convention
 enforced via code review (guardrails) and automated tests. Tests should
 verify the absence of UPDATE/DELETE operations on audit event models in
-the service layer.
-
-The only exception is a future archival/cleanup mechanism, which must be
-defined in a dedicated specification before implementation.
+the service layer. There are no exceptions to this rule (see Retention
+Policy above).
 
 ## Scalability Considerations
 
 Current indexes cover primary query patterns (per-entity lookups).
 Cross-entity queries at high volume may degrade on very large tables.
-Table partitioning by date range can be evaluated in the future if
-volumes justify it. Retention is intentionally indefinite (all trails
-have `default_retention_days = None`).
+The expected event volume does not justify additional partitioning or
+performance measures at this time. See Retention Policy for the
+rationale.
 
 ## Enforcement
 
