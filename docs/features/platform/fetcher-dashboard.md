@@ -302,12 +302,14 @@ Returns full detail for a single run.
 
 Same fields as the list response, plus:
 - `error_detail`: included ONLY if the requesting user has the Admin
-  role. Omitted (or `null`) for non-admin users.
+  role. The field is **absent from the response body** for
+  unauthenticated callers and authenticated users without the Admin role.
 - `error_traceback`: included ONLY if the requesting user has the Admin
-  role. Omitted (or `null`) for non-admin users.
+  role. The field is **absent from the response body** for
+  unauthenticated callers and authenticated users without the Admin role.
 
 **Permissions**: publicly accessible (no authentication required). Admin
-users see additional fields (`error_traceback`).
+users see additional fields (`error_detail`, `error_traceback`).
 
 **Error responses**:
 
@@ -392,6 +394,10 @@ individual runs for the last 90 days, weekly aggregates for older data.
   and `enabled_by` are `null`.
 
 **Permissions**: publicly accessible (no authentication required).
+
+**Sorting**: results are returned in chronological order (`timestamp`
+ascending). Client-controlled sorting is not supported — the data is
+time-series and must be in chronological order for chart rendering.
 
 **Error responses**:
 
@@ -607,6 +613,8 @@ include the fields to change.
 |---|---|---|
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be configured. |
+| 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` (not declared in the fetcher's schema) |
+| 422 | `FETCHER_SETTING_INVALID` | Value in `custom_settings` fails type, range, or choices validation |
 | 422 | `VALIDATION_ERROR` | Invalid cron expression, timeout, or rate limit format |
 
 ### Get Fetcher Audit Log (Admin Only)
@@ -624,7 +632,7 @@ Returns the audit trail of admin actions for a fetcher.
 | `page` | int | 1 | Page number |
 | `per_page` | int | 20 | Items per page (max 100) |
 | `event_type` | string | -- | Comma-separated list of event types (e.g., `disabled,enabled`) |
-| `actor` | string | -- | Filter by actor: user UUID, username, or `system` (accepted but returns no results — all fetcher admin actions are human-initiated) |
+| `actor` | string | -- | Filter by actor: user UUID or username. Follows User Identifier Resolution (see `docs/api-spec.md`). Returns events performed by the specified user. |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 

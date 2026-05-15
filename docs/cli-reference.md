@@ -15,3 +15,4 @@ guidelines, and the CLI Output Contract.
 | `sentinel manage-user unlock`      | Clear login lockout counter for a user   | Yes        | [user-management](features/identity/user-management.md) |
 | `sentinel fetcher list`            | List all fetchers with current state     | Yes        | [fetcher-dashboard](features/platform/fetcher-dashboard.md) |
 | `sentinel fetcher run <name>`      | Execute a fetcher synchronously          | No (by design) | [fetcher-dashboard](features/platform/fetcher-dashboard.md) |
+| `sentinel fetcher config <name>`   | Display fetcher configuration            | Yes        | [fetcher-dashboard](features/platform/fetcher-dashboard.md) |
