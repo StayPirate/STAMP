@@ -566,7 +566,7 @@ timestamp on the record:
 - `deleted_at IS NULL` → record is active
 
 The identity of the user who performed the deletion is recorded in the
-corresponding `TicketEvent` (`user_id` field), not on the record itself.
+corresponding `TicketAuditEvent` (`user_id` field), not on the record itself.
 
 ### Hierarchical Exclusion Model
 
@@ -666,7 +666,7 @@ When the VA restores a soft-deleted record:
 2. `deleted_at` is set to `NULL` on the record.
 3. The record's state is already current (no recalculation needed —
    soft-deleted records continue to receive updates).
-4. A single `TicketEvent` is created for the restored record.
+4. A single `TicketAuditEvent` is created for the restored record.
 
 **Restore is permitted even when an ancestor is excluded** (per design
 decision D2). Clearing a product's `deleted_at` while its parent track
@@ -694,7 +694,7 @@ function directly and benefit from the automatic exclusion via hierarchy.
 
 ### Ticket Events for Soft-Deletion
 
-A single `TicketEvent` is created for each soft-deletion or restore
+A single `TicketAuditEvent` is created for each soft-deletion or restore
 operation — only for the **directly affected record**. Child records
 that become effectively excluded via the hierarchy do not generate
 separate events.
@@ -906,7 +906,7 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
 ## Ticket Events for Package Changes
 
 Every modification to a ticket's package data MUST produce a
-`TicketEvent` record for audit and traceability. The following event
+`TicketAuditEvent` record for audit and traceability. The following event
 types are defined:
 
 | Action | `event_type` | `user_id` | Details recorded |
@@ -934,7 +934,7 @@ types are defined:
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's
   `old_value`, `new_value`, and `comment` fields as strings. See
-  `docs/features/tickets/ticket-history.md` for the exact field mapping
+  `docs/features/tickets/ticket-audit-log.md` for the exact field mapping
   and `docs/data-model.md` for the schema.
 
 ---
@@ -1105,7 +1105,7 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/exclude
 
 Soft-delete a package from the ticket. Sets `deleted_at` on the package
 record only — tracks and products are not modified but become
-effectively excluded via the hierarchy. Creates a single `TicketEvent`.
+effectively excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 See [Soft-Deletion](#soft-deletion) for the full behavior.
 
 **Response** (200 OK):
@@ -1140,7 +1140,7 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/restore
 
 Restore a soft-deleted package. Clears `deleted_at` on the package
 record only — child records are not modified. Creates a single
-`TicketEvent`. See [Soft-Deletion — Restore](#restore).
+`TicketAuditEvent`. See [Soft-Deletion — Restore](#restore).
 
 **Pre-check**: the package must have at least one track with
 `deleted_at IS NULL` that itself has at least one product with
@@ -1179,7 +1179,7 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude
 
 Soft-delete a track from the ticket. Sets `deleted_at` on the track
 record only — products under it are not modified but become effectively
-excluded via the hierarchy. Creates a single `TicketEvent`.
+excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 
 **Response** (200 OK):
 
@@ -1213,7 +1213,7 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore
 
 Restore a soft-deleted track. Clears `deleted_at` on the track record
 only — products under it are not modified. Creates a single
-`TicketEvent`.
+`TicketAuditEvent`.
 
 **Pre-check**: the track must have at least one product with
 `deleted_at IS NULL`. If not, returns `422 PACKAGE_RESTORE_BLOCKED`.
@@ -1284,7 +1284,7 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/product
 
 Restore a soft-deleted product. Clears `deleted_at` on the product
 record. No pre-check needed (products have no children). Creates a
-single `TicketEvent`.
+single `TicketAuditEvent`.
 
 **Response** (200 OK):
 
@@ -1319,7 +1319,7 @@ PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}
 
 Change the affectedness status of a track. Triggers status propagation
 to all active child products (with eligibility evaluation for
-"Affected"), TicketEvent creation, and ticket status re-evaluation — all
+"Affected"), TicketAuditEvent creation, and ticket status re-evaluation — all
 via `ticket_mutations`.
 
 **Request body**:
@@ -1401,7 +1401,7 @@ PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/produc
 
 Override the affectedness status and/or eligibility of a specific
 product. Sets the corresponding `is_*_override` flag to `true`.
-Triggers TicketEvent creation and ticket status re-evaluation via
+Triggers TicketAuditEvent creation and ticket status re-evaluation via
 `ticket_mutations`.
 
 **Request body**:
@@ -1579,7 +1579,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   with actionable `TicketPackageProduct` records and enqueues
   re-evaluation. With the new model: Reactive LTSS sets
   `eligible = false` (status stays `AFFECTED`); EOL with `AFFECTED`
-  status removes the product (soft-delete with system TicketEvent); EOL
+  status removes the product (soft-delete with system TicketAuditEvent); EOL
   with `ANALYSIS` status removes the product. Idempotent — operates on
   current state with no cache. See
   `docs/features/packages/product-lifecycle-transitions.md` for the
@@ -1641,7 +1641,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   ticket mutations module
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
-- `docs/features/tickets/ticket-history.md` — TicketEvent field mapping
+- `docs/features/tickets/ticket-audit-log.md` — TicketAuditEvent field mapping
 - `docs/features/packages/ibs-track-release-detection.md` — IBS
   track-level release detection
 - `docs/features/packages/ibs-product-release-detection.md` — IBS

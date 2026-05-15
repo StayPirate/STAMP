@@ -239,7 +239,7 @@ Then:
 
 ### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
 
-- Create a `TicketEvent` of informational type recording: `advisory_id`,
+- Create a `TicketAuditEvent` of informational type recording: `advisory_id`,
   the source name derived from `primary.xml` if available, and a note that
   no ticket package matched.
 - Notify the ticket's assignee (notification mechanism is TBD at the system

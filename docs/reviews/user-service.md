@@ -50,7 +50,7 @@
 
 ### USVC-COH-02 — duplicate_target_changed event type added to ticket-history frontend display table (Low)
 
-**Status**: RESOLVED — Added duplicate_target_changed with display label to the Filter Bar display label mapping table in ticket-history.md (2026-05-08)
+**Status**: RESOLVED — Added duplicate_target_changed with display label to the Filter Bar display label mapping table in ticket-audit-log.md (2026-05-08)
 
 ### USVC-COH-03 — Password minimum length inconsistency across identity specs (High)
 

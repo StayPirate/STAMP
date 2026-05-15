@@ -326,44 +326,75 @@ The goal is to prevent security vulnerabilities from being introduced into
 the codebase. The `@security-reviewer` agent complements the automated
 security scanning in the CI pipeline (`bandit`, `pip-audit`, `npm audit`).
 
-### 11. Ticket event logging
+### 11. Audit trail atomicity
 
-CRITICAL: Every service operation that modifies a Ticket or its related
-data (status, assignee, duplicate links, packages, codestreams, products)
-MUST create a `TicketEvent` record with the appropriate `event_type`.
+CRITICAL: Every service operation that modifies data covered by an audit
+trail registered in `BaseAuditLog` MUST create the corresponding audit
+event record in the same database transaction. The absence of an audit
+event for a covered mutation is a bug.
+
+See `docs/features/platform/audit-trail-infrastructure.md` for the
+Audit Trail Index (which audit trails exist and what they cover),
+naming conventions, and the `BaseAuditLog` / `AuditEventMixin`
+contracts.
+
+#### Ticket audit trail
+
+Every service operation that modifies a Ticket or its related data
+(status, assignee, duplicate links, packages, codestreams, products)
+MUST create a `TicketAuditEvent` record with the appropriate
+`event_type`.
 
 Before considering any ticket-related code change complete:
 
 1. Identify which ticket mutations the code performs
-2. Verify that a `TicketEvent` is created for each mutation, with:
-   - Correct `event_type` per the contract in `docs/features/tickets/ticket-history.md`
+2. Verify that a `TicketAuditEvent` is created for each mutation, with:
+   - Correct `event_type` per the contract in `docs/features/tickets/ticket-audit-log.md`
    - `old_value` and `new_value` populated where applicable
    - `user_id` set for user-initiated actions, `NULL` for system actions
    - `comment` populated for automated events with a system description
-3. Verify that the `TicketEvent` is created in the same database transaction
+3. Verify that the `TicketAuditEvent` is created in the same database transaction
    as the ticket mutation (atomicity guarantee)
-4. Verify that tests assert `TicketEvent` creation:
+4. Verify that tests assert `TicketAuditEvent` creation:
    - Correct event count after each operation
    - Correct `event_type`, `old_value`, `new_value`
    - Correct `user_id` (user vs `NULL` for system)
 5. If the change introduces a new type of ticket mutation not covered by
-   an existing `TicketEventType`, STOP and propose an update to
-   `docs/data-model.md` and `docs/features/tickets/ticket-history.md` before
+   an existing `TicketAuditEventType`, STOP and propose an update to
+   `docs/data-model.md` and `docs/features/tickets/ticket-audit-log.md` before
    proceeding with the implementation
 6. After implementation, invoke `@ticket-integrity-reviewer` to verify:
-   - All mutations are covered by `TicketEvent` records
+   - All mutations are covered by `TicketAuditEvent` records
    - Field values comply with the contract in
-     `docs/features/tickets/ticket-history.md`
+     `docs/features/tickets/ticket-audit-log.md`
    - Events share the same database transaction as the mutation
 7. When creating or modifying a feature spec in `docs/features/` that
    describes ticket operations, invoke `@ticket-integrity-reviewer` to verify
-   that all described mutations have corresponding `TicketEventType`
+   that all described mutations have corresponding `TicketAuditEventType`
    entries in the contract — missing entries must be added before
    proceeding with implementation
 
 The goal is to maintain a complete and reliable audit trail for every
 ticket. An operation that mutates a ticket without creating a corresponding
-`TicketEvent` is a bug.
+`TicketAuditEvent` is a bug.
+
+#### Identity audit trail
+
+Every service operation that modifies identity-related data (user
+lifecycle, roles, API keys, role mappings) MUST create an
+`IdentityAuditEvent` via `IdentityAuditLog.log_event()` in the same
+database transaction.
+
+Before considering any identity-related code change complete:
+
+1. Identify which identity mutations the code performs
+2. Verify that an `IdentityAuditEvent` is created for each mutation
+3. Verify that tests assert `IdentityAuditEvent` creation (correct
+   event count, event type, user_id, target_user_id, old/new values)
+4. After implementation, invoke `@identity-integrity-reviewer`
+
+See `docs/features/identity/identity-audit-log.md` for the event type
+contract.
 
 ### 12. API-UI parity
 
@@ -562,7 +593,7 @@ handlers, CLI commands, or Celery tasks is a bug.
 
 This ensures that:
 
-- Side effects (ticket reassignment, TicketEvent creation, API key
+- Side effects (ticket reassignment, TicketAuditEvent creation, API key
   revocation, auth invalidation) are applied consistently
 - Business rules (self-removal guard, self-deactivation guard) are
   enforced regardless of the entry point

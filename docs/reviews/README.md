@@ -54,5 +54,5 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - pages
 - product-lifecycle-transitions
 - references
-- ticket-history
+- ticket-audit-log
 - tickets

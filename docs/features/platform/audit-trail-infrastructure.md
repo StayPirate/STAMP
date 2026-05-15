@@ -1,0 +1,287 @@
+# Audit Trail Infrastructure
+
+## Purpose
+
+Define the shared infrastructure for all audit trails in Sentinel:
+the `BaseAuditLog` service-layer base class, the `AuditEventMixin`
+model-layer mixin, naming conventions, atomicity rules, actor field
+semantics, date filtering convention, indexing criteria, and the
+Audit Trail Index.
+
+This is the single canonical source for all cross-cutting audit trail
+rules. Domain-specific audit trail specifications (ticket, identity,
+setting, fetcher) reference this document for shared conventions and
+extend it with their domain-specific event types and data.
+
+## AuditEventMixin
+
+Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
+(`backend/app/models/mixins.py`). The mixin provides the columns common
+to all audit trail tables:
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | UUID | PK | Internal identifier |
+| `created_at` | TIMESTAMP | NOT NULL, server default | When the event occurred |
+| `user_id` | UUID | FK(user.id), nullable | Actor. NULL for system-initiated actions |
+
+All audit event models inherit these columns from the mixin and add
+their own domain-specific columns (e.g., `ticket_id`, `event_type`,
+`target_user_id`).
+
+## BaseAuditLog Class
+
+Every audit trail in Sentinel MUST be implemented as a subclass of
+`BaseAuditLog` (`backend/app/services/base_audit_log.py`). The base class
+defines:
+
+- **Auto-registration**: all subclasses are automatically registered in a
+  global registry, keyed by `name`
+- **Retention**: `default_retention_days: int | None` — `None` means
+  indefinite retention. Subclasses override as needed
+- **Event creation**: `log_event()` class method inserts a record within
+  the caller's database transaction. Subclasses may override to add
+  domain-specific validation (e.g., ensuring `user_id` is provided for
+  admin-only trails)
+- **Date filtering**: `apply_date_filters()` class method applies
+  `from_date` / `to_date` filters on `created_at`. Every audit trail API
+  endpoint MUST use this method for uniform date filtering behavior
+- **Actor filtering**: `filter_by_actor()` class method filters by
+  `user_id` column (inherited from `AuditEventMixin`). Accepts `"system"`
+  for NULL actor, a UUID string for direct match, or a username for
+  lookup via JOIN. Every audit trail API endpoint with an `actor` filter
+  MUST use this method. **Note**: this method operates exclusively on the
+  `user_id` column (the actor). Domain-specific filters on other user FK
+  columns (e.g., `target_user_id` in `IdentityAuditEvent`) are the
+  responsibility of the endpoint implementation, not the base class
+
+### Abstract Interface
+
+```python
+class BaseAuditLog:
+    """Base for all audit trail implementations."""
+
+    # Subclass MUST define:
+    name: str                          # e.g., "ticket", "identity", "setting"
+    description: str                   # human-readable purpose
+    model_class: type                  # SQLAlchemy model (e.g., TicketAuditEvent)
+    default_retention_days: int | None = None  # None = indefinite
+
+    # Auto-registration in global registry (populated by __init_subclass__)
+
+    @classmethod
+    async def log_event(cls, session: AsyncSession, **kwargs) -> None:
+        """Create an audit record in the current transaction.
+
+        Subclasses may override to add domain-specific validation.
+        """
+        ...
+
+    @classmethod
+    def apply_date_filters(
+        cls,
+        query: Select,
+        from_date: date | datetime | None = None,
+        to_date: date | datetime | None = None,
+    ) -> Select:
+        """Apply created_at date range filters to a query.
+
+        - from_date only: WHERE created_at >= from_date
+        - to_date only:   WHERE created_at <= to_date
+        - both:           WHERE created_at >= from_date
+                            AND created_at <= to_date
+        - neither:        no filter applied
+        """
+        ...
+
+    @classmethod
+    def filter_by_actor(
+        cls,
+        query: Select,
+        actor: str | None = None,
+    ) -> Select:
+        """Filter audit events by actor (user_id column).
+
+        - actor is None:     no filter applied
+        - actor == "system": WHERE user_id IS NULL
+        - actor is a UUID:   WHERE user_id = <uuid>
+        - actor is a string: JOIN User, WHERE username = <actor>
+
+        Relies on the uniform user_id column provided by
+        AuditEventMixin across all audit event models.
+
+        This method operates exclusively on the `user_id` column
+        (the actor). Domain-specific filters on other user FK columns
+        (e.g., `target_user_id` in IdentityAuditEvent) are the
+        responsibility of the endpoint implementation, not the base
+        class.
+        """
+        ...
+```
+
+### Concrete Subclasses
+
+```python
+class TicketAuditLog(BaseAuditLog):
+    name = "ticket"
+    description = "Ticket lifecycle and mutation events"
+    model_class = TicketAuditEvent
+    default_retention_days = None  # indefinite
+
+
+class IdentityAuditLog(BaseAuditLog):
+    name = "identity"
+    description = "User lifecycle, roles, API keys, and role mappings"
+    model_class = IdentityAuditEvent
+    default_retention_days = None  # indefinite
+
+
+class SettingAuditLog(BaseAuditLog):
+    name = "setting"
+    description = "System setting modifications"
+    model_class = SettingAuditEvent
+    default_retention_days = None  # indefinite
+
+
+class FetcherAuditLog(BaseAuditLog):
+    name = "fetcher"
+    description = "Administrative actions on fetchers"
+    model_class = FetcherAuditEvent
+    default_retention_days = None  # indefinite
+```
+
+**Note**: these subclasses define only service-layer attributes (name,
+description, model reference, retention). Database columns (`id`,
+`created_at`, `user_id`, and domain-specific columns) are defined in the
+SQLAlchemy models pointed to by `model_class`, which inherit from
+`AuditEventMixin` for the common columns.
+
+### Retention Policy
+
+Default retention is **indefinite** (`None`). Each subclass can override
+`default_retention_days` with an integer value. If in the future a
+runtime-configurable retention is needed, a `SystemSetting` can be
+introduced — but this is deferred (YAGNI).
+
+A future cleanup task could iterate the `BaseAuditLog` registry and
+delete records older than `default_retention_days` for each trail where
+the value is not `None`.
+
+### Relationship to AuditEventMixin
+
+```
+Service layer (behavior)               Model layer (data structure)
+─────────────────────────               ────────────────────────────
+BaseAuditLog                            AuditEventMixin (id, created_at, user_id)
+  │  - log_event()                          │
+  │  - apply_date_filters()                 │
+  │  - filter_by_actor()                    │
+  │  - registry                             │
+  │                                         │
+  ├── TicketAuditLog ──model_class──▶  TicketAuditEvent (Base + Mixin)
+  ├── IdentityAuditLog ─model_class─▶  IdentityAuditEvent (Base + Mixin)
+  ├── SettingAuditLog ──model_class──▶  SettingAuditEvent (Base + Mixin)
+  └── FetcherAuditLog ─model_class──▶  FetcherAuditEvent (Base + Mixin)
+```
+
+`BaseAuditLog` references the model via `model_class` and provides
+behavioral methods. `AuditEventMixin` provides the structural columns.
+Together they ensure that all audit trails are both structurally
+consistent (same base columns) and behaviorally consistent (same
+service-layer interface).
+
+## Naming
+
+| Element | Pattern | Example |
+|---|---|---|
+| Database table | `{domain}_audit_event` | `ticket_audit_event`, `identity_audit_event` |
+| SQLAlchemy model | `{Domain}AuditEvent` | `TicketAuditEvent`, `IdentityAuditEvent` |
+| Enum | `{Domain}AuditEventType` | `TicketAuditEventType`, `IdentityAuditEventType` |
+| BaseAuditLog subclass | `{Domain}AuditLog` | `TicketAuditLog`, `IdentityAuditLog` |
+| Spec file (standalone) | `{domain}-audit-log.md` | `ticket-audit-log.md`, `identity-audit-log.md` |
+| Event type column | `event_type` | All audit event tables |
+| JSONB context column | `detail` (singular) | `IdentityAuditEvent.detail`, `FetcherAuditEvent.detail` |
+
+Endpoint naming convention: see `docs/api-spec.md` (Audit Trail Endpoint
+Naming section).
+
+## Atomicity
+
+Every audit event MUST be created in the same database transaction as the
+mutation it records. If the mutation is rolled back, the audit event must
+not persist. This is enforced by using `BaseAuditLog.log_event()` with the
+same `AsyncSession` as the mutation.
+
+## Actor Field
+
+- `user_id` is inherited from `AuditEventMixin` and is nullable at the
+  database level in all audit event models
+- `user_id` is set when the action was initiated by a human user
+- `user_id` is `NULL` when the action was initiated by the system (e.g.,
+  background task, AD sync, automated detection)
+- Subclasses that only record human-initiated actions (e.g.,
+  `SettingAuditLog`, `FetcherAuditLog`) MUST override `log_event()` to
+  validate that `user_id` is provided, raising `ValueError` if it is
+  `None`
+
+## Date Filtering
+
+Every audit trail API endpoint MUST support `from_date` and `to_date`
+query parameters (ISO 8601 date or datetime, both optional, inclusive
+bounds). Filtering is provided by the `BaseAuditLog.apply_date_filters()`
+class method to ensure uniform behavior across all audit trails:
+
+- `from_date` only → records where `created_at >= from_date`
+- `to_date` only → records where `created_at <= to_date`
+- Both → records in the inclusive range
+- Neither → no date filter applied
+
+## Indexing
+
+Every audit event table MUST have indexes on:
+
+1. `created_at` — all audit trail endpoints support date range filtering
+2. Every column used as a mandatory scope filter (e.g., `ticket_id` for
+   ticket audit events, `fetcher_name` for fetcher audit events)
+3. Every nullable FK column used as an optional filter (e.g.,
+   `target_user_id`, `user_id`)
+
+The `event_type` column does NOT require a dedicated index — its low
+cardinality makes it ineffective as a standalone index. When filtered
+alongside `created_at` or a scope column, the existing indexes provide
+sufficient selectivity.
+
+Specific index definitions per table are left to implementation. This
+convention provides the criteria; the developer applies them to each
+concrete table.
+
+## Audit Trail Index
+
+When adding a new audit trail, update this index.
+
+| Audit Trail | Table | Event Types | Retention | Owning Spec |
+|---|---|---|---|---|
+| Ticket | `ticket_audit_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
+| Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
+| Identity | `identity_audit_event` | 16 | Indefinite | `docs/features/identity/identity-audit-log.md` |
+| Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
+
+## Access Level
+
+Most audit trail endpoints are restricted to **Admin** role. The ticket
+audit log (`GET /api/v1/tickets/{ticket_id}/audit-log`) is the exception:
+it is **Public** because ticket event history is part of the normal VA
+workflow, not an admin-only auditing feature. This asymmetry is
+intentional — the ticket audit log is entity-scoped (always filtered by
+`ticket_id`) and does not expose cross-entity audit data.
+
+## Cross-references
+
+- `docs/conventions.md` — Audit Trail reference paragraph
+- `docs/api-spec.md` — `/audit-log` endpoint suffix convention
+- `docs/data-model.md` — table definitions for all audit event models
+- `docs/features/tickets/ticket-audit-log.md` — ticket audit trail
+- `docs/features/identity/identity-audit-log.md` — identity audit trail
+- `docs/features/platform/admin.md` — setting audit trail
+- `docs/features/platform/fetcher-infrastructure.md` — fetcher audit trail
+- `AGENTS.md` — Audit trail atomicity guardrail

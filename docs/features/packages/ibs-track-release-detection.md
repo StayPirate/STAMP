@@ -128,7 +128,7 @@ A `TicketPackageTrack` record exists for the ticket's CVE with
 - Set `TicketPackageTrack.status` to `FIXED` and
   `TicketPackageTrack.delivery_status` to `RELEASED` through the
   `ticket_mutations` module (unless current status is `WONT_FIX`).
-- Create a `TicketEvent` with `event_type = track_released`,
+- Create a `TicketAuditEvent` with `event_type = track_released`,
   `user_id = NULL` (system action).
 
 ### Case B — Ticket exists, package NOT tracked in the ticket
@@ -144,7 +144,7 @@ for package P (in any codestream).
 - Set the `TicketPackageTrack` for codestream C to `status = FIXED` and
   `delivery_status = RELEASED` through `ticket_mutations` (the specific
   codestream where the fix was detected).
-- Create a `TicketEvent` with `event_type = package_added`,
+- Create a `TicketAuditEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
   detected in `{C}`".
 - Notify the ticket's assignee.
@@ -170,7 +170,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
    5. Set the `TicketPackageTrack` for the originating codestream to
       `status = FIXED` and `delivery_status = RELEASED` through
       `ticket_mutations`.
-   6. Create a `TicketEvent` with `event_type = ticket_created`,
+   6. Create a `TicketAuditEvent` with `event_type = ticket_created`,
        `user_id = NULL`, comment: `"CVE fix detected in {package}
        ({codestream})"`.
 

@@ -356,7 +356,7 @@ with an active ticket, Sentinel performs the following recalculation:
    Hat) and default CVSS version changes only process active tickets
    (New, Analysis, Analyzed) — Resolved tickets are excluded from those
    scopes.
-4. **Audit trail**: create `TicketEvent` records for each change:
+4. **Audit trail**: create `TicketAuditEvent` records for each change:
    - Severity change: `event_type = "severity_changed"`, `old_value` and
      `new_value` with severity labels
    - Product eligibility change: `event_type = "product_eligibility_changed"`,
@@ -580,7 +580,7 @@ records MUST go through the `ticket_mutations` module (see
 3. Calls `cvss.calculate_severity()` to derive the new severity
 4. Updates `CVE.severity` if it changed
 5. Re-evaluates product eligibility using the new score
-6. Creates `TicketEvent` records for each change
+6. Creates `TicketAuditEvent` records for each change
 7. Calls `evaluate_ticket_status()` to re-evaluate the ticket status
 
 All steps execute within the **same database transaction** as the

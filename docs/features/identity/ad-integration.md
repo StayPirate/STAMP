@@ -217,7 +217,7 @@ only if you understand the impact."
    - **Visual warning**: the admin UI displays a persistent safety
      warning (yellow triangle + amber box) explaining the impact of
      changing this value, ensuring the admin makes an informed decision
-   - **Audit trail**: every change is recorded in `FetcherAuditLog`
+   - **Audit trail**: every change is recorded in `FetcherAuditEvent`
      with old and new values, providing accountability
    - **Immediate effect**: the updated value takes effect on the next
      sync run without requiring a worker restart, which is advantageous
@@ -400,7 +400,7 @@ only if you understand the impact."
    `acting_user_id = None`. The service sets `active = false` and
    executes all side effects atomically. See
      `docs/features/identity/user-service.md` for the full contract (ticket
-     unassignment, API key revocation, TicketEvent creation)
+     unassignment, API key revocation, TicketAuditEvent creation)
 7. **Reactivation**: for each user in the `newly_reactivated` list
     (built in step 3 from the **active entries** set produced by step
     2b), call `user_service.reactivate_user()` with
@@ -414,15 +414,15 @@ only if you understand the impact."
 
    **Step ordering rationale (5→6→7)**: steps 5, 6, and 7 operate on
    independent data and produce independent side effects. Step 5
-   manages `UserRole` records (no TicketEvents). Step 6 manages
+   manages `UserRole` records (no TicketAuditEvents). Step 6 manages
    `active` status, API keys, sessions, and ticket assignments (with
-   TicketEvents). Step 7 sets `active = true` (no TicketEvents). Roles
+   TicketAuditEvents). Step 7 sets `active = true` (no TicketAuditEvents). Roles
    are not affected by deactivation or reactivation — they persist
    across status changes. The `newly_deactivated` and
    `newly_reactivated` lists are mutually exclusive by construction
    (a user cannot be both `active = true` and `active = false` in the
    DB). Therefore the ordering of these steps does not affect
-    correctness or TicketEvent content.
+    correctness or TicketAuditEvent content.
 
 #### Transaction boundaries
 
@@ -458,7 +458,7 @@ with a single transaction that rolls back entirely on failure.
 
 This model contrasts with the role mapping CRUD endpoints (POST / DELETE
 `/role-mappings`), which wrap all their operations — rule persistence,
-user re-evaluation, and TicketEvent creation — in a **single atomic
+user re-evaluation, and TicketAuditEvent creation — in a **single atomic
 transaction**. CRUD operations are short, admin-initiated, and expected
 to either succeed fully or roll back entirely.
 
@@ -490,7 +490,7 @@ implications:
   is a known side-effect of the sync — username stability is not
   guaranteed
 - **Internal identification is not affected**: all database
-  relationships, tickets, historical data, and TicketEvent records use
+  relationships, tickets, historical data, and TicketAuditEvent records use
   UUID primary keys, not usernames. No data integrity is lost
 - **Active sessions are not affected**: JWT tokens use UUID as the
   subject (`sub` claim), not the username. Existing sessions continue
@@ -766,10 +766,10 @@ Processing (all steps execute within a **single database transaction**):
    the service — only newly created `UserRole` records, not
    pre-existing ones (e.g., if a concurrent sync already applied the
    same mapping, those users are not counted)
-5. Emit a structured audit log entry (INFO level, JSON format) containing:
-   `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
-   `affected_users_count`, `timestamp`. This log line follows the
-   application's structured logging conventions (JSON log lines)
+5. Create `IdentityAuditEvent` with `event_type = role_mapping_created`
+   via `IdentityAuditLog.log_event()` — `user_id` = admin,
+   `target_user_id = NULL`, `new_value` = `"{ad_group} -> {role}"`,
+   `detail` = `{"ad_group_cn": "...", "role": "...", "affected_users": N}`
 
 ### Delete Role Mapping
 
@@ -802,10 +802,10 @@ Processing (steps 2–4 execute within a single database transaction):
    `USER_SELF_ROLE_REMOVAL` (see
    `docs/features/identity/user-service.md` for the full contract)
 3. Delete the `RoleMapping` record
-4. Emit a structured audit log entry (INFO level, JSON format) containing:
-   `admin_user_id`, `admin_username`, `ad_group_cn`, `role`,
-   `revoked_users_count`, `timestamp`. This log line follows the
-   application's structured logging conventions (JSON log lines)
+4. Create `IdentityAuditEvent` with `event_type = role_mapping_deleted`
+   via `IdentityAuditLog.log_event()` — `user_id` = admin,
+   `target_user_id = NULL`, `old_value` = `"{ad_group} -> {role}"`,
+   `detail` = `{"ad_group_cn": "...", "role": "...", "affected_users": N}`
 5. Return 200 with the impact summary
 
 This endpoint returns 200 with an impact summary instead of 204 because
@@ -878,7 +878,7 @@ Displays a table of all configured role mappings:
 5. **Deactivation cascades**: when an employee is deactivated in AD,
    the side effects are handled by `user_service.deactivate_user()` —
    see `docs/features/identity/user-service.md` for the full contract
-    (ticket unassignment, API key revocation, TicketEvent creation)
+    (ticket unassignment, API key revocation, TicketAuditEvent creation)
 6. **Admin self-removal protection**: an admin cannot remove their own
    Admin role via the API. The Admin role can be removed from a user only
    by a different admin, by the CLI, or by system actions (LDAP sync,
@@ -948,10 +948,12 @@ variables are not currently defined because anonymous bind does not use them.
   amount of AD data stored locally
 - Employee personal data (name, email) is stored locally for operational
   purposes. No additional PII (phone, address, etc.) is imported
-- **Audit logging for role mapping operations**: all role mapping CRUD
-  operations (creation and deletion) are audit-logged via structured
-  logging (JSON log lines at INFO level), capturing the admin identity,
-  mapping details, affected user counts, and timestamps
+- **Audit trail for role mapping operations**: all role mapping CRUD
+  operations (creation and deletion) produce `IdentityAuditEvent`
+  records (`role_mapping_created`, `role_mapping_deleted`) via
+  `IdentityAuditLog.log_event()`, capturing the admin identity,
+  mapping details, and affected user counts. See
+  `docs/features/identity/identity-audit-log.md`
 - The CLI `manage-user` commands require shell access to the server,
   which is an appropriate security barrier for administrative operations.
   See `docs/features/identity/user-management.md`

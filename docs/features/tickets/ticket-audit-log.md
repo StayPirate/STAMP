@@ -1,22 +1,28 @@
-# Ticket History
+# Ticket Audit Log
 
 ## Purpose
 
 Provide a complete, searchable audit trail for every ticket in Sentinel. Every
 modification to a ticket or its related data (status, assignee, duplicate
-links, packages, tracks, products) MUST produce a `TicketEvent` record.
+links, packages, tracks, products) MUST produce a `TicketAuditEvent` record.
 Users can browse, filter, and search the history through a dedicated "History"
-tab on the Ticket Detail page.
+tab on the Ticket Detail page (see
+`docs/features/ui/pages/ticket-detail.md` for the UI specification).
+
+The `TicketAuditLog` subclass of `BaseAuditLog` provides the event creation
+helper and registers this audit trail in the global registry. See
+`docs/features/platform/audit-trail-infrastructure.md` for the base class
+contract.
 
 ## Data Model
 
-The `TicketEvent` table and `TicketEventType` enum are defined in
+The `TicketAuditEvent` table and `TicketAuditEventType` enum are defined in
 `docs/data-model.md`. This specification defines the **contract** for how
 each event type must be populated.
 
 ### Event Type Contract
 
-Every service that mutates a ticket MUST create a `TicketEvent` with the
+Every service that mutates a ticket MUST create a `TicketAuditEvent` with the
 fields populated according to this table:
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` |
@@ -63,7 +69,7 @@ fields populated according to this table:
 ### List Ticket Events
 
 ```
-GET /api/v1/tickets/{ticket_id}/events
+GET /api/v1/tickets/{ticket_id}/audit-log
 ```
 
 Returns a paginated list of events for a specific ticket, ordered by
@@ -84,8 +90,10 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 | `page`       | int    | 1       | Page number (1-indexed) |
 | `per_page`   | int    | 20      | Items per page (max 100) |
 | `event_type` | string | —       | Comma-separated list of event types to include (e.g., `status_change,assignment`). If omitted, all types are returned. |
-| `actor`      | string | —       | Filter by actor. Accepts a user UUID to filter by a specific user, or the literal value `system` to show only automated events (where `user_id IS NULL`). If omitted, all actors are returned. |
+| `actor`      | string | —       | Filter by actor: user UUID, username, or `system` for automated events (where `user_id IS NULL`). If omitted, all actors are returned. |
 | `search`     | string | —       | Case-insensitive substring search on the `comment` field. If omitted, no text filtering is applied. |
+| `from_date`  | string | —       | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date`    | string | —       | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
 **Response** (200 OK):
 
@@ -147,148 +155,16 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 required). If the ticket is soft-deleted, only Admin users can access its
 event history; non-admin callers receive 410 Gone.
 
-## Frontend
-
-### History Tab
-
-The Ticket Detail page (`/tickets/:id`) includes a **"History"** tab that
-displays the ticket event timeline. This tab is separate from the main ticket
-information and package data tabs.
-
-#### Filter Bar
-
-At the top of the History tab, a horizontal filter bar provides:
-
-1. **Event type filter**: multi-select dropdown with checkboxes. Options are
-   derived from the `TicketEventType` enum, displayed with human-readable
-   labels:
-
-   | Enum value                 | Display label              |
-   |----------------------------|----------------------------|
-   | `status_change`            | Status change              |
-   | `assignment`               | Assignment                 |
-   | `duplicate_set`            | Duplicate set              |
-   | `duplicate_removed`        | Duplicate removed          |
-   | `duplicate_target_changed` | Duplicate target changed   |
-   | `package_added`            | Package added              |
-   | `package_excluded`         | Package excluded            |
-   | `package_restored`         | Package restored            |
-   | `track_status_changed`     | Track status changed        |
-   | `product_status_overridden`| Product status overridden   |
-   | `track_released`           | Track released              |
-   | `product_released`         | Product released           |
-   | `ticket_created`           | Ticket created             |
-   | `cve_associated`           | CVE associated             |
-   | `cve_removed`              | CVE removed                |
-   | `severity_changed`         | Severity changed           |
-   | `cvss_assessment_changed`  | CVSS assessment changed    |
-   | `product_eligibility_changed` | Product eligibility changed |
-    | `ticket_deleted`           | Ticket deleted              |
-    | `ticket_restored`          | Ticket restored             |
-    | `track_excluded`           | Track excluded              |
-    | `track_restored`           | Track restored              |
-    | `product_excluded`         | Product excluded            |
-    | `product_restored`         | Product restored            |
-
-2. **Actor filter**: single-select dropdown with options:
-   - "All" (default — no filter applied)
-   - "System" (shows only automated events)
-   - Individual users who appear in the ticket's event history (populated
-     dynamically from the event data currently loaded)
-
-3. **Text search**: input field with placeholder "Search in comments...".
-   Debounced (300ms delay) to avoid excessive API calls. Triggers a new API
-   request with the `search` query parameter.
-
-All filters are applied via query parameters on the API request. Changing any
-filter resets the pagination to page 1.
-
-A "Clear filters" button appears when any filter is active, allowing the user
-to reset all filters at once.
-
-#### Event Timeline
-
-Below the filter bar, events are rendered as a vertical timeline (newest
-first). Each event entry displays:
-
-1. **Icon**: a small icon indicating the event category. The mapping from
-   event type to icon category is:
-
-   | Icon category | Icon | Event types |
-   |---|---|---|
-   | Status change | arrow-right-left | `status_change` |
-   | Assignment | user | `assignment` |
-   | Duplicate | copy | `duplicate_set`, `duplicate_removed` |
-   | Creation | plus-circle | `ticket_created`, `cve_associated`, `cve_removed` |
-    | Package | package | `package_added`, `package_excluded`, `package_restored`, `track_excluded`, `track_restored`, `product_excluded`, `product_restored` |
-   | Affectedness | shield | `track_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
-   | Release | check-circle | `track_released`, `product_released` |
-   | CVSS | gauge | `severity_changed`, `cvss_assessment_changed` |
-   | Deletion | trash | `ticket_deleted`, `ticket_restored` |
-
-2. **Timestamp**: relative time (e.g., "2 hours ago", "3 days ago") with a
-   tooltip showing the absolute datetime in the user's locale.
-
-3. **Actor**: the username of the user who performed the action, rendered as
-   a badge. For system events, display "System" with a distinct visual style
-   (e.g., muted color or bot icon).
-
-4. **Description**: a human-readable sentence describing the event. Template
-   for each event type:
-
-   | Event type | Description template |
-   |---|---|
-   | `status_change` | Changed status from **{old_value}** to **{new_value}** |
-   | `assignment` | Assigned to **{new_value}** (if `old_value` is null: "Assigned to **{new_value}**"; if reassignment: "Reassigned from **{old_value}** to **{new_value}**") |
-   | `duplicate_set` | Marked as duplicate of **{new_value}** |
-   | `duplicate_removed` | Duplicate mark removed (was duplicate of **{old_value}**) |
-   | `package_added` | Added package **{new_value}** (if `comment` present: "Added package **{new_value}** — **{comment}**") |
-   | `package_excluded` | Excluded package **{old_value}** (if `comment` present: "Excluded package **{old_value}** — **{comment}**") |
-   | `package_restored` | Restored package **{new_value}** (if `comment` present: "Restored package **{new_value}** — **{comment}**") |
-   | `track_status_changed` | Changed track status from **{old_value}** to **{new_value}** for **{comment}** |
-   | `product_status_overridden` | Overrode product status from **{old_value}** to **{new_value}** for **{comment}** |
-   | `track_released` | Track release detected for **{comment}** |
-   | `product_released` | Product release detected for **{comment}** |
-   | `ticket_created` | Ticket created — **{comment}** |
-   | `cve_associated` | CVE **{new_value}** associated with this ticket |
-   | `cve_removed` | CVE **{old_value}** removed from this ticket (if `comment` present: "CVE **{old_value}** removed from this ticket — **{comment}**") |
-   | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
-   | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
-   | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
-    | `ticket_deleted` | Ticket deleted (if `comment` present: "Ticket deleted — **{comment}**") |
-    | `ticket_restored` | Ticket restored (if `comment` present: "Ticket restored — **{comment}**") |
-    | `track_excluded` | Track **{old_value}** excluded — **{comment}** |
-    | `track_restored` | Track **{new_value}** restored (if `comment` present: "Track **{new_value}** restored — **{comment}**") |
-    | `product_excluded` | Product **{old_value}** excluded — **{comment}** |
-    | `product_restored` | Product **{new_value}** restored (if `comment` present: "Product **{new_value}** restored — **{comment}**") |
-
-5. **Comment**: if present, displayed below the description in a muted style.
-
-#### Pagination
-
-Standard numbered pagination at the bottom of the timeline, consistent with
-the pagination pattern used on list pages (Inbox, All Tickets). Shows current
-page, total pages, and allows navigation to specific pages.
-
-#### Empty State
-
-When no events match the current filters, display a message: "No events match
-the current filters." with a "Clear filters" action.
-
-When a ticket has no events at all (should not happen in practice since ticket
-creation always generates at least one event), display: "No history available
-for this ticket."
-
 ## Service Contract
 
-Every service function that modifies a ticket MUST create a `TicketEvent` as
+Every service function that modifies a ticket MUST create a `TicketAuditEvent` as
 part of the same database transaction. This ensures atomicity — if the
 mutation succeeds, the event is guaranteed to be recorded; if the mutation
 fails, no orphan event is created.
 
 ### Implementation Guidelines
 
-1. **Same transaction**: the `TicketEvent` insert MUST happen in the same
+1. **Same transaction**: the `TicketAuditEvent` insert MUST happen in the same
    database session/transaction as the ticket mutation. Do NOT create events
    in a separate transaction or after committing the main change.
 
@@ -296,30 +172,18 @@ fails, no orphan event is created.
    layer (`app/services/`), not in the API layer or model layer. The service
    function that performs the mutation also creates the event.
 
-3. **Helper function**: services SHOULD use a shared helper to create events,
-   to ensure consistent field population:
-
-   ```python
-   async def create_ticket_event(
-       session: AsyncSession,
-       ticket_id: UUID,
-       event_type: TicketEventType,
-       user_id: UUID | None = None,
-       old_value: str | None = None,
-       new_value: str | None = None,
-       comment: str | None = None,
-   ) -> TicketEvent:
-       ...
-   ```
+3. **Event creation**: services MUST use `TicketAuditLog.log_event()` to
+   create events, ensuring consistent field population and registration
+   in the global audit trail registry.
 
 4. **No silent mutations**: if a service modifies ticket data without
-   creating a `TicketEvent`, it is a bug. See Guardrail 11 in `AGENTS.md`.
+   creating a `TicketAuditEvent`, it is a bug. See Guardrail 11 in `AGENTS.md`.
 
 ## Testing Requirements
 
 Tests for any ticket-mutating service MUST verify:
 
-1. A `TicketEvent` record is created after the operation
+1. A `TicketAuditEvent` record is created after the operation
 2. The `event_type` matches the expected value
 3. `old_value` and `new_value` are correctly populated
 4. `user_id` is set for user actions and `NULL` for system actions
@@ -329,7 +193,14 @@ Tests for any ticket-mutating service MUST verify:
 See Guardrail 6 (Mandatory testing) and Guardrail 11 (Ticket event logging)
 in `AGENTS.md` for enforcement.
 
+## Data Retention
+
+Indefinite. TicketAuditEvent records are never automatically deleted.
+
 ## Cross-references
 
+- `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
+  AuditEventMixin, naming conventions
+- `docs/conventions.md` — Audit Trail Conventions
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

@@ -101,8 +101,10 @@ Creates a new API key for a user.
 5. Check active key count for the user (non-revoked, non-expired). If
    count exceeds 20, emit a WARNING log: `"User {username} has {count}
    active API keys (anomaly threshold: 20)"`
-6. Audit: TBD — will create `IdentityAuditEvent` once the audit trail
-   redesign is applied
+6. Create `IdentityAuditEvent` with `event_type = api_key_created` via
+   `IdentityAuditLog.log_event()` — `user_id` = acting user,
+   `target_user_id` = key owner, `new_value` = key name,
+   `detail` = `{"key_id": "uuid"}`
 7. Return the created `ApiKey` record with the plaintext key accessible
    as a transient attribute (not persisted to the database). The caller
    is responsible for including the plaintext key in the API response
@@ -136,8 +138,10 @@ NULL`), return the key unchanged without error.
 2. If `revoked_at` is already set, return the key unchanged (idempotent)
 3. Set `revoked_at = now()`
 4. Set `revoked_by = acting_user_id` (NULL for system actions)
-5. Audit: TBD — will create `IdentityAuditEvent` once the audit trail
-   redesign is applied
+5. Create `IdentityAuditEvent` with `event_type = api_key_revoked` via
+   `IdentityAuditLog.log_event()` — `user_id` = acting user (or NULL),
+   `target_user_id` = key owner, `old_value` = key name,
+   `detail` = `{"key_id": "uuid"}`
 6. Return the revoked `ApiKey` record
 
 **Returns**: `ApiKey` record
@@ -165,13 +169,14 @@ deactivation.
 
 **Behavior**:
 
-1. Execute: `UPDATE api_key SET revoked_at = now(), revoked_by =
-   :acting_user_id WHERE user_id = :user_id AND revoked_at IS NULL`
-2. Collect the count of affected rows
-3. Audit: TBD — will create `IdentityAuditEvent` records once the audit
-   trail redesign is applied. Open question: whether bulk revocation
-   produces one event per key or a single summary event (see
-   `docs/drafts/audit-trail-redesign.md`, open question 2)
+1. Query all active (non-revoked) API keys for the user
+2. For each key, set `revoked_at = now()` and `revoked_by =
+   acting_user_id`
+3. For each revoked key, create `IdentityAuditEvent` with
+   `event_type = api_key_revoked` via `IdentityAuditLog.log_event()` —
+   `user_id` = acting user (or NULL for system), `target_user_id` = key
+   owner, `old_value` = key name,
+   `detail` = `{"key_id": "uuid", "reason": "user_deactivated"}`
 4. Return the count of revoked keys
 
 **Returns**: `int` — number of keys revoked (0 if no active keys
@@ -223,5 +228,9 @@ these into its own response format.
   threshold
 - `docs/features/identity/user-service.md` — `deactivate_user()` calls
   `revoke_all_user_keys()` as step 1 of the deactivation side effects
+- `docs/features/identity/identity-audit-log.md` — `api_key_created` and
+  `api_key_revoked` event type contract
+- `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
+  AuditEventMixin
 - `docs/data-model.md` — `ApiKey` table schema
 - `docs/api-spec.md` — global API conventions (error envelope, pagination)

@@ -281,6 +281,19 @@ event logging, state transitions, or cross-entity validation.
 Rule of thumb: if the operation requires a dedicated service method (not
 just a field setter), it is an action endpoint (POST with verb).
 
+### Audit Trail Endpoint Naming
+
+Every audit trail retrieval endpoint MUST use the `/audit-log` suffix.
+The general pattern is `/{resource-scope}/audit-log`:
+
+- Entity-scoped: `GET /api/v1/tickets/{ticket_id}/audit-log`
+- Admin-scoped: `GET /api/v1/admin/identity/audit-log`
+- Nested: `GET /api/v1/admin/settings/audit-log`
+- Named resource: `GET /api/v1/fetchers/{fetcher_name}/audit-log`
+
+See `docs/features/platform/audit-trail-infrastructure.md` for the full
+audit trail specification.
+
 ## Endpoint Index
 
 Each feature specification in `docs/features/` authoritatively defines its

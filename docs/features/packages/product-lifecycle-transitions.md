@@ -99,8 +99,8 @@ tickets with non-final, non-protected status:
 
 | Current status | Action |
 |----------------|--------|
-| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
-| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 
 Records in final status (`NOT_AFFECTED`, `FIXED`) or protected status
 (`WONT_FIX`) are not modified.
@@ -119,7 +119,7 @@ Invariants") apply upward: if the parent track has zero remaining products
 with `deleted_at IS NULL` (not directly excluded), the track itself is
 soft-deleted (`deleted_at` set on the track record only), and if the parent
 package has zero remaining tracks with `deleted_at IS NULL`, the package
-itself is soft-deleted. Each step produces a `TicketEvent` (with
+itself is soft-deleted. Each step produces a `TicketAuditEvent` (with
 `user_id = NULL`) and calls `evaluate_ticket_status`.
 
 This is an upward cascade only — child records are never modified. Each
@@ -127,9 +127,9 @@ soft-deletion sets `deleted_at` on the targeted record; descendants become
 effectively excluded via the hierarchical exclusion model (see
 `docs/features/packages/package-tracking.md`).
 
-## TicketEvent Records
+## TicketAuditEvent Records
 
-All automated transitions and soft-deletions produce `TicketEvent`
+All automated transitions and soft-deletions produce `TicketAuditEvent`
 records with `user_id = NULL` (system action).
 
 | Action | `event_type` | `old_value` | `new_value` | `comment` |
@@ -145,7 +145,7 @@ records with `user_id = NULL` (system action).
 soft-deletion event types). For system-initiated soft-deletions,
 `user_id` is `NULL` (distinguishing them from VA-initiated exclusions
 where `user_id` identifies the VA). See `docs/data-model.md` for the
-full enum definition and `docs/features/tickets/ticket-history.md` for
+full enum definition and `docs/features/tickets/ticket-audit-log.md` for
 the field contract.
 
 ## Integration with Existing Tasks
@@ -173,5 +173,5 @@ soft-deleted or have their eligibility changed by lifecycle transitions.
   authentication involved
 - `re_evaluate_product_eligibility` is an internal sub-task, not exposed
   via API
-- All mutations go through `ticket_mutations` which enforces TicketEvent
+- All mutations go through `ticket_mutations` which enforces TicketAuditEvent
   creation

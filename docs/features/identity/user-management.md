@@ -301,7 +301,7 @@ sentinel manage-user deactivate \
 
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
-with TicketEvent, ticket assignments, and UserRole audit data. This is
+with TicketAuditEvent, ticket assignments, and UserRole audit data. This is
 consistent with LDAP sync deactivation behavior. For full database
 cleanup in development environments, reset the database directly.
 
@@ -849,8 +849,9 @@ inactive user prepares credentials for reactivation.
    acting_user_id=authenticated_admin.id)` — this handles AD user
    check, validation, hashing, and session invalidation (see
    `docs/features/identity/user-service.md`)
-3. Log the operation at INFO level: admin identity (user_id, username)
-   and target user (user_id, username)
+3. Create `IdentityAuditEvent` with `event_type = password_reset` via
+   `IdentityAuditLog.log_event()` — `user_id` = admin, `target_user_id`
+   = target user
 4. Return HTTP 200
 
 **Error responses**:
@@ -1090,14 +1091,18 @@ handling is required.
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)
-- **Audit trail**: user operations are logged at INFO level (user
-   creation, role changes, password resets). Deactivation additionally
-   creates `TicketEvent` records for ticket unassignment. Role changes
-   do not produce `TicketEvent` records (see
-   `docs/features/identity/user-service.md`)
-- **Admin password reset is logged**: every admin-initiated password
-  reset is logged at INFO level with the acting admin's identity and
-  the target user. No rate limiting or step-up authentication is applied
+- **Audit trail**: all identity operations produce `IdentityAuditEvent`
+   records via `IdentityAuditLog.log_event()` (user creation, role
+   changes, password resets, deactivation, reactivation, unlock, API key
+   lifecycle). Deactivation additionally creates `TicketAuditEvent`
+   records for ticket unassignment. Role changes do not produce
+   `TicketAuditEvent` records. See
+   `docs/features/identity/identity-audit-log.md` for the full event
+   type contract and `docs/features/identity/user-service.md` for the
+   service operations.
+- **Admin password reset is audited**: every admin-initiated password
+  reset produces a `password_reset` `IdentityAuditEvent`. No rate
+  limiting or step-up authentication is applied
   — the admin role is the highest trust level in the system, and
   additional friction would not meaningfully improve security given that
   a compromised admin already has full system access
@@ -1106,8 +1111,8 @@ handling is required.
   the target user receives no notification (no email, no in-app alert).
   A compromised admin could covertly take over an account. This is
   accepted because: (1) the admin trust level already implies full system
-  access; (2) the audit log (INFO-level logging of acting admin and
-  target user) provides a forensic trail; (3) adding a notification
+  access; (2) the `IdentityAuditEvent` (`password_reset`) provides a
+  forensic trail of acting admin and target user; (3) adding a notification
   system (SMTP infrastructure, templates, bounce handling) is
   disproportionate to the residual risk in an internal tool. If the
   threat model evolves (e.g., multi-tenant admin roles), user-facing

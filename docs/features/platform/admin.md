@@ -37,7 +37,7 @@ When the Admin changes the default CVSS version, Sentinel MUST:
    default version's score
 3. Apply the same recalculation cascade as a CVSS score change (see
    `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
-4. Create `TicketEvent` records for every severity or eligibility change
+4. Create `TicketAuditEvent` records for every severity or eligibility change
 
 This operation may take time for a large number of active tickets. It
 is executed as a background task (Celery). The task reuses the same
@@ -142,7 +142,96 @@ Future administrative settings will be added to this page as needed.
 System settings are stored in a key-value configuration table. See
 `docs/data-model.md` for the schema.
 
+## Setting Audit Log
+
+Every modification to a system setting MUST produce a
+`SettingAuditEvent` record in the same database transaction as the
+setting update.
+
+### SettingAuditEvent Table
+
+See `docs/data-model.md` for the full table definition. Key columns:
+
+| Column | Type | Description |
+|---|---|---|
+| event_type | ENUM | `SettingAuditEventType` — currently only `setting_changed` |
+| setting_key | VARCHAR | Which setting was changed (e.g., `default_cvss_version`) |
+| user_id | UUID | Admin who changed the setting (always present — no system-initiated changes) |
+| old_value | VARCHAR | Previous value |
+| new_value | VARCHAR | New value |
+
+### API
+
+```
+GET /api/v1/admin/settings/audit-log
+```
+
+Returns a paginated list of setting changes, ordered by `created_at`
+descending. Sorting is fixed — client-controlled `sort_by` /
+`sort_order` parameters are not supported (audit trail entries are
+always displayed in reverse chronological order).
+
+**Query parameters**:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | int | 1 | Page number (1-indexed) |
+| `per_page` | int | 20 | Items per page (max 100) |
+| `event_type` | string | -- | Comma-separated list of event types (currently only `setting_changed`) |
+| `setting_key` | string | -- | Filter by setting key |
+| `actor` | string | -- | Filter by actor: user UUID or username. `system` is accepted but will return no results (all setting changes are user-initiated) |
+| `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
+
+**Permissions**: Admin role required.
+
+**Response** (200 OK):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "event_type": "setting_changed",
+      "setting_key": "default_cvss_version",
+      "old_value": "3.1",
+      "new_value": "4.0",
+      "created_at": "2026-05-13T14:00:00Z",
+      "actor": {
+        "id": "uuid",
+        "username": "asmith",
+        "full_name": "Alice Smith"
+      }
+    }
+  ],
+  "meta": {
+    "total": 3,
+    "page": 1,
+    "per_page": 20
+  }
+}
+```
+
+**Error responses**:
+
+| Status | Code | Condition |
+|---|---|---|
+| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+
+### UI
+
+The setting audit log is displayed in the Admin Settings page
+(`/admin/settings`) below the settings form, as a collapsible section
+showing the history of changes.
+
+### Data Retention
+
+Indefinite. SettingAuditEvent records are never automatically deleted.
+
 ## Cross-references
 
+- `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
+  AuditEventMixin
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
+- `docs/features/identity/rbac.md` — Endpoint Permission Map

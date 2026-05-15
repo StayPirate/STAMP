@@ -149,6 +149,17 @@ Rules:
 - Use `model_config = ConfigDict(from_attributes=True)` for ORM integration
 - Validate at the schema level, not in endpoints or services
 
+### Audit Trail
+
+Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
+(`backend/app/models/mixins.py`). Every audit trail MUST be implemented
+as a `BaseAuditLog` subclass
+(`backend/app/services/base_audit_log.py`).
+
+See `docs/features/platform/audit-trail-infrastructure.md` for the
+full specification: base class interface, mixin columns, naming
+conventions, atomicity rules, and the Audit Trail Index.
+
 ### Testing Conventions
 
 - Test files mirror the `app/` directory structure

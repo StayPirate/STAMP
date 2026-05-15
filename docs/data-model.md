@@ -29,7 +29,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
        │
        ▼ (0..1:1)
 ┌──────────────────┐ (1:N) ┌──────────────────┐
-│     Ticket       │──────▶│   TicketEvent    │
+│     Ticket       │──────▶│   TicketAuditEvent    │
 │                  │       │                  │
 │  sequence_id(UQ) │       │  ticket_id (FK)  │
 │  cve_id(FK,UQ,?) │       │  user_id (FK) ──────┐
@@ -170,14 +170,14 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 │  custom_settings     │   │  error_message                  │
 └──────────────────────┘   │  error_detail                   │
 ┌──────────────────────┐   │  error_traceback                │
-│  FetcherAuditLog     │   │  triggered_by                   │
+│  FetcherAuditEvent   │   │  triggered_by                   │
 │                      │   │  triggered_by_user_id (FK)      │
 │                      │   └─────────────────────────────────┘
 │  fetcher_name        │
-│  action              │   ┌─────────────────────────────────┐
-│  performed_by_user_id│   │ FetcherRunWeeklyAggregate        │
-│  (FK)                │   │                                 │
-│  details             │   │  fetcher_name                   │
+│  event_type          │   ┌─────────────────────────────────┐
+│  user_id (FK)        │   │ FetcherRunWeeklyAggregate        │
+│                      │   │                                 │
+│  detail              │   │  fetcher_name                   │
 └──────────────────────┘   │  week_start                     │
                            │  run_count                      │
                            │  success/failure/partial_count  │
@@ -648,24 +648,43 @@ the full specification.
 
 **Unique constraint**: (ticket_id, url)
 
-### TicketEvent
+### AuditEventMixin
 
-Audit log of all changes to a ticket. Each event represents a discrete
+Shared SQLAlchemy mixin inherited by all audit event models. Provides
+the common columns for every audit trail table. See
+`docs/features/platform/audit-trail-infrastructure.md` for the full
+specification.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal identifier |
+| created_at | TIMESTAMP | NOT NULL, server default | When the event occurred |
+| user_id | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
+
+**Location**: `backend/app/models/mixins.py`
+
+All audit event models below inherit these columns from the mixin and
+add their own domain-specific columns.
+
+### TicketAuditEvent
+
+Audit log of all changes to a ticket. Inherits `id`, `created_at`, and
+`user_id` from `AuditEventMixin`. Each event represents a discrete
 action (status change, assignment, duplicate operation, or automated
 system action).
 
 | Column      | Type        | Constraints            | Description                                |
 |-------------|-------------|------------------------|--------------------------------------------|
-| id          | UUID        | PK                     | Internal identifier                        |
+| id          | UUID        | PK                     | Inherited from AuditEventMixin             |
 | ticket_id   | UUID        | FK(ticket.id), NOT NULL| Related ticket                             |
-| user_id     | UUID        | FK(user.id), nullable  | User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
-| event_type  | ENUM        | NOT NULL               | See TicketEventType enum below             |
+| user_id     | UUID        | FK(user.id), nullable  | Inherited from AuditEventMixin. User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
+| event_type  | ENUM        | NOT NULL               | See TicketAuditEventType enum below             |
 | old_value   | VARCHAR     | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | VARCHAR     | nullable               | New value (e.g., new status, new assignee username) |
 | comment     | TEXT        | nullable               | Optional note from the VA, or system-generated description for automated events |
-| created_at  | TIMESTAMP   | NOT NULL, DEFAULT      | Event timestamp                            |
+| created_at  | TIMESTAMP   | NOT NULL, DEFAULT      | Inherited from AuditEventMixin             |
 
-### TicketEventType Enum
+### TicketAuditEventType Enum
 
 | Value                      | Description                                        |
 |----------------------------|----------------------------------------------------|
@@ -693,6 +712,70 @@ system action).
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `comment` format: `package_name:product_id:reason` where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
 | ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 | ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
+
+### IdentityAuditEvent
+
+Audit trail for identity-related operations: user lifecycle, role
+assignments, API key management, and role mapping administration.
+Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Inherited from AuditEventMixin |
+| event_type | ENUM | NOT NULL | See IdentityAuditEventType enum below |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync, auto-lock) |
+| target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
+| old_value | VARCHAR | nullable | Previous state (human-readable) |
+| new_value | VARCHAR | nullable | New state (human-readable) |
+| detail | JSONB | nullable | Additional structured context |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+
+### IdentityAuditEventType Enum
+
+| Value | Description |
+|---|---|
+| user_created | User account created (manual or AD sync) |
+| user_deactivated | User account deactivated (admin or AD sync) |
+| user_reactivated | User account reactivated by admin |
+| user_locked | User account locked after failed password threshold |
+| user_unlocked | User account unlocked by admin |
+| password_reset | Admin reset another user's password |
+| role_added | Role assigned to user (admin or AD sync) |
+| role_removed | Role removed from user (admin or AD sync) |
+| role_mapping_created | AD group-to-role mapping created by admin |
+| role_mapping_deleted | AD group-to-role mapping deleted by admin |
+| username_changed | Username changed by AD sync (sAMAccountName change) |
+| api_key_created | API key created by user or admin |
+| api_key_revoked | API key revoked by user, admin, or system |
+| email_changed | Email address updated (admin or AD sync) |
+| full_name_changed | Full name updated (admin or AD sync) |
+| manager_changed | Direct manager updated by AD sync |
+
+See `docs/features/identity/identity-audit-log.md` for the full event
+type contract with field values.
+
+### SettingAuditEvent
+
+Audit trail for system setting modifications. Inherits `id`,
+`created_at`, and `user_id` from `AuditEventMixin`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Inherited from AuditEventMixin |
+| event_type | ENUM | NOT NULL | See SettingAuditEventType enum below |
+| setting_key | VARCHAR | NOT NULL | Which setting was changed |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who changed the setting. Nullable at DB level; service validates presence |
+| old_value | VARCHAR | nullable | Previous value |
+| new_value | VARCHAR | NOT NULL | New value |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+
+### SettingAuditEventType Enum
+
+| Value | Description |
+|---|---|
+| setting_changed | Admin modified a system setting |
+
+See `docs/features/platform/admin.md` for the full specification.
 
 ### CodestreamPackageChecksum
 
@@ -800,18 +883,19 @@ startup if not present.
 | custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `custom_settings_schema` (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
 | updated_at        | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp        |
 
-### FetcherAuditLog
+### FetcherAuditEvent
 
-Audit trail for administrative actions on fetchers.
+Audit trail for administrative actions on fetchers. Inherits `id`,
+`created_at`, and `user_id` from `AuditEventMixin`.
 
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
-| id                   | UUID        | PK                       | Internal identifier                |
+| id                   | UUID        | PK                       | Inherited from AuditEventMixin     |
 | fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier                 |
-| action               | ENUM        | NOT NULL                 | FetcherAuditAction: `disabled`, `enabled`, `triggered`, `config_changed` |
-| performed_by_user_id | UUID        | FK(user.id), NOT NULL    | Admin who performed the action     |
-| details              | JSONB       | nullable                 | Additional context (e.g., old/new config values) |
-| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | When the action occurred           |
+| event_type           | ENUM        | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
+| user_id              | UUID        | FK(user.id), nullable    | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; service validates presence |
+| detail               | JSONB       | nullable                 | Additional context (e.g., old/new config values) |
+| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | Inherited from AuditEventMixin     |
 
 ### FetcherRunWeeklyAggregate
 
@@ -905,8 +989,9 @@ TBD — will be defined based on query patterns during implementation.
 - All tables use UUID primary keys (exceptions: `SystemSetting` uses a
   VARCHAR `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR as PK)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
-  `TicketEvent`, `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
-  `PackageBugownerMember`, `FetcherRun`, `FetcherAuditLog`,
+  `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
+  `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
+  `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
   `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, and `RoleMapping`
   only have `created_at` because they are immutable write-once records or are
   replaced rather than updated in place —

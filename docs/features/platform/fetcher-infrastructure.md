@@ -554,20 +554,21 @@ one does not already exist.
   The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
   record is auto-created for a newly registered fetcher.
 
-### FetcherAuditLog
+### FetcherAuditEvent
 
-Audit trail for administrative actions on fetchers.
+Audit trail for administrative actions on fetchers. Inherits `id`,
+`created_at`, and `user_id` from `AuditEventMixin`.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Internal identifier |
+| id | UUID | PK | Inherited from AuditEventMixin |
 | fetcher_name | VARCHAR | NOT NULL, indexed | Fetcher identifier |
-| action | ENUM | NOT NULL | See FetcherAuditAction enum |
-| performed_by_user_id | UUID | FK(user.id), NOT NULL | Admin who performed the action |
-| details | JSONB | nullable | Additional context (e.g., old/new schedule values) |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT | When the action occurred |
+| event_type | ENUM | NOT NULL | See FetcherAuditEventType enum |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
+| detail | JSONB | nullable | Additional context (e.g., old/new schedule values) |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
-### FetcherAuditAction Enum
+### FetcherAuditEventType Enum
 
 | Value | Description |
 |---|---|
@@ -576,7 +577,7 @@ Audit trail for administrative actions on fetchers.
 | `triggered` | Fetcher was manually triggered by an admin |
 | `config_changed` | Fetcher configuration was modified (schedule, timeout, rate limit) |
 
-**Notes on `details` JSONB**:
+**Notes on `detail` JSONB**:
 - For `config_changed`: `{"field": "schedule_override", "old_value": "0 */6 * * *", "new_value": "0 */4 * * *"}`
 - For `disabled` / `enabled`: `null` (the action itself is self-explanatory)
 - For `triggered`: `null`
@@ -721,6 +722,13 @@ Structured summary with:
 
 - Celery Beat with dynamic schedule support (`celery-redbeat` or
   equivalent)
+
+## Audit Trail
+
+The `FetcherAuditLog` subclass of `BaseAuditLog` provides the event
+creation helper and registers the fetcher audit trail in the global
+registry. See `docs/features/platform/audit-trail-infrastructure.md`
+for the base class contract.
 
 ## Open Questions
 

@@ -220,7 +220,7 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/events` | Public | [ticket-history](../tickets/ticket-history.md#list-ticket-events) |
+| GET | `/api/v1/tickets/{ticket_id}/audit-log` | Public | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-events) |
 
 ### Submission Tracking
 
@@ -258,6 +258,8 @@ here with the required access level and a link to the owning spec.
 |--------|----------|--------|-------------|
 | GET | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md#get-system-settings) |
 | PATCH | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md#update-system-settings) |
+| GET | `/api/v1/admin/settings/audit-log` | Admin | [admin](../platform/admin.md#api) |
+| GET | `/api/v1/admin/identity/audit-log` | Admin | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | Admin | [authentication](authentication.md#get-apiv1adminapi-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | Admin | [authentication](authentication.md#post-apiv1adminapi-keyskey_idrevoke) |
 | PATCH | `/api/v1/admin/users/{user}` | Admin | [user-management](user-management.md#patch-apiv1adminusersuser) |

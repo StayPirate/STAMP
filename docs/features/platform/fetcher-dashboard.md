@@ -11,7 +11,7 @@ for bootstrap and troubleshooting.
 This feature depends on the fetcher infrastructure defined in
 `docs/features/platform/fetcher-infrastructure.md`. Read that spec first for the
 `BaseFetcher` contract, data model (`FetcherRun`, `FetcherConfig`,
-`FetcherAuditLog`, `FetcherRunWeeklyAggregate`), concurrency control,
+`FetcherAuditEvent`, `FetcherRunWeeklyAggregate`), concurrency control,
 and stale run detection.
 
 ## API Endpoints
@@ -329,7 +329,7 @@ individual runs for the last 90 days, weekly aggregates for older data.
 - `points[].items_created/updated/failed`: actual counts for individual
   runs, totals for aggregates
 - `disabled_periods`: array of time ranges when the fetcher was disabled,
-  derived from `FetcherAuditLog` records. Used to render grey overlay
+  derived from `FetcherAuditEvent` records. Used to render grey overlay
   bands on the chart. If the fetcher is currently disabled, `enabled_at`
   and `enabled_by` are `null`.
 
@@ -371,7 +371,7 @@ Enqueues a manual run of the specified fetcher.
 **Permissions**: Admin only.
 
 **Side effects**:
-- Creates a `FetcherAuditLog` record with action `triggered`
+- Creates a `FetcherAuditEvent` record with `event_type = triggered`
 - Creates a `FetcherRun` record **synchronously** (before enqueuing the
   Celery task) with `status = running` and `triggered_by = manual`. This
   ensures the `run_id` is available in the API response. The
@@ -505,11 +505,11 @@ include the fields to change.
 **Response** (200 OK): the updated config object (same as GET response).
 
 **Side effects**:
-- Creates a `FetcherAuditLog` record:
-  - If `enabled` changed: action `disabled` or `enabled`
-  - If any other field changed: action `config_changed` with `details`
+- Creates a `FetcherAuditEvent` record:
+  - If `enabled` changed: `event_type = disabled` or `enabled`
+  - If any other field changed: `event_type = config_changed` with `detail`
     containing old and new values
-  - If `custom_settings` changed: action `config_changed` with `details`
+  - If `custom_settings` changed: `event_type = config_changed` with `detail`
     in the format:
     ```json
     {
@@ -550,6 +550,10 @@ Returns the audit trail of admin actions for a fetcher.
 |---|---|---|---|
 | `page` | int | 1 | Page number |
 | `per_page` | int | 20 | Items per page (max 100) |
+| `event_type` | string | -- | Comma-separated list of event types (e.g., `disabled,enabled`) |
+| `actor` | string | -- | Filter by actor: user UUID, username, or `system` (accepted but returns no results — all fetcher admin actions are human-initiated) |
+| `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
 **Sorting**: default `sort_by=created_at`, `sort_order=desc` (most recent
 entry first). Follows the project-wide default sorting convention.
@@ -562,12 +566,13 @@ entry first). Follows the project-wide default sorting convention.
     {
       "id": "uuid",
       "fetcher_name": "sync_cves_nvd",
-      "action": "disabled",
-      "performed_by": {
+      "event_type": "disabled",
+      "actor": {
         "id": "uuid",
-        "username": "admin1"
+        "username": "admin1",
+        "full_name": "Alice Smith"
       },
-      "details": null,
+      "detail": null,
       "created_at": "2025-04-18T14:30:00Z"
     }
   ],
@@ -833,7 +838,7 @@ Each field shows:
 Visible only to Admin role users. Displayed as a tab or collapsible
 section.
 
-A simple chronological list of admin actions from `FetcherAuditLog`:
+A simple chronological list of admin actions from `FetcherAuditEvent`:
 
 - "{username} disabled this fetcher — {datetime}"
 - "{username} triggered manual run — {datetime}"

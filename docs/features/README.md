@@ -50,7 +50,7 @@ Index of all feature specification domains.
 - [tickets.md](tickets/tickets.md) — Ticket lifecycle, status gates, centralized evaluation
 - [cve-tracking.md](tickets/cve-tracking.md) — CVE ingestion from NVD/MITRE, on-demand fetch
 - [cvss-scoring.md](tickets/cvss-scoring.md) — Multi-provider CVSS assessments, severity resolution
-- [ticket-history.md](tickets/ticket-history.md) — TicketEvent audit trail, event type contract
+- [ticket-audit-log.md](tickets/ticket-audit-log.md) — TicketAuditEvent audit trail, event type contract
 
 ### UI
 

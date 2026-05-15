@@ -110,7 +110,7 @@
 
 ### ADIN-GAP-16 — Ordering between steps 5 (role mappings) and 6 (deactivations) (Medium)
 
-**Status**: RESOLVED — Added step ordering rationale (5→6→7) documenting that the operations are independent: step 5 manages UserRole (no TicketEvents), step 6 manages active status/tickets (with TicketEvents), step 7 sets active=true (no TicketEvents). Roles persist across status changes. Lists are mutually exclusive by construction (2026-05-11)
+**Status**: RESOLVED — Added step ordering rationale (5→6→7) documenting that the operations are independent: step 5 manages UserRole (no TicketAuditEvents), step 6 manages active status/tickets (with TicketAuditEvents), step 7 sets active=true (no TicketAuditEvents). Roles persist across status changes. Lists are mutually exclusive by construction (2026-05-11)
 
 ### ADIN-GAP-17 — What happens to manager_id when the referenced manager user is deactivated? (Medium)
 

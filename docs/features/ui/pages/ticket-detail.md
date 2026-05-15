@@ -46,7 +46,7 @@ See `docs/features/ui/maintainer-dashboard.md` for the per-ticket view.
 A "Delete ticket" button is displayed in the header actions area,
 **visible only to users with the Admin role**. It is available from any
 ticket status. Clicking it opens a confirmation dialog. The Admin may
-optionally provide a note (stored in the `TicketEvent.comment` field).
+optionally provide a note (stored in the `TicketAuditEvent.comment` field).
 Upon confirmation, the ticket is soft-deleted and the Admin is redirected
 to the All Tickets page.
 
@@ -217,13 +217,132 @@ Shown on the original ticket when other tickets reference it as duplicate:
 A dedicated **"History" tab** in the Ticket Detail page provides a complete
 audit trail with search and filtering capabilities.
 
-- Chronological timeline (newest first) of all ticket events
-- Filter bar: filter by event type (multi-select), by actor (user or system),
-  and text search on comments
-- Paginated results
+See `docs/features/tickets/ticket-audit-log.md` for the data model, event type
+contract, and API endpoint.
 
-See `docs/features/tickets/ticket-history.md` for the full specification, including
-API endpoint, filter parameters, event type contract, and UI details.
+#### Filter Bar
+
+At the top of the History tab, a horizontal filter bar provides:
+
+1. **Event type filter**: multi-select dropdown with checkboxes. Options are
+   derived from the `TicketAuditEventType` enum, displayed with human-readable
+   labels:
+
+   | Enum value                    | Display label               |
+   |-------------------------------|-----------------------------|
+   | `status_change`               | Status change               |
+   | `assignment`                  | Assignment                  |
+   | `duplicate_set`               | Duplicate set               |
+   | `duplicate_removed`           | Duplicate removed           |
+   | `duplicate_target_changed`    | Duplicate target changed    |
+   | `package_added`               | Package added               |
+   | `package_excluded`            | Package excluded            |
+   | `package_restored`            | Package restored            |
+   | `track_status_changed`        | Track status changed        |
+   | `product_status_overridden`   | Product status overridden   |
+   | `track_released`              | Track released              |
+   | `product_released`            | Product released            |
+   | `ticket_created`              | Ticket created              |
+   | `cve_associated`              | CVE associated              |
+   | `cve_removed`                 | CVE removed                 |
+   | `severity_changed`            | Severity changed            |
+   | `cvss_assessment_changed`     | CVSS assessment changed     |
+   | `product_eligibility_changed` | Product eligibility changed |
+   | `ticket_deleted`              | Ticket deleted              |
+   | `ticket_restored`             | Ticket restored             |
+   | `track_excluded`              | Track excluded              |
+   | `track_restored`              | Track restored              |
+   | `product_excluded`            | Product excluded            |
+   | `product_restored`            | Product restored            |
+
+2. **Actor filter**: single-select dropdown with options:
+   - "All" (default — no filter applied)
+   - "System" (shows only automated events)
+   - Individual users who appear in the ticket's event history (populated
+     dynamically from the event data currently loaded)
+
+3. **Text search**: input field with placeholder "Search in comments...".
+   Debounced (300ms delay) to avoid excessive API calls. Triggers a new API
+   request with the `search` query parameter.
+
+All filters are applied via query parameters on the API request. Changing any
+filter resets the pagination to page 1.
+
+A "Clear filters" button appears when any filter is active, allowing the user
+to reset all filters at once.
+
+#### Event Timeline
+
+Below the filter bar, events are rendered as a vertical timeline (newest
+first). Each event entry displays:
+
+1. **Icon**: a small icon indicating the event category. The mapping from
+   event type to icon category is:
+
+   | Icon category  | Icon              | Event types |
+   |----------------|-------------------|-------------|
+   | Status change  | arrow-right-left  | `status_change` |
+   | Assignment     | user              | `assignment` |
+   | Duplicate      | copy              | `duplicate_set`, `duplicate_removed` |
+   | Creation       | plus-circle       | `ticket_created`, `cve_associated`, `cve_removed` |
+   | Package        | package           | `package_added`, `package_excluded`, `package_restored`, `track_excluded`, `track_restored`, `product_excluded`, `product_restored` |
+   | Affectedness   | shield            | `track_status_changed`, `product_status_overridden`, `product_eligibility_changed` |
+   | Release        | check-circle      | `track_released`, `product_released` |
+   | CVSS           | gauge             | `severity_changed`, `cvss_assessment_changed` |
+   | Deletion       | trash             | `ticket_deleted`, `ticket_restored` |
+
+2. **Timestamp**: relative time (e.g., "2 hours ago", "3 days ago") with a
+   tooltip showing the absolute datetime in the user's locale.
+
+3. **Actor**: the username of the user who performed the action, rendered as
+   a badge. For system events, display "System" with a distinct visual style
+   (e.g., muted color or bot icon).
+
+4. **Description**: a human-readable sentence describing the event. Template
+   for each event type:
+
+   | Event type | Description template |
+   |---|---|
+   | `status_change` | Changed status from **{old_value}** to **{new_value}** |
+   | `assignment` | Assigned to **{new_value}** (if `old_value` is null: "Assigned to **{new_value}**"; if reassignment: "Reassigned from **{old_value}** to **{new_value}**") |
+   | `duplicate_set` | Marked as duplicate of **{new_value}** |
+   | `duplicate_removed` | Duplicate mark removed (was duplicate of **{old_value}**) |
+   | `package_added` | Added package **{new_value}** (if `comment` present: "Added package **{new_value}** — **{comment}**") |
+   | `package_excluded` | Excluded package **{old_value}** (if `comment` present: "Excluded package **{old_value}** — **{comment}**") |
+   | `package_restored` | Restored package **{new_value}** (if `comment` present: "Restored package **{new_value}** — **{comment}**") |
+   | `track_status_changed` | Changed track status from **{old_value}** to **{new_value}** for **{comment}** |
+   | `product_status_overridden` | Overrode product status from **{old_value}** to **{new_value}** for **{comment}** |
+   | `track_released` | Track release detected for **{comment}** |
+   | `product_released` | Product release detected for **{comment}** |
+   | `ticket_created` | Ticket created — **{comment}** |
+   | `cve_associated` | CVE **{new_value}** associated with this ticket |
+   | `cve_removed` | CVE **{old_value}** removed from this ticket (if `comment` present: "CVE **{old_value}** removed from this ticket — **{comment}**") |
+   | `severity_changed` | Severity changed from **{old_value}** to **{new_value}** |
+   | `cvss_assessment_changed` | CVSS assessment changed from **{old_value}** to **{new_value}** |
+   | `product_eligibility_changed` | Product eligibility changed from **{old_value}** to **{new_value}** for **{comment}** |
+   | `ticket_deleted` | Ticket deleted (if `comment` present: "Ticket deleted — **{comment}**") |
+   | `ticket_restored` | Ticket restored (if `comment` present: "Ticket restored — **{comment}**") |
+   | `track_excluded` | Track **{old_value}** excluded — **{comment}** |
+   | `track_restored` | Track **{new_value}** restored (if `comment` present: "Track **{new_value}** restored — **{comment}**") |
+   | `product_excluded` | Product **{old_value}** excluded — **{comment}** |
+   | `product_restored` | Product **{new_value}** restored (if `comment` present: "Product **{new_value}** restored — **{comment}**") |
+
+5. **Comment**: if present, displayed below the description in a muted style.
+
+#### Pagination
+
+Standard numbered pagination at the bottom of the timeline, consistent with
+the pagination pattern used on list pages (Inbox, All Tickets). Shows current
+page, total pages, and allows navigation to specific pages.
+
+#### Empty State
+
+When no events match the current filters, display a message: "No events match
+the current filters." with a "Clear filters" action.
+
+When a ticket has no events at all (should not happen in practice since ticket
+creation always generates at least one event), display: "No history available
+for this ticket."
 
 ## Security
 

@@ -26,7 +26,8 @@ findings without modifying files.
 | `@spec-coherence-reviewer` | Reviewer | Guardrail 15 | Detects contradictions and inconsistencies across feature specifications |
 | `@spec-gap-analyzer` | Reviewer | Guardrail 17 | Identifies uncovered functional cases and missing edge-case handling in specs |
 | `@test-reviewer` | Reviewer | Guardrail 6 | Reviews test quality, coverage, and adherence to testing conventions |
-| `@ticket-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies TicketEvent audit trail and ticket_mutations module compliance |
+| `@identity-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies IdentityAuditEvent audit trail compliance for identity mutations |
+| `@ticket-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies TicketAuditEvent audit trail and ticket_mutations module compliance |
 | `@ui-reviewer` | Reviewer | Guardrail 7 | Reviews frontend components for UI consistency and design system compliance |
 
 ## Commands

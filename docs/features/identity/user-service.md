@@ -10,7 +10,7 @@ integrations).
 
 Without this centralization, each entry point would need to independently
 implement side effects (ticket unassignment, API key revocation,
-TicketEvent creation) and business rules (self-removal guard,
+TicketAuditEvent creation) and business rules (self-removal guard,
 self-deactivation guard), leading to inconsistency and bugs.
 
 ## Architecture
@@ -138,7 +138,7 @@ a new password).
 
 User deletion is not supported. Deactivation is the terminal state of the
 user lifecycle. This is intentional: User records are referenced by
-`TicketEvent` (audit trail), `Ticket` (historical assignments), `ApiKey`
+`TicketAuditEvent` (audit trail), `Ticket` (historical assignments), `ApiKey`
 (revocation records), `Session`, and `UserRole`. Deleting a user would
 orphan these records or require complex cascade/anonymization logic.
 
@@ -209,7 +209,11 @@ Creates a new User record with optional initial roles.
    This is consistent with the idempotency behavior of `update_roles()`.
 8. Return the created User
 
-**TicketEvent**: none (user creation does not affect tickets)
+**TicketAuditEvent**: none (user creation does not affect tickets)
+
+**IdentityAuditEvent**: `user_created` — `user_id` = creating admin,
+`target_user_id` = created user, `new_value` = username. Created via
+`IdentityAuditLog.log_event()` in the same transaction.
 
 ### `update_user()`
 
@@ -265,9 +269,18 @@ their own business rules.
 
     If all optional parameters are `_MISSING`, this is a no-op: no UPDATE
    is issued. The User record returned is the one loaded in step 1.
-7. Return updated User
+7. For each changed field, create an `IdentityAuditEvent` via
+   `IdentityAuditLog.log_event()`: `email_changed`, `full_name_changed`,
+   or `manager_changed` with `old_value` and `new_value`. One event per
+   changed field, all in the same transaction.
+8. Return updated User
 
-**TicketEvent**: none
+**TicketAuditEvent**: none
+
+**IdentityAuditEvent**: one per changed field (`email_changed`,
+`full_name_changed`, `manager_changed`). See
+`docs/features/identity/identity-audit-log.md` for the event type
+contract.
 
 ### `update_roles()`
 
@@ -315,11 +328,16 @@ Adds or removes roles for a user.
 4. For each entry in `effective_add`, create UserRole if not already
    present, with `assigned_by = acting_user_id`
 5. For each entry in `effective_remove`, delete matching UserRole record
-6. Log INFO with `user_id`, `acting_user_id`, roles added, and roles
-   removed (effective lists only — omit no-ops)
+6. For each role added, create `IdentityAuditEvent` with `event_type =
+   role_added`; for each role removed, `event_type = role_removed`. All
+   events created via `IdentityAuditLog.log_event()` in the same
+   transaction.
 7. Return updated User with current roles
 
-**TicketEvent**: none (role changes do not directly affect tickets)
+**TicketAuditEvent**: none (role changes do not directly affect tickets)
+
+**IdentityAuditEvent**: `role_added` / `role_removed` per effective
+change. See `docs/features/identity/identity-audit-log.md`.
 
 ### `sync_role_mapping()`
 
@@ -359,7 +377,11 @@ created.
    system-assigned regardless of the initiator)
 5. Delete all `UserRole` records where `user_id` is in `to_remove`,
    `role` matches, and `ad_group_cn` matches
-6. Log INFO: mapping details, added count, removed count
+6. For each user in `to_add`, create `IdentityAuditEvent` with
+   `event_type = role_added`, `user_id = NULL` (system), `detail`
+   including `{"source": "ad_sync", "mapping": "..."}`. For each user
+   in `to_remove`, `event_type = role_removed` with same detail. All
+   events via `IdentityAuditLog.log_event()`.
 7. Return `(added_count, removed_count)`
 
 **Idempotency**: calling this function twice with the same
@@ -367,7 +389,11 @@ created.
 finds nothing to add or remove. The UNIQUE constraint on
 `(user_id, role, ad_group_cn)` prevents duplicate records.
 
-**TicketEvent**: none (role changes do not directly affect tickets)
+**TicketAuditEvent**: none (role changes do not directly affect tickets)
+
+**IdentityAuditEvent**: `role_added` / `role_removed` per effective
+change, with `user_id = NULL` (AD sync, system action). See
+`docs/features/identity/identity-audit-log.md`.
 
 ### `delete_role_mapping_roles()`
 
@@ -396,10 +422,14 @@ Used when a role mapping is deleted via
    Assign admin via another mapping or manually before retrying."
    No `UserRole` records are removed — the operation is atomic
 3. Delete all matching `UserRole` records
-4. Log INFO: mapping details, affected users count
+4. For each removed `UserRole`, create `IdentityAuditEvent` with
+   `event_type = role_removed` via `IdentityAuditLog.log_event()`
 5. Return `affected_users_count`
 
-**TicketEvent**: none (role changes do not directly affect tickets)
+**TicketAuditEvent**: none (role changes do not directly affect tickets)
+
+**IdentityAuditEvent**: `role_removed` per affected user. See
+`docs/features/identity/identity-audit-log.md`.
 
 ### `deactivate_user()`
 
@@ -411,7 +441,7 @@ Deactivates a user account and triggers all associated side effects.
 |----------------|-----------------------------|----------|--------------------------------------|
 | `user_id`      | `UUID`                      | Yes      | User to deactivate                   |
 | `acting_user_id` | `UUID \| None`            | No       | Who is performing the action         |
-| `reason`       | `str`                       | Yes      | Human-readable reason (used in TicketEvent comments) |
+| `reason`       | `str`                       | Yes      | Human-readable reason (used in TicketAuditEvent comments) |
 
 **Preconditions**:
 
@@ -448,9 +478,9 @@ in this specific order):
    statuses (Resolved, Ignored, Duplicated) retain their current
    assignee. No active ticket should retain an assignee pointing to an
    inactive user — ticket history preserves the previous assignment via
-   the TicketEvent record. No attempt is made to reassign to the manager
+   the TicketAuditEvent record. No attempt is made to reassign to the manager
    or any other user.
-   Create a `TicketEvent` of type
+   Create a `TicketAuditEvent` of type
    `assignment` with:
    - `user_id = NULL` (system action)
    - `old_value` = deactivated user's username
@@ -463,11 +493,14 @@ interrupted at any point, a user who still appears active will have
 already lost access. The admin can safely retry the deactivation
 without risk of leaving a deactivated user with valid credentials.
 
-**Logging**: log INFO for every deactivation with `user_id`,
-`acting_user_id`, and `reason`.
+**IdentityAuditEvent**: `user_deactivated` — `user_id` = admin (or
+`NULL` for AD sync), `target_user_id` = deactivated user, `detail`
+includes reason. API key revocations produce individual
+`api_key_revoked` events via `api_key_service`. See
+`docs/features/identity/identity-audit-log.md`.
 
-**TicketEvent**: yes — one `assignment` event per unassigned ticket (see
-`docs/features/tickets/ticket-history.md` for the event type contract)
+**TicketAuditEvent**: yes — one `assignment` event per unassigned ticket (see
+`docs/features/tickets/ticket-audit-log.md` for the event type contract)
 
 ### `reactivate_user()`
 
@@ -492,8 +525,8 @@ Reactivates a previously deactivated user account.
 **Behavior**:
 
 1. Set `User.active = true`
-2. Log INFO for every reactivation with `user_id`, `acting_user_id`,
-   and the user's current roles
+2. Create `IdentityAuditEvent` with `event_type = user_reactivated`
+   via `IdentityAuditLog.log_event()`
 3. Return updated User
 
 **Explicitly NOT restored**:
@@ -503,7 +536,10 @@ Reactivates a previously deactivated user account.
 - Role assignments are unchanged (roles are not affected by
   deactivation/reactivation)
 
-**TicketEvent**: none (reactivation is not a ticket mutation)
+**TicketAuditEvent**: none (reactivation is not a ticket mutation)
+
+**IdentityAuditEvent**: `user_reactivated`. See
+`docs/features/identity/identity-audit-log.md`.
 
 ### `reset_password()`
 
@@ -541,7 +577,7 @@ Resets the password for a local user and invalidates all active sessions.
    a password reset.
 6. Return updated User
 
-**TicketEvent**: none (password reset does not affect tickets)
+**TicketAuditEvent**: none (password reset does not affect tickets)
 
 ### `unlock_user(user_id, acting_user_id)`
 
@@ -561,7 +597,8 @@ attempt local authentication.
 2. Delete the Redis key `login_attempts:{username}` (where `username`
    is the user's current username). If Redis is unreachable, log WARNING
    and proceed — the counter will expire naturally via TTL.
-3. Log at INFO level: admin identity, target user, timestamp.
+3. Create `IdentityAuditEvent` with `event_type = user_unlocked` via
+   `IdentityAuditLog.log_event()`.
 
 **Idempotency:** if the user is not currently locked out (Redis key
 does not exist or counter is zero), the operation completes successfully
@@ -574,9 +611,11 @@ with no error. This is a no-op, not a failure.
 | `UserNotFoundError` | `user_id` does not match any user |
 
 **Notes:**
-- No `TicketEvent` is created (not a ticket operation).
+- No `TicketAuditEvent` is created (not a ticket operation).
+- **IdentityAuditEvent**: `user_unlocked`. Note: since unlock is a
+  Redis-only operation with no DB transaction, the audit event is
+  created in its own transaction.
 - No session invalidation (unlocking does not indicate compromise).
-- No database mutation — this operation is purely Redis-based.
 - The `reset_password()` operation continues to clear the lockout
   counter as a side effect (step 5), but `unlock_user()` provides
   an independent path that does not force a password change.
@@ -663,5 +702,7 @@ for the API-layer mapping.
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
-| `docs/features/tickets/ticket-history.md` | `deactivate_user` creates TicketEvents per the `assignment` event type contract |
+| `docs/features/tickets/ticket-audit-log.md` | `deactivate_user` creates TicketAuditEvents per the `assignment` event type contract |
+| `docs/features/identity/identity-audit-log.md` | All identity mutations create IdentityAuditEvents per the event type contract |
+| `docs/features/platform/audit-trail-infrastructure.md` | BaseAuditLog, AuditEventMixin, naming conventions |
 | `docs/data-model.md` | User and UserRole table definitions |

@@ -384,8 +384,8 @@ When no references exist: "No references yet."
 ## Ticket Event Logging
 
 Reference mutations (add, edit, delete) do **not** generate
-`TicketEvent` records. References are supplementary external metadata
-and do not constitute ticket state changes. The `TicketEventType` enum
+`TicketAuditEvent` records. References are supplementary external metadata
+and do not constitute ticket state changes. The `TicketAuditEventType` enum
 does not include reference-related event types.
 
 ## Security

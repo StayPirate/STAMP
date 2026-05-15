@@ -89,7 +89,7 @@ An VA can associate a CVE with a ticket that does not yet have one, via
     [Severity Resolution](#severity-resolution)) — initially `None` if
     the CVE data has not been fetched yet; updated automatically once
     CVSS data arrives from the on-demand fetch
-  - A `TicketEvent` with `event_type = cve_associated` is created
+  - A `TicketAuditEvent` with `event_type = cve_associated` is created
   - CVSS sync and release tracking begin applying to the ticket
 
 ### Dissociating a CVE
@@ -107,8 +107,8 @@ An Admin can remove a CVE from a ticket via
 - Severity resolution falls back to `severity_override` (see
   [Severity Resolution](#severity-resolution)). If `severity_override`
   is also `NULL`, the ticket severity becomes `None`
-- A `TicketEvent` with `event_type = cve_removed` is created (see
-  `docs/features/tickets/ticket-history.md`)
+- A `TicketAuditEvent` with `event_type = cve_removed` is created (see
+  `docs/features/tickets/ticket-audit-log.md`)
 - CVSS sync and release tracking cease applying to the ticket
 - Existing `TicketPackageTrack` and `TicketPackageProduct` records
   are preserved. However, without an associated CVE, automatic release
@@ -141,7 +141,7 @@ sources), a ticket is created automatically. See
 - `cve_id`: set to the ingested CVE
 - `status`: `New`
 - `assignee_id`: `NULL`
-- `TicketEvent`: `event_type = ticket_created`, `user_id = NULL`,
+- `TicketAuditEvent`: `event_type = ticket_created`, `user_id = NULL`,
   `comment` = fetcher source description (e.g., `"CVE ingested from NVD"`)
 
 ### Automatic: Codestream Release Detection (Case C)
@@ -154,7 +154,7 @@ creates the ticket. See `docs/features/packages/ibs-track-release-detection.md`
 - `cve_id`: set to the created/fetched CVE
 - `status`: `New`
 - `assignee_id`: `NULL`
-- `TicketEvent`: `event_type = ticket_created`, `user_id = NULL`,
+- `TicketAuditEvent`: `event_type = ticket_created`, `user_id = NULL`,
   `comment` = detection context
 
 ### Manual Creation
@@ -179,7 +179,7 @@ An Vulnerability Analyst can create a ticket manually via
 - `status`: `Analysis` (direct, bypasses `New` — the creating user is
   automatically assigned)
 - `assignee_id`: set to the creating user
-- Two `TicketEvent` records are created atomically in the same
+- Two `TicketAuditEvent` records are created atomically in the same
   transaction (three if a CVE-ID is provided):
   1. `event_type = ticket_created`, `user_id = creating user`,
      `comment = "Ticket created manually"`
@@ -354,7 +354,7 @@ naturally when gate conditions are no longer met:
 - **Resolved → Analysis**: both "Resolved" and "Analyzed" gates are
   broken (e.g., a new package is added with tracks in ANALYSIS)
 
-All automatic transitions create a `TicketEvent` with `user_id = NULL`
+All automatic transitions create a `TicketAuditEvent` with `user_id = NULL`
 (system action), even when the underlying data change was initiated by
 an VA.
 
@@ -375,7 +375,7 @@ determining a ticket's status based on its current data.
      status is Analyzed
    - Otherwise → status is Analysis
 2. If the determined status differs from the current status, the function
-   updates the ticket and creates a `TicketEvent` with
+   updates the ticket and creates a `TicketAuditEvent` with
    `event_type = status_change`
 3. The function operates within the **same database transaction** as the
    triggering operation (atomicity guarantee)
@@ -450,7 +450,7 @@ This logic is internal to `ticket_mutations` — callers (including
 
 Operations that do NOT modify gate-relevant data (assignment, duplicate
 set/remove, CVE association/removal, ticket-level soft-delete/restore)
-are NOT required to go through this module — they create `TicketEvent`
+are NOT required to go through this module — they create `TicketAuditEvent`
 records in their own services.
 
 #### Orphan Cleanup Invariants
@@ -480,21 +480,21 @@ package orphan rule:
 
 ```
 soft_delete_ticket_package_product(record, user)
-  → TicketEvent (product_excluded)
+  → TicketAuditEvent (product_excluded)
   → evaluate_ticket_status()
   → _enforce_track_orphan_rule()
       → if 0 directly-active products:
           set track.deleted_at (direct)
-          → TicketEvent (track_excluded, user_id=NULL)
+          → TicketAuditEvent (track_excluded, user_id=NULL)
           → evaluate_ticket_status()
           → _enforce_package_orphan_rule()
               → if 0 directly-active tracks:
                   set package.deleted_at (direct)
-                  → TicketEvent (package_excluded, user_id=NULL)
+                  → TicketAuditEvent (package_excluded, user_id=NULL)
                   → evaluate_ticket_status()
 ```
 
-Note: orphan-triggered soft-deletions create `TicketEvent` records with
+Note: orphan-triggered soft-deletions create `TicketAuditEvent` records with
 `user_id = NULL` (system action), distinguishing them from VA-initiated
 exclusions. Each orphan soft-deletion sets `deleted_at` only on the
 parent — no cascade to children (per the hierarchical exclusion model).
@@ -562,7 +562,7 @@ tickets.
 
 When an VA performs any modifying operation on a ticket with
 `assignee_id = NULL`, the ticket is automatically assigned to the acting
-VA. A `TicketEvent` with `event_type = assignment` is created atomically
+VA. A `TicketAuditEvent` with `event_type = assignment` is created atomically
 in the same transaction as the modifying operation.
 
 If the ticket is in `New` status and the operation does not include an
@@ -595,7 +595,7 @@ auto-assignment.
 - **Cascade update**: when marking ticket B as duplicate of ticket C,
   all existing tickets whose `duplicate_of_id` points to B are
   automatically updated to point to C (the resolved target). For each
-  updated ticket, a `TicketEvent` is created with `event_type =
+  updated ticket, a `TicketAuditEvent` is created with `event_type =
   duplicate_target_changed`, `user_id = NULL` (system action),
   `old_value` = previous original identifier, `new_value` = new
   original identifier
@@ -619,7 +619,7 @@ auto-assignment.
     gates for `previous_status` are no longer met (e.g., a CVSS
     assessment was deleted while the ticket was Duplicated), the ticket
     is automatically regressed to the appropriate status (Analysis or
-    Analyzed). This may produce two `TicketEvent` records in the same
+    Analyzed). This may produce two `TicketAuditEvent` records in the same
     transaction: `duplicate_removed` (user action) followed by
     `status_change` (system action)
 
@@ -636,8 +636,8 @@ auto-assignment.
 - All sub-resources of a soft-deleted ticket remain intact but are
   inaccessible to non-admin users (API returns 410 Gone)
 - A soft-deleted ticket can be restored by clearing `deleted_at`
-- Both operations create a `TicketEvent` record (see
-  `docs/features/tickets/ticket-history.md`)
+- Both operations create a `TicketAuditEvent` record (see
+  `docs/features/tickets/ticket-audit-log.md`)
 
 **Automated verification**: every service-layer operation that queries
 tickets as part of its logic MUST include a parametrized test verifying
@@ -646,7 +646,7 @@ that soft-deleted tickets are excluded. At minimum:
 - Create a ticket in each relevant active status (New, Analysis, Analyzed)
 - Soft-delete it (`deleted_at = now()`)
 - Execute the operation under test
-- Assert the soft-deleted ticket was NOT affected (no TicketEvents
+- Assert the soft-deleted ticket was NOT affected (no TicketAuditEvents
   created, no status changes, no unassignment, no inclusion in results)
 
 ### Status Categories
@@ -991,7 +991,7 @@ DELETE /api/v1/tickets/{ticket_id}
 ```
 
 Soft-deletes a ticket by setting `deleted_at`. Creates a `ticket_deleted`
-TicketEvent. See [Soft-Delete](#soft-delete) for visibility rules and
+TicketAuditEvent. See [Soft-Delete](#soft-delete) for visibility rules and
 sub-resource behavior.
 
 Response: 204 No Content.
@@ -1010,7 +1010,7 @@ POST /api/v1/tickets/{ticket_id}/restore
 ```
 
 Restores a soft-deleted ticket by clearing `deleted_at`. Creates a
-`ticket_restored` TicketEvent. See [Soft-Delete](#soft-delete) for
+`ticket_restored` TicketAuditEvent. See [Soft-Delete](#soft-delete) for
 soft-delete lifecycle.
 
 Response: the restored ticket object wrapped in the standard
