@@ -23,7 +23,13 @@ to all audit trail tables:
 |---|---|---|---|
 | `id` | UUID | PK | Internal identifier |
 | `created_at` | TIMESTAMP | NOT NULL, server default | When the event occurred |
-| `user_id` | UUID | FK(user.id), nullable | Actor. NULL for system-initiated actions |
+| `user_id` | UUID | FK(user.id, ON DELETE RESTRICT), nullable | Actor. NULL for system-initiated actions |
+
+Sentinel only performs soft-delete (deactivation) on users, never
+hard-delete. The FK on `user_id` uses `ON DELETE RESTRICT` explicitly
+(even though it is the PostgreSQL default) to make the constraint visible
+and prevent accidental data loss. If a hard-delete were attempted, it
+would fail with a FK violation, protecting audit history.
 
 All audit event models inherit these columns from the mixin and add
 their own domain-specific columns (e.g., `ticket_id`, `event_type`,
@@ -36,7 +42,9 @@ Every audit trail in Sentinel MUST be implemented as a subclass of
 defines:
 
 - **Auto-registration**: all subclasses are automatically registered in a
-  global registry, keyed by `name`
+  global registry, keyed by `name`. If a subclass attempts to register
+  with a `name` that already exists in the registry, a `ValueError` MUST
+  be raised at startup to prevent silent overwrites
 - **Retention**: `default_retention_days: int | None` — `None` means
   indefinite retention. Subclasses override as needed
 - **Event creation**: `log_event()` class method inserts a record within
@@ -74,6 +82,11 @@ class BaseAuditLog:
         """Create an audit record in the current transaction.
 
         Subclasses may override to add domain-specific validation.
+        The base class uses **kwargs for flexibility (each trail has
+        different fields). Subclasses SHOULD override with a typed
+        signature that validates expected fields for their event types
+        before calling super().log_event(). Database NOT NULL constraints
+        serve as a last safety net for required fields.
         """
         ...
 
@@ -106,6 +119,11 @@ class BaseAuditLog:
         - actor == "system": WHERE user_id IS NULL
         - actor is a UUID:   WHERE user_id = <uuid>
         - actor is a string: JOIN User, WHERE username = <actor>
+
+        The `actor` parameter follows the User Identifier Resolution
+        convention defined in `docs/conventions.md`: if the value is a
+        valid UUID, lookup is by `user.id`; otherwise, lookup is by
+        `user.username` (exact match).
 
         Relies on the uniform user_id column provided by
         AuditEventMixin across all audit event models.
@@ -212,6 +230,12 @@ mutation it records. If the mutation is rolled back, the audit event must
 not persist. This is enforced by using `BaseAuditLog.log_event()` with the
 same `AsyncSession` as the mutation.
 
+If `log_event()` fails for any reason (FK constraint violation, invalid
+event_type, serialization error), the entire transaction — including the
+business mutation — MUST roll back. The caller MUST NOT catch exceptions
+from `log_event()` separately from the main transaction. No mutation can
+exist without its corresponding audit event.
+
 ## Actor Field
 
 - `user_id` is inherited from `AuditEventMixin` and is nullable at the
@@ -235,6 +259,9 @@ class method to ensure uniform behavior across all audit trails:
 - `to_date` only → records where `created_at <= to_date`
 - Both → records in the inclusive range
 - Neither → no date filter applied
+
+Date-only values (without a time component) are interpreted following the
+convention defined in `docs/api-spec.md` (Date Range Interpretation).
 
 ## Indexing
 
@@ -275,10 +302,42 @@ workflow, not an admin-only auditing feature. This asymmetry is
 intentional — the ticket audit log is entity-scoped (always filtered by
 `ticket_id`) and does not expose cross-entity audit data.
 
+## Immutability
+
+Audit event tables are append-only. No application-level UPDATE or DELETE
+operations are permitted on these tables. This is a project convention
+enforced via code review (guardrails) and automated tests. Tests should
+verify the absence of UPDATE/DELETE operations on audit event models in
+the service layer.
+
+The only exception is a future archival/cleanup mechanism, which must be
+defined in a dedicated specification before implementation.
+
+## Scalability Considerations
+
+Current indexes cover primary query patterns (per-entity lookups).
+Cross-entity queries at high volume may degrade on very large tables.
+Table partitioning by date range can be evaluated in the future if
+volumes justify it. Retention is intentionally indefinite (all trails
+have `default_retention_days = None`).
+
+## Enforcement
+
+Guardrail 11 (AGENTS.md) and reviewer agents
+(`@ticket-integrity-reviewer`, `@identity-integrity-reviewer`) verify
+audit compliance during PR review. Integration tests for each mutation
+service should verify the corresponding audit event is created. No
+additional runtime detection mechanism is needed at this time.
+
+## Filtering
+
+All audit trail endpoints MUST apply standard pagination as defined in
+`docs/api-spec.md` (default `per_page`: 20, max: 100).
+
 ## Cross-references
 
 - `docs/conventions.md` — Audit Trail reference paragraph
-- `docs/api-spec.md` — `/audit-log` endpoint suffix convention
+- `docs/api-spec.md` — `/audit-log` endpoint suffix convention, pagination conventions
 - `docs/data-model.md` — table definitions for all audit event models
 - `docs/features/tickets/ticket-audit-log.md` — ticket audit trail
 - `docs/features/identity/identity-audit-log.md` — identity audit trail

@@ -20,39 +20,47 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
 | [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-12 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [admin](admin.md) | — | — | — | — | 🟢 | 0 | 2026-05-06 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 2 | 🟢 | 1 | 2 | 🟢 | 5 | 2026-05-15 | ⚠️ |
+|  | 2:🟡 |  | 1:🟡 | 2:🟡 |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
+| [identity-audit-log](identity-audit-log.md) | — | — | — | — | — | 0 | — | — |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 1 | 🟢 | 1 | 2026-05-13 |  |
+| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 1 | 🟢 | 1 | 2026-05-13 | ⚠️ |
 |  |  |  |  | 1:🟠 |  |  |  |  |
-| [sso-authentication](sso-authentication.md) | 🟢 | — | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
+| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
+| [ticket-audit-log](ticket-audit-log.md) | — | — | — | — | — | 0 | — | — |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | — | 0 | 2026-05-08 | ⚠️ |
+| [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **0** | **0** | **0** | **1** | **0** | **1** | — |  |
-|  |  |  |  | 1:🟠 |  |  |  |  |
+| **Total** | **2** | **0** | **1** | **3** | **0** | **6** |  |  |
+|  | 2:🟡 |  | 1:🟡 | 1:🟠 2:🟡 |  |  |  |  |
 
 ### Disabled specs
 
+- admin
+- api-key-service
 - cve-tracking
 - cvss-scoring
 - fetcher-dashboard
 - fetcher-infrastructure
-- ibs-track-release-detection
+- git-product-release-detection
+- git-track-release-detection
 - ibs-integration
 - ibs-product-release-detection
 - ibs-rabbitmq-integration
 - ibs-submission-tracking
+- ibs-track-release-detection
 - maintainer-dashboard
 - package-bugowner
 - package-tracking
 - pages
+- product-catalog
 - product-lifecycle-transitions
 - references
-- ticket-audit-log
 - tickets

@@ -145,6 +145,21 @@ resource. Common patterns:
 - Search: `?search=term` (searches relevant text fields)
 - Date range: `?from_date=2024-01-01&to_date=2024-12-31`
 
+#### Date Range Interpretation
+
+When a date range filter (`from_date`, `to_date`) is applied against a
+`datetime` column:
+
+- **Date-only value** (e.g., `2025-01-15`):
+  - `from_date` → interpreted as `2025-01-15T00:00:00` (start of day,
+    inclusive)
+  - `to_date` → interpreted as `2025-01-15T23:59:59.999999` (end of day,
+    inclusive)
+- **Full datetime value** (e.g., `2025-01-15T14:30:00`): used as-is
+
+This ensures that "inclusive bounds" means inclusive of the full day when no
+time component is specified.
+
 ### Sorting
 
 List endpoints support sorting:
