@@ -50,7 +50,7 @@ flowchart TB
         ReleaseRequest
     end
 
-    CVE -->|"0..1 : 1"| Ticket
+    CVE -->|"0..1 : 0..1"| Ticket
     Ticket --> TicketAuditEvent
     Ticket --> TicketPackage
     Ticket -->|"assignee"| User
