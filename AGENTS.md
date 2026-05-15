@@ -26,38 +26,64 @@ For full architecture details, read `docs/architecture.md`.
 sentinel/
 ├── AGENTS.md                    # Project instructions for OpenCode
 ├── opencode.json                # OpenCode configuration
+├── certs/                       # TLS certificates (SUSE Trust Root CA)
+├── dev-env.sh                   # Local dev stack launcher (Podman/Docker)
+├── docker-compose.yml           # Local development environment
 ├── docs/                        # Specifications and documentation
 │   ├── architecture.md          # System architecture
+│   ├── api-spec.md              # API specifications
+│   ├── cli-reference.md         # CLI commands reference
 │   ├── configuration.md         # Configuration reference (env vars index)
+│   ├── conventions.md           # Code conventions
 │   ├── data-model.md            # Database schema and relationships
 │   ├── data-sources.md          # External data sources catalog
-│   ├── api-spec.md              # API specifications
-│   ├── conventions.md           # Code conventions
+│   ├── deployment.md            # Deployment guide
+│   ├── system-map.md            # System map
 │   ├── ui-design-system.md      # UI design system
 │   ├── drafts/                  # WIP feature specs (not yet approved)
-│   └── features/                # Approved feature specifications
+│   ├── features/                # Approved feature specifications
+│   │   ├── identity/            # Identity & access management
+│   │   ├── integrations/        # External system integrations
+│   │   ├── packages/            # Package tracking
+│   │   ├── platform/            # Platform infrastructure
+│   │   ├── tickets/             # Ticket management
+│   │   └── ui/                  # UI features
+│   └── reviews/                 # Review findings (untracked)
 ├── .opencode/                   # OpenCode agents, skills, commands
+│   ├── agents/                  # Subagent definitions
+│   ├── commands/                # Custom slash commands
+│   └── skills/                  # Skill workflows
 ├── backend/                     # FastAPI backend
+│   ├── Dockerfile               # Backend container image
+│   ├── pyproject.toml           # Python dependencies and config
+│   ├── alembic.ini              # Alembic configuration
+│   ├── alembic/                 # Database migrations
+│   ├── scripts/                 # Utility scripts
 │   ├── app/
+│   │   ├── main.py              # FastAPI application entry point
+│   │   ├── config.py            # Application configuration
+│   │   ├── database.py          # Database session setup
 │   │   ├── models/              # SQLAlchemy models
 │   │   ├── schemas/             # Pydantic schemas (request/response)
 │   │   ├── api/v1/              # API endpoints
 │   │   ├── services/            # Business logic
 │   │   ├── tasks/               # Celery background tasks
 │   │   └── core/                # Auth, permissions, utilities
-│   ├── alembic/                 # Database migrations
 │   └── tests/                   # Backend tests
 ├── frontend/                    # React SPA
+│   ├── Dockerfile               # Frontend container image
+│   ├── package.json             # Node dependencies
+│   ├── vite.config.ts           # Vite build configuration
 │   ├── src/
 │   │   ├── api/                 # API client
+│   │   ├── assets/              # Static assets
 │   │   ├── components/          # React components
 │   │   │   └── ui/              # Reusable UI components (shadcn/ui)
 │   │   ├── pages/               # Page components
 │   │   ├── hooks/               # Custom React hooks
 │   │   └── types/               # TypeScript types
 │   └── tests/                   # Frontend tests
-├── .github/workflows/           # CI/CD pipelines
-└── docker-compose.yml           # Local development environment
+└── .github/workflows/           # CI/CD pipelines
 ```
 
 ## Commands
@@ -145,10 +171,12 @@ the location is correct according to this map:
 |----------------------------|-----------------------------------|
 | Feature specifications     | `docs/features/<domain>/<feature-name>.md` |
 | General architecture       | `docs/architecture.md`            |
+| API specifications         | `docs/api-spec.md`                |
+| CLI reference              | `docs/cli-reference.md`           |
 | Configuration reference    | `docs/configuration.md`           |
 | Data schema                | `docs/data-model.md`              |
 | External data sources      | `docs/data-sources.md`            |
-| API specifications         | `docs/api-spec.md`                |
+| Deployment guide           | `docs/deployment.md`              |
 | Code conventions           | `docs/conventions.md`             |
 | UI design system           | `docs/ui-design-system.md`        |
 | SQLAlchemy models          | `backend/app/models/`             |
@@ -158,6 +186,8 @@ the location is correct according to this map:
 | Background tasks           | `backend/app/tasks/`              |
 | Auth and permissions       | `backend/app/core/`               |
 | DB migrations              | `backend/alembic/versions/`       |
+| Utility scripts            | `backend/scripts/`                |
+| TLS certificates           | `certs/`                          |
 | Reusable UI components     | `frontend/src/components/ui/`     |
 | Page-specific components   | `frontend/src/components/`        |
 | Page components            | `frontend/src/pages/`             |
@@ -343,55 +373,42 @@ contracts.
 Every service operation that modifies a Ticket or its related data
 (status, assignee, duplicate links, packages, codestreams, products)
 MUST create a `TicketAuditEvent` record with the appropriate
-`event_type`.
+`event_type`. An operation that mutates a ticket without creating a
+corresponding `TicketAuditEvent` is a bug.
 
-Before considering any ticket-related code change complete:
+If the change introduces a new type of ticket mutation not covered by
+an existing `TicketAuditEventType`, STOP and propose an update to
+`docs/data-model.md` and `docs/features/tickets/ticket-audit-log.md` before
+proceeding with the implementation.
 
-1. Identify which ticket mutations the code performs
-2. Verify that a `TicketAuditEvent` is created for each mutation, with:
-   - Correct `event_type` per the contract in `docs/features/tickets/ticket-audit-log.md`
-   - `old_value` and `new_value` populated where applicable
-   - `user_id` set for user-initiated actions, `NULL` for system actions
-   - `comment` populated for automated events with a system description
-3. Verify that the `TicketAuditEvent` is created in the same database transaction
-   as the ticket mutation (atomicity guarantee)
-4. Verify that tests assert `TicketAuditEvent` creation:
-   - Correct event count after each operation
-   - Correct `event_type`, `old_value`, `new_value`
-   - Correct `user_id` (user vs `NULL` for system)
-5. If the change introduces a new type of ticket mutation not covered by
-   an existing `TicketAuditEventType`, STOP and propose an update to
-   `docs/data-model.md` and `docs/features/tickets/ticket-audit-log.md` before
-   proceeding with the implementation
-6. After implementation, invoke `@ticket-integrity-reviewer` to verify:
-   - All mutations are covered by `TicketAuditEvent` records
-   - Field values comply with the contract in
-     `docs/features/tickets/ticket-audit-log.md`
-   - Events share the same database transaction as the mutation
-7. When creating or modifying a feature spec in `docs/features/` that
-   describes ticket operations, invoke `@ticket-integrity-reviewer` to verify
-   that all described mutations have corresponding `TicketAuditEventType`
-   entries in the contract — missing entries must be added before
-   proceeding with implementation
+Invoke `@ticket-integrity-reviewer`:
 
-The goal is to maintain a complete and reliable audit trail for every
-ticket. An operation that mutates a ticket without creating a corresponding
-`TicketAuditEvent` is a bug.
+- After implementing or modifying code in `backend/app/services/` or
+  `backend/app/tasks/` that mutates tickets or their related data
+- When creating or modifying a feature spec in `docs/features/` that
+  describes ticket operations
+
+See `docs/features/tickets/ticket-audit-log.md` for the event type contract.
 
 #### Identity audit trail
 
 Every service operation that modifies identity-related data (user
 lifecycle, roles, API keys, role mappings) MUST create an
 `IdentityAuditEvent` via `IdentityAuditLog.log_event()` in the same
-database transaction.
+database transaction. An operation that mutates identity data without
+creating a corresponding `IdentityAuditEvent` is a bug.
 
-Before considering any identity-related code change complete:
+If the change introduces a new type of identity mutation not covered by
+an existing `IdentityAuditEventType`, STOP and propose an update to
+`docs/data-model.md` and `docs/features/identity/identity-audit-log.md`
+before proceeding with the implementation.
 
-1. Identify which identity mutations the code performs
-2. Verify that an `IdentityAuditEvent` is created for each mutation
-3. Verify that tests assert `IdentityAuditEvent` creation (correct
-   event count, event type, user_id, target_user_id, old/new values)
-4. After implementation, invoke `@identity-integrity-reviewer`
+Invoke `@identity-integrity-reviewer`:
+
+- After implementing or modifying code in `backend/app/services/` or
+  `backend/app/tasks/` that mutates identity-related data
+- When creating or modifying a feature spec in `docs/features/` that
+  describes identity operations
 
 See `docs/features/identity/identity-audit-log.md` for the event type
 contract.
@@ -515,20 +532,15 @@ Relevant data includes: `TicketPackageTrack` records,
 `TicketPackageProduct` records, `CVECVSSAssessment` records, ticket
 severity, and package addition/removal.
 
-Before considering any ticket-related code change complete:
+If there is no suitable function in `ticket_mutations` for a new type
+of gate-relevant mutation, add one before proceeding with the
+implementation.
 
-1. Identify whether the code modifies any gate-relevant data
-2. If it does, verify that the modification goes through a
-   `ticket_mutations` function (not direct model attribute assignment)
-3. If there is no suitable function in `ticket_mutations`, add one
-   before proceeding
-4. Verify that the architectural integration tests (see
-   `docs/features/tickets/tickets.md`, Architectural Test Requirement) cover
-   the new or modified operation
+The `@ticket-integrity-reviewer` (Guardrail 11) verifies module usage
+compliance after implementation.
 
-The goal is to ensure that ticket status is always consistent with its
-underlying data. A service operation that modifies gate-relevant data
-without going through `ticket_mutations` is a bug.
+See `docs/features/tickets/tickets.md` (Centralized Status Evaluation)
+for the full specification.
 
 ### 17. Specification completeness
 
@@ -599,6 +611,9 @@ This ensures that:
   enforced regardless of the entry point
 - The async pattern is maintained consistently (service is async; sync
   callers use `asyncio.run()`)
+
+The `@identity-integrity-reviewer` (Guardrail 11) verifies service
+usage compliance after implementation.
 
 See `docs/features/identity/user-service.md` for the full service contract.
 
