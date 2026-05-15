@@ -60,7 +60,7 @@ flowchart TB
     User --> UserRole
     User --> Session
     User --> ApiKey
-    FetcherConfig -.->|"by name"| FetcherRun
+    FetcherConfig -->|"FK fetcher_name"| FetcherRun
     SubmissionRequest -.->|"incident_number"| ReleaseRequest
 ```
 
@@ -258,19 +258,19 @@ erDiagram
     }
     FetcherRun {
         UUID id PK
-        VARCHAR fetcher_name "NOT NULL"
+        VARCHAR fetcher_name FK "NOT NULL"
         ENUM status "NOT NULL"
         ENUM triggered_by "NOT NULL"
         UUID triggered_by_user_id FK "nullable"
     }
     FetcherRunWeeklyAggregate {
         UUID id PK
-        VARCHAR fetcher_name "NOT NULL"
+        VARCHAR fetcher_name FK "NOT NULL"
         DATE week_start "NOT NULL"
     }
     FetcherAuditEvent {
         UUID id PK
-        VARCHAR fetcher_name "NOT NULL"
+        VARCHAR fetcher_name FK "NOT NULL"
         ENUM event_type "NOT NULL"
         UUID user_id FK "nullable"
     }
@@ -288,9 +288,9 @@ erDiagram
         UUID id PK
     }
 
-    FetcherConfig ||..o{ FetcherRun : "identifies"
-    FetcherConfig ||..o{ FetcherAuditEvent : "identifies"
-    FetcherConfig ||..o{ FetcherRunWeeklyAggregate : "identifies"
+    FetcherConfig ||--o{ FetcherRun : "has runs"
+    FetcherConfig ||--o{ FetcherAuditEvent : "has audit events"
+    FetcherConfig ||--o{ FetcherRunWeeklyAggregate : "has aggregates"
     FetcherRun }o--o| User : "triggered by"
     FetcherAuditEvent }o--o| User : "performed by"
     SettingAuditEvent }o--o| User : "performed by"
@@ -991,7 +991,7 @@ specification.
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Internal identifier                |
-| fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier (matches `BaseFetcher.name`) |
+| fetcher_name         | VARCHAR     | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
 | started_at           | TIMESTAMP   | NOT NULL                 | When the run started               |
 | finished_at          | TIMESTAMP   | nullable                 | When the run ended (NULL while running) |
 | duration_seconds     | FLOAT       | nullable                 | `finished_at - started_at` in seconds |
@@ -1029,7 +1029,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Inherited from AuditEventMixin     |
-| fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier                 |
+| fetcher_name         | VARCHAR     | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier                 |
 | event_type           | ENUM        | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
 | user_id              | UUID        | FK(user.id), nullable    | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; service validates presence |
 | detail               | JSONB       | nullable                 | Additional context (e.g., old/new config values) |
@@ -1043,7 +1043,7 @@ retention task after the 90-day individual retention window.
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Internal identifier                |
-| fetcher_name         | VARCHAR     | NOT NULL, indexed        | Fetcher identifier                 |
+| fetcher_name         | VARCHAR     | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier                 |
 | week_start           | DATE        | NOT NULL                 | Monday of the aggregation week     |
 | run_count            | INTEGER     | NOT NULL                 | Total runs in the week             |
 | success_count        | INTEGER     | NOT NULL                 | Runs with status `success`         |

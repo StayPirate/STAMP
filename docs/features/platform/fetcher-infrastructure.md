@@ -481,7 +481,7 @@ the dashboard charts.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| fetcher_name | VARCHAR | NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
+| fetcher_name | VARCHAR | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
 | started_at | TIMESTAMP | NOT NULL | When the run started |
 | finished_at | TIMESTAMP | nullable | When the run ended (NULL while running) |
 | duration_seconds | FLOAT | nullable | Computed: `finished_at - started_at` in seconds |
@@ -562,7 +562,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
-| fetcher_name | VARCHAR | NOT NULL, indexed | Fetcher identifier |
+| fetcher_name | VARCHAR | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
 | event_type | ENUM | NOT NULL | See FetcherAuditEventType enum |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
 | detail | JSONB | nullable | Additional context (e.g., old/new schedule values) |
@@ -599,7 +599,7 @@ Stores weekly summaries of fetcher runs after the retention window
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| fetcher_name | VARCHAR | NOT NULL, indexed | Fetcher identifier |
+| fetcher_name | VARCHAR | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
 | week_start | DATE | NOT NULL | Monday of the aggregation week |
 | run_count | INTEGER | NOT NULL | Total number of runs in the week |
 | success_count | INTEGER | NOT NULL | Runs with status `success` |
@@ -635,6 +635,53 @@ days) before individual run records are deleted.
 
 This task is itself a fetcher (inherits `BaseFetcher`) so its execution
 is also tracked in the dashboard.
+
+## Deregistered Fetcher Lifecycle
+
+When a fetcher class is removed from the codebase (or renamed), its
+entry disappears from the in-memory `FETCHER_REGISTRY` at the next
+worker restart. However, its `FetcherConfig` record and all associated
+`FetcherRun`, `FetcherAuditEvent`, and `FetcherRunWeeklyAggregate`
+records remain in the database. The FK constraints (`ON DELETE RESTRICT`)
+on the three dependent tables prevent accidental deletion of the
+`FetcherConfig` row while dependent records exist.
+
+### Observable effects
+
+- The fetcher is no longer present in `FETCHER_REGISTRY`
+- Celery Beat does not schedule it
+- The `GET /api/v1/fetchers` endpoint and `sentinel fetcher list` CLI
+  command (both driven by the registry) do not include it
+- Per-fetcher API endpoints (`/runs`, `/timeline`, `/config`,
+  `/audit-log`) return `404 FETCHER_NOT_FOUND` because the fetcher name
+  is validated against the registry
+- Historical data (runs, aggregates, audit events) remains in the
+  database but is inaccessible through the standard API and CLI
+
+### Aggregation task behavior
+
+The `aggregate_fetcher_runs` task selects `FetcherRun` records by age,
+not by registry membership. It continues to aggregate and eventually
+delete old individual run records for deregistered fetchers on the same
+schedule as for active fetchers. Over time, all individual runs are
+replaced by `FetcherRunWeeklyAggregate` records.
+
+### No automatic cleanup
+
+Sentinel does not automatically delete `FetcherConfig` records for
+deregistered fetchers. This is intentional:
+
+- Historical run and audit data has forensic and operational value
+- The `ON DELETE RESTRICT` FK constraints make accidental cleanup
+  impossible — dependent records must be removed first
+- The number of deregistered fetchers grows slowly (order of units over
+  the lifetime of the application) and does not create a storage or
+  performance concern
+
+If an operator needs to remove all traces of a deregistered fetcher,
+the cleanup is a manual database operation that must respect FK ordering:
+delete `FetcherRunWeeklyAggregate` records, then `FetcherRun` records,
+then `FetcherAuditEvent` records, and finally the `FetcherConfig` row.
 
 ## Guardrail: Fetcher Base Class Compliance
 
