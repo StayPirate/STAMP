@@ -88,3 +88,43 @@ for local development.
 for frontend serving — may be sufficient), and whether to add
 application-level rate limiting as defense-in-depth or rely solely on
 the proxy.
+
+---
+
+## 3. Orphan CVE Re-Ticketing Mechanism
+
+**Origin**: spec inconsistency found while reviewing the CVE-Ticket
+cardinality in the ER diagram.
+
+**Context**: `docs/features/tickets/tickets.md` (lines 125-129) states
+that after an Admin dissociates a CVE from a ticket, "a subsequent CVE
+sync will create a new ticket for it". However,
+`docs/features/tickets/cve-tracking.md` (line 229) specifies that the
+sync fetchers (`sync_cves_nvd`, `sync_cves_mitre`) create tickets only
+for **newly ingested** CVEs — i.e., CVEs that do not yet exist in the
+database. For CVEs that already exist, the sync only updates data
+(references, scores, etc.) without checking whether a ticket is
+associated.
+
+This means that after a CVE dissociation, the CVE remains in the
+database without a ticket indefinitely. The only partial safety net is
+IBS Case C (`ibs-track-release-detection.md`, lines 153-176), which
+creates a ticket when a CVE fix is found in an IBS diff — but this is
+reactive and narrow, not a general orphan scan.
+
+**Options**:
+
+- **(A) Extend sync fetchers**: when processing an existing CVE, check
+  whether a ticket exists for it. If not, create one. This is the
+  simplest fix and fulfills the promise in `tickets.md`, but adds a
+  query per existing CVE on every sync run.
+- **(B) Remove the re-ticketing claim**: update `tickets.md` to state
+  that dissociation leaves the CVE without a ticket, and that the Admin
+  is responsible for re-associating it before the next sync. Simpler,
+  but orphan CVEs become a silent operational risk.
+- **(C) Dedicated periodic task**: create a lightweight "orphan CVE
+  scanner" that runs periodically (e.g., daily) and creates tickets for
+  any CVE without one. Decouples the concern from the sync fetchers.
+
+**Decision needed**: which approach to adopt for resolving the
+inconsistency between `tickets.md` and `cve-tracking.md`.
