@@ -5,211 +5,349 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
 
+The data model comprises 29 entities organized into five domains. The
+overview below shows the core entities and their cross-domain
+relationships. Domain-specific diagrams follow with key columns (primary
+keys, foreign keys, and discriminant fields). Full column definitions
+are in the [Tables](#tables) section.
+
+Entities from other domains appear as stubs (primary key only) in domain
+diagrams when referenced by a foreign key. Dashed lines indicate
+implicit relationships (joined by convention, no FK constraint).
+
+### Overview
+
+```mermaid
+flowchart TB
+    subgraph cve_tickets["CVE & Tickets"]
+        CVE
+        Ticket
+        TicketAuditEvent
+    end
+
+    subgraph packages["Package Tracking"]
+        TicketPackage
+        TicketPackageTrack
+        TicketPackageProduct
+        Product
+    end
+
+    subgraph identity["Identity"]
+        User
+        UserRole
+        Session
+        ApiKey
+    end
+
+    subgraph platform["Platform"]
+        FetcherConfig
+        FetcherRun
+        SystemSetting
+    end
+
+    subgraph ibs["IBS Integration"]
+        SubmissionRequest
+        ReleaseRequest
+    end
+
+    CVE -->|"0..1 : 1"| Ticket
+    Ticket --> TicketAuditEvent
+    Ticket --> TicketPackage
+    Ticket -->|"assignee"| User
+    TicketPackage --> TicketPackageTrack
+    TicketPackageTrack --> TicketPackageProduct
+    Product --> TicketPackageProduct
+    User --> UserRole
+    User --> Session
+    User --> ApiKey
+    FetcherConfig -.->|"by name"| FetcherRun
+    SubmissionRequest -.->|"incident_number"| ReleaseRequest
 ```
-┌──────────────────┐ (1:N) ┌──────────────────┐
-│       CVE        │──────▶│    CVESource     │
-│                  │       │                  │
-│  cve_id          │       │  cve_id (FK)     │
-│  description     │       │  source_type     │
-│  severity        │       │  source_url      │
-│  published_date  │       │  raw_data        │
-│  nvd_status      │       └──────────────────┘
-└──────┬───┬───────┘
-       │   │
-       │   ▼ (1:N)
-       │  ┌──────────────────────┐
-       │  │  CVECVSSAssessment   │
-       │  │                      │
-       │  │  cve_id (FK)         │
-       │  │  provider_name       │
-       │  │  cvss_version        │
-       │  │  score               │
-       │  │  vector              │
-       │  └──────────────────────┘
-       │
-       ▼ (0..1:1)
-┌──────────────────┐ (1:N) ┌──────────────────┐
-│     Ticket       │──────▶│   TicketAuditEvent    │
-│                  │       │                  │
-│  sequence_id(UQ) │       │  ticket_id (FK)  │
-│  cve_id(FK,UQ,?) │       │  user_id (FK) ──────┐
-│  status          │       │  event_type      │  │
-│  severity_override│      │  old_value       │  │
-│  assignee_id (FK)──┐     │  new_value       │  │
-│  duplicate_of_id │  │    │  comment         │  │
-│  (FK, self-ref)  │  │    │                  │  │
-│  previous_status │  │    │                  │  │
-│  deleted_at      │  │    │                  │  │
-└──────┬───────────┘  │    └──────────────────┘  │
-       │              │                          │
-       │              │    ┌──────────────────┐   │
-       │              └───▶│      User        │◀──┘
-       │                   │                  │
-        │                   │  username          │
-       │                   │  email             │
-       │                   │  full_name         │
-       │                   │  active            │
-       │                   │  password_hash     │
-        │                   │  ad_object_guid  │
-        │                   │  manager_id (FK)   │
-       │                   │  ad_synced_at    │
-       │                   │  last_login_at     │
-       │                   └────────┬─────────┘
-       │                            │
-       │                            ▼ (1:N)
-       │                   ┌──────────────────┐
-       │                   │    UserRole      │
-       │                   │                  │
-       │                   │  user_id (FK)    │
-       │                   │  role            │
-       │                   │  ad_group_cn     │
-       │                   │  assigned_by(FK) │
-       │                   └──────────────────┘
-       │
-       │                   ┌──────────────────┐
-       │                   │  RoleMapping     │
-       │                   │                  │
-       │                   │  ad_group_cn     │
-       │                   │  role            │
-       │                   │  created_by (FK) │
-       │                   └──────────────────┘
-       │
-       │                   ┌──────────────────┐
-       │                   │    Session       │
-       │                   │                  │
-       │                   │  user_id (FK)    │
-       │                   │  is_active       │
-       │                   └──────────────────┘
-       │
-       │                   ┌──────────────────┐
-       │                   │    ApiKey        │
-       │                   │                  │
-       │                   │  user_id (FK)    │
-       │                   │  key_hash        │
-       │                   │  prefix          │
-       │                   │  name            │
-       │                   │  expires_at      │
-       │                   │  revoked_at      │
-       │                   │  revoked_by (FK) │
-       │                   │  last_used_at    │
-       │                   └──────────────────┘
-       │
-       │
-       ▼ (1:N)
-┌────────────────────────────┐             │
-│  TicketPackage             │     ┌───────┴─────────────────┐
-│                            │     │        Product          │
-│  ticket_id (FK)            │     │                         │
-│  package_name              │     │  smelt_id               │
-│  deleted_at                │     │  name                   │
-└──────────┬─────────────────┘     │  version                │
-           │                       │  display_name           │
-           ▼ (1:N)                 │  cpe                    │
-┌────────────────────────────┐     │  cvss_threshold         │
-│  TicketPackageTrack        │     │  active                 │
-│                            │     │  fcs                    │
-│  ticket_package_id (FK)    │     │  end_of_gs              │
-│  workflow_type             │     │  end_of_ltss            │
-│  reference                 │     │  end_of_espos           │
-│  status                    │     │  end_of_reactive_ltss   │
-│  delivery_status           │     └──────┬──────────────────┘
-│  deleted_at                │            │
-└──────────┬─────────────────┘            │
-           │                              │
-           ▼ (1:N)                        │
-┌────────────────────────────┐            │
-│   TicketPackageProduct     │────▶───────┘
-│                            │
-│  tpt_id (FK) *             │            ▼ (1:N)
-│  product_id (FK)           │     ┌─────────────────────────┐
-│  status                    │     │   ProductRepository     │
-│  is_status_override        │     │                         │
-│  eligible                  │     │  product_id (FK)        │
-│  is_eligible_override      │     │  repo_name              │
-│  released_at               │     └─────────────────────────┘
-│  deleted_at                │
-└────────────────────────────┘     ┌─────────────────────────┐
-                                   │   ProductRepository     │
-┌──────────────────┐               │                         │
-│  SystemSetting   │               │  product_id (FK)        │
-│                  │               │  repo_name              │
-│  key (PK)        │               └─────────────────────────┘
-│  value           │
-└──────────────────┘       ┌─────────────────────────────────┐
-                           │ CodestreamPackageChecksum        │
-                           │ (operational cache)              │
-                           │                                 │
-                           │  codestream_name                │
-                           │  package_name                   │
-                           │  srcmd5                         │
-                           │  last_seen_at                   │
-                           └─────────────────────────────────┘
 
-┌──────────────────────────────┐
-│  PackageBugowner             │ (1:N)
-│  (bugowner cache)            │──────┐
-│                              │      │
-│  package_name (UQ)           │      │
-│  bugowner_type               │      ▼
-│  bugowner_name               │  ┌──────────────────────────────┐
-│  bugowner_email              │  │  PackageBugownerMember       │
-└──────────────────────────────┘  │                              │
-                                  │  package_bugowner_id (FK)    │
-                                  │  userid                      │
-                                  │  email                       │
-                                  └──────────────────────────────┘
+### CVE & Ticket Core
 
-┌──────────────────────┐   ┌─────────────────────────────────┐
-│  FetcherConfig       │   │ FetcherRun                       │
-│                      │   │                                 │
-│  fetcher_name (PK)   │   │  fetcher_name                   │
-│  enabled             │   │  started_at / finished_at       │
-│  schedule_override   │   │  duration_seconds               │
-│  timeout_seconds     │   │  status                         │
-│  rate_limit          │   │  items_created/updated/failed   │
-│  custom_settings     │   │  error_message                  │
-└──────────────────────┘   │  error_detail                   │
-┌──────────────────────┐   │  error_traceback                │
-│  FetcherAuditEvent   │   │  triggered_by                   │
-│                      │   │  triggered_by_user_id (FK)      │
-│                      │   └─────────────────────────────────┘
-│  fetcher_name        │
-│  event_type          │   ┌─────────────────────────────────┐
-│  user_id (FK)        │   │ FetcherRunWeeklyAggregate        │
-│                      │   │                                 │
-│  detail              │   │  fetcher_name                   │
-└──────────────────────┘   │  week_start                     │
-                           │  run_count                      │
-                           │  success/failure/partial_count  │
-                           │  avg/min/max_duration_seconds   │
-                           │  total_items_created/updated    │
-                           │  total_items_failed             │
-                           └─────────────────────────────────┘
+```mermaid
+erDiagram
+    CVE {
+        UUID id PK
+        VARCHAR cve_id UK "NOT NULL"
+        ENUM severity
+        VARCHAR nvd_status
+    }
+    CVESource {
+        UUID id PK
+        UUID cve_id FK "NOT NULL"
+        ENUM source_type "NOT NULL"
+    }
+    CVECVSSAssessment {
+        UUID id PK
+        UUID cve_id FK "NOT NULL"
+        VARCHAR provider_name "NOT NULL"
+        VARCHAR cvss_version "NOT NULL"
+        DECIMAL score "NOT NULL"
+    }
+    Ticket {
+        UUID id PK
+        INTEGER sequence_id UK "auto-increment"
+        UUID cve_id FK "UNIQUE, nullable"
+        ENUM status "NOT NULL"
+        ENUM severity_override "nullable"
+        UUID assignee_id FK "nullable"
+        UUID duplicate_of_id FK "self-ref, nullable"
+        ENUM previous_status "nullable"
+        TIMESTAMP deleted_at "nullable"
+    }
+    TicketAuditEvent {
+        UUID id PK
+        UUID ticket_id FK "NOT NULL"
+        UUID user_id FK "nullable"
+        ENUM event_type "NOT NULL"
+        VARCHAR old_value "nullable"
+        VARCHAR new_value "nullable"
+        TEXT comment "nullable"
+    }
+    TicketReference {
+        UUID id PK
+        UUID ticket_id FK "NOT NULL"
+        VARCHAR url "NOT NULL"
+        VARCHAR source "NOT NULL"
+        UUID created_by FK "nullable"
+    }
+    User {
+        UUID id PK
+    }
 
-┌──────────────────────────────────┐
-│  SubmissionRequest               │ (M:N via join table)
-│                                  │──────┐
-│  request_number (UQ)             │      │
-│  package_name                    │      ▼
-│  codestream_name                 │  ┌──────────────────────────────────┐
-│  state                           │  │  SubmissionRequestTrack          │
-│  author                          │  │                                  │
-│  incident_number ─ ─ ─ ─ ─ ─ ┐  │  │  submission_request_id (FK)      │
-│  superseded_by                │  │  │  ticket_package_track_id (FK)    │
-└──────────────────────────────────┘  └──────────────────────────────────┘
-                                │
-                                ▼ (implicit link via incident_number)
-┌──────────────────────────────────┐
-│  ReleaseRequest                  │
-│                                  │
-│  request_number (UQ)             │
-│  package_name                    │
-│  codestream_name                 │
-│  state                           │
-│  incident_number                 │
-└──────────────────────────────────┘
+    CVE ||--o{ CVESource : "has sources"
+    CVE ||--o{ CVECVSSAssessment : "has assessments"
+    CVE |o--o| Ticket : "tracked by"
+    Ticket ||--o{ TicketAuditEvent : "has events"
+    Ticket ||--o{ TicketReference : "has references"
+    Ticket }o--o| User : "assigned to"
+    Ticket }o--o| Ticket : "duplicate of"
+    TicketAuditEvent }o--o| User : "performed by"
+    TicketReference }o--o| User : "created by"
+```
 
-* tpt_id = ticket_package_track_id (abbreviated for diagram readability)
+### Package Tracking
+
+```mermaid
+erDiagram
+    Ticket {
+        UUID id PK
+    }
+    TicketPackage {
+        UUID id PK
+        UUID ticket_id FK "NOT NULL"
+        VARCHAR package_name "NOT NULL"
+        TIMESTAMP deleted_at "nullable"
+    }
+    TicketPackageTrack {
+        UUID id PK
+        UUID ticket_package_id FK "NOT NULL"
+        ENUM workflow_type "NOT NULL (ibs, git)"
+        VARCHAR reference "NOT NULL"
+        ENUM status "NOT NULL, DEFAULT ANALYSIS"
+        ENUM delivery_status "NOT NULL, DEFAULT PENDING"
+        TIMESTAMP deleted_at "nullable"
+    }
+    TicketPackageProduct {
+        UUID id PK
+        UUID ticket_package_track_id FK "NOT NULL"
+        UUID product_id FK "NOT NULL"
+        ENUM status "NOT NULL, DEFAULT ANALYSIS"
+        BOOLEAN is_status_override "DEFAULT false"
+        BOOLEAN eligible "NOT NULL"
+        BOOLEAN is_eligible_override "DEFAULT false"
+        TIMESTAMP released_at "nullable"
+        TIMESTAMP deleted_at "nullable"
+    }
+    Product {
+        UUID id PK
+        INTEGER smelt_id UK "NOT NULL"
+        VARCHAR name "NOT NULL"
+        VARCHAR version "NOT NULL"
+        VARCHAR cpe UK "NOT NULL"
+        DECIMAL cvss_threshold "nullable"
+        BOOLEAN active "DEFAULT true"
+    }
+    ProductRepository {
+        UUID id PK
+        UUID product_id FK "NOT NULL"
+        VARCHAR repo_name UK "NOT NULL"
+    }
+
+    Ticket ||--o{ TicketPackage : "has packages"
+    TicketPackage ||--o{ TicketPackageTrack : "has tracks"
+    TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
+    Product ||--o{ TicketPackageProduct : "referenced by"
+    Product ||--o{ ProductRepository : "has repositories"
+```
+
+### Identity
+
+```mermaid
+erDiagram
+    User {
+        UUID id PK
+        VARCHAR username UK "NOT NULL"
+        VARCHAR email UK "NOT NULL"
+        BOOLEAN active "NOT NULL"
+        UUID ad_object_guid UK "nullable"
+        UUID manager_id FK "nullable, self-ref"
+        VARCHAR password_hash "nullable"
+    }
+    UserRole {
+        UUID id PK
+        UUID user_id FK "NOT NULL"
+        ENUM role "NOT NULL"
+        VARCHAR ad_group_cn "NOT NULL, DEFAULT _manual"
+        UUID assigned_by FK "nullable"
+    }
+    RoleMapping {
+        UUID id PK
+        VARCHAR ad_group_cn "NOT NULL"
+        ENUM role "NOT NULL"
+        UUID created_by FK "NOT NULL"
+    }
+    Session {
+        UUID id PK
+        UUID user_id FK "NOT NULL"
+        BOOLEAN is_active "DEFAULT true"
+    }
+    ApiKey {
+        UUID id PK
+        UUID user_id FK "NOT NULL"
+        VARCHAR key_hash UK "NOT NULL"
+        VARCHAR prefix "NOT NULL"
+        VARCHAR name "NOT NULL"
+        TIMESTAMP expires_at "nullable"
+        TIMESTAMP revoked_at "nullable"
+        UUID revoked_by FK "nullable"
+    }
+    IdentityAuditEvent {
+        UUID id PK
+        ENUM event_type "NOT NULL"
+        UUID user_id FK "nullable"
+        UUID target_user_id FK "nullable"
+        VARCHAR old_value "nullable"
+        VARCHAR new_value "nullable"
+        JSONB detail "nullable"
+    }
+
+    User ||--o{ UserRole : "has roles"
+    User ||--o{ Session : "has sessions"
+    User ||--o{ ApiKey : "owns keys"
+    User }o--o| User : "managed by"
+    UserRole }o--o| User : "assigned by"
+    RoleMapping }o--|| User : "created by"
+    ApiKey }o--o| User : "revoked by"
+    IdentityAuditEvent }o--o| User : "performed by"
+    IdentityAuditEvent }o--o| User : "targets"
+```
+
+### Platform Infrastructure
+
+```mermaid
+erDiagram
+    FetcherConfig {
+        VARCHAR fetcher_name PK
+        BOOLEAN enabled "DEFAULT true"
+        VARCHAR schedule_override "nullable"
+        INTEGER timeout_seconds "DEFAULT 3600"
+        JSONB custom_settings "DEFAULT empty"
+    }
+    FetcherRun {
+        UUID id PK
+        VARCHAR fetcher_name "NOT NULL"
+        ENUM status "NOT NULL"
+        ENUM triggered_by "NOT NULL"
+        UUID triggered_by_user_id FK "nullable"
+    }
+    FetcherRunWeeklyAggregate {
+        UUID id PK
+        VARCHAR fetcher_name "NOT NULL"
+        DATE week_start "NOT NULL"
+    }
+    FetcherAuditEvent {
+        UUID id PK
+        VARCHAR fetcher_name "NOT NULL"
+        ENUM event_type "NOT NULL"
+        UUID user_id FK "nullable"
+    }
+    SystemSetting {
+        VARCHAR key PK
+        VARCHAR value "NOT NULL"
+    }
+    SettingAuditEvent {
+        UUID id PK
+        ENUM event_type "NOT NULL"
+        VARCHAR setting_key "NOT NULL"
+        UUID user_id FK "nullable"
+    }
+    User {
+        UUID id PK
+    }
+
+    FetcherConfig ||..o{ FetcherRun : "identifies"
+    FetcherConfig ||..o{ FetcherAuditEvent : "identifies"
+    FetcherConfig ||..o{ FetcherRunWeeklyAggregate : "identifies"
+    FetcherRun }o--o| User : "triggered by"
+    FetcherAuditEvent }o--o| User : "performed by"
+    SettingAuditEvent }o--o| User : "performed by"
+```
+
+### IBS Integration
+
+```mermaid
+erDiagram
+    SubmissionRequest {
+        UUID id PK
+        INTEGER request_number UK "NOT NULL"
+        VARCHAR package_name "NOT NULL"
+        VARCHAR codestream_name "NOT NULL"
+        ENUM state "DEFAULT open"
+        INTEGER incident_number "nullable"
+        INTEGER superseded_by "nullable"
+    }
+    SubmissionRequestTrack {
+        UUID id PK
+        UUID submission_request_id FK "NOT NULL"
+        UUID ticket_package_track_id FK "NOT NULL"
+    }
+    ReleaseRequest {
+        UUID id PK
+        INTEGER request_number UK "NOT NULL"
+        VARCHAR package_name "NOT NULL"
+        VARCHAR codestream_name "NOT NULL"
+        ENUM state "DEFAULT open"
+        INTEGER incident_number "NOT NULL"
+    }
+    CodestreamPackageChecksum {
+        UUID id PK
+        VARCHAR codestream_name "NOT NULL"
+        VARCHAR package_name "NOT NULL"
+        VARCHAR srcmd5 "NOT NULL"
+    }
+    PackageBugowner {
+        UUID id PK
+        VARCHAR package_name UK "NOT NULL"
+        ENUM bugowner_type "nullable"
+        VARCHAR bugowner_name "nullable"
+    }
+    PackageBugownerMember {
+        UUID id PK
+        UUID package_bugowner_id FK "NOT NULL"
+        VARCHAR userid "NOT NULL"
+        VARCHAR email "NOT NULL"
+    }
+    TicketPackageTrack {
+        UUID id PK
+    }
+
+    SubmissionRequest ||--o{ SubmissionRequestTrack : "has track links"
+    SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
+    SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
+    PackageBugowner ||--o{ PackageBugownerMember : "has members"
 ```
 
 ## Tables
