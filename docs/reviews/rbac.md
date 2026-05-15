@@ -1,7 +1,7 @@
 # Review: rbac
 
 **Spec**: `docs/features/identity/rbac.md`
-**Last reviewed**: 2026-05-13
+**Last reviewed**: 2026-05-15
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -102,10 +102,7 @@
 
 ### RBAC-SEC-03 — No audit logging for role removals (Medium)
 
-**Category**: Missing audit trail
-**Status**: OPEN
-
-The `assigned_by` field captures role grants but there is no specified mechanism for logging role removals. Role changes are security-sensitive operations that should have a complete audit trail covering both additions and removals.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-15)
 
 ### RBAC-SEC-04 — Fetcher error messages may leak infrastructure details (Low)
 
