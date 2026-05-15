@@ -110,15 +110,31 @@ not on disconnection).
 GET /api/v1/fetchers
 ```
 
-Returns all registered fetchers with their current status and
-configuration.
+Returns all fetchers — both registered (present in the in-memory
+`FETCHER_REGISTRY`) and deregistered (removed from the codebase but
+with a `FetcherConfig` record still in the database). See
+`docs/features/platform/fetcher-infrastructure.md`, "Deregistered
+Fetcher Lifecycle" for background on how deregistered fetchers arise.
 
-**Pagination**: not paginated. The number of fetchers is bounded by the
-application's fetcher registry (expected <30 entries). The full list is
-always returned.
+**Data source**: the endpoint merges two sources:
+
+1. The `FETCHER_REGISTRY` provides registered fetchers with their
+   code-defined metadata (`description`, `default_schedule`,
+   `custom_settings_schema`)
+2. `FetcherConfig` rows whose `fetcher_name` is NOT present in the
+   registry provide deregistered fetchers (DB-stored configuration
+   only; code-defined metadata is unavailable)
+
+**Pagination**: not paginated. The total number of fetchers (registered
++ deregistered) is bounded — registered fetchers are expected <30, and
+deregistered fetchers grow at most by units over the application's
+lifetime (see `fetcher-infrastructure.md`). The full list is always
+returned.
 
 **Sorting**: results are ordered by `name` ascending (alphabetical).
-Client-controlled sorting is not supported.
+Client-controlled sorting is not supported. Registered and deregistered
+fetchers are interleaved alphabetically — the `registered` field
+provides the distinction.
 
 **Response** (200 OK):
 
@@ -127,6 +143,7 @@ Client-controlled sorting is not supported.
   "data": [
     {
       "name": "sync_cves_nvd",
+      "registered": true,
       "description": "Incremental CVE sync from NVD",
       "enabled": true,
       "schedule": "0 */6 * * *",
@@ -142,6 +159,30 @@ Client-controlled sorting is not supported.
         "items_created": 12,
         "items_updated": 45,
         "items_failed": 0
+      },
+      "custom_settings": {}
+    },
+    {
+      "name": "old_fetcher",
+      "registered": false,
+      "description": null,
+      "enabled": true,
+      "schedule": null,
+      "schedule_is_override": null,
+      "default_schedule": null,
+      "next_run_at": null,
+      "last_run": {
+        "id": "uuid",
+        "started_at": "2026-01-15T08:00:00Z",
+        "finished_at": "2026-01-15T08:00:45Z",
+        "duration_seconds": 45.0,
+        "status": "success",
+        "items_created": 3,
+        "items_updated": 10,
+        "items_failed": 0
+      },
+      "custom_settings": {
+        "throttle_delay_seconds": 5.0
       }
     }
   ]
@@ -149,18 +190,35 @@ Client-controlled sorting is not supported.
 ```
 
 **Fields**:
-- `schedule`: the effective schedule (override if set, otherwise default)
-- `schedule_is_override`: `true` if the schedule comes from `FetcherConfig`
-- `default_schedule`: the schedule defined in code
-- `next_run_at`: calculated from the effective schedule and the Celery Beat
-  state. May be `null` if the fetcher is disabled.
-- `last_run`: the most recent `FetcherRun` record, or `null` if never run.
-  Does NOT include `error_traceback` (admin-only, available on the detail
-  endpoint).
-- `custom_settings`: included in each fetcher's data (current values from
-  DB). `settings_schema` is NOT included in the list response to keep the
-  payload compact — the UI fetches it only when opening the configuration
-  panel for a specific fetcher (via the GET config endpoint).
+- `registered`: `true` if the fetcher class is present in the
+  `FETCHER_REGISTRY`, `false` if the class has been removed from the
+  codebase (deregistered). Deregistered fetchers cannot be triggered,
+  configured, or scheduled — only their historical data is accessible.
+- `description`: human-readable description from the fetcher class.
+  `null` for deregistered fetchers (the class no longer exists).
+- `enabled`: whether the fetcher is active. For deregistered fetchers,
+  this reflects the stored DB value at the time the fetcher was removed.
+  It has no practical effect — the fetcher cannot be scheduled or
+  triggered regardless of this value.
+- `schedule`: the effective schedule (override if set, otherwise default).
+  For deregistered fetchers: the stored `schedule_override` if set,
+  otherwise `null` (the code-defined default is no longer available).
+- `schedule_is_override`: `true` if the schedule comes from
+  `FetcherConfig`. `null` for deregistered fetchers (the concept does
+  not apply without a default to compare against).
+- `default_schedule`: the schedule defined in code. `null` for
+  deregistered fetchers.
+- `next_run_at`: calculated from the effective schedule and the Celery
+  Beat state. `null` if the fetcher is disabled or deregistered.
+- `last_run`: the most recent `FetcherRun` record, or `null` if never
+  run. Does NOT include `error_traceback` (admin-only, available on the
+  detail endpoint).
+- `custom_settings`: included in each fetcher's data (current values
+  from DB). For deregistered fetchers, contains the raw stored values
+  (schema defaults and descriptions are not available). `settings_schema`
+  is NOT included in the list response to keep the payload compact — the
+  UI fetches it only when opening the configuration panel for a specific
+  fetcher (via the GET config endpoint).
 
 **Permissions**: publicly accessible (no authentication required).
 
@@ -230,7 +288,7 @@ run first). Follows the project-wide default sorting convention.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | Fetcher not found in registry |
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
 ### Get Fetcher Run Detail
 
@@ -255,7 +313,7 @@ users see additional fields (`error_traceback`).
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | Fetcher or run not found |
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name, or run not found |
 
 ### Get Fetcher Run Timeline Data
 
@@ -339,7 +397,7 @@ individual runs for the last 90 days, weekly aggregates for older data.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | Fetcher not found in registry |
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
 ### Trigger Fetcher (Admin Only)
 
@@ -364,7 +422,8 @@ Enqueues a manual run of the specified fetcher.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | Fetcher not found in registry |
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be triggered. |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
 | 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
 
@@ -432,7 +491,20 @@ fetcher-specific custom settings and the schema that describes them.
 - `settings_schema`: the schema declared by the fetcher class (read-only,
   not stored in DB). Included so the UI can render the settings form
   without hardcoding field definitions. `null` if the fetcher declares no
-  custom settings.
+  custom settings or if the fetcher is deregistered.
+- `default_schedule`: the schedule defined in code. `null` for
+  deregistered fetchers.
+- `effective_schedule`: the effective schedule (override if set, otherwise
+  default). For deregistered fetchers: the stored `schedule_override` if
+  set, otherwise `null`.
+
+**Deregistered fetcher behavior**: when this endpoint is called for a
+deregistered fetcher (present in DB but not in the registry), the
+response is a read-only snapshot of the stored configuration.
+`settings_schema` and `default_schedule` are `null` because the fetcher
+class is no longer available. The `custom_settings` field contains the
+raw stored values without schema context (descriptions, defaults, and
+ranges are unavailable).
 
 **Permissions**: Admin only.
 
@@ -440,7 +512,7 @@ fetcher-specific custom settings and the schema that describes them.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | Fetcher not found |
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
 ### Update Fetcher Config (Admin Only)
 
@@ -533,7 +605,8 @@ include the fields to change.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | Fetcher not found |
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be configured. |
 | 422 | `VALIDATION_ERROR` | Invalid cron expression, timeout, or rate limit format |
 
 ### Get Fetcher Audit Log (Admin Only)
@@ -585,6 +658,12 @@ entry first). Follows the project-wide default sorting convention.
 ```
 
 **Permissions**: Admin only.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
 ## Frontend
 
@@ -669,8 +748,9 @@ Status: Unreachable
 
 Each card contains:
 
-1. **Header**: fetcher name (human-readable `description`) and a status
-   indicator:
+1. **Header**: fetcher name (human-readable `description`; if
+   `description` is `null` — as for deregistered fetchers — display the
+   `name` field instead) and a status indicator:
    - Green dot: last run was `success`
    - Red dot: last run was `failure`
    - Yellow dot: last run was `partial`
@@ -695,11 +775,58 @@ Each card contains:
 5. **Click target**: clicking anywhere on the card (except admin controls)
    navigates to the fetcher detail page.
 
+#### Deregistered Fetcher Section
+
+Below the active fetcher card grid, a collapsible section displays
+deregistered fetchers (those with `registered: false` in the API
+response). The section is hidden when there are no deregistered
+fetchers.
+
+**Section header**: "Deregistered fetchers (N)" where N is the count.
+Collapsed by default.
+
+When expanded, each deregistered fetcher is rendered as a card with the
+following differences from active fetcher cards:
+
+1. **Visual distinction**: muted colors (reduced opacity) to clearly
+   differentiate from active fetchers
+2. **Header**: displays `name` (the technical identifier, since
+   `description` is `null`). A "Deregistered" badge replaces the
+   status dot
+3. **Last run summary**: same layout as active cards (data from DB)
+4. **Schedule info**: replaced with a single "Deregistered" label — no
+   schedule or next run information (the fetcher cannot be scheduled)
+5. **Admin controls**: not rendered (no toggle switch, no "Run Now"
+   button). The fetcher cannot be triggered or configured
+6. **Click target**: clicking navigates to the fetcher detail page
+
 #### Fetcher Detail Page
 
 **Route**: `/fetchers/:name`
 
 **Access**: publicly accessible (no authentication required).
+
+This page works for both registered and deregistered fetchers. When
+displaying a deregistered fetcher, the following differences apply:
+
+- An informational banner is displayed at the top of the page: *"This
+  fetcher has been deregistered (removed from codebase). Historical
+  data is displayed below."*
+- The page title displays the `name` field (technical identifier)
+  instead of the `description` (which is `null`)
+- The **Admin Configuration Panel** is not rendered (the fetcher
+  cannot be configured — see `FETCHER_DEREGISTERED` error on the
+  PATCH endpoint)
+- The **Admin Audit Log** section is rendered normally (read-only
+  historical data, useful for forensic investigation)
+- The **"Run Now" button** (if present in the page header for admin
+  users) is not rendered
+- **Run history data availability**: individual `FetcherRun` records
+  are subject to the retention window of the `aggregate_fetcher_runs`
+  task (default: 90 days). After the retention period, only
+  `FetcherRunWeeklyAggregate` records remain. The timeline chart
+  displays aggregated data transparently, but the run history table
+  will show no entries beyond the retention window
 
 ##### Timeline Charts
 
@@ -909,7 +1036,8 @@ exclusively through the API.
 
 ### `sentinel fetcher list`
 
-Lists all registered fetchers with their current state.
+Lists all fetchers (registered and deregistered) with their current
+state.
 
 ```
 sentinel fetcher list
@@ -925,16 +1053,29 @@ sync_products_smelt        yes       2026-04-26 06:00 UTC  success (45s)        
 check_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —
 sync_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)             —
 aggregate_fetcher_runs     yes       —                     never run                    —
+
+Deregistered (historical data only):
+Name                       Last Run              Status
+old_fetcher                2026-01-15 08:00 UTC  success (45s)
 ```
 
-**Settings column logic**:
+The deregistered section is displayed only when `FetcherConfig` records
+exist in the database for fetcher names not present in the
+`FETCHER_REGISTRY`. If there are no deregistered fetchers, the section
+is omitted entirely.
+
+The deregistered table uses a reduced column set: no "Enabled" column
+(the fetcher cannot be toggled) and no "Settings" column (the schema
+is unavailable).
+
+**Settings column logic** (registered fetchers only):
 - Shows the count of explicitly configured (non-default) custom settings
   from `FetcherConfig.custom_settings` — e.g., `2 custom` means 2 keys
   are set to non-default values
 - Shows `—` if the fetcher has no `custom_settings_schema` or if all
   settings use their defaults (JSONB is `{}`)
 
-**Status column logic**:
+**Status column logic** (applies to both registered and deregistered):
 
 1. If a `FetcherRun` with `status = running` exists for the fetcher:
    show `running ({elapsed} elapsed)` where elapsed is calculated from
@@ -946,12 +1087,15 @@ aggregate_fetcher_runs     yes       —                     never run          
    `success (3m 12s)`, `failure`, `partial (1m 5s)`
 3. If no `FetcherRun` records exist: show `never run`
 
-**Enabled column**: reads from `FetcherConfig.enabled`. If no
-`FetcherConfig` record exists for the fetcher, defaults to `yes`.
+**Enabled column** (registered fetchers only): reads from
+`FetcherConfig.enabled`. If no `FetcherConfig` record exists for the
+fetcher, defaults to `yes`.
 
 **Data source**: queries the database directly (synchronous session).
-The fetcher registry provides the list of fetcher names; the database
-provides `FetcherRun` and `FetcherConfig` data.
+The fetcher registry provides the list of registered fetcher names;
+`FetcherConfig` rows whose `fetcher_name` is not in the registry
+provide deregistered fetchers. The database provides `FetcherRun` and
+`FetcherConfig` data for both.
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any
 time.
@@ -988,9 +1132,13 @@ are not running (e.g., during initial deployment bootstrap).
 
 The command MUST:
 
-1. Validate that `<name>` exists in the `FETCHER_REGISTRY`. If not,
-   print an error with the list of available fetcher names and exit
-   with code 1
+1. Validate that `<name>` exists in the `FETCHER_REGISTRY`. If not:
+   - If a `FetcherConfig` record exists in the database for the name
+     (deregistered fetcher), print a specific error to stderr:
+     `"Error: fetcher '<name>' is deregistered (removed from codebase)
+     and cannot be executed."` and exit with code 1
+   - Otherwise (completely unknown name), print an error with the list
+     of available fetcher names and exit with code 1
 2. Perform the concurrency check (see below)
 3. Create a `FetcherRun` record with `status = running` and
    `triggered_by = manual` **before** calling `execute()`
@@ -1079,7 +1227,7 @@ this scenario.
 | Code | Meaning |
 |------|---------|
 | 0    | Fetcher completed successfully (`success` or `partial`) |
-| 1    | User error: unknown fetcher name, already running, stale run not confirmed |
+| 1    | User error: unknown or deregistered fetcher name, already running, stale run not confirmed |
 | 2    | System error: database unreachable, unhandled exception in `execute()` |
 | 130  | Interrupted by SIGINT (Ctrl+C) |
 | 143  | Interrupted by SIGTERM |
@@ -1140,7 +1288,31 @@ Rate limit: —
 No custom settings available for this fetcher.
 ```
 
-**Value display logic**:
+For a deregistered fetcher (present in DB but not in the registry):
+
+```
+Fetcher: old_fetcher (deregistered)
+Enabled: yes
+Schedule override: 0 */6 * * *
+Timeout: 3600s
+Rate limit: —
+
+Custom settings (schema unavailable — raw stored values):
+  throttle_delay_seconds = 5.0
+```
+
+Differences from the registered fetcher output:
+
+- The header includes `(deregistered)` after the fetcher name
+- "Schedule" becomes "Schedule override" since the code-defined default
+  is unavailable — only the stored override value (if any) is shown.
+  If no override was stored, the line shows `—`
+- Custom settings are displayed as raw key-value pairs without defaults,
+  ranges, or descriptions (the schema from the fetcher class is
+  unavailable). If `custom_settings` is empty (`{}`), the section shows:
+  `"No custom settings stored."`
+
+**Value display logic** (registered fetchers only):
 - If a setting is explicitly configured (key exists in JSONB): show
   `key = value  (default: X, range: Y–Z)`
 - If a setting uses its default (key absent from JSONB): show
@@ -1148,8 +1320,10 @@ No custom settings available for this fetcher.
 - `range` is shown only for `int`/`float` with `min`/`max` declared
 - `choices` are shown as `choices: a, b, c` for `str`/`int` with choices
 
-**Data source**: queries `FetcherConfig` from the database and
-`custom_settings_schema` from the fetcher registry.
+**Data source**: queries `FetcherConfig` from the database. For
+registered fetchers, also reads `custom_settings_schema` from the
+fetcher registry. For deregistered fetchers, only DB-stored data is
+available.
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any
 time.
@@ -1158,8 +1332,8 @@ time.
 
 | Code | Meaning |
 |------|---------|
-| 0    | Success |
-| 1    | User error: unknown fetcher name |
+| 0    | Success (including deregistered fetchers — read-only display) |
+| 1    | User error: unknown fetcher name (not in registry and not in DB) |
 | 2    | System error: database unreachable |
 
 **Output channels**: configuration to stdout. `"Error: ..."` messages

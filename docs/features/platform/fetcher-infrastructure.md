@@ -651,12 +651,20 @@ on the three dependent tables prevent accidental deletion of the
 - The fetcher is no longer present in `FETCHER_REGISTRY`
 - Celery Beat does not schedule it
 - The `GET /api/v1/fetchers` endpoint and `sentinel fetcher list` CLI
-  command (both driven by the registry) do not include it
-- Per-fetcher API endpoints (`/runs`, `/timeline`, `/config`,
-  `/audit-log`) return `404 FETCHER_NOT_FOUND` because the fetcher name
-  is validated against the registry
+  command include the fetcher with `registered: false`. Code-defined
+  metadata (`description`, `default_schedule`, `custom_settings_schema`)
+  is unavailable and appears as `null`
+- Per-fetcher **read** endpoints (`/runs`, `/timeline`, `GET /config`,
+  `/audit-log`) work normally — they validate the fetcher name against
+  `FetcherConfig` in the database, not against the registry
+- Per-fetcher **write** endpoints (`POST /trigger`, `PATCH /config`)
+  return `409 FETCHER_DEREGISTERED` — the fetcher cannot be triggered
+  or configured since the code has been removed
+- The `sentinel fetcher run` CLI command returns an error for
+  deregistered fetchers. `sentinel fetcher config` displays a
+  read-only snapshot of the stored configuration without schema context
 - Historical data (runs, aggregates, audit events) remains in the
-  database but is inaccessible through the standard API and CLI
+  database and is accessible through the API, CLI, and dashboard UI
 
 ### Aggregation task behavior
 
@@ -665,6 +673,14 @@ not by registry membership. It continues to aggregate and eventually
 delete old individual run records for deregistered fetchers on the same
 schedule as for active fetchers. Over time, all individual runs are
 replaced by `FetcherRunWeeklyAggregate` records.
+
+**Visibility consequence**: after the retention window (default: 90
+days), individual `FetcherRun` records for a deregistered fetcher are
+deleted and only `FetcherRunWeeklyAggregate` records remain. The
+timeline chart on the dashboard continues to display aggregated data,
+but the run history table shows no entries beyond the retention window.
+Operators should investigate detailed failure information (error
+messages, tracebacks) within the retention period.
 
 ### No automatic cleanup
 
