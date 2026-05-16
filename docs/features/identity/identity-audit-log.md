@@ -21,7 +21,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync, auto-lock) |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events (which affect configuration, not a specific user) |
 | old_value | VARCHAR | nullable | Previous state (human-readable) |
 | new_value | VARCHAR | nullable | New state (human-readable) |
@@ -48,8 +48,6 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | `user_created` | User account created (manual or AD sync) | Creating admin for manual, `NULL` for AD sync | Created user | `NULL` | Username | `NULL` |
 | `user_deactivated` | Admin or AD sync deactivation | Admin for manual, `NULL` for AD sync | Deactivated user | `active` | `inactive` | Reason (e.g., `{"reason": "ad_sync_missing"}` or `{"reason": "admin_action"}`) |
 | `user_reactivated` | Admin reactivation | Admin | Reactivated user | `inactive` | `active` | `NULL` |
-| `user_locked` | Failed password threshold exceeded | `NULL` (system) | Locked user | `NULL` | `locked` | `{"failed_attempts": N}` |
-| `user_unlocked` | Admin unlocks user | Admin | Unlocked user | `locked` | `NULL` | `NULL` |
 | `password_reset` | Admin resets another user's password | Admin | Target user | `NULL` | `NULL` | `NULL` |
 | `role_added` | Admin or AD sync adds role | Admin for manual, `NULL` for AD sync | Target user | `NULL` | Role name (e.g., `admin`) | For AD sync: `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
 | `role_removed` | Admin or AD sync removes role | Admin for manual, `NULL` for AD sync | Target user | Role name (e.g., `admin`) | `NULL` | For AD sync: `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
@@ -81,7 +79,7 @@ entries are always displayed in reverse chronological order).
 |---|---|---|---|
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
-| `event_type` | string | -- | Comma-separated list of event types |
+| `event_type` | string | -- | Comma-separated list of event types. See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
 | `actor` | string | -- | Filter by actor: user UUID, username, or `system` for automated events |
 | `target_user` | string | -- | Filter by target user (UUID or username) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |

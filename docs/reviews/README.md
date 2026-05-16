@@ -24,8 +24,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [identity-audit-log](identity-audit-log.md) | 7 | 1 | 3 | 4 | 🟢 | 15 | 2026-05-15 | ⚠️ |
-|  | 4:🟠 3:🟡 | 1:🟠 | 1:🟠 2:🟡 | 4:🟡 |  |  |  |  |
+| [identity-audit-log](identity-audit-log.md) | 3 | 🟢 | 3 | 4 | 🟢 | 10 | 2026-05-15 | ⚠️ |
+|  | 3:🟡 |  | 1:🟠 2:🟡 | 4:🟡 |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | |
@@ -38,8 +38,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **7** | **1** | **3** | **4** | **0** | **15** |  |  |
-|  | 4:🟠 3:🟡 | 1:🟠 | 1:🟠 2:🟡 | 4:🟡 |  |  |  |  |
+| **Total** | **3** | **0** | **3** | **4** | **0** | **10** |  |  |
+|  | 3:🟡 |  | 1:🟠 2:🟡 | 4:🟡 |  |  |  |  |
 
 ### Disabled specs
 

@@ -861,7 +861,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType enum below |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync, auto-lock) |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
 | old_value | VARCHAR | nullable | Previous state (human-readable) |
 | new_value | VARCHAR | nullable | New state (human-readable) |
@@ -875,8 +875,6 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | user_created | User account created (manual or AD sync) |
 | user_deactivated | User account deactivated (admin or AD sync) |
 | user_reactivated | User account reactivated by admin |
-| user_locked | User account locked after failed password threshold |
-| user_unlocked | User account unlocked by admin |
 | password_reset | Admin reset another user's password |
 | role_added | Role assigned to user (admin or AD sync) |
 | role_removed | Role removed from user (admin or AD sync) |

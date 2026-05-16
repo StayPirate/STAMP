@@ -246,7 +246,13 @@ attempts per username using a Redis counter.
    effect — the Nth attempt is the last one that receives a full
    password check. Attempts rejected at this step do **not** increment
    the counter or reset the TTL — the lockout window expires naturally
-   from the last failed password verification (step 11)
+   from the last failed password verification (step 11). When the
+   counter first reaches `LOGIN_MAX_ATTEMPTS` (transition from unlocked
+   to locked), log an INFO message: `"User '{username}' locked after
+   {N} failed login attempts"`. Lockout events are tracked via
+   application logging only (not the identity audit trail) because
+   lockout is a transient Redis-only state, not a persistent identity
+   mutation
 4. On successful login, delete the counter
 
 **Notes**:

@@ -145,6 +145,14 @@ resource. Common patterns:
 - Search: `?search=term` (searches relevant text fields)
 - Date range: `?from_date=2024-01-01&to_date=2024-12-31`
 
+#### Enum Filter Validation
+
+When a filter parameter accepts enum values (comma-separated or repeatable),
+invalid values are silently ignored. If all provided values are invalid, the
+endpoint returns an empty result set (not an error). This applies to all
+endpoints that accept enum-based filter parameters (e.g., `event_type`,
+`status`, `severity`).
+
 #### Date Range Interpretation
 
 When a date range filter (`from_date`, `to_date`) is applied against a
@@ -253,6 +261,20 @@ Resolution is automatic:
 Response payloads always contain the user's UUID (never the username as
 identifier). The database persists only UUIDs in foreign keys and
 relationships.
+
+#### User References in Responses
+
+When a response payload includes a reference to a user (e.g., `actor`,
+`assignee`, `target_user`, `created_by`), it is serialized as an object
+with `id`, `username`, and `full_name` — populated via JOIN to the
+**current** User record. These values reflect the user's current profile
+data, not a historical snapshot at the time of the event or action.
+
+Historical values, where relevant, are preserved in dedicated fields of
+the owning entity (e.g., `old_value` / `new_value` in audit events).
+The `id` (UUID) is the stable, immutable identifier; `username` and
+`full_name` are display conveniences that may change over time (e.g.,
+via AD sync).
 
 This convention applies to:
 

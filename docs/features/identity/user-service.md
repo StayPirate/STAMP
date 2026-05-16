@@ -612,8 +612,8 @@ attempt local authentication.
 2. Delete the Redis key `login_attempts:{username}` (where `username`
    is the user's current username). If Redis is unreachable, log WARNING
    and proceed — the counter will expire naturally via TTL.
-3. Create `IdentityAuditEvent` with `event_type = user_unlocked` via
-   `IdentityAuditLog.log_event()`.
+3. Log an INFO message: `"User '{username}' unlocked by
+   {acting_user or 'system'}"`.
 
 **Idempotency:** if the user is not currently locked out (Redis key
 does not exist or counter is zero), the operation completes successfully
@@ -627,9 +627,9 @@ with no error. This is a no-op, not a failure.
 
 **Notes:**
 - No `TicketAuditEvent` is created (not a ticket operation).
-- **IdentityAuditEvent**: `user_unlocked`. Note: since unlock is a
-  Redis-only operation with no DB transaction, the audit event is
-  created in its own transaction.
+- No `IdentityAuditEvent` is created. Lockout is a transient
+  Redis-only state, not a persistent identity mutation. Application
+  logging (INFO level) provides sufficient operational visibility.
 - No session invalidation (unlocking does not indicate compromise).
 - The `reset_password()` operation continues to clear the lockout
   counter as a side effect (step 5), but `unlock_user()` provides

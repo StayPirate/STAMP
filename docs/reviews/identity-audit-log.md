@@ -10,31 +10,19 @@
 
 ### IAL-GAP-01 — Concurrent role mapping creation and AD sync (Medium)
 
-**Category**: Data accuracy
-**Status**: OPEN
-
-The `role_mapping_created` event includes `"affected_users": N` in the detail JSONB, representing users affected at mapping creation time. If an AD sync is running concurrently and adding users who are members of the mapped group, the `affected_users` count could be stale by the time the transaction commits. The spec does not clarify whether `affected_users` is a point-in-time snapshot (acceptable) or must reflect the final committed state. This affects audit accuracy for role mapping events.
+**Status**: RESOLVED — By design: affected_users is a point-in-time count of what the transaction actually did; spec already documents concurrent sync behavior explicitly at ad-integration.md lines 769-772 (2026-05-16)
 
 ### IAL-GAP-02 — Deleted target user representation in API response (Medium)
 
-**Category**: Schema completeness
-**Status**: OPEN
-
-The response schema shows `target_user` as an object with `id`, `username`, and `full_name`. The spec states users are soft-deleted (deactivated), never hard-deleted, but does not specify what happens if a deactivated user's `username` or `full_name` was changed before deactivation. More importantly, if the `target_user_id` FK references a user whose username was later changed (via `username_changed` event from AD sync), historical audit events would display the *current* username, not the username at the time of the event. The spec does not clarify whether `target_user` reflects the user's current state or their state at event creation time.
+**Status**: RESOLVED — Addressed by cross-cutting convention: added "User References in Responses" to api-spec.md establishing that user objects reflect current profile data, not historical snapshots (2026-05-16)
 
 ### IAL-GAP-03 — event_type filter with invalid values (Medium)
 
-**Category**: Input validation
-**Status**: OPEN
-
-The `event_type` parameter accepts a "comma-separated list of event types" but the spec does not define behavior when one or more values in the list are not valid `IdentityAuditEventType` enum values. Should invalid values be silently ignored (returning no matches for those types), or should the request be rejected with a 400 error? Different implementers would resolve this differently.
+**Status**: RESOLVED — Addressed by cross-cutting convention: added "Enum Filter Validation" to api-spec.md establishing silent-ignore behavior for invalid enum filter values (2026-05-16)
 
 ### IAL-GAP-04 — target_user_id for self-service operations (Medium)
 
-**Category**: Behavioral ambiguity
-**Status**: OPEN
-
-For `api_key_created` and `api_key_revoked`, the spec says `user_id` = "Acting user" and `target_user_id` = "Key owner". When a user creates/revokes their own API key, both fields would contain the same UUID. The spec does not explicitly confirm this is the intended behavior (user_id == target_user_id for self-service). While implied, this affects filter behavior — filtering by `actor=jdoe` and `target_user=jdoe` would both return the same event, which could confuse administrators trying to distinguish "admin actions on others" from "self-service actions."
+**Status**: RESOLVED — Not a gap: user_id == target_user_id for self-service is implicit from field definitions; distinction is already queryable by comparing the two fields (2026-05-16)
 
 ### IAL-GAP-05 — actor filter value "system" combined with event_type filter (Low)
 
@@ -67,10 +55,7 @@ The spec says `revoke_all_user_keys()` creates "N `api_key_revoked` events (one 
 
 ### IAL-COH-02 — user_locked event has no specified producer in any service spec (Medium)
 
-**Category**: Missing producer
-**Status**: OPEN
-
-The identity-audit-log.md defines `user_locked` with trigger "Failed password threshold exceeded" and user_id=NULL (system). However, no other spec documents which code path creates this event. The local-authentication.md describes the lockout mechanism (Redis counter reaches threshold) but never mentions creating an IdentityAuditEvent. The user-service.md does not have a `lock_user()` operation. Since lockout is a Redis-only operation with no DB transaction, the atomicity requirement ("same database transaction as the mutation") cannot be satisfied in the standard way.
+**Status**: RESOLVED — Removed: user_locked and user_unlocked event types removed from audit trail; lockout is a transient Redis-only state, replaced with application logging (INFO level) in local-authentication.md and user-service.md (2026-05-16)
 
 ---
 

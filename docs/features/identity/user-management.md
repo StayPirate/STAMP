@@ -1022,8 +1022,7 @@ Clear the login lockout counter for a user.
 3. Return HTTP 200 with `{"data": {"detail": "Account unlocked successfully."}}`
 
 The endpoint is idempotent: if the user is not locked, it returns 200
-with the same response without error. The log entry is emitted
-regardless (to record that an admin attempted to unlock).
+with the same response without error.
 
 **Error responses**:
 
@@ -1090,7 +1089,7 @@ handling is required.
   `docs/features/identity/local-authentication.md`)
 - **Audit trail**: all identity operations produce `IdentityAuditEvent`
    records via `IdentityAuditLog.log_event()` (user creation, role
-   changes, password resets, deactivation, reactivation, unlock, API key
+   changes, password resets, deactivation, reactivation, API key
    lifecycle). Deactivation additionally creates `TicketAuditEvent`
    records for ticket unassignment. Role changes do not produce
    `TicketAuditEvent` records. See
