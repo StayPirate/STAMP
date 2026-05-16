@@ -54,10 +54,7 @@ _No findings — clean review._
 
 ### TAL-DES-01 — Overloaded comment field as structured data carrier (Medium)
 
-**Category**: Maintainability
-**Status**: OPEN
-
-A package named openssl:fips (containing a colon) would make the comment openssl:fips:SUSE:SLE-15-SP6:Update ambiguous for parsing. The comment field is being used both as a human-readable note and as a structured data carrier with colon-delimited values. Consider adding a detail JSONB column (like IdentityAuditEvent already has) for structured context, keeping comment purely for human-readable notes.
+**Status**: RESOLVED — Structured data migrated from comment to detail JSONB column with validated schema contract, aligning with IdentityAuditEvent pattern (2026-05-16)
 
 ### TAL-DES-02 — track_released vs track_status_changed overlap (Low)
 
