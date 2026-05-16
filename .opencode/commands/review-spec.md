@@ -251,10 +251,11 @@ User switches to Build mode for fixes. After fix, do NOT present the
 next finding in the same message.
 
 **4a.3a.** Use Task tool (`general`) to verify the finding and
-formulate the presentation. On the first finding of a spec, the
-subagent loads the target spec + all referenced specs + cross-cutting
-docs (`data-model.md`, `api-spec.md`, `architecture.md`). Reuse the
-same session (`task_id`) for subsequent findings of the same spec.
+formulate the content for the presentation. On the first finding of a
+spec, the subagent loads the target spec + all referenced specs +
+cross-cutting docs (`data-model.md`, `api-spec.md`,
+`architecture.md`). Reuse the same session (`task_id`) for subsequent
+findings of the same spec.
 
 The subagent MUST:
 
@@ -276,6 +277,12 @@ The subagent MUST:
    **context** is the same full Italian translation of the finding's
    description (same rules as point 2), and **reason** is a brief
    explanation of why the finding no longer applies
+
+IMPORTANT — formatting rules for the subagent's return value: return
+each field (context, solution, reason, files) as **flowing prose**
+without hard line breaks or fixed-width wrapping. Do NOT pre-format
+the output as a presentation block. The main agent will compose the
+final markdown presentation using the templates below.
 
 **If valid** — present the finding:
 
@@ -379,6 +386,9 @@ the current spec (same criteria as step 4a.3a). Then:
   `{valid: true, context, solution, files}`
 - If no longer valid: return `{valid: false, context, reason}` (same
   rules as step 4a.3a — context is always included)
+
+Same formatting rules as step 4a.3a apply: the subagent returns
+flowing prose, the main agent composes the final presentation.
 
 **If valid** — present using the same format as step 4a.3a, with
 added `Spec: <spec-name>` line under the finding header.
