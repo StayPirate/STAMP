@@ -272,7 +272,9 @@ The subagent MUST:
    - **Soluzione proposta**: the proposed fix in Italian
    - **File coinvolti**: files that need changes and what changes
    Return `{valid: true, context, solution, files}`
-3. If no longer valid: return `{valid: false, reason}` with a brief
+3. If no longer valid: return `{valid: false, context, reason}` —
+   **context** is the same full Italian translation of the finding's
+   description (same rules as point 2), and **reason** is a brief
    explanation of why the finding no longer applies
 
 **If valid** — present the finding:
@@ -302,6 +304,10 @@ Approvi questa soluzione? [sì / modificare / saltare / basta]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Finding: <ID> — <Title> (<Severity>)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Contesto:
+<Spiegazione in italiano di cosa è il problema, perché è un problema,
+e quale impatto ha. Riferimenti alle sezioni specifiche della spec.>
 
 ⚠ Finding non più valido: <motivo>
 
@@ -371,7 +377,8 @@ the current spec (same criteria as step 4a.3a). Then:
   translate the finding's full description, not summarize it; then
   Soluzione proposta and File coinvolti). Return
   `{valid: true, context, solution, files}`
-- If no longer valid: return `{valid: false, reason}`
+- If no longer valid: return `{valid: false, context, reason}` (same
+  rules as step 4a.3a — context is always included)
 
 **If valid** — present using the same format as step 4a.3a, with
 added `Spec: <spec-name>` line under the finding header.
