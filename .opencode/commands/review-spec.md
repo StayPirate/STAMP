@@ -250,8 +250,26 @@ content).
 User switches to Build mode for fixes. After fix, do NOT present the
 next finding in the same message.
 
-**4a.3a.** Present the finding (in Italian). Apply Guardrail 21
-placement self-check before proposing solution.
+**4a.3a.** Use Task tool (`general`) to verify the finding and
+formulate the presentation. On the first finding of a spec, the
+subagent loads the target spec + all referenced specs + cross-cutting
+docs (`data-model.md`, `api-spec.md`, `architecture.md`). Reuse the
+same session (`task_id`) for subsequent findings of the same spec.
+
+The subagent MUST:
+
+1. Read the current spec and verify whether the issue described in the
+   finding is still present. A finding is **no longer valid** if the
+   spec has been changed such that the described problem no longer
+   exists (the section was rewritten, the missing element was added,
+   the contradiction was resolved, etc.)
+2. If still valid: apply Guardrail 21 placement self-check, then
+   formulate Contesto + Soluzione proposta (in Italian) + File
+   coinvolti. Return `{valid: true, context, solution, files}`
+3. If no longer valid: return `{valid: false, reason}` with a brief
+   explanation of why the finding no longer applies
+
+**If valid** — present the finding:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -272,7 +290,32 @@ File coinvolti:
 Approvi questa soluzione? [sì / modificare / saltare / basta]
 ```
 
-**4a.3b.** Wait for decision:
+**If no longer valid** — present and offer auto-resolution:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Finding: <ID> — <Title> (<Severity>)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠ Finding non più valido: <motivo>
+
+Il finding non corrisponde più allo stato attuale della spec.
+Auto-risolvere? [sì / saltare / basta]
+```
+
+- **sì**: use Task tool (`general`, fresh session) to auto-resolve.
+  Instruct it to read:
+  - `.opencode/commands/review-spec/review-file-format.md`
+  - `.opencode/commands/review-spec/readme-layout.md`
+
+  Mark the finding as RESOLVED with compact format:
+  `**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (<YYYY-MM-DD>)`
+  Update review file + `.tracking.json` cache + `docs/reviews/README.md`.
+  Then proceed to next finding (same as **saltare** flow below)
+- **saltare**: leave OPEN, move to next finding (stay in Plan)
+- **basta**: exit loop, show session summary
+
+**4a.3b.** Wait for decision (applies to the **valid** case):
 - **sì**: wait for Build mode, then implement
 - **modificare**: adjust proposal, re-present
 - **saltare**: skip, move to next (stay in Plan)
@@ -312,11 +355,22 @@ spec name. Return parsed findings (not raw content).
 **4a-R.3. Fix loop** — same mode management as by-spec flow.
 
 **4a-R.3a.** Use Task tool (`general`, new session per spec change) to
-load the target spec + references + cross-cutting docs, apply Guardrail
-21, and formulate the presentation (Contesto + Soluzione proposta in
-Italian). Reuse session (`task_id`) for same-spec findings.
+load the target spec + references + cross-cutting docs. Reuse session
+(`task_id`) for same-spec findings.
 
-Present with added `Spec: <spec-name>` line under the finding header.
+The subagent MUST first verify whether the finding is still valid in
+the current spec (same criteria as step 4a.3a). Then:
+- If still valid: apply Guardrail 21, formulate the presentation
+  (Contesto + Soluzione proposta in Italian + File coinvolti). Return
+  `{valid: true, context, solution, files}`
+- If no longer valid: return `{valid: false, reason}`
+
+**If valid** — present using the same format as step 4a.3a, with
+added `Spec: <spec-name>` line under the finding header.
+
+**If no longer valid** — present and offer auto-resolution using the
+same format and options as step 4a.3a (⚠ block with
+`[sì / saltare / basta]`), with added `Spec: <spec-name>` line.
 
 **4a-R.3b.** Wait for decision (same as 4a.3b).
 
