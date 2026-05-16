@@ -207,13 +207,19 @@ Creates a new User record with optional initial roles.
    entries (same role + same `ad_group_cn`), deduplicate silently — only
    one UserRole record is created per unique `(role, ad_group_cn)` pair.
    This is consistent with the idempotency behavior of `update_roles()`.
+   For each UserRole created, also create an `IdentityAuditEvent` with
+   `event_type = role_added` via `IdentityAuditLog.log_event()` —
+   `user_id` = `acting_user_id`, `target_user_id` = created user,
+   `new_value` = role name. This ensures initial role assignments are
+   audited identically to later role changes via `update_roles()`.
 8. Return the created User
 
 **TicketAuditEvent**: none (user creation does not affect tickets)
 
 **IdentityAuditEvent**: `user_created` — `user_id` = creating admin,
-`target_user_id` = created user, `new_value` = username. Created via
-`IdentityAuditLog.log_event()` in the same transaction.
+`target_user_id` = created user, `new_value` = username. Additionally,
+one `role_added` event per initial role assigned (see step 7). All events
+created via `IdentityAuditLog.log_event()` in the same transaction.
 
 ### `update_user()`
 
@@ -270,15 +276,15 @@ their own business rules.
     If all optional parameters are `_MISSING`, this is a no-op: no UPDATE
    is issued. The User record returned is the one loaded in step 1.
 7. For each changed field, create an `IdentityAuditEvent` via
-   `IdentityAuditLog.log_event()`: `email_changed`, `full_name_changed`,
-   or `manager_changed` with `old_value` and `new_value`. One event per
-   changed field, all in the same transaction.
+   `IdentityAuditLog.log_event()`: `username_changed`, `email_changed`,
+   `full_name_changed`, or `manager_changed` with `old_value` and
+   `new_value`. One event per changed field, all in the same transaction.
 8. Return updated User
 
 **TicketAuditEvent**: none
 
-**IdentityAuditEvent**: one per changed field (`email_changed`,
-`full_name_changed`, `manager_changed`). See
+**IdentityAuditEvent**: one per changed field (`username_changed`,
+`email_changed`, `full_name_changed`, `manager_changed`). See
 `docs/features/identity/identity-audit-log.md` for the event type
 contract.
 
@@ -575,9 +581,18 @@ Resets the password for a local user and invalidates all active sessions.
    log WARNING and proceed — the counter will expire naturally via TTL.
    This ensures that a locked-out user regains access immediately after
    a password reset.
-6. Return updated User
+6. Create `IdentityAuditEvent` with `event_type = password_reset` via
+   `IdentityAuditLog.log_event()` — `user_id` = `acting_user_id`
+   (admin), `target_user_id` = target user. Created in the same
+   transaction as the password hash update.
+7. Return updated User
 
 **TicketAuditEvent**: none (password reset does not affect tickets)
+
+**IdentityAuditEvent**: `password_reset` — `user_id` = acting admin,
+`target_user_id` = target user. See
+`docs/features/identity/identity-audit-log.md` for the event type
+contract.
 
 ### `unlock_user(user_id, acting_user_id)`
 

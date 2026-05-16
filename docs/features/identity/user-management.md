@@ -847,12 +847,9 @@ inactive user prepares credentials for reactivation.
    code `USER_NOT_FOUND`
 2. Delegate to `user_service.reset_password(user_id, password,
    acting_user_id=authenticated_admin.id)` — this handles AD user
-   check, validation, hashing, and session invalidation (see
-   `docs/features/identity/user-service.md`)
-3. Create `IdentityAuditEvent` with `event_type = password_reset` via
-   `IdentityAuditLog.log_event()` — `user_id` = admin, `target_user_id`
-   = target user
-4. Return HTTP 200
+   check, validation, hashing, session invalidation, and audit event
+   creation (see `docs/features/identity/user-service.md`)
+3. Return HTTP 200
 
 **Error responses**:
 

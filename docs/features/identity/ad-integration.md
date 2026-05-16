@@ -761,15 +761,15 @@ Processing (all steps execute within a **single database transaction**):
    and returns `(added_count, removed_count)` (see
    `docs/features/identity/user-service.md` for the full contract).
    For a new mapping, `removed_count` is always 0
-4. Commit the transaction and return the created mapping.
+4. Create `IdentityAuditEvent` with `event_type = role_mapping_created`
+   via `IdentityAuditLog.log_event()` — `user_id` = admin,
+   `target_user_id = NULL`, `new_value` = `"{ad_group} -> {role}"`,
+   `detail` = `{"ad_group_cn": "...", "role": "...", "affected_users": N}`
+5. Commit the transaction and return the created mapping.
    `affected_users_count` reflects the `added_count` returned by
    the service — only newly created `UserRole` records, not
    pre-existing ones (e.g., if a concurrent sync already applied the
    same mapping, those users are not counted)
-5. Create `IdentityAuditEvent` with `event_type = role_mapping_created`
-   via `IdentityAuditLog.log_event()` — `user_id` = admin,
-   `target_user_id = NULL`, `new_value` = `"{ad_group} -> {role}"`,
-   `detail` = `{"ad_group_cn": "...", "role": "...", "affected_users": N}`
 
 ### Delete Role Mapping
 

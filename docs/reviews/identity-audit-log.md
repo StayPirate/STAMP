@@ -63,10 +63,7 @@ The spec says `revoke_all_user_keys()` creates "N `api_key_revoked` events (one 
 
 ### IAL-COH-01 — reset_password() in user-service.md omits IdentityAuditEvent creation (High)
 
-**Category**: Cross-spec contradiction
-**Status**: OPEN
-
-The identity-audit-log.md defines `password_reset` as an event type and its Service Contract states "Every service function that modifies identity-related data... MUST create an IdentityAuditEvent." However, user-service.md's `reset_password()` operation lists 6 behavioral steps and does NOT include creating a `password_reset` IdentityAuditEvent. In contrast, user-management.md explicitly mentions "Create IdentityAuditEvent with event_type = password_reset" as step 3 of the admin password reset endpoint. The authoritative service contract (user-service.md) contradicts both the identity-audit-log.md service contract and the user-management.md endpoint specification.
+**Status**: RESOLVED — Fixed: added password_reset audit event step and IdentityAuditEvent annotation to reset_password() in user-service.md; removed redundant audit event from POST handler in user-management.md; also fixed update_user() missing username_changed, role_mapping_created atomicity in ad-integration.md, and create_user() missing role_added events (2026-05-16)
 
 ### IAL-COH-02 — user_locked event has no specified producer in any service spec (Medium)
 
