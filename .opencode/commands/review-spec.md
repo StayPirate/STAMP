@@ -264,8 +264,14 @@ The subagent MUST:
    exists (the section was rewritten, the missing element was added,
    the contradiction was resolved, etc.)
 2. If still valid: apply Guardrail 21 placement self-check, then
-   formulate Contesto + Soluzione proposta (in Italian) + File
-   coinvolti. Return `{valid: true, context, solution, files}`
+   formulate the presentation in Italian:
+   - **Contesto**: translate and rephrase the finding's full
+     description into Italian. Include what the problem is, why it
+     matters, and references to specific spec sections. This is NOT a
+     summary — it must convey all the detail from the original finding
+   - **Soluzione proposta**: the proposed fix in Italian
+   - **File coinvolti**: files that need changes and what changes
+   Return `{valid: true, context, solution, files}`
 3. If no longer valid: return `{valid: false, reason}` with a brief
    explanation of why the finding no longer applies
 
@@ -361,7 +367,9 @@ load the target spec + references + cross-cutting docs. Reuse session
 The subagent MUST first verify whether the finding is still valid in
 the current spec (same criteria as step 4a.3a). Then:
 - If still valid: apply Guardrail 21, formulate the presentation
-  (Contesto + Soluzione proposta in Italian + File coinvolti). Return
+  in Italian (same detail level as step 4a.3a — Contesto must
+  translate the finding's full description, not summarize it; then
+  Soluzione proposta and File coinvolti). Return
   `{valid: true, context, solution, files}`
 - If no longer valid: return `{valid: false, reason}`
 
