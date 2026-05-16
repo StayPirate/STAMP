@@ -224,9 +224,9 @@ the implicit grouping by `package_name` across
 | `id` | UUID | PK | Internal identifier |
 | `ticket_id` | UUID | FK(ticket.id), NOT NULL | Related ticket |
 | `package_name` | VARCHAR(255) | NOT NULL | Source package name |
-| `deleted_at` | TIMESTAMP | nullable | Soft-deletion timestamp. NULL = active |
-| `created_at` | TIMESTAMP | NOT NULL, DEFAULT | Record creation timestamp |
-| `updated_at` | TIMESTAMP | NOT NULL, DEFAULT | Record update timestamp |
+| `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
 **Unique constraint**: `(ticket_id, package_name)`
 
@@ -245,9 +245,9 @@ by the system based on IBS SR/RR tracking data.
 | `reference` | VARCHAR(255) | NOT NULL | Track identifier: IBS codestream name or git branch name |
 | `status` | PackageStatus | NOT NULL, DEFAULT ANALYSIS | Affectedness status |
 | `delivery_status` | DeliveryStatus | NOT NULL, DEFAULT PENDING | Delivery pipeline status |
-| `deleted_at` | TIMESTAMP | nullable | Soft-deletion timestamp. NULL = active |
-| `created_at` | TIMESTAMP | NOT NULL, DEFAULT | Record creation timestamp |
-| `updated_at` | TIMESTAMP | NOT NULL, DEFAULT | Record update timestamp |
+| `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
 **Unique constraint**: `(ticket_package_id, reference)`
 
@@ -272,10 +272,10 @@ the VA.
 | `is_status_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the status |
 | `eligible` | BOOLEAN | NOT NULL | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the eligibility |
-| `released_at` | TIMESTAMP | nullable | When Sentinel detected the fix in the product's update repository |
-| `deleted_at` | TIMESTAMP | nullable | Soft-deletion timestamp. NULL = active |
-| `created_at` | TIMESTAMP | NOT NULL, DEFAULT | Record creation timestamp |
-| `updated_at` | TIMESTAMP | NOT NULL, DEFAULT | Record update timestamp |
+| `released_at` | TIMESTAMPTZ | nullable | When Sentinel detected the fix in the product's update repository |
+| `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
 **Unique constraint**: `(ticket_package_track_id, product_id)`
 

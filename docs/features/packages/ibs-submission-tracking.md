@@ -146,8 +146,8 @@ to Sentinel.
 | author             | VARCHAR(64)  |                      | IBS username who created the request (from payload `author`) |
 | incident_number    | INTEGER      | nullable             | Populated when state becomes `accepted` (extracted from `actions[0].targetproject` which becomes `SUSE:Maintenance:XXXXX` after acceptance) |
 | superseded_by      | INTEGER      | nullable             | Request number of the superseding request (from payload `superseded_by`) |
-| created_at         | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp                |
-| updated_at         | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp                  |
+| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp                |
+| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp                  |
 
 **Notes**:
 
@@ -195,8 +195,8 @@ Sentinel.
 | codestream_name    | VARCHAR(255) | NOT NULL             | Target codestream (from payload `actions[0].targetproject`) |
 | state              | ENUM         | NOT NULL, DEFAULT open | See ReleaseRequestState below           |
 | incident_number    | INTEGER      | NOT NULL             | Extracted from `actions[0].sourceproject` (e.g., `SUSE:Maintenance:12345` -> `12345`) |
-| created_at         | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp                |
-| updated_at         | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp                  |
+| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp                |
+| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp                  |
 
 **Notes**:
 
@@ -226,7 +226,7 @@ records whose CVEs are mentioned in the request's diff.
 | id                            | UUID      | PK                                         | Internal identifier                |
 | submission_request_id         | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
 | ticket_package_track_id       | UUID      | FK(ticket_package_track.id), NOT NULL      | Related track record               |
-| created_at                    | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
+| created_at                    | TIMESTAMPTZ | NOT NULL, DEFAULT                          | Record creation timestamp          |
 
 **Unique constraint**: (submission_request_id, ticket_package_track_id)
 

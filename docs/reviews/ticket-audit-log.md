@@ -26,10 +26,7 @@
 
 ### TAL-GAP-05 — from_date / to_date timezone handling (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-If a user passes from_date=2025-03-15 (date without time), is this interpreted as midnight UTC? If they pass 2025-03-15T10:00:00+02:00, is the timezone offset respected? The spec says "ISO 8601" but doesn't specify timezone interpretation rules for the filter parameters.
+**Status**: RESOLVED — Added "Timestamps & Timezones" convention to conventions.md as single source of truth; added "Date Range Interpretation" section to api-spec.md with timezone parsing rules (naive=UTC, offset=convert to UTC); updated data-model.md and all feature specs from TIMESTAMP to TIMESTAMPTZ (2026-05-16)
 
 ### TAL-GAP-06 — search filter on NULL comment field (Low)
 

@@ -69,6 +69,32 @@ Rules:
 - The `source` field in API responses returns `"ad"` or `"local"` (never
   `"ldap"` or `"sso"`)
 
+### Timestamps & Timezones
+
+Sentinel follows the **"UTC everywhere, local display"** convention:
+
+- **Database**: all timestamp columns use PostgreSQL `TIMESTAMPTZ` (which
+  normalizes values to UTC internally). Never use bare `TIMESTAMP`
+  (without time zone) — naive timestamps are ambiguous and a source of
+  bugs in multi-timezone environments
+- **Backend**: all datetime operations (comparisons, arithmetic,
+  scheduling, TTL checks) operate in UTC. Use `datetime.now(UTC)` (never
+  `datetime.utcnow()`, which returns a naive datetime). Celery Beat
+  schedules are expressed in UTC
+- **API responses**: all datetime values are serialized in UTC with the
+  `Z` suffix (e.g., `2025-03-15T10:30:00Z`)
+- **API inputs**: datetime filter parameters (e.g., `from_date`,
+  `to_date`) interpret naive values (without timezone offset) as UTC.
+  Values with an explicit offset (e.g., `+02:00`) are accepted and
+  converted to UTC before comparison. See `docs/api-spec.md` (Date
+  Range Interpretation) for the detailed parsing rules
+- **Frontend**: the UI converts UTC timestamps from the API to the
+  user's local timezone at display time (using `Intl.DateTimeFormat` or
+  equivalent). When submitting datetime values to the API, the frontend
+  converts local time to UTC before sending
+- **CLI**: timestamps in CLI output are displayed in UTC with an
+  explicit "UTC" suffix (e.g., `2025-03-15 10:30:00 UTC`)
+
 ## Python (Backend)
 
 ### Style

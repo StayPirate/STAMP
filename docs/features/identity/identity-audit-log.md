@@ -26,7 +26,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | old_value | TEXT | nullable | Previous state (human-readable) |
 | new_value | TEXT | nullable | New state (human-readable) |
 | detail | JSONB | nullable | Additional structured context when old_value/new_value are insufficient |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
 **Notes**:
 

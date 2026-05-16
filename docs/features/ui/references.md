@@ -35,8 +35,8 @@ See `docs/data-model.md` for the full schema. Key table:
 | source     | VARCHAR(100)   | NOT NULL                     | Origin of the reference: fetcher name (e.g., `"sync_cves_nvd"`, `"sync_cves_mitre"`) or `"manual"` for user-added references |
 | tags       | ARRAY(VARCHAR) | nullable                     | Descriptive tags (e.g., `"Patch"`, `"Vendor Advisory"`, `"Third Party Advisory"`). Populated from CVE source data when available |
 | created_by | UUID           | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
-| created_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record update timestamp            |
+| created_at | TIMESTAMPTZ      | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at | TIMESTAMPTZ      | NOT NULL, DEFAULT            | Record update timestamp            |
 
 **Unique constraint**: `(ticket_id, url)` — a URL cannot be referenced
 twice on the same ticket.

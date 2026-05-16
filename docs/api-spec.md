@@ -159,14 +159,19 @@ When a date range filter (`from_date`, `to_date`) is applied against a
 `datetime` column:
 
 - **Date-only value** (e.g., `2025-01-15`):
-  - `from_date` → interpreted as `2025-01-15T00:00:00` (start of day,
-    inclusive)
-  - `to_date` → interpreted as `2025-01-15T23:59:59.999999` (end of day,
-    inclusive)
-- **Full datetime value** (e.g., `2025-01-15T14:30:00`): used as-is
+  - `from_date` → interpreted as `2025-01-15T00:00:00Z` (start of day
+    UTC, inclusive)
+  - `to_date` → interpreted as `2025-01-15T23:59:59.999999Z` (end of day
+    UTC, inclusive)
+- **Full datetime value without offset** (e.g., `2025-01-15T14:30:00`):
+  interpreted as UTC
+- **Full datetime value with offset** (e.g., `2025-01-15T14:30:00+02:00`):
+  accepted and converted to UTC before comparison (i.e.,
+  `2025-01-15T12:30:00Z`)
 
 This ensures that "inclusive bounds" means inclusive of the full day when no
-time component is specified.
+time component is specified. For the full timezone policy, see
+`docs/conventions.md` (Timestamps & Timezones).
 
 ### Sorting
 

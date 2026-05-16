@@ -1038,9 +1038,9 @@ table:
 | severity_override | ENUM        | nullable                     | Manual severity (Critical, High, Medium, Low, None). Used when `cve_id IS NULL` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | previous_status   | ENUM        | nullable                     | Status before Duplicated |
-| created_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp |
-| updated_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp |
-| deleted_at        | TIMESTAMP   | nullable                     | Soft-delete timestamp |
+| created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
+| updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
+| deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp |
 
 ## Security
 

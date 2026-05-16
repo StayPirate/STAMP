@@ -22,7 +22,7 @@ to all audit trail tables:
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | UUID | PK | Internal identifier |
-| `created_at` | TIMESTAMP | NOT NULL, server default | When the event occurred |
+| `created_at` | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
 | `user_id` | UUID | FK(user.id, ON DELETE RESTRICT), nullable | Actor. NULL for system-initiated actions |
 
 Sentinel only performs soft-delete (deactivation) on users, never

@@ -95,7 +95,7 @@ erDiagram
         UUID assignee_id FK "nullable"
         UUID duplicate_of_id FK "self-ref, nullable"
         ENUM previous_status "nullable"
-        TIMESTAMP deleted_at "nullable"
+        TIMESTAMPTZ deleted_at "nullable"
     }
     TicketAuditEvent {
         UUID id PK
@@ -139,7 +139,7 @@ erDiagram
         UUID id PK
         UUID ticket_id FK "NOT NULL"
         VARCHAR_255 package_name "NOT NULL"
-        TIMESTAMP deleted_at "nullable"
+        TIMESTAMPTZ deleted_at "nullable"
     }
     TicketPackageTrack {
         UUID id PK
@@ -148,7 +148,7 @@ erDiagram
         VARCHAR_255 reference "NOT NULL"
         ENUM status "NOT NULL, DEFAULT ANALYSIS"
         ENUM delivery_status "NOT NULL, DEFAULT PENDING"
-        TIMESTAMP deleted_at "nullable"
+        TIMESTAMPTZ deleted_at "nullable"
     }
     TicketPackageProduct {
         UUID id PK
@@ -158,8 +158,8 @@ erDiagram
         BOOLEAN is_status_override "DEFAULT false"
         BOOLEAN eligible "NOT NULL"
         BOOLEAN is_eligible_override "DEFAULT false"
-        TIMESTAMP released_at "nullable"
-        TIMESTAMP deleted_at "nullable"
+        TIMESTAMPTZ released_at "nullable"
+        TIMESTAMPTZ deleted_at "nullable"
     }
     Product {
         UUID id PK
@@ -220,8 +220,8 @@ erDiagram
         VARCHAR_64 key_hash UK "NOT NULL"
         VARCHAR_12 prefix "NOT NULL"
         VARCHAR_128 name "NOT NULL"
-        TIMESTAMP expires_at "nullable"
-        TIMESTAMP revoked_at "nullable"
+        TIMESTAMPTZ expires_at "nullable"
+        TIMESTAMPTZ revoked_at "nullable"
         UUID revoked_by FK "nullable"
     }
     IdentityAuditEvent {
@@ -364,11 +364,11 @@ Represents a Common Vulnerability and Exposure entry.
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
 | description    | TEXT         |                      | Vulnerability description       |
 | severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
-| published_date | TIMESTAMP    |                      | Date CVE was published         |
-| modified_date  | TIMESTAMP    |                      | Date CVE was last modified     |
+| published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
+| modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
 | nvd_status     | VARCHAR(50)  |                      | NVD vulnerability status (e.g., `Analyzed`, `Rejected`, `Modified`). Updated during NVD sync. See `docs/features/tickets/cve-tracking.md` for handling rules. |
-| created_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp      |
-| updated_at     | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp        |
+| created_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp      |
+| updated_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp        |
 
 ### CVESource
 
@@ -381,9 +381,9 @@ Tracks the origin of CVE data from different sources.
 | source_type | ENUM        | NOT NULL         | NVD, MITRE, etc.       |
 | source_url  | TEXT        |                  | URL to the source entry            |
 | raw_data    | JSONB       |                  | Original data from the source      |
-| fetched_at  | TIMESTAMP   | NOT NULL         | When the data was fetched          |
-| created_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record creation timestamp          |
-| updated_at  | TIMESTAMP   | NOT NULL, DEFAULT| Record update timestamp            |
+| fetched_at  | TIMESTAMPTZ   | NOT NULL         | When the data was fetched          |
+| created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT| Record creation timestamp          |
+| updated_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT| Record update timestamp            |
 
 ### CVECVSSAssessment
 
@@ -400,8 +400,8 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 | cvss_version  | VARCHAR(10)   | NOT NULL                               | CVSS version (e.g., `"3.1"`, `"4.0"`, `"2.0"`) |
 | score         | DECIMAL(3,1)  | NOT NULL                               | Calculated base score (0.0-10.0)   |
 | vector        | VARCHAR(200)  | NOT NULL                               | Full CVSS vector string            |
-| created_at    | TIMESTAMP     | NOT NULL, DEFAULT                      | Record creation timestamp          |
-| updated_at    | TIMESTAMP     | NOT NULL, DEFAULT                      | Record update timestamp            |
+| created_at    | TIMESTAMPTZ     | NOT NULL, DEFAULT                      | Record creation timestamp          |
+| updated_at    | TIMESTAMPTZ     | NOT NULL, DEFAULT                      | Record update timestamp            |
 
 **Unique constraint**: (cve_id, provider_name, cvss_version)
 
@@ -423,7 +423,7 @@ Key-value store for system-wide configuration. See
 |------------|-------------|--------------------|----------------------------------|
 | key        | VARCHAR(100) | PK                 | Setting identifier (e.g., `default_cvss_version`) |
 | value      | VARCHAR(255) | NOT NULL           | Setting value                    |
-| updated_at | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp      |
+| updated_at | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp      |
 
 **Initial data**:
 
@@ -454,10 +454,10 @@ full details.
 | end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
 | end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, products have `eligible = false` regardless of CVSS score. |
 | active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/packages/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
-| smelt_synced_at      | TIMESTAMP    |                      | Last sync from SMELT               |
-| aimaas_synced_at     | TIMESTAMP    |                      | Last sync from AIMAAS              |
-| created_at           | TIMESTAMP    | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at           | TIMESTAMP    | NOT NULL, DEFAULT    | Record update timestamp            |
+| smelt_synced_at      | TIMESTAMPTZ    |                      | Last sync from SMELT               |
+| aimaas_synced_at     | TIMESTAMPTZ    |                      | Last sync from AIMAAS              |
+| created_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp            |
 
 **Unique constraint**: (name, version)
 
@@ -472,7 +472,7 @@ Product records. Synced from SMELT alongside products.
 | id         | UUID      | PK                           | Internal identifier                |
 | product_id | UUID      | FK(product.id), NOT NULL     | Related product                    |
 | repo_name  | VARCHAR(255) | UNIQUE, NOT NULL             | SMELT repository project name (e.g., `SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64`) |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
 
 ### TicketPackage
 
@@ -485,9 +485,9 @@ entity for tracks and products. See
 | id           | UUID      | PK                           | Internal identifier                |
 | ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
 | package_name | VARCHAR(255) | NOT NULL                     | Source package name                |
-| deleted_at   | TIMESTAMP | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
-| created_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at   | TIMESTAMP | NOT NULL, DEFAULT            | Record update timestamp            |
+| deleted_at   | TIMESTAMPTZ | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record update timestamp            |
 
 **Unique constraint**: (ticket_id, package_name)
 
@@ -509,9 +509,9 @@ delivery).
 | reference         | VARCHAR(255) | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
 | status            | ENUM      | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
 | delivery_status   | ENUM      | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
-| deleted_at        | TIMESTAMP | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
-| created_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record creation timestamp          |
-| updated_at        | TIMESTAMP | NOT NULL, DEFAULT                     | Record update timestamp            |
+| deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
+| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record creation timestamp          |
+| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
 
 **Unique constraint**: (ticket_package_id, reference)
 
@@ -531,10 +531,10 @@ status inheritance, eligibility rules, and override model.
 | is_status_override       | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the status |
 | eligible                 | BOOLEAN   | NOT NULL                                    | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
-| released_at              | TIMESTAMP | nullable                                    | When Sentinel detected the fix in the product's update repository |
-| deleted_at               | TIMESTAMP | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
-| created_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record creation timestamp          |
-| updated_at               | TIMESTAMP | NOT NULL, DEFAULT                           | Record update timestamp            |
+| released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
+| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
+| created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
+| updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |
 
 **Unique constraint**: (ticket_package_track_id, product_id)
 
@@ -586,10 +586,10 @@ the same access as an unauthenticated user (read-only on public data).
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for AD users. See `docs/features/identity/local-authentication.md` |
 | ad_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
-| ad_synced_at   | TIMESTAMP   | nullable                 | When this record was last synced from AD |
-| last_login_at    | TIMESTAMP   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
-| created_at       | TIMESTAMP   | NOT NULL, DEFAULT        | Record creation timestamp        |
-| updated_at       | TIMESTAMP   | NOT NULL, DEFAULT        | Record update timestamp          |
+| ad_synced_at   | TIMESTAMPTZ   | nullable                 | When this record was last synced from AD |
+| last_login_at    | TIMESTAMPTZ   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
+| created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp        |
+| updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record update timestamp          |
 
 **Check constraint**: `chk_user_auth_exclusive` —
 `(ad_object_guid IS NOT NULL AND password_hash IS NULL) OR (ad_object_guid IS NULL AND password_hash IS NOT NULL)`
@@ -615,7 +615,7 @@ process and cannot be removed via the API. See
 | role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst    |
 | ad_group_cn  | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
 | assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
-| created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | When the role was assigned       |
+| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
 
 **Unique constraint**: (user_id, role, ad_group_cn)
 
@@ -647,7 +647,7 @@ membership. See `docs/features/identity/ad-integration.md`.
 | ad_group_cn  | VARCHAR(256) | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
 | role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin` or `Vulnerability Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
-| created_at   | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp          |
+| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
 **Unique constraint**: (ad_group_cn, role)
 
@@ -664,7 +664,7 @@ See `docs/features/identity/authentication.md` (Session Management).
 |--------------|-------------|---------------------------|--------------------------------------------|
 | id           | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
 | user_id      | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
-| created_at   | TIMESTAMP   | NOT NULL, DEFAULT         | When the session was created (login time)  |
+| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the session was created (login time)  |
 | is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
 
 **Index**: (user_id, is_active) — for efficient bulk invalidation on
@@ -688,10 +688,10 @@ hash is stored. See `docs/features/identity/authentication.md` (API Keys).
 | key_hash      | VARCHAR(64) | NOT NULL, UNIQUE          | SHA-256 hex digest of the full key         |
 | prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9b`) for display |
 | name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
-| created_at    | TIMESTAMP   | NOT NULL, DEFAULT         | When the key was created                   |
-| last_used_at  | TIMESTAMP   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
-| expires_at    | TIMESTAMP   | nullable                  | Optional expiration. NULL means never expires |
-| revoked_at    | TIMESTAMP   | nullable                  | When the key was revoked. NULL means active |
+| created_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the key was created                   |
+| last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
+| expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
+| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means active |
 | revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
 
 **Indexes**:
@@ -717,9 +717,9 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
 | previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
-| created_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record creation timestamp            |
-| updated_at        | TIMESTAMP   | NOT NULL, DEFAULT            | Record update timestamp              |
-| deleted_at        | TIMESTAMP   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
+| created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
+| updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
+| deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
 
 **Deletion policy**: tickets MUST NOT be hard-deleted from the database.
 Soft-delete is performed by setting `deleted_at` to the current timestamp.
@@ -783,8 +783,8 @@ the full specification.
 | source     | VARCHAR(100)   | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`, `"sync_cves_mitre"`) or `"manual"` for user-added references |
 | tags       | ARRAY(VARCHAR) | nullable                     | Descriptive tags from CVE data (e.g., `"Patch"`, `"Vendor Advisory"`) |
 | created_by | UUID           | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
-| created_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record update timestamp            |
+| created_at | TIMESTAMPTZ      | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at | TIMESTAMPTZ      | NOT NULL, DEFAULT            | Record update timestamp            |
 
 **Unique constraint**: (ticket_id, url)
 
@@ -798,7 +798,7 @@ specification.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| created_at | TIMESTAMP | NOT NULL, server default | When the event occurred |
+| created_at | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
 | user_id | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
 
 **Location**: `backend/app/models/mixins.py`
@@ -822,7 +822,7 @@ system action).
 | old_value   | TEXT        | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | TEXT        | nullable               | New value (e.g., new status, new assignee username) |
 | comment     | TEXT        | nullable               | Optional note from the VA, or system-generated description for automated events |
-| created_at  | TIMESTAMP   | NOT NULL, DEFAULT      | Inherited from AuditEventMixin             |
+| created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT      | Inherited from AuditEventMixin             |
 
 ### TicketAuditEventType Enum
 
@@ -868,7 +868,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | old_value | TEXT | nullable | Previous state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | new_value | TEXT | nullable | New state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | detail | JSONB | nullable | Additional structured context |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
 ### IdentityAuditEventType Enum
 
@@ -905,7 +905,7 @@ Audit trail for system setting modifications. Inherits `id`,
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who changed the setting. Nullable at DB level; service validates presence |
 | old_value | TEXT | nullable | Previous value |
 | new_value | TEXT | NOT NULL | New value |
-| created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
 ### SettingAuditEventType Enum
 
@@ -934,7 +934,7 @@ of the release detection mechanism.
 | codestream_name | VARCHAR(255) | NOT NULL             | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) |
 | package_name    | VARCHAR(255) | NOT NULL             | Source package name                |
 | srcmd5          | VARCHAR(32)  | NOT NULL             | MD5 checksum of the package source revision from IBS |
-| last_seen_at    | TIMESTAMP   | NOT NULL, DEFAULT    | When this checksum was last observed |
+| last_seen_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT    | When this checksum was last observed |
 
 **Unique constraint**: (codestream_name, package_name)
 
@@ -955,8 +955,8 @@ longer appears in any active ticket. See
 | bugowner_type  | ENUM        | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
 | bugowner_name  | VARCHAR(100) | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
 | bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group. NULL if unresolved |
-| created_at     | TIMESTAMP   | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at     | TIMESTAMP   | NOT NULL, DEFAULT    | Record update timestamp            |
+| created_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record update timestamp            |
 
 **BugownerType enum values**:
 
@@ -978,7 +978,7 @@ represents one member of the IBS group. See
 | package_bugowner_id  | UUID        | FK(package_bugowner.id), NOT NULL    | Parent bugowner record             |
 | userid               | VARCHAR(64)  | NOT NULL                             | IBS username of the group member   |
 | email                | VARCHAR(255) | NOT NULL                             | Email of the group member          |
-| created_at           | TIMESTAMP   | NOT NULL, DEFAULT                    | Record creation timestamp          |
+| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT                    | Record creation timestamp          |
 
 **Unique constraint**: (package_bugowner_id, userid)
 
@@ -992,8 +992,8 @@ specification.
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Internal identifier                |
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
-| started_at           | TIMESTAMP   | NOT NULL                 | When the run started               |
-| finished_at          | TIMESTAMP   | nullable                 | When the run ended (NULL while running) |
+| started_at           | TIMESTAMPTZ   | NOT NULL                 | When the run started               |
+| finished_at          | TIMESTAMPTZ   | nullable                 | When the run ended (NULL while running) |
 | duration_seconds     | FLOAT       | nullable                 | `finished_at - started_at` in seconds |
 | status               | ENUM        | NOT NULL                 | FetcherRunStatus: `running`, `success`, `failure`, `partial` |
 | items_created        | INTEGER     | NOT NULL, DEFAULT 0      | New records created                |
@@ -1004,7 +1004,7 @@ specification.
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
 | triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
-| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | Record creation timestamp          |
+| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
 
 ### FetcherConfig
 
@@ -1019,7 +1019,7 @@ startup if not present.
 | timeout_seconds   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds. Also used as stale run detection threshold. 0 disables both. |
 | rate_limit        | VARCHAR(20)  | nullable           | Rate limit (e.g., `"2/s"`, `"100/m"`) |
 | custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `custom_settings_schema` (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
-| updated_at        | TIMESTAMP   | NOT NULL, DEFAULT  | Last modification timestamp        |
+| updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp        |
 
 ### FetcherAuditEvent
 
@@ -1033,7 +1033,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | event_type           | ENUM        | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
 | user_id              | UUID        | FK(user.id), nullable    | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; service validates presence |
 | detail               | JSONB       | nullable                 | Additional context (e.g., old/new config values) |
-| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | Inherited from AuditEventMixin     |
+| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Inherited from AuditEventMixin     |
 
 ### FetcherRunWeeklyAggregate
 
@@ -1055,7 +1055,7 @@ retention task after the 90-day individual retention window.
 | total_items_created  | INTEGER     | NOT NULL                 | Sum of `items_created`             |
 | total_items_updated  | INTEGER     | NOT NULL                 | Sum of `items_updated`             |
 | total_items_failed   | INTEGER     | NOT NULL                 | Sum of `items_failed`              |
-| created_at           | TIMESTAMP   | NOT NULL, DEFAULT        | When this aggregate was created    |
+| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | When this aggregate was created    |
 
 **Unique constraint**: (fetcher_name, week_start)
 
@@ -1074,8 +1074,8 @@ to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 | author             | VARCHAR(64)  | nullable                 | IBS username who created the request     |
 | incident_number    | INTEGER      | nullable                 | Populated when state becomes `accepted`  |
 | superseded_by      | INTEGER      | nullable                 | Request number of the superseding request |
-| created_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record creation timestamp                |
-| updated_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record update timestamp                  |
+| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
+| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
 
 **SubmissionRequestState enum**: `open`, `accepted`, `declined`,
 `revoked`, `superseded`. `open` maps to IBS states `new` and `review`.
@@ -1094,8 +1094,8 @@ to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 | codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
 | state              | ENUM         | NOT NULL, DEFAULT open   | ReleaseRequestState (see below)          |
 | incident_number    | INTEGER      | NOT NULL                 | Maintenance incident number              |
-| created_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record creation timestamp                |
-| updated_at         | TIMESTAMP    | NOT NULL, DEFAULT        | Record update timestamp                  |
+| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
+| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
 
 **ReleaseRequestState enum**: `open`, `accepted`, `declined`, `revoked`.
 `open` maps to IBS states `new` and `review`. `declined` is non-final.
@@ -1114,7 +1114,7 @@ records whose CVEs are mentioned in the request's diff.
 | id                       | UUID      | PK                                         | Internal identifier                |
 | submission_request_id    | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
 | ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL      | Related track record               |
-| created_at               | TIMESTAMP | NOT NULL, DEFAULT                          | Record creation timestamp          |
+| created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                          | Record creation timestamp          |
 
 **Unique constraint**: (submission_request_id, ticket_package_track_id)
 
@@ -1137,6 +1137,9 @@ TBD — will be defined based on query patterns during implementation.
   in place; `PackageBugownerMember` records are deleted and recreated when
   group membership changes)
 - ENUM types are defined as PostgreSQL enums
+- All timestamp columns use `TIMESTAMPTZ` (timestamp with time zone), which
+  normalizes values to UTC internally. See `docs/conventions.md` (Timestamps
+  & Timezones) for the full timezone policy
 - JSONB is used for flexible storage of source-specific data
 - The schema will evolve as features are implemented; this document must be
   updated before any schema changes
