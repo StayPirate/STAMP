@@ -26,24 +26,15 @@
 
 ### IAL-GAP-05 — actor filter value "system" combined with event_type filter (Low)
 
-**Category**: Filter behavior
-**Status**: OPEN
-
-The spec says `actor` accepts `"system"` for automated events (NULL user_id). This is clear. However, the spec does not specify behavior when `actor` is provided as a username or UUID that does not exist in the system. The base class `filter_by_actor()` accepts a username for lookup via JOIN — if the username doesn't match any user, the spec doesn't state whether this returns an empty result set or a 400/404 error.
+**Status**: RESOLVED — Clarified in audit-trail-infrastructure.md (filter_by_actor: empty result set for non-existent usernames) and in api-spec.md (User Identifier Resolution 404 limited to target parameters, not filters) (2026-05-16)
 
 ### IAL-GAP-06 — Initial AD sync producing hundreds of events — query performance and pagination (Low)
 
-**Category**: UX / performance
-**Status**: OPEN
-
-The spec acknowledges "On initial AD sync this may produce hundreds of `user_created` events" but does not address whether the `per_page` max of 100 and the API's fixed reverse-chronological ordering are sufficient for administrators to navigate a large initial burst. This is a minor UX gap — pagination handles it mechanically, but filtering by `event_type` or date range would be the practical workaround and those are already specified.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-16)
 
 ### IAL-GAP-07 — revoke_all_user_keys with zero active keys (Low)
 
-**Category**: Edge case
-**Status**: OPEN
-
-The spec says `revoke_all_user_keys()` creates "N `api_key_revoked` events (one per revoked key)." When N=0 (user has no active API keys), the spec does not explicitly state whether zero events are created (implicit but obvious) or whether a summary "no keys to revoke" event is expected. The implicit resolution (zero events) is obvious.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-16)
 
 ---
 
@@ -63,17 +54,11 @@ The spec says `revoke_all_user_keys()` creates "N `api_key_revoked` events (one 
 
 ### IAL-DES-01 — Initial AD sync may produce unbounded batch of audit events in a single transaction (Medium)
 
-**Category**: Scalability
-**Status**: OPEN
-
-The spec states "On initial AD sync this may produce hundreds of `user_created` events — this is intentional." If the AD sync creates all users in a single transaction (as implied by the atomicity rule requiring audit events in the same transaction as the mutation), an initial sync of hundreds or thousands of users produces hundreds/thousands of INSERT statements in one transaction. This could cause long-running transactions, lock contention, and potential OOM in the session's identity map. Alternative: batch the AD sync into chunks (e.g., 100 users per transaction), with each chunk producing its own audit events atomically.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-16)
 
 ### IAL-DES-02 — VARCHAR columns for old_value/new_value lack defined length and structured semantics (Low)
 
-**Category**: Schema design
-**Status**: OPEN
-
-The `old_value` and `new_value` columns are VARCHAR with no specified max length, containing human-readable strings whose format varies by event type. This creates implicit coupling between event_type and the interpretation of these fields. However, this mirrors the existing TicketAuditEvent pattern and is consistent with the infrastructure spec.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-16)
 
 ### IAL-DES-03 — No filtering by event_type combination with target_user for self-service audit visibility (Low)
 

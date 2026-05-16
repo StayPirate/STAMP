@@ -18,28 +18,28 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 
 | Spec | GAP | COH | DES | SEC | API | Total | Last Review | Stale |
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
-| [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-12 | ⚠️ |
+| [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
+| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 |  |
 |  |  |  |  |  |  |  |  |  |
-| [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
+| [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [identity-audit-log](identity-audit-log.md) | 3 | 🟢 | 3 | 4 | 🟢 | 10 | 2026-05-15 | ⚠️ |
-|  | 3:🟡 |  | 1:🟠 2:🟡 | 4:🟡 |  |  |  |  |
-| [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
+| [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 1 | 4 | 🟢 | 5 | 2026-05-16 |  |
+|  |  |  | 1:🟡 | 4:🟡 |  |  |  |  |
+| [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | |
+| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 |  |
 |  |  |  |  |  |  |  |  |  |
-| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
+| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 |  |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | — | — | — | — | — | 0 | — | — |
 |  |  |  |  |  |  |  |  |  |
-| [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
+| [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
+| [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **0** | **3** | **4** | **0** | **10** |  |  |
-|  | 3:🟡 |  | 1:🟠 2:🟡 | 4:🟡 |  |  |  |  |
+| **Total** | **0** | **0** | **1** | **4** | **0** | **5** |  |  |
+|  |  |  | 1:🟡 | 4:🟡 |  |  |  |  |
 
 ### Disabled specs
 

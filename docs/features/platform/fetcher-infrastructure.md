@@ -481,7 +481,7 @@ the dashboard charts.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| fetcher_name | VARCHAR | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
+| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
 | started_at | TIMESTAMP | NOT NULL | When the run started |
 | finished_at | TIMESTAMP | nullable | When the run ended (NULL while running) |
 | duration_seconds | FLOAT | nullable | Computed: `finished_at - started_at` in seconds |
@@ -528,11 +528,11 @@ one does not already exist.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| fetcher_name | VARCHAR | PK | Fetcher identifier (matches `BaseFetcher.name`) |
+| fetcher_name | VARCHAR(100) | PK | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled | BOOLEAN | NOT NULL, DEFAULT true | Whether the fetcher is active |
-| schedule_override | VARCHAR | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
+| schedule_override | VARCHAR(50) | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
 | timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
-| rate_limit | VARCHAR | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
+| rate_limit | VARCHAR(20) | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
 | custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `custom_settings_schema` (see "Custom Settings Schema" above). |
 | updated_at | TIMESTAMP | NOT NULL, DEFAULT | Last modification timestamp |
 
@@ -562,7 +562,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
-| fetcher_name | VARCHAR | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
+| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
 | event_type | ENUM | NOT NULL | See FetcherAuditEventType enum |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
 | detail | JSONB | nullable | Additional context (e.g., old/new schedule values) |
@@ -599,7 +599,7 @@ Stores weekly summaries of fetcher runs after the retention window
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| fetcher_name | VARCHAR | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
+| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
 | week_start | DATE | NOT NULL | Monday of the aggregation week |
 | run_count | INTEGER | NOT NULL | Total number of runs in the week |
 | success_count | INTEGER | NOT NULL | Runs with status `success` |

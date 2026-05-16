@@ -155,10 +155,10 @@ See `docs/data-model.md` for the full table definition. Key columns:
 | Column | Type | Description |
 |---|---|---|
 | event_type | ENUM | `SettingAuditEventType` — currently only `setting_changed` |
-| setting_key | VARCHAR | Which setting was changed (e.g., `default_cvss_version`) |
+| setting_key | VARCHAR(100) | Which setting was changed (e.g., `default_cvss_version`) |
 | user_id | UUID | Admin who changed the setting (always present — no system-initiated changes) |
-| old_value | VARCHAR | Previous value |
-| new_value | VARCHAR | New value |
+| old_value | TEXT | Previous value |
+| new_value | TEXT | New value |
 
 ### API
 

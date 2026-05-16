@@ -30,9 +30,9 @@ See `docs/data-model.md` for the full schema. Key table:
 |------------|----------------|------------------------------|------------------------------------|
 | id         | UUID           | PK                           | Internal identifier                |
 | ticket_id  | UUID           | FK(ticket.id), NOT NULL      | Related ticket                     |
-| url        | VARCHAR        | NOT NULL                     | URL of the external resource       |
-| title      | VARCHAR        | nullable                     | Optional human-readable label      |
-| source     | VARCHAR        | NOT NULL                     | Origin of the reference: fetcher name (e.g., `"sync_cves_nvd"`, `"sync_cves_mitre"`) or `"manual"` for user-added references |
+| url        | TEXT           | NOT NULL                     | URL of the external resource       |
+| title      | TEXT           | nullable                     | Optional human-readable label      |
+| source     | VARCHAR(100)   | NOT NULL                     | Origin of the reference: fetcher name (e.g., `"sync_cves_nvd"`, `"sync_cves_mitre"`) or `"manual"` for user-added references |
 | tags       | ARRAY(VARCHAR) | nullable                     | Descriptive tags (e.g., `"Patch"`, `"Vendor Advisory"`, `"Third Party Advisory"`). Populated from CVE source data when available |
 | created_by | UUID           | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
 | created_at | TIMESTAMP      | NOT NULL, DEFAULT            | Record creation timestamp          |

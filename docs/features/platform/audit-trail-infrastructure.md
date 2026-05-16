@@ -125,7 +125,12 @@ class BaseAuditLog:
         The `actor` parameter follows the User Identifier Resolution
         convention defined in `docs/conventions.md`: if the value is a
         valid UUID, lookup is by `user.id`; otherwise, lookup is by
-        `user.username` (exact match).
+        `user.username` (exact match). If the provided username or UUID
+        does not match any user in the system, the method returns an
+        empty result set (no 404 error). See `docs/api-spec.md`, User
+        Identifier Resolution — the 404 convention applies only to
+        single-resource target parameters, not to optional filter
+        parameters on list endpoints.
 
         Relies on the uniform user_id column provided by
         AuditEventMixin across all audit event models.

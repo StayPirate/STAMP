@@ -256,7 +256,10 @@ Resolution is automatic:
   (`User.id`)
 - Otherwise, lookup is by the `username` field (case-sensitive exact match)
 - If no user matches either lookup, the endpoint returns 404 with error code
-  `USER_NOT_FOUND`
+  `USER_NOT_FOUND`. This 404 convention applies to parameters that identify a
+  **single target resource** (path parameters, request body fields). Optional
+  filter parameters on list endpoints (e.g., `?actor=jdoe`) do NOT return
+  404 — a non-matching value produces an empty result set instead
 
 Response payloads always contain the user's UUID (never the username as
 identifier). The database persists only UUIDs in foreign keys and

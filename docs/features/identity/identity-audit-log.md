@@ -23,8 +23,8 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events (which affect configuration, not a specific user) |
-| old_value | VARCHAR | nullable | Previous state (human-readable) |
-| new_value | VARCHAR | nullable | New state (human-readable) |
+| old_value | TEXT | nullable | Previous state (human-readable) |
+| new_value | TEXT | nullable | New state (human-readable) |
 | detail | JSONB | nullable | Additional structured context when old_value/new_value are insufficient |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
