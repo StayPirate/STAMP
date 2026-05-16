@@ -151,6 +151,7 @@ here with the required access level and a link to the owning spec.
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md#get-apiv1usersme) |
+| GET | `/api/v1/users/me/audit-log` | Authenticated | [identity-audit-log](identity-audit-log.md#list-my-identity-audit-events) |
 | GET | `/api/v1/users` | Public | [user-management](user-management.md#get-apiv1users) |
 | GET | `/api/v1/users/{user}` | Public | [user-management](user-management.md#get-apiv1usersuser) |
 

@@ -85,7 +85,8 @@ entries are always displayed in reverse chronological order).
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
-**Permissions**: Admin role required.
+**Permissions**: Admin role required. For non-admin users, a self-scoped
+endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
 
 **Response** (200 OK):
 
@@ -121,12 +122,99 @@ entries are always displayed in reverse chronological order).
 |---|---|---|
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
 
+### List My Identity Audit Events
+
+```
+GET /api/v1/users/me/audit-log
+```
+
+Returns a paginated list of identity audit events where the
+authenticated user is the target (`target_user_id = current_user.id`).
+The target filter is implicit and not exposed as a query parameter.
+Events with `target_user_id IS NULL` (role mapping configuration
+events) are excluded.
+
+Sorting is fixed at `created_at` descending — client-controlled
+`sort_by` / `sort_order` parameters are not supported.
+
+**Query parameters**:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | int | 1 | Page number (1-indexed) |
+| `per_page` | int | 20 | Items per page (max 100) |
+| `event_type` | string | -- | Comma-separated list of event types. See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
+| `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
+
+The `actor` and `target_user` filters are not available on this
+endpoint. The target is always the authenticated user; the actor is
+anonymized in the response (see below).
+
+**Permissions**: Authenticated.
+
+**Response** (200 OK):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "event_type": "role_added",
+      "old_value": null,
+      "new_value": "admin",
+      "detail": {"source": "ad_sync", "mapping": "cn=SecurityTeam"},
+      "created_at": "2026-05-13T10:30:00Z",
+      "actor": "system"
+    }
+  ],
+  "meta": {
+    "total": 42,
+    "page": 1,
+    "per_page": 20
+  }
+}
+```
+
+**Actor anonymization**: the `actor` field is returned as a string
+(not an object) to prevent non-admin users from identifying which
+specific administrator performed an action. The mapping is:
+
+| DB condition | `actor` value |
+|---|---|
+| `user_id IS NULL` | `"system"` |
+| `user_id = target_user_id` | `"self"` |
+| `user_id IS NOT NULL AND user_id ≠ target_user_id` | `"admin"` |
+
+This gives users visibility into whether an event was triggered by
+themselves, by an administrator, or by an automated system process,
+without exposing the administrator's identity.
+
+**`detail` field transparency**: the `detail` JSONB field is returned
+unredacted in the self-service response. This includes AD group CNs in
+`detail.mapping` for AD sync events (e.g.,
+`{"source": "ad_sync", "mapping": "cn=SecurityTeam"}`). AD group CNs
+are considered non-sensitive organizational metadata — they are
+meaningful only within the AD administrative context and do not
+constitute personal data or security-critical information.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|---|---|---|
+| 401 | `AUTH_NOT_AUTHENTICATED` | Caller is not authenticated |
+
 ## UI
 
-The identity audit log is displayed in the Admin panel as a dedicated
-section or tab. The specific UI layout will be defined in
-`docs/features/ui/pages/admin-settings.md` when the admin panel UI is
-specified in detail.
+The identity audit log is displayed in two contexts:
+
+- **Admin panel**: full audit log with all events and unmasked actor
+  identity. The specific UI layout will be defined in
+  `docs/features/ui/pages/admin-settings.md` when the admin panel UI is
+  specified in detail.
+- **User profile**: self-scoped audit log showing only events that
+  affect the current user, with anonymized actor. The specific UI layout
+  will be defined when the user profile page is specified in detail.
 
 ## Service Contract
 

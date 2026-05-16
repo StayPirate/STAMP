@@ -62,10 +62,7 @@
 
 ### IAL-DES-03 — No filtering by event_type combination with target_user for self-service audit visibility (Low)
 
-**Category**: Access control
-**Status**: OPEN
-
-The endpoint is admin-only, which means users cannot view their own identity audit history. This is a deliberate access control choice and may be fine for now, but if a future requirement adds user-visible audit, the current design would need a second endpoint or permission relaxation.
+**Status**: RESOLVED — Self-service endpoint added: GET /api/v1/users/me/audit-log with actor anonymization (2026-05-16)
 
 ---
 

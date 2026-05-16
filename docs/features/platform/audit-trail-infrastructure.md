@@ -290,17 +290,33 @@ When adding a new audit trail, update this index.
 |---|---|---|---|---|
 | Ticket | `ticket_audit_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
-| Identity | `identity_audit_event` | 16 | Indefinite | `docs/features/identity/identity-audit-log.md` |
+| Identity | `identity_audit_event` | 14 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
 
 ## Access Level
 
-Most audit trail endpoints are restricted to **Admin** role. The ticket
-audit log (`GET /api/v1/tickets/{ticket_id}/audit-log`) is the exception:
-it is **Public** because ticket event history is part of the normal VA
-workflow, not an admin-only auditing feature. This asymmetry is
-intentional — the ticket audit log is entity-scoped (always filtered by
-`ticket_id`) and does not expose cross-entity audit data.
+Most audit trail endpoints are restricted to **Admin** role. Two
+exceptions exist:
+
+- **Ticket audit log** (`GET /api/v1/tickets/{ticket_id}/audit-log`):
+  **Public**, because ticket event history is part of the normal VA
+  workflow, not an admin-only auditing feature. This endpoint is
+  entity-scoped (always filtered by `ticket_id`) and does not expose
+  cross-entity audit data.
+
+- **Identity audit log — self-service**
+  (`GET /api/v1/users/me/audit-log`): **Authenticated**, scoped to
+  `target_user_id = current_user.id`. Users can view events that affect
+  their own account (role changes, password resets, API key operations,
+  field changes from AD sync). The actor field is anonymized to
+  `"system"`, `"self"`, or `"admin"` to prevent identification of the
+  specific administrator. The full, unmasked audit log remains
+  admin-only at `GET /api/v1/admin/identity/audit-log`.
+
+The self-service pattern (authenticated access with implicit user
+scoping and actor anonymization) is reusable for future audit trails
+that need to give users visibility into events affecting them without
+exposing cross-user data or actor identities.
 
 ## Immutability
 
