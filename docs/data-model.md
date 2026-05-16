@@ -865,8 +865,8 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType enum below |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
-| old_value | TEXT | nullable | Previous state (human-readable) |
-| new_value | TEXT | nullable | New state (human-readable) |
+| old_value | TEXT | nullable | Previous state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
+| new_value | TEXT | nullable | New state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | detail | JSONB | nullable | Additional structured context |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 

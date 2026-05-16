@@ -40,6 +40,11 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 - `detail` JSONB is used for structured data that does not fit the
   old_value/new_value pattern (e.g., role mapping metadata, affected
   user counts)
+- `old_value` and `new_value` must not exceed 512 characters. This limit
+  is derived from the constraints of the source columns: username max 64
+  characters, email max 255 characters, role names and status strings are
+  shorter still. The service layer must silently truncate any value
+  exceeding this limit before writing the audit event
 
 ### IdentityAuditEventType Enum
 
@@ -59,6 +64,41 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | `email_changed` | Email address updated (admin or AD sync) | Admin for manual, `NULL` for AD sync | Target user | Old email | New email | `NULL` |
 | `full_name_changed` | Full name updated (admin or AD sync) | Admin for manual, `NULL` for AD sync | Target user | Old full name | New full name | `NULL` |
 | `manager_changed` | Direct manager updated (AD sync) | `NULL` (system) | Target user | Old manager username (or `NULL`) | New manager username (or `NULL`) | `NULL` |
+
+### detail JSONB Schema Contract
+
+The `detail` column carries structured context for event types where
+`old_value`/`new_value` are insufficient. Every event type that
+populates `detail` MUST have its schema defined in the table below.
+Event types not listed here MUST set `detail` to `NULL`.
+
+| Event Type | Required Keys | Optional Keys | Example |
+|---|---|---|---|
+| `user_deactivated` | `reason` (string) | — | `{"reason": "ad_sync_missing"}` |
+| `role_added` | — | `source` (string), `mapping` (string) | `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
+| `role_removed` | — | `source` (string), `mapping` (string) | `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
+| `role_mapping_created` | `ad_group_cn` (string), `role` (string), `affected_users` (int) | — | `{"ad_group_cn": "cn=SecurityTeam", "role": "admin", "affected_users": 5}` |
+| `role_mapping_deleted` | `ad_group_cn` (string), `role` (string), `affected_users` (int) | — | `{"ad_group_cn": "cn=SecurityTeam", "role": "admin", "affected_users": 3}` |
+| `api_key_created` | `key_id` (UUID string) | — | `{"key_id": "550e8400-e29b-41d4-a716-446655440000"}` |
+| `api_key_revoked` | `key_id` (UUID string) | `reason` (string) | `{"key_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "user_deactivated"}` |
+
+**Notes**:
+
+- `role_added` and `role_removed`: `detail` is `NULL` for manual admin
+  actions. The optional keys (`source`, `mapping`) are present only when
+  the role change originates from AD sync. When `detail` is non-NULL,
+  both `source` and `mapping` MUST be present together
+- `api_key_revoked`: the `reason` key is present only for bulk
+  revocations triggered by user deactivation. For individual manual
+  revocations, `detail` contains only `key_id`
+- Maximum payload size: 4 KB. The service layer MUST reject any
+  `detail` value exceeding this limit
+- The service layer MUST validate that `detail` contains only keys
+  defined in this contract for the given event type — undocumented keys
+  are rejected
+- When a new `IdentityAuditEventType` is added that uses the `detail`
+  column, this table MUST be extended with the corresponding schema
+  definition before the implementation proceeds
 
 ## API
 

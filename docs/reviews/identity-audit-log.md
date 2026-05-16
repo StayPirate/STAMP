@@ -70,31 +70,19 @@
 
 ### IAL-SEC-01 — No input validation specified for old_value/new_value VARCHAR columns (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-The old_value and new_value columns are VARCHAR with no specified length constraint. While these are internally generated (not direct user input), AD-synced values originate from an external system. A malicious or corrupted AD attribute could be written without bounds. The spec should define a maximum length.
+**Status**: RESOLVED — Added 512-character length constraint for old_value/new_value with service-layer truncation rule; cross-referenced from data-model.md (2026-05-16)
 
 ### IAL-SEC-02 — detail JSONB column accepts unstructured data without schema validation (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-The detail JSONB column has different schemas per event type but the spec does not define a validation contract or maximum size. Since the values are generated internally by service code, the risk is low.
+**Status**: RESOLVED — Added detail JSONB Schema Contract section with per-event-type key definitions, 4 KB size limit, and validation requirements (2026-05-16)
 
 ### IAL-SEC-03 — Audit log endpoint lacks rate limiting specification (Low)
 
-**Category**: Rate limiting
-**Status**: OPEN
-
-The GET endpoint has no rate limiting specified. While it is restricted to Admin role, a compromised admin session could repeatedly query with broad date ranges. This is mitigated by pagination (max 100 per page).
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-16)
 
 ### IAL-SEC-04 — Comma-separated event_type filter has no limit on number of values (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-The event_type query parameter accepts a comma-separated list with no specified maximum count. While the enum is finite, the spec does not explicitly state that invalid values are rejected.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-16)
 
 ---
 
