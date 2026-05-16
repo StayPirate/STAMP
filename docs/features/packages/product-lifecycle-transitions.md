@@ -134,11 +134,11 @@ records with `user_id = NULL` (system action).
 
 | Action | `event_type` | `old_value` | `new_value` | `comment` |
 |--------|--------------|-------------|-------------|-----------|
-| Product eligibility set to false (Reactive LTSS) | `product_eligibility_changed` | `true` | `false` | `package_name:product_id:reactive_ltss` |
-| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | Product display name | `NULL` | `package_name:product_id:eol` |
-| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | Product display name | `NULL` | `package_name:product_id:eol` |
-| Track soft-deleted (orphan) | `track_excluded` | Track reference | `NULL` | `package_name:no_products_remaining` |
-| Package soft-deleted (orphan) | `package_excluded` | Package name | `NULL` | `package_name:no_tracks_remaining` |
+| Product eligibility set to false (Reactive LTSS) | `product_eligibility_changed` | `true` | `false` | `track_name package_name product_id reactive_ltss` |
+| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | Product display name | `NULL` | `track_name package_name product_id eol` |
+| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | Product display name | `NULL` | `track_name package_name product_id eol` |
+| Track soft-deleted (orphan) | `track_excluded` | Track reference | `NULL` | `track_name package_name no_products_remaining` |
+| Package soft-deleted (orphan) | `package_excluded` | Package name | `NULL` | `package_name no_tracks_remaining` |
 
 **Event types used**: `product_eligibility_changed` (existing),
 `product_excluded`, `track_excluded`, and `package_excluded` (existing

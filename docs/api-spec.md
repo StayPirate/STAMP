@@ -279,6 +279,14 @@ The `id` (UUID) is the stable, immutable identifier; `username` and
 `full_name` are display conveniences that may change over time (e.g.,
 via AD sync).
 
+Users are never physically deleted from the database — all foreign keys
+referencing the User table use `ON DELETE RESTRICT`. Deactivated users
+(`active=false`) are resolved normally, with all fields (`id`, `username`,
+`full_name`) populated from current data. Consequently, a user reference
+object is never null or partial when `user_id` is non-null — if a `user_id`
+foreign key is present, the referenced user record is guaranteed to exist
+and the serialized object will always be complete.
+
 This convention applies to:
 
 - Path parameters (e.g., `/api/v1/users/{user}`)

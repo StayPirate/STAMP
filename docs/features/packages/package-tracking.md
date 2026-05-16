@@ -706,11 +706,11 @@ do not produce individual events.
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
 | VA soft-deletes a package | `package_excluded` | VA user | `package_name` |
-| VA soft-deletes a track | `track_excluded` | VA user | `package_name`, `reference` |
-| VA soft-deletes a product | `product_excluded` | VA user | `package_name`, `reference`, `product_id` |
+| VA soft-deletes a track | `track_excluded` | VA user | `track_name`, `package_name` |
+| VA soft-deletes a product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
 | VA restores a package | `package_restored` | VA user | `package_name` |
-| VA restores a track | `track_restored` | VA user | `package_name`, `reference` |
-| VA restores a product | `product_restored` | VA user | `package_name`, `reference`, `product_id` |
+| VA restores a track | `track_restored` | VA user | `track_name`, `package_name` |
+| VA restores a product | `product_restored` | VA user | `track_name`, `package_name`, `product_id` |
 
 ---
 
@@ -914,18 +914,18 @@ types are defined:
 | VA adds package | `package_added` | VA user | `package_name` |
 | Package auto-added (CPE match or Case B) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
-| VA soft-deletes track | `track_excluded` | VA user | `package_name`, `reference` |
-| VA soft-deletes product | `product_excluded` | VA user | `package_name`, `reference`, `product_id` |
+| VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
+| VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
 | VA restores package | `package_restored` | VA user | `package_name` |
-| VA restores track | `track_restored` | VA user | `package_name`, `reference` |
-| VA restores product | `product_restored` | VA user | `package_name`, `reference`, `product_id` |
-| VA changes track status | `track_status_changed` | VA user | `package_name`, `reference`, `old_status`, `new_status` |
-| VA overrides product status | `product_status_overridden` | VA user | `package_name`, `product_id`, `old_status`, `new_status` |
-| VA overrides product eligibility | `product_eligibility_changed` | VA user | `package_name`, `product_id`, `old_eligible`, `new_eligible` |
+| VA restores track | `track_restored` | VA user | `track_name`, `package_name` |
+| VA restores product | `product_restored` | VA user | `track_name`, `package_name`, `product_id` |
+| VA changes track status | `track_status_changed` | VA user | `track_name`, `package_name`, `old_status`, `new_status` |
+| VA overrides product status | `product_status_overridden` | VA user | `track_name`, `package_name`, `product_id`, `old_status`, `new_status` |
+| VA overrides product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
-| Track release detected | `track_released` | `NULL` | `package_name`, `reference` |
-| Product release detected | `product_released` | `NULL` | `package_name`, `product_id`, `advisory_id` |
-| Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `package_name`, `product_id`, `old_eligible`, `new_eligible` |
+| Track release detected | `track_released` | `NULL` | `track_name`, `package_name` |
+| Product release detected | `product_released` | `NULL` | `track_name`, `package_name`, `product_id`, `advisory_id` |
+| Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
 
 - `user_id = NULL` indicates an automatic system action. For
   `package_added`, this distinguishes manual additions (VA user) from

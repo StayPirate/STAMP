@@ -128,8 +128,12 @@ A `TicketPackageTrack` record exists for the ticket's CVE with
 - Set `TicketPackageTrack.status` to `FIXED` and
   `TicketPackageTrack.delivery_status` to `RELEASED` through the
   `ticket_mutations` module (unless current status is `WONT_FIX`).
+- Create a `TicketAuditEvent` with `event_type = track_status_changed`,
+  `user_id = NULL` (system action), `old_value` = previous status,
+  `new_value = FIXED`, `comment` = `"{C} {P}"` (track_name package_name).
 - Create a `TicketAuditEvent` with `event_type = track_released`,
-  `user_id = NULL` (system action).
+  `user_id = NULL` (system action), `old_value = NULL`,
+  `new_value = RELEASED`, `comment` = `"{C} {P}"` (track_name package_name).
 
 ### Case B — Ticket exists, package NOT tracked in the ticket
 
