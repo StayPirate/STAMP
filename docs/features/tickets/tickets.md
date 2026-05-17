@@ -634,7 +634,10 @@ auto-assignment.
   soft-deleted tickets unless it explicitly deals with deletion or
   restoration management
 - All sub-resources of a soft-deleted ticket remain intact but are
-  inaccessible to non-admin users (API returns 410 Gone)
+  inaccessible to non-admin users. This is enforced centrally by a
+  shared dependency on the ticket sub-resource router — see
+  `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses))
+  for the HTTP-level contract (410 `TICKET_DELETED`)
 - A soft-deleted ticket can be restored by clearing `deleted_at`
 - Both operations create a `TicketAuditEvent` record (see
   `docs/features/tickets/ticket-audit-log.md`)
@@ -741,8 +744,6 @@ Response: ticket object in `{"data": ...}` envelope (200 OK).
 Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 410 with code `TICKET_DELETED`: ticket is soft-deleted and caller is
-  not an Admin
 
 ### Create Ticket
 

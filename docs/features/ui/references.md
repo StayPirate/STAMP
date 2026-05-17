@@ -202,15 +202,14 @@ Client-controlled sorting is not supported (small dataset).
 ```
 
 **Permissions**: publicly accessible for active tickets (no authentication
-required). If the ticket is soft-deleted, only Admin users can access its
-references; non-admin callers receive 410 Gone.
+required). Soft-deleted ticket protection is enforced centrally — see
+`docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses)).
 
 **Error responses**:
 
 | Status | Code | Condition           |
 |--------|------|---------------------|
 | 404    | `TICKET_NOT_FOUND` | Ticket not found    |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
 
 ### Add Reference
 
@@ -272,7 +271,6 @@ Adds a manual reference to a ticket.
 |--------|------|--------------------------------------------------|
 | 404    | `TICKET_NOT_FOUND` | Ticket not found                                 |
 | 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket               |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin |
 | 422    | `VALIDATION_ERROR` | Invalid URL format or missing required fields    |
 
 ### Update Reference
@@ -319,7 +317,6 @@ create response).
 |--------|------|--------------------------------------------------|
 | 404    | `RESOURCE_NOT_FOUND` | Ticket or reference not found                    |
 | 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket (if changed)  |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin |
 | 422    | `VALIDATION_ERROR` | Invalid URL format or missing required fields    |
 
 ### Delete Reference
@@ -340,7 +337,6 @@ source (automatic or manual).
 | Status | Code | Condition                          |
 |--------|------|------------------------------------|
 | 404    | `RESOURCE_NOT_FOUND` | Ticket or reference not found      |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin |
 
 ## UI Requirements
 

@@ -1084,7 +1084,6 @@ added, all counts will be zero in the `created` fields.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `VALIDATION_ERROR` | Missing or empty `package_name` |
 | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
 | 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
@@ -1127,7 +1126,6 @@ See [Soft-Deletion](#soft-deletion) for the full behavior.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `PACKAGE_ALREADY_EXCLUDED` | Package is already soft-deleted |
 
 ---
@@ -1165,7 +1163,6 @@ record only — child records are not modified. Creates a single
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Package is not directly soft-deleted |
 | 422 | `PACKAGE_RESTORE_BLOCKED` | Package has no active tracks with active products. Restore at least one track (with active products) first. |
 
@@ -1200,7 +1197,6 @@ excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `PACKAGE_ALREADY_EXCLUDED` | Track is already soft-deleted |
 
 ---
@@ -1237,7 +1233,6 @@ only — products under it are not modified. Creates a single
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Track is not directly soft-deleted |
 | 422 | `PACKAGE_RESTORE_BLOCKED` | Track has no active products. Restore at least one product first. |
 
@@ -1271,7 +1266,6 @@ Soft-delete a single product from a track.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `PACKAGE_ALREADY_EXCLUDED` | Product is already soft-deleted |
 
 ---
@@ -1306,7 +1300,6 @@ single `TicketAuditEvent`.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Product is not directly soft-deleted |
 
 ---
@@ -1388,7 +1381,6 @@ separate fetch.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or track not found on this ticket |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `VALIDATION_ERROR` | Invalid status value |
 
 ---
@@ -1466,7 +1458,6 @@ endpoint above — single-field update from the client's perspective.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |
-| 410 | `TICKET_DELETED` | Ticket exists but has been soft-deleted |
 | 422 | `VALIDATION_ERROR` | Invalid status value, or neither `status` nor `eligible` provided |
 
 ---

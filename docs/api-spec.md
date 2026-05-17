@@ -92,7 +92,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
@@ -235,6 +235,39 @@ Notes:
   populated with field-level details
 - Endpoint error tables should only list responses that are specific to
   that endpoint's logic (e.g., 404, 409, 403 for role requirements)
+
+### Scoped Responses
+
+Some shared dependencies apply to a specific resource group rather than to
+all endpoints. Like global responses, scoped responses are not repeated in
+per-endpoint error tables.
+
+#### Ticket Soft-Delete Protection
+
+All endpoints under `/api/v1/tickets/{ticket_id}/` — including the ticket
+detail endpoint itself — are subject to a centralized soft-delete check
+enforced by a router-level shared dependency (`require_accessible_ticket`).
+
+| Status | Code              | Condition                                            |
+|--------|-------------------|------------------------------------------------------|
+| 410    | `TICKET_DELETED`  | Ticket is soft-deleted and caller does not hold the Admin role |
+
+When a ticket has `deleted_at IS NOT NULL`, Admin callers proceed normally
+while all other callers receive 410 Gone. This applies uniformly to read
+and write operations on the ticket and its sub-resources (packages, tracks,
+products, CVSS assessments, references, audit log, submission requests).
+
+**Exceptions** — the following endpoints are excluded from this check
+because they manage the soft-delete lifecycle directly:
+
+- `DELETE /api/v1/tickets/{ticket_id}` (soft-delete): returns 409
+  `TICKET_ALREADY_DELETED` if the ticket is already soft-deleted
+- `POST /api/v1/tickets/{ticket_id}/restore` (restore): returns 409
+  `TICKET_NOT_DELETED` if the ticket is not soft-deleted
+
+See `docs/features/tickets/tickets.md` ([Soft-Delete](docs/features/tickets/tickets.md#soft-delete))
+for the full business rules (who may delete/restore, status categories,
+sub-resource behavior, automated verification requirements).
 
 ### Versioning
 

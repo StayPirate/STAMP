@@ -196,11 +196,10 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404    | `TICKET_NOT_FOUND` | Ticket not found |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and the caller is not an Admin (see `docs/api-spec.md`, soft-delete protection on sub-resources) |
 
-**Permissions**: requires authentication. If the ticket is soft-deleted, only
-Admin users can access its event history; non-admin authenticated callers
-receive 410 Gone.
+**Permissions**: requires authentication. Soft-deleted ticket protection
+is enforced centrally — see `docs/api-spec.md`
+([Scoped Responses](docs/api-spec.md#scoped-responses)).
 
 ## Service Contract
 

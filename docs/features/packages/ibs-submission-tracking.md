@@ -988,7 +988,6 @@ List all submission requests correlated to the ticket via the
 | Status | Code | Condition                                              |
 |--------|------|--------------------------------------------------------|
 | 404    | `TICKET_NOT_FOUND` | Ticket not found                                       |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and caller is not Admin         |
 | 422    | `VALIDATION_ERROR` | Invalid `state` value                                  |
 
 ### `GET /api/v1/tickets/{ticket_id}/release-requests`
@@ -1048,7 +1047,6 @@ SR correlation: find SRs correlated to the ticket, collect their
 | Status | Code | Condition                                              |
 |--------|------|--------------------------------------------------------|
 | 404    | `TICKET_NOT_FOUND` | Ticket not found                                       |
-| 410    | `TICKET_DELETED` | Ticket is soft-deleted and caller is not Admin         |
 | 422    | `VALIDATION_ERROR` | Invalid `state` or `incident_number` value             |
 
 ## Background Tasks
