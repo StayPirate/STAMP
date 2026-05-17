@@ -76,10 +76,7 @@ _No findings — clean review._
 
 ### TAL-SEC-03 — No rate limiting specified (Low)
 
-**Category**: Resource exhaustion
-**Status**: OPEN
-
-The public endpoint with text search capability could be abused for user enumeration (searching for actor names) or denial of service via expensive ILIKE queries. The spec should reference the platform's rate limiting strategy or define endpoint-specific limits.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-17)
 
 ---
 
@@ -87,7 +84,4 @@ The public endpoint with text search capability could be abused for user enumera
 
 ### TAL-API-01 — actor filter behavior for non-existent values not explicitly stated (Low)
 
-**Category**: Ambiguity
-**Status**: OPEN
-
-The spec doesn't explicitly state what happens when the actor filter value doesn't match any user. Per api-spec.md convention, non-matching filter values produce empty result sets, but this isn't restated in the spec. Minor since covered by general convention, but could cause confusion for implementers unfamiliar with the general rules.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-17)

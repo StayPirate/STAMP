@@ -34,14 +34,14 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 1 | 1 | 2 | 2026-05-17 | ⚠️ |
-|  |  |  |  | 1:🟡 | 1:🟡 |  |  |  |
+| [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **6** | **1** | **1** | **5** | **1** | **14** |  |  |
-|  | 3:🟠 3:🟡 | 1:🟡 | 1:🟠 | 2:🟠 3:🟡 | 1:🟡 |  |  |  |
+| **Total** | **6** | **1** | **1** | **4** | **0** | **12** |  |  |
+|  | 3:🟠 3:🟡 | 1:🟡 | 1:🟠 | 2:🟠 2:🟡 |  |  |  |  |
 
 ### Disabled specs
 
