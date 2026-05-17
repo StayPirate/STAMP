@@ -80,10 +80,7 @@ Over years, the audit event table will grow to tens of millions of rows. The spe
 
 ### TAL-SEC-01 — Public access to full audit history (Medium)
 
-**Category**: Authorization gap
-**Status**: OPEN
-
-The audit log endpoint is publicly accessible. While ticket data itself is public, the audit log exposes actor details (username, full_name, UUID) and operational patterns (who changed what, when). This information could aid reconnaissance by revealing organizational structure, work patterns, and individual responsibilities.
+**Status**: RESOLVED — Access level changed from Public to Authenticated; endpoint now requires authentication; History tab hidden for non-authenticated UI visitors (2026-05-17)
 
 ### TAL-SEC-02 — ILIKE search without length limit (Low)
 

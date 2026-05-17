@@ -72,7 +72,7 @@ _No findings._
 
 ### ATI-SEC-001 — Ticket Audit Log Public Information Disclosure (Medium)
 
-**Status**: RESOLVED — Accepted risk: Public access to ticket audit log is intentional design decision (2026-05-15)
+**Status**: RESOLVED — Risk mitigated: ticket audit log access level changed from Public to Authenticated (2026-05-17)
 
 ### ATI-SEC-002 — No Pagination Bounds on Audit Endpoints (Medium)
 

@@ -1045,7 +1045,9 @@ table:
 ## Security
 
 - Viewing ticket lists and details: publicly accessible (no
-  authentication required)
+  authentication required). Exception: the ticket audit log
+  sub-resource (`/audit-log`) requires authentication — see
+  `docs/features/tickets/ticket-audit-log.md`
 - Creating tickets, assigning, changing status, associating CVE,
   managing packages, setting severity override: Vulnerability Analyst role
 - Removing a CVE from a ticket: Admin role

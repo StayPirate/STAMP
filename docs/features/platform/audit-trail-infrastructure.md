@@ -300,10 +300,10 @@ Most audit trail endpoints are restricted to **Admin** role. Two
 exceptions exist:
 
 - **Ticket audit log** (`GET /api/v1/tickets/{ticket_id}/audit-log`):
-  **Public**, because ticket event history is part of the normal VA
-  workflow, not an admin-only auditing feature. This endpoint is
-  entity-scoped (always filtered by `ticket_id`) and does not expose
-  cross-entity audit data.
+  **Authenticated**, because the response includes actor details
+  (username, full name, UUID) that could aid reconnaissance if exposed
+  publicly. This endpoint is entity-scoped (always filtered by
+  `ticket_id`) and does not expose cross-entity audit data.
 
 - **Identity audit log — self-service**
   (`GET /api/v1/users/me/audit-log`): **Authenticated**, scoped to

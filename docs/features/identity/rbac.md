@@ -221,7 +221,7 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/audit-log` | Public | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-events) |
+| GET | `/api/v1/tickets/{ticket_id}/audit-log` | Authenticated | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-events) |
 
 ### Submission Tracking
 

@@ -215,7 +215,8 @@ Shown on the original ticket when other tickets reference it as duplicate:
 ### Event History (Tab)
 
 A dedicated **"History" tab** in the Ticket Detail page provides a complete
-audit trail with search and filtering capabilities.
+audit trail with search and filtering capabilities. Visible to authenticated
+users only (see Security section below).
 
 See `docs/features/tickets/ticket-audit-log.md` for the data model, event type
 contract, and API endpoint.
@@ -347,6 +348,9 @@ for this ticket."
 ## Security
 
 - Public (no authentication required)
+- The History tab (event audit trail) is visible only to authenticated users;
+  non-authenticated visitors can view all other ticket information but the
+  History tab is hidden and its API endpoint requires authentication
 - Edit actions (assign, change status, edit affectedness, reassign, mark as
   duplicate) require the Vulnerability Analyst role
 - Reassignment is available to any Vulnerability Analyst, not just the current
