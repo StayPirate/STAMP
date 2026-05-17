@@ -26,24 +26,15 @@
 
 ### AKS-GAP-003 — Name whitespace handling unspecified (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The spec states `name` must be '1-128 characters' but does not specify whether leading/trailing whitespace is trimmed before validation. A name of 128 spaces would pass the length check. Similarly, names that differ only by whitespace would not conflict. This could confuse users viewing their key list.
+**Status**: RESOLVED — Added explicit whitespace trimming rule to `create_key()` Validation section in api-key-service.md (2026-05-17)
 
 ### AKS-GAP-005 — expires_at race condition at creation boundary (Low)
 
-**Category**: Temporal and concurrency
-**Status**: OPEN
-
-The spec validates 'expires_at must be in the future' at service call time, but the key is not yet committed. If `expires_at` is set to seconds from now, it could already be expired by the time the transaction commits and the response reaches the client. This is a minor edge case with an obvious implicit resolution (don't set expiry to seconds from now), but the spec doesn't address minimum expiry duration.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-17)
 
 ### AKS-GAP-006 — No operation for listing or reading keys (Low)
 
-**Category**: Data lifecycle gaps
-**Status**: OPEN
-
-The service defines create, revoke, and revoke-all but no read/list operation. Key listing logic lives elsewhere (presumably directly in API handlers), which diverges from the centralization goal stated in the Purpose section. Listing is arguably not a 'lifecycle operation' but the spec doesn't explicitly scope what's included/excluded.
+**Status**: RESOLVED — Added explicit scoping note to Purpose section clarifying that read-only operations are excluded from centralization (2026-05-17)
 
 ---
 
@@ -51,10 +42,7 @@ The service defines create, revoke, and revoke-all but no read/list operation. K
 
 ### AKS-COH-001 — Prefix column size contradicts example values across specs (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-The api-key-service spec states 'prefix = first 12 characters of the full key' and the data model defines the column as VARCHAR(12). However, the example prefix used in authentication.md and data-model.md (`stl_ak_7f3a9b`) is 13 characters long. Either the prefix should be the first 13 characters (and the column VARCHAR(13)), or the examples should be truncated to 12 characters.
+**Status**: RESOLVED — Truncated all example prefix values from 13 characters to 12 characters across authentication.md and data-model.md to match the VARCHAR(12) column definition (2026-05-17)
 
 ---
 
@@ -98,10 +86,7 @@ The api-key-service spec states 'prefix = first 12 characters of the full key' a
 
 ### AKS-SEC-002 — No rate limiting on key creation endpoint (Low)
 
-**Category**: Insecure patterns
-**Status**: OPEN
-
-The POST /api/v1/api-keys endpoint has no rate limiting specified. Combined with the lack of a hard key limit, a compromised JWT session could rapidly create many keys.
+**Status**: RESOLVED — Accepted risk: key creation requires JWT session authentication (API keys cannot self-replicate), anomaly log at 20 keys provides operational visibility, and rate limiting can be added as cross-cutting middleware if needed in the future (2026-05-17)
 
 ### AKS-SEC-004 — create_key does not verify acting_user_id matches user_id for self-service (Low)
 

@@ -20,8 +20,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
 | [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [api-key-service](api-key-service.md) | 3 | 1 | 🟢 | 1 | 🟢 | 5 | 2026-05-17 |  |
-|  | 3:🟡 | 1:🟡 |  | 1:🟡 |  |  |  |  |
+| [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 |  |
+|  |  |  |  |  |  |  |  |  |
 | [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1 | 2026-05-17 |  |
@@ -40,8 +40,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **2** | **0** | **1** | **0** | **6** |  |  |
-|  | 3:🟡 | 2:🟡 |  | 1:🟡 |  |  |  |  |
+| **Total** | **0** | **1** | **0** | **0** | **0** | **1** |  |  |
+|  |  | 1:🟡 |  |  |  |  |  |  |
 
 ### Disabled specs
 

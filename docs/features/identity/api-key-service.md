@@ -7,6 +7,11 @@ bulk revocation) in a single service module to ensure consistent
 enforcement of business rules and side effects regardless of the entry
 point (API self-service, admin API, CLI, or user deactivation).
 
+Read-only operations (listing and retrieving API keys) are not
+centralized in this service because they carry no business logic, side
+effects, or audit trail requirements. They are implemented directly in
+API endpoint handlers (see `docs/features/identity/authentication.md`).
+
 Without this centralization, each entry point would need to independently
 implement the mutation logic and, once the audit trail redesign is
 applied, independently create the corresponding `IdentityAuditEvent`
@@ -75,8 +80,10 @@ Creates a new API key for a user.
 
 **Validation**:
 
-- `name` must be 1-128 characters. If empty or exceeds 128 characters,
-  raise `ApiKeyNameValidationError`
+- `name` is normalized by trimming leading and trailing whitespace
+  before any other validation. After trimming, the name must be 1-128
+  characters. If empty or exceeds 128 characters, raise
+  `ApiKeyNameValidationError`
 - `name` must be unique among the user's non-revoked keys. If a
   non-revoked key with the same name already exists, raise
   `ApiKeyNameConflictError`
@@ -86,7 +93,7 @@ Creates a new API key for a user.
 **Behavior**:
 
 1. Validate preconditions and input (user existence, active status,
-   name format, name uniqueness, expiry)
+   name trimming and format, name uniqueness, expiry)
 2. Generate a cryptographically random key: `stl_ak_` + 32 random
    alphanumeric characters (using a CSPRNG)
 3. Compute `SHA-256(full_key)` as a lowercase hex digest

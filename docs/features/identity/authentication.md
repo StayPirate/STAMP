@@ -477,7 +477,7 @@ JWTs without attempting to decode.
 
 The full key value is returned **exactly once** — in the response to the
 creation request. After that, only the `prefix` (first 12 characters,
-e.g. `stl_ak_7f3a9b`) is stored and displayed. The server stores only
+e.g. `stl_ak_7f3a9`) is stored and displayed. The server stores only
 the hash. There is no way to recover the full key after creation.
 
 ### Self-service management
@@ -638,7 +638,7 @@ returned in creation order, newest first).
   "data": [
     {
       "id": "uuid",
-      "prefix": "stl_ak_7f3a9b",
+      "prefix": "stl_ak_7f3a9",
       "name": "CI production",
       "created_at": "ISO8601",
       "last_used_at": "ISO8601 | null",
@@ -692,7 +692,7 @@ responses. See `docs/features/identity/api-key-service.md`
 {
   "data": {
     "id": "uuid",
-    "prefix": "stl_ak_7f3a9b",
+    "prefix": "stl_ak_7f3a9",
     "name": "CI production",
     "key": "stl_ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "created_at": "ISO8601",
@@ -738,7 +738,7 @@ endpoints with `revoked_at` populated.
 {
   "data": {
     "id": "uuid",
-    "prefix": "stl_ak_7f3a9b",
+    "prefix": "stl_ak_7f3a9",
     "name": "CI production",
     "created_at": "ISO8601",
     "last_used_at": "ISO8601 | null",
@@ -779,7 +779,7 @@ Lists API keys across all users. Admin only.
   "data": [
     {
       "id": "uuid",
-      "prefix": "stl_ak_7f3a9b",
+      "prefix": "stl_ak_7f3a9",
       "name": "CI production",
       "user_id": "uuid",
       "username": "string",
@@ -827,7 +827,7 @@ using it are rejected.
 {
   "data": {
     "id": "uuid",
-    "prefix": "stl_ak_7f3a9b",
+    "prefix": "stl_ak_7f3a9",
     "name": "CI production",
     "user_id": "uuid",
     "username": "string",
