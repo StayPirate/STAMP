@@ -186,6 +186,56 @@ See `docs/features/platform/audit-trail-infrastructure.md` for the
 full specification: base class interface, mixin columns, naming
 conventions, atomicity rules, and the Audit Trail Index.
 
+### Transaction and Locking
+
+When a service module centralizes all mutations on an entity (e.g.,
+`ticket_mutations` for tickets), concurrent transactions can produce
+lost updates or stale audit trail values. To prevent this, apply
+pessimistic locking at the module boundary.
+
+#### Pessimistic Locking Pattern
+
+Every public function in a centralized mutation module MUST acquire a
+row-level lock on the root entity as the first database operation in
+the transaction:
+
+```python
+ticket = await db.execute(
+    select(Ticket).where(Ticket.id == ticket_id).with_for_update()
+)
+```
+
+This serializes all concurrent mutations on the same entity at the
+database level. The lock is released automatically when the transaction
+commits or rolls back.
+
+#### Transaction Hygiene Rules
+
+The transaction that holds a `FOR UPDATE` lock MUST be kept as short
+as possible. Two categories of work are forbidden inside it:
+
+1. **No external service calls**: HTTP requests to external services
+   (IBS, SMELT, NVD, AIMAAS, AD, or any network I/O) MUST happen
+   **before** the transaction that acquires the lock. The correct
+   pattern is:
+
+   ```
+   1. Fetch data from external service (no lock held)
+   2. Open transaction → SELECT ... FOR UPDATE on root entity
+   3. Apply mutations + create audit events
+   4. Commit (lock released)
+   ```
+
+   Holding a row lock while waiting for an external service response
+   (which may take seconds or time out entirely) blocks all other
+   mutations on the same entity for the duration.
+
+2. **No expensive queries**: analytical queries, aggregations over
+   large tables, or computationally intensive operations MUST be
+   executed before acquiring the lock. The locked transaction should
+   contain only fast reads (single-row lookups for validation) and
+   writes.
+
 ### Testing Conventions
 
 - Test files mirror the `app/` directory structure

@@ -230,6 +230,14 @@ fails, no orphan event is created.
    Contract for the given event type. Undocumented keys MUST be rejected.
    The maximum `detail` payload is 4 KB.
 
+6. **Concurrency correctness**: the correctness of `old_value` and
+   `new_value` fields depends on the pessimistic locking enforced by
+   the `ticket_mutations` module (see `docs/features/tickets/tickets.md`,
+   Concurrency Control). The `FOR UPDATE` lock on the `Ticket` row
+   serializes concurrent mutations, ensuring that each audit event
+   captures the true pre-mutation state. Without this lock, concurrent
+   transactions could record stale `old_value` entries.
+
 ## Testing Requirements
 
 Tests for any ticket-mutating service MUST verify:

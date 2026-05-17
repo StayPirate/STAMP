@@ -120,8 +120,13 @@ An Admin can remove a CVE from a ticket via
   with the ticket (via `POST .../associate-cve`), automatic release
   detection resumes
 - `evaluate_ticket_status` is called after the dissociation: if severity
-  becomes `None` and the Analyzed gate requires severity, the ticket may
-  regress to Analysis
+    becomes `None` and the Analyzed gate requires severity, the ticket may
+    regress to Analysis
+
+This operation modifies the `Ticket` row and calls
+`evaluate_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`
+row before any modification (see
+[Concurrency Control](#concurrency-control)).
 - The CVE record itself is not deleted — it remains in the database.
   If no other ticket references this CVE, a subsequent CVE sync will
   create a new ticket for it — this is intentional to ensure CVEs are
@@ -451,7 +456,63 @@ This logic is internal to `ticket_mutations` — callers (including
 Operations that do NOT modify gate-relevant data (assignment, duplicate
 set/remove, CVE association/removal, ticket-level soft-delete/restore)
 are NOT required to go through this module — they create `TicketAuditEvent`
-records in their own services.
+records in their own services. However, these operations still MUST
+acquire `FOR UPDATE` on the `Ticket` row before modifying it (see
+[Concurrency Control](#concurrency-control)).
+
+#### Concurrency Control
+
+Every public function in the `ticket_mutations` module MUST acquire a
+row-level lock on the `Ticket` row as its first database operation:
+
+```python
+ticket = await db.execute(
+    select(Ticket).where(Ticket.id == ticket_id).with_for_update()
+)
+```
+
+This serializes all concurrent mutations on the same ticket at the
+database level — whether originating from API endpoints, Celery
+background tasks (release detection, CVSS sync), or the IBS RabbitMQ
+event consumer. The lock is released when the transaction commits or
+rolls back.
+
+The same rule applies to **any service operation that modifies the
+`Ticket` row** (any column: `status`, `assignee_id`, `cve_id`,
+`duplicate_of_id`, `previous_status`, `deleted_at`) **or that calls
+`evaluate_ticket_status`**, even if the operation does not go through
+the `ticket_mutations` module. This prevents non-gate operations
+(assignment, duplicate set/revert, CVE dissociation, soft-delete,
+restore, ignore) from racing with gate operations on the same ticket.
+`evaluate_ticket_status` itself does not acquire the lock — it is
+always the caller's responsibility.
+
+Callers of `ticket_mutations` functions and all other ticket-modifying
+services MUST complete any external I/O (IBS queries, SMELT resolution,
+NVD fetches) **before** acquiring the lock. The locked transaction must
+contain only the database mutations and audit event creation — no
+network calls or expensive computations.
+
+**Single-ticket scope**: `ticket_mutations` functions operate on a
+single ticket per transaction. Code that must modify multiple tickets
+(e.g., the cascade update of `duplicate_of_id` when marking a ticket
+as duplicate) MUST NOT acquire `FOR UPDATE` on multiple ticket rows
+in the same transaction — process each ticket in an independent
+transaction to avoid deadlocks.
+
+**Blocking wait**: the default PostgreSQL behavior (blocking wait) is
+used. `NOWAIT` is intentionally not specified — the transaction hygiene
+rules ensure locks are held for milliseconds, making spurious failures
+from `NOWAIT` more harmful than brief waits.
+
+**Ticket not found**: if the `SELECT FOR UPDATE` returns no row (ticket
+does not exist, invalid ID, or stale reference from a queue message),
+the function MUST raise a domain-specific exception. It MUST NOT
+proceed silently or operate on `None`. Callers handle the exception as
+appropriate: background tasks log and skip; API endpoints return 404.
+
+See `docs/conventions.md` (Transaction and Locking) for the general
+convention and rationale.
 
 #### Orphan Cleanup Invariants
 
@@ -622,6 +683,11 @@ auto-assignment.
     Analyzed). This may produce two `TicketAuditEvent` records in the same
     transaction: `duplicate_removed` (user action) followed by
     `status_change` (system action)
+
+This operation modifies the `Ticket` row and calls
+`evaluate_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`
+row before any modification (see
+[Concurrency Control](#concurrency-control)).
 
 ## Soft-Delete
 

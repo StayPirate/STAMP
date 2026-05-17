@@ -30,17 +30,11 @@
 
 ### TAL-GAP-06 — search filter on NULL comment field (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-Many event types specify comment as NULL. Using the search filter will exclude all events with NULL comments. This is technically correct SQL behavior (ILIKE on NULL yields NULL, not TRUE) but could confuse users who expect to find events via search when the relevant context is in other fields like old_value or new_value rather than comment.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-17)
 
 ### TAL-GAP-07 — Concurrent mutations producing conflicting audit events (Low)
 
-**Category**: Temporal/concurrency
-**Status**: OPEN
-
-Two VAs concurrently change a ticket's status. Both read old_value as "New" and write events with old_value: "New". One transaction will succeed; the other may also succeed (if no optimistic lock exists), creating two events where the second event's old_value is stale. The spec doesn't address whether optimistic locking or serializable isolation is expected to prevent this.
+**Status**: RESOLVED — Addressed: pessimistic locking (SELECT FOR UPDATE) added to ticket_mutations module specification and conventions (2026-05-17)
 
 ---
 
@@ -62,10 +56,7 @@ _No findings — clean review._
 
 ### TAL-DES-03 — Unbounded ILIKE search on comment (Medium)
 
-**Category**: Scalability
-**Status**: OPEN
-
-ILIKE '%term%' with a leading wildcard cannot use a B-tree index. For high-activity tickets with 10,000+ events, this could result in slow queries. The per-ticket scoping provides some mitigation, but the spec should acknowledge this limitation or suggest a mitigation path (e.g., pg_trgm GIN index) for large-scale deployments.
+**Status**: RESOLVED — Accepted risk: per-ticket scoping provides sufficient mitigation; pg_trgm index can be added operationally if needed (2026-05-17)
 
 ### TAL-DES-04 — Indefinite retention with no archival path (Low)
 

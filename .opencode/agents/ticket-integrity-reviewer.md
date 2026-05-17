@@ -125,6 +125,43 @@ For each `TicketAuditEvent` creation, verify:
   are NOT required to go through `ticket_mutations` — they create
   `TicketAuditEvent` records in their own services
 
+#### Locking compliance
+
+- Every public function in `ticket_mutations` MUST begin with a
+  `SELECT ... FOR UPDATE` on the `Ticket` row (SQLAlchemy:
+  `select(Ticket).where(...).with_for_update()`) before performing
+  any mutation
+- Flag any public function in `ticket_mutations` that modifies
+  gate-relevant data without first acquiring a `FOR UPDATE` lock on
+  the ticket as a defect
+- Every service function **outside** `ticket_mutations` that modifies
+  the `Ticket` row (any column: `status`, `assignee_id`, `cve_id`,
+  `duplicate_of_id`, `previous_status`, `deleted_at`) or that calls
+  `evaluate_ticket_status` MUST also acquire `FOR UPDATE` on the
+  `Ticket` row as its first database operation
+- Flag any non-gate service that writes to the `Ticket` row or
+  invokes `evaluate_ticket_status` without first acquiring a
+  `FOR UPDATE` lock as a defect
+- See `docs/features/tickets/tickets.md` (Concurrency Control) and
+  `docs/conventions.md` (Transaction and Locking) for the full
+  specification
+
+#### Transaction hygiene
+
+- Within the locked transaction (i.e., after `FOR UPDATE` is acquired
+  and before commit), verify that there are **no external service
+  calls** — HTTP requests to IBS, SMELT, NVD, AIMAAS, AD, or any
+  other network I/O
+- Within the locked transaction, verify that there are **no expensive
+  queries** — analytical aggregations, full-table scans, or
+  computationally intensive operations
+- If a caller of `ticket_mutations` performs external I/O and the
+  mutation call within the same transaction scope, flag it as a defect
+  — external I/O must complete **before** the transaction that
+  acquires the lock
+- See `docs/conventions.md` (Transaction and Locking) for the
+  rationale and correct pattern
+
 ### Level 2: Specification review
 
 Apply this level when the change creates or modifies a feature spec in
