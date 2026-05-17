@@ -657,7 +657,7 @@ User search and autocomplete. Returns a paginated list of users.
 
 Query parameters:
 - `search` (string, optional): searches across `username`, `email`, and
-  `full_name`. Minimum 2 characters. Maximum 100 characters.
+  `full_name`. Minimum 2 characters.
   Case-insensitive substring match (SQL `ILIKE '%query%'`)
 - `type` (enum, optional): filter by authentication type. Values:
   `local`, `ad`
@@ -677,7 +677,7 @@ object). Each user object follows the same schema as
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters or longer than 100 characters |
+| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters |
 
 #### `GET /api/v1/users/{user}`
 

@@ -60,10 +60,7 @@ _No findings — clean review._
 
 ### TAL-DES-04 — Indefinite retention with no archival path (Low)
 
-**Category**: Scalability
-**Status**: OPEN
-
-Over years, the audit event table will grow to tens of millions of rows. The spec defines no archival, partitioning, or retention policy. Acceptable for initial deployment but worth noting as a future concern that should be addressed before the table becomes a performance bottleneck.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-17)
 
 ---
 
@@ -75,10 +72,7 @@ Over years, the audit event table will grow to tens of millions of rows. The spe
 
 ### TAL-SEC-02 — ILIKE search without length limit (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-Without a maximum length constraint on the search query string, very long patterns could cause inefficient regex compilation and query execution. The spec should define a maximum search string length to prevent abuse.
+**Status**: RESOLVED — Added global query parameter length limit (500 chars) in api-spec.md and implementation guidance in conventions.md (2026-05-17)
 
 ### TAL-SEC-03 — No rate limiting specified (Low)
 

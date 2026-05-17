@@ -161,6 +161,13 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 
   Location: `backend/app/core/dependencies.py` (or equivalent shared module)
 
+- **Cross-cutting query parameter constraints**: enforce global constraints
+  (such as the 500-character string parameter length limit defined in
+  `docs/api-spec.md`) via a shared dependency injected at the app or router
+  level, rather than repeating validation logic in individual endpoint
+  handlers. This ensures consistent enforcement across all endpoints and
+  reduces the risk of omission
+
 ### SQLAlchemy Conventions
 
 - Use SQLAlchemy 2.0 style (mapped_column, declarative base)

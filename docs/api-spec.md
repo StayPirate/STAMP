@@ -145,6 +145,12 @@ resource. Common patterns:
 - Search: `?search=term` (searches relevant text fields)
 - Date range: `?from_date=2024-01-01&to_date=2024-12-31`
 
+#### Query Parameter Length Limit
+
+Every string query parameter has an individual maximum length of 500
+characters, unless the endpoint specifies otherwise. Values exceeding the
+limit return `422 VALIDATION_ERROR`.
+
 #### Enum Filter Validation
 
 When a filter parameter accepts enum values (comma-separated or repeatable),
