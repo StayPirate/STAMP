@@ -224,6 +224,12 @@ service-layer interface).
 Endpoint naming convention: see `docs/api-spec.md` (Audit Trail Endpoint
 Naming section).
 
+## Idempotent No-ops
+
+When a service operation returns early because the desired state is already
+reached and no mutation occurs, no audit event is created. Audit events
+record state changes, not access attempts.
+
 ## Atomicity
 
 Every audit event MUST be created in the same database transaction as the

@@ -10,24 +10,15 @@
 
 ### AKS-GAP-001 — revoke_all_user_keys does not check user existence (Medium)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The `revoke_all_user_keys()` operation does not list any precondition for user existence — unlike `create_key()` which specifies `UserNotFoundError`. If called with a non-existent `user_id`, the behavior is unspecified: it would silently return 0, which is indistinguishable from a valid user with no active keys. While current callers (user_service.deactivate_user) would have already validated the user, the service contract should be self-documenting for future callers.
+**Status**: RESOLVED — Added Preconditions section and user existence validation step to `revoke_all_user_keys()` in api-key-service.md (2026-05-17)
 
 ### AKS-GAP-004 — Idempotent revoke skips audit event creation (Medium)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-For `revoke_key()`, the spec says if the key is already revoked, return the key unchanged without error. Step 2 returns before reaching step 5 (audit event creation). This means an admin revoking an already-revoked key gets no audit record of their attempt. This is likely intentional but creates an asymmetry: the first revocation is audited, subsequent attempts are invisible. The spec should explicitly state whether this is desired.
+**Status**: RESOLVED — Added idempotent no-op rule to audit-trail-infrastructure.md and cross-reference in api-key-service.md revoke_key() idempotency clause (2026-05-17)
 
 ### AKS-GAP-007 — Concurrent creation of keys with same name (Medium)
 
-**Category**: Temporal and concurrency
-**Status**: OPEN
-
-The spec checks name uniqueness among non-revoked keys at service level, but two concurrent requests creating a key with the same name could both pass the check before either commits. The data model has a partial unique index which would catch this at DB level, but the spec doesn't specify what exception the service should translate a database IntegrityError into.
+**Status**: RESOLVED — Fixed: added IntegrityError-to-ApiKeyNameConflictError translation for concurrent name collisions (2026-05-17)
 
 ### AKS-GAP-002 — No maximum limit on active API keys per user (Low)
 
@@ -71,10 +62,7 @@ The api-key-service spec states 'prefix = first 12 characters of the full key' a
 
 ### AKS-DES-001 — No maximum key limit enforcement, only warning log (Medium)
 
-**Category**: Edge cases and risks
-**Status**: OPEN
-
-The spec states: 'If count exceeds 20, emit a WARNING log.' A malicious or compromised account could create unlimited keys, increasing the attack surface and bloating the api_keys table. The warning log is invisible to the user and requires someone to monitor logs. Alternative: enforce a hard cap (e.g., 50 active keys) and raise a typed exception. The anomaly log can remain as an additional signal below the hard cap.
+**Status**: RESOLVED — Accepted risk: warning log at 20 keys is sufficient for current scale; hard cap deferred as premature given low abuse likelihood with authenticated-only access (2026-05-17)
 
 ### AKS-DES-002 — Race condition on name uniqueness check (Low)
 
@@ -98,17 +86,11 @@ The spec states: 'If count exceeds 20, emit a WARNING log.' A malicious or compr
 
 ### AKS-SEC-003 — revoke_key() lacks authorization check by design — relies on caller discipline (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The spec explicitly states ownership validation is NOT performed by the service — it's an 'endpoint-level concern'. This is a defense-in-depth weakness: if a new caller forgets the ownership check, any authenticated user could revoke any other user's API key.
+**Status**: RESOLVED — Accepted risk: authorization is endpoint-level by design; moving ownership checks into the service would set an architectural precedent inconsistent with the project's layering convention where all role/resource authorization is handled via FastAPI Depends() (2026-05-17)
 
 ### AKS-SEC-008 — No user active-status check during API key validation (Medium)
 
-**Category**: Authentication
-**Status**: OPEN
-
-The `create_key()` operation checks that the user is active, but the API key validation flow in authentication.md does not explicitly verify `user.active = true` after loading the user in step 6. If a user is deactivated but key revocation fails partially, their existing API keys could remain usable.
+**Status**: RESOLVED — Auto-resolved: the user.active check already exists in get_current_user step 5 (authentication.md), which executes after both JWT and API key validation sub-flows converge; no API key path bypasses this gate (2026-05-17)
 
 ### AKS-SEC-001 — No maximum API key limit per user enables resource exhaustion (Low)
 
@@ -123,10 +105,7 @@ The POST /api/v1/api-keys endpoint has no rate limiting specified. Combined with
 
 ### AKS-SEC-004 — create_key does not verify acting_user_id matches user_id for self-service (Low)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The `create_key()` service accepts `user_id` and `acting_user_id` as separate parameters but does not validate their relationship. Authorization enforcement is entirely dependent on the caller passing correct values.
+**Status**: RESOLVED — Accepted risk: same architectural reasoning as AKS-SEC-003; acting_user_id/user_id relationship validation is an endpoint-level concern by design (2026-05-17)
 
 ### AKS-SEC-005 — API key creation restricted to JWT sessions — good anti-replication control (Low)
 

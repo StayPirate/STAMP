@@ -108,6 +108,13 @@
 
 **Status**: RESOLVED — Misleading wording in `api-spec.md` replaced with "There is no public user self-registration endpoint. Local users are created by admins via CLI or admin UI." and references to `local-authentication.md`. (2026-05-05)
 
+### AUTH-COH-07 — User-loading redundancy between credential sub-flows and get_current_user top-level (Low)
+
+**Category**: Structural inconsistency
+**Status**: OPEN
+
+Both the JWT validation sub-flow (step 7: "Load the user by sub claim") and the API key validation sub-flow (step 6: "Load the user by user_id from the ApiKey record") describe loading the User record, while get_current_user step 5 also says "Load the User record. If the user is inactive, return HTTP 401." This creates a double-load ambiguity — the spec describes user-loading twice for each auth path. Additionally, JWT validation step 8 ("Load the user's current roles from the database") has no equivalent in the API key sub-flow, creating an asymmetry: both auth methods need roles, but only JWT explicitly loads them. The clean design would have sub-flows return a user_id (not a loaded user), with get_current_user step 5 performing all user-loading, active-checking, and role-loading uniformly for both auth methods.
+
 ---
 
 ## Design

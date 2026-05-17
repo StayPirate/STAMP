@@ -98,6 +98,13 @@ Creates a new API key for a user.
    - `expires_at` = provided value or NULL
    - `revoked_at` = NULL
    - `revoked_by` = NULL
+   - If the INSERT raises an `IntegrityError` due to the partial unique
+     index on `(user_id, name) WHERE revoked_at IS NULL` (concurrent race
+     condition where two requests pass the application-level uniqueness
+     check before either commits), the service must catch the exception
+     and re-raise it as `ApiKeyNameConflictError`. This ensures that
+     concurrent race conditions produce the same typed error as the
+     sequential application-level validation in the preconditions step.
 5. Check active key count for the user (non-revoked, non-expired). If
    count exceeds 20, emit a WARNING log: `"User {username} has {count}
    active API keys (anomaly threshold: 20)"`
@@ -129,7 +136,9 @@ Revokes a single API key.
 - Key must exist. If not found, raise `ApiKeyNotFoundError`
 
 **Idempotency**: if the key is already revoked (`revoked_at IS NOT
-NULL`), return the key unchanged without error.
+NULL`), return the key unchanged without error. No `IdentityAuditEvent`
+is created in the idempotent case (see `audit-trail-infrastructure.md`,
+Idempotent No-ops).
 
 **Behavior**:
 
@@ -167,17 +176,22 @@ deactivation.
 | `user_id`        | `UUID`         | Yes      | User whose keys should be revoked        |
 | `acting_user_id` | `UUID \| None` | No       | Who is performing the action             |
 
+**Preconditions**:
+
+- User must exist. If not found, raise `UserNotFoundError`
+
 **Behavior**:
 
-1. Query all active (non-revoked) API keys for the user
-2. For each key, set `revoked_at = now()` and `revoked_by =
+1. Validate that the user exists. If not found, raise `UserNotFoundError`
+2. Query all active (non-revoked) API keys for the user
+3. For each key, set `revoked_at = now()` and `revoked_by =
    acting_user_id`
-3. For each revoked key, create `IdentityAuditEvent` with
+4. For each revoked key, create `IdentityAuditEvent` with
    `event_type = api_key_revoked` via `IdentityAuditLog.log_event()` —
    `user_id` = acting user (or NULL for system), `target_user_id` = key
    owner, `old_value` = key name,
    `detail` = `{"key_id": "uuid", "reason": "user_deactivated"}`
-4. Return the count of revoked keys
+5. Return the count of revoked keys
 
 **Returns**: `int` — number of keys revoked (0 if no active keys
 existed)

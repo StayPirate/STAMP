@@ -20,12 +20,12 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
 | [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [api-key-service](api-key-service.md) | 6 | 1 | 1 | 4 | 🟢 | 12 | 2026-05-17 |  |
-|  | 3:🟠 3:🟡 | 1:🟡 | 1:🟠 | 2:🟠 2:🟡 |  |  |  |  |
+| [api-key-service](api-key-service.md) | 3 | 1 | 🟢 | 1 | 🟢 | 5 | 2026-05-17 |  |
+|  | 3:🟡 | 1:🟡 |  | 1:🟡 |  |  |  |  |
 | [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [authentication](authentication.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1 | 2026-05-17 |  |
+|  |  | 1:🟡 |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
@@ -40,8 +40,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **6** | **1** | **1** | **4** | **0** | **12** |  |  |
-|  | 3:🟠 3:🟡 | 1:🟡 | 1:🟠 | 2:🟠 2:🟡 |  |  |  |  |
+| **Total** | **3** | **2** | **0** | **1** | **0** | **6** |  |  |
+|  | 3:🟡 | 2:🟡 |  | 1:🟡 |  |  |  |  |
 
 ### Disabled specs
 
