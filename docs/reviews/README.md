@@ -20,31 +20,32 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
 | [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 |  |
+| [api-key-service](api-key-service.md) | 6 | 1 | 1 | 4 | 🟢 | 12 | 2026-05-17 |  |
+|  | 3:🟠 3:🟡 | 1:🟡 | 1:🟠 | 2:🟠 2:🟡 |  |  |  |  |
+| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 |  |
+| [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 |  |
+| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 |  |
+| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-audit-log](ticket-audit-log.md) | 2 | 🟢 | 2 | 2 | 1 | 7 | 2026-05-16 |  |
+| [ticket-audit-log](ticket-audit-log.md) | 2 | 🟢 | 2 | 2 | 1 | 7 | 2026-05-16 | ⚠️ |
 |  | 2:🟡 |  | 1:🟠 1:🟡 | 2:🟡 | 1:🟡 |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **0** | **2** | **2** | **1** | **7** |  |  |
-|  | 2:🟡 |  | 1:🟠 1:🟡 | 2:🟡 | 1:🟡 |  |  |  |
+| **Total** | **8** | **1** | **3** | **6** | **1** | **19** |  |  |
+|  | 3:🟠 5:🟡 | 1:🟡 | 2:🟠 1:🟡 | 2:🟠 4:🟡 | 1:🟡 |  |  |  |
 
 ### Disabled specs
 
 - admin
-- api-key-service
 - cve-tracking
 - cvss-scoring
 - fetcher-dashboard
