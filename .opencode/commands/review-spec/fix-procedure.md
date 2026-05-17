@@ -68,3 +68,27 @@ Return a brief confirmation:
 - List of files modified (path + one-line summary of change)
 - New open/resolved counts for the review file
 - Any file that was NOT modified and why
+- **Change classification**: one or more tags from the closed vocabulary
+  below, describing the nature of the changes applied to the spec. The
+  orchestrator uses these tags to decide whether to recommend re-running
+  reviewer agents after the fix.
+
+### Change classification tags
+
+| Tag | When it applies |
+|-----|-----------------|
+| `api-endpoint-changed` | API endpoint added, modified, or removed |
+| `business-rule-changed` | Business rule, state transition, data flow, or operation added/modified |
+| `error-path-changed` | Error path or edge case added/modified |
+| `auth-changed` | Authentication, authorization, or RBAC rules modified |
+| `cross-ref-changed` | Cross-spec reference added/modified |
+| `terminology-changed` | Status, enum, or concept renamed; new term introduced |
+| `config-changed` | Environment variable, default value, or configuration parameter added/changed |
+| `rule-or-pattern-added` | New reusable rule, convention, or pattern added |
+| `design-changed` | Architectural decision or design approach changed |
+| `structural-rewrite` | Significant rewrite of a section |
+| `cosmetic` | Formatting, typo, or clarification with no semantic change |
+
+A fix typically produces 1-3 tags. Use `cosmetic` only when no other
+tag applies. Use `structural-rewrite` when a section is substantially
+rewritten (not just a sentence added/changed).

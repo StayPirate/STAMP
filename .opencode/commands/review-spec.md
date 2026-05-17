@@ -332,13 +332,13 @@ Auto-risolvere? [sì / saltare / basta]
   Update review file + `.tracking.json` cache + `docs/reviews/README.md`.
   Then proceed to next finding (same as **saltare** flow below)
 - **saltare**: leave OPEN, move to next finding (stay in Plan)
-- **basta**: exit loop, show session summary
+- **basta**: exit loop (see "Session summary and deferred reviews")
 
 **4a.3b.** Wait for decision (applies to the **valid** case):
 - **sì**: wait for Build mode, then implement
 - **modificare**: adjust proposal, re-present
 - **saltare**: skip, move to next (stay in Plan)
-- **basta**: exit loop, show session summary
+- **basta**: exit loop (see "Session summary and deferred reviews")
 
 **4a.3c.** Use Task tool (`general`, fresh session) to implement the
 fix. Instruct it to read:
@@ -347,7 +347,11 @@ fix. Instruct it to read:
 
 Pass: finding details, approved solution, file list, spec name/abbr.
 
-**4a.3d.** Ask: `"Finding risolto. Continuo con il prossimo? (ricorda di passare a Plan con Tab prima di rispondere)"`
+**4a.3d.** Post-fix review evaluation — follow the "Post-fix review
+evaluation procedure" section below, using the change classification
+tags returned by the fix subagent in step 4a.3c.
+
+**4a.3e.** Ask: `"Continuo con il prossimo? (ricorda di passare a Plan con Tab prima di rispondere)"`
 Do NOT present next finding in this message. Wait for reply.
 
 ### By-reviewer flow
@@ -402,13 +406,150 @@ same format and options as step 4a.3a (⚠ block with
 **4a-R.3c.** Use a **FRESH** Task subagent (`general`) for
 implementation — same as 4a.3c. Do NOT reuse the analysis session.
 
-**4a-R.3d.** After fix, check if next finding is same or different spec:
-- **Same spec**: `"Finding risolto. Continuo con il prossimo? (ricorda di passare a Plan con Tab prima di rispondere)"`
-- **Different spec**: `"Finding risolto. Il prossimo finding è in '<next-spec>'. Carico il contesto della nuova spec (sessione fresca). Continuo? (ricorda di passare a Plan con Tab prima di rispondere)"`
+**4a-R.3d.** Post-fix review evaluation — same as 4a.3d.
+
+**4a-R.3e.** After fix, check if next finding is same or different spec:
+- **Same spec**: `"Continuo con il prossimo? (ricorda di passare a Plan con Tab prima di rispondere)"`
+- **Different spec**: `"Il prossimo finding è in '<next-spec>'. Carico il contesto della nuova spec (sessione fresca). Continuo? (ricorda di passare a Plan con Tab prima di rispondere)"`
 
 If user says yes and spec changes, start fresh Task session. If no,
-show session summary grouped by spec. Do NOT present next finding in
-this message.
+show session summary (see "Session summary and deferred reviews"
+below). Do NOT present next finding in this message.
+
+---
+
+### Post-fix review evaluation procedure
+
+This procedure runs after every fix implementation (steps 4a.3c and
+4a-R.3c). It does NOT run after auto-resolutions (which modify only
+the review file, not the spec).
+
+**PFR-1.** Read the change classification tags returned by the fix
+subagent (see `.opencode/commands/review-spec/fix-procedure.md`,
+"Change classification tags").
+
+**PFR-2.** Apply the decision matrix to determine recommended
+reviewers:
+
+| Tag | Recommended reviewers |
+|-----|----------------------|
+| `api-endpoint-changed` | `api-convention-reviewer`, `spec-coherence-reviewer`, `security-reviewer` |
+| `business-rule-changed` | `spec-gap-analyzer`, `spec-coherence-reviewer` |
+| `error-path-changed` | `spec-gap-analyzer` |
+| `auth-changed` | `security-reviewer`, `spec-coherence-reviewer` |
+| `cross-ref-changed` | `spec-coherence-reviewer` |
+| `terminology-changed` | `spec-coherence-reviewer` |
+| `config-changed` | `spec-coherence-reviewer`, `spec-gap-analyzer` |
+| `rule-or-pattern-added` | `docs-placement-reviewer` |
+| `design-changed` | `design-reviewer` |
+| `structural-rewrite` | all 5 tracked reviewers + `docs-placement-reviewer` |
+| `cosmetic` | none |
+
+Merge results from all returned tags. Deduplicate the reviewer list.
+
+NOTE: `docs-placement-reviewer` is NOT one of the 5 tracked reviewers
+(GAP/COH/DES/SEC/API). When recommended, it is launched as a
+standalone Task agent and its findings are presented inline — they are
+not tracked in the review file. The 5 tracked reviewers are launched
+via the single-reviewer mechanism from `review-procedure.md`.
+
+**PFR-3.** If no reviewers are recommended (`cosmetic` only), include
+in the post-fix message:
+
+```
+Finding risolto. Nessuna review aggiuntiva necessaria.
+```
+
+Then proceed to the "Continuo?" step (4a.3e / 4a-R.3e).
+
+**PFR-4.** If reviewers are recommended, present the evaluation:
+
+```
+Finding risolto.
+
+Valutazione post-fix:
+  ✦ spec-gap-analyzer — consigliato (<motivo>)
+  ✦ spec-coherence-reviewer — consigliato (<motivo>)
+  — design-reviewer — non necessario
+  — security-reviewer — non necessario
+  — api-convention-reviewer — non necessario
+
+Lanciare i reviewer consigliati? [sì / dopo / no]
+```
+
+Show all 5 tracked reviewers in standard order (GAP→COH→DES→SEC→API).
+Recommended ones use `✦`, others use `—`. For each recommended
+reviewer, derive a brief Italian reason from the triggering tag:
+
+| Tag | Reason text |
+|-----|-------------|
+| `api-endpoint-changed` | endpoint API modificato |
+| `business-rule-changed` | regola di business modificata |
+| `error-path-changed` | percorso errore aggiunto/modificato |
+| `auth-changed` | regole auth/RBAC modificate |
+| `cross-ref-changed` | riferimento cross-spec modificato |
+| `terminology-changed` | terminologia modificata |
+| `config-changed` | configurazione modificata |
+| `design-changed` | design modificato |
+| `structural-rewrite` | sezione riscritta significativamente |
+| `rule-or-pattern-added` | nuovo pattern/regola aggiunto |
+
+If `docs-placement-reviewer` is also recommended (from
+`rule-or-pattern-added` or `structural-rewrite`), append it below the
+5 tracked reviewers with a `+` prefix:
+
+```
+  + docs-placement-reviewer — consigliato (nuovo pattern aggiunto) [standalone]
+```
+
+**PFR-5.** Wait for decision:
+
+- **sì**: launch the recommended tracked reviewers on the current spec
+  using the single-reviewer mechanism (section "Single reviewer" in
+  `review-procedure.md`). Launch one Task agent per reviewer in
+  parallel. If `docs-placement-reviewer` is recommended, launch it as
+  an additional standalone Task agent in the same parallel batch. After
+  all complete, present a brief findings summary, then proceed to the
+  "Continuo?" step
+- **dopo**: add the recommendations to the **deferred review
+  accumulator** (maintained in memory by the orchestrator across the
+  fix loop). Store: spec name, recommended reviewer names, and the
+  finding ID that triggered the recommendation. Proceed to "Continuo?"
+- **no**: discard recommendations. Proceed to "Continuo?"
+
+### Session summary and deferred reviews
+
+When the fix loop exits (all findings processed or user says "basta"):
+
+**1.** Show the session summary (findings fixed, skipped, auto-resolved;
+grouped by spec in the by-reviewer flow).
+
+**2.** Check the deferred review accumulator. If empty, session ends.
+
+**3.** If non-empty, present the aggregated deferred reviews:
+
+```
+Review rimandate durante la sessione:
+
+  <spec-name>:
+    ✦ spec-coherence-reviewer (da fix <ID>, <ID>)
+    ✦ spec-gap-analyzer (da fix <ID>)
+
+  <spec-name-2>:
+    ✦ api-convention-reviewer (da fix <ID>)
+    + docs-placement-reviewer (da fix <ID>) [standalone]
+
+Lanciare queste review ora? [sì / scegliere / no]
+```
+
+- **sì**: launch all accumulated reviewers. For each spec, launch the
+  tracked reviewers via the single-reviewer mechanism and any
+  `docs-placement-reviewer` as standalone Task agents. Launch in
+  parallel per spec
+- **scegliere**: show a `question` tool prompt with `multiple: true`,
+  listing each spec/reviewer pair as a selectable option. Launch only
+  the selected ones
+- **no**: discard. Session ends
 
 ---
 
