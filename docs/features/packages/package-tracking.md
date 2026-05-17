@@ -368,9 +368,64 @@ The delivery status is updated by the system when SR/RR state changes
 are detected (via IBS RabbitMQ events or the `RequestSyncFetcher`
 catch-up).
 
-The delivery badge is visible in the UI for all tracks regardless of
-affectedness status. The two axes are independent — see
+The two axes are independent — see
 [Affectedness-Delivery Independence](#affectedness-delivery-independence).
+
+#### Delivery Relevance Indicator
+
+The `delivery_status` column on `TicketPackageTrack` always contains the
+real system value (`PENDING`, `IN_PROGRESS`, or `RELEASED`). However,
+`PENDING` is the system default and carries no operational meaning when
+the track's affectedness status does not imply that a fix is expected.
+For example, a track with `NOT_AFFECTED + PENDING` simply means no SR
+was ever created — the `PENDING` value is noise, not a signal.
+
+To help API consumers distinguish meaningful delivery states from default
+noise, API responses for tracks include a computed boolean field
+`delivery_relevant`:
+
+```python
+delivery_relevant = (
+    track.status in ("ANALYSIS", "AFFECTED")
+    or track.delivery_status != "PENDING"
+)
+```
+
+Rules:
+
+- `delivery_relevant = true`: the delivery status has operational
+  meaning. Either the track is still being analyzed / is affected (so
+  delivery progress matters), or the delivery pipeline has moved beyond
+  the default (an SR exists or the fix was released).
+- `delivery_relevant = false`: the delivery status is the system default
+  (`PENDING`) on a track with a final affectedness status
+  (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) where no delivery activity was
+  ever detected. Consumers SHOULD treat the delivery status as noise —
+  do not display it or act on it.
+
+When `delivery_relevant = true` **and** the affectedness is
+`NOT_AFFECTED` or `WONT_FIX`, the combination is anomalous: it signals
+that delivery activity exists for a track that was assessed as not
+requiring a fix. `FIXED` with delivery activity (`IN_PROGRESS` or
+`RELEASED`) is not anomalous — it is the expected progression of a fix.
+See [Anomaly Detection](#anomaly-detection-future-review-queue).
+
+**Important**: `delivery_relevant` is a **computed API field only** — it
+is not a database column. It is derived from `status` and
+`delivery_status` at serialization time in the Pydantic response schema.
+The database schema is not affected.
+
+**OpenAPI documentation**: since external consumers will discover
+`delivery_relevant` and `delivery_status` through the generated OpenAPI
+documentation (not through internal specs), the Pydantic response schema
+MUST include `Field(description=...)` on both fields that conveys the
+consumer-facing guidance:
+
+- `delivery_status`: explain that `PENDING` is the system default and
+  does not imply a fix is expected; reference `delivery_relevant` for
+  operational significance
+- `delivery_relevant`: explain that when `false`, consumers should not
+  display `delivery_status` or make decisions based on it
 
 #### SUSE Maintenance Workflow Mapping
 
@@ -439,35 +494,46 @@ their own delivery detection and reconciliation mechanism (TBD).
 
 The affectedness status and the delivery status are tracked as
 independent axes. Neither resets nor constrains the other. All
-combinations are valid system states:
+combinations are valid system states. The `delivery_relevant` field
+indicates whether the delivery status carries operational meaning in the
+context of the current affectedness — see
+[Delivery Relevance Indicator](#delivery-relevance-indicator).
 
-| Affectedness | Delivery | Anomaly | Meaning |
-|-------------|----------|---------|---------|
-| `ANALYSIS` | `PENDING` | | Not yet analyzed, no SR |
-| `ANALYSIS` | `IN_PROGRESS` | | SR exists before VA analyzed the track |
-| `ANALYSIS` | `RELEASED` | | Fix released before VA analyzed the track |
-| `AFFECTED` | `PENDING` | | Affected, no SR yet |
-| `AFFECTED` | `IN_PROGRESS` | | Fix in the pipeline |
-| `AFFECTED` | `RELEASED` | Yes | Fix released but VA considers it insufficient — needs review |
-| `NOT_AFFECTED` | `PENDING` | | Not affected, nothing to deliver |
-| `NOT_AFFECTED` | `IN_PROGRESS` | Yes | SR in progress for unaffected code — possible confusion |
-| `NOT_AFFECTED` | `RELEASED` | Yes | Fix released for unaffected code — possible confusion |
-| `FIXED` | `PENDING` | | VA set FIXED manually, no SR detected yet |
-| `FIXED` | `IN_PROGRESS` | | Fix confirmed, SR still in pipeline |
-| `FIXED` | `RELEASED` | | Fix confirmed and delivered |
-| `WONT_FIX` | `PENDING` | | Decided not to fix, nothing in pipeline |
-| `WONT_FIX` | `IN_PROGRESS` | Yes | SR in progress despite won't-fix decision — conflicting |
-| `WONT_FIX` | `RELEASED` | Yes | Fix released despite won't-fix decision — conflicting |
+| Affectedness | Delivery | Relevant | Anomaly | Meaning |
+|-------------|----------|----------|---------|---------|
+| `ANALYSIS` | `PENDING` | Yes | | Not yet analyzed, no SR |
+| `ANALYSIS` | `IN_PROGRESS` | Yes | | SR exists before VA analyzed the track |
+| `ANALYSIS` | `RELEASED` | Yes | | Fix released before VA analyzed the track |
+| `AFFECTED` | `PENDING` | Yes | | Affected, fix expected, no SR yet |
+| `AFFECTED` | `IN_PROGRESS` | Yes | | Fix in the pipeline |
+| `AFFECTED` | `RELEASED` | Yes | Yes | Fix released but VA considers it insufficient — needs review |
+| `NOT_AFFECTED` | `PENDING` | **No** | | Not affected; delivery is the system default — not meaningful |
+| `NOT_AFFECTED` | `IN_PROGRESS` | Yes | Yes | SR in progress for unaffected code — possible confusion |
+| `NOT_AFFECTED` | `RELEASED` | Yes | Yes | Fix released for unaffected code — possible confusion |
+| `FIXED` | `PENDING` | **No** | | VA set FIXED manually; delivery is the system default — not meaningful |
+| `FIXED` | `IN_PROGRESS` | Yes | | Fix confirmed, SR still in pipeline |
+| `FIXED` | `RELEASED` | Yes | | Fix confirmed and delivered |
+| `WONT_FIX` | `PENDING` | **No** | | Decided not to fix; delivery is the system default — not meaningful |
+| `WONT_FIX` | `IN_PROGRESS` | Yes | Yes | SR in progress despite won't-fix decision — conflicting |
+| `WONT_FIX` | `RELEASED` | Yes | Yes | Fix released despite won't-fix decision — conflicting |
 
 ### Anomaly Detection (future: Review Queue)
 
 Anomalous combinations (marked in the table above) indicate situations
 that require VA attention — a possible bug, a maintainer not following
-the workflow, or an outdated VA assessment. These combinations are
-destined to be integrated into the future **Review Queue** — a mechanism
-that will automatically tag tickets presenting anomalies, making them
-visible to VAs for review. The specification of the Review Queue and the
-tagging mechanism will be defined in a dedicated specification.
+the workflow, or an outdated VA assessment. Note that all anomalous
+combinations have `delivery_relevant = true` by definition: if delivery
+has moved beyond the default, it is always relevant regardless of
+affectedness. Conversely, the three `delivery_relevant = false`
+combinations (`NOT_AFFECTED + PENDING`, `FIXED + PENDING`,
+`WONT_FIX + PENDING`) are never anomalous — they are simply the system
+default with no delivery activity.
+
+These anomalous combinations are destined to be integrated into the
+future **Review Queue** — a mechanism that will automatically tag
+tickets presenting anomalies, making them visible to VAs for review.
+The specification of the Review Queue and the tagging mechanism will be
+defined in a dedicated specification.
 
 ---
 
@@ -1345,6 +1411,7 @@ effects.
     "reference": "SUSE:SLE-15-SP6:Update",
     "status": "AFFECTED",
     "delivery_status": "PENDING",
+    "delivery_relevant": true,
     "products": [
       {
         "product_id": "uuid",
@@ -1477,11 +1544,16 @@ Package: openssl-3                              [Exclude]
 │   ├── SLES 15 SP6         Affected  (eligible)        [Exclude]
 │   ├── SLED 15 SP6         Affected  (eligible)        [Exclude]
 │   └── SLES-LTSS 15-SP4    Affected  (not eligible)    [Exclude]
-├── SUSE:SLE-15-SP5:Update  [Not Affected ▼]  Pending   [Exclude]
+├── SUSE:SLE-15-SP5:Update  [Not Affected ▼]            [Exclude]
 │   └── SLES-LTSS 15-SP5    Not Affected                [Exclude]
 └── SUSE:SLE-15-SP3:Update  [Fixed ▼]         Released  [Exclude]
     └── SLES-LTSS 15-SP1    Fixed  (not eligible)       [Exclude]
 ```
+
+- The second track (`Not Affected + Pending`) has no delivery badge
+  because `delivery_relevant = false`. The third track (`Fixed +
+  Released`) shows the badge because `delivery_relevant = true` (delivery
+  has moved beyond the default).
 
 - **Package level**: shows the package name with an option to exclude it
   (soft-delete)
@@ -1490,6 +1562,9 @@ Package: openssl-3                              [Exclude]
     Fixed, Won't Fix
   - A **delivery badge** (right): shows delivery progress (Pending /
     In Progress / Released) with color coding (grey / orange / green).
+    The badge is **only displayed when `delivery_relevant = true`** —
+    when delivery is not relevant (final affectedness with no delivery
+    activity), the badge is hidden to avoid displaying noise.
     Clicking the badge opens a popover with SR/incident/RR details.
   - An **Exclude** action
 - **Product level**: shows the product name, inherited status (with
