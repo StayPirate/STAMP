@@ -70,7 +70,8 @@ displayed normally with the following additions:
 When a **non-admin user** (Vulnerability Analyst or unauthenticated) accesses
 the URL of a soft-deleted ticket, the ticket detail page displays only a
 message: **"This ticket has been deleted. Contact an admin if you think
-this is an error."** No ticket data is shown. The API returns 410 Gone.
+this is an error."** No ticket data is shown (the API returns 410 Gone —
+see `docs/api-spec.md`, [Scoped Responses](docs/api-spec.md#scoped-responses)).
 
 **Automatic status transitions**: transitions from Analysis to Analyzed
 and from Analyzed to Resolved happen automatically when gate conditions
@@ -356,5 +357,6 @@ for this ticket."
 - Reassignment is available to any Vulnerability Analyst, not just the current
   assignee
 - Soft-deleting and restoring tickets requires the Admin role
-- Non-admin users accessing a soft-deleted ticket receive 410 Gone
+- Non-admin users accessing a soft-deleted ticket receive 410 Gone (see
+  `docs/api-spec.md`, [Scoped Responses](docs/api-spec.md#scoped-responses))
 - See `docs/features/identity/rbac.md` for the full permission model
