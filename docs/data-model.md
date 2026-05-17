@@ -274,6 +274,9 @@ erDiagram
         VARCHAR_100 fetcher_name FK "NOT NULL"
         ENUM event_type "NOT NULL"
         UUID user_id FK "nullable"
+        TEXT old_value "nullable"
+        TEXT new_value "nullable"
+        JSONB detail "nullable"
     }
     SystemSetting {
         VARCHAR_100 key PK
@@ -1034,8 +1037,13 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier                 |
 | event_type           | ENUM        | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
 | user_id              | UUID        | FK(user.id), nullable    | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; service validates presence |
-| detail               | JSONB       | nullable                 | Additional context (e.g., old/new config values) |
+| old_value            | TEXT        | nullable                 | Previous value (e.g., old schedule expression) |
+| new_value            | TEXT        | nullable                 | New value (e.g., new schedule expression) |
+| detail               | JSONB       | nullable                 | Additional structured context (e.g., which config field changed) |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Inherited from AuditEventMixin     |
+
+See `docs/features/platform/fetcher-infrastructure.md` for the event
+type contract with field values and the one-event-per-field rule.
 
 ### FetcherRunWeeklyAggregate
 

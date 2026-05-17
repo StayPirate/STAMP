@@ -218,7 +218,8 @@ service-layer interface).
 | BaseAuditLog subclass | `{Domain}AuditLog` | `TicketAuditLog`, `IdentityAuditLog` |
 | Spec file (standalone) | `{domain}-audit-log.md` | `ticket-audit-log.md`, `identity-audit-log.md` |
 | Event type column | `event_type` | All audit event tables |
-| JSONB context column | `detail` (singular) | `IdentityAuditEvent.detail`, `FetcherAuditEvent.detail` |
+| Change value columns | `old_value`, `new_value` (TEXT, nullable) | All audit event tables. `SettingAuditEvent.new_value` is NOT NULL |
+| JSONB context column | `detail` (singular) | `TicketAuditEvent.detail`, `IdentityAuditEvent.detail`, `FetcherAuditEvent.detail`. Not present in `SettingAuditEvent` (not needed) |
 
 Endpoint naming convention: see `docs/api-spec.md` (Audit Trail Endpoint
 Naming section).

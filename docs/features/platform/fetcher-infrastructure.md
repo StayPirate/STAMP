@@ -565,7 +565,9 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
 | event_type | ENUM | NOT NULL | See FetcherAuditEventType enum |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
-| detail | JSONB | nullable | Additional context (e.g., old/new schedule values) |
+| old_value | TEXT | nullable | Previous value (e.g., old schedule expression) |
+| new_value | TEXT | nullable | New value (e.g., new schedule expression) |
+| detail | JSONB | nullable | Additional structured context (e.g., which config field changed) |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
 ### FetcherAuditEventType Enum
@@ -575,12 +577,34 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | `disabled` | Fetcher was disabled by an admin |
 | `enabled` | Fetcher was re-enabled by an admin |
 | `triggered` | Fetcher was manually triggered by an admin |
-| `config_changed` | Fetcher configuration was modified (schedule, timeout, rate limit) |
+| `config_changed` | Fetcher configuration was modified (schedule, timeout, rate limit, custom settings) |
 
-**Notes on `detail` JSONB**:
-- For `config_changed`: `{"field": "schedule_override", "old_value": "0 */6 * * *", "new_value": "0 */4 * * *"}`
-- For `disabled` / `enabled`: `null` (the action itself is self-explanatory)
-- For `triggered`: `null`
+### Event Field Values
+
+Each event type uses `old_value`, `new_value`, and `detail` as follows:
+
+| Event Type | `old_value` | `new_value` | `detail` |
+|---|---|---|---|
+| `config_changed` (standard field) | Previous value (e.g., `"0 */6 * * *"`) | New value (e.g., `"0 */4 * * *"`) | `{"field": "<field_name>"}` where field is `schedule_override`, `timeout_seconds`, or `rate_limit` |
+| `config_changed` (custom setting) | Previous value as string (e.g., `"2.0"`), or `null` if set for the first time | New value as string (e.g., `"5.0"`), or `null` if reset to default | `{"field": "custom_settings", "key": "<setting_key>"}` |
+| `disabled` | `null` | `null` | `null` |
+| `enabled` | `null` | `null` | `null` |
+| `triggered` | `null` | `null` | `null` |
+
+### One Event Per Field Rule
+
+A single PATCH request that modifies N fields produces N separate
+`config_changed` events, one for each field that actually changed.
+Each custom setting sub-key counts as a separate field. Toggle
+changes (`enabled` field) produce a separate `disabled` or `enabled`
+event, not a `config_changed` event.
+
+Example: a PATCH that changes `schedule_override`, `timeout_seconds`,
+and `custom_settings.throttle_delay_seconds` produces three
+`config_changed` events, each with its own `old_value`/`new_value`
+pair and identifying `detail`. All events share the same `created_at`
+timestamp and `user_id`. If the same PATCH also changes `enabled` to
+`false`, a fourth event of type `disabled` is created.
 
 ## Data Retention
 

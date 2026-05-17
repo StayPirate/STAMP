@@ -583,22 +583,22 @@ include the fields to change.
 **Response** (200 OK): the updated config object (same as GET response).
 
 **Side effects**:
-- Creates a `FetcherAuditEvent` record:
-  - If `enabled` changed: `event_type = disabled` or `enabled`
-  - If any other field changed: `event_type = config_changed` with `detail`
-    containing old and new values
-  - If `custom_settings` changed: `event_type = config_changed` with `detail`
-    in the format:
-    ```json
-    {
-      "field": "custom_settings",
-      "changes": {
-        "throttle_delay_seconds": {"old": 2.0, "new": 5.0}
-      }
-    }
-    ```
-    When a key is reset to default (set to `null`): `{"old": 5.0, "new": null}`.
-    When a key is set for the first time: `{"old": null, "new": 5.0}`.
+- Creates `FetcherAuditEvent` records (one per changed field — see
+  `docs/features/platform/fetcher-infrastructure.md`, "One Event Per Field
+  Rule"):
+  - If `enabled` changed: one event with `event_type = disabled` or
+    `enabled` (`old_value`, `new_value`, and `detail` are all `null`)
+  - For each standard field that changed (`schedule_override`,
+    `timeout_seconds`, `rate_limit`): one event with
+    `event_type = config_changed`, `old_value` = previous value,
+    `new_value` = new value, `detail = {"field": "<field_name>"}`
+  - For each `custom_settings` sub-key that changed: one event with
+    `event_type = config_changed`, `old_value` = previous value as
+    string (or `null` if set for the first time), `new_value` = new
+    value as string (or `null` if reset to default),
+    `detail = {"field": "custom_settings", "key": "<setting_key>"}`
+  - All events from the same PATCH share the same `created_at` and
+    `user_id`
 - If `enabled` changed to `false` and the fetcher is currently running:
   the current run is allowed to complete. The next scheduled run will not
   start.
@@ -647,12 +647,28 @@ entry first). Follows the project-wide default sorting convention.
     {
       "id": "uuid",
       "fetcher_name": "sync_cves_nvd",
+      "event_type": "config_changed",
+      "actor": {
+        "id": "uuid",
+        "username": "admin1",
+        "full_name": "Alice Smith"
+      },
+      "old_value": "0 */6 * * *",
+      "new_value": "0 */4 * * *",
+      "detail": {"field": "schedule_override"},
+      "created_at": "2025-04-18T14:31:00Z"
+    },
+    {
+      "id": "uuid",
+      "fetcher_name": "sync_cves_nvd",
       "event_type": "disabled",
       "actor": {
         "id": "uuid",
         "username": "admin1",
         "full_name": "Alice Smith"
       },
+      "old_value": null,
+      "new_value": null,
       "detail": null,
       "created_at": "2025-04-18T14:30:00Z"
     }
