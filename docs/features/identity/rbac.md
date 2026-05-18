@@ -37,7 +37,7 @@ Operates the triage and assessment workflow:
 - Change track and product affectedness status
 - Add, edit, and delete SUSE CVSS assessments
 - Add, edit, and delete ticket references
-- Set ticket confidentiality (see `docs/features/tickets/confidential-tickets.md`)
+- Set ticket confidentiality (see `docs/features/tickets/tickets.md`)
 - Manage access grants on confidential tickets
 
 > **Design note — VA role granularity**: the VA role intentionally bundles
@@ -183,10 +183,10 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revert-duplicate-status) |
 | DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md#soft-delete-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/restore` | Admin | [tickets](../tickets/tickets.md#restore-ticket) |
-| POST | `/api/v1/tickets/{ticket_id}/set-confidentiality` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#set-confidentiality) |
-| GET | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#list-access-grants) |
-| POST | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#grant-access) |
-| DELETE | `/api/v1/tickets/{ticket_id}/access/{user}` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#revoke-access) |
+| POST | `/api/v1/tickets/{ticket_id}/set-confidentiality` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-confidentiality) |
+| GET | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [tickets](../tickets/tickets.md#list-access-grants) |
+| POST | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [tickets](../tickets/tickets.md#grant-access) |
+| DELETE | `/api/v1/tickets/{ticket_id}/access/{user}` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revoke-access) |
 
 ### Ticket Packages
 

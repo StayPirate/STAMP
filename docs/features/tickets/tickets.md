@@ -777,6 +777,147 @@ Packages, tracks, and products can still be added and managed
 normally. The VA can set affectedness statuses and the ticket can
 progress through the full lifecycle.
 
+## Confidential Tickets
+
+Sentinel supports "Confidential Tickets" to securely handle embargoed
+vulnerabilities. Confidential tickets restrict read and write access to a
+specific subset of authorized users, preventing data leaks prior to public
+disclosure.
+
+- **Confidentiality Flag**: A boolean state (`is_confidential`) on the
+  Ticket entity that determines if the ticket is under embargo.
+- **Access Grants**: The mechanism determining who can access a
+  confidential ticket. Access is granted via roles, automated maintainer
+  inheritance (from IBS bugowners), and explicit manual grants.
+- **Confidentiality Filtering**: Confidential tickets are excluded at
+  the database query level for unauthorized and unauthenticated users.
+  They do not appear in list results, are not returned by detail
+  endpoints, and leave no visible trace (no placeholders, no redacted
+  entries). Authorized users see confidential tickets normally alongside
+  non-confidential ones.
+
+Ticket response objects (both list and detail) MUST include the
+`is_confidential: boolean` field. This field is always present — there
+is no information leakage concern because a user only receives tickets
+they are authorized to see (see [Confidentiality Filtering](#confidentiality-filtering)).
+
+See `docs/data-model.md` for the `TicketAccessGrant` entity definition
+and the `is_confidential` column on the Ticket table.
+
+### Authorization Rules
+
+When a ticket is `is_confidential=True`, any read/write HTTP request
+MUST be evaluated against these rules. Access is **GRANTED** if the user
+meets at least one condition:
+
+1. **Role-based**: The user holds the `Vulnerability Analyst` or `Admin`
+   role.
+2. **Explicit Grant**: The user's `id` exists in the `TicketAccessGrant`
+   table for the requested `ticket_id`.
+3. **Bugowner (Person)**: The user's `email` matches the
+   `bugowner_email` of any `PackageBugowner` associated with any of the
+   ticket's *currently associated* packages. The email comparison MUST
+   be case-insensitive.
+4. **Bugowner (Group)**: The user's `email` matches the `email` of any
+   `PackageBugownerMember` associated with a group bugowner of any
+   *currently associated* package in the ticket. The email comparison
+   MUST be case-insensitive.
+
+*Dynamic Access Note:* Bugowner access is dynamic. A maintainer gains
+access when a package they support is added to the ticket, and loses
+access the moment the last package they support is removed from the
+ticket. "Currently associated packages" means
+`TicketPackage.deleted_at IS NULL` — soft-deleted (excluded) packages do
+not grant bugowner access.
+
+If no condition is met, or if the user is unauthenticated, the
+confidential ticket is **invisible**: it is excluded from list queries
+and detail endpoints return `404 Not Found`. Unauthenticated users never
+see confidential tickets.
+
+*Note: System background tasks (Celery fetchers, event consumers) bypass
+these rules and process confidential tickets normally.*
+
+### Confidentiality Filtering
+
+Confidential tickets are filtered at the database query level.
+Unauthorized and unauthenticated users never see them — no placeholders,
+no redacted entries, no trace of their existence.
+
+**Ticket List (`GET /api/v1/tickets`)**:
+The list query includes only non-confidential tickets plus confidential
+tickets for which the current user satisfies at least one authorization
+rule from [Authorization Rules](#authorization-rules). For
+unauthenticated users, only non-confidential tickets are returned.
+Pagination counts reflect only the tickets visible to the caller.
+
+**Maintainer Dashboard (`GET /api/v1/my/packages/*`)**:
+The maintainer dashboard endpoints MUST apply the same confidentiality
+filtering as the ticket list. Although the bugowner email match used by
+the dashboard already coincides with authorization rules 3 and 4
+([Authorization Rules](#authorization-rules)), the confidentiality filter
+MUST be applied explicitly as defense in depth — protecting against
+future changes to the dashboard query logic that might inadvertently
+bypass the authorization check.
+
+**CVE Details (`GET /api/v1/cves/{id}`)**:
+If the CVE is linked to a confidential ticket that the caller is not
+authorized to access (or is unauthenticated), the ticket reference MUST
+be omitted entirely from the response. The caller sees no indication
+that a ticket exists for this CVE.
+
+### Audit Trail
+
+Three `TicketAuditEventType` values support confidentiality operations:
+
+| `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
+|---|---|---|---|---|---|---|
+| `confidentiality_changed` | `is_confidential` toggled | VA user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
+| `access_grant_added` | User manually added to access grants | VA user | `NULL` | Target username | `NULL` | `NULL` |
+| `access_grant_removed` | User manually removed from access grants | VA user | Target username | `NULL` | `NULL` | `NULL` |
+
+See `docs/features/tickets/ticket-audit-log.md` for the audit event
+contract and detail JSONB schema.
+
+### Stale Access Grant Cleanup
+
+When a ticket's `is_confidential` flag is set to `FALSE` (embargo
+lifted) or the ticket is soft-deleted, the explicit `TicketAccessGrant`
+records remain in the database inertly.
+
+To prevent infinite database growth, a Celery Beat background task
+(`cleanup_stale_ticket_access_grants`) will be implemented:
+
+- **Type**: Plain Celery Beat task (NOT a `BaseFetcher`, as it does not
+  fetch external data).
+- **Schedule**: Weekly, Sunday at 04:00 UTC.
+- **Logic**: Deletes all `TicketAccessGrant` records belonging to
+  tickets where `is_confidential = FALSE` AND `updated_at` is older
+  than 14 days.
+
+This single condition covers all cases:
+
+- Embargo lifted (ticket made non-confidential) → grants cleaned after
+  14 days
+- Soft-deleted non-confidential ticket → `is_confidential` is already
+  `FALSE` → grants cleaned after 14 days
+- Soft-deleted confidential ticket → `is_confidential` is still `TRUE`
+  → grants preserved. If the ticket is later restored, all grants are
+  intact. To clean them, an Admin must first restore the ticket, then a
+  VA removes confidentiality — the cleanup runs 14 days later
+
+### UI Requirements
+
+- **Ticket Detail**: Display a prominent "Confidential / Embargoed"
+  badge or banner when `is_confidential=True`.
+- **Access Grants Manager**: A new section in the Ticket Detail sidebar
+  (visible only to VAs) to search for users and add/remove them from the
+  manual access grants list.
+- **Ticket List**: Confidential tickets only appear for authorized
+  users. No special rendering is needed — they display normally alongside
+  non-confidential tickets. A small "Confidential" badge may be shown to
+  indicate the ticket's status to authorized viewers.
+
 ## API Endpoints
 
 ### List Tickets
@@ -866,7 +1007,7 @@ Request body:
   CVSS)
 - `is_confidential` (boolean, optional): if `true`, the ticket is
   created as confidential (see
-  `docs/features/tickets/confidential-tickets.md`). Default: `false`
+  [Confidential Tickets](#confidential-tickets)). Default: `false`
 
 Response: the created ticket object wrapped in the standard `{"data": ...}`
 envelope (201 Created). Includes `cve_data_pending: true` when a CVE-ID
@@ -1121,6 +1262,135 @@ Error responses:
 
 Requires the Admin role.
 
+### Set Confidentiality
+
+```
+POST /api/v1/tickets/{ticket_id}/set-confidentiality
+```
+
+Sets the confidentiality status of a ticket.
+
+- **Access level**: Vulnerability Analyst
+- **Request body**: `{ "is_confidential": boolean }`
+- **Response body**: The updated ticket object in the standard
+  `{"data": <ticket>}` envelope.
+- **Idempotency**: If the ticket already has the requested status, the
+  operation returns 200 OK without creating an audit event or modifying
+  the database.
+- **Concurrency**: Acquires `FOR UPDATE` on the `Ticket` row (because
+  it modifies the Ticket entity, fulfilling the Concurrency Control
+  convention in [Concurrency Control](#concurrency-control)). It does NOT
+  go through `ticket_mutations` as it is not gate-relevant data.
+- **Audit**: Creates `TicketAuditEvent` with
+  `event_type = confidentiality_changed`.
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 200    | -    | Success (or already in requested state) |
+| 404    | `TICKET_NOT_FOUND` | Ticket not found |
+| 409    | `TICKET_INVALID_TRANSITION` | Ticket is in Duplicated status (revert first) |
+
+Requires the Vulnerability Analyst role.
+
+### Access Grant Management
+
+Endpoints to manage `TicketAccessGrant` records. Available ONLY to
+users with the `Vulnerability Analyst` role.
+
+#### List Access Grants
+
+```
+GET /api/v1/tickets/{ticket_id}/access
+```
+
+List all users with explicit access grants for a confidential ticket.
+
+- **Access level**: Vulnerability Analyst
+- **Response** (200 OK, unpaginated):
+  ```json
+  {
+    "data": [
+      {
+        "user": {
+          "id": "uuid",
+          "username": "jdoe",
+          "full_name": "John Doe",
+          "active": true
+        },
+        "granted_at": "2025-03-15T10:30:00Z",
+        "granted_by": {
+          "id": "uuid",
+          "username": "asmith",
+          "full_name": "Alice Smith",
+          "active": true
+        }
+      }
+    ]
+  }
+  ```
+  *Note: Unpaginated because explicit access grants per ticket are a
+  bounded dataset (typically a handful of users).*
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 200    | -    | Success |
+| 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
+| 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+
+#### Grant Access
+
+```
+POST /api/v1/tickets/{ticket_id}/access
+```
+
+Grant explicit access to a user on a confidential ticket.
+
+- **Access level**: Vulnerability Analyst
+- **Request body**: `{ "user": str }` (Accepts UUID or username per User
+  Identifier Resolution convention; backend resolves via
+  `resolve_user_identifier`).
+- **Idempotency**: If the grant already exists, returns 200 OK with the
+  existing grant data (reflecting the original `granted_by` and
+  `granted_at`), without creating an audit event. Otherwise, creates the
+  grant and returns 201 Created.
+- **Response** (200 OK or 201 Created): The grant object wrapped in the
+  standard `{"data": <grant>}` envelope. The grant object has the same
+  shape as items in the list response.
+- **Audit**: Creates `TicketAuditEvent` with
+  `event_type = access_grant_added`.
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 201    | -    | Grant created |
+| 200    | -    | Grant already exists (idempotent success) |
+| 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
+| 404    | `USER_NOT_FOUND` | Target user not found |
+| 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+
+#### Revoke Access
+
+```
+DELETE /api/v1/tickets/{ticket_id}/access/{user}
+```
+
+Revoke explicit access from a user on a confidential ticket. The
+`{user}` path parameter is of type `str` and accepts either a UUID or
+username.
+
+- **Access level**: Vulnerability Analyst
+- **Idempotency**: If the grant does not exist, returns 204 No Content
+  without creating an audit event.
+- **Response**: 204 No Content.
+- **Audit**: Creates `TicketAuditEvent` with
+  `event_type = access_grant_removed`.
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 204    | -    | Grant revoked (or did not exist — idempotent success) |
+| 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
+| 404    | `USER_NOT_FOUND` | Target user not found |
+| 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+
 ## Data Model
 
 See `docs/data-model.md` for the full schema. Key fields on the Ticket
@@ -1138,7 +1408,7 @@ table:
 | previous_status   | ENUM        | nullable                     | Status before Duplicated |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
-| is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See `docs/features/tickets/confidential-tickets.md` |
+| is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See [Confidential Tickets](#confidential-tickets) |
 | deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp |
 
 ## Security
@@ -1148,7 +1418,7 @@ table:
   sub-resource (`/audit-log`) requires authentication — see
   `docs/features/tickets/ticket-audit-log.md`; (2) confidential tickets
   are invisible to unauthorized and unauthenticated users — see
-  `docs/features/tickets/confidential-tickets.md`
+  [Confidential Tickets](#confidential-tickets)
 - Creating tickets, assigning, changing status, associating CVE,
   managing packages, setting severity override, setting confidentiality:
   Vulnerability Analyst role
@@ -1160,5 +1430,8 @@ table:
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
-- `docs/features/tickets/confidential-tickets.md` — confidential tickets
-  (embargo), access grants, confidentiality filtering
+- `docs/features/tickets/ticket-audit-log.md` — audit event contract, detail
+  JSONB schema
+- `docs/features/identity/rbac.md` — Endpoint Permission Map
+- `docs/features/packages/package-bugowner.md` — bugowner resolution for
+  dynamic access

@@ -740,7 +740,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
-| is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/confidential-tickets.md` |
+| is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/tickets.md` (Confidential Tickets) |
 | deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
 
 **Deletion policy**: tickets MUST NOT be hard-deleted from the database.
@@ -875,7 +875,7 @@ system action).
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `detail` carries `{"track", "package", "product_id", "reason"}` context where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
 | ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 | ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
-| confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/confidential-tickets.md`. |
+| confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/tickets.md` (Confidential Tickets). |
 | access_grant_added          | VA manually granted a user explicit access to a confidential ticket. `old_value` is NULL. `new_value` is the target username. `detail` is NULL. |
 | access_grant_removed        | VA manually revoked a user's explicit access to a confidential ticket. `old_value` is the target username. `new_value` is NULL. `detail` is NULL. |
 
@@ -885,7 +885,7 @@ Explicit access grants for confidential tickets. Each record represents
 a manual grant from a VA to a specific user. Composite primary key on
 `(ticket_id, user_id)`.
 
-See `docs/features/tickets/confidential-tickets.md` for the full
+See `docs/features/tickets/tickets.md` (Confidential Tickets) for the full
 specification.
 
 | Column        | Type        | Constraints                  | Description                          |

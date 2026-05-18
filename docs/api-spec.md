@@ -259,9 +259,9 @@ The dependency evaluates conditions in this exact order:
 1. **Existence**: if the ticket does not exist, return `404 TICKET_NOT_FOUND`
 2. **Confidentiality**: if the ticket is confidential
    (`is_confidential=TRUE`) and the caller does not satisfy any
-   authorization rule from `docs/features/tickets/confidential-tickets.md`
-   (Section 4), return `404 TICKET_NOT_FOUND` — indistinguishable from a
-   non-existent ticket
+    authorization rule from `docs/features/tickets/tickets.md`
+    (Authorization Rules), return `404 TICKET_NOT_FOUND` — indistinguishable from a
+    non-existent ticket
 3. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and the
    caller does not hold the Admin role, return `410 TICKET_DELETED`
 
