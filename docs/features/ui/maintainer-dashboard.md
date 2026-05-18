@@ -578,6 +578,17 @@ return a significant number of rows. Mitigation strategies:
 - **Metrics**: aggregate statistics (average time to fix, submission
   success rate) per maintainer or team
 
+## Open Points
+
+1. **Soft-deleted packages in dashboard queries**: the dashboard tab
+   queries (Pending Fixes, In Progress, Completed) do not explicitly
+   filter out soft-deleted `TicketPackage` records
+   (`TicketPackage.deleted_at IS NULL`). Soft-deleted packages are
+   excluded from a ticket and should not appear in the maintainer's
+   work queue. While the tab conditions (status, SR existence) may
+   implicitly exclude most soft-deleted records, an explicit filter
+   should be added for correctness.
+
 ## Cross-references
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
