@@ -376,8 +376,10 @@ session behavior.
   for v1 given the limited use cases (dev environments, bots, no-SSO
   deployments). A `POST /api/v1/auth/change-password` endpoint (requiring
   active session + old password) is a planned follow-up.
-- **No password in JWT**: the JWT contains only user ID, session ID, and
-  roles. The password hash is never included in tokens or API responses.
+- **No password in JWT**: the JWT contains only user ID (`sub`), session
+  ID, and timing claims (`iat`, `exp`, `session_deadline`). Roles are
+  loaded from the database on each request, not embedded in the token.
+  The password hash is never included in tokens or API responses.
 - **Password not returned by API**: no endpoint returns the
   `password_hash` field. Pydantic response schemas must explicitly
   exclude it.

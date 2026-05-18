@@ -436,7 +436,7 @@ This is a deliberate design decision:
   invalidates all sessions
 - The Sentinel JWT is refreshed transparently via sliding session for
   active users. Inactive sessions expire after the configured duration
-  (default 72 hours). All sessions expire unconditionally after 30 days
+  (default 72 hours). All sessions expire unconditionally after `SESSION_MAX_LIFETIME_DAYS` (default 30 days)
   (see `docs/features/identity/authentication.md`, Token lifecycle).
 
 ## Authentication Providers Endpoint

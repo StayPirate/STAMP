@@ -152,6 +152,12 @@ client-side logic or dedicated refresh endpoint is required.
   WARNING is logged. The next request will re-attempt the refresh
 - No database write is required for token refresh (the Session record is
   not modified)
+- When multiple requests arrive simultaneously after the refresh
+  threshold, each independently issues a new JWT. This is intentionally
+  accepted: all resulting tokens reference the same valid session, no
+  database write is involved, and the browser naturally adopts the last
+  `Set-Cookie` received. No serialization or deduplication mechanism is
+  required
 
 ## Session Management
 
@@ -190,6 +196,23 @@ cache purge on logout/deactivation makes this near-instantaneous — the
 TTL is only a safety net for edge cases). This tradeoff is acceptable
 for an internal tool.
 
+**Cache value contract**: the Redis key `session_liveness:{session_id}` stores
+the string `"1"` to represent an active session. Inactive sessions are never
+cached. The lookup semantics are:
+
+- **Cache hit** (key exists with value `"1"`): the session is active — no
+  database query is needed. Proceed to user loading.
+- **Cache miss** (key does not exist): query the database for the `Session`
+  record and check `is_active`:
+  - If `is_active = true`: write `"1"` to Redis with key
+    `session_liveness:{session_id}` and TTL 60 seconds, then proceed.
+  - If `is_active = false`: do NOT write to cache, reject the request
+    (HTTP 401).
+
+This ensures that only positive (active) state is ever cached, a cache miss
+always triggers a database verification, and a revoked session never pollutes
+the cache.
+
 **Redis unavailability**: if Redis is unreachable, the session liveness
 check falls back to a direct database query. This is functionally
 correct but increases database load (one extra query per authenticated
@@ -206,7 +229,7 @@ Session invalidation is handled by `session_service`
 
 Invalidates a single session (used by the logout endpoint).
 
-1. Set `Session.is_active = false` for the given `session_id`
+1. Set `Session.is_active = false` and `Session.updated_at = now()` for the given `session_id`
 2. Delete the Redis cache entry `session_liveness:{session_id}`
 3. If Redis is unreachable, proceed — the entry expires naturally
    within the cache TTL
@@ -216,7 +239,7 @@ Invalidates a single session (used by the logout endpoint).
 Invalidates all active sessions for a user (used by deactivation and
 password reset).
 
-1. `UPDATE session SET is_active = false WHERE user_id = :user_id AND
+1. `UPDATE session SET is_active = false, updated_at = now() WHERE user_id = :user_id AND
    is_active = true` — collect the list of invalidated `session_id`s
 2. For each invalidated session, delete the Redis cache entry
    `session_liveness:{session_id}`
@@ -269,8 +292,9 @@ user with valid credentials.
 
 ### Session cleanup
 
-A Celery Beat task runs **once per week** and deletes session rows matching
-either of these conditions:
+A Celery Beat task (`cleanup_sessions`) runs every **Sunday at 03:00 UTC**
+(fixed schedule, not configurable) and deletes session rows matching either
+of these conditions:
 
 - `is_active = false AND updated_at < now() - interval '1 hour'` —
   invalidated sessions, with a 1-hour grace period. The grace period
@@ -513,6 +537,18 @@ Lists all API keys (active and revoked) for the given user. Output
 includes: prefix, name, created_at, last_used_at, expires_at, status
 (active/revoked/expired).
 
+**Output**: table with fixed-width columns on stdout.
+
+**Exit codes**:
+
+| Code | Condition |
+|------|-----------|
+| 0 | Success (including empty result when user has no keys) |
+| 1 | User error: `Error: User '<username>' not found.` (stderr) |
+| 2 | System error: database unreachable |
+
+**Idempotency**: Idempotent (read-only query).
+
 #### `sentinel api-key revoke`
 
 ```
@@ -526,8 +562,20 @@ Revokes the specified key. Delegates to
 `acting_user_id` is `None` (CLI/system action), so `revoked_by` is set
 to `NULL` (displayed as "System" in the UI).
 
-If the key is already revoked, prints a message and exits with code 0
-(idempotent — handled by the service's idempotency guarantee).
+**Output**: confirmation message on stdout (e.g., `Revoked API key
+'<prefix>...' for user '<username>'.`). Errors on stderr with `Error:`
+prefix.
+
+**Exit codes**:
+
+| Code | Condition |
+|------|-----------|
+| 0 | Success (including already-revoked key = idempotent no-op) |
+| 1 | User error: `Error: User '<username>' not found.` (stderr), or `Error: API key '<key_id>' not found.` (stderr) |
+| 2 | System error: database unreachable |
+
+**Idempotency**: Idempotent (no-op if already revoked — handled by the
+service's idempotency guarantee).
 
 ### Automatic revocation
 
@@ -667,6 +715,17 @@ requests receive HTTP 403 (see Authentication restriction below).
 }
 ```
 
+**Name validation**:
+
+- Leading and trailing whitespace is trimmed before any other validation
+- The value is normalized to lowercase
+- Allowed character set (after normalization): `[a-z0-9._-]`
+- Length: 1–128 characters (measured after trim and normalization)
+- A value that is empty after trim is rejected (standard Pydantic 422
+  validation error)
+- The uniqueness constraint (`AUTH_API_KEY_NAME_CONFLICT`) is evaluated on
+  the normalized value
+
 **Authentication restriction**: API-key-authenticated requests receive
 HTTP 403 with code `AUTH_SESSION_REQUIRED` and message: `"API key
 creation requires session authentication."` — this prevents a
@@ -766,7 +825,7 @@ Lists API keys across all users. Admin only.
 
 | Parameter  | Type   | Description                         |
 |------------|--------|-------------------------------------|
-| `user_id`  | UUID   | Filter by user (optional)           |
+| `owner`    | string | Filter by key owner; accepts UUID or username. Returns empty result set if user not found. (optional) |
 | `status`   | string | `active`, `revoked`, or `expired` — single value only (optional) |
 | `page`     | int    | Page number (default 1)             |
 | `per_page` | int    | Items per page (default 50, max 100)  |

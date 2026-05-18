@@ -4,6 +4,7 @@
 **Last reviewed**: 2026-05-18
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
+
 ---
 
 ## Gap Analysis
@@ -82,38 +83,31 @@
 
 ### AUTH-GAP-34 — Session cleanup task schedule and configuration not fully specified (Low)
 
-**Category**: Completeness
-**Status**: OPEN
-
-The spec states the session cleanup task runs "once per week" but does not specify the day/time of week (unlike other fetchers which specify exact schedule, e.g., "02:00 UTC"), whether the schedule is configurable, or the Celery task name/identifier.
+**Status**: RESOLVED — Specified exact schedule (Sundays 03:00 UTC), task name (`cleanup_sessions`), and fixed (non-configurable) schedule in authentication.md (2026-05-18)
 
 ### AUTH-GAP-35 — Redis cache key format for session liveness not specified as contract (Low)
 
-**Category**: Completeness
-**Status**: OPEN
-
-The spec mentions `session_liveness:{session_id}` as the Redis key pattern and a 60-second TTL, but does not specify what value is stored in the cache entry (boolean? timestamp?) or whether a cache hit with value `false` (inactive session) is handled differently from a cache miss.
+**Status**: RESOLVED — Added Redis cache value contract to session liveness section: only active sessions cached as "1", cache miss triggers DB verification, inactive sessions never cached (2026-05-18)
 
 ### AUTH-GAP-36 — API key `name` validation rules not fully specified (Low)
 
-**Category**: Completeness
-**Status**: OPEN
-
-The spec states `name` is "string (required, 1-128 chars)" but does not specify whether leading/trailing whitespace is trimmed before validation, whether empty-after-trim names are rejected, or the allowed character set (any Unicode? ASCII only? no control characters?).
+**Status**: RESOLVED — Added API key name validation rules: trim, lowercase normalization, charset [a-z0-9._-], 1-128 chars, uniqueness on normalized value (2026-05-18)
 
 ### AUTH-GAP-37 — `GET /api/v1/admin/api-keys` filter by `user_id` does not specify behavior for non-existent user (Low)
 
-**Category**: Completeness
-**Status**: OPEN
-
-The `user_id` query parameter filters by user UUID, but the spec does not state what happens if the UUID does not correspond to an existing user. Per `api-spec.md` conventions, optional filter parameters on list endpoints should return an empty result set (not 404), but this is not explicitly confirmed here.
+**Status**: RESOLVED — Covered by AUTH-API-08 fix: `owner` parameter explicitly specifies empty result set for non-existent user (2026-05-18)
 
 ### AUTH-GAP-38 — Token refresh and concurrent requests may issue multiple refreshed tokens (Low)
 
-**Category**: Completeness
-**Status**: OPEN
+**Status**: RESOLVED — Added explicit note acknowledging concurrent token refresh behavior as intentional and benign (2026-05-18)
 
-When multiple requests arrive simultaneously after the refresh threshold, each may independently generate a new JWT. The spec notes "No database write is required for token refresh" but does not address whether multiple concurrent refreshes for the same session are acceptable. Since all issued tokens reference the same valid session, this is likely benign, but the spec does not explicitly acknowledge this behavior.
+### AUTH-GAP-39 — CLI `api-key` commands missing exit code and output format specification (Low)
+
+**Status**: RESOLVED — Added exit codes, output format, and idempotency declarations to CLI api-key commands (2026-05-18)
+
+### AUTH-GAP-40 — CLI `api-key list` behavior for non-existent username unspecified (Low)
+
+**Status**: RESOLVED — Specified Error + exit 1 for non-existent username in CLI api-key commands (2026-05-18)
 
 ---
 
@@ -149,17 +143,19 @@ When multiple requests arrive simultaneously after the refresh threshold, each m
 
 ### AUTH-COH-08 — Session cleanup references `updated_at` column not present in data model (Medium)
 
-**Category**: Cross-spec contradiction
-**Status**: OPEN
-
-The session cleanup rule in `authentication.md` specifies the condition `is_active = false AND updated_at < now() - interval '1 hour'` for deleting invalidated sessions. However, the Session table definition in `docs/data-model.md` lists only four columns: `id`, `user_id`, `created_at`, and `is_active` — there is no `updated_at` column. Either `authentication.md` should reference `created_at` (or another existing column), or `data-model.md` needs an `updated_at` column added to the Session table.
+**Status**: RESOLVED — Added `updated_at` column to Session table in data-model.md and explicit `updated_at = now()` step in invalidation operations in authentication.md (2026-05-18)
 
 ### AUTH-COH-09 — data-model.md session cleanup threshold still hardcoded to "30 days" (Low)
 
-**Category**: Cross-spec contradiction
-**Status**: OPEN
+**Status**: RESOLVED — Replaced hardcoded "30 days" with SESSION_MAX_LIFETIME_DAYS reference in data-model.md (2026-05-18)
 
-`docs/data-model.md` describes session cleanup as deleting "sessions older than 30 days". This contradicts `authentication.md` which specifies the threshold as `SESSION_MAX_LIFETIME_DAYS + 1 day` (a configurable value, defaulting to 30+1=31 days). The data-model.md cleanup description should reference the configured value rather than a hardcoded "30 days".
+### AUTH-COH-10 — local-authentication.md states JWT contains "roles" claim (Low)
+
+**Status**: RESOLVED — Corrected JWT claims description in local-authentication.md: removed incorrect "roles" claim, added actual timing claims (2026-05-18)
+
+### AUTH-COH-11 — sso-authentication.md hardcodes "30 days" session lifetime (Low)
+
+**Status**: RESOLVED — Replaced hardcoded "30 days" with SESSION_MAX_LIFETIME_DAYS reference in sso-authentication.md (2026-05-18)
 
 ---
 
@@ -279,14 +275,8 @@ The session cleanup rule in `authentication.md` specifies the condition `is_acti
 
 ### AUTH-API-08 — Admin API keys endpoint `user_id` filter should accept username (Medium)
 
-**Category**: Convention violation
-**Status**: OPEN
-
-The `GET /api/v1/admin/api-keys` endpoint defines the `user_id` query parameter as `UUID` type only. Per `docs/api-spec.md` (User Identifier Resolution): "All parameters that identify a user accept either a UUID or a username." The parameter should accept both formats per the project convention.
+**Status**: RESOLVED — Renamed parameter from `user_id` to `owner` (string type, accepts UUID or username) with explicit empty-result-set behavior for non-existent users (2026-05-18)
 
 ### AUTH-API-09 — Admin API keys endpoint missing behavior for invalid `status` value (Low)
 
-**Category**: Ambiguity
-**Status**: OPEN
-
-The `GET /api/v1/admin/api-keys` endpoint defines a `status` filter accepting `active`, `revoked`, or `expired` but does not specify behavior when an invalid value is provided. Per `docs/api-spec.md` enum filter validation convention, invalid values should be silently ignored, but since this is a single-value parameter (not multi-value), the interaction with the convention is ambiguous.
+**Status**: RESOLVED — Auto-resolved: api-spec.md enum filter convention explicitly covers single-value parameters; no per-endpoint clarification needed (2026-05-18)

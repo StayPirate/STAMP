@@ -660,8 +660,9 @@ membership. See `docs/features/identity/ad-integration.md`.
 Tracks active user sessions. Every login (SSO or local) creates a
 session record. The JWT references the session via the `session_id`
 claim. On every authenticated request, the middleware verifies that the
-session is still active. The maximum session lifetime (30 days) is
-enforced via the `session_deadline` claim in the JWT, not in this table.
+session is still active. The maximum session lifetime
+(`SESSION_MAX_LIFETIME_DAYS`, default 30 days) is enforced via the
+`session_deadline` claim in the JWT, not in this table.
 See `docs/features/identity/authentication.md` (Session Management).
 
 | Column       | Type        | Constraints               | Description                                |
@@ -669,14 +670,17 @@ See `docs/features/identity/authentication.md` (Session Management).
 | id           | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
 | user_id      | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the session was created (login time)  |
+| updated_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
 | is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
 
 **Index**: (user_id, is_active) — for efficient bulk invalidation on
 user deactivation.
 
 **Cleanup**: inactive sessions (`is_active = false`) and sessions older
-than 30 days (`created_at < now() - 30 days`) are deleted weekly by a
-Celery Beat maintenance task. No session history is retained.
+than `SESSION_MAX_LIFETIME_DAYS + 1` days
+(`created_at < now() - (SESSION_MAX_LIFETIME_DAYS + 1) days`) are
+deleted weekly by a Celery Beat maintenance task. No session history is
+retained.
 
 ### ApiKey
 
