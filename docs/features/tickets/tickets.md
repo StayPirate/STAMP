@@ -64,6 +64,24 @@ A ticket may optionally be associated with a CVE.
 - Tickets created manually or from external sources (e.g., bug trackers)
   start without a CVE
 
+### CVE Resolution Behavior
+
+Whenever a CVE-ID is provided for association with a ticket (whether at
+ticket creation or via explicit association), the following rules apply:
+
+- **Conflict**: if the CVE exists in the database and is already
+  associated with another ticket, the operation fails with 409 Conflict.
+  The response body includes `existing_ticket_id` (UUID) to allow the
+  frontend to link to the existing ticket
+- **On-demand fetch**: if the CVE does not exist in the Sentinel
+  database, a minimal CVE record (only `cve_id` set) is created and an
+  on-demand single-CVE fetch is triggered in the background (see
+  `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch").
+  The operation proceeds immediately with the minimal record. The API
+  response includes `cve_data_pending: true`
+- **Normal**: if the CVE exists and is not associated with any ticket,
+  the association proceeds directly
+
 ### Associating a CVE Later
 
 An VA can associate a CVE with a ticket that does not yet have one, via
@@ -73,16 +91,7 @@ An VA can associate a CVE with a ticket that does not yet have one, via
 
 - The ticket must not already have a CVE associated (`cve_id IS NULL`)
 - The CVE-ID string must be provided (e.g., `CVE-2024-1234`)
-- If the CVE exists in the Sentinel database and is already associated with
-  another ticket, the API returns 409 Conflict with
-  `existing_ticket_id` in the response body (see
-  [Associate CVE endpoint](#associate-cve) for details)
-- If the CVE does not exist in the Sentinel database, Sentinel creates a
-  minimal CVE record (only `cve_id` set) and triggers on-demand
-  single-CVE fetch in the background (see
-  `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch"). The
-  association proceeds immediately with the minimal CVE record. The API
-  response includes `cve_data_pending: true`
+- [CVE Resolution Behavior](#cve-resolution-behavior) applies
 - When a CVE is associated:
   - `Ticket.cve_id` is set
   - The automatic severity from CVSS takes over (see
@@ -171,16 +180,7 @@ An Vulnerability Analyst can create a ticket manually via
   `"CVE-2024-1234"`) at creation time. If omitted, the ticket is
   created without a CVE (can be associated later)
 - When a CVE-ID is provided:
-  - If the CVE exists in the database and is already associated with
-    another ticket, the creation fails with 409 Conflict and
-    `existing_ticket_id` in the response body
-  - If the CVE does not exist in the database, Sentinel creates a minimal
-    CVE record (only `cve_id` set) and triggers on-demand single-CVE
-    fetch in the background (see `docs/features/tickets/cve-tracking.md`,
-    "On-demand Single-CVE Fetch"). The ticket is created immediately.
-    The API response includes `cve_data_pending: true`
-  - If the CVE exists in the database and is not associated with any
-    ticket, the ticket is created with that CVE
+  - [CVE Resolution Behavior](#cve-resolution-behavior) applies
 - `status`: `Analysis` (direct, bypasses `New` — the creating user is
   automatically assigned)
 - `assignee_id`: set to the creating user
@@ -284,6 +284,8 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
 | Any        | Duplicated | VA marks ticket as duplicate                           | Manual             | Any VA                                 |
 | Duplicated | (previous) | VA reverts duplicate status                            | Manual             | Any VA (becomes new assignee)          |
+
+**Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned; instead, a notification is sent to the assignee for manual review. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
 
 ### Gate: Analysis → Analyzed
 
@@ -726,6 +728,30 @@ that soft-deleted tickets are excluded. At minimum:
   No longer monitored.
 - **Soft-deleted tickets**: `deleted_at IS NOT NULL`. Excluded from
   everything regardless of status.
+
+## Terminal Statuses and Mutability
+
+### Ignored
+
+Ignored is a **terminal status** — there is no transition from Ignored
+to any other status. If a ticket was marked as Ignored in error, an
+Admin must soft-delete it (or a new ticket can be created if the issue
+needs to be re-evaluated).
+
+### Modifications in Inactive Statuses
+
+Tickets in inactive statuses (`Resolved`, `Ignored`, `Duplicated`) are
+not monitored by background tasks. Manual modifications (adding
+packages, changing track statuses) are **not blocked** by the system but
+are discouraged:
+
+- **Resolved**: modifying gate-relevant data triggers centralized status
+  evaluation, which may regress the ticket to Analyzed or Analysis
+- **Ignored**: modifications have no effect on status — the ticket
+  remains Ignored regardless of gate conditions
+- **Duplicated**: modifications are blocked by the API — endpoints that
+  modify ticket data return 409 if the ticket is in Duplicated status
+  (the ticket must be reverted first)
 
 ## Tickets Without CVE: Behavioral Differences
 
