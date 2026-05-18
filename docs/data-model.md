@@ -102,8 +102,8 @@ erDiagram
         TIMESTAMPTZ deleted_at "nullable"
     }
     TicketAccessGrant {
-        UUID ticket_id PK_FK "NOT NULL"
-        UUID user_id PK_FK "NOT NULL"
+        UUID ticket_id PK,FK "NOT NULL"
+        UUID user_id PK,FK "NOT NULL"
         UUID granted_by_id FK "NOT NULL"
         TIMESTAMPTZ granted_at "NOT NULL"
     }
