@@ -1,7 +1,7 @@
 # Review: authentication
 
 **Spec**: `docs/features/identity/authentication.md`
-**Last reviewed**: 2026-05-07
+**Last reviewed**: 2026-05-18
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -80,6 +80,41 @@
 
 **Status**: RESOLVED — If the role-loading DB query fails during token refresh, the refresh is silently skipped: the old JWT remains valid and a WARNING log is emitted. Token refresh is a transparent side-effect that must never block the user's actual request. (2026-05-05)
 
+### AUTH-GAP-34 — Session cleanup task schedule and configuration not fully specified (Low)
+
+**Category**: Completeness
+**Status**: OPEN
+
+The spec states the session cleanup task runs "once per week" but does not specify the day/time of week (unlike other fetchers which specify exact schedule, e.g., "02:00 UTC"), whether the schedule is configurable, or the Celery task name/identifier.
+
+### AUTH-GAP-35 — Redis cache key format for session liveness not specified as contract (Low)
+
+**Category**: Completeness
+**Status**: OPEN
+
+The spec mentions `session_liveness:{session_id}` as the Redis key pattern and a 60-second TTL, but does not specify what value is stored in the cache entry (boolean? timestamp?) or whether a cache hit with value `false` (inactive session) is handled differently from a cache miss.
+
+### AUTH-GAP-36 — API key `name` validation rules not fully specified (Low)
+
+**Category**: Completeness
+**Status**: OPEN
+
+The spec states `name` is "string (required, 1-128 chars)" but does not specify whether leading/trailing whitespace is trimmed before validation, whether empty-after-trim names are rejected, or the allowed character set (any Unicode? ASCII only? no control characters?).
+
+### AUTH-GAP-37 — `GET /api/v1/admin/api-keys` filter by `user_id` does not specify behavior for non-existent user (Low)
+
+**Category**: Completeness
+**Status**: OPEN
+
+The `user_id` query parameter filters by user UUID, but the spec does not state what happens if the UUID does not correspond to an existing user. Per `api-spec.md` conventions, optional filter parameters on list endpoints should return an empty result set (not 404), but this is not explicitly confirmed here.
+
+### AUTH-GAP-38 — Token refresh and concurrent requests may issue multiple refreshed tokens (Low)
+
+**Category**: Completeness
+**Status**: OPEN
+
+When multiple requests arrive simultaneously after the refresh threshold, each may independently generate a new JWT. The spec notes "No database write is required for token refresh" but does not address whether multiple concurrent refreshes for the same session are acceptable. Since all issued tokens reference the same valid session, this is likely benign, but the spec does not explicitly acknowledge this behavior.
+
 ---
 
 ## Coherence
@@ -110,10 +145,21 @@
 
 ### AUTH-COH-07 — User-loading redundancy between credential sub-flows and get_current_user top-level (Low)
 
-**Category**: Structural inconsistency
+**Status**: RESOLVED — Credential sub-flows now return only user_id; user loading consolidated in get_current_user step 5; role loading removed from middleware (2026-05-18)
+
+### AUTH-COH-08 — Session cleanup references `updated_at` column not present in data model (Medium)
+
+**Category**: Cross-spec contradiction
 **Status**: OPEN
 
-Both the JWT validation sub-flow (step 7: "Load the user by sub claim") and the API key validation sub-flow (step 6: "Load the user by user_id from the ApiKey record") describe loading the User record, while get_current_user step 5 also says "Load the User record. If the user is inactive, return HTTP 401." This creates a double-load ambiguity — the spec describes user-loading twice for each auth path. Additionally, JWT validation step 8 ("Load the user's current roles from the database") has no equivalent in the API key sub-flow, creating an asymmetry: both auth methods need roles, but only JWT explicitly loads them. The clean design would have sub-flows return a user_id (not a loaded user), with get_current_user step 5 performing all user-loading, active-checking, and role-loading uniformly for both auth methods.
+The session cleanup rule in `authentication.md` specifies the condition `is_active = false AND updated_at < now() - interval '1 hour'` for deleting invalidated sessions. However, the Session table definition in `docs/data-model.md` lists only four columns: `id`, `user_id`, `created_at`, and `is_active` — there is no `updated_at` column. Either `authentication.md` should reference `created_at` (or another existing column), or `data-model.md` needs an `updated_at` column added to the Session table.
+
+### AUTH-COH-09 — data-model.md session cleanup threshold still hardcoded to "30 days" (Low)
+
+**Category**: Cross-spec contradiction
+**Status**: OPEN
+
+`docs/data-model.md` describes session cleanup as deleting "sessions older than 30 days". This contradicts `authentication.md` which specifies the threshold as `SESSION_MAX_LIFETIME_DAYS + 1 day` (a configurable value, defaulting to 30+1=31 days). The data-model.md cleanup description should reference the configured value rather than a hardcoded "30 days".
 
 ---
 
@@ -146,6 +192,10 @@ Both the JWT validation sub-flow (step 7: "Load the user by sub claim") and the 
 ### AUTH-DES-04 — Cookie Path=/api restricts future non-API authenticated routes (Low)
 
 **Status**: RESOLVED — `Path=/api` is a deliberate security choice. All authenticated backend routes are under `/api` by architectural convention. No routing constraint exists in practice. (2026-05-05)
+
+### AUTH-DES-08 — Session model missing `updated_at` column referenced by cleanup logic (Low)
+
+**Status**: RESOLVED — Cross-agent duplicate of AUTH-COH-08 (2026-05-18)
 
 ---
 
@@ -226,3 +276,17 @@ Both the JWT validation sub-flow (step 7: "Load the user by sub claim") and the 
 ### AUTH-API-06 — Logout endpoint 401 case missing error code (Low)
 
 **Status**: RESOLVED — Introduced "Global Responses" section in `api-spec.md` documenting 401/422/500 as middleware-level responses with machine-readable codes. Replaced `AUTH_TOKEN_EXPIRED` with `AUTH_NOT_AUTHENTICATED` across all specs. (2026-05-06)
+
+### AUTH-API-08 — Admin API keys endpoint `user_id` filter should accept username (Medium)
+
+**Category**: Convention violation
+**Status**: OPEN
+
+The `GET /api/v1/admin/api-keys` endpoint defines the `user_id` query parameter as `UUID` type only. Per `docs/api-spec.md` (User Identifier Resolution): "All parameters that identify a user accept either a UUID or a username." The parameter should accept both formats per the project convention.
+
+### AUTH-API-09 — Admin API keys endpoint missing behavior for invalid `status` value (Low)
+
+**Category**: Ambiguity
+**Status**: OPEN
+
+The `GET /api/v1/admin/api-keys` endpoint defines a `status` filter accepting `active`, `revoked`, or `expired` but does not specify behavior when an invalid value is provided. Per `docs/api-spec.md` enum filter validation convention, invalid values should be silently ignored, but since this is a single-value parameter (not multi-value), the interaction with the convention is ambiguous.

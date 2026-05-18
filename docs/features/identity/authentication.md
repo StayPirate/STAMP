@@ -360,10 +360,13 @@ into all endpoints that require authentication.
 3. Determine credential type:
    - If the token starts with `stl_ak_`: treat as **API key**
    - Otherwise: treat as **JWT**
-4. Validate according to the credential type (see below).
-5. Load the `User` record. If the user is inactive (`active = false`),
-   return HTTP 401.
-6. Return the authenticated user.
+4. Validate according to the credential type (see below). Any validation
+   failure in a credential sub-flow results in HTTP 401 with the standard
+   generic body (described below). Only the success path is described in
+   the sub-flows.
+5. Load the `User` record by the `user_id` returned from the credential
+   sub-flow. If the user is inactive (`active = false`), return HTTP 401.
+6. Return the `User` model instance (the record loaded in step 5).
 
 All HTTP 401 responses return a generic body `{"code":
 "AUTH_NOT_AUTHENTICATED", "detail": "Authentication required"}` regardless
@@ -388,9 +391,7 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 5. Look up the session by `session_id` claim.
 6. Verify the session passes the liveness check (active + not expired).
    Use Redis cache when available.
-7. Load the user by `sub` claim.
-8. Load the user's **current roles from the database**. Role changes
-   take effect immediately, without waiting for re-login.
+7. On success, return the `user_id` from the `sub` claim.
 
 ### API key validation
 
@@ -398,7 +399,7 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
    hex digest.
 2. Look up the `ApiKey` record by matching `key_hash` to the computed
    digest. If no record is found, log a WARNING with the key prefix
-   (first 12 characters) and the source IP, then return HTTP 401.
+   (first 12 characters) and the source IP, and fail.
 
    **Log rate limiting**: the WARNING emission is rate-limited to prevent
    log flooding from brute-force attacks. The HTTP 401 response is
@@ -434,7 +435,7 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
    since the last DB write for this key on this instance, the update is
    skipped. With N API server instances, the worst case is N writes per
    minute per key — acceptable for an internal tool.
-6. Load the user by `user_id` from the `ApiKey` record.
+6. On success, return the `user_id` from the `ApiKey` record.
 
 API keys do **not** use sessions. They are validated directly against the
 `ApiKey` table on every request.
