@@ -5,7 +5,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
 
-The data model comprises 29 entities organized into five domains. The
+The data model comprises 30 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -23,6 +23,7 @@ flowchart TB
         CVE
         Ticket
         TicketAuditEvent
+        TicketAccessGrant
     end
 
     subgraph packages["Package Tracking"]
@@ -52,8 +53,10 @@ flowchart TB
 
     CVE -->|"0..1 : 0..1"| Ticket
     Ticket --> TicketAuditEvent
+    Ticket --> TicketAccessGrant
     Ticket --> TicketPackage
     Ticket -->|"assignee"| User
+    TicketAccessGrant -->|"user_id, granted_by_id"| User
     TicketPackage --> TicketPackageTrack
     TicketPackageTrack --> TicketPackageProduct
     Product --> TicketPackageProduct
@@ -92,10 +95,17 @@ erDiagram
         UUID cve_id FK "UNIQUE, nullable"
         ENUM status "NOT NULL"
         ENUM severity_override "nullable"
+        BOOLEAN is_confidential "NOT NULL, DEFAULT FALSE"
         UUID assignee_id FK "nullable"
         UUID duplicate_of_id FK "self-ref, nullable"
         ENUM previous_status "nullable"
         TIMESTAMPTZ deleted_at "nullable"
+    }
+    TicketAccessGrant {
+        UUID ticket_id PK_FK "NOT NULL"
+        UUID user_id PK_FK "NOT NULL"
+        UUID granted_by_id FK "NOT NULL"
+        TIMESTAMPTZ granted_at "NOT NULL"
     }
     TicketAuditEvent {
         UUID id PK
@@ -121,10 +131,13 @@ erDiagram
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
     CVE |o--o| Ticket : "tracked by"
+    Ticket ||--o{ TicketAccessGrant : "has access grants"
     Ticket ||--o{ TicketAuditEvent : "has events"
     Ticket ||--o{ TicketReference : "has references"
     Ticket }o--o| User : "assigned to"
     Ticket }o--o| Ticket : "duplicate of"
+    TicketAccessGrant }o--|| User : "granted to"
+    TicketAccessGrant }o--|| User : "granted by"
     TicketAuditEvent }o--o| User : "performed by"
     TicketReference }o--o| User : "created by"
 ```
@@ -727,6 +740,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
+| is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/confidential-tickets.md` |
 | deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
 
 **Deletion policy**: tickets MUST NOT be hard-deleted from the database.
@@ -861,6 +875,28 @@ system action).
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `detail` carries `{"track", "package", "product_id", "reason"}` context where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
 | ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 | ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
+| confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/confidential-tickets.md`. |
+| access_grant_added          | VA manually granted a user explicit access to a confidential ticket. `old_value` is NULL. `new_value` is the target username. `detail` is NULL. |
+| access_grant_removed        | VA manually revoked a user's explicit access to a confidential ticket. `old_value` is the target username. `new_value` is NULL. `detail` is NULL. |
+
+### TicketAccessGrant
+
+Explicit access grants for confidential tickets. Each record represents
+a manual grant from a VA to a specific user. Composite primary key on
+`(ticket_id, user_id)`.
+
+See `docs/features/tickets/confidential-tickets.md` for the full
+specification.
+
+| Column        | Type        | Constraints                  | Description                          |
+|---------------|-------------|------------------------------|--------------------------------------|
+| ticket_id     | UUID        | PK, FK(ticket.id) ON DELETE RESTRICT | The confidential ticket            |
+| user_id       | UUID        | PK, FK(user.id) ON DELETE RESTRICT   | The user granted access            |
+| granted_by_id | UUID        | FK(user.id) ON DELETE RESTRICT, NOT NULL | The VA who granted the access |
+| granted_at    | TIMESTAMPTZ | NOT NULL, DEFAULT            | When the grant was created           |
+
+*Note: ON DELETE RESTRICT is used because tickets and users are never
+physically deleted in Sentinel (only soft-deleted or deactivated).*
 
 ### IdentityAuditEvent
 
@@ -1139,14 +1175,18 @@ TBD — will be defined based on query patterns during implementation.
 ## Notes
 
 - All tables use UUID primary keys (exceptions: `SystemSetting` uses a
-  VARCHAR(100) `key` as PK; `FetcherConfig` uses `fetcher_name` VARCHAR(100) as PK)
+  VARCHAR(100) `key` as PK; `FetcherConfig` uses `fetcher_name`
+  VARCHAR(100) as PK; `TicketAccessGrant` uses a composite PK
+  `(ticket_id, user_id)`)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
   `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, and `RoleMapping`
   only have `created_at` because they are immutable write-once records or are
-  replaced rather than updated in place —
+  replaced rather than updated in place; `TicketAccessGrant` uses
+  `granted_at` instead of `created_at` (semantically identical for
+  write-once records) and has no `updated_at` —
   `ProductRepository` records are replaced during SMELT sync, never updated
   in place; `PackageBugownerMember` records are deleted and recreated when
   group membership changes)

@@ -481,7 +481,8 @@ rolls back.
 
 The same rule applies to **any service operation that modifies the
 `Ticket` row** (any column: `status`, `assignee_id`, `cve_id`,
-`duplicate_of_id`, `previous_status`, `deleted_at`) **or that calls
+`duplicate_of_id`, `previous_status`, `is_confidential`, `deleted_at`)
+**or that calls
 `evaluate_ticket_status`**, even if the operation does not go through
 the `ticket_mutations` module. This prevents non-gate operations
 (assignment, duplicate set/revert, CVE dissociation, soft-delete,
@@ -850,7 +851,8 @@ Request body:
 ```json
 {
   "cve_id": "CVE-2024-1234",
-  "severity": "High"
+  "severity": "High",
+  "is_confidential": false
 }
 ```
 
@@ -862,6 +864,9 @@ Request body:
   High, Medium, Low, None). If omitted, severity is `None` until set
   by the VA. Ignored if `cve_id` is provided (severity is derived from
   CVSS)
+- `is_confidential` (boolean, optional): if `true`, the ticket is
+  created as confidential (see
+  `docs/features/tickets/confidential-tickets.md`). Default: `false`
 
 Response: the created ticket object wrapped in the standard `{"data": ...}`
 envelope (201 Created). Includes `cve_data_pending: true` when a CVE-ID
@@ -931,13 +936,13 @@ Error responses:
 
 Requires the Admin role.
 
-### Update Severity Override
+### Set Severity Override
 
 ```
-PATCH /api/v1/tickets/{ticket_id}/severity
+POST /api/v1/tickets/{ticket_id}/set-severity
 ```
 
-Updates the severity override for a ticket without a CVE.
+Sets the severity override for a ticket without a CVE.
 
 Request body:
 
@@ -1133,16 +1138,20 @@ table:
 | previous_status   | ENUM        | nullable                     | Status before Duplicated |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
+| is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See `docs/features/tickets/confidential-tickets.md` |
 | deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp |
 
 ## Security
 
 - Viewing ticket lists and details: publicly accessible (no
-  authentication required). Exception: the ticket audit log
+  authentication required). Exceptions: (1) the ticket audit log
   sub-resource (`/audit-log`) requires authentication — see
-  `docs/features/tickets/ticket-audit-log.md`
+  `docs/features/tickets/ticket-audit-log.md`; (2) confidential tickets
+  are invisible to unauthorized and unauthenticated users — see
+  `docs/features/tickets/confidential-tickets.md`
 - Creating tickets, assigning, changing status, associating CVE,
-  managing packages, setting severity override: Vulnerability Analyst role
+  managing packages, setting severity override, setting confidentiality:
+  Vulnerability Analyst role
 - Removing a CVE from a ticket: Admin role
 - Soft-deleting and restoring tickets: Admin role
 - See `docs/features/identity/rbac.md` for the full permission model
@@ -1151,3 +1160,5 @@ table:
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
+- `docs/features/tickets/confidential-tickets.md` — confidential tickets
+  (embargo), access grants, confidentiality filtering

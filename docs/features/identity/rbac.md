@@ -37,6 +37,8 @@ Operates the triage and assessment workflow:
 - Change track and product affectedness status
 - Add, edit, and delete SUSE CVSS assessments
 - Add, edit, and delete ticket references
+- Set ticket confidentiality (see `docs/features/tickets/confidential-tickets.md`)
+- Manage access grants on confidential tickets
 
 > **Design note — VA role granularity**: the VA role intentionally bundles
 > triage, assessment, and package management into a single role. Sentinel
@@ -76,6 +78,8 @@ capabilities must hold both roles.
 | Change track/product status      | No    | Yes | No            | No     |
 | Add/edit/delete SUSE CVSS        | No    | Yes | No            | No     |
 | Add/edit/delete references       | No    | Yes | No            | No     |
+| Set ticket confidentiality       | No    | Yes | No            | No     |
+| Manage access grants             | No    | Yes | No            | No     |
 
 > **Assignment target constraint**: the "Assign/reassign ticket" permission
 > allows any VA to assign a ticket, but the target user MUST also hold the
@@ -172,13 +176,17 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/tickets` | Vulnerability Analyst | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | Vulnerability Analyst | [tickets](../tickets/tickets.md#associate-cve) |
 | DELETE | `/api/v1/tickets/{ticket_id}/cve` | Admin | [tickets](../tickets/tickets.md#remove-cve-from-ticket-admin-only) |
-| PATCH | `/api/v1/tickets/{ticket_id}/severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md#update-severity-override) |
+| POST | `/api/v1/tickets/{ticket_id}/set-severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-severity-override) |
 | POST | `/api/v1/tickets/{ticket_id}/assign` | Vulnerability Analyst | [tickets](../tickets/tickets.md#assign-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/ignore` | Vulnerability Analyst | [tickets](../tickets/tickets.md#ignore-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#mark-ticket-as-duplicate) |
 | POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revert-duplicate-status) |
 | DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md#soft-delete-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/restore` | Admin | [tickets](../tickets/tickets.md#restore-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/set-confidentiality` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#set-confidentiality) |
+| GET | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#list-access-grants) |
+| POST | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#grant-access) |
+| DELETE | `/api/v1/tickets/{ticket_id}/access/{user}` | Vulnerability Analyst | [confidential-tickets](../tickets/confidential-tickets.md#revoke-access) |
 
 ### Ticket Packages
 

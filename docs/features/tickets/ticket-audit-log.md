@@ -51,6 +51,9 @@ fields populated according to this table:
 | `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note | `NULL` |
 | `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note | `NULL` |
 | `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note | `NULL` |
+| `confidentiality_changed` | Ticket `is_confidential` flag toggled | VA user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
+| `access_grant_added` | VA manually granted a user explicit access to a confidential ticket | VA user | `NULL` | Target username | `NULL` | `NULL` |
+| `access_grant_removed` | VA manually revoked a user's explicit access to a confidential ticket | VA user | Target username | `NULL` | `NULL` | `NULL` |
 
 **Rules**:
 

@@ -92,7 +92,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_CONFIDENTIAL` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
@@ -248,15 +248,31 @@ Some shared dependencies apply to a specific resource group rather than to
 all endpoints. Like global responses, scoped responses are not repeated in
 per-endpoint error tables.
 
-#### Ticket Soft-Delete Protection
+#### Ticket Accessibility Check
 
 All endpoints under `/api/v1/tickets/{ticket_id}/` — including the ticket
-detail endpoint itself — are subject to a centralized soft-delete check
+detail endpoint itself — are subject to a centralized accessibility check
 enforced by a router-level shared dependency (`require_accessible_ticket`).
+
+The dependency evaluates conditions in this exact order:
+
+1. **Existence**: if the ticket does not exist, return `404 TICKET_NOT_FOUND`
+2. **Confidentiality**: if the ticket is confidential
+   (`is_confidential=TRUE`) and the caller does not satisfy any
+   authorization rule from `docs/features/tickets/confidential-tickets.md`
+   (Section 4), return `404 TICKET_NOT_FOUND` — indistinguishable from a
+   non-existent ticket
+3. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and the
+   caller does not hold the Admin role, return `410 TICKET_DELETED`
 
 | Status | Code              | Condition                                            |
 |--------|-------------------|------------------------------------------------------|
+| 404    | `TICKET_NOT_FOUND`| Ticket does not exist, or is confidential and caller is not authorized |
 | 410    | `TICKET_DELETED`  | Ticket is soft-deleted and caller does not hold the Admin role |
+
+The evaluation order is security-critical: returning `410` before
+checking confidentiality would confirm the existence of a confidential
+ticket to an unauthorized user.
 
 When a ticket has `deleted_at IS NOT NULL`, Admin callers proceed normally
 while all other callers receive 410 Gone. This applies uniformly to read
@@ -313,23 +329,24 @@ relationships.
 
 When a response payload includes a reference to a user (e.g., `actor`,
 `assignee`, `target_user`, `created_by`), it is serialized as an object
-with `id`, `username`, and `full_name` — populated via JOIN to the
-**current** User record. These values reflect the user's current profile
-data, not a historical snapshot at the time of the event or action.
+with `id`, `username`, `full_name`, and `active` — populated via JOIN to
+the **current** User record. These values reflect the user's current
+profile data, not a historical snapshot at the time of the event or
+action.
 
 Historical values, where relevant, are preserved in dedicated fields of
 the owning entity (e.g., `old_value` / `new_value` in audit events).
-The `id` (UUID) is the stable, immutable identifier; `username` and
-`full_name` are display conveniences that may change over time (e.g.,
-via AD sync).
+The `id` (UUID) is the stable, immutable identifier; `username`,
+`full_name`, and `active` are display conveniences that may change over
+time (e.g., via AD sync or deactivation).
 
 Users are never physically deleted from the database — all foreign keys
 referencing the User table use `ON DELETE RESTRICT`. Deactivated users
 (`active=false`) are resolved normally, with all fields (`id`, `username`,
-`full_name`) populated from current data. Consequently, a user reference
-object is never null or partial when `user_id` is non-null — if a `user_id`
-foreign key is present, the referenced user record is guaranteed to exist
-and the serialized object will always be complete.
+`full_name`, `active`) populated from current data. Consequently, a user
+reference object is never null or partial when `user_id` is non-null — if
+a `user_id` foreign key is present, the referenced user record is
+guaranteed to exist and the serialized object will always be complete.
 
 This convention applies to:
 
@@ -353,8 +370,8 @@ Two patterns exist for modifying resources:
 **PATCH — field update without significant side-effects:**
 
 ```
-PATCH /api/v1/tickets/{id}
-Body: {"severity": "high"}
+PATCH /api/v1/fetchers/{name}/config
+Body: {"enabled": true}
 ```
 
 Used when the operation is a direct attribute change with no additional
