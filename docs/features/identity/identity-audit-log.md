@@ -144,7 +144,8 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
       "target_user": {
         "id": "uuid",
         "username": "jdoe",
-        "full_name": "John Doe"
+        "full_name": "John Doe",
+        "active": true
       }
     }
   ],

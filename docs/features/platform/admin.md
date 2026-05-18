@@ -200,7 +200,8 @@ always displayed in reverse chronological order).
       "actor": {
         "id": "uuid",
         "username": "asmith",
-        "full_name": "Alice Smith"
+        "full_name": "Alice Smith",
+        "active": true
       }
     }
   ],

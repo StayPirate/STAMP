@@ -279,7 +279,8 @@ run first). Follows the project-wide default sorting convention.
 
 **Notes**:
 - `error_detail` and `error_traceback` are NOT included in list responses
-- `triggered_by_user` is an object `{"id": "uuid", "username": "admin1"}`
+- `triggered_by_user` is a User Reference Object
+  `{"id": "uuid", "username": "admin1", "full_name": "Alice Smith", "active": true}`
   when `triggered_by` is `manual`, otherwise `null`
 
 **Permissions**: publicly accessible (no authentication required).
@@ -651,7 +652,8 @@ entry first). Follows the project-wide default sorting convention.
       "actor": {
         "id": "uuid",
         "username": "admin1",
-        "full_name": "Alice Smith"
+        "full_name": "Alice Smith",
+        "active": true
       },
       "old_value": "0 */6 * * *",
       "new_value": "0 */4 * * *",
@@ -665,7 +667,8 @@ entry first). Follows the project-wide default sorting convention.
       "actor": {
         "id": "uuid",
         "username": "admin1",
-        "full_name": "Alice Smith"
+        "full_name": "Alice Smith",
+        "active": true
       },
       "old_value": null,
       "new_value": null,

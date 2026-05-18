@@ -156,7 +156,8 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
       "actor": {
         "id": "uuid",
         "username": "jdoe",
-        "full_name": "John Doe"
+        "full_name": "John Doe",
+        "active": true
       }
     },
     {

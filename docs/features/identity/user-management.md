@@ -698,6 +698,7 @@ envelope:
       "id": "uuid",
       "username": "string",
       "full_name": "string",
+      "active": true,
       "email": "string"
     } | null,
     "roles": [
