@@ -396,15 +396,49 @@ determining a ticket's status based on its current data.
 3. The function operates within the **same database transaction** as the
    triggering operation (atomicity guarantee)
 
+#### Inactive Assignee Sanitization
+
+After determining the ticket's "natural" status via gate evaluation, if
+the resulting status is non-terminal (New, Analysis, or Analyzed) and
+`assignee_id` points to an inactive user, `evaluate_ticket_status`
+performs the following steps:
+
+1. Set `assignee_id = NULL`
+2. Create a `TicketAuditEvent` with `event_type = assignee_changed`
+   (system-initiated, `user_id = NULL`,
+   `detail = {"reason": "assignee_deactivated"}`)
+3. Add the ticket to the revisit queue (to be defined in a future
+   specification)
+4. Re-evaluate the gates — since the Analysis gate
+   (`assignee_id IS NOT NULL`) is no longer satisfied, the ticket will
+   regress accordingly (e.g., Analysis → New, Analyzed → New)
+
+If the resulting status is terminal (Resolved, Ignored, Duplicated): no
+assignee check is performed — the ticket is closed and does not need an
+active assignee.
+
+This mechanism ensures that tickets do not remain assigned to users who
+can no longer act on them. It complements the bulk unassignment
+performed by `deactivate_user` (see
+[user-service.md](../identity/user-service.md#deactivate_user)) by
+catching any tickets that were missed or that entered the gate zone
+after the deactivation event.
+
 #### Gates
 
 The gate conditions for each status level:
 
 - **Analysis** (minimum gate): `assignee_id IS NOT NULL` — a ticket with
   an assignee cannot remain in New status. This is a **promotional-only**
-  gate: assigning a VA promotes New → Analysis, but the absence of an
-  assignee never causes regression (unassignment is not a supported
-  operation — see [Assign Ticket](#assign-ticket))
+  gate under normal operation: assigning a VA promotes New → Analysis,
+  and user-initiated unassignment is not supported via the API (see
+  [Assign Ticket](#assign-ticket)). However, system-initiated
+  unassignment may occur as a side effect of user deactivation (see
+  [user-service.md](../identity/user-service.md#deactivate_user)) or
+  via the [Inactive Assignee Sanitization](#inactive-assignee-sanitization)
+  step within `evaluate_ticket_status` itself — in either case, the
+  resulting `assignee_id = NULL` causes the gate to fail and the ticket
+  regresses to New
 - **Analyzed**: all existing package/CVSS/product gates (unchanged)
 - **Resolved**: all existing resolution gates (unchanged)
 
@@ -674,6 +708,15 @@ Request. This applies to the
 explicit assignment endpoint (`POST /assign`); auto-assignment is
 inherently safe because only VAs can perform modifying operations on
 tickets.
+
+**System-initiated unassignment**: in addition to the bulk unassignment
+performed by `deactivate_user` (see
+[user-service.md](../identity/user-service.md#deactivate_user)),
+`evaluate_ticket_status` also performs system-initiated unassignment
+when it encounters an inactive assignee on a non-terminal ticket (see
+[Inactive Assignee Sanitization](#inactive-assignee-sanitization)).
+This ensures that even if a ticket enters the gate zone or is evaluated
+after the deactivation event, the stale assignee is cleared.
 
 ### Auto-Assignment on Unassigned Tickets
 
@@ -1419,10 +1462,13 @@ Request body:
   target must hold the `vulnerability_analyst` role.
 
 > **No unassignment by design**: the `user_id` field is required and
-> cannot be null. Once a ticket has an assignee, it can only be
-> **reassigned** to another active VA — never unassigned. This enforces
-> explicit handover and ensures the assignee gate (which promotes
-> New → Analysis) is never reversed.
+> cannot be null. Via the API, a ticket can only be **reassigned** to
+> another active VA — never unassigned. This enforces explicit handover.
+> System-initiated unassignment may occur as a side effect of user
+> deactivation (see
+> [user-service.md](../identity/user-service.md#deactivate_user)); the
+> promotional-only assignee gate ensures this never causes status
+> regression.
 
 Response: the updated ticket object wrapped in the standard `{"data": ...}`
 envelope (200 OK).

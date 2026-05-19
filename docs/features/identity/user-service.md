@@ -478,14 +478,16 @@ in this specific order):
    session service contract.
 3. Set `User.active = false`
 4. Unassign open tickets: for each ticket where `assignee_id` points to
-   the deactivated user and the ticket is in active status (see
-   `docs/features/tickets/tickets.md` § Status Categories: New,
-   Analysis, Analyzed), set `assignee_id = NULL`. Tickets in inactive
-   statuses (Resolved, Ignored, Duplicated) retain their current
-   assignee. No active ticket should retain an assignee pointing to an
-   inactive user — ticket history preserves the previous assignment via
-   the TicketAuditEvent record. No attempt is made to reassign to the manager
-   or any other user.
+   the deactivated user, `deleted_at IS NULL`, and the ticket is in
+   active status (New, Analysis, or Analyzed — see
+   `docs/features/tickets/tickets.md` § Status Categories), set
+   `assignee_id = NULL`. Each de-assigned ticket is added to the revisit
+   queue for follow-up reassignment (see future specification). Tickets
+   in inactive statuses (Resolved, Ignored, Duplicated) retain their
+   current assignee. No active ticket should retain an assignee pointing
+   to an inactive user — ticket history preserves the previous assignment
+   via the TicketAuditEvent record. No attempt is made to reassign to
+   the manager or any other user.
    Create a `TicketAuditEvent` of type
    `assignment` with:
    - `user_id = NULL` (system action)

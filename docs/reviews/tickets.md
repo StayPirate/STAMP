@@ -60,10 +60,7 @@ For tickets in the gate zone, the mutability guard passes (Ignored is not in the
 
 ### TKT-GAP-12 — Deactivation-triggered unassignment contradicts "unassignment not supported" (Medium)
 
-**Category**: Contradictions
-**Status**: OPEN
-
-The spec states "unassignment is not a supported operation" but the user-service deactivation flow can set assignee_id to NULL. The promotional-only gate in evaluate_ticket_status handles this correctly (ticket stays in current status, just loses assignee), but the absolute statement about unassignment is misleading. The spec should acknowledge system-initiated unassignment as a distinct case.
+**Status**: RESOLVED — Clarified distinction between user-initiated unassignment (not supported via API) and system-initiated unassignment (deactivation side effect); added revisit queue mention in user-service.md deactivation flow; added cross-references (2026-05-19)
 
 ### TKT-GAP-13 — evaluate_ticket_status behavior on New tickets undocumented (Low)
 
@@ -81,10 +78,7 @@ If a VA dissociates a CVE from a ticket while a background on-demand fetch for t
 
 ### TKT-GAP-15 — Stale grant cleanup uses updated_at which changes on any ticket modification (Medium)
 
-**Category**: Edge Cases
-**Status**: OPEN
-
-The stale access grant cleanup task uses the ticket's updated_at timestamp to determine staleness. However, updated_at changes on any ticket modification (status change, reassignment, etc.), not just when confidentiality is toggled off. A non-confidential ticket that keeps being modified will never have its grants cleaned up because updated_at keeps refreshing. The cleanup condition should use a dedicated timestamp (e.g., confidentiality_changed_at) or filter on is_confidential = false explicitly.
+**Status**: RESOLVED — Accepted risk: the cleanup task is best-effort by design; delayed grant removal for actively-modified tickets is acceptable and does not warrant additional query complexity (audit event join) or schema changes (2026-05-19)
 
 ### TKT-GAP-16 — Sequence ID gaps not documented (Low)
 
@@ -95,17 +89,11 @@ Ticket sequence IDs use a PostgreSQL sequence, which produces gaps on rolled-bac
 
 ### TKT-GAP-17 — cve_data_pending lifecycle undefined (Medium)
 
-**Category**: Missing specification
-**Status**: OPEN
-
-The cve_data_pending flag is set to true when a ticket is created with a CVE-ID that requires on-demand fetch, but the spec does not define when or how it transitions to false. Specifically: does the background fetch task set it to false on success? What happens if all fetch attempts fail permanently? Is there a maximum retry count or timeout after which the flag is cleared?
+**Status**: RESOLVED — Deferred: this finding belongs to the cve-tracking spec (currently disabled/WIP), not to the tickets spec; will be addressed when cve-tracking is defined (2026-05-19)
 
 ### TKT-GAP-18 — Case B package addition can regress Resolved tickets (Medium)
 
-**Category**: Edge Cases
-**Status**: OPEN
-
-When a package is added to a Resolved ticket via Case B (automatic addition from CVE CPE mapping), the new TicketPackageTrack records are created with status ANALYSIS. This triggers evaluate_ticket_status, which will regress the ticket from Resolved back to Analysis (or New). While this is correct per the status evaluation rules, the spec does not explicitly acknowledge this regression as intentional behavior for Resolved tickets.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes; the Automatic Status Re-evaluation section (line 363) explicitly documents Resolved → Analysis regression when a new package is added with tracks in ANALYSIS (2026-05-19)
 
 ### TKT-GAP-19 — Assignee preservation on Ignore transition not explicitly stated (Low)
 
@@ -174,10 +162,7 @@ The tickets spec defines a duplicate_target_changed audit event type (emitted du
 
 ### TKT-DES-04 — Stale access grant cleanup misses soft-deleted confidential tickets permanently (Medium)
 
-**Category**: Edge Cases
-**Status**: OPEN
-
-The spec states: "Soft-deleted confidential ticket: is_confidential is still TRUE, grants preserved. If the ticket is later restored, all grants are intact. To clean them, an Admin must first restore the ticket, then a VA removes confidentiality, and the cleanup runs 14 days later." If a confidential ticket is soft-deleted and never restored, its access grants persist indefinitely. Over years, this constitutes unbounded growth for abandoned tickets. Consider adding a secondary condition: also delete grants for tickets where deleted_at is older than 90 days.
+**Status**: RESOLVED — Accepted risk: the cleanup task is best-effort by design; unbounded grant growth for permanently soft-deleted confidential tickets is acceptable given the low volume per ticket and the administrative restore path remains available (2026-05-19)
 
 ### TKT-DES-05 — Orphan cleanup cascade calls evaluate_ticket_status multiple times per transaction (Low)
 
@@ -188,10 +173,7 @@ The spec shows: "soft_delete_ticket_package_product calls evaluate_ticket_status
 
 ### TKT-DES-06 — evaluate_ticket_status can regress Resolved to New on restore (Medium)
 
-**Category**: Edge Cases
-**Status**: OPEN
-
-When a soft-deleted ticket is restored, evaluate_ticket_status is called for status reconciliation. If all packages were removed while the ticket was deleted (or tracks/products changed), the evaluation could regress a previously Resolved ticket to New. The spec should document whether this regression is intentional or whether restore should preserve the pre-deletion status as a floor.
+**Status**: RESOLVED — Auto-resolved: the premise (packages removed while soft-deleted) is impossible under the soft-delete invisibility rule (lines 925-929); regression on restore is explicitly documented as intentional (lines 935-947); the inactive assignee scenario is now covered by the new Inactive Assignee Sanitization step in evaluate_ticket_status (2026-05-19)
 
 ### TKT-DES-07 — Ignore from Analyzed not supported but may be needed for workflow (Medium)
 
