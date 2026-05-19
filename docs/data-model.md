@@ -98,7 +98,6 @@ erDiagram
         BOOLEAN is_confidential "NOT NULL, DEFAULT FALSE"
         UUID assignee_id FK "nullable"
         UUID duplicate_of_id FK "self-ref, nullable"
-        ENUM previous_status "nullable"
         TIMESTAMPTZ deleted_at "nullable"
     }
     TicketAccessGrant {
@@ -737,7 +736,6 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the canonical target ticket when status is Duplicated. May transiently reference a Duplicated ticket if a cascade was interrupted; the `resolve_canonical_target` function handles resolution at read time. Hop limit: 50 |
-| previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/tickets.md` (Confidential Tickets) |
@@ -767,8 +765,8 @@ Summary:
 - Resolved -> Analysis (automatic: both resolved and analyzed gates
   broken)
 - Any except Duplicated -> Duplicated (manual, reversible)
-- Duplicated -> previous_status (manual: revert, reassigns to the
-  reverting VA)
+- Duplicated -> (evaluated status) (manual: revert, `evaluate_ticket_status`
+  determines target based on current gates; reassigns to the reverting VA)
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
 are handled automatically by the `ticket_mutations` module — see

@@ -284,7 +284,7 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by VA or system action) |
 | Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
 | Any        | Duplicated | VA marks ticket as duplicate                           | Manual             | Any VA                                 |
-| Duplicated | (previous) | VA reverts duplicate status                            | Manual             | Any VA (becomes new assignee)          |
+| Duplicated | (evaluated) | VA reverts duplicate status; `evaluate_ticket_status` determines target | Manual | Any VA (becomes new assignee) |
 | Ignored    | Analysis   | VA assigns themselves to the ticket                    | Manual             | Any VA (becomes assignee)              |
 | Ignored    | Analysis   | System reopens (e.g., NVD rejection revert) and last assignee is active | Automatic | System                                 |
 | Ignored    | New        | System reopens and no previous assignee or previous assignee is deactivated | Automatic | System                                 |
@@ -407,10 +407,16 @@ The gate conditions for each status level:
 
 #### Scope
 
-The function evaluates tickets in `New`, `Analysis`, `Analyzed`, or
-`Resolved` status. Tickets in `Ignored` or `Duplicated` are excluded —
-these statuses are governed by explicit user actions or specific system
-events (e.g., NVD rejection), not by gate evaluation.
+The function evaluates tickets in `New`, `Analysis`, `Analyzed`,
+`Resolved`, or `Duplicated` status. Tickets in `Ignored` are excluded —
+Ignored is governed by explicit user actions or specific system events
+(e.g., NVD rejection), not by gate evaluation.
+
+For tickets in `Duplicated` status, `evaluate_ticket_status` is only
+called during the revert-duplicate operation (since all other mutations
+are blocked by the 409 immutability rule). It determines the correct
+post-revert status based on current gate conditions, without needing a
+stored `previous_status`.
 
 #### Ticket Mutations Module
 
@@ -499,7 +505,7 @@ rolls back.
 
 The same rule applies to **any service operation that modifies the
 `Ticket` row** (any column: `status`, `assignee_id`, `cve_id`,
-`duplicate_of_id`, `previous_status`, `is_confidential`, `deleted_at`)
+`duplicate_of_id`, `is_confidential`, `deleted_at`)
 **or that calls
 `evaluate_ticket_status`**, even if the operation does not go through
 the `ticket_mutations` module. This prevents non-gate operations
@@ -730,7 +736,7 @@ Steps:
 5. Acquire `FOR UPDATE` on the ticket being modified (single ticket —
    per the single-ticket-scope rule).
 6. Set `duplicate_of_id = canonical_target_id`.
-7. Set `status = Duplicated`, store `previous_status`.
+7. Set `status = Duplicated`.
 8. If the ticket had no assignee (`assignee_id = NULL`), the acting VA
    becomes the assignee (see
    [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
@@ -783,19 +789,17 @@ without cascade completion because:
 When reverting a ticket from Duplicated status:
 
 - `duplicate_of_id` is cleared (set to NULL).
-- `status` is restored to `previous_status`.
-- `previous_status` is cleared.
 - The ticket is reassigned to the VA who performed the revert.
-- After restoring the status, `evaluate_ticket_status` is called to
-  reconcile the restored status with current gate conditions. If the
-  gates for `previous_status` are no longer met (e.g., a CVSS
-  assessment was deleted while the ticket was Duplicated), the ticket
-  is automatically regressed to the appropriate status (Analysis or
-  Analyzed). Conversely, if `previous_status` was `New`, the assignee
-  gate (`assignee_id IS NOT NULL` — set by the reassignment step above)
-  promotes the ticket to `Analysis` automatically. This may produce two
-  `TicketAuditEvent` records in the same transaction: `duplicate_removed`
-  (user action) followed by `status_change` (system action).
+- `evaluate_ticket_status` is called to determine the correct status
+  based on current gate conditions. Since the revert assigns a new VA
+  (satisfying the assignee gate), the typical outcomes are:
+  - All Resolved gates met → Resolved
+  - All Analyzed gates met → Analyzed
+  - Assignee present but not all Analyzed gates met → Analysis
+  This may produce two `TicketAuditEvent` records in the same
+  transaction: `duplicate_removed` (user action) followed by
+  `status_change` (system action if the evaluated status differs from
+  Duplicated).
 - Create `TicketAuditEvent` (`duplicate_removed`).
 
 The revert operation does NOT need to know or care about the canonical
@@ -1626,7 +1630,6 @@ table:
 | assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |
 | severity_override | ENUM        | nullable                     | Manual severity (Critical, High, Medium, Low, None). Used when `cve_id IS NULL` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
-| previous_status   | ENUM        | nullable                     | Status before Duplicated |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See [Confidential Tickets](#confidential-tickets) |
