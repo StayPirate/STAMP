@@ -177,10 +177,7 @@ The spec shows: "soft_delete_ticket_package_product calls evaluate_ticket_status
 
 ### TKT-DES-07 — Ignore from Analyzed not supported but may be needed for workflow (Medium)
 
-**Category**: Workflow gaps
-**Status**: OPEN
-
-The Ignore transition is only specified from New and Analysis statuses. A ticket that has reached Analyzed status cannot be ignored, even if the VA determines the CVE is not relevant after full analysis. This may force VAs to work around the limitation. The spec should either add the Analyzed to Ignored transition or document the rationale for excluding it.
+**Status**: RESOLVED — Design rationale documented: Analyzed→Ignored excluded because removing packages triggers automatic regression to Analysis via gate evaluation, allowing the existing Analysis→Ignored transition (2026-05-19)
 
 ### TKT-DES-08 — Mark-as-duplicate target accessibility and confidentiality (Medium)
 

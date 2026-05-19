@@ -253,8 +253,19 @@ layer.
 | Analysis   | Assigned to an VA who is actively analyzing — filling in affectedness data. |
 | Analyzed   | All required data has been filled in. Ready for updates to be prepared. |
 | Resolved   | Security updates have been released for all affected packages across all products. |
-| Ignored    | The issue does not require action. Can only be set from New or Analysis. |
+| Ignored    | The issue does not require action. Can only be set from New or Analysis. See design note below. |
 | Duplicated | Duplicate of another ticket. Links to the original. Reversible. |
+
+**Design note — why Analyzed → Ignored is intentionally excluded**: A ticket
+in Analyzed status has had all its packages and tracks fully evaluated. If a VA
+later determines the CVE does not require action, the natural workflow is to
+remove (soft-delete) the remaining packages. This triggers the orphan cleanup
+cascade, which calls `evaluate_ticket_status()` — the "at least one package"
+gate condition (Analyzed gate #1) fails and the ticket automatically regresses
+to Analysis. At that point the VA can use the existing Analysis → Ignored
+transition. Adding a direct Analyzed → Ignored transition would bypass the
+package cleanup step, leaving stale affectedness data attached to an Ignored
+ticket. The regression path ensures a clean state.
 
 ### Status Transition Diagram
 
