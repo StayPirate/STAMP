@@ -179,6 +179,7 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/tickets/{ticket_id}/set-severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-severity-override) |
 | POST | `/api/v1/tickets/{ticket_id}/assign` | Vulnerability Analyst | [tickets](../tickets/tickets.md#assign-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/ignore` | Vulnerability Analyst | [tickets](../tickets/tickets.md#ignore-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/reopen` | Vulnerability Analyst | [tickets](../tickets/tickets.md#reopen-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#mark-ticket-as-duplicate) |
 | POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revert-duplicate-status) |
 | DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md#soft-delete-ticket) |

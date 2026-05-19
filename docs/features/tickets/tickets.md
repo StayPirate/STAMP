@@ -266,8 +266,8 @@ New ──→ Analysis ──────────→ Analyzed ────�
  ├──→ Ignored (from New or Analysis only)
  │         ◄── Ignored → Analysis (VA assigns) or Ignored → New (system reopen)
  │
- └──→ Duplicated (from any state, reversible)
-      (also Analysis, Analyzed, Resolved, Ignored → Duplicated)
+ └──→ Duplicated (from any gate-zone state, reversible)
+      (New, Analysis, Analyzed, Resolved → Duplicated)
 ```
 
 ### Status Transitions
@@ -283,7 +283,7 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Analyzed   | Analysis   | "Analyzed" gate conditions no longer met               | Automatic          | System (triggered by VA or system action) |
 | Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by VA or system action) |
 | Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
-| Any        | Duplicated | VA marks ticket as duplicate                           | Manual             | Any VA                                 |
+| New, Analysis, Analyzed, Resolved | Duplicated | VA marks ticket as duplicate | Manual | Any VA |
 | Duplicated | (evaluated) | VA reverts duplicate status; `_reenter_gate_zone` determines target | Manual | Any VA (becomes new assignee) |
 | Ignored    | (evaluated) | VA assigns themselves or system reopens (e.g., NVD rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | VA or System |
 
@@ -743,14 +743,16 @@ for:
 
 #### Mark-as-Duplicate Operation
 
-A ticket can be marked as duplicate from any status **except
-Duplicated**. A ticket already in Duplicated status MUST be reverted
-first (the Duplicated immutability rule applies — the API returns 409).
+A ticket can be marked as duplicate from any **gate-zone** status (New,
+Analysis, Analyzed, Resolved). Tickets in the manual zone (Ignored or
+Duplicated) are blocked by the `require_ticket_mutable` guard (409
+`TICKET_NOT_MUTABLE`) — an Ignored ticket must be reopened first, and a
+Duplicated ticket must be reverted first.
 
 Steps:
 
-1. Verify the ticket is not in `Duplicated` status (reject with 409 if
-   it is).
+1. Verify the ticket is not in `Ignored` or `Duplicated` status (the
+   `require_ticket_mutable` guard handles this — 409 if violated).
 2. Resolve the requested target to its canonical target using the
    resolver.
 3. If the resolved canonical target has `deleted_at IS NOT NULL`, reject
@@ -986,6 +988,7 @@ All other modifications on Ignored tickets are blocked — mutation
 endpoints return 409 `TICKET_NOT_MUTABLE` (same guard as Duplicated).
 This prevents gate-relevant data from accumulating while the ticket is
 in the manual zone, which would cause unexpected status jumps on reopen.
+See [Mutability Guard](#mutability-guard) for enforcement details.
 
 ### Modifications in Inactive Statuses
 
@@ -1024,10 +1027,11 @@ async def require_ticket_mutable(ticket: Ticket = Depends(get_ticket)):
   (`POST .../reopen`, `POST .../revert-duplicate`), and soft-delete/restore
   (which have their own admin-only guard)
 
-**Relationship with `require_ticket_not_deleted`**: the soft-delete guard
-is a router-level dependency (applies to all operations on a single
-ticket, including reads). `require_ticket_mutable` is per-endpoint
-(applies only to mutations). A ticket can be both not-deleted and
+**Relationship with `require_accessible_ticket`**: the accessibility
+check is a router-level dependency (applies to all operations on a
+single ticket, including reads — see `docs/api-spec.md`, Ticket
+Accessibility Check). `require_ticket_mutable` is per-endpoint
+(applies only to mutations). A ticket can be both accessible and
 not-mutable (e.g., an active Duplicated ticket). The two guards are
 independent checks evaluated in sequence.
 
@@ -1483,6 +1487,33 @@ Error responses:
 
 Requires the Vulnerability Analyst role.
 
+### Reopen Ticket
+
+```
+POST /api/v1/tickets/{ticket_id}/reopen
+```
+
+Reopens an Ignored ticket. The calling VA becomes the new assignee. After
+assignment, `_reenter_gate_zone()` determines the correct gate-zone
+status (typically Analysis, since an assignee is now present). See
+[Ignored](#ignored) for the full reopen behavior and audit trail.
+
+No request body is required.
+
+Response: the updated ticket object wrapped in the standard `{"data": ...}`
+envelope (200 OK).
+
+Error responses:
+
+- 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Ignored
+  status
+
+Requires the Vulnerability Analyst role.
+
+This endpoint is **not** subject to the `require_ticket_mutable` guard
+(it is the dedicated exit from the Ignored manual-zone status).
+
 ### Revert Duplicate Status
 
 ```
@@ -1571,7 +1602,6 @@ Sets the confidentiality status of a ticket.
 |--------|------|-----------|
 | 200    | -    | Success (or already in requested state) |
 | 404    | `TICKET_NOT_FOUND` | Ticket not found |
-| 409    | `TICKET_INVALID_TRANSITION` | Ticket is in Duplicated status (revert first) |
 
 Requires the Vulnerability Analyst role.
 

@@ -138,10 +138,15 @@ erDiagram
         UUID created_by FK "nullable"
     }
 
-    TicketPackageTrack {
+    TicketPackage {
         UUID id PK
         UUID ticket_id FK
         VARCHAR package_name
+    }
+
+    TicketPackageTrack {
+        UUID id PK
+        UUID ticket_package_id FK
         VARCHAR reference
         ENUM status
     }
@@ -247,10 +252,11 @@ erDiagram
 
     Ticket ||--o{ TicketAuditEvent : "has events"
     Ticket ||--o{ TicketReference : "has references"
-    Ticket ||--o{ TicketPackageTrack : "has tracks"
+    Ticket ||--o{ TicketPackage : "has packages"
     Ticket }o--o| User : "assigned to"
     Ticket }o--o| Ticket : "duplicate of"
 
+    TicketPackage ||--o{ TicketPackageTrack : "has tracks"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
     TicketPackageProduct }o--|| Product : "targets"
 
@@ -272,7 +278,7 @@ erDiagram
 | Group | Tables | Purpose |
 |-------|--------|---------|
 | **CVE Domain** | CVE, CVESource, CVECVSSAssessment | Vulnerability data from external sources |
-| **Ticket Domain** | Ticket, TicketAuditEvent, TicketReference, TicketPackageTrack, TicketPackageProduct | Security workflow and audit trail |
+| **Ticket Domain** | Ticket, TicketAuditEvent, TicketReference, TicketPackage, TicketPackageTrack, TicketPackageProduct | Security workflow and audit trail |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
 | **Identity Domain** | User, UserRole, RoleMapping | Users, roles, and AD group mappings |
 | **Package Domain** | PackageBugowner, PackageBugownerMember | IBS package maintainer cache |
@@ -370,7 +376,7 @@ flowchart LR
     subgraph release["Release Detection"]
         direction TB
         RT["Real-time:<br/>IBS RabbitMQ<br/>Consumer"]
-        PERIODIC["Periodic:<br/>check_codestream_releases<br/>(daily 02:00 UTC)"]
+        PERIODIC["Periodic:<br/>check_ibs_track_releases<br/>(daily 02:00 UTC)"]
         MD5["Shared MD5 cache<br/>(CodestreamPackageChecksum)"]
         DIFF["IBS diff analysis<br/>(CVE-ID in changes)"]
         CS_REL["Codestream → FIXED<br/>(delivery_status = RELEASED)"]
@@ -455,9 +461,9 @@ flowchart TD
 - If CVE is associated: SUSE CVSS assessment exists
 
 **Resolved gate**: all `TicketPackageTrack` and `TicketPackageProduct`
-records are in a final status (`AFFECTED`, `NOT_AFFECTED`, `FIXED`, or
-`WONT_FIX`) — tracks/products are soft-deleted rather than using a
-separate `IGNORED` status, and `RELEASED` is represented by `FIXED` with
+records are in a final status (`NOT_AFFECTED`, `FIXED`, or `WONT_FIX`) —
+tracks/products are soft-deleted rather than using a separate `IGNORED`
+status, and `RELEASED` is represented by `FIXED` with
 `delivery_status = RELEASED`.
 
 ---
