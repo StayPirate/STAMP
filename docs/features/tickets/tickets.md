@@ -284,10 +284,8 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by VA or system action) |
 | Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
 | Any        | Duplicated | VA marks ticket as duplicate                           | Manual             | Any VA                                 |
-| Duplicated | (evaluated) | VA reverts duplicate status; `evaluate_ticket_status` determines target | Manual | Any VA (becomes new assignee) |
-| Ignored    | Analysis   | VA assigns themselves to the ticket                    | Manual             | Any VA (becomes assignee)              |
-| Ignored    | Analysis   | System reopens (e.g., NVD rejection revert) and last assignee is active | Automatic | System                                 |
-| Ignored    | New        | System reopens and no previous assignee or previous assignee is deactivated | Automatic | System                                 |
+| Duplicated | (evaluated) | VA reverts duplicate status; `_reenter_gate_zone` determines target | Manual | Any VA (becomes new assignee) |
+| Ignored    | (evaluated) | VA assigns themselves or system reopens (e.g., NVD rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | VA or System |
 
 **Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned; instead, a notification is sent to the assignee for manual review. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
 
@@ -407,16 +405,20 @@ The gate conditions for each status level:
 
 #### Scope
 
-The function evaluates tickets in `New`, `Analysis`, `Analyzed`,
-`Resolved`, or `Duplicated` status. Tickets in `Ignored` are excluded —
-Ignored is governed by explicit user actions or specific system events
-(e.g., NVD rejection), not by gate evaluation.
+The ticket state machine has two zones:
 
-For tickets in `Duplicated` status, `evaluate_ticket_status` is only
-called during the revert-duplicate operation (since all other mutations
-are blocked by the 409 immutability rule). It determines the correct
-post-revert status based on current gate conditions, without needing a
-stored `previous_status`.
+- **Gate zone** (New, Analysis, Analyzed, Resolved): status is determined
+  automatically by `evaluate_ticket_status` based on gate conditions.
+- **Manual zone** (Ignored, Duplicated): status is set by explicit user
+  actions or specific system events. `evaluate_ticket_status` never
+  operates on tickets in the manual zone.
+
+To exit the manual zone, an explicit operation must call the private
+helper `_reenter_gate_zone()`, which sets `status = New` and then calls
+`evaluate_ticket_status`. This ensures the ticket re-enters the gate
+zone at the lowest rung and is immediately promoted to the correct
+gate-based status (Analysis, Analyzed, or Resolved) based on current
+conditions.
 
 #### Ticket Mutations Module
 
@@ -438,6 +440,18 @@ at the end of the operation, within the same database transaction.
 External services (CVSS sync, release detection, package tracking,
 API endpoints) MUST use these functions instead of modifying
 ticket-related models directly.
+
+The module also provides two **manual-zone exit functions** for
+transitioning tickets out of Ignored or Duplicated:
+
+- `reopen_from_ignored()` — sets assignee (if applicable), then calls
+  `_reenter_gate_zone()`
+- `revert_duplicate()` — clears `duplicate_of_id`, reassigns to the
+  reverting VA, then calls `_reenter_gate_zone()`
+
+Both delegate to the private helper `_reenter_gate_zone()`, which sets
+`status = New` and calls `evaluate_ticket_status`. The helper is never
+called directly by external code.
 
 **Relationship with `services/cvss.py`**: the CVSS-related functions in
 `ticket_mutations` (assessment creation, update, deletion) delegate
@@ -786,12 +800,14 @@ without cascade completion because:
 
 #### Revert-Duplicate Operation
 
-When reverting a ticket from Duplicated status:
+When reverting a ticket from Duplicated status
+(`ticket_mutations.revert_duplicate()`):
 
 - `duplicate_of_id` is cleared (set to NULL).
 - The ticket is reassigned to the VA who performed the revert.
-- `evaluate_ticket_status` is called to determine the correct status
-  based on current gate conditions. Since the revert assigns a new VA
+- `_reenter_gate_zone()` is called: sets `status = New`, then
+  `evaluate_ticket_status` determines the correct status based on
+  current gate conditions. Since the revert assigns a new VA
   (satisfying the assignee gate), the typical outcomes are:
   - All Resolved gates met → Resolved
   - All Analyzed gates met → Analyzed
@@ -799,7 +815,7 @@ When reverting a ticket from Duplicated status:
   This may produce two `TicketAuditEvent` records in the same
   transaction: `duplicate_removed` (user action) followed by
   `status_change` (system action if the evaluated status differs from
-  Duplicated).
+  New).
 - Create `TicketAuditEvent` (`duplicate_removed`).
 
 The revert operation does NOT need to know or care about the canonical
@@ -811,7 +827,8 @@ Scenario: `A → B → C` (A points to B, B points to C, cascade was
 interrupted so A was not flattened).
 
 If a VA reverts B (removes B from Duplicated status):
-- B.`duplicate_of_id` is cleared, B returns to its previous status.
+- B.`duplicate_of_id` is cleared, `_reenter_gate_zone` determines B's
+  new status based on current gate conditions.
 - A still points to B, but B is no longer Duplicated.
 - Therefore A.`duplicate_of_id` resolves to B directly (B is the
   canonical target now).
@@ -932,24 +949,23 @@ that soft-deleted tickets are excluded. At minimum:
 
 ### Ignored
 
-Ignored is a **conditionally terminal status** — most modifications are
-blocked, but two exit transitions are allowed:
+Ignored is a **manual-zone status** — `evaluate_ticket_status` never
+operates on Ignored tickets. Two exit transitions are allowed:
 
-1. **VA assigns themselves (manual):** Ignored → Analysis. The VA who
-   assigns themselves becomes the assignee. This allows recovery when a
-   ticket was marked as Ignored in error.
-2. **System reopens (automatic):** Ignored → Analysis if the last assignee
-   is still active, or Ignored → New if no previous assignee exists or
-   the previous assignee is deactivated. This handles cases like NVD
-   rejection reverts (see `docs/features/tickets/cve-tracking.md`,
-   "Rejection revert handling").
+1. **VA assigns themselves (manual):** the VA becomes the assignee.
+2. **System reopens (automatic):** the last active assignee is restored,
+   or no assignee is set if none exists or the previous one is
+   deactivated. This handles cases like NVD rejection reverts (see
+   `docs/features/tickets/cve-tracking.md`, "Rejection revert handling").
 
-Both transitions MUST go through the `ticket_mutations` module via a
-`reopen_from_ignored()` function that:
+Both transitions go through `ticket_mutations.reopen_from_ignored()`:
 1. Acquires `FOR UPDATE` on the ticket
 2. Verifies current status is Ignored
-3. Determines target status and assignee based on input
-4. Creates a `TicketAuditEvent` (`status_change` + `assignment_change`
+3. Sets assignee (if applicable)
+4. Calls `_reenter_gate_zone()` (sets `status = New`, then
+   `evaluate_ticket_status` promotes based on current gate conditions —
+   typically to Analysis if an assignee is present)
+5. Creates `TicketAuditEvent` (`status_change` + `assignment_change`
    if applicable)
 
 All other modifications on Ignored tickets remain blocked — adding
@@ -966,12 +982,14 @@ are discouraged:
 - **Resolved**: modifying gate-relevant data triggers centralized status
   evaluation, which may regress the ticket to Analyzed or Analysis
 - **Ignored**: modifications (other than assignment/reopen) have no
-  effect on status — the ticket remains Ignored regardless of gate
-  conditions. Only assignment (VA) or system reopen are permitted exit
-  transitions (see [Ignored](#ignored) above)
+  effect on status — `evaluate_ticket_status` never operates on Ignored
+  tickets (manual zone). Only `reopen_from_ignored()` can transition the
+  ticket back to the gate zone (see [Ignored](#ignored) above)
 - **Duplicated**: modifications are blocked by the API — endpoints that
-  modify ticket data return 409 if the ticket is in Duplicated status
-  (the ticket must be reverted first)
+  modify ticket data return 409 if the ticket is in Duplicated status.
+  `evaluate_ticket_status` never operates on Duplicated tickets (manual
+  zone). Only `revert_duplicate()` can transition the ticket back to
+  the gate zone
 
 ## Tickets Without CVE: Behavioral Differences
 

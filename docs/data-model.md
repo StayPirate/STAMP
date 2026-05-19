@@ -765,12 +765,17 @@ Summary:
 - Resolved -> Analysis (automatic: both resolved and analyzed gates
   broken)
 - Any except Duplicated -> Duplicated (manual, reversible)
-- Duplicated -> (evaluated status) (manual: revert, `evaluate_ticket_status`
-  determines target based on current gates; reassigns to the reverting VA)
+- Duplicated -> (evaluated status) (manual: revert via
+  `_reenter_gate_zone`; reassigns to the reverting VA)
+- Ignored -> (evaluated status) (manual: VA assigns; or automatic:
+  system reopens via `_reenter_gate_zone`)
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
 are handled automatically by the `ticket_mutations` module — see
 `docs/features/tickets/tickets.md` (Centralized Status Evaluation).
+Exits from the manual zone (Ignored, Duplicated) use the shared
+`_reenter_gate_zone` helper which sets `status = New` and calls
+`evaluate_ticket_status`.
 
 **Status categories**:
 - **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`
