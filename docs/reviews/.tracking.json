@@ -254,15 +254,15 @@
       "enabled": true,
       "abbr": "TKT",
       "cache": {
-        "last_review": "2026-05-18T23:31:14+0200",
+        "last_review": "2026-05-19T00:00:00+0000",
         "open": {
-          "GAP": { "H": 0, "M": 4, "L": 4 },
+          "GAP": { "H": 0, "M": 1, "L": 3 },
           "COH": { "H": 0, "M": 0, "L": 0 },
           "DES": { "H": 0, "M": 1, "L": 1 },
           "SEC": { "H": 0, "M": 3, "L": 3 },
           "API": { "H": 0, "M": 1, "L": 3 }
         },
-        "resolved": 8,
+        "resolved": 12,
         "not_reviewed": []
       }
     },

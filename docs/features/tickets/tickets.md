@@ -380,19 +380,33 @@ determining a ticket's status based on its current data.
      is Resolved
    - If all "Analyzed" gates are met (but "Resolved" gates are not) →
      status is Analyzed
-   - Otherwise → status is Analysis
+   - If the "Analysis" gate is met (but "Analyzed" gates are not) →
+     status is Analysis
+   - Otherwise → status is New
 2. If the determined status differs from the current status, the function
    updates the ticket and creates a `TicketAuditEvent` with
    `event_type = status_change`
 3. The function operates within the **same database transaction** as the
    triggering operation (atomicity guarantee)
 
+#### Gates
+
+The gate conditions for each status level:
+
+- **Analysis** (minimum gate): `assignee_id IS NOT NULL` — a ticket with
+  an assignee cannot remain in New status. This is a **promotional-only**
+  gate: assigning a VA promotes New → Analysis, but the absence of an
+  assignee never causes regression (unassignment is not a supported
+  operation — see [Assign Ticket](#assign-ticket))
+- **Analyzed**: all existing package/CVSS/product gates (unchanged)
+- **Resolved**: all existing resolution gates (unchanged)
+
 #### Scope
 
-The function only evaluates tickets in `Analysis`, `Analyzed`, or
-`Resolved` status. Tickets in `New`, `Ignored`, or `Duplicated` are
-excluded — these statuses are governed by explicit user actions or
-specific system events (e.g., NVD rejection), not by gate evaluation.
+The function evaluates tickets in `New`, `Analysis`, `Analyzed`, or
+`Resolved` status. Tickets in `Ignored` or `Duplicated` are excluded —
+these statuses are governed by explicit user actions or specific system
+events (e.g., NVD rejection), not by gate evaluation.
 
 #### Ticket Mutations Module
 
@@ -624,19 +638,21 @@ tickets.
 
 ### Auto-Assignment on Unassigned Tickets
 
-When an VA performs any modifying operation on a ticket with
+When a VA performs any modifying operation on a ticket with
 `assignee_id = NULL`, the ticket is automatically assigned to the acting
 VA. A `TicketAuditEvent` with `event_type = assignment` is created atomically
 in the same transaction as the modifying operation.
 
-If the ticket is in `New` status and the operation does not include an
-explicit status change (e.g., marking as duplicate or ignored), the
-ticket also transitions to `Analysis`.
+After the assignment, `evaluate_ticket_status` is called within the same
+transaction. If the ticket was in `New` status and the operation does not
+include an explicit status change (e.g., marking as duplicate or ignored),
+the assignee gate (`assignee_id IS NOT NULL`) promotes the ticket to
+`Analysis` automatically.
 
 If the operation includes an explicit status change (e.g.,
 `New → Duplicated` or `New → Ignored`), the status follows the explicit
-transition and the assignee is set, but the ticket does not transition
-to `Analysis` first.
+transition and the assignee is set — the assignee gate does not override
+explicit transitions.
 
 This rule does not apply to system operations (background tasks,
 automated ingestion). Only VA-initiated actions trigger
@@ -702,18 +718,21 @@ Steps:
    it is).
 2. Resolve the requested target to its canonical target using the
    resolver.
-3. If the canonical target equals the ticket being modified, reject with
+3. If the resolved canonical target has `deleted_at IS NOT NULL`, reject
+   with 404 `TICKET_NOT_FOUND` — the target is invisible to business
+   logic per the soft-delete invariant.
+4. If the canonical target equals the ticket being modified, reject with
    400 Bad Request ("a ticket cannot be a duplicate of itself").
-4. Acquire `FOR UPDATE` on the ticket being modified (single ticket —
+5. Acquire `FOR UPDATE` on the ticket being modified (single ticket —
    per the single-ticket-scope rule).
-5. Set `duplicate_of_id = canonical_target_id`.
-6. Set `status = Duplicated`, store `previous_status`.
-7. If the ticket had no assignee (`assignee_id = NULL`), the acting VA
+6. Set `duplicate_of_id = canonical_target_id`.
+7. Set `status = Duplicated`, store `previous_status`.
+8. If the ticket had no assignee (`assignee_id = NULL`), the acting VA
    becomes the assignee (see
    [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
-8. Create `TicketAuditEvent` (`duplicate_set`).
-9. Commit.
-10. Cascade (synchronous, same request): find all tickets whose
+9. Create `TicketAuditEvent` (`duplicate_set`).
+10. Commit.
+11. Cascade (synchronous, same request): find all tickets whose
     `duplicate_of_id` points to the just-duplicated ticket. For each, in
     an independent transaction (best-effort per-item):
     - Acquire `FOR UPDATE` on that single ticket.
@@ -727,13 +746,19 @@ Steps:
     - If this individual transaction fails (DB error, constraint
       violation), log a warning and continue to the next ticket. Do NOT
       abort the entire cascade.
-11. If the cascade is interrupted (crash, timeout) or individual steps
+12. If the cascade is interrupted (crash, timeout) or individual steps
     fail, the system is NOT corrupted — subsequent operations and reads
     resolve the chain through the canonical resolver.
 
 The cascade is synchronous (completes before the API response returns)
 because chains longer than two tickets are almost nonexistent, making
 the overhead negligible (1–2 extra DB operations in the worst case).
+
+> **Note — soft-deleted source ticket**: attempting to mark a
+> soft-deleted ticket itself as duplicate is already rejected by the
+> shared sub-resource router dependency (410 `TICKET_DELETED`), which
+> fires before endpoint-specific logic runs. No additional guard is
+> needed in the mark-as-duplicate steps above.
 
 #### Cascade as Best-Effort Flattening
 
@@ -762,9 +787,11 @@ When reverting a ticket from Duplicated status:
   gates for `previous_status` are no longer met (e.g., a CVSS
   assessment was deleted while the ticket was Duplicated), the ticket
   is automatically regressed to the appropriate status (Analysis or
-  Analyzed). This may produce two `TicketAuditEvent` records in the same
-  transaction: `duplicate_removed` (user action) followed by
-  `status_change` (system action).
+  Analyzed). Conversely, if `previous_status` was `New`, the assignee
+  gate (`assignee_id IS NOT NULL` — set by the reassignment step above)
+  promotes the ticket to `Analysis` automatically. This may produce two
+  `TicketAuditEvent` records in the same transaction: `duplicate_removed`
+  (user action) followed by `status_change` (system action).
 - Create `TicketAuditEvent` (`duplicate_removed`).
 
 The revert operation does NOT need to know or care about the canonical
@@ -860,9 +887,19 @@ row before any modification (see
   shared dependency on the ticket sub-resource router — see
   `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses))
   for the HTTP-level contract (410 `TICKET_DELETED`)
-- A soft-deleted ticket can be restored by clearing `deleted_at`
-- Both operations create a `TicketAuditEvent` record (see
-  `docs/features/tickets/ticket-audit-log.md`)
+- A soft-deleted ticket can be restored by clearing `deleted_at`.
+  After restoring the ticket and creating the `TicketAuditEvent`
+  (`ticket_restored`), `evaluate_ticket_status` is called within the
+  same transaction to reconcile the ticket's status with current gate
+  conditions. While the ticket was soft-deleted, gate-relevant data may
+  have changed externally (CVSS scores deleted, product eligibility
+  changed, AIMAAS thresholds updated). If the gates for the ticket's
+  current status are no longer met, the ticket is automatically regressed
+  to the appropriate status. This may produce two `TicketAuditEvent`
+  records in the same transaction: `ticket_restored` followed by
+  `status_change` (system action)
+- Both operations (soft-delete and restore) create a `TicketAuditEvent`
+  record (see `docs/features/tickets/ticket-audit-log.md`)
 
 **Automated verification**: every service-layer operation that queries
 tickets as part of its logic MUST include a parametrized test verifying
@@ -1281,6 +1318,12 @@ Request body:
 
 - `user_id` (string, required): UUID or username of the target user. The
   target must hold the `vulnerability_analyst` role.
+
+> **No unassignment by design**: the `user_id` field is required and
+> cannot be null. Once a ticket has an assignee, it can only be
+> **reassigned** to another active VA — never unassigned. This enforces
+> explicit handover and ensures the assignee gate (which promotes
+> New → Analysis) is never reversed.
 
 Response: the updated ticket object wrapped in the standard `{"data": ...}`
 envelope (200 OK).

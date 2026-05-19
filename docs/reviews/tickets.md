@@ -10,10 +10,7 @@
 
 ### TKT-GAP-01 — Duplicate marking of a soft-deleted ticket is unspecified (Medium)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The spec states "Any ticket can be marked as a duplicate of another ticket, from any status" (Duplicate Handling section). The soft-delete section states "Soft-deleted tickets are invisible to all business logic". However, it is unspecified whether: (a) a soft-deleted ticket can be marked as duplicate (it shouldn't be visible, but the transition table says "any status"), and (b) a non-deleted ticket can be marked as duplicate OF a soft-deleted ticket (the target resolution follows the chain, but what if the resolved target is soft-deleted?). A VA could attempt to mark ticket A as duplicate of ticket B where B has been soft-deleted by an admin — the spec does not state whether the target must be active.
+**Status**: RESOLVED — Aggiunto passaggio di validazione esplicito per target soft-deleted nella sezione Mark as Duplicate (2026-05-19)
 
 ### TKT-GAP-02 — Cascade update when marking duplicate processes multiple tickets without single-ticket scope (Medium)
 
@@ -21,17 +18,11 @@ The spec states "Any ticket can be marked as a duplicate of another ticket, from
 
 ### TKT-GAP-03 — Restore of soft-deleted ticket does not specify status reconciliation (Medium)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The spec states a soft-deleted ticket can be restored by clearing "deleted_at". However, while the ticket was soft-deleted, its gate-relevant data may have changed externally (e.g., CVSS scores updated, product eligibility recalculated). The spec does not specify whether "evaluate_ticket_status" is called after restoration to reconcile the ticket's status with current gate conditions — unlike the duplicate revert, which explicitly calls evaluate_ticket_status after restoring previous_status.
+**Status**: RESOLVED — Aggiunta chiamata evaluate_ticket_status dopo restore da soft-delete per riconciliazione stato (2026-05-19)
 
 ### TKT-GAP-04 — Duplicate revert with previous_status = New is unspecified (Medium)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The spec states when a duplicate is reverted: "status is restored to previous_status" and then "evaluate_ticket_status is called to reconcile". However, evaluate_ticket_status "only evaluates tickets in Analysis, Analyzed, or Resolved status. Tickets in New, Ignored, or Duplicated are excluded." If a ticket was in "New" when marked as duplicate, reverting would restore it to "New", but then evaluate_ticket_status would not run (it's excluded). The ticket would remain in "New" with an assignee (the VA who reverted), which contradicts the New status semantics (unassigned). The spec does not address this case.
+**Status**: RESOLVED — Assignee reso gate promozionale in evaluate_ticket_status: assignee_id IS NOT NULL → stato minimo Analysis. Rimosso New dalla lista esclusioni. Auto-assignment semplificato (2026-05-19)
 
 ### TKT-GAP-05 — No transition from Ignored when NVD rejection is reverted (Medium)
 
@@ -56,10 +47,7 @@ The Set Severity Override endpoint lists only TICKET_SEVERITY_DERIVED and TICKET
 
 ### TKT-GAP-08 — Unassign operation not specified (Low)
 
-**Category**: User-facing scenario gaps
-**Status**: OPEN
-
-The spec defines assignment and reassignment but does not specify whether a ticket can be unassigned (set assignee_id back to NULL). The Assign Ticket endpoint requires a user_id (required field). If a VA needs to step away from a ticket and no replacement is available, there is no mechanism to return it to the unassigned pool. This may be intentional but is not explicitly stated as a deliberate omission.
+**Status**: RESOLVED — Dichiarato esplicitamente che unassignment non è supportato: user_id è obbligatorio, un ticket può solo essere riassegnato a un altro VA (handover by design) (2026-05-19)
 
 ### TKT-GAP-09 — Ticket creation with invalid CVE-ID format has no specified error (Low)
 
