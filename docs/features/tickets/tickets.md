@@ -659,9 +659,13 @@ status will not match the expected state.
 
 ### Reassignment
 
-A ticket can be reassigned to a different VA at any time, regardless of
-its current status. Reassignment does not change the ticket status. All
-reassignments are logged in the ticket event history.
+A ticket can be reassigned to a different VA at any time, as long as the
+ticket is in a mutable status (not Ignored or Duplicated). For Ignored
+tickets, the dedicated reopen flow (`POST .../reopen`) handles
+assignment; for Duplicated tickets, the revert-duplicate flow
+(`POST .../revert-duplicate`) handles it. Reassignment does not change
+the ticket status. All reassignments are logged in the ticket event
+history.
 
 **Target constraint**: the assignment target MUST be an **active** user
 holding the `vulnerability_analyst` role. Attempting to assign a ticket
@@ -1020,9 +1024,7 @@ async def require_ticket_mutable(ticket: Ticket = Depends(get_ticket)):
 ```
 
 **Scope**:
-- Applied to: all endpoints that modify ticket data (add package, set
-  severity, associate CVE, set track status, mark as duplicate, ignore,
-  grant/revoke access, add/remove references, etc.)
+- Applied to: all endpoints that modify ticket data
 - NOT applied to: read endpoints (GET), manual-zone exit endpoints
   (`POST .../reopen`, `POST .../revert-duplicate`), and soft-delete/restore
   (which have their own admin-only guard)
@@ -1335,6 +1337,8 @@ Error responses:
 - 409 with code `TICKET_CVE_CONFLICT`: CVE is already associated with
   another ticket. Response body includes `existing_ticket_id` (UUID) to
   allow the frontend to link to the existing ticket
+- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
+  status
 
 Requires the Vulnerability Analyst role.
 
@@ -1355,6 +1359,8 @@ Error responses:
 - 400 with code `TICKET_CVE_NOT_SET`: ticket does not have a CVE
   associated
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
+  status
 
 Requires the Admin role.
 
@@ -1385,6 +1391,8 @@ Error responses:
 - 400 with code `TICKET_SEVERITY_DERIVED`: ticket has an associated CVE
   (severity is derived from CVSS, not manually settable)
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
+  status
 
 Requires the Vulnerability Analyst role.
 
@@ -1426,6 +1434,8 @@ Error responses:
 - 400 with code `TICKET_ASSIGNEE_INACTIVE`: target user is inactive
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 404 with code `USER_NOT_FOUND`: target user not found
+- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
+  status (use the dedicated reopen or revert-duplicate endpoints instead)
 
 Requires the Vulnerability Analyst role.
 
@@ -1446,6 +1456,8 @@ envelope (200 OK).
 Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
+- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
+  status
 - 409 with code `TICKET_INVALID_TRANSITION`: current status does not
   allow transition to Ignored
 
@@ -1482,6 +1494,8 @@ Error responses:
 - 400 with code `TICKET_SELF_DUPLICATE`: resolved target is the same
   ticket (self-reference after chain resolution)
 - 404 with code `TICKET_NOT_FOUND`: ticket or target ticket not found
+- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
+  status
 - 409 with code `TICKET_DUPLICATE_CHAIN_DEPTH`: chain depth exceeded
   (indicates data corruption requiring manual intervention)
 
@@ -1602,6 +1616,7 @@ Sets the confidentiality status of a ticket.
 |--------|------|-----------|
 | 200    | -    | Success (or already in requested state) |
 | 404    | `TICKET_NOT_FOUND` | Ticket not found |
+| 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
 
 Requires the Vulnerability Analyst role.
 
@@ -1678,6 +1693,7 @@ Grant explicit access to a user on a confidential ticket.
 | 200    | -    | Grant already exists (idempotent success) |
 | 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
 | 404    | `USER_NOT_FOUND` | Target user not found |
+| 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
 | 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
 
 #### Revoke Access
@@ -1702,6 +1718,7 @@ username.
 | 204    | -    | Grant revoked (or did not exist — idempotent success) |
 | 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
 | 404    | `USER_NOT_FOUND` | Target user not found |
+| 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
 | 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
 
 ## Data Model

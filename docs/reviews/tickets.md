@@ -49,10 +49,7 @@ The Create Ticket and Associate CVE endpoints accept a cve_id string (e.g., "CVE
 
 ### TKT-GAP-10 — Assign endpoint vs mutability guard contradiction (Medium)
 
-**Category**: Contradictions
-**Status**: OPEN
-
-The Reassignment section states that ticket assignment can occur "at any time, regardless of status," but the centralized mutability guard blocks mutations on tickets in Ignored or Duplicated status. These two statements directly conflict. The spec should either exempt the assign endpoint from the mutability guard or restrict reassignment to mutable statuses.
+**Status**: RESOLVED — Mutability guard scope clarified: removed ambiguous example list, kept only exception list; Reassignment section now restricts to mutable statuses; added TICKET_NOT_MUTABLE to Assign endpoint and all 8 other mutation endpoints missing it (2026-05-19)
 
 ### TKT-GAP-11 — Ignore endpoint mutability guard evaluation order unclear (Low)
 
