@@ -644,48 +644,201 @@ auto-assignment.
 
 ### Duplicate Handling
 
-- Any ticket can be marked as a duplicate of another ticket, from any
-  status
-- **Target resolution**: when marking ticket A as duplicate of ticket B:
-  - If B is in `Duplicated` status, follow the `duplicate_of_id` chain
-    until a non-Duplicated ticket is found (the "ultimate original")
-  - A maximum chain depth of 10 is enforced; if exceeded, the operation
-    fails with 409 Conflict and an ERROR is logged (indicates data
-    corruption requiring manual intervention)
-  - If the resolved target equals ticket A, the operation fails with
-    400 Bad Request ("a ticket cannot be a duplicate of itself")
-  - `duplicate_of_id` is set to the resolved target (always a
-    non-Duplicated ticket)
-- **Cascade update**: when marking ticket B as duplicate of ticket C,
-  all existing tickets whose `duplicate_of_id` points to B are
-  automatically updated to point to C (the resolved target). For each
-  updated ticket, a `TicketAuditEvent` is created with `event_type =
-  duplicate_target_changed`, `user_id = NULL` (system action),
-  `old_value` = previous original identifier, `new_value` = new
-  original identifier
-- **Invariant**: `duplicate_of_id` always references a ticket that is
-  NOT in `Duplicated` status. Multiple tickets may reference the same
-  original.
-- When marked as duplicate:
-  - `status` is set to `Duplicated`
-  - `duplicate_of_id` is set to the resolved target ticket's ID
-  - `previous_status` stores the status before duplication
-  - If the ticket had no assignee (`assignee_id = NULL`), the acting VA
-    becomes the assignee (see
-    [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
-- When reverted:
-  - `status` is restored to `previous_status`
-  - `duplicate_of_id` is cleared
-  - `previous_status` is cleared
-  - The ticket is reassigned to the VA who performed the revert
-  - After restoring the status, `evaluate_ticket_status` is called to
-    reconcile the restored status with current gate conditions. If the
-    gates for `previous_status` are no longer met (e.g., a CVSS
-    assessment was deleted while the ticket was Duplicated), the ticket
-    is automatically regressed to the appropriate status (Analysis or
-    Analyzed). This may produce two `TicketAuditEvent` records in the same
-    transaction: `duplicate_removed` (user action) followed by
-    `status_change` (system action)
+#### Terminology
+
+- **Canonical target**: the non-Duplicated ticket at the end of the
+  `duplicate_of_id` resolution chain. This is the technically precise
+  term used throughout the resolver logic, cascade operations, and
+  concurrency sections.
+- **Original ticket**: the user-facing synonym for "canonical target."
+  Used in UI copy (e.g., "See the original ticket: SNTL-42"), audit
+  event descriptions, and high-level prose where the technical
+  resolution mechanism is not relevant.
+
+#### Canonical Target Resolver
+
+A centralized public function `resolve_canonical_target` in the
+`ticket_mutations` module (`backend/app/services/ticket_mutations.py`).
+
+Contract:
+- Accepts a ticket ID and a database session.
+- Follows the `duplicate_of_id` chain until a non-Duplicated ticket is
+  found.
+- Maintains a set of visited ticket IDs to detect cycles.
+- Enforces a maximum hop limit of 50. This limit is a corruption
+  guard — under normal operation chains are 1–2 hops. A limit of 50 is
+  unreachable organically and protects against pathological data only.
+- If a cycle is detected, raises an integrity error with code
+  `TICKET_DUPLICATE_CYCLE_DETECTED` (409 Conflict). Indicates data
+  corruption requiring admin intervention.
+- If the hop limit is exceeded without finding a non-Duplicated ticket,
+  raises an integrity error with code `TICKET_DUPLICATE_CHAIN_DEPTH`
+  (409 Conflict). Indicates data corruption requiring admin intervention.
+- Returns the canonical (non-Duplicated) target ticket.
+
+All code paths that need the canonical target MUST use this function:
+- `mark-as-duplicate` operation (pre-write validation)
+- API response serialization (see
+  [API Response Behavior](#api-response-behavior))
+- Any future logic that reads `duplicate_of_id` for decision-making
+
+Direct reads of `duplicate_of_id` without resolution are only permitted
+for:
+- Audit event recording (`old_value`/`new_value` store the `SNTL-{n}`
+  identifier corresponding to the DB value at the time of the event)
+- Database-level queries that need the raw FK (e.g., finding all tickets
+  whose raw `duplicate_of_id` points to a specific ticket, for cascade
+  purposes)
+
+#### Mark-as-Duplicate Operation
+
+A ticket can be marked as duplicate from any status **except
+Duplicated**. A ticket already in Duplicated status MUST be reverted
+first (the Duplicated immutability rule applies — the API returns 409).
+
+Steps:
+
+1. Verify the ticket is not in `Duplicated` status (reject with 409 if
+   it is).
+2. Resolve the requested target to its canonical target using the
+   resolver.
+3. If the canonical target equals the ticket being modified, reject with
+   400 Bad Request ("a ticket cannot be a duplicate of itself").
+4. Acquire `FOR UPDATE` on the ticket being modified (single ticket —
+   per the single-ticket-scope rule).
+5. Set `duplicate_of_id = canonical_target_id`.
+6. Set `status = Duplicated`, store `previous_status`.
+7. If the ticket had no assignee (`assignee_id = NULL`), the acting VA
+   becomes the assignee (see
+   [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
+8. Create `TicketAuditEvent` (`duplicate_set`).
+9. Commit.
+10. Cascade (synchronous, same request): find all tickets whose
+    `duplicate_of_id` points to the just-duplicated ticket. For each, in
+    an independent transaction (best-effort per-item):
+    - Acquire `FOR UPDATE` on that single ticket.
+    - Update `duplicate_of_id` to the canonical target.
+    - Create `TicketAuditEvent` (`duplicate_target_changed`,
+      `user_id = NULL`,
+      `detail = {"triggered_by_ticket": "SNTL-{n}"}`) where `SNTL-{n}`
+      is the identifier of the ticket that was just marked as duplicate
+      (the operation that triggered this cascade).
+    - Commit.
+    - If this individual transaction fails (DB error, constraint
+      violation), log a warning and continue to the next ticket. Do NOT
+      abort the entire cascade.
+11. If the cascade is interrupted (crash, timeout) or individual steps
+    fail, the system is NOT corrupted — subsequent operations and reads
+    resolve the chain through the canonical resolver.
+
+The cascade is synchronous (completes before the API response returns)
+because chains longer than two tickets are almost nonexistent, making
+the overhead negligible (1–2 extra DB operations in the worst case).
+
+#### Cascade as Best-Effort Flattening
+
+The cascade is an optimization that reduces hops for future resolutions.
+It is NOT a correctness requirement. The system is correct with or
+without cascade completion because:
+
+- All reads use the canonical resolver.
+- Duplicated tickets are immutable (API returns 409 on modification
+  attempts), so intermediate links are stable.
+- The only operation that can alter an intermediate link is
+  `revert-duplicate` on that specific ticket, which clears
+  `duplicate_of_id` entirely (correct behavior regardless of chain
+  state).
+
+#### Revert-Duplicate Operation
+
+When reverting a ticket from Duplicated status:
+
+- `duplicate_of_id` is cleared (set to NULL).
+- `status` is restored to `previous_status`.
+- `previous_status` is cleared.
+- The ticket is reassigned to the VA who performed the revert.
+- After restoring the status, `evaluate_ticket_status` is called to
+  reconcile the restored status with current gate conditions. If the
+  gates for `previous_status` are no longer met (e.g., a CVSS
+  assessment was deleted while the ticket was Duplicated), the ticket
+  is automatically regressed to the appropriate status (Analysis or
+  Analyzed). This may produce two `TicketAuditEvent` records in the same
+  transaction: `duplicate_removed` (user action) followed by
+  `status_change` (system action).
+- Create `TicketAuditEvent` (`duplicate_removed`).
+
+The revert operation does NOT need to know or care about the canonical
+target — it simply removes the ticket from the duplicate chain.
+
+#### Revert of an Intermediate Ticket
+
+Scenario: `A → B → C` (A points to B, B points to C, cascade was
+interrupted so A was not flattened).
+
+If a VA reverts B (removes B from Duplicated status):
+- B.`duplicate_of_id` is cleared, B returns to its previous status.
+- A still points to B, but B is no longer Duplicated.
+- Therefore A.`duplicate_of_id` resolves to B directly (B is the
+  canonical target now).
+- This is correct: A is a duplicate of B, which is now a live ticket
+  again.
+- No cascade or repair needed on A.
+
+#### API Response Behavior
+
+Wherever the `duplicate_of_id` field is included in an API response,
+its value MUST be the resolved canonical target (the `SNTL-{n}`
+identifier of the non-Duplicated ticket at the end of the chain), not
+the raw DB value. The API does NOT expose the raw DB value in a separate
+field.
+
+This rule is endpoint-agnostic: it applies to any response schema that
+includes `duplicate_of_id`. This ensures:
+
+- UI links always point to the correct non-Duplicated ticket (the
+  "original ticket").
+- Third-party scripts and integrations can trust that following
+  `duplicate_of_id` always leads to a non-Duplicated ticket — no
+  client-side chain resolution needed.
+- The transient state (interrupted cascade) is invisible to API
+  consumers.
+
+The raw value remains accessible through the audit history
+(`duplicate_set` and `duplicate_target_changed` events record what was
+written to the DB).
+
+#### Cycle Prevention
+
+Under normal sequential operations, cycles cannot form because:
+1. `mark-as-duplicate` always resolves the target to a canonical
+   non-Duplicated ticket before writing.
+2. A ticket in Duplicated status cannot be the target of
+   mark-as-duplicate (it would be resolved through to its canonical).
+3. A non-Duplicated ticket being marked as duplicate has its target
+   resolved — if the resolution leads back to itself, the operation is
+   rejected.
+
+Under concurrent operations (two users simultaneously marking tickets
+that reference each other), a cycle could theoretically form under READ
+COMMITTED isolation. This is accepted as a residual risk because:
+- Duplicate operations are rare.
+- Concurrent conflicting duplicate operations on the same chain are
+  essentially zero probability.
+- The cycle detection in the resolver catches this at read time with a
+  clear integrity error (`TICKET_DUPLICATE_CYCLE_DETECTED`).
+- Resolution requires manual admin intervention.
+- Adding `FOR UPDATE` on the target ticket would lock two tickets in the
+  same transaction, contradicting the single-ticket-scope rule — a
+  disproportionate cost for an essentially impossible scenario.
+
+#### Correctness Guarantee
+
+`duplicate_of_id` SHOULD reference the canonical non-Duplicated ticket
+after normal write operations complete successfully. A link to a
+Duplicated ticket is a valid transient state (e.g., after an interrupted
+cascade) and MUST be handled gracefully by the canonical resolver.
+Correctness MUST NOT depend on immediate flatness of the link. Multiple
+tickets may reference the same canonical target.
 
 This operation modifies the `Ticket` row and calls
 `evaluate_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`

@@ -16,6 +16,22 @@
         "not_reviewed": []
       }
     },
+    "admin": {
+      "enabled": false,
+      "abbr": "ADM",
+      "cache": {
+        "last_review": "2026-05-06T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 3,
+        "not_reviewed": ["GAP", "COH", "DES", "SEC"]
+      }
+    },
     "api-key-service": {
       "enabled": true,
       "abbr": "AKS",
@@ -62,150 +78,6 @@
         },
         "resolved": 64,
         "not_reviewed": []
-      }
-    },
-    "identity-audit-log": {
-      "enabled": true,
-      "abbr": "IAL",
-      "cache": {
-        "last_review": "2026-05-15T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 16,
-        "not_reviewed": []
-      }
-    },
-    "local-authentication": {
-      "enabled": true,
-      "abbr": "LAUTH",
-      "cache": {
-        "last_review": "2026-05-07T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 21,
-        "not_reviewed": []
-      }
-    },
-    "rbac": {
-      "enabled": true,
-      "abbr": "RBAC",
-      "cache": {
-        "last_review": "2026-05-15T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 34,
-        "not_reviewed": []
-      }
-    },
-    "sso-authentication": {
-      "enabled": true,
-      "abbr": "SSO",
-      "cache": {
-        "last_review": "2026-05-07T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 25,
-        "not_reviewed": []
-      }
-    },
-    "ticket-audit-log": {
-      "enabled": true,
-      "abbr": "TAL",
-      "cache": {
-        "last_review": "2026-05-16T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 15,
-        "not_reviewed": []
-      }
-    },
-    "tickets": {
-      "enabled": true,
-      "abbr": "TKT",
-      "cache": {
-        "last_review": "2026-05-18T23:31:14+0200",
-        "open": {
-          "GAP": { "H": 0, "M": 5, "L": 4 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 1, "M": 3, "L": 1 },
-          "SEC": { "H": 0, "M": 3, "L": 3 },
-          "API": { "H": 0, "M": 1, "L": 3 }
-        },
-        "resolved": 4,
-        "not_reviewed": []
-      }
-    },
-    "user-management": {
-      "enabled": true,
-      "abbr": "UMGT",
-      "cache": {
-        "last_review": "2026-05-09T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 93,
-        "not_reviewed": []
-      }
-    },
-    "user-service": {
-      "enabled": true,
-      "abbr": "USVC",
-      "cache": {
-        "last_review": "2026-05-08T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 23,
-        "not_reviewed": []
-      }
-    },
-    "admin": {
-      "enabled": false,
-      "abbr": "ADM",
-      "cache": {
-        "last_review": "2026-05-06T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 3,
-        "not_reviewed": ["GAP", "COH", "DES", "SEC"]
       }
     },
     "cve-tracking": {
@@ -263,6 +135,38 @@
       "abbr": "ITRD",
       "cache": null
     },
+    "identity-audit-log": {
+      "enabled": true,
+      "abbr": "IAL",
+      "cache": {
+        "last_review": "2026-05-15T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 16,
+        "not_reviewed": []
+      }
+    },
+    "local-authentication": {
+      "enabled": true,
+      "abbr": "LAUTH",
+      "cache": {
+        "last_review": "2026-05-07T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 21,
+        "not_reviewed": []
+      }
+    },
     "maintainer-dashboard": {
       "enabled": false,
       "abbr": "MDB",
@@ -293,70 +197,106 @@
       "abbr": "PLT",
       "cache": null
     },
+    "rbac": {
+      "enabled": true,
+      "abbr": "RBAC",
+      "cache": {
+        "last_review": "2026-05-15T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 34,
+        "not_reviewed": []
+      }
+    },
     "references": {
       "enabled": false,
       "abbr": "REF",
       "cache": null
     },
-    "admin-settings": {
-      "enabled": false,
-      "abbr": "ADMS",
-      "cache": null
+    "sso-authentication": {
+      "enabled": true,
+      "abbr": "SSO",
+      "cache": {
+        "last_review": "2026-05-07T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 25,
+        "not_reviewed": []
+      }
     },
-    "all-tickets": {
-      "enabled": false,
-      "abbr": "ATKT",
-      "cache": null
+    "ticket-audit-log": {
+      "enabled": true,
+      "abbr": "TAL",
+      "cache": {
+        "last_review": "2026-05-16T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 15,
+        "not_reviewed": []
+      }
     },
-    "fetcher-detail": {
-      "enabled": false,
-      "abbr": "FETD",
-      "cache": null
+    "tickets": {
+      "enabled": true,
+      "abbr": "TKT",
+      "cache": {
+        "last_review": "2026-05-18T23:31:14+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 4, "L": 4 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 1, "L": 1 },
+          "SEC": { "H": 0, "M": 3, "L": 3 },
+          "API": { "H": 0, "M": 1, "L": 3 }
+        },
+        "resolved": 8,
+        "not_reviewed": []
+      }
     },
-    "fetchers": {
-      "enabled": false,
-      "abbr": "FET",
-      "cache": null
+    "user-management": {
+      "enabled": true,
+      "abbr": "UMGT",
+      "cache": {
+        "last_review": "2026-05-09T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 93,
+        "not_reviewed": []
+      }
     },
-    "inbox": {
-      "enabled": false,
-      "abbr": "INB",
-      "cache": null
-    },
-    "layout": {
-      "enabled": false,
-      "abbr": "LAY",
-      "cache": null
-    },
-    "login": {
-      "enabled": false,
-      "abbr": "LOG",
-      "cache": null
-    },
-    "my-packages": {
-      "enabled": false,
-      "abbr": "MPKG",
-      "cache": null
-    },
-    "my-packages-ticket": {
-      "enabled": false,
-      "abbr": "MPKT",
-      "cache": null
-    },
-    "my-tickets": {
-      "enabled": false,
-      "abbr": "MTKT",
-      "cache": null
-    },
-    "orphan-tickets": {
-      "enabled": false,
-      "abbr": "OTKT",
-      "cache": null
-    },
-    "ticket-detail": {
-      "enabled": false,
-      "abbr": "TKDT",
-      "cache": null
+    "user-service": {
+      "enabled": true,
+      "abbr": "USVC",
+      "cache": {
+        "last_review": "2026-05-08T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 23,
+        "not_reviewed": []
+      }
     }
   }
 }

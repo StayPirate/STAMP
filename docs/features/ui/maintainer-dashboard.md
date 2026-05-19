@@ -282,8 +282,9 @@ a short message, and a "Back to My Packages" link pointing to
   `docs/features/tickets/tickets.md`).
 - **Duplicated link**: the message includes a clickable link to the
   original ticket's per-ticket view (`/my-packages/ticket/{duplicate_of_id}`).
-  If the original ticket is also in an abnormal state, the user will see
-  the corresponding status page for that ticket — no special handling.
+  The `duplicate_of_id` value in API responses is always the resolved
+  canonical target (a non-Duplicated ticket), so the link always points
+  to a live, non-Duplicated ticket — no special handling needed.
 - **Presentation**: all error states share a single component layout
   (icon + title + message + back link), varying only the content.
 

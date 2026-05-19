@@ -736,7 +736,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
-| duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the original ticket when status is Duplicated |
+| duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the canonical target ticket when status is Duplicated. May transiently reference a Duplicated ticket if a cascade was interrupted; the `resolve_canonical_target` function handles resolution at read time. Hop limit: 50 |
 | previous_status   | ENUM        | nullable                     | Status before being marked as Duplicated, used to restore on revert |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
@@ -766,7 +766,7 @@ Summary:
   still met)
 - Resolved -> Analysis (automatic: both resolved and analyzed gates
   broken)
-- Any -> Duplicated (manual, reversible)
+- Any except Duplicated -> Duplicated (manual, reversible)
 - Duplicated -> previous_status (manual: revert, reassigns to the
   reverting VA)
 
@@ -855,7 +855,7 @@ system action).
 | assignment                 | Ticket was assigned or reassigned                  |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
-| duplicate_target_changed   | Cascade update: the ticket's `duplicate_of_id` was re-pointed because its previous original was itself marked as duplicate. `old_value` is the previous original identifier (`SNTL-{n}`). `new_value` is the new original identifier. `user_id` is NULL (system action). |
+| duplicate_target_changed   | Cascade update: the ticket's `duplicate_of_id` was re-pointed because its previous canonical target was itself marked as duplicate. `old_value` is the previous canonical target identifier (`SNTL-{n}`). `new_value` is the new canonical target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered the cascade. This event may be absent if cascade was interrupted (not an error). |
 | package_added              | Package added to the ticket (manual by VA or automatic via CPE match / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
 | package_excluded           | Package directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the package name. `user_id` is the VA who performed the action, or NULL for system (orphan cleanup). `detail` carries `{"reason"}` for automatic exclusions, NULL for manual. Child records are not modified — they become effectively excluded via the hierarchy. |
 | package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |

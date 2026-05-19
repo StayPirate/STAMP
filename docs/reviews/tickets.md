@@ -1,7 +1,7 @@
 # Review: tickets
 
 **Spec**: `docs/features/tickets/tickets.md`
-**Last reviewed**: 2026-05-18
+**Last reviewed**: 2026-05-19
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -17,10 +17,7 @@ The spec states "Any ticket can be marked as a duplicate of another ticket, from
 
 ### TKT-GAP-02 — Cascade update when marking duplicate processes multiple tickets without single-ticket scope (Medium)
 
-**Category**: Temporal and concurrency gaps
-**Status**: OPEN
-
-The spec states under Concurrency Control: "Code that must modify multiple tickets (e.g., the cascade update of duplicate_of_id when marking a ticket as duplicate) MUST NOT acquire FOR UPDATE on multiple ticket rows in the same transaction — process each ticket in an independent transaction to avoid deadlocks." However, the Duplicate Handling section states the cascade update happens when marking ticket B as duplicate of C — "all existing tickets whose duplicate_of_id points to B are automatically updated to point to C". If each cascaded ticket is updated in its own transaction, there is a window where some tickets point to the old target and some to the new target. Additionally, if any individual cascade transaction fails (e.g., the ticket was concurrently deleted), the spec does not define whether the primary operation is rolled back or partial updates are acceptable.
+**Status**: RESOLVED — Auto-resolved: spec now explicitly documents cascade as best-effort with independent transactions, partial updates acceptable, and correctness not depending on cascade completion (Cascade as Best-Effort Flattening section) (2026-05-19)
 
 ### TKT-GAP-03 — Restore of soft-deleted ticket does not specify status reconciliation (Medium)
 
@@ -89,24 +86,15 @@ The Create Ticket and Associate CVE endpoints accept a cve_id string (e.g., "CVE
 
 ### TKT-DES-01 — Duplicate cascade update violates single-ticket-per-transaction rule (High)
 
-**Category**: Concurrency Control
-**Status**: OPEN
-
-The spec states: "Code that must modify multiple tickets (e.g., the cascade update of duplicate_of_id when marking a ticket as duplicate) MUST NOT acquire FOR UPDATE on multiple ticket rows in the same transaction — process each ticket in an independent transaction to avoid deadlocks." However, the cascade update section says: "when marking ticket B as duplicate of ticket C, all existing tickets whose duplicate_of_id points to B are automatically updated to point to C. For each updated ticket, a TicketAuditEvent is created." If each cascaded ticket is updated in its own transaction, there is a window where some tickets point to the old target and some to the new one. If the process crashes mid-cascade, some tickets will have stale duplicate_of_id references pointing to a ticket that is now itself Duplicated — violating the invariant that "duplicate_of_id always references a ticket that is NOT in Duplicated status." Alternative: process the cascade in a single transaction with ordered locking (always lock by ticket UUID ascending) to avoid deadlocks while maintaining atomicity. Trade-off: slightly more complex locking logic but preserves the invariant atomically. Recommendation: adopt ordered locking in a single transaction — the invariant is critical for correctness.
+**Status**: RESOLVED — Auto-resolved: spec now explicitly documents cascade as best-effort flattening with independent transactions, and states correctness does not depend on immediate flatness (lines 738-751, 839) (2026-05-19)
 
 ### TKT-DES-02 — Duplicate chain resolution is vulnerable to concurrent marking (Medium)
 
-**Category**: Race Conditions
-**Status**: OPEN
-
-The spec describes chain resolution: "If B is in Duplicated status, follow the duplicate_of_id chain until a non-Duplicated ticket is found." This chain traversal reads multiple ticket rows without holding locks. If two VAs concurrently mark tickets in the same chain (e.g., VA1 marks A→B while VA2 marks B→C), the chain traversal for VA1 may resolve B as the target (seeing B as non-Duplicated) while VA2 is about to mark B as Duplicated. After both commits, A.duplicate_of_id = B where B is Duplicated — violating the invariant. The cascade update would eventually fix this, but only if VA2's cascade sees A. If VA1's transaction commits after VA2's cascade runs, A is left with a stale reference. Alternative: acquire FOR UPDATE on the resolved target ticket before setting duplicate_of_id, and re-verify it is not Duplicated. This serializes competing duplicate operations on overlapping chains. Cost: one additional lock per operation. Recommendation: adopt — the invariant violation is a real correctness issue.
+**Status**: RESOLVED — Auto-resolved: spec now explicitly addresses this race under Cycle Prevention section, accepting it as a residual risk with detection at read time via the canonical resolver (2026-05-19)
 
 ### TKT-DES-03 — CVE dissociation race with background CVE sync re-creating the ticket (Medium)
 
-**Category**: Edge Cases
-**Status**: OPEN
-
-When Admin dissociates a CVE and the next CVE sync runs before re-association with another ticket, a duplicate ticket is created. The window depends on sync frequency. Alternative: add a short grace period (e.g., 24h) where dissociated CVEs are not eligible for auto-ticket creation.
+**Status**: RESOLVED — Auto-resolved: spec explicitly states that new ticket creation after CVE dissociation is intentional behavior to ensure CVEs are not lost (2026-05-19)
 
 ### TKT-DES-04 — Stale access grant cleanup misses soft-deleted confidential tickets permanently (Medium)
 
