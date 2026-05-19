@@ -264,6 +264,7 @@ New ──→ Analysis ──────────→ Analyzed ────�
  │         │    ◄────────────    │    ◄────────────
  │         │     automatic       │     automatic
  ├──→ Ignored (from New or Analysis only)
+ │         ◄── Ignored → Analysis (VA assigns) or Ignored → New (system reopen)
  │
  └──→ Duplicated (from any state, reversible)
       (also Analysis, Analyzed, Resolved, Ignored → Duplicated)
@@ -284,6 +285,9 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
 | Any        | Duplicated | VA marks ticket as duplicate                           | Manual             | Any VA                                 |
 | Duplicated | (previous) | VA reverts duplicate status                            | Manual             | Any VA (becomes new assignee)          |
+| Ignored    | Analysis   | VA assigns themselves to the ticket                    | Manual             | Any VA (becomes assignee)              |
+| Ignored    | Analysis   | System reopens (e.g., NVD rejection revert) and last assignee is active | Automatic | System                                 |
+| Ignored    | New        | System reopens and no previous assignee or previous assignee is deactivated | Automatic | System                                 |
 
 **Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned; instead, a notification is sent to the assignee for manual review. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
 
@@ -924,10 +928,29 @@ that soft-deleted tickets are excluded. At minimum:
 
 ### Ignored
 
-Ignored is a **terminal status** — there is no transition from Ignored
-to any other status. If a ticket was marked as Ignored in error, an
-Admin must soft-delete it (or a new ticket can be created if the issue
-needs to be re-evaluated).
+Ignored is a **conditionally terminal status** — most modifications are
+blocked, but two exit transitions are allowed:
+
+1. **VA assigns themselves (manual):** Ignored → Analysis. The VA who
+   assigns themselves becomes the assignee. This allows recovery when a
+   ticket was marked as Ignored in error.
+2. **System reopens (automatic):** Ignored → Analysis if the last assignee
+   is still active, or Ignored → New if no previous assignee exists or
+   the previous assignee is deactivated. This handles cases like NVD
+   rejection reverts (see `docs/features/tickets/cve-tracking.md`,
+   "Rejection revert handling").
+
+Both transitions MUST go through the `ticket_mutations` module via a
+`reopen_from_ignored()` function that:
+1. Acquires `FOR UPDATE` on the ticket
+2. Verifies current status is Ignored
+3. Determines target status and assignee based on input
+4. Creates a `TicketAuditEvent` (`status_change` + `assignment_change`
+   if applicable)
+
+All other modifications on Ignored tickets remain blocked — adding
+packages, changing severity, changing track statuses have no effect on
+status and are discouraged.
 
 ### Modifications in Inactive Statuses
 
@@ -938,8 +961,10 @@ are discouraged:
 
 - **Resolved**: modifying gate-relevant data triggers centralized status
   evaluation, which may regress the ticket to Analyzed or Analysis
-- **Ignored**: modifications have no effect on status — the ticket
-  remains Ignored regardless of gate conditions
+- **Ignored**: modifications (other than assignment/reopen) have no
+  effect on status — the ticket remains Ignored regardless of gate
+  conditions. Only assignment (VA) or system reopen are permitted exit
+  transitions (see [Ignored](#ignored) above)
 - **Duplicated**: modifications are blocked by the API — endpoints that
   modify ticket data return 409 if the ticket is in Duplicated status
   (the ticket must be reverted first)

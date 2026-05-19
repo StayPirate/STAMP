@@ -26,10 +26,7 @@
 
 ### TKT-GAP-05 — No transition from Ignored when NVD rejection is reverted (Medium)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The spec states "Ignored is a terminal status — there is no transition from Ignored to any other status." It also references NVD rejection revert handling in cve-tracking.md. If a ticket was auto-transitioned to Ignored due to NVD rejection (New → Ignored), and then NVD reverts the rejection, the ticket is stuck in Ignored with no way to automatically or programmatically undo it. The note says "see docs/features/tickets/cve-tracking.md" for rejection revert handling but the tickets spec explicitly declares Ignored as terminal with only admin soft-delete as recourse. This creates an operational gap where legitimate CVEs rejected in error by NVD cannot have their tickets automatically recovered.
+**Status**: RESOLVED — Rimossa la terminalità assoluta di Ignored; aggiunte transizioni condizionate Ignored→Analysis (assegnazione VA) e Ignored→New (reopen di sistema) con centralizzazione in ticket_mutations (2026-05-19)
 
 ### TKT-GAP-06 — Associate-CVE on a ticket in Duplicated status is unspecified (Low)
 
