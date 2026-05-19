@@ -387,7 +387,12 @@ determining a ticket's status based on its current data.
    - Otherwise → status is New
 2. If the determined status differs from the current status, the function
    updates the ticket and creates a `TicketAuditEvent` with
-   `event_type = status_change`
+   `event_type = status_change`. The event's `old_value` is taken from
+   the optional `previous_status` parameter if provided; otherwise it is
+   the ticket's current status field. This allows callers to record the
+   real semantic transition (e.g., `Ignored → Analysis`) even when the
+   status field has been set to an intermediate value for evaluation
+   purposes.
 3. The function operates within the **same database transaction** as the
    triggering operation (atomicity guarantee)
 
@@ -414,11 +419,16 @@ The ticket state machine has two zones:
   operates on tickets in the manual zone.
 
 To exit the manual zone, an explicit operation must call the private
-helper `_reenter_gate_zone()`, which sets `status = New` and then calls
-`evaluate_ticket_status`. This ensures the ticket re-enters the gate
-zone at the lowest rung and is immediately promoted to the correct
-gate-based status (Analysis, Analyzed, or Resolved) based on current
-conditions.
+helper `_reenter_gate_zone()`. The helper:
+1. Saves the ticket's current status (Ignored or Duplicated) as
+   `original_status`
+2. Sets `status = New` (entering the gate zone at the lowest rung)
+3. Calls `evaluate_ticket_status(previous_status=original_status)`
+
+This produces a single `TicketAuditEvent` with the real transition
+(e.g., `old_value = Ignored, new_value = Analysis`). The intermediate
+`New` state is an internal implementation detail — never visible in the
+audit trail.
 
 #### Ticket Mutations Module
 
@@ -449,9 +459,10 @@ transitioning tickets out of Ignored or Duplicated:
 - `revert_duplicate()` — clears `duplicate_of_id`, reassigns to the
   reverting VA, then calls `_reenter_gate_zone()`
 
-Both delegate to the private helper `_reenter_gate_zone()`, which sets
-`status = New` and calls `evaluate_ticket_status`. The helper is never
-called directly by external code.
+Both delegate to the private helper `_reenter_gate_zone()`, which saves
+the current status, sets `status = New`, and calls
+`evaluate_ticket_status(previous_status=original_status)`. The helper is
+never called directly by external code.
 
 **Relationship with `services/cvss.py`**: the CVSS-related functions in
 `ticket_mutations` (assessment creation, update, deletion) delegate
@@ -805,17 +816,17 @@ When reverting a ticket from Duplicated status
 
 - `duplicate_of_id` is cleared (set to NULL).
 - The ticket is reassigned to the VA who performed the revert.
-- `_reenter_gate_zone()` is called: sets `status = New`, then
-  `evaluate_ticket_status` determines the correct status based on
-  current gate conditions. Since the revert assigns a new VA
-  (satisfying the assignee gate), the typical outcomes are:
+- `_reenter_gate_zone()` is called: saves `original_status = Duplicated`,
+  sets `status = New`, then calls
+  `evaluate_ticket_status(previous_status=Duplicated)` to determine the
+  correct status. Since the revert assigns a new VA (satisfying the
+  assignee gate), the typical outcomes are:
   - All Resolved gates met → Resolved
   - All Analyzed gates met → Analyzed
   - Assignee present but not all Analyzed gates met → Analysis
-  This may produce two `TicketAuditEvent` records in the same
-  transaction: `duplicate_removed` (user action) followed by
-  `status_change` (system action if the evaluated status differs from
-  New).
+  This produces two `TicketAuditEvent` records in the same transaction:
+  `duplicate_removed` (user action) followed by `status_change` with
+  `old_value = Duplicated, new_value = (evaluated target)`.
 - Create `TicketAuditEvent` (`duplicate_removed`).
 
 The revert operation does NOT need to know or care about the canonical
@@ -920,9 +931,11 @@ row before any modification (see
   have changed externally (CVSS scores deleted, product eligibility
   changed, AIMAAS thresholds updated). If the gates for the ticket's
   current status are no longer met, the ticket is automatically regressed
-  to the appropriate status. This may produce two `TicketAuditEvent`
-  records in the same transaction: `ticket_restored` followed by
-  `status_change` (system action)
+  to the appropriate status. If the ticket is in the manual zone
+  (Ignored or Duplicated), `evaluate_ticket_status` is a no-op — the
+  ticket retains its pre-deletion status unchanged. This may produce two
+  `TicketAuditEvent` records in the same transaction: `ticket_restored`
+  followed by `status_change` (system action, only for gate-zone tickets)
 - Both operations (soft-delete and restore) create a `TicketAuditEvent`
   record (see `docs/features/tickets/ticket-audit-log.md`)
 
@@ -962,34 +975,61 @@ Both transitions go through `ticket_mutations.reopen_from_ignored()`:
 1. Acquires `FOR UPDATE` on the ticket
 2. Verifies current status is Ignored
 3. Sets assignee (if applicable)
-4. Calls `_reenter_gate_zone()` (sets `status = New`, then
-   `evaluate_ticket_status` promotes based on current gate conditions —
-   typically to Analysis if an assignee is present)
-5. Creates `TicketAuditEvent` (`status_change` + `assignment_change`
-   if applicable)
+4. Calls `_reenter_gate_zone()` — saves `original_status = Ignored`,
+   sets `status = New`, calls
+   `evaluate_ticket_status(previous_status=Ignored)`. Produces a
+   `status_change` event with `old_value = Ignored, new_value =
+   (evaluated target)` — typically Analysis if an assignee is present
+5. Creates `TicketAuditEvent` (`assignment_change` if applicable)
 
-All other modifications on Ignored tickets remain blocked — adding
-packages, changing severity, changing track statuses have no effect on
-status and are discouraged.
+All other modifications on Ignored tickets are blocked — mutation
+endpoints return 409 `TICKET_NOT_MUTABLE` (same guard as Duplicated).
+This prevents gate-relevant data from accumulating while the ticket is
+in the manual zone, which would cause unexpected status jumps on reopen.
 
 ### Modifications in Inactive Statuses
 
 Tickets in inactive statuses (`Resolved`, `Ignored`, `Duplicated`) are
-not monitored by background tasks. Manual modifications (adding
-packages, changing track statuses) are **not blocked** by the system but
-are discouraged:
+not monitored by background tasks.
 
 - **Resolved**: modifying gate-relevant data triggers centralized status
   evaluation, which may regress the ticket to Analyzed or Analysis
-- **Ignored**: modifications (other than assignment/reopen) have no
-  effect on status — `evaluate_ticket_status` never operates on Ignored
-  tickets (manual zone). Only `reopen_from_ignored()` can transition the
-  ticket back to the gate zone (see [Ignored](#ignored) above)
-- **Duplicated**: modifications are blocked by the API — endpoints that
-  modify ticket data return 409 if the ticket is in Duplicated status.
-  `evaluate_ticket_status` never operates on Duplicated tickets (manual
-  zone). Only `revert_duplicate()` can transition the ticket back to
-  the gate zone
+- **Ignored and Duplicated** (manual zone): mutation endpoints return
+  409 `TICKET_NOT_MUTABLE` via the `require_ticket_mutable` dependency.
+  Only the dedicated exit endpoints (`POST .../reopen` for Ignored,
+  `POST .../revert-duplicate` for Duplicated) bypass this guard. See
+  [Mutability Guard](#mutability-guard) for the enforcement mechanism.
+
+### Mutability Guard
+
+Enforcement of the manual-zone immutability is centralized in a shared
+FastAPI dependency `require_ticket_mutable`, applied as a `Depends()` on
+each mutation endpoint's handler signature:
+
+```python
+async def require_ticket_mutable(ticket: Ticket = Depends(get_ticket)):
+    if ticket.status in (TicketStatus.Ignored, TicketStatus.Duplicated):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "TICKET_NOT_MUTABLE", ...}
+        )
+    return ticket
+```
+
+**Scope**:
+- Applied to: all endpoints that modify ticket data (add package, set
+  severity, associate CVE, set track status, mark as duplicate, ignore,
+  grant/revoke access, add/remove references, etc.)
+- NOT applied to: read endpoints (GET), manual-zone exit endpoints
+  (`POST .../reopen`, `POST .../revert-duplicate`), and soft-delete/restore
+  (which have their own admin-only guard)
+
+**Relationship with `require_ticket_not_deleted`**: the soft-delete guard
+is a router-level dependency (applies to all operations on a single
+ticket, including reads). `require_ticket_mutable` is per-endpoint
+(applies only to mutations). A ticket can be both not-deleted and
+not-mutable (e.g., an active Duplicated ticket). The two guards are
+independent checks evaluated in sequence.
 
 ## Tickets Without CVE: Behavioral Differences
 

@@ -92,7 +92,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
@@ -290,6 +290,28 @@ because they manage the soft-delete lifecycle directly:
 See `docs/features/tickets/tickets.md` ([Soft-Delete](docs/features/tickets/tickets.md#soft-delete))
 for the full business rules (who may delete/restore, status categories,
 sub-resource behavior, automated verification requirements).
+
+#### Manual-Zone Mutability Guard
+
+Tickets in the **manual zone** (status `Ignored` or `Duplicated`) are
+immutable — mutation endpoints return `409 TICKET_NOT_MUTABLE`. This is
+enforced by a per-endpoint dependency (`require_ticket_mutable`) on all
+endpoints that modify ticket data.
+
+| Status | Code                  | Condition                                          |
+|--------|-----------------------|----------------------------------------------------|
+| 409    | `TICKET_NOT_MUTABLE`  | Ticket is in Ignored or Duplicated status          |
+
+**Exceptions** — the following endpoints are excluded from this check
+because they manage the manual-zone exit lifecycle:
+
+- `POST /api/v1/tickets/{ticket_id}/reopen` (exit Ignored)
+- `POST /api/v1/tickets/{ticket_id}/revert-duplicate` (exit Duplicated)
+
+Read endpoints (GET) are never subject to this guard.
+
+See `docs/features/tickets/tickets.md` ([Mutability Guard](docs/features/tickets/tickets.md#mutability-guard))
+for the full specification.
 
 ### Versioning
 
