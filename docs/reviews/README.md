@@ -20,11 +20,11 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
 | [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 |  |
+| [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-18 |  |
+| [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-18 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -36,14 +36,14 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [tickets](tickets.md) | 1 | 🟢 | 2 | 6 | 4 | 13 | 2026-05-19 | ⚠️ |
-| | 1:🟡 |  | 1:🟠 1:🟡 | 3:🟠 3:🟡 | 1:🟠 3:🟡 |  |  |  |
+| [tickets](tickets.md) | 12 | 1 | 6 | 9 | 5 | 33 | 2026-05-19 |  |
+| | 5:🟠 7:🟡 | 1:🟡 | 3:🟠 3:🟡 | 4:🟠 5:🟡 | 1:🟠 4:🟡 |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **1** | **0** | **2** | **6** | **4** | **13** |  |  |
-| | 1:🟡 |  | 1:🟠 1:🟡 | 3:🟠 3:🟡 | 1:🟠 3:🟡 |  |  |  |
+| **Total** | **12** | **1** | **6** | **9** | **5** | **33** |  |  |
+| | 5:🟠 7:🟡 | 1:🟡 | 3:🟠 3:🟡 | 4:🟠 5:🟡 | 1:🟠 4:🟡 |  |  |  |
 
 ### Disabled specs
 
