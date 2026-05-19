@@ -30,17 +30,11 @@
 
 ### TKT-GAP-06 — Associate-CVE on a ticket in Duplicated status is unspecified (Low)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The spec states under "Modifications in Inactive Statuses": "Duplicated: modifications are blocked by the API — endpoints that modify ticket data return 409 if the ticket is in Duplicated status". However, the Associate CVE endpoint (POST /api/v1/tickets/{ticket_id}/associate-cve) does not list a 409 error for Duplicated status in its error responses table. It's implied by the general rule but not explicit in the endpoint definition. A developer implementing this endpoint might miss the Duplicated guard.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes. The mutability guard is now centralized as `require_ticket_mutable` dependency documented in api-spec.md (Scoped Responses, Manual-Zone Mutability Guard). Per convention, scoped responses are not repeated in per-endpoint error tables. (2026-05-19)
 
 ### TKT-GAP-07 — Set-severity endpoint missing Duplicated status guard in error table (Low)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The Set Severity Override endpoint lists only TICKET_SEVERITY_DERIVED and TICKET_NOT_FOUND errors. Per the general rule "Duplicated: modifications are blocked by the API — endpoints that modify ticket data return 409", this endpoint should also reject calls on Duplicated tickets, but the error table does not document this. Same applies to the Ignore endpoint for tickets already in Duplicated status (though the status check would catch it via TICKET_INVALID_TRANSITION).
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes. The mutability guard is now centralized as `require_ticket_mutable` dependency documented in api-spec.md (Scoped Responses, Manual-Zone Mutability Guard). Per convention, scoped responses are not repeated in per-endpoint error tables. (2026-05-19)
 
 ### TKT-GAP-08 — Unassign operation not specified (Low)
 
