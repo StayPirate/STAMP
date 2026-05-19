@@ -200,3 +200,10 @@ The List Tickets endpoint declares sort_by and sort_order parameters but does no
 ### TKT-API-05 — TICKET_CVE_CONFLICT error code not listed in api-spec.md Error Code Categories (Medium)
 
 **Status**: RESOLVED — The convention requires codes to be defined in the Python enum — the examples table in api-spec.md is illustrative, not exhaustive. The spec correctly uses the TICKET_* prefix and documents HTTP status + error code for each error. (2026-05-18)
+
+### TKT-API-06 — Ticket object response schema not defined (Medium)
+
+**Category**: API completeness
+**Status**: OPEN
+
+The tickets spec does not define which fields are included in the "ticket object" returned by the list endpoint (`GET /api/v1/tickets`) vs the detail endpoint (`GET /api/v1/tickets/{ticket_id}`). The spec only says "paginated list in `{"data": [...], "meta": {...}}` envelope" for lists and "ticket object in `{"data": ...}` envelope" for detail. The only mentioned difference is that detail "includes bugowner information for each package." Fields like `duplicate_of_id`, `previous_status`, `is_confidential`, and nested relationships (packages, tracks, products) have no explicit inclusion/exclusion per endpoint. This makes it ambiguous for implementers and API consumers which fields to expect in each context.
