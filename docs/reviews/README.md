@@ -36,22 +36,26 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [tickets](tickets.md) | 9 | 🟢 | 5 | 6 | 3 | 23 | 2026-05-18 |  |
-| | 5:🟠 4:🟡 |  | 1:🔴 3:🟠 1:🟡 | 3:🟠 3:🟡 | 3:🟡 |  |  |  |
+| [tickets](tickets.md) | 9 | 🟢 | 5 | 6 | 4 | 24 | 2026-05-18 |  |
+| | 5:🟠 4:🟡 |  | 1:🔴 3:🟠 1:🟡 | 3:🟠 3:🟡 | 1:🟠 3:🟡 |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **9** | **0** | **5** | **6** | **3** | **23** |  |  |
-| | 5:🟠 4:🟡 |  | 1:🔴 3:🟠 1:🟡 | 3:🟠 3:🟡 | 3:🟡 |  |  |  |
+| **Total** | **9** | **0** | **5** | **6** | **4** | **24** |  |  |
+| | 5:🟠 4:🟡 |  | 1:🔴 3:🟠 1:🟡 | 3:🟠 3:🟡 | 1:🟠 3:🟡 |  |  |  |
 
 ### Disabled specs
 
 - admin
+- admin-settings
+- all-tickets
 - cve-tracking
 - cvss-scoring
 - fetcher-dashboard
+- fetcher-detail
 - fetcher-infrastructure
+- fetchers
 - git-product-release-detection
 - git-track-release-detection
 - ibs-integration
@@ -59,10 +63,18 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - ibs-rabbitmq-integration
 - ibs-submission-tracking
 - ibs-track-release-detection
+- inbox
+- layout
+- login
 - maintainer-dashboard
+- my-packages
+- my-packages-ticket
+- my-tickets
+- orphan-tickets
 - package-bugowner
 - package-tracking
 - pages
 - product-catalog
 - product-lifecycle-transitions
 - references
+- ticket-detail
