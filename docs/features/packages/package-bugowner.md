@@ -385,33 +385,6 @@ The `members` field is included only when `type` is `group`. For
 No additional authentication is required — bugowner information is
 visible to all users (same access level as package data in tickets).
 
-## UI Requirements
-
-### Ticket Detail Page
-
-In the package section of the ticket detail page, display the bugowner
-next to each package name:
-
-```
-Package: curl
-Bugowner: pkg-maintainers (pkg-maintainers@suse.de)
-Codestreams:
-  ├── SUSE:SLE-15-SP5:Update  [Analysis]
-  ├── SUSE:SLE-15-SP6:Update  [Affected]
-  └── SUSE:SLE-15-SP7:Update  [Affected]
-```
-
-- For **group** bugowners: display the group name and email. A tooltip
-  or expandable section shows the list of group members.
-- For **person** bugowners: display the name and email.
-- If the bugowner is **unknown** (`null`): display "Unknown" in a
-  neutral/greyed-out style.
-
-The bugowner display is informational — no edit actions are available
-(the data comes from IBS).
-
-See `docs/features/ui/pages.md` for page placement.
-
 ## Background Tasks
 
 - `sync_package_bugowners`: runs every 14 days at 03:00 UTC. Performs
@@ -449,4 +422,4 @@ See `docs/features/ui/pages.md` for page placement.
 - `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints
   (bugowner resolution endpoint)
 - `docs/features/identity/rbac.md` — access control for fetcher operations
-- `docs/features/ui/pages.md` — page placement for bugowner display
+

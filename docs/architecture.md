@@ -99,7 +99,7 @@ coordination across multiple maintained distribution versions.
   tracking, metric collection, and registry. The fetcher registry feeds
   a dashboard that shows execution history, performance charts, and
    operational controls. See `docs/features/platform/fetcher-infrastructure.md`
-   for the base class contract and `docs/features/platform/fetcher-dashboard.md`
+   for the base class contract and `docs/features/platform/fetcher-operations.md`
    for the monitoring dashboard.
 
 ### Database (PostgreSQL)

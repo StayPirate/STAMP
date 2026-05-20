@@ -105,7 +105,7 @@ directly on the assessment record.
 
 #### SUSE
 
-- **Source**: manual input by VA via the Ticket Detail page
+- **Source**: manual input by VA
 - **Provider name in Sentinel**: `"SUSE"`
 - **CVSS versions**: the VA MUST provide both v3.1 and v4.0 assessments
   before the ticket can progress beyond Analysis (see Workflow Gates)
@@ -365,72 +365,6 @@ with an active ticket, Sentinel performs the following recalculation:
      of re-evaluation): `event_type = "status_change"`, with `old_value` and
      `new_value` reflecting the actual transition, `user_id = NULL`
      (system action)
-
-## UI — CVSS Card
-
-The CVSS Card is a dedicated section in the Ticket Detail page
-(`/tickets/:id`), displayed after the CVE Information Card. See
-`docs/features/ui/pages.md` for the full page layout.
-
-### Structure
-
-The card contains:
-
-1. **Tabs**: one tab per CVSS version, ordered by version ascending (e.g.,
-   v2.0 → v3.1 → v4.0)
-2. **Tab visibility**:
-   - Tabs for v3.1 and v4.0 are **always visible**, even if empty
-   - Tabs for other versions (e.g., v2.0) are visible only if at least one
-     assessment of that version exists for the CVE
-3. **Active tab on load**: the tab corresponding to the system-wide default
-   CVSS version
-4. **Tab content**: a table of assessments for that version (see below)
-5. **SUSE CVSS action**: below the table (only in v3.1 and v4.0 tabs):
-   - If SUSE assessment is absent: button "Add SUSE CVSS"
-   - If SUSE assessment is present: button "Edit SUSE CVSS"
-   - Both open a modal with a vector string input field
-6. **Empty state**: when a tab has no assessments, display
-   "No CVSS data available for this version" with the SUSE action button
-   (if applicable)
-
-### Assessment Table
-
-Each tab displays a table with the following columns:
-
-**CVSS v3.1 tab:**
-
-| Provider | Score | Attack Vector | Attack Complexity | Privileges Required | User Interaction | Scope | Confidentiality | Integrity | Availability |
-|----------|-------|---------------|-------------------|---------------------|------------------|-------|-----------------|-----------|--------------|
-
-**CVSS v4.0 tab:**
-
-| Provider | Score | Attack Vector | Attack Complexity | Attack Requirements | Privileges Required | User Interaction | Vuln. Confidentiality | Vuln. Integrity | Vuln. Availability | Sub. Confidentiality | Sub. Integrity | Sub. Availability |
-|----------|-------|---------------|-------------------|---------------------|---------------------|------------------|-----------------------|-----------------|--------------------|----------------------|----------------|-------------------|
-
-- One row per provider
-- Metric columns show human-readable values parsed from the vector string
-  (e.g., "Network", "Low", "High")
-- Providers that only supply certain versions appear only in the
-  corresponding tabs (e.g., Red Hat appears only in v3.1 if they only
-  provide v3.1). No placeholder rows for missing versions.
-- Other CVSS versions (e.g., v2.0): columns match the base metrics of that
-  version's specification
-
-### SUSE CVSS Modal
-
-When the VA clicks "Add SUSE CVSS" or "Edit SUSE CVSS":
-
-1. A modal opens with:
-   - Title: "SUSE CVSS v{version}" (matching the active tab)
-   - Input field: CVSS vector string (text input, monospace)
-   - Pre-filled with existing vector if editing
-   - Validation feedback inline (invalid vector format → error message)
-2. On submit:
-   - Backend validates the vector string format for the specified version
-   - Backend calculates the score from the vector
-   - Assessment is saved with `provider_name = "SUSE"`
-   - Severity and eligibility are recalculated (see Recalculation Cascade)
-   - The table updates to show the new/updated SUSE row
 
 ## API Endpoints
 

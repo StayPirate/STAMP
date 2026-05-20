@@ -213,10 +213,10 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/references` | Public | [references](../ui/references.md#list-references) |
-| POST | `/api/v1/tickets/{ticket_id}/references` | Vulnerability Analyst | [references](../ui/references.md#add-reference) |
-| PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../ui/references.md#update-reference) |
-| DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../ui/references.md#delete-reference) |
+| GET | `/api/v1/tickets/{ticket_id}/references` | Public | [references](../tickets/ticket-references.md#list-references) |
+| POST | `/api/v1/tickets/{ticket_id}/references` | Vulnerability Analyst | [references](../tickets/ticket-references.md#add-reference) |
+| PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../tickets/ticket-references.md#update-reference) |
+| DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | Vulnerability Analyst | [references](../tickets/ticket-references.md#delete-reference) |
 
 ### CVSS Assessments
 
@@ -243,24 +243,24 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/fetchers` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md#list-fetchers) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md#list-fetcher-runs) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md#get-fetcher-run-detail) |
-| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md#get-fetcher-run-timeline-data) |
-| POST | `/api/v1/fetchers/{fetcher_name}/trigger` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md#trigger-fetcher-admin-only) |
-| GET | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md#get-fetcher-config-admin-only) |
-| PATCH | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md#update-fetcher-config-admin-only) |
-| GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | Admin | [fetcher-dashboard](../platform/fetcher-dashboard.md#get-fetcher-audit-log-admin-only) |
-| GET | `/api/v1/ibs-consumer/status` | Public | [fetcher-dashboard](../platform/fetcher-dashboard.md#ibs-rabbitmq-consumer-status) |
+| GET | `/api/v1/fetchers` | Public | [fetcher-operations](../platform/fetcher-operations.md#list-fetchers) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public | [fetcher-operations](../platform/fetcher-operations.md#list-fetcher-runs) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-detail) |
+| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-timeline-data) |
+| POST | `/api/v1/fetchers/{fetcher_name}/trigger` | Admin | [fetcher-operations](../platform/fetcher-operations.md#trigger-fetcher-admin-only) |
+| GET | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-config-admin-only) |
+| PATCH | `/api/v1/fetchers/{fetcher_name}/config` | Admin | [fetcher-operations](../platform/fetcher-operations.md#update-fetcher-config-admin-only) |
+| GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | Admin | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-audit-log-admin-only) |
+| GET | `/api/v1/ibs-consumer/status` | Public | [fetcher-operations](../platform/fetcher-operations.md#ibs-rabbitmq-consumer-status) |
 
-### Maintainer Dashboard
+### Maintainer Operations
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/my/packages/pending` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md#get-apiv1mypackagespending) |
-| GET | `/api/v1/my/packages/in-progress` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md#get-apiv1mypackagesin-progress) |
-| GET | `/api/v1/my/packages/completed` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md#get-apiv1mypackagescompleted) |
-| GET | `/api/v1/my/packages/ticket/{ticket_id}` | Authenticated | [maintainer-dashboard](../ui/maintainer-dashboard.md#get-apiv1mypackagesticketticket_id) |
+| GET | `/api/v1/my/packages/pending` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagespending) |
+| GET | `/api/v1/my/packages/in-progress` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagesin-progress) |
+| GET | `/api/v1/my/packages/completed` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagescompleted) |
+| GET | `/api/v1/my/packages/ticket/{ticket_id}` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagesticketticket_id) |
 
 ### Administration
 
@@ -361,49 +361,6 @@ A user can acquire a role from two independent sources (origins):
 5. Removing a manual role never affects AD-derived records; removing an
    AD-derived role (via sync) never affects manual records. The two
    lifecycles are fully independent.
-
-### UI representation
-
-In the Admin UI (user detail page and user management page), each role
-displays badge(s) indicating its active origin(s):
-
-- A role held only manually shows a "Manual" badge
-- A role held only via AD shows a badge with the AD group name (locked,
-  not removable by the admin)
-- A role held from both sources shows both badges — the admin can remove
-  the manual assignment but the AD badge remains (locked)
-
-This gives admins full visibility into why a user has a given role and
-what would happen if they remove the manual assignment.
-
-## UI Requirements
-
-### Login Page
-
-The login page displays both authentication options: an SSO button
-(redirect to id.suse.com) and a local username/password form. The SSO
-button is rendered only when SSO is configured (the frontend determines
-this by calling `GET /api/v1/auth/providers`); the local form is always
-visible. See `docs/features/identity/authentication.md` for the shared
-framework and `docs/features/identity/sso-authentication.md` /
-`docs/features/identity/local-authentication.md` for each provider's flow.
-
-### User Management Page (Admin only)
-
-- Table of all users with their assigned roles and role origins
-- Edit user roles (add/remove manual roles; AD-derived roles shown as
-  locked)
-- Activate/deactivate local users (AD users have their active status
-  managed exclusively by directory sync — see
-  `docs/features/identity/user-service.md`, AD Active Status Ownership)
-- Users are created by the LDAP directory sync (AD users) or by admins
-  via CLI and admin UI (local users). See
-  `docs/features/identity/ad-integration.md` and
-  `docs/features/identity/user-management.md`
-
-### User Profile
-
-- View own profile and roles (with origin)
 
 ## Business Rules
 

@@ -92,12 +92,12 @@ Disalignment risk is mitigated by `ticket_mutations` and the
 vulnerable" (`NOT_AFFECTED`). Both mean the code is not currently
 vulnerable, but they carry different history and workload implications.
 
-- The VA can set `FIXED` manually via the dropdown
+- The VA can set `FIXED` manually
 - The system sets `FIXED` automatically when delivery reaches `RELEASED`
   (one-shot event, not continuous reconciliation)
 - The VA can change `FIXED` back to `AFFECTED` if the fix is insufficient
 - No `is_status_override` flag is needed on tracks — the VA has direct
-  control via the dropdown
+  control
 
 ### 6. Affectedness and delivery are independent axes
 
@@ -305,7 +305,7 @@ Property of the source code. Determined by the VA during analysis.
 | `FIXED` | Code was vulnerable, fix has been applied |
 | `WONT_FIX` | Code is vulnerable, decision not to fix |
 
-The VA sets affectedness at the **track level** via a dropdown. Products
+The VA sets affectedness at the **track level**. Products
 inherit the track's status unless the VA overrides a specific product
 (`is_status_override = true`).
 
@@ -615,7 +615,7 @@ When `delivery_status` transitions to `RELEASED`:
 ### Manual Transitions
 
 The VA can manually change the affectedness status of any track to any
-value without restriction via the dropdown. The VA cannot manually
+value without restriction. The VA cannot manually
 change the delivery status — it is system-managed.
 
 ---
@@ -693,22 +693,11 @@ current reality, not the state at the time of deletion.
 
 Soft-deleted records are excluded from:
 
-- **UI normal view** — not shown in the ticket's package tree
+- **Default views** — excluded from default ticket responses (requires `include_deleted` parameter)
 - **Ticket resolution gate** — not considered when evaluating whether
   a ticket can transition to Resolved
 - **Anomaly detection** — not flagged in the future Review Queue
 - **Analysis gate** — not considered when evaluating Analysis → Analyzed
-
-### UI for Soft-Deleted Records
-
-When a ticket contains soft-deleted records, the UI shows a discrete
-indicator (e.g., "3 excluded items"). Clicking the indicator opens a
-panel that displays:
-
-- Each excluded item with its **current state** (not the state at
-  deletion time)
-- When it was excluded (from `deleted_at`)
-- A "Restore" button for each item
 
 ### Restore
 
@@ -921,13 +910,6 @@ When a VA removes a package from a ticket, Sentinel performs a
 is set on the `TicketPackage` record only. Child `TicketPackageTrack`
 and `TicketPackageProduct` records are not modified — they become
 effectively excluded via the hierarchy.
-
-**UI confirmation**: if any of the records being removed are in a final
-status (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), the UI must display a
-confirmation dialog before proceeding (e.g., "This package has N
-tracks/products in a final status. Are you sure you want to remove
-it?"). The backend API does not enforce this check — it is a UI-only
-safeguard.
 
 ### SMELT Query for Package Resolution
 
@@ -1528,87 +1510,6 @@ endpoint above — single-field update from the client's perspective.
 | 422 | `VALIDATION_ERROR` | Invalid status value, or neither `status` nor `eligible` provided |
 
 ---
-
-## UI Requirements
-
-### Ticket Detail — Affectedness Section
-
-The affectedness section on the ticket detail page displays a tree
-structure:
-
-```
-[+ Add Package]
-
-Package: openssl-3                              [Exclude]
-├── SUSE:SLE-15-SP6:Update  [Affected ▼]   In Progress  [Exclude]
-│   ├── SLES 15 SP6         Affected  (eligible)        [Exclude]
-│   ├── SLED 15 SP6         Affected  (eligible)        [Exclude]
-│   └── SLES-LTSS 15-SP4    Affected  (not eligible)    [Exclude]
-├── SUSE:SLE-15-SP5:Update  [Not Affected ▼]            [Exclude]
-│   └── SLES-LTSS 15-SP5    Not Affected                [Exclude]
-└── SUSE:SLE-15-SP3:Update  [Fixed ▼]         Released  [Exclude]
-    └── SLES-LTSS 15-SP1    Fixed  (not eligible)       [Exclude]
-```
-
-- The second track (`Not Affected + Pending`) has no delivery badge
-  because `delivery_relevant = false`. The third track (`Fixed +
-  Released`) shows the badge because `delivery_relevant = true` (delivery
-  has moved beyond the default).
-
-- **Package level**: shows the package name with an option to exclude it
-  (soft-delete)
-- **Track level**: shows the track reference with:
-  - A **status dropdown** (left): Analysis, Affected, Not Affected,
-    Fixed, Won't Fix
-  - A **delivery badge** (right): shows delivery progress (Pending /
-    In Progress / Released) with color coding (grey / orange / green).
-    The badge is **only displayed when `delivery_relevant = true`** —
-    when delivery is not relevant (final affectedness with no delivery
-    activity), the badge is hidden to avoid displaying noise.
-    Clicking the badge opens a popover with SR/incident/RR details.
-  - An **Exclude** action
-- **Product level**: shows the product name, inherited status (with
-  color), and eligibility indicator. Products have an option to override
-  the status and eligibility (which sets the corresponding
-  `is_*_override = true`). Each product has an Exclude action.
-- **Color coding**: Affected = red, all final states = green,
-  Analysis = neutral/no color. Not eligible products are greyed out.
-- **Add Package**: opens an input where the VA types a package name.
-  Sentinel queries SMELT and populates the tree. If SMELT returns no
-  results, an error is shown.
-
-### Excluded Items Panel
-
-When the ticket has excluded records (directly or via hierarchy), a
-discrete indicator is shown (e.g., "3 excluded items"). Clicking it
-opens a panel showing:
-
-- Each excluded item with its **current state** (updated in real-time)
-- Whether it was excluded **directly** (`deleted_at` on the record
-  itself) or **indirectly** (via a parent's `deleted_at`), and at which
-  level (package or track)
-- When it was excluded (from the relevant `deleted_at` timestamp —
-  the record's own or the ancestor's)
-- A "Restore" button for **directly excluded** items only (items
-  excluded via hierarchy cannot be restored individually — the parent
-  must be restored first)
-
-### Product Release Anomaly Indicator
-
-When a track has `status = FIXED` and `delivery_status = RELEASED` but
-a specific eligible product has NOT received the fix (no `released_at`),
-that product displays a warning indicator in the UI:
-
-```
-kernel-default (SLE-15-SP6)  [FIXED]         Released
-   SLES 15 SP6              (normal)
-   SLED 15 SP6              ! update not received    <-- blocks ticket
-   SLES 15 SP5 LTSS         (greyed out, not eligible)
-```
-
-This is an exceptional case (possible causes: product not enabled in
-incident by mistake, repository sync delay, operational error). It gives
-the VA immediate visibility into what is blocking ticket resolution.
 
 ---
 

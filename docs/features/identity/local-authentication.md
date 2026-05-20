@@ -313,15 +313,6 @@ attempts per username using a Redis counter.
 
 ## Login Page
 
-The login page always displays the username/password form. The "Login
-with SUSE SSO" button is rendered only when SSO is configured — the
-frontend determines this by calling `GET /api/v1/auth/providers` (see
-`docs/features/identity/sso-authentication.md`).
-
-- **"Login with SUSE SSO" button** (conditional): initiates the SSO flow
-- **Username/password form** (always visible): submits to
-  `POST /api/v1/auth/login`
-
 The local login form does not check whether local users exist — it
 simply returns an authentication error if the credentials are invalid.
 

@@ -13,6 +13,8 @@ ad-integration.md          SUSE AD sync, role mapping
 user-service.md            Service-layer contract for user mutations
 user-management.md         Admin CLI and API for user operations
 rbac.md                    Role definitions and endpoint permission map
+identity-audit-log.md      Identity audit trail (IdentityAuditEvent)
+api-key-service.md         API key lifecycle management
 ```
 
 ## Relationships

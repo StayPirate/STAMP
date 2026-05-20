@@ -559,23 +559,23 @@ status inheritance, eligibility rules, and override model.
 Affectedness status, used by both TicketPackageTrack and
 TicketPackageProduct.
 
-| Value        | UI Label     | Color   | Type      |
-|--------------|-------------|---------|-----------|
-| ANALYSIS     | Analysis    | Neutral | Non-final |
-| AFFECTED     | Affected    | Red     | Non-final |
-| NOT_AFFECTED | Not Affected| Green   | Final     |
-| FIXED        | Fixed       | Green   | Final     |
-| WONT_FIX     | Won't Fix   | Green   | Final     |
+| Value        | Type      |
+|--------------|-----------|
+| ANALYSIS     | Non-final |
+| AFFECTED     | Non-final |
+| NOT_AFFECTED | Final     |
+| FIXED        | Final     |
+| WONT_FIX     | Final     |
 
 ### DeliveryStatus Enum
 
 Delivery pipeline status, used by TicketPackageTrack.
 
-| Value       | UI Label    | Color  |
-|-------------|-------------|--------|
-| PENDING     | Pending     | Grey   |
-| IN_PROGRESS | In Progress | Orange |
-| RELEASED    | Released    | Green  |
+| Value       |
+|-------------|
+| PENDING     |
+| IN_PROGRESS |
+| RELEASED    |
 
 ### WorkflowType Enum
 
@@ -796,7 +796,7 @@ Exits from the manual zone (Ignored, Duplicated) use the shared
 
 Stores external links associated with a ticket. References are created
 automatically by CVE fetchers during ingestion and can also be added
-manually by Vulnerability Analysts. See `docs/features/ui/references.md` for
+manually by Vulnerability Analysts. See `docs/features/tickets/ticket-references.md` for
 the full specification.
 
 | Column     | Type           | Constraints                  | Description                        |

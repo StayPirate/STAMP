@@ -214,9 +214,8 @@ only if you understand the impact."
    - **Bounded range** (1–100): the schema enforces hard limits,
      preventing an admin from disabling the threshold entirely or
      setting it to an unreasonably high value
-   - **Visual warning**: the admin UI displays a persistent safety
-     warning (yellow triangle + amber box) explaining the impact of
-     changing this value, ensuring the admin makes an informed decision
+    - **Safety warning**: the system warns the admin about the impact of
+      changing this value, ensuring an informed decision
    - **Audit trail**: every change is recorded in `FetcherAuditEvent`
      with old and new values, providing accountability
    - **Immediate effect**: the updated value takes effect on the next
@@ -544,7 +543,7 @@ sentinel fetcher run sync_ldap_directory
 ```
 
 This runs the sync synchronously in the CLI process (no Celery
-required). See `docs/features/platform/fetcher-dashboard.md` (section "CLI
+required). See `docs/features/platform/fetcher-operations.md` (section "CLI
 Commands") for full details on the `sentinel fetcher` command group.
 
 ### Post-deployment bootstrap sequence
@@ -670,14 +669,6 @@ members, the response is valid with `affected_users: []`,
 `unknown_users: []`, and `affected_count: 0`. This is not an error — an
 admin may create a role mapping for a group that is not yet populated, in
 preparation for future members.
-
-**UI rendering notes**:
-
-- The `unknown_users` list is displayed in the UI only when non-empty.
-  When empty, the section is hidden to avoid confusing administrators.
-- When displayed, a tooltip (info icon or mouse-over) provides a brief
-  explanation: "Users found in the AD group but not yet synced to
-  Sentinel. They will receive the role at the next directory sync."
 
 **Validation**:
 
@@ -821,40 +812,6 @@ the admin needs to confirm in the response.
 
 Note: users who also have the same role via a different AD group mapping
 or with `ad_group_cn = '_manual'` will retain the role.
-
-## UI Requirements
-
-### Users page and User detail page
-
-The public users page and user detail page are defined in
-`docs/features/identity/user-management.md` (UI section).
-
-### Settings > Role Mappings page
-
-Admin only. Accessible from the admin settings area.
-
-Displays a table of all configured role mappings:
-- AD Group CN
-- Sentinel Role
-- Created by (username)
-- Created at
-- Delete button
-
-**Add Mapping flow**:
-1. Admin enters the AD group CN (text input, or searchable dropdown if
-   AD group listing is feasible)
-2. Admin selects the Sentinel role from a dropdown
-3. Admin clicks "Preview" → the system queries AD live and shows the list
-   of users who would receive the role, along with a count
-4. Admin reviews the list and clicks "Confirm" to create the mapping, or
-   "Cancel" to abort
-5. On confirmation, roles are applied immediately
-
-**Delete Mapping flow**:
-1. Admin clicks "Delete" on a mapping
-2. The system shows a confirmation dialog with the count of users who
-   will lose the role
-3. Admin confirms or cancels
 
 ## Business Rules
 

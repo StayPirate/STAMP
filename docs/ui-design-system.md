@@ -74,8 +74,15 @@ values will be defined during implementation, but the semantic usage is:
 | Affected (green) | `success`     |
 | Not Affected     | `success`     |
 | Won't Fix        | `success`     |
-| Ignored          | `muted`       |
-| Released         | `success`     |
+| Fixed            | `success`     |
+
+### Delivery Status Colors
+
+| Status      | Color Intent |
+|-------------|-------------|
+| Pending     | `muted`     |
+| In Progress | `warning`   |
+| Released    | `success`   |
 
 ## Typography
 

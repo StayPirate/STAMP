@@ -11,7 +11,6 @@ Index of all feature specification domains.
 | [Packages](packages/) | Package affectedness, release detection, and submission tracking |
 | [Platform](platform/) | Cross-cutting infrastructure and system administration |
 | [Tickets](tickets/) | CVE ingestion, triage, severity, and audit trail |
-| [UI](ui/) | Page specifications, dashboards, and cross-cutting UI features |
 
 ## All Specs
 
@@ -24,6 +23,8 @@ Index of all feature specification domains.
 - [user-service.md](identity/user-service.md) — Service-layer contract for user mutations
 - [user-management.md](identity/user-management.md) — Admin CLI and API for user operations
 - [rbac.md](identity/rbac.md) — Role definitions and endpoint permission map
+- [identity-audit-log.md](identity/identity-audit-log.md) — Identity audit trail (IdentityAuditEvent)
+- [api-key-service.md](identity/api-key-service.md) — API key lifecycle management
 
 ### Integrations
 
@@ -35,14 +36,19 @@ Index of all feature specification domains.
 - [package-tracking.md](packages/package-tracking.md) — Status model, eligibility, add/remove packages
 - [ibs-track-release-detection.md](packages/ibs-track-release-detection.md) — MD5 cache, IBS diff
 - [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — updateinfo.xml, advisory match
+- [git-track-release-detection.md](packages/git-track-release-detection.md) — Git track-level release detection
+- [git-product-release-detection.md](packages/git-product-release-detection.md) — Git product-level release detection
 - [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive LTSS / EOL automation
+- [product-catalog.md](packages/product-catalog.md) — Product/ProductRepository, SMELT/AIMAAS sync
 - [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — SR/RR tracking via RabbitMQ + periodic sync
 - [package-bugowner.md](packages/package-bugowner.md) — IBS bugowner resolution and cache
+- [maintainer.md](packages/maintainer.md) — Maintainer operations (pending fixes, in-progress, completed)
 
 ### Platform
 
 - [fetcher-infrastructure.md](platform/fetcher-infrastructure.md) — BaseFetcher base class, registry, execution tracking
-- [fetcher-dashboard.md](platform/fetcher-dashboard.md) — Monitoring dashboard, API, and CLI for fetchers
+- [fetcher-operations.md](platform/fetcher-operations.md) — Monitoring, API, and CLI for fetchers
+- [audit-trail-infrastructure.md](platform/audit-trail-infrastructure.md) — BaseAuditLog base class, AuditEventMixin
 - [admin.md](platform/admin.md) — System settings (default CVSS version, etc.)
 
 ### Tickets
@@ -51,9 +57,4 @@ Index of all feature specification domains.
 - [cve-tracking.md](tickets/cve-tracking.md) — CVE ingestion from NVD/MITRE, on-demand fetch
 - [cvss-scoring.md](tickets/cvss-scoring.md) — Multi-provider CVSS assessments, severity resolution
 - [ticket-audit-log.md](tickets/ticket-audit-log.md) — TicketAuditEvent audit trail, event type contract
-
-### UI
-
-- [pages.md](ui/pages.md) — Page index and routing overview
-- [maintainer-dashboard.md](ui/maintainer-dashboard.md) — Package maintainer view (My Packages)
-- [references.md](ui/references.md) — External links on tickets (auto + manual)
+- [ticket-references.md](tickets/ticket-references.md) — External links on tickets (auto + manual fetcher ingestion)

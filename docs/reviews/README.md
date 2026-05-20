@@ -30,32 +30,32 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| [maintainer](maintainer.md) | 12 | 4 | — | — | 3 | 19 | 2026-05-20 |  |
+| | 1:🔴 5:🟠 6:🟡 | 3:🟠 1:🟡 |  |  | 1:🟠 2:🟡 |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| [ticket-references](ticket-references.md) | 13 | 2 | — | — | 2 | 17 | 2026-05-20 |  |
+| | 6:🟠 7:🟡 | 1:🟠 1:🟡 |  |  | 1:🟠 1:🟡 |  |  |  |
 | [tickets](tickets.md) | 7 | 1 | 3 | 5 | 🟢 | 16 | 2026-05-19 |  |
 | | 7:🟡 | 1:🟡 | 3:🟡 | 5:🟡 |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **7** | **1** | **3** | **5** | **0** | **16** |  |  |
-| | 7:🟡 | 1:🟡 | 3:🟡 | 5:🟡 |  |  |  |  |
+| **Total** | **32** | **7** | **3** | **5** | **5** | **52** |  |  |
+| | 1:🔴 11:🟠 20:🟡 | 4:🟠 3:🟡 | 3:🟡 | 5:🟡 | 2:🟠 3:🟡 |  |  |  |
 
 ### Disabled specs
 
 - admin
-- admin-settings
-- all-tickets
 - cve-tracking
 - cvss-scoring
-- fetcher-dashboard
-- fetcher-detail
 - fetcher-infrastructure
-- fetchers
+- fetcher-operations
 - git-product-release-detection
 - git-track-release-detection
 - ibs-integration
@@ -63,18 +63,7 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - ibs-rabbitmq-integration
 - ibs-submission-tracking
 - ibs-track-release-detection
-- inbox
-- layout
-- login
-- maintainer-dashboard
-- my-packages
-- my-packages-ticket
-- my-tickets
-- orphan-tickets
 - package-bugowner
 - package-tracking
-- pages
 - product-catalog
 - product-lifecycle-transitions
-- references
-- ticket-detail

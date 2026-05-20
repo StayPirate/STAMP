@@ -282,9 +282,8 @@ tracks individual runs with start/end timestamps and item counts) does
 not fit its continuous execution model.
 
 Instead, the consumer reports its state via a **Redis heartbeat** and is
-displayed as a dedicated card in the fetcher dashboard (see
-`docs/features/platform/fetcher-dashboard.md`, section "IBS RabbitMQ Consumer
-Card").
+surfaced via the `GET /api/v1/ibs-consumer/status` endpoint (see
+`docs/features/platform/fetcher-operations.md#ibs-rabbitmq-consumer-status`).
 
 ### Redis Heartbeat
 
@@ -346,13 +345,12 @@ connection):
 - **Requests processed**: `request.create` and `request.state_change`
   events successfully processed by the submission tracking pipeline
 
-### Dashboard Integration
+### Operations API Integration
 
-The consumer state is displayed as a dedicated card in the fetcher
-dashboard, positioned above the fetcher card grid. The card is publicly
-accessible (no authentication required), consistent with the rest of the
-dashboard. See `docs/features/platform/fetcher-dashboard.md`, section "IBS
-RabbitMQ Consumer Card" for the full UI specification.
+The consumer state is exposed via the `GET /api/v1/ibs-consumer/status`
+endpoint, accessible without authentication. See
+`docs/features/platform/fetcher-operations.md#ibs-rabbitmq-consumer-status`
+for the response schema.
 
 ## Known Limitations
 

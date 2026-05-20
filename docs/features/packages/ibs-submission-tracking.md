@@ -811,114 +811,27 @@ with a given maintenance incident. Called automatically by
      codestream_name and package_name extracted from action fields)
 ```
 
-## UI Requirements
+### Chain Selection Rules
 
-### Visualization Format
-
-In the ticket detail view, within the affectedness tree, each track
-in `AFFECTED` (or `ANALYSIS`) status shows the update progression as a
-chain:
-
-```
-SR#XXXXX → SM#XXXXX → RR#XXXXX
-```
-
-Each element is a hyperlink:
-- **SR#XXXXX** — `https://build.suse.de/request/show/XXXXX`
-- **SM#XXXXX** — `https://build.suse.de/project/show/SUSE:Maintenance:XXXXX`
-- **RR#XXXXX** — `https://build.suse.de/request/show/XXXXX`
-
-The arrows (`→`) indicate progression through the MU process. Elements
-that do not yet exist are not shown — the chain grows as the process
-advances.
-
-### Color Coding
-
-Colors indicate the state of each element:
-
-| Color  | Meaning                        | Applies to |
-|--------|--------------------------------|------------|
-| Yellow | In review (IBS `new`/`review`) | SR, RR     |
-| Green  | Accepted                       | SR, RR     |
-| Red    | Declined or revoked            | SR, RR     |
-| Orange | Superseded                     | SR         |
-| Grey   | No state (neutral)             | SM         |
-
-The incident (SM) is always grey — it has no state of its own.
-
-### Display Logic
-
-The chain shown for a given ticket/track is determined by:
+The chain returned for a given ticket/track is determined by:
 
 1. **If an incident exists** (at least one accepted SR with an
-   `incident_number`): show the chain based on the **most recent
+   `incident_number`): return the chain based on the **most recent
    incident**:
    - SR = the most recent SR accepted into that incident
    - SM = the incident
    - RR = the most recent RR for that incident (if any)
 
-2. **If no incident exists**: show the **most recent SR** (pending or
+2. **If no incident exists**: return the **most recent SR** (pending or
    declined, with no incident or RR in the chain).
 
 New SRs that are pending but not yet associated with an active incident
-are **not shown** while an incident chain is active. They appear in the
+are **not included** while an incident chain is active. They appear in the
 chain only after the UM accepts them into the incident.
 
-### Examples
-
-```
-Package: curl                                         [Remove]
-+-- SUSE:SLE-15-SP6:Update        [Affected]
-|   |  SR#407175 → SM#43894 → RR#407225
-|   +-- SLES 15 SP6               Affected   (eligible)
-|   +-- SLED 15 SP6               Affected   (eligible)
-+-- SUSE:SLE-15-SP5:Update        [Affected]
-|   |  SR#407180
-|   +-- ...
-+-- SUSE:SLE-15-SP4:Update        [Fixed]
-    +-- ...
-```
-
-The VA sees immediately:
-- SP6: SR accepted (green), incident created (grey), RR in QA (yellow)
-- SP5: SR pending (yellow), no incident yet
-- SP4: fixed, no chain shown
-
-### Progression Examples
-
-```
-Phase 1 — SR just created:
-  SR#407175                              (yellow)
-
-Phase 2 — SR accepted, incident created:
-  SR#407175 → SM#43894                   (green → grey)
-
-Phase 3 — RR created, in QA:
-  SR#407175 → SM#43894 → RR#407225       (green → grey → yellow)
-
-Phase 4 — RR accepted, released:
-  SR#407175 → SM#43894 → RR#407225       (green → grey → green)
-  (delivery_status transitions to RELEASED; track status set to FIXED)
-
-SR declined, no incident:
-  SR#407175                              (red)
-
-RR declined, revoked, new RR created:
-  SR#407175 → SM#43894 → RR#407230       (green → grey → yellow)
-  (shows the most recent RR, previous revoked RR not shown)
-
-SR superseded:
-  SR#407180                              (orange → shows superseding SR)
-  (or the superseding SR is shown if it exists in Sentinel)
-```
-
-### General Rules
-
-- The chain is **read-only** — no VA interaction required
-- The chain is only shown for non-final track statuses (`ANALYSIS`,
-  `AFFECTED`). Tracks with `FIXED` or `WONT_FIX` status do not show the
-  chain (though the data remains in the database).
-- All elements are clickable links to IBS
+The chain is only relevant for non-final track statuses (`ANALYSIS`,
+`AFFECTED`). Tracks with `FIXED` or `WONT_FIX` status do not have an
+active chain (though the data remains in the database).
 
 ## API Endpoints
 

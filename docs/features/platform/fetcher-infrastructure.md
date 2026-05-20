@@ -11,7 +11,7 @@ control, data model, and data retention.
 
 For the monitoring dashboard (API endpoints, frontend pages, CLI
 commands) that consumes this infrastructure, see
-`docs/features/platform/fetcher-dashboard.md`.
+`docs/features/platform/fetcher-operations.md`.
 
 ## Terminology
 
@@ -62,7 +62,7 @@ class MyConcreteFetcher(BaseFetcher):
     # Only applicable to CVE fetchers. When set, a TicketReference
     # is automatically created with this URL for each processed CVE.
     # Uses {cve_id} as placeholder (e.g., "CVE-2026-3317").
-    # See docs/features/ui/references.md for details.
+    # See docs/features/tickets/ticket-references.md for details.
     source_reference_url_pattern: str | None = None
 
     # Optional: per-fetcher operational parameters configurable at
@@ -250,8 +250,8 @@ properties:
 | `description` | string | Yes | all | Human-readable description shown in the admin UI |
 | `min` | number | No | `int`, `float` | Minimum allowed value |
 | `max` | number | No | `int`, `float` | Maximum allowed value |
-| `choices` | list | No | `str`, `int` | Allowed values (renders as dropdown in UI) |
-| `warning` | string | No | all | Safety warning displayed with visual emphasis in the UI. Use for settings where incorrect values could have significant operational impact |
+| `choices` | list | No | `str`, `int` | Allowed values |
+| `warning` | string | No | all | Safety warning. Use for settings where incorrect values could have significant operational impact |
 
 ### Schema validation rules
 
@@ -298,8 +298,6 @@ subclass. This registry is used by:
 
 - The API validation layer (PATCH endpoint validates submitted values
   against the fetcher's schema)
-- The dashboard UI (dynamic form rendering based on `settings_schema`
-  in the GET config response)
 - The `sentinel fetcher config` CLI command (settings display)
 
 ### Design decisions
@@ -468,7 +466,7 @@ logger.warning("Marking stale run %s for '%s' as failure (running since %s, time
 Stale run detection is a recovery mechanism for unclean process
 terminations (OOM-kill, node crash, `kill -9`). It is NOT a substitute
 for proper signal handling — processes that can handle `SIGINT`/`SIGTERM`
-must do so (see `docs/features/platform/fetcher-dashboard.md`, section "CLI
+must do so (see `docs/features/platform/fetcher-operations.md`, section "CLI
 Commands", "Signal handling").
 
 ## Data Model
@@ -613,7 +611,7 @@ of days (default: **90 days**). After the retention period, runs are
 aggregated into weekly summaries and individual records are deleted. The
 retention period is controlled by the `retention_days` custom setting of
 the `aggregate_fetcher_runs` fetcher (see
-`docs/features/platform/fetcher-dashboard.md`, "Background Tasks").
+`docs/features/platform/fetcher-operations.md`, "Background Tasks").
 
 ### FetcherRunWeeklyAggregate
 
@@ -778,7 +776,7 @@ Invoke `@fetcher-compliance-reviewer` when:
 2. **Required attributes**: `name`, `description`, and `default_schedule`
    are defined on the class. For CVE fetchers,
    `source_reference_url_pattern` should be set if the source has a
-   human-readable web page (see `docs/features/ui/references.md`), and
+   human-readable web page (see `docs/features/tickets/ticket-references.md`), and
    `fetch_single()` must be implemented (see "On-demand Single-Item
    Fetch" above)
 3. **Unique name**: the fetcher's `name` does not conflict with any

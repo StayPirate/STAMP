@@ -26,11 +26,8 @@ Every ticket has two identifiers:
   creation. It is unique and immutable.
 - The human-readable form is `SNTL-{sequence_id}` (e.g., `SNTL-1`,
   `SNTL-42`, `SNTL-1337`). No zero-padding.
-- `SNTL-{n}` is the primary label shown in ticket lists, detail pages,
-  logs, events, and external communications.
-- For tickets with an associated CVE, the UI shows both identifiers:
-  `SNTL-42 (CVE-2024-1234)`.
-- For tickets without a CVE, only `SNTL-{n}` is shown.
+- `SNTL-{n}` is the primary label shown in logs, events, and external
+  communications.
 
 ### API Dual Lookup
 
@@ -71,14 +68,13 @@ ticket creation or via explicit association), the following rules apply:
 
 - **Conflict**: if the CVE exists in the database and is already
   associated with another ticket, the operation fails with 409 Conflict.
-  The response body includes `existing_ticket_id` (UUID) to allow the
-  frontend to link to the existing ticket
+  The response body includes `existing_ticket_id` (UUID) to identify
+  the conflicting ticket
 - **On-demand fetch**: if the CVE does not exist in the Sentinel
   database, a minimal CVE record (only `cve_id` set) is created and an
   on-demand single-CVE fetch is triggered in the background (see
   `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch").
-  The operation proceeds immediately with the minimal record. The API
-  response includes `cve_data_pending: true`
+  The operation proceeds immediately with the minimal record.
 - **Normal**: if the CVE exists and is not associated with any ticket,
   the association proceeds directly
 
@@ -195,9 +191,6 @@ An Vulnerability Analyst can create a ticket manually via
 
 **Required role**: Vulnerability Analyst.
 
-The UI must provide a mechanism to create tickets manually (button
-placement TBD in `docs/features/ui/pages.md`).
-
 ### Future: External Sources
 
 The data model supports automatic ticket creation from external systems
@@ -234,14 +227,6 @@ layer.
 - When a CVE is associated later, the automatic severity from CVSS takes
   over and `severity_override` is ignored (but not deleted — it serves
   as a historical record of the VA's initial assessment)
-
-### UI Behavior
-
-- **Ticket with CVE**: severity badge is read-only (derived from CVSS)
-- **Ticket without CVE**: severity is editable by the VA (sets
-  `severity_override`)
-- In both cases, the UI shows a single severity badge — the user is not
-  aware of the internal resolution mechanism
 
 ## Ticket Lifecycle
 
@@ -1111,8 +1096,6 @@ features behave differently:
 | Release tracking (product) | Not applicable — product-level detection relies on CVE-ID in `updateinfo.xml` |
 | NVD rejection handling | Not applicable — no CVE means no `vulnStatus` changes |
 | NVD rejection revert handling | Not applicable |
-| CVE Information UI section | Hidden |
-| CVSS Card UI section | Hidden |
 | Gate: SUSE CVSS required | Not applicable — severity is set via `severity_override` instead |
 | Critical CVE notification | Not applicable |
 
@@ -1268,18 +1251,6 @@ This single condition covers all cases:
   intact. To clean them, an Admin must first restore the ticket, then a
   VA removes confidentiality — the cleanup runs 14 days later
 
-### UI Requirements
-
-- **Ticket Detail**: Display a prominent "Confidential / Embargoed"
-  badge or banner when `is_confidential=True`.
-- **Access Grants Manager**: A new section in the Ticket Detail sidebar
-  (visible only to VAs) to search for users and add/remove them from the
-  manual access grants list.
-- **Ticket List**: Confidential tickets only appear for authorized
-  users. No special rendering is needed — they display normally alongside
-  non-confidential tickets. A small "Confidential" badge may be shown to
-  indicate the ticket's status to authorized viewers.
-
 ## API Endpoints
 
 ### Response Schemas
@@ -1426,7 +1397,6 @@ TicketSummary with the full package tree and expanded CVE data.
 | `severity` | string \| null | Resolved severity (override → CVSS-derived). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates and sources, or `null` if no CVE |
-| `cve_data_pending` | boolean | `true` when CVE data is being fetched in the background; `false` otherwise |
 | `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
 | `packages` | PackageDetail[] | Full package/track/product tree with bugowner data |
@@ -1563,8 +1533,7 @@ Request body:
   [Confidential Tickets](#confidential-tickets)). Default: `false`
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
-(201 Created). The `cve_data_pending` field is `true` when a CVE-ID
-was provided and the CVE data is being fetched in the background.
+(201 Created).
 
 Error responses:
 
@@ -1597,8 +1566,7 @@ Request body:
 - `cve_id` (string, required): CVE identifier string
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
-(200 OK). The `cve_data_pending` field is `true` when the CVE data is
-being fetched in the background.
+(200 OK).
 
 Error responses:
 

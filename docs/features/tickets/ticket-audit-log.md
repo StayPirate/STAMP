@@ -5,9 +5,8 @@
 Provide a complete, searchable audit trail for every ticket in Sentinel. Every
 modification to a ticket or its related data (status, assignee, duplicate
 links, packages, tracks, products) MUST produce a `TicketAuditEvent` record.
-Users can browse, filter, and search the history through a dedicated "History"
-tab on the Ticket Detail page (see
-`docs/features/ui/pages/ticket-detail.md` for the UI specification).
+Users can browse, filter, and search the history through the audit-log API
+endpoint.
 
 The `TicketAuditLog` subclass of `BaseAuditLog` provides the event creation
 helper and registers this audit trail in the global registry. See
@@ -58,7 +57,7 @@ fields populated according to this table:
 **Rules**:
 
 - `user_id` MUST be set for user-initiated actions and `NULL` for system
-  actions. This distinction enables the actor filter in the UI.
+  actions.
 - `old_value` and `new_value` store human-readable strings. For enum values,
   store the enum name (e.g., `AFFECTED`, `NOT_AFFECTED`). For user
   references, store the username.

@@ -16,6 +16,7 @@ package-tracking.md                      Status model, eligibility, delivery, so
 product-catalog.md                       Product/ProductRepository, SMELT/AIMAAS sync, lifecycle phases
 ibs-submission-tracking.md               SR/RR tracking via RabbitMQ + periodic sync
 package-bugowner.md                      IBS bugowner resolution and cache
+maintainer.md                            Maintainer operations (pending fixes, in-progress, completed)
 ```
 
 ## Relationships
@@ -30,4 +31,4 @@ package-bugowner.md                      IBS bugowner resolution and cache
 - `ibs-submission-tracking.md` is independent but shares the
   `TicketPackageTrack` model and `IBSEventConsumer` infrastructure.
 - `package-bugowner.md` is self-contained — it caches IBS maintainer
-  data referenced by the ticket detail UI.
+  data referenced by the maintainer operations spec.

@@ -470,7 +470,7 @@ status, and `RELEASED` is represented by `FIXED` with
 
 ## Feature Specification Map
 
-How the 14 feature specifications relate to each other. Arrows indicate
+How the 30 feature specifications relate to each other. Arrows indicate
 dependencies (A → B means A depends on or references B). Specs are
 grouped by domain. See individual specs in [features/](features/).
 
@@ -492,18 +492,18 @@ flowchart TD
         OBS["ibs-integration"]
         RABBIT["ibs-rabbitmq-integration"]
         BUGOWNER["package-bugowner"]
+        MAINT["maintainer"]
     end
 
     subgraph identity["Identity and Access"]
-        LDAP["ldap-integration"]
+        ADI["ad-integration"]
         RBAC["rbac"]
     end
 
     subgraph platform["Platform"]
         ADMIN["admin"]
         FETCHER_INFRA["fetcher-infrastructure"]
-        FETCHER["fetcher-dashboard"]
-        PAGES["pages"]
+        FETCHER["fetcher-operations"]
     end
 
     %% Core internal links
@@ -523,9 +523,11 @@ flowchart TD
     RABBIT --> OBS
     BUGOWNER --> PKG
     BUGOWNER --> OBS
+    MAINT --> BUGOWNER
+    MAINT --> PKG
 
     %% Identity → Core
-    LDAP --> RBAC
+    ADI --> RBAC
     RBAC --> TICKETS
 
     %% Platform → everything
@@ -533,15 +535,6 @@ flowchart TD
     ADMIN --> TICKETS
     FETCHER --> CVE
     FETCHER --> RABBIT
-    PAGES --> TICKETS
-    PAGES --> PKG
-    PAGES --> FETCHER
-    PAGES --> ADMIN
-    PAGES --> CVSS
-    PAGES --> REFS
-    PAGES --> HISTORY
-    PAGES --> BUGOWNER
-    PAGES --> RBAC
 
     %% History links
     HISTORY --> PKG
@@ -573,13 +566,13 @@ other feature:
 | [package-tracking](features/packages/package-tracking.md) | Core | Codestream/product affectedness and release detection |
 | [cve-tracking](features/tickets/cve-tracking.md) | Ingestion | CVE sync from NVD, MITRE, and other sources |
 | [cvss-scoring](features/tickets/cvss-scoring.md) | Ingestion | Multi-provider CVSS assessment and severity derivation |
-| [references](features/ui/references.md) | Ingestion | External links on tickets (auto and manual) |
+| [references](features/tickets/ticket-references.md) | Ingestion | External links on tickets (auto and manual) |
 | [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, bugowners |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
 | [package-bugowner](features/packages/package-bugowner.md) | Integration | IBS package maintainer cache |
-| [ldap-integration](features/identity/ldap-integration.md) | Identity | SUSE AD sync for user provisioning and roles |
+| [ad-integration](features/identity/ad-integration.md) | Identity | SUSE AD sync for user provisioning and roles |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [admin](features/platform/admin.md) | Platform | System settings (default CVSS version) |
 | [fetcher-infrastructure](features/platform/fetcher-infrastructure.md) | Platform | BaseFetcher base class, registry, data model |
-| [fetcher-dashboard](features/platform/fetcher-dashboard.md) | Platform | Background task monitoring dashboard, API, and CLI |
-| [pages](features/ui/pages.md) | Platform | UI page definitions and layouts |
+| [fetcher-operations](features/platform/fetcher-operations.md) | Platform | Background task monitoring, API, and CLI |
+| [maintainer](features/packages/maintainer.md) | Integration | Maintainer-oriented package/ticket views |

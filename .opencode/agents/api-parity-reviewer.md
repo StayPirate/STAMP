@@ -31,7 +31,8 @@ defect.
 
 1. Read `docs/api-spec.md` to understand the documented API surface
 2. Read `docs/architecture.md` to understand the system design
-3. Read `docs/features/ui/pages.md` to understand all UI pages and their actions
+3. Read feature specs relevant to the change being reviewed to understand
+   what UI actions and API endpoints are defined
 4. List all specs in `docs/features/**/` and read any spec relevant to the
    change being reviewed
 5. List all files in `backend/app/api/v1/` to identify implemented endpoints

@@ -245,18 +245,6 @@ constitute personal data or security-critical information.
 |---|---|---|
 | 401 | `AUTH_NOT_AUTHENTICATED` | Caller is not authenticated |
 
-## UI
-
-The identity audit log is displayed in two contexts:
-
-- **Admin panel**: full audit log with all events and unmasked actor
-  identity. The specific UI layout will be defined in
-  `docs/features/ui/pages/admin-settings.md` when the admin panel UI is
-  specified in detail.
-- **User profile**: self-scoped audit log showing only events that
-  affect the current user, with anonymized actor. The specific UI layout
-  will be defined when the user profile page is specified in detail.
-
 ## Service Contract
 
 Every service function that modifies identity-related data (user

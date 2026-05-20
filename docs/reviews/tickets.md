@@ -87,10 +87,6 @@ If a VA dissociates a CVE from a ticket while a background on-demand fetch for t
 
 Ticket sequence IDs use a PostgreSQL sequence, which produces gaps on rolled-back transactions. This is standard PostgreSQL behavior and not a bug, but users may perceive gaps as missing tickets. The spec should document that sequence ID gaps are expected and do not indicate data loss.
 
-### TKT-GAP-17 — cve_data_pending lifecycle undefined (Medium)
-
-**Status**: RESOLVED — Deferred: this finding belongs to the cve-tracking spec (currently disabled/WIP), not to the tickets spec; will be addressed when cve-tracking is defined (2026-05-19)
-
 ### TKT-GAP-18 — Case B package addition can regress Resolved tickets (Medium)
 
 **Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes; the Automatic Status Re-evaluation section (line 363) explicitly documents Resolved → Analysis regression when a new package is added with tracks in ANALYSIS (2026-05-19)

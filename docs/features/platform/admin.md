@@ -47,8 +47,6 @@ ticket is processed in an independent database transaction. See
 full batch execution specification.
 
 **Warning**: changing the default CVSS version is a significant operation.
-The Admin UI should display a confirmation dialog explaining the impact
-before proceeding.
 
 ## API Endpoints
 
@@ -117,25 +115,6 @@ Response: the updated settings object in the standard `{"data": ...}`
 envelope.
 
 Requires: Admin role.
-
-## UI
-
-### Admin Settings Page
-
-**Route**: `/admin/settings`
-
-A simple settings page containing:
-
-1. **Default CVSS Version**: dropdown with display labels `"v3.1"` and
-   `"v4.0"` (the API values sent in the PATCH request are `"3.1"` and
-   `"4.0"` without the "v" prefix), showing the current value. On change,
-   a confirmation dialog:
-   - "Changing the default CVSS version will re-evaluate all products on
-     currently open tickets. Continue?"
-   - Confirm → PATCH API call → show success feedback
-   - Cancel → no change
-
-Future administrative settings will be added to this page as needed.
 
 ## Data Model
 
@@ -218,12 +197,6 @@ always displayed in reverse chronological order).
 | Status | Code | Condition |
 |---|---|---|
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
-
-### UI
-
-The setting audit log is displayed in the Admin Settings page
-(`/admin/settings`) below the settings form, as a collapsible section
-showing the history of changes.
 
 ### Data Retention
 

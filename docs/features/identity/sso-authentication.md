@@ -32,8 +32,7 @@ the local login endpoint — see `docs/features/identity/local-authentication.md
 All settings except `sso_user_claim` are required for SSO to function.
 If any required setting is missing, **SSO is disabled entirely**:
 
-- The login page shows only the local credentials form — the "Login
-  with SUSE SSO" button is not rendered
+- SSO authentication is unavailable to the user
 - The SSO endpoints (`/api/v1/auth/sso/authorize`,
   `/api/v1/auth/sso/callback`) return HTTP 404
 - At startup, the application logs: `"SSO authentication disabled —
@@ -336,10 +335,10 @@ Unlike the local login endpoint, SSO error messages can be specific
    `sentinel_return_url`) to preserve the user's intended destination
    across the SSO redirect
 3. Frontend calls `GET /api/v1/auth/sso/authorize`
-   - On HTTP 404 (`AUTH_SSO_DISABLED`): show only the local login form
-     (hide the SSO button). This should not normally happen since the
-     button is rendered conditionally via `/auth/providers`, but handles
-     race conditions (e.g., SSO disabled between page load and click)
+   - On HTTP 404 (`AUTH_SSO_DISABLED`): SSO is not available. This
+     should not normally happen since availability is checked via
+     `/auth/providers`, but handles race conditions (e.g., SSO disabled
+     between page load and click)
    - On HTTP 503 (`AUTH_SSO_UNAVAILABLE`): display an inline error
      message on the login page: "SSO is temporarily unavailable, please
      try later." Do not redirect the browser away
@@ -469,48 +468,6 @@ uses the response to decide whether to render the SSO button.
 No application-level error responses. This endpoint reads internal
 configuration only and has no failure modes beyond standard server
 errors (500).
-
-## Login Page
-
-The login page conditionally displays authentication options based on the
-response from `GET /api/v1/auth/providers`:
-
-- The **username/password form** is always rendered (local auth is always
-  available)
-- The **"Login with SUSE SSO" button** is rendered only when
-  `sso = true` in the providers response
-
-When SSO is enabled:
-
-```
-┌─────────────────────────────────────┐
-│             Sentinel                │
-│                                     │
-│   [ Login with SUSE SSO ]           │
-│                                     │
-│   ─────────── or ───────────       │
-│                                     │
-│   Username: [__________________]    │
-│   Password: [__________________]    │
-│   [ Login ]                         │
-│                                     │
-└─────────────────────────────────────┘
-```
-
-When SSO is disabled:
-
-```
-┌─────────────────────────────────────┐
-│             Sentinel                │
-│                                     │
-│   Username: [__________________]    │
-│   Password: [__________________]    │
-│   [ Login ]                         │
-│                                     │
-└─────────────────────────────────────┘
-```
-
-The "or" divider is only shown when both options are present.
 
 ## Security Considerations
 

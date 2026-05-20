@@ -15,7 +15,7 @@ permission:
 ## Role
 
 You review fetcher implementations to ensure they follow the `BaseFetcher`
-pattern and are correctly integrated with the fetcher dashboard
+pattern and are correctly integrated with the fetcher operations
 infrastructure. You do NOT write or modify code.
 
 ## Before reviewing

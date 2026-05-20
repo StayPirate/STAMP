@@ -1,4 +1,4 @@
-# References
+# Ticket References
 
 ## Purpose
 
@@ -12,7 +12,7 @@ References come from two sources:
 - **Automatic**: created by CVE fetchers during ingestion. Each fetcher
   adds its own source URL (if it has a human-readable page) plus all
   references extracted from the CVE data.
-- **Manual**: added by Vulnerability Analysts through the API or UI for any
+- **Manual**: added by Vulnerability Analysts through the API for any
   purpose (e.g., linking a Bugzilla bug, an internal advisory, a patch).
 
 All references are stored in a single `TicketReference` table associated
@@ -207,11 +207,8 @@ Client-controlled sorting is not supported (small dataset).
 required). Soft-deleted ticket protection is enforced centrally — see
 `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses)).
 
-**Error responses**:
-
-| Status | Code | Condition           |
-|--------|------|---------------------|
-| 404    | `TICKET_NOT_FOUND` | Ticket not found    |
+**Error responses**: No endpoint-specific errors. See `docs/api-spec.md`
+for global and scoped responses.
 
 ### Add Reference
 
@@ -273,7 +270,6 @@ Adds a manual reference to a ticket.
 
 | Status | Code | Condition                                        |
 |--------|------|--------------------------------------------------|
-| 404    | `TICKET_NOT_FOUND` | Ticket not found                                 |
 | 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket               |
 | 422    | `VALIDATION_ERROR` | Invalid URL format or missing required fields    |
 
@@ -342,45 +338,6 @@ source (automatic or manual).
 |--------|------|------------------------------------|
 | 404    | `RESOURCE_NOT_FOUND` | Ticket or reference not found      |
 
-## UI Requirements
-
-### Ticket Detail Page
-
-References are displayed in a dedicated **References** section in the
-Ticket Detail page (see `docs/features/ui/pages.md`).
-
-#### Layout
-
-- Section title: "References"
-- Each reference is displayed as a clickable link with:
-  - The `title` if available, otherwise the URL itself (truncated if long)
-  - A small badge or label showing the source. The raw `source` value
-    (e.g., `"sync_cves_nvd"`) is mapped to a human-readable display
-    label in the frontend (e.g., "NVD", "MITRE", "Manual")
-  - Tags displayed as small badges next to the link (e.g., "Patch",
-    "Vendor Advisory")
-- References are grouped by `source` for visual clarity (using the
-  human-readable display labels)
-- "Add Reference" button (visible only to Vulnerability Analysts)
-
-#### Add Reference
-
-Clicking "Add Reference" opens a simple form:
-- URL input field (required)
-- Title input field (optional)
-- "Save" and "Cancel" buttons
-
-#### Edit and Delete
-
-Each reference has an action menu (visible only to Vulnerability Analysts)
-with:
-- "Edit" — opens the same form pre-filled with the current values
-- "Delete" — confirmation dialog before deletion
-
-#### Empty State
-
-When no references exist: "No references yet."
-
 ## Ticket Event Logging
 
 Reference mutations (add, edit, delete) do **not** generate
@@ -403,7 +360,6 @@ does not include reference-related event types.
 - `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates references
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` contract for
   `source_reference_url_pattern`
-- `docs/features/ui/pages.md` — Ticket Detail page displays references
 
 ## Cross-references
 

@@ -21,15 +21,6 @@ middleware behavior, and UI surfaces.
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                        Login Page                                  │
-│                                                                   │
-│   [ Login with SUSE SSO ]          Username: [________]           │
-│                                    Password: [________]           │
-│                                    [ Login ]                      │
-└──────────┬────────────────────────────────────┬───────────────────┘
-           │                                    │
-           ▼                                    ▼
    SSO Provider                        Local Provider
    (OIDC flow)                     (POST /api/v1/auth/login)
            │                                    │
@@ -907,29 +898,6 @@ using it are rejected.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
 | 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found |
 
-## UI Surfaces
-
-### Personal API Keys page
-
-Accessible to every authenticated user from their profile/settings area.
-
-- Lists the user's own API keys (prefix, name, created, last used,
-  status)
-- "Create new key" action: opens a form (name + optional expiration),
-  shows the full key once after creation with a copy button
-- "Revoke" action per key: confirmation dialog, then revokes
-
-### Administration: API Keys page
-
-Accessible only to users with the `admin` role, in the administration
-panel.
-
-- Lists all API keys across all users
-- Shows: prefix, name, user (username), created_at, last_used_at, status
-- Filter by user, filter by status (active/revoked/expired)
-- "Revoke" action per key: confirmation dialog, then revokes
-- No "Create" action (admins cannot create keys for other users)
-
 ## Use Cases: Bots and AI Agents
 
 Sentinel supports two patterns for programmatic access. The key
@@ -979,12 +947,6 @@ attributed to the agent's own identity.
 | Recommended for     | Personal automations       | Shared/organizational tools  |
 
 ## Open Points
-
-- **Admin API Keys page layout**: how should keys be displayed? Options
-  include: flat table with all keys (sortable by user, last_used_at),
-  search/filter by username, or grouped by user. The exact UX will be
-  defined during implementation based on the expected number of keys in
-  production.
 
 ## Security Considerations
 
