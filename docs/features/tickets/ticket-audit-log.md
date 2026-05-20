@@ -235,7 +235,7 @@ fails, no orphan event is created.
 
 6. **Concurrency correctness**: the correctness of `old_value` and
    `new_value` fields depends on the pessimistic locking enforced by
-   the `ticket_mutations` module (see `docs/features/tickets/tickets.md`,
+   the `ticket_mutations` module (see `docs/features/tickets/ticket-mutations.md`,
    Concurrency Control). The `FOR UPDATE` lock on the `Ticket` row
    serializes concurrent mutations, ensuring that each audit event
    captures the true pre-mutation state. Without this lock, concurrent

@@ -224,53 +224,15 @@
         "not_reviewed": ["DES", "SEC"]
       }
     },
-    "sso-authentication": {
+    "ticket-mutations": {
       "enabled": true,
-      "abbr": "SSOA",
-      "cache": {
-        "last_review": "2026-05-07T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 25,
-        "not_reviewed": []
-      }
-    },
-    "ticket-audit-log": {
-      "enabled": true,
-      "abbr": "TAL",
-      "cache": {
-        "last_review": "2026-05-16T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 15,
-        "not_reviewed": []
-      }
+      "abbr": "TKM",
+      "cache": null
     },
     "tickets": {
       "enabled": true,
       "abbr": "TKT",
-      "cache": {
-        "last_review": "2026-05-19T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 7 },
-          "COH": { "H": 0, "M": 0, "L": 1 },
-          "DES": { "H": 0, "M": 0, "L": 3 },
-          "SEC": { "H": 0, "M": 0, "L": 5 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 41,
-        "not_reviewed": []
-      }
+      "cache": null
     },
     "user-management": {
       "enabled": true,

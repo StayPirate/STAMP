@@ -552,8 +552,9 @@ The two most interconnected specifications, referenced by almost every
 other feature:
 
 - **[tickets](features/tickets/tickets.md)**: the central workflow entity — ticket
-  creation, lifecycle, status gates, severity resolution, and the
-  `ticket_mutations` module
+  creation, lifecycle, status gates, severity resolution. The service-layer
+  module contract is in
+  [ticket-mutations](features/tickets/ticket-mutations.md)
 - **[package-tracking](features/packages/package-tracking.md)**: codestream/product
   resolution, status propagation, eligibility rules, and release detection
 

@@ -539,8 +539,8 @@ implementation.
 The `@ticket-integrity-reviewer` (Guardrail 11) verifies module usage
 compliance after implementation.
 
-See `docs/features/tickets/tickets.md` (Centralized Status Evaluation)
-for the full specification.
+See `docs/features/tickets/ticket-mutations.md` for the full
+specification.
 
 ### 17. Specification completeness
 

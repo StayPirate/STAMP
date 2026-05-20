@@ -349,7 +349,7 @@ with an active ticket, Sentinel performs the following recalculation:
 3. **Ticket status re-evaluation**: eligibility changes in step 2 MUST be
    applied through the `ticket_mutations` module, which then calls
    `evaluate_ticket_status` to re-evaluate the ticket status (see
-   `docs/features/tickets/tickets.md`, Centralized Status Evaluation).
+   `docs/features/tickets/ticket-mutations.md`).
    The centralized evaluator determines the correct target status.
    **Note**: this re-evaluation can only occur when a VA manually modifies
    a SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
@@ -507,7 +507,7 @@ These functions are used in two contexts:
 
 All operations that create, update, or delete `CVECVSSAssessment`
 records MUST go through the `ticket_mutations` module (see
-`docs/features/tickets/tickets.md`, Ticket Mutations Module). This module:
+`docs/features/tickets/ticket-mutations.md`). This module:
 
 1. Persists the `CVECVSSAssessment` record change
 2. Calls `cvss.resolve_cvss_score()` to determine the new resolved score

@@ -776,7 +776,7 @@ Summary:
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
 are handled automatically by the `ticket_mutations` module — see
-`docs/features/tickets/tickets.md` (Centralized Status Evaluation).
+`docs/features/tickets/ticket-mutations.md`.
 Exits from the manual zone (Ignored, Duplicated) use the shared
 `_reenter_gate_zone` helper which sets `status = New` and calls
 `evaluate_ticket_status`.

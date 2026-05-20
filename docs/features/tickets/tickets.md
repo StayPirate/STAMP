@@ -339,353 +339,40 @@ from a final state to `AFFECTED`), the ticket automatically transitions
 back from Resolved to Analyzed (or to Analysis, if the "Analyzed" gates
 are also no longer met).
 
-### Automatic Status Re-evaluation
+### Automatic Status Evaluation
 
-Forward and reverse transitions between Analysis, Analyzed, and Resolved
-are governed by a single mechanism: the centralized status evaluation
-function re-evaluates gate conditions after every relevant data change
-and sets the ticket to the highest valid status.
+Forward and reverse transitions between Analysis, Analyzed, and
+Resolved are governed by a single mechanism: the centralized status
+evaluation function (`evaluate_ticket_status`) in the
+`ticket_mutations` module. This function re-evaluates gate conditions
+after every relevant data change and sets the ticket to the highest
+valid status. It is the sole authority for gate-zone status.
 
-This means reverse transitions are not special cases — they emerge
-naturally when gate conditions are no longer met:
+- If all "Resolved" AND "Analyzed" gates are met → Resolved
+- If all "Analyzed" gates are met → Analyzed
+- If the "Analysis" gate is met → Analysis
+- Otherwise → New
 
-- **Analyzed → Analysis**: any "Analyzed" gate ceases to be met (e.g.,
-  package added with tracks in ANALYSIS, SUSE CVSS assessment
-  deleted, track status reset to ANALYSIS, severity cleared)
-- **Resolved → Analyzed**: any resolved gate condition ceases to be met
-  while "Analyzed" gates remain met (e.g., CVSS recalculation changes
-  product eligibility, causing a previously satisfied gate to fail —
-  see `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
-- **Resolved → Analysis**: both "Resolved" and "Analyzed" gates are
-  broken (e.g., a new package is added with tracks in ANALYSIS)
+Reverse transitions are not special cases — they emerge naturally
+when gate conditions are no longer met.
 
-All automatic transitions create a `TicketAuditEvent` with `user_id = NULL`
-(system action), even when the underlying data change was initiated by
-an VA.
+All automatic transitions create a `TicketAuditEvent` with
+`user_id = NULL` (system action), even when the underlying data
+change was initiated by a VA.
 
-### Centralized Status Evaluation
-
-All automatic status transitions between Analysis, Analyzed, and
-Resolved are handled by a single **internal** service-layer function:
-`evaluate_ticket_status`. This function is the **sole authority** for
-determining a ticket's status based on its current data.
-
-#### Behavior
-
-1. The function receives a ticket and evaluates gate conditions top-down
-   (most advanced status first):
-   - If all "Resolved" gates AND all "Analyzed" gates are met → status
-     is Resolved
-   - If all "Analyzed" gates are met (but "Resolved" gates are not) →
-     status is Analyzed
-   - If the "Analysis" gate is met (but "Analyzed" gates are not) →
-     status is Analysis
-   - Otherwise → status is New
-2. If the determined status differs from the current status, the function
-   updates the ticket and creates a `TicketAuditEvent` with
-   `event_type = status_change`. The event's `old_value` is taken from
-   the optional `previous_status` parameter if provided; otherwise it is
-   the ticket's current status field. This allows callers to record the
-   real semantic transition (e.g., `Ignored → Analysis`) even when the
-   status field has been set to an intermediate value for evaluation
-   purposes.
-3. The function operates within the **same database transaction** as the
-   triggering operation (atomicity guarantee)
-
-#### Inactive Assignee Sanitization
-
-After determining the ticket's "natural" status via gate evaluation, if
-the resulting status is non-final (New, Analysis, or Analyzed) and
-`assignee_id` points to an inactive user, `evaluate_ticket_status`
-performs the following steps:
-
-1. Set `assignee_id = NULL`
-2. Create a `TicketAuditEvent` with `event_type = assignee_changed`
-   (system-initiated, `user_id = NULL`,
-   `detail = {"reason": "assignee_deactivated"}`)
-3. Add the ticket to the revisit queue (to be defined in a future
-   specification)
-4. Re-evaluate the gates — since the Analysis gate
-   (`assignee_id IS NOT NULL`) is no longer satisfied, the ticket will
-   regress accordingly (e.g., Analysis → New, Analyzed → New)
-
-If the resulting status is final (Resolved, Ignored, Duplicated): no
-assignee check is performed — the ticket is closed and does not need an
-active assignee.
-
-This mechanism ensures that tickets do not remain assigned to users who
-can no longer act on them. It complements the bulk unassignment
-performed by `deactivate_user` (see
-[user-service.md](../identity/user-service.md#deactivate_user)) by
-catching any tickets that were missed or that entered the gate zone
-after the deactivation event.
-
-#### Gates
-
-The gate conditions for each status level:
-
-- **Analysis** (minimum gate): `assignee_id IS NOT NULL` — a ticket with
-  an assignee cannot remain in New status. This is a **promotional-only**
-  gate under normal operation: assigning a VA promotes New → Analysis,
-  and user-initiated unassignment is not supported via the API (see
-  [Assign Ticket](#assign-ticket)). However, system-initiated
-  unassignment may occur as a side effect of user deactivation (see
-  [user-service.md](../identity/user-service.md#deactivate_user)) or
-  via the [Inactive Assignee Sanitization](#inactive-assignee-sanitization)
-  step within `evaluate_ticket_status` itself — in either case, the
-  resulting `assignee_id = NULL` causes the gate to fail and the ticket
-  regresses to New
-- **Analyzed**: all existing package/CVSS/product gates (unchanged)
-- **Resolved**: all existing resolution gates (unchanged)
-
-#### Scope
-
-The ticket state machine has two zones:
-
-- **Gate zone** (New, Analysis, Analyzed, Resolved): status is determined
-  automatically by `evaluate_ticket_status` based on gate conditions.
-- **Manual zone** (Ignored, Duplicated): status is set by explicit user
-  actions or specific system events. `evaluate_ticket_status` never
-  operates on tickets in the manual zone.
-
-To exit the manual zone, an explicit operation must call the private
-helper `_reenter_gate_zone()`. The helper:
-1. Saves the ticket's current status (Ignored or Duplicated) as
-   `original_status`
-2. Sets `status = New` (entering the gate zone at the lowest rung)
-3. Calls `evaluate_ticket_status(previous_status=original_status)`
-
-This produces a single `TicketAuditEvent` with the real transition
-(e.g., `old_value = Ignored, new_value = Analysis`). The intermediate
-`New` state is an internal implementation detail — never visible in the
-audit trail.
-
-#### Ticket Mutations Module
-
-`evaluate_ticket_status` is an **internal implementation detail** — it
-is not called directly by other services. Instead, all operations that
-modify data relevant to ticket status gates are centralized in a
-dedicated service module (`ticket_mutations`). This module exposes
-functions for every type of ticket-relevant mutation:
-
-- Track status changes
-- Product status changes (including eligibility overrides)
-- Product eligibility changes
-- CVSS assessment creation, update, and deletion
-- Severity changes (`severity_override`)
-- Package addition and soft-deletion/restore
-
-Each function in the module calls `evaluate_ticket_status` internally
-at the end of the operation, within the same database transaction.
-External services (CVSS sync, release detection, package tracking,
-API endpoints) MUST use these functions instead of modifying
-ticket-related models directly.
-
-The module also provides two **manual-zone exit functions** for
-transitioning tickets out of Ignored or Duplicated:
-
-- `reopen_from_ignored()` — sets assignee (if applicable), then calls
-  `_reenter_gate_zone()`
-- `revert_duplicate()` — clears `duplicate_of_id`, reassigns to the
-  reverting VA, then calls `_reenter_gate_zone()`
-
-Both delegate to the private helper `_reenter_gate_zone()`, which saves
-the current status, sets `status = New`, and calls
-`evaluate_ticket_status(previous_status=original_status)`. The helper is
-never called directly by external code.
-
-**Relationship with `services/cvss.py`**: the CVSS-related functions in
-`ticket_mutations` (assessment creation, update, deletion) delegate
-CVSS resolution and severity calculation to pure functions in
-`services/cvss.py`. The resolution cascade logic is never reimplemented
-inside `ticket_mutations`. See `docs/features/tickets/cvss-scoring.md` (Service
-Architecture) for the full responsibility split between the two modules.
-
-**Relationship with `add_package_to_ticket`**: the centralized package
-addition function defined in `docs/features/packages/package-tracking.md` handles
-SMELT resolution and external I/O. It delegates the actual creation of
-`TicketPackage`, `TicketPackageTrack`, and `TicketPackageProduct` records
-to `ticket_mutations` functions. Similarly, package soft-deletion
-delegates record updates to the module. Soft-deletion follows the
-hierarchical exclusion model — only the directly targeted record
-receives `deleted_at`; child records are not modified. The SMELT query
-logic does not belong in `ticket_mutations` — only the record mutations
-do.
-
-**Idempotency**: the record creation functions in `ticket_mutations` are
-idempotent. If a `TicketPackageTrack` or `TicketPackageProduct`
-record already exists for the given combination (including soft-deleted
-records), it is skipped without modification. Only missing records are
-created.
-
-**Record creation logic**: when `ticket_mutations` creates a new
-`TicketPackageTrack` record, the initial status is always `ANALYSIS`
-and `delivery_status` is `PENDING`. When it creates a new
-`TicketPackageProduct` record, it determines the initial status by
-inheriting from the parent `TicketPackageTrack`:
-
-- Parent in `ANALYSIS` → `ANALYSIS`
-- Parent in `AFFECTED` → status is set to `AFFECTED`; eligibility is
-  calculated separately (CVSS threshold, Reactive LTSS override) and
-  stored in the `eligible` boolean
-- Parent in any other status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) →
-  inherit the same status
-
-This logic is internal to `ticket_mutations` — callers (including
-`add_package_to_ticket`) do not specify the initial status.
-
-Operations that do NOT modify gate-relevant data (assignment, duplicate
-set/remove, CVE association/removal, ticket-level soft-delete/restore)
-are NOT required to go through this module — they create `TicketAuditEvent`
-records in their own services. However, these operations still MUST
-acquire `FOR UPDATE` on the `Ticket` row before modifying it (see
-[Concurrency Control](#concurrency-control)).
+See [ticket-mutations.md](ticket-mutations.md) for the full function
+contract, inactive assignee sanitization, concurrency control rules,
+orphan cleanup invariants, and architectural test requirements.
 
 #### Concurrency Control
 
-Every public function in the `ticket_mutations` module MUST acquire a
-row-level lock on the `Ticket` row as its first database operation:
-
-```python
-ticket = await db.execute(
-    select(Ticket).where(Ticket.id == ticket_id).with_for_update()
-)
-```
-
-This serializes all concurrent mutations on the same ticket at the
-database level — whether originating from API endpoints, Celery
-background tasks (release detection, CVSS sync), or the IBS RabbitMQ
-event consumer. The lock is released when the transaction commits or
-rolls back.
-
-The same rule applies to **any service operation that modifies the
-`Ticket` row** (any column: `status`, `assignee_id`, `cve_id`,
-`duplicate_of_id`, `is_confidential`, `deleted_at`)
-**or that calls
-`evaluate_ticket_status`**, even if the operation does not go through
-the `ticket_mutations` module. This prevents non-gate operations
-(assignment, duplicate set/revert, CVE dissociation, soft-delete,
-restore, ignore) from racing with gate operations on the same ticket.
-`evaluate_ticket_status` itself does not acquire the lock — it is
-always the caller's responsibility.
-
-Callers of `ticket_mutations` functions and all other ticket-modifying
-services MUST complete any external I/O (IBS queries, SMELT resolution,
-NVD fetches) **before** acquiring the lock. The locked transaction must
-contain only the database mutations and audit event creation — no
-network calls or expensive computations.
-
-**Single-ticket scope**: `ticket_mutations` functions operate on a
-single ticket per transaction. Code that must modify multiple tickets
-(e.g., the cascade update of `duplicate_of_id` when marking a ticket
-as duplicate) MUST NOT acquire `FOR UPDATE` on multiple ticket rows
-in the same transaction — process each ticket in an independent
-transaction to avoid deadlocks.
-
-**Blocking wait**: the default PostgreSQL behavior (blocking wait) is
-used. `NOWAIT` is intentionally not specified — the transaction hygiene
-rules ensure locks are held for milliseconds, making spurious failures
-from `NOWAIT` more harmful than brief waits.
-
-**Ticket not found**: if the `SELECT FOR UPDATE` returns no row (ticket
-does not exist, invalid ID, or stale reference from a queue message),
-the function MUST raise a domain-specific exception. It MUST NOT
-proceed silently or operate on `None`. Callers handle the exception as
-appropriate: background tasks log and skip; API endpoints return 404.
-
-See `docs/conventions.md` (Transaction and Locking) for the general
-convention and rationale.
-
-#### Orphan Cleanup Invariants
-
-The `ticket_mutations` module enforces automatic cleanup of empty parent
-records. These are generic rules that apply regardless of the trigger —
-any current or future feature that soft-deletes a product or track
-automatically benefits from these invariants. The orphan rule triggers
-**only on soft-deletion events**, not on restore or other mutations.
-
-**Invariant 1 — Track orphan rule**: after every product soft-deletion,
-`ticket_mutations` checks whether the parent `TicketPackageTrack` has
-zero remaining products with `deleted_at IS NULL` (direct check). If
-zero directly-active products remain, the track receives its own
-`deleted_at` (direct soft-deletion). Products under the track are NOT
-modified — they already have their own `deleted_at`.
-
-**Invariant 2 — Package orphan rule**: after every track soft-deletion,
-`ticket_mutations` checks whether the parent `TicketPackage` has zero
-remaining tracks with `deleted_at IS NULL` (direct check). If zero
-directly-active tracks remain, the package receives its own `deleted_at`.
-Tracks and products under the package are NOT modified.
-
-**Cascading composition**: the invariants compose naturally. Soft-deleting
-a product may trigger the track orphan rule, which may trigger the
-package orphan rule:
-
-```
-soft_delete_ticket_package_product(record, user)
-  → TicketAuditEvent (product_excluded)
-  → evaluate_ticket_status()
-  → _enforce_track_orphan_rule()
-      → if 0 directly-active products:
-          set track.deleted_at (direct)
-          → TicketAuditEvent (track_excluded, user_id=NULL)
-          → evaluate_ticket_status()
-          → _enforce_package_orphan_rule()
-              → if 0 directly-active tracks:
-                  set package.deleted_at (direct)
-                  → TicketAuditEvent (package_excluded, user_id=NULL)
-                  → evaluate_ticket_status()
-```
-
-Note: orphan-triggered soft-deletions create `TicketAuditEvent` records with
-`user_id = NULL` (system action), distinguishing them from VA-initiated
-exclusions. Each orphan soft-deletion sets `deleted_at` only on the
-parent — no cascade to children (per the hierarchical exclusion model).
-
-Each public function in `ticket_mutations` calls
-`evaluate_ticket_status` at the end of its execution. This ensures the
-ticket is always in a consistent state after any mutation, regardless of
-how many times `evaluate_ticket_status` is called within the same
-transaction.
-
-#### Contract
-
-Every service-layer operation that modifies data relevant to ticket
-status gates MUST go through the `ticket_mutations` module. Direct
-modification of `TicketPackageTrack`, `TicketPackageProduct`,
-or `CVECVSSAssessment` records outside this module is a bug — it
-bypasses status re-evaluation and may leave the ticket in an
-inconsistent state.
-
-Relevant data includes:
-
-- `TicketPackageTrack` records (creation, soft-deletion, status change,
-  delivery status change)
-- `TicketPackageProduct` records (creation, soft-deletion, status change,
-  eligibility change)
-- `CVECVSSAssessment` records (creation, update, deletion)
-- Ticket severity (`severity_override` or CVSS-derived severity)
-- Package addition or soft-deletion/restore
-
-#### Architectural Test Requirement
-
-A parametrized integration test MUST be implemented to verify that
-the `ticket_mutations` module produces the correct ticket status after
-every type of relevant mutation. The test must cover:
-
-- **Forward transitions**: each gate condition being satisfied one by
-  one until the ticket advances (Analysis → Analyzed → Resolved)
-- **Backward transitions**: each gate condition being broken after the
-  ticket has advanced (Analyzed → Analysis, Resolved → Analyzed,
-  Resolved → Analysis)
-- **No-op cases**: mutations that do not affect gate conditions
-- **Edge cases**: ticket with no packages, ticket without CVE (no SUSE
-  CVSS gate), all tracks in final status but severity not set
-
-This test serves as a permanent architectural fitness function: if a
-new service operation modifies gate-relevant data without going through
-the `ticket_mutations` module, the test will fail because the ticket
-status will not match the expected state.
+Every operation that modifies the `Ticket` row or calls
+`evaluate_ticket_status` MUST acquire `FOR UPDATE` on the Ticket row
+before any modification. See
+[ticket-mutations.md](ticket-mutations.md#concurrency-control) for
+the full rules. The same pattern applies to non-module operations
+(CVE dissociation, mark-as-duplicate, soft-delete/restore,
+set-confidentiality).
 
 ### Reassignment
 
@@ -736,6 +423,10 @@ This rule does not apply to system operations (background tasks,
 automated ingestion). Only VA-initiated actions trigger
 auto-assignment.
 
+This rule is enforced by the `ticket_mutations` module — see
+[ticket-mutations.md](ticket-mutations.md#auto-assignment-rule)
+for implementation details.
+
 ### Duplicate Handling
 
 #### Terminology
@@ -752,29 +443,11 @@ auto-assignment.
 #### Canonical Target Resolver
 
 A centralized public function `resolve_canonical_target` in the
-`ticket_mutations` module (`backend/app/services/ticket_mutations.py`).
-
-Contract:
-- Accepts a ticket ID and a database session.
-- Follows the `duplicate_of_id` chain until a non-Duplicated ticket is
-  found.
-- Maintains a set of visited ticket IDs to detect cycles.
-- Enforces a maximum hop limit of 50. This limit is a corruption
-  guard — under normal operation chains are 1–2 hops. A limit of 50 is
-  unreachable organically and protects against pathological data only.
-- If a cycle is detected, raises an integrity error with code
-  `TICKET_DUPLICATE_CYCLE_DETECTED` (409 Conflict). Indicates data
-  corruption requiring admin intervention.
-- If the hop limit is exceeded without finding a non-Duplicated ticket,
-  raises an integrity error with code `TICKET_DUPLICATE_CHAIN_DEPTH`
-  (409 Conflict). Indicates data corruption requiring admin intervention.
-- Returns the canonical (non-Duplicated) target ticket.
-
-The resolver does not apply confidentiality checks — it is a service-layer
-utility used by both API serialization and background tasks. See
-[Confidentiality Filtering](#confidentiality-filtering) ("Accepted risk")
-for the rationale and impact assessment of exposing the resolved target
-identifier in public API responses.
+`ticket_mutations` module follows the `duplicate_of_id` chain to
+find the non-Duplicated canonical target. See
+[ticket-mutations.md](ticket-mutations.md#resolve_canonical_target)
+for the full function contract (parameters, hop limit, cycle detection,
+error codes).
 
 All code paths that need the canonical target MUST use this function:
 - `mark-as-duplicate` operation (pre-write validation)
@@ -865,20 +538,15 @@ without cascade completion because:
 When reverting a ticket from Duplicated status
 (`ticket_mutations.revert_duplicate()`):
 
-- `duplicate_of_id` is cleared (set to NULL).
-- The ticket is reassigned to the VA who performed the revert.
-- `_reenter_gate_zone()` is called: saves `original_status = Duplicated`,
-  sets `status = New`, then calls
-  `evaluate_ticket_status(previous_status=Duplicated)` to determine the
-  correct status. Since the revert assigns a new VA (satisfying the
-  assignee gate), the typical outcomes are:
-  - All Resolved gates met → Resolved
-  - All Analyzed gates met → Analyzed
-  - Assignee present but not all Analyzed gates met → Analysis
-  This produces two `TicketAuditEvent` records in the same transaction:
-  `duplicate_removed` (user action) followed by `status_change` with
-  `old_value = Duplicated, new_value = (evaluated target)`.
-- Create `TicketAuditEvent` (`duplicate_removed`).
+- `duplicate_of_id` is cleared (set to NULL)
+- The ticket is reassigned to the VA who performed the revert
+- The ticket re-enters the gate zone; `evaluate_ticket_status`
+  determines the correct status based on current gate conditions
+- Creates two `TicketAuditEvent` records: `duplicate_removed` (user
+  action) + `status_change` (system action)
+
+See [ticket-mutations.md](ticket-mutations.md#revert_duplicate) for the
+full function contract.
 
 The revert operation does NOT need to know or care about the canonical
 target — it simply removes the ticket from the duplicate chain.
@@ -1026,12 +694,11 @@ Both transitions go through `ticket_mutations.reopen_from_ignored()`:
 1. Acquires `FOR UPDATE` on the ticket
 2. Verifies current status is Ignored
 3. Sets assignee (if applicable)
-4. Calls `_reenter_gate_zone()` — saves `original_status = Ignored`,
-   sets `status = New`, calls
-   `evaluate_ticket_status(previous_status=Ignored)`. Produces a
-   `status_change` event with `old_value = Ignored, new_value =
-   (evaluated target)` — typically Analysis if an assignee is present
-5. Creates `TicketAuditEvent` (`assignment_change` if applicable)
+4. Re-enters the gate zone; `evaluate_ticket_status` determines the
+   correct status (typically Analysis if an assignee is present)
+
+See [ticket-mutations.md](ticket-mutations.md#reopen_from_ignored) for
+the full function contract.
 
 All other modifications on Ignored tickets are blocked — mutation
 endpoints return 409 `TICKET_NOT_MUTABLE` (same guard as Duplicated).
@@ -2004,6 +1671,9 @@ table:
 
 ## Cross-references
 
+- `docs/features/tickets/ticket-mutations.md` — service-layer contract for
+  all gate-relevant mutations, function signatures, concurrency rules,
+  orphan invariants, and architectural test requirements
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
 - `docs/features/tickets/ticket-audit-log.md` — audit event contract, detail

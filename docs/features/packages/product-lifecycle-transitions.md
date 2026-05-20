@@ -6,8 +6,8 @@ Define the automated behavior when a product transitions to the Reactive
 LTSS phase or reaches End of Life (EOL) while it has non-final
 `TicketPackageProduct` records in active tickets. This specification
 relies on the soft-deletion mechanism and track orphan cleanup invariants
-in `ticket_mutations` (defined in `docs/features/tickets/tickets.md` and
-`docs/features/packages/package-tracking.md`) that ensure tracks and
+in `ticket_mutations` (defined in `docs/features/tickets/ticket-mutations.md`
+and `docs/features/packages/package-tracking.md`) that ensure tracks and
 packages are automatically soft-deleted when they no longer have active
 children.
 
@@ -99,8 +99,8 @@ tickets with non-final status:
 
 | Current status | Action |
 |----------------|--------|
-| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
-| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 
 Records in final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
 modified. Note: `WONT_FIX` is additionally protected from automatic
@@ -117,8 +117,8 @@ Existing behavior as specified in `docs/features/packages/package-tracking.md` a
 
 When `re_evaluate_product_eligibility` soft-deletes a `TicketPackageProduct`
 (for EOL), the orphan cleanup invariants defined in
-`docs/features/tickets/tickets.md` (Ticket Mutations Module, "Orphan Cleanup
-Invariants") apply upward: if the parent track has zero remaining products
+`docs/features/tickets/ticket-mutations.md` (Orphan Cleanup Invariants)
+apply upward: if the parent track has zero remaining products
 with `deleted_at IS NULL` (not directly excluded), the track itself is
 soft-deleted (`deleted_at` set on the track record only), and if the parent
 package has zero remaining tracks with `deleted_at IS NULL`, the package

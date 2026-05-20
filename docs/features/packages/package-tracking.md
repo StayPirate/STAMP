@@ -553,7 +553,7 @@ defined in a dedicated specification.
 
 All track and product status changes described in this section MUST go
 through the `ticket_mutations` module (see
-`docs/features/tickets/tickets.md`, Ticket Mutations Module), which
+`docs/features/tickets/ticket-mutations.md`), which
 ensures automatic ticket status re-evaluation after each change.
 
 ### VA Sets "Affected" on a Track
@@ -665,8 +665,8 @@ are NOT modified — they are implicitly excluded through the hierarchy.
 
 When a soft-deletion leaves a parent record with no remaining children
 that have `deleted_at IS NULL`, the orphan cleanup invariants (defined in
-`docs/features/tickets/tickets.md`, Ticket Mutations Module, "Orphan
-Cleanup Invariants") apply upward: the parent is also soft-deleted. See
+`docs/features/tickets/ticket-mutations.md`, Orphan Cleanup Invariants)
+apply upward: the parent is also soft-deleted. See
 also `docs/features/packages/product-lifecycle-transitions.md` for the
 EOL-triggered cascade.
 
@@ -864,8 +864,7 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 
 `ticket_mutations` handles idempotency (skipping existing records,
 including soft-deleted), initial status determination, and eligibility
-logic internally — see `docs/features/tickets/tickets.md`, Ticket
-Mutations Module.
+logic internally — see `docs/features/tickets/ticket-mutations.md`.
 
 New records are created with `deleted_at = NULL`. If the parent package
 or track is soft-deleted, these records are automatically **effectively
@@ -1036,9 +1035,10 @@ affectedness status is `WONT_FIX` (protected state).
 
 All track and product status changes go through the `ticket_mutations`
 module, which automatically re-evaluates ticket status after each change.
-See `docs/features/tickets/tickets.md` (Ticket Lifecycle, Centralized
-Status Evaluation) for the authoritative gate conditions and status
-transition rules, including:
+See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the
+authoritative gate conditions and status transition rules, and
+`docs/features/tickets/ticket-mutations.md` for the module contract,
+including:
 
 - **Analysis → Analyzed**: requires at least one package, all tracks and
   products decided, severity set, SUSE CVSS provided
