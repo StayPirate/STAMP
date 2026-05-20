@@ -59,7 +59,7 @@ files.
 1. Read the specification that was created or modified (provided as context
    by the caller)
 2. Scan the specification for references to other documents:
-   - Explicit references (e.g., "see `docs/features/packages/package-tracking.md`")
+   - Explicit references (e.g., "see `docs/features/packages/package-model.md`")
    - References to `docs/data-model.md`, `docs/api-spec.md`, or
      `docs/architecture.md`
    - Implicit references: mentions of concepts, entities, statuses, or

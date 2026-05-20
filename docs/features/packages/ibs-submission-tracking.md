@@ -745,7 +745,7 @@ release detection Case B/C).
   their `PackageStatus` or soft-deletion status. Soft-deleted tracks are
   included because submission tracking applies regardless of exclusion
   status (see hierarchical exclusion model in
-  `docs/features/packages/package-tracking.md`). This ensures SR/RR data
+  `docs/features/packages/package-model.md`). This ensures SR/RR data
   is captured even for tracks already in `FIXED` state (e.g., Case C
   tickets created by `create_ticket_from_detection`) or tracks excluded
   by the VA. The data is not displayed in the UI for final-status or
@@ -1026,7 +1026,7 @@ mechanisms or credentials:
 - `ibs-rabbitmq-integration.md` — consumer architecture, connection
   management, routing key bindings
 - `ibs-integration.md` — IBS REST API and diff API
-- `package-tracking.md` — `TicketPackageTrack` model,
+- `package-model.md` — `TicketPackageTrack` model,
   `add_package_to_ticket` trigger
 - `tickets.md` — ticket model and access rules
 - `fetcher-infrastructure.md` — `BaseFetcher` base class contract
@@ -1122,7 +1122,7 @@ manual test query against IBS for a known incident with an active RR.
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
 - `docs/data-model.md` — full database schema
-- `docs/features/packages/package-tracking.md` — `TicketPackageTrack` model,
+- `docs/features/packages/package-model.md` — `TicketPackageTrack` model,
   `add_package_to_ticket` trigger, delivery status dimension
 - `docs/features/tickets/tickets.md` — ticket model and access rules
 - `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints

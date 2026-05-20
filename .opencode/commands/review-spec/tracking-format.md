@@ -85,7 +85,7 @@ depend on it). Derivation rules:
    max 4 chars (`ibs-track-release-detection` → `ITRD`)
 4. Hyphenated spec, 2-3 words: take letters from each word to reach
    3-4 chars, prioritizing recognizability
-   (`package-tracking` → `PKT`, `user-service` → `USVC`,
+   (`package-model` → `PKM`, `user-service` → `USVC`,
    `sso-authentication` → `SSOA`)
 5. If collision with an existing `abbr`: append successive letters from
    the last word until unique (e.g., `ICRD` collides → `ICRE`)

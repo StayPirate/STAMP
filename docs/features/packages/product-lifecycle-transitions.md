@@ -7,7 +7,7 @@ LTSS phase or reaches End of Life (EOL) while it has non-final
 `TicketPackageProduct` records in active tickets. This specification
 relies on the soft-deletion mechanism and track orphan cleanup invariants
 in `ticket_mutations` (defined in `docs/features/tickets/ticket-mutations.md`
-and `docs/features/packages/package-tracking.md`) that ensure tracks and
+and `docs/features/packages/package-model.md`) that ensure tracks and
 packages are automatically soft-deleted when they no longer have active
 children.
 
@@ -104,13 +104,13 @@ tickets with non-final status:
 
 Records in final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
 modified. Note: `WONT_FIX` is additionally protected from automatic
-transitions (see `docs/features/packages/package-tracking.md`, "Automatic
+transitions (see `docs/features/packages/package-model.md`, "Automatic
 Transitions") — this behavior is pending removal (see
 `docs/drafts/open-points.md`, section 4).
 
 #### Reason: `threshold_change` / `cvss_change`
 
-Existing behavior as specified in `docs/features/packages/package-tracking.md` and
+Existing behavior as specified in `docs/features/packages/package-model.md` and
 `docs/features/tickets/cvss-scoring.md`.
 
 ## Cascading Cleanup
@@ -128,7 +128,7 @@ itself is soft-deleted. Each step produces a `TicketAuditEvent` (with
 This is an upward cascade only — child records are never modified. Each
 soft-deletion sets `deleted_at` on the targeted record; descendants become
 effectively excluded via the hierarchical exclusion model (see
-`docs/features/packages/package-tracking.md`).
+`docs/features/packages/package-model.md`).
 
 ## TicketAuditEvent Records
 

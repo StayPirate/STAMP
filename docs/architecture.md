@@ -146,7 +146,7 @@ active source. See the data sources catalog for the full picture.
   bugowner (maintainer) of each source package tracked in tickets. This
   data is cached locally and maintained by a periodic fetcher. See
   `docs/features/packages/package-bugowner.md`.
-- See `docs/features/packages/package-tracking.md` for track/product concepts
+- See `docs/features/packages/package-model.md` for track/product concepts
 
 #### SMELT
 
@@ -162,7 +162,7 @@ active source. See the data sources catalog for the full picture.
     in Reactive LTSS phase. All pages MUST be fetched.
 - Target repository names from `maintainedpackage` are matched to local
   Product records via the ProductRepository table
-- See `docs/features/packages/package-tracking.md` for full integration details
+- See `docs/features/packages/package-model.md` for full integration details
 
 #### AIMAAS
 
@@ -234,7 +234,7 @@ the full ticket specification.
    are marked `eligible=false` but retain the inherited status (e.g.,
    AFFECTED with `eligible=false` — no separate AFFECTED_RESOLVED status)
 4. VA can override individual product statuses when needed
-5. See `docs/features/packages/package-tracking.md` for full status propagation rules
+5. See `docs/features/packages/package-model.md` for full status propagation rules
 
 ### Release Tracking Flow
 

@@ -33,7 +33,7 @@ Index of all feature specification domains.
 
 ### Packages
 
-- [package-tracking.md](packages/package-tracking.md) — Status model, eligibility, add/remove packages
+- [package-model.md](packages/package-model.md) — Status model, eligibility, add/remove packages
 - [ibs-track-release-detection.md](packages/ibs-track-release-detection.md) — MD5 cache, IBS diff
 - [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — updateinfo.xml, advisory match
 - [git-track-release-detection.md](packages/git-track-release-detection.md) — Git track-level release detection

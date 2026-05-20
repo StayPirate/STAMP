@@ -319,7 +319,7 @@ transitions back from Analyzed to Analysis.
 The system automatically transitions a ticket from Analyzed to Resolved
 when ALL of the following conditions are met (only records that are not
 effectively excluded are considered — see
-`docs/features/packages/package-tracking.md`, "Hierarchical Exclusion
+`docs/features/packages/package-model.md`, "Hierarchical Exclusion
 Model"):
 
 1. Every active `TicketPackageTrack` has a final status:
@@ -1017,7 +1017,7 @@ is `null` rather than an object.
 | `reference` | string | Codestream project name or branch reference |
 | `status` | string | PackageStatus enum: `analysis`, `affected`, `not_affected`, `fixed`, `wont_fix` |
 | `delivery_status` | string | DeliveryStatus enum: `pending`, `in_progress`, `released` |
-| `delivery_relevant` | boolean | Computed field (see `docs/features/packages/package-tracking.md`) |
+| `delivery_relevant` | boolean | Computed field (see `docs/features/packages/package-model.md`) |
 | `products` | ProductDetail[] | Products under this track |
 | `deleted_at` | datetime \| null | Soft-deletion (see above) |
 

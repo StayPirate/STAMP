@@ -155,7 +155,7 @@ automatic transitions.
 **Specifications that reference the protected state concept** (all will
 need updating):
 
-- `docs/features/packages/package-tracking.md` (lines 592-596, 1016,
+- `docs/features/packages/package-model.md` (lines 592-596, 1016,
   1045) — authoritative definition and workflow-agnostic rule
 - `docs/features/packages/ibs-track-release-detection.md` (lines 34-36,
   130)
@@ -178,5 +178,5 @@ automatic transitions. Options:
   transitions do not target it (not in the source set for release
   detection) but propagation can overwrite it
 
-In both cases, the "Protected state" section in `package-tracking.md`
+In both cases, the "Protected state" section in `package-model.md`
 and all references to it across the codebase would be removed.

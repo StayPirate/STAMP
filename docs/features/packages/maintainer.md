@@ -384,7 +384,7 @@ return a significant number of rows. Mitigation strategies:
 
 - `docs/features/packages/package-bugowner.md` — bugowner resolution and
   group membership data
-- `docs/features/packages/package-tracking.md` — TicketPackageTrack status
+- `docs/features/packages/package-model.md` — TicketPackageTrack status
   and delivery status model
 - `docs/features/packages/ibs-submission-tracking.md` — SubmissionRequest
   and ReleaseRequest records for in-progress/completed views

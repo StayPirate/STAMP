@@ -22,7 +22,7 @@ identifier.
 A product receives binary packages from one or more tracks. The same
 track can feed multiple products. The mapping between a track's packages
 and the products that receive them is resolved by SMELT on a per-package
-basis (see `docs/features/packages/package-tracking.md`, SMELT Query for
+basis (see `docs/features/packages/package-model.md`, SMELT Query for
 Package Resolution).
 
 ### AIMAAS
@@ -92,7 +92,7 @@ See `docs/data-model.md` for the full column listing.
 ## SMELT Integration -- Product Sync
 
 Product data is synced from SMELT's product listing endpoint. See
-`docs/features/packages/package-tracking.md` (Domain Concepts: SMELT)
+`docs/features/packages/package-model.md` (Domain Concepts: SMELT)
 for the general SMELT description.
 
 - **Endpoint**: `GET /api/v1/basic/products/` (paginated)
@@ -240,7 +240,7 @@ List all products synced from SMELT. Paginated.
   codes, pagination, shared 422 responses)
 - `docs/data-model.md` -- full database schema (Product,
   ProductRepository tables)
-- `docs/features/packages/package-tracking.md` -- package affectedness
+- `docs/features/packages/package-model.md` -- package affectedness
   model; eligibility rules consume product lifecycle and threshold data
 - `docs/features/packages/product-lifecycle-transitions.md` -- EOL and
   Reactive LTSS automated actions

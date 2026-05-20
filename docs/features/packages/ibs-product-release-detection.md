@@ -7,7 +7,7 @@ parsing `updateinfo.xml` metadata from IBS download infrastructure. This is
 the **product-level** release detection mechanism.
 
 For the overall release tracking architecture (two independent levels —
-codestream and product), see `docs/features/packages/package-tracking.md`, section
+codestream and product), see `docs/features/packages/package-model.md`, section
 "Release Tracking". For codestream-level detection, see
 `docs/features/packages/ibs-track-release-detection.md`.
 
@@ -28,7 +28,7 @@ affectedness status is NOT changed — release confirmation is tracked
 exclusively via the `released_at` timestamp.
 
 Products with status `WONT_FIX` (protected state — see
-`docs/features/packages/package-tracking.md`, "Status Behavior") are
+`docs/features/packages/package-model.md`, "Status Behavior") are
 excluded from scanning.
 
 ## Detection Mechanism
@@ -55,7 +55,7 @@ below for how `<repo_url>` is constructed):
    records reference P, have `eligible = true`, and
    `released_at IS NULL`. Soft-deleted products are included — release
    detection applies regardless of exclusion status (see hierarchical
-   exclusion model in `docs/features/packages/package-tracking.md`).
+   exclusion model in `docs/features/packages/package-model.md`).
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received

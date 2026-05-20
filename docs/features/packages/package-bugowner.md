@@ -19,7 +19,7 @@ This feature enables:
    affecting their packages (separate spec)
 
 This specification is the authoritative source for bugowner resolution,
-caching, and maintenance. See `docs/features/packages/package-tracking.md` for
+caching, and maintenance. See `docs/features/packages/package-model.md` for
 package affectedness and release tracking. See
 `docs/features/integrations/ibs-integration.md` for IBS API integration details.
 
@@ -417,7 +417,7 @@ visible to all users (same access level as package data in tickets).
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
 - `docs/data-model.md` — full database schema (bugowner tables)
-- `docs/features/packages/package-tracking.md` — `TicketPackage` model,
+- `docs/features/packages/package-model.md` — `TicketPackage` model,
   package lifecycle context
 - `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints
   (bugowner resolution endpoint)

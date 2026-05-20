@@ -12,7 +12,7 @@ project where source packages are maintained and built. This specification
 uses "codestream" throughout to refer to this IBS-specific concept.
 
 For the overall release tracking architecture (two independent levels —
-codestream and product), see `docs/features/packages/package-tracking.md`, section
+codestream and product), see `docs/features/packages/package-model.md`, section
 "Release Tracking". For product-level detection, see
 `docs/features/packages/ibs-product-release-detection.md`.
 
@@ -32,7 +32,7 @@ appears in the codestream IBS project, **regardless of the status of the
 products under it**.
 
 The automatic transition is suppressed when the current status is `WONT_FIX`
-(protected state — see `docs/features/packages/package-tracking.md`, "Status
+(protected state — see `docs/features/packages/package-model.md`, "Status
 Behavior").
 
 ## Detection Mechanism
@@ -83,7 +83,7 @@ by the real-time `IBSEventConsumer` during downtime — see
    (`ANALYSIS`, `AFFECTED`) and `delivery_status != RELEASED`.
    Soft-deleted tracks are included — release detection applies
    regardless of exclusion status (see hierarchical exclusion model in
-   `docs/features/packages/package-tracking.md`). Only codestreams with
+   `docs/features/packages/package-model.md`). Only codestreams with
    at least one such track are scanned.
 
 2. **Fetch current MD5 checksums**: for each active codestream, call
@@ -144,7 +144,7 @@ for package P (in any codestream).
   and products via SMELT and create the `TicketPackage` +
   `TicketPackageTrack` records with status `ANALYSIS` (record creation
   goes through `ticket_mutations`). See
-  `docs/features/packages/package-tracking.md`, "Adding Packages to a Ticket".
+  `docs/features/packages/package-model.md`, "Adding Packages to a Ticket".
 - Set the `TicketPackageTrack` for codestream C to `status = FIXED` and
   `delivery_status = RELEASED` through `ticket_mutations` (the specific
   codestream where the fix was detected).

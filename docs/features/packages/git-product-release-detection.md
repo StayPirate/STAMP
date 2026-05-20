@@ -16,7 +16,7 @@ For IBS products, this confirmation is done via `updateinfo.xml` parsing.
 The git workflow may use the same mechanism (if SLFO products publish
 `updateinfo.xml`) or a different one.
 
-See `docs/features/packages/package-tracking.md` for the package tracking
+See `docs/features/packages/package-model.md` for the package tracking
 model, including the three orthogonal dimensions (affectedness,
 eligibility, delivery) and the workflow-agnostic design that this
 specification extends.
@@ -33,7 +33,7 @@ specification extends.
 
 ## Cross-references
 
-- `docs/features/packages/package-tracking.md` — package tracking model
+- `docs/features/packages/package-model.md` — package tracking model
   (owning specification)
 - `docs/features/packages/ibs-product-release-detection.md` — IBS
   equivalent of this specification

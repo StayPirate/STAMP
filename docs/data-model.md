@@ -26,7 +26,7 @@ flowchart TB
         TicketAccessGrant
     end
 
-    subgraph packages["Package Tracking"]
+    subgraph packages["Package Model"]
         TicketPackage
         TicketPackageTrack
         TicketPackageProduct
@@ -141,7 +141,7 @@ erDiagram
     TicketReference }o--o| User : "created by"
 ```
 
-### Package Tracking
+### Package Model
 
 ```mermaid
 erDiagram
@@ -494,14 +494,14 @@ Product records. Synced from SMELT alongside products.
 
 Anchors a source package within a ticket. Provides an explicit grouping
 entity for tracks and products. See
-`docs/features/packages/package-tracking.md` for full specification.
+`docs/features/packages/package-model.md` for full specification.
 
 | Column       | Type      | Constraints                  | Description                        |
 |--------------|-----------|------------------------------|------------------------------------|
 | id           | UUID      | PK                           | Internal identifier                |
 | ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
 | package_name | VARCHAR(255) | NOT NULL                     | Source package name                |
-| deleted_at   | TIMESTAMPTZ | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
+| deleted_at   | TIMESTAMPTZ | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
 | created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -513,7 +513,7 @@ Records the affectedness and delivery status of a source package in a
 specific maintenance track within the context of a ticket. The VA sets
 the affectedness status at this level. The delivery status is maintained
 by the system based on IBS SR/RR tracking data. See
-`docs/features/packages/package-tracking.md` for status propagation
+`docs/features/packages/package-model.md` for status propagation
 rules and the three orthogonal dimensions (affectedness, eligibility,
 delivery).
 
@@ -525,7 +525,7 @@ delivery).
 | reference         | VARCHAR(255) | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
 | status            | ENUM      | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
 | delivery_status   | ENUM      | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
-| deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
+| deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
 | created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record creation timestamp          |
 | updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
 
@@ -535,7 +535,7 @@ delivery).
 
 Records the affectedness status, eligibility, and release confirmation
 of a source package for a specific product within the context of a
-ticket and track. See `docs/features/packages/package-tracking.md` for
+ticket and track. See `docs/features/packages/package-model.md` for
 status inheritance, eligibility rules, and override model.
 
 | Column                   | Type      | Constraints                                 | Description                        |
@@ -548,7 +548,7 @@ status inheritance, eligibility rules, and override model.
 | eligible                 | BOOLEAN   | NOT NULL                                    | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
 | released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
-| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-tracking.md`) |
+| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
 | created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
 | updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |
 
@@ -567,7 +567,7 @@ TicketPackageProduct.
 | FIXED        |
 | WONT_FIX     |
 
-See `docs/features/packages/package-tracking.md` (Axis 1: Affectedness)
+See `docs/features/packages/package-model.md` (Axis 1: Affectedness)
 for the semantic meaning of each value and the final/non-final
 classification.
 

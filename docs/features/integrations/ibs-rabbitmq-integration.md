@@ -150,7 +150,7 @@ For each `suse.obs.package.commit` event:
    `codestream_name` values of `TicketPackageTrack` records with status
    `ANALYSIS` or `AFFECTED`. Soft-deleted tracks are included — release
    detection applies regardless of exclusion status (see hierarchical
-   exclusion model in `docs/features/packages/package-tracking.md`).
+   exclusion model in `docs/features/packages/package-model.md`).
    The set is cached in memory and refreshed periodically (every 5
    minutes) or on cache miss.
    If the project is not in the set → **acknowledge and discard** the
@@ -400,7 +400,7 @@ connection and process the full event stream.
 
 ## Dependencies
 
-- `docs/features/packages/package-tracking.md`: defines the codestream-level
+- `docs/features/packages/package-model.md`: defines the codestream-level
   detection logic (Case A/B/C), `CodestreamPackageChecksum` cache, and
   `add_package_to_ticket` function used by the consumer
 - `docs/features/integrations/ibs-integration.md`: defines the `IBSClient` service

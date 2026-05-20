@@ -178,7 +178,7 @@ this design choice explicitly.
 
 The response example uses `"reference": "SLE-15-SP6"` but the database stores
 the full IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) per
-`package-tracking.md` (line 245). The example value does not match the
+`package-model.md` (line 245). The example value does not match the
 expected stored format.
 
 ### MNT-COH-04 — `analyzed_at` derivation crosses spec boundaries (Medium)

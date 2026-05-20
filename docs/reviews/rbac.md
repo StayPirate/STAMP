@@ -150,7 +150,7 @@
 
 ### RBAC-API-07 — Missing DELETE endpoint for packages in Permission Map (Medium)
 
-**Status**: RESOLVED — Auto-resolved: api-spec.md no longer contains an endpoint catalog; package-tracking uses POST .../exclude (already in Permission Map), not DELETE (2026-05-13)
+**Status**: RESOLVED — Auto-resolved: api-spec.md no longer contains an endpoint catalog; package-model uses POST .../exclude (already in Permission Map), not DELETE (2026-05-13)
 
 ### RBAC-API-08 — Missing product endpoints in Permission Map (Medium)
 

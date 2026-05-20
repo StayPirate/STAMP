@@ -22,6 +22,6 @@ ticket-references.md    External links on tickets (auto + manual fetcher ingesti
   control, orphan invariants, architectural test requirements).
 - `cve-tracking.md` feeds tickets: each ingested CVE creates a ticket.
 - `cvss-scoring.md` drives ticket severity and product eligibility
-  (consumed by `tickets.md` and `packages/package-tracking.md`).
+  (consumed by `tickets.md` and `packages/package-model.md`).
 - `ticket-audit-log.md` defines the event contract that all ticket-mutating
   operations must satisfy.

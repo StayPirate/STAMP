@@ -402,7 +402,7 @@ its actual content (the "dashboard" framing was UI-centric).
 
 ### Packages Domain
 
-#### `docs/features/packages/package-tracking.md`
+#### `docs/features/packages/package-model.md`
 
 | Action | Lines | Content |
 |--------|-------|---------|
@@ -552,7 +552,7 @@ and no `docs/features/ui/` references:
 
 1. **`fetcher-dashboard.md`**: rename to `fetcher-operations.md` (reflects
    actual content: API + CLI + access control for fetcher operations)
-2. **`package-tracking.md` removal warning** (lines 925-930): remove
+2. **`package-model.md` removal warning** (lines 925-930): remove
    entirely. Removing packages in final status is not destructive — if the
    VA does it, there is a reason. Consequences on ticket status are
    expected behavior, not a special case requiring a warning

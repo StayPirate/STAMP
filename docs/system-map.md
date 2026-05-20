@@ -349,7 +349,7 @@ flowchart LR
 
 How packages are resolved, tracked across codestreams and products, and how
 releases are detected. See
-[features/packages/package-tracking.md](features/packages/package-tracking.md),
+[features/packages/package-model.md](features/packages/package-model.md),
 [features/integrations/ibs-integration.md](features/integrations/ibs-integration.md), and
 [features/integrations/ibs-rabbitmq-integration.md](features/integrations/ibs-rabbitmq-integration.md).
 
@@ -479,7 +479,7 @@ flowchart TD
     subgraph core["Core"]
         TICKETS["tickets"]
         HISTORY["ticket-audit-log"]
-        PKG["package-tracking"]
+        PKG["package-model"]
     end
 
     subgraph ingestion["Data Ingestion"]
@@ -555,7 +555,7 @@ other feature:
   creation, lifecycle, status gates, severity resolution. The service-layer
   module contract is in
   [ticket-mutations](features/tickets/ticket-mutations.md)
-- **[package-tracking](features/packages/package-tracking.md)**: codestream/product
+- **[package-model](features/packages/package-model.md)**: codestream/product
   resolution, status propagation, eligibility rules, and release detection
 
 ### Specification Index
@@ -564,7 +564,7 @@ other feature:
 |------|--------|---------|
 | [tickets](features/tickets/tickets.md) | Core | Ticket entity, lifecycle, gates, severity resolution |
 | [ticket-audit-log](features/tickets/ticket-audit-log.md) | Core | Audit trail via TicketAuditEvent records |
-| [package-tracking](features/packages/package-tracking.md) | Core | Codestream/product affectedness and release detection |
+| [package-model](features/packages/package-model.md) | Core | Codestream/product affectedness and release detection |
 | [cve-tracking](features/tickets/cve-tracking.md) | Ingestion | CVE sync from NVD, MITRE, and other sources |
 | [cvss-scoring](features/tickets/cvss-scoring.md) | Ingestion | Multi-provider CVSS assessment and severity derivation |
 | [references](features/tickets/ticket-references.md) | Ingestion | External links on tickets (auto and manual) |

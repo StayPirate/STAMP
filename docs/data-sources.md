@@ -284,7 +284,7 @@ whether update advisories have been published to product repositories.
   `src/api/app/controllers/` for endpoint logic and `src/api/config/routes.rb`
   for route definitions) rather than relying solely on the published docs
 - **See also**: `docs/features/integrations/ibs-integration.md`,
-  `docs/features/packages/package-tracking.md`,
+  `docs/features/packages/package-model.md`,
   `docs/features/packages/ibs-track-release-detection.md`,
   `docs/features/packages/ibs-product-release-detection.md`,
   `docs/features/packages/package-bugowner.md`
@@ -476,7 +476,7 @@ belong to which codestreams, and which repositories serve each product.
   AIMAAS lifecycle data
 - **Documentation**: https://smelt.suse.de (internal)
 - **See also**: `docs/features/packages/product-catalog.md` (product
-  sync), `docs/features/packages/package-tracking.md` (package query)
+  sync), `docs/features/packages/package-model.md` (package query)
 
 ### AIMAAS
 

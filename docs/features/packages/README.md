@@ -6,7 +6,7 @@ tracking.
 ## Specs
 
 ```
-package-tracking.md                      Status model, eligibility, delivery, soft-deletion
+package-model.md                      Status model, eligibility, delivery, soft-deletion
 ├── ibs-track-release-detection.md       IBS track-level: MD5 cache, IBS diff, Cases A/B/C
 ├── ibs-product-release-detection.md     IBS product-level: updateinfo.xml, advisory match chain
 ├── git-track-release-detection.md       Git track-level release detection (TBD)
@@ -21,12 +21,12 @@ maintainer.md                            Maintainer operations (pending fixes, i
 
 ## Relationships
 
-- `package-tracking.md` is the umbrella spec for the affectedness model.
+- `package-model.md` is the umbrella spec for the affectedness model.
   The two release-detection specs and the lifecycle-transitions spec
   implement specific automation described there.
 - `product-catalog.md` owns the Product and ProductRepository entities,
   SMELT product sync, AIMAAS lifecycle/threshold sync, and the
-  `GET /api/v1/products` endpoint. `package-tracking.md` consumes
+  `GET /api/v1/products` endpoint. `package-model.md` consumes
   product data for eligibility evaluation and track-to-product mapping.
 - `ibs-submission-tracking.md` is independent but shares the
   `TicketPackageTrack` model and `IBSEventConsumer` infrastructure.

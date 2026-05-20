@@ -66,6 +66,6 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - ibs-submission-tracking
 - ibs-track-release-detection
 - package-bugowner
-- package-tracking
+- package-model
 - product-catalog
 - product-lifecycle-transitions

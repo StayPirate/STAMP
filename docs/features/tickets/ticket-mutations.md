@@ -270,7 +270,7 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 3. If status unchanged, return (no-op)
 4. Update `TicketPackageTrack.status`
 5. Propagate status to child products per the rules in
-   `docs/features/packages/package-tracking.md` (Status Propagation)
+   `docs/features/packages/package-model.md` (Status Propagation)
 6. Create `TicketAuditEvent` (`track_status_changed`)
 7. Call `evaluate_ticket_status()`
 8. Return updated track
@@ -1119,7 +1119,7 @@ unrealistic at this scale and would rot.
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   severity calculation
-- `docs/features/packages/package-tracking.md` — track/product concepts,
+- `docs/features/packages/package-model.md` — track/product concepts,
   status propagation, hierarchical exclusion model
 - `docs/features/packages/product-lifecycle-transitions.md` — AIMAAS
   threshold changes triggering eligibility mutations

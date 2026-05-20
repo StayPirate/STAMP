@@ -43,7 +43,7 @@ this cascade:
 
 When the score is absent and a decision requires a numeric value (e.g.,
 eligibility threshold comparison), the system uses **10.0** (worst-case,
-conservative approach). See `docs/features/packages/package-tracking.md` for
+conservative approach). See `docs/features/packages/package-model.md` for
 eligibility rules.
 
 ## Providers
@@ -240,7 +240,7 @@ selection follows the resolution cascade with a conservative fallback:
 This ensures that a CVE without any CVSS data is never excluded from a
 product due to threshold rules.
 
-See `docs/features/packages/package-tracking.md` for the full eligibility logic.
+See `docs/features/packages/package-model.md` for the full eligibility logic.
 
 ## Data Sync
 

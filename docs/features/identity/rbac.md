@@ -193,15 +193,15 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| POST | `/api/v1/tickets/{ticket_id}/packages` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#add-package-to-ticket) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/exclude` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#soft-delete-package-from-ticket) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#restore-package) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#soft-delete-track) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#restore-track) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#change-track-status) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#soft-delete-product) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#restore-product) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | Vulnerability Analyst | [package-tracking](../packages/package-tracking.md#override-product-status) |
+| POST | `/api/v1/tickets/{ticket_id}/packages` | Vulnerability Analyst | [package-model](../packages/package-model.md#add-package-to-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/exclude` | Vulnerability Analyst | [package-model](../packages/package-model.md#soft-delete-package-from-ticket) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | Vulnerability Analyst | [package-model](../packages/package-model.md#restore-package) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude` | Vulnerability Analyst | [package-model](../packages/package-model.md#soft-delete-track) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore` | Vulnerability Analyst | [package-model](../packages/package-model.md#restore-track) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | Vulnerability Analyst | [package-model](../packages/package-model.md#change-track-status) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude` | Vulnerability Analyst | [package-model](../packages/package-model.md#soft-delete-product) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore` | Vulnerability Analyst | [package-model](../packages/package-model.md#restore-product) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | Vulnerability Analyst | [package-model](../packages/package-model.md#override-product-status) |
 
 ### Products
 

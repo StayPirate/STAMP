@@ -13,7 +13,7 @@ has been applied to a git branch (e.g., `slfo-main`, `slfo-1.2`) on
 `TicketPackageTrack` (with `workflow_type = 'git'`) will have its
 `status` set to `FIXED` and `delivery_status` set to `RELEASED`.
 
-See `docs/features/packages/package-tracking.md` for the package tracking
+See `docs/features/packages/package-model.md` for the package tracking
 model, including the three orthogonal dimensions (affectedness,
 eligibility, delivery) and the workflow-agnostic design that this
 specification extends.
@@ -32,7 +32,7 @@ specification extends.
 
 ## Cross-references
 
-- `docs/features/packages/package-tracking.md` — package tracking model
+- `docs/features/packages/package-model.md` — package tracking model
   (owning specification)
 - `docs/features/packages/ibs-track-release-detection.md` — IBS
   equivalent of this specification
