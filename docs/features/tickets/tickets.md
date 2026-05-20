@@ -785,6 +785,12 @@ Contract:
   (409 Conflict). Indicates data corruption requiring admin intervention.
 - Returns the canonical (non-Duplicated) target ticket.
 
+The resolver does not apply confidentiality checks — it is a service-layer
+utility used by both API serialization and background tasks. See
+[Confidentiality Filtering](#confidentiality-filtering) ("Accepted risk")
+for the rationale and impact assessment of exposing the resolved target
+identifier in public API responses.
+
 All code paths that need the canonical target MUST use this function:
 - `mark-as-duplicate` operation (pre-write validation)
 - API response serialization (see
@@ -1202,6 +1208,25 @@ If the CVE is linked to a confidential ticket that the caller is not
 authorized to access (or is unauthenticated), the ticket reference MUST
 be omitted entirely from the response. The caller sees no indication
 that a ticket exists for this CVE.
+
+**Accepted risk — `duplicate_of_id` and confidential targets**: A
+Duplicated ticket that is non-confidential may have a `duplicate_of_id`
+pointing (directly or through a chain) to a confidential ticket. The
+`resolve_canonical_target` function resolves this chain without
+confidentiality checks (it operates at the service layer), and the
+resolved canonical target identifier (`SNTL-{n}`) appears in public API
+responses. This reveals the *existence* of the confidential target ticket
+but not its content (the detail endpoint returns 404 for unauthorized
+callers, indistinguishable from a non-existent ticket). This is an
+accepted risk because: (a) only the identifier is exposed — no title,
+CVE, severity, or package data leaks; (b) creating the duplicate link
+requires Vulnerability Analyst role, which already has full access to
+confidential tickets; (c) the reverse scenario (target becomes
+confidential after the link is created) is rare and the leak is limited
+to existence inference; (d) implementing bidirectional cascading
+confidentiality adds significant complexity (reverse chain traversal,
+audit events, revert semantics) disproportionate to the severity of the
+information leak.
 
 ### Audit Trail
 

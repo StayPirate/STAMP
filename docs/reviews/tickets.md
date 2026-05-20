@@ -211,10 +211,7 @@ The search parameter on GET /api/v1/tickets searches across ticket title, CVE-ID
 
 ### TKT-SEC-01 — Duplicate chain resolution leaks confidential ticket existence (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-When marking a ticket as duplicate via POST /api/v1/tickets/{ticket_id}/duplicate, the spec defines chain resolution that follows duplicate_of_id links up to depth 10. There is no specification that the resolved target ticket must be accessible to the caller. If an intermediate ticket in the chain is confidential and the caller is not authorized, the operation could leak the existence of confidential tickets by successfully resolving through them rather than failing.
+**Status**: RESOLVED — Accepted risk documented: only target identifier exposed (no content leak), link creation requires VA role, bidirectional cascading complexity disproportionate to severity (2026-05-20)
 
 ### TKT-SEC-02 — Confidential ticket existence leakage via 409 CVE conflict response (Medium)
 
