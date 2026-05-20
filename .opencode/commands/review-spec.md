@@ -13,8 +13,9 @@ CRITICAL EXECUTION RULES (must obey BEFORE reading the rest):
    the mechanism for writes.
 2. Files under docs/reviews/ may not all be git-tracked (e.g.,
    .tracking.json is gitignored). Task agents MUST use
-   `bash ls docs/reviews/` to discover files there, then Read to
-   read them. NEVER use Glob for docs/reviews/.
+   `bash ls -a docs/reviews/` to discover files there (the `-a` flag
+   is required because `.tracking.json` is a dotfile), then Read to
+   read them. NEVER use Glob for docs/reviews/ (Glob skips dotfiles).
 3. The user sees ONLY formatted output and interactive prompts from you.
    All tool calls for data gathering happen inside Task agents invisibly.
 4. Reference files for subagent procedures are in
@@ -178,9 +179,12 @@ Use Task tool (subagent `explore`). Instruct it to:
 2. Find all `.md` files in `docs/features/` (Glob `docs/features/**/*.md`,
    exclude `docs/features/**/pages/*.md`). Use filename without extension
    as spec name. Sort alphabetically.
-3. Read `docs/reviews/.tracking.json` (use
-   `bash ls docs/reviews/` first). Handle init/sync/cleanup per
-   the tracking format reference. Write to disk if changed.
+3. Attempt to Read `docs/reviews/.tracking.json` directly (the path is
+   known — do NOT use Glob or bare `ls` to discover it, as both skip
+   dotfiles by default). If Read succeeds, parse the content and
+   apply sync/cleanup rules from the tracking format reference. If
+   Read fails (file not found), initialize per the tracking format
+   reference. Write to disk only if changed.
 4. Do NOT read or parse review files — trust the cache.
 5. Return the full `.tracking.json` content.
 

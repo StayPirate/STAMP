@@ -18,38 +18,38 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 
 | Spec | GAP | COH | DES | SEC | API | Total | Last Review | Stale |
 |------|-----|-----|-----|-----|-----|-------|-------------|-------|
-| [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
+| [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-12 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
+| [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-18 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
+| [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [maintainer](maintainer.md) | 12 | 4 | — | — | 3 | 19 | 2026-05-20 |  |
-| | 1:🔴 5:🟠 6:🟡 | 3:🟠 1:🟡 |  |  | 1:🟠 2:🟡 |  |  |  |
+| [maintainer](maintainer.md) | 13 | 4 | — | — | 4 | 21 | 2026-05-20 | ⚠️ |
+|  | 1:🔴 6:🟠 6:🟡 | 3:🟠 1:🟡 |  |  | 2:🟠 2:🟡 |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
+| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-references](ticket-references.md) | 13 | 2 | — | — | 2 | 17 | 2026-05-20 |  |
-| | 6:🟠 7:🟡 | 1:🟠 1:🟡 |  |  | 1:🟠 1:🟡 |  |  |  |
-| [ticket-mutations](ticket-mutations.md) | — | — | — | — | — | 0 |  |  |
+| [ticket-mutations](ticket-mutations.md) | — | — | — | — | — | 0 |  | — |
 |  |  |  |  |  |  |  |  |  |
-| [tickets](tickets.md) | — | — | — | — | — | 0 |  |  |
+| [ticket-references](ticket-references.md) | 13 | 2 | — | — | 2 | 17 | 2026-05-20 | ⚠️ |
+|  | 6:🟠 7:🟡 | 1:🟠 1:🟡 |  |  | 1:🟠 1:🟡 |  |  |  |
+| [tickets](tickets.md) | — | — | — | — | — | 0 |  | — |
 |  |  |  |  |  |  |  |  |  |
-| [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-14 | ⚠️ |
+| [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
+| [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **25** | **6** | **0** | **0** | **5** | **36** |  |  |
-| | 1:🔴 11:🟠 13:🟡 | 4:🟠 2:🟡 |  |  | 2:🟠 3:🟡 |  |  |  |
+| **Total** | **26** | **6** | **0** | **0** | **6** | **38** |  |  |
+|  | 1:🔴 12:🟠 13:🟡 | 4:🟠 2:🟡 |  |  | 3:🟠 3:🟡 |  |  |  |
 
 ### Disabled specs
 

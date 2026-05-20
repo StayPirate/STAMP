@@ -19,7 +19,18 @@
     "admin": {
       "enabled": false,
       "abbr": "ADM",
-      "cache": null
+      "cache": {
+        "last_review": "2026-05-06T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 3,
+        "not_reviewed": ["GAP", "COH", "DES", "SEC"]
+      }
     },
     "api-key-service": {
       "enabled": true,
@@ -41,7 +52,7 @@
       "enabled": true,
       "abbr": "ATI",
       "cache": {
-        "last_review": "2026-05-15T00:00:00+0000",
+        "last_review": "2026-05-17T00:00:00+0000",
         "open": {
           "GAP": { "H": 0, "M": 0, "L": 0 },
           "COH": { "H": 0, "M": 0, "L": 0 },
@@ -79,14 +90,14 @@
       "abbr": "CVS",
       "cache": null
     },
-    "fetcher-operations": {
-      "enabled": false,
-      "abbr": "FEO",
-      "cache": null
-    },
     "fetcher-infrastructure": {
       "enabled": false,
       "abbr": "FEI",
+      "cache": null
+    },
+    "fetcher-operations": {
+      "enabled": false,
+      "abbr": "FEO",
       "cache": null
     },
     "git-product-release-detection": {
@@ -128,7 +139,7 @@
       "enabled": true,
       "abbr": "IAL",
       "cache": {
-        "last_review": "2026-05-15T00:00:00+0000",
+        "last_review": "2026-05-16T00:00:00+0000",
         "open": {
           "GAP": { "H": 0, "M": 0, "L": 0 },
           "COH": { "H": 0, "M": 0, "L": 0 },
@@ -162,11 +173,11 @@
       "cache": {
         "last_review": "2026-05-20T00:00:00+0000",
         "open": {
-          "GAP": { "H": 1, "M": 5, "L": 6 },
+          "GAP": { "H": 1, "M": 6, "L": 6 },
           "COH": { "H": 0, "M": 3, "L": 1 },
           "DES": { "H": 0, "M": 0, "L": 0 },
           "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 1, "L": 2 }
+          "API": { "H": 0, "M": 2, "L": 2 }
         },
         "resolved": 0,
         "not_reviewed": ["DES", "SEC"]
@@ -177,9 +188,9 @@
       "abbr": "PAB",
       "cache": null
     },
-    "package-tracking": {
+    "package-model": {
       "enabled": false,
-      "abbr": "PKT",
+      "abbr": "PKM",
       "cache": null
     },
     "product-catalog": {
@@ -208,6 +219,43 @@
         "not_reviewed": []
       }
     },
+    "sso-authentication": {
+      "enabled": true,
+      "abbr": "SSOA",
+      "cache": {
+        "last_review": "2026-05-07T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 25,
+        "not_reviewed": []
+      }
+    },
+    "ticket-audit-log": {
+      "enabled": true,
+      "abbr": "TAL",
+      "cache": {
+        "last_review": "2026-05-17T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 15,
+        "not_reviewed": []
+      }
+    },
+    "ticket-mutations": {
+      "enabled": true,
+      "abbr": "TKM",
+      "cache": null
+    },
     "ticket-references": {
       "enabled": true,
       "abbr": "TRF",
@@ -223,11 +271,6 @@
         "resolved": 0,
         "not_reviewed": ["DES", "SEC"]
       }
-    },
-    "ticket-mutations": {
-      "enabled": true,
-      "abbr": "TKM",
-      "cache": null
     },
     "tickets": {
       "enabled": true,
