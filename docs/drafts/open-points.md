@@ -128,3 +128,55 @@ reactive and narrow, not a general orphan scan.
 
 **Decision needed**: which approach to adopt for resolving the
 inconsistency between `tickets.md` and `cve-tracking.md`.
+
+---
+
+## 4. Remove Protected State Behavior from WONT_FIX
+
+**Origin**: analysis of `PackageStatus` enum semantics and how
+final/non-final classification is used across feature specifications.
+
+**Context**: `WONT_FIX` is currently treated as a "protected state" —
+immune to all automatic/system-initiated status transitions. This means:
+
+- Track-level release detection skips `WONT_FIX` tracks (does not
+  transition them to `FIXED` even if a fix is detected in IBS)
+- Product status propagation from track to products skips `WONT_FIX`
+  products (even without `is_status_override`)
+- Product-level release detection excludes `WONT_FIX` products from
+  scanning entirely
+- CVSS eligibility recalculation excludes `WONT_FIX` products
+- EOL lifecycle transitions do not modify `WONT_FIX` products
+
+This distinction is not justified. `WONT_FIX` should behave like the
+other two final statuses (`FIXED`, `NOT_AFFECTED`) with respect to
+automatic transitions.
+
+**Specifications that reference the protected state concept** (all will
+need updating):
+
+- `docs/features/packages/package-tracking.md` (lines 592-596, 1016,
+  1045) — authoritative definition and workflow-agnostic rule
+- `docs/features/packages/ibs-track-release-detection.md` (lines 34-36,
+  130)
+- `docs/features/packages/ibs-product-release-detection.md` (lines
+  30-32, 236-237, 259-261)
+- `docs/features/integrations/ibs-rabbitmq-integration.md` (line 182)
+- `docs/features/integrations/ibs-integration.md` (lines 243-244)
+- `docs/features/tickets/cvss-scoring.md` (line 347)
+- `docs/features/packages/product-lifecycle-transitions.md` (lines 98,
+  164-168)
+- `docs/architecture.md` (lines 264-265)
+
+**Decision needed**: define the new behavior for `WONT_FIX` under
+automatic transitions. Options:
+
+- **(A)** Treat `WONT_FIX` exactly like `FIXED` — automatic transitions
+  apply identically (release detection can transition it, propagation
+  overwrites it unless `is_status_override` is set)
+- **(B)** Treat `WONT_FIX` exactly like `NOT_AFFECTED` — automatic
+  transitions do not target it (not in the source set for release
+  detection) but propagation can overwrite it
+
+In both cases, the "Protected state" section in `package-tracking.md`
+and all references to it across the codebase would be removed.

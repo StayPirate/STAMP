@@ -305,6 +305,18 @@ Property of the source code. Determined by the VA during analysis.
 | `FIXED` | Code was vulnerable, fix has been applied |
 | `WONT_FIX` | Code is vulnerable, decision not to fix |
 
+**Status classification**: statuses are classified as either *final* or
+*non-final*. A final status indicates that no further work is expected on
+the track or product for this ticket. A non-final status indicates that
+the track or product still requires attention (analysis pending or fix
+in progress).
+
+- **Final statuses**: `NOT_AFFECTED`, `FIXED`, `WONT_FIX`
+- **Non-final statuses**: `ANALYSIS`, `AFFECTED`
+
+Other specifications that reference "final status" or "non-final status"
+use this classification as defined here.
+
 The VA sets affectedness at the **track level**. Products
 inherit the track's status unless the VA overrides a specific product
 (`is_status_override = true`).
@@ -591,9 +603,11 @@ any active product under it has `eligible = true`.
 | `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Release detected (delivery reaches `RELEASED`, one-shot) |
 | any non-protected | inherited from track | TicketPackageProduct | Track status changed by VA (propagation) |
 
-**Protected state**: `WONT_FIX` is never modified by automatic
+**Protected state** (pending removal — see `docs/drafts/open-points.md`,
+section 4): `WONT_FIX` is currently never modified by automatic
 transitions. If a track or product has status `WONT_FIX`, no automatic
-status change is applied.
+status change is applied. This behavior will be removed in the future so
+that `WONT_FIX` behaves identically to the other final statuses.
 
 **Delivery status transitions** (system-managed):
 
@@ -1028,7 +1042,7 @@ transition rules, including:
 
 - **Analysis → Analyzed**: requires at least one package, all tracks and
   products decided, severity set, SUSE CVSS provided
-- **Analyzed → Resolved**: requires all tracks in terminal status, all
+- **Analyzed → Resolved**: requires all tracks in final status, all
   `FIXED` tracks with `delivery_status = RELEASED`, all eligible
   products with `released_at IS NOT NULL`
 - Reverse transitions when gate conditions are no longer met

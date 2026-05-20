@@ -95,15 +95,18 @@ only when status is `AFFECTED`).
 #### Reason: `eol`
 
 For all `TicketPackageProduct` records referencing this product in open
-tickets with non-final, non-protected status:
+tickets with non-final status:
 
 | Current status | Action |
 |----------------|--------|
 | `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 | `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 
-Records in final status (`NOT_AFFECTED`, `FIXED`) or protected status
-(`WONT_FIX`) are not modified.
+Records in final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
+modified. Note: `WONT_FIX` is additionally protected from automatic
+transitions (see `docs/features/packages/package-tracking.md`, "Automatic
+Transitions") — this behavior is pending removal (see
+`docs/drafts/open-points.md`, section 4).
 
 #### Reason: `threshold_change` / `cvss_change`
 
@@ -163,9 +166,11 @@ perform re-evaluation — phase detection is handled by
 
 ## Protected States
 
-Consistent with the rest of the system, `WONT_FIX` is NEVER modified
-by automatic transitions. Records with status `WONT_FIX` are not
-soft-deleted or have their eligibility changed by lifecycle transitions.
+Consistent with the rest of the system, `WONT_FIX` is currently never
+modified by automatic transitions. Records with status `WONT_FIX` are
+not soft-deleted or have their eligibility changed by lifecycle
+transitions. This behavior is pending removal — see
+`docs/drafts/open-points.md`, section 4.
 
 ## Security
 

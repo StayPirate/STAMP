@@ -322,7 +322,7 @@ effectively excluded are considered — see
 `docs/features/packages/package-tracking.md`, "Hierarchical Exclusion
 Model"):
 
-1. Every active `TicketPackageTrack` has a terminal affectedness status:
+1. Every active `TicketPackageTrack` has a final status:
    `FIXED`, `NOT_AFFECTED`, or `WONT_FIX`
 2. Every active track with status `FIXED` has
    `delivery_status = RELEASED`
@@ -395,7 +395,7 @@ determining a ticket's status based on its current data.
 #### Inactive Assignee Sanitization
 
 After determining the ticket's "natural" status via gate evaluation, if
-the resulting status is non-terminal (New, Analysis, or Analyzed) and
+the resulting status is non-final (New, Analysis, or Analyzed) and
 `assignee_id` points to an inactive user, `evaluate_ticket_status`
 performs the following steps:
 
@@ -409,7 +409,7 @@ performs the following steps:
    (`assignee_id IS NOT NULL`) is no longer satisfied, the ticket will
    regress accordingly (e.g., Analysis → New, Analyzed → New)
 
-If the resulting status is terminal (Resolved, Ignored, Duplicated): no
+If the resulting status is final (Resolved, Ignored, Duplicated): no
 assignee check is performed — the ticket is closed and does not need an
 active assignee.
 
@@ -709,7 +709,7 @@ tickets.
 performed by `deactivate_user` (see
 [user-service.md](../identity/user-service.md#deactivate_user)),
 `evaluate_ticket_status` also performs system-initiated unassignment
-when it encounters an inactive assignee on a non-terminal ticket (see
+when it encounters an inactive assignee on a non-final ticket (see
 [Inactive Assignee Sanitization](#inactive-assignee-sanitization)).
 This ensures that even if a ticket enters the gate zone or is evaluated
 after the deactivation event, the stale assignee is cleared.

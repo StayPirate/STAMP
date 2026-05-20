@@ -559,13 +559,17 @@ status inheritance, eligibility rules, and override model.
 Affectedness status, used by both TicketPackageTrack and
 TicketPackageProduct.
 
-| Value        | Type      |
-|--------------|-----------|
-| ANALYSIS     | Non-final |
-| AFFECTED     | Non-final |
-| NOT_AFFECTED | Final     |
-| FIXED        | Final     |
-| WONT_FIX     | Final     |
+| Value        |
+|--------------|
+| ANALYSIS     |
+| AFFECTED     |
+| NOT_AFFECTED |
+| FIXED        |
+| WONT_FIX     |
+
+See `docs/features/packages/package-tracking.md` (Axis 1: Affectedness)
+for the semantic meaning of each value and the final/non-final
+classification.
 
 ### DeliveryStatus Enum
 
