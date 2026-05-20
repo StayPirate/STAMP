@@ -1282,11 +1282,193 @@ This single condition covers all cases:
 
 ## API Endpoints
 
+### Response Schemas
+
+This section defines the response schemas for ticket endpoints. All
+endpoints that return a ticket use one of two representations depending
+on the context: a compact summary for list views, or a full detail
+object for single-ticket views and mutation responses.
+
+**Enum serialization**: all enum values (`status`, `severity`,
+`workflow_type`, `delivery_status`, and `PackageStatus`) are serialized
+as **lowercase** strings in API responses (e.g., `"new"`, `"critical"`,
+`"affected"`). Request bodies and query parameters also use lowercase.
+The PascalCase forms used elsewhere in this spec (e.g., `New`,
+`Analysis`, `Critical`) refer to the logical values; the wire format is
+always lowercase.
+
+**Soft-deletion visibility**: all entities with soft-deletion include a
+`deleted_at` field (`datetime | null`). This field is present only when
+the request includes `include_deleted=true` or `include_deleted=only`
+and the caller holds the Admin role. When not applicable, the field is
+omitted from the response.
+
+#### Shared Sub-Schemas
+
+**UserSummary** — inline representation of a user reference. Fields:
+`id` (UUID), `username` (string), `full_name` (string), `active`
+(boolean). See `docs/api-spec.md`, "User References in Responses" for
+the canonical definition.
+
+**CVESummary** — compact CVE representation for list views:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cve_id` | string | CVE identifier (e.g., `CVE-2024-1234`) |
+| `description` | string \| null | Vulnerability description |
+
+**CVESource** — individual CVE data source:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | string | Source identifier (e.g., `nvd`, `mitre`) |
+| `url` | string | Source URL for the CVE |
+
+**CVEDetail** — expanded CVE representation for detail views:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | CVE record primary key |
+| `cve_id` | string | CVE identifier (e.g., `CVE-2024-1234`) |
+| `description` | string \| null | Vulnerability description |
+| `published_date` | datetime \| null | Date published (UTC) |
+| `modified_date` | datetime \| null | Date last modified (UTC) |
+| `nvd_status` | string \| null | NVD vulnerability status |
+| `sources` | CVESource[] | Data sources for this CVE |
+
+**BugownerMember** — individual member within a group bugowner:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userid` | string | IBS username |
+| `email` | string | Member email address |
+
+**BugownerInfo** — bugowner data for a package (see
+`docs/features/packages/package-bugowner.md`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `"person"` \| `"group"` | Bugowner type |
+| `name` | string | IBS userid or group name |
+| `email` | string | Contact email |
+| `members` | BugownerMember[] \| null | Group members. `null` for person bugowners |
+
+When the bugowner is unknown (not resolved), the entire `bugowner` field
+is `null` rather than an object.
+
+**ProductDetail** — product within a track:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | TicketPackageProduct primary key |
+| `product_id` | UUID | Product foreign key |
+| `product_name` | string | Product display name (from `Product.display_name`) |
+| `status` | string | PackageStatus enum: `analysis`, `affected`, `not_affected`, `fixed`, `wont_fix` |
+| `is_status_override` | boolean | `true` if VA manually set this product's status |
+| `eligible` | boolean | Whether this product receives the fix |
+| `is_eligible_override` | boolean | `true` if VA manually set eligibility |
+| `released_at` | datetime \| null | When the fix was detected in the product repository (UTC) |
+| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+
+**TrackDetail** — track (codestream) within a package:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | TicketPackageTrack primary key |
+| `workflow_type` | string | `"ibs"` or `"git"` |
+| `reference` | string | Codestream project name or branch reference |
+| `status` | string | PackageStatus enum: `analysis`, `affected`, `not_affected`, `fixed`, `wont_fix` |
+| `delivery_status` | string | DeliveryStatus enum: `pending`, `in_progress`, `released` |
+| `delivery_relevant` | boolean | Computed field (see `docs/features/packages/package-tracking.md`) |
+| `products` | ProductDetail[] | Products under this track |
+| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+
+**PackageDetail** — package within a ticket (detail view only):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | TicketPackage primary key |
+| `package_name` | string | Source package name |
+| `bugowner` | BugownerInfo \| null | Bugowner data. `null` if not resolved |
+| `tracks` | TrackDetail[] | Tracks (codestreams) for this package |
+| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+
+#### TicketSummary
+
+Returned by the list endpoint. Provides enough information for table
+views without the full package tree.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Ticket primary key |
+| `identifier` | string | Human-readable identifier (`SNTL-{n}`) |
+| `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
+| `severity` | string \| null | Resolved severity (override → CVSS-derived). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
+| `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
+| `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
+| `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
+| `is_confidential` | boolean | Whether the ticket is confidential |
+| `package_names` | string[] | Flat list of affected package names (e.g., `["curl", "openssl-3"]`) |
+| `created_at` | datetime | Creation timestamp (UTC) |
+| `updated_at` | datetime | Last modification timestamp (UTC) |
+| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+
+#### TicketDetail
+
+Returned by the detail endpoint and all mutation endpoints. Extends
+TicketSummary with the full package tree and expanded CVE data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Ticket primary key |
+| `identifier` | string | Human-readable identifier (`SNTL-{n}`) |
+| `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
+| `severity` | string \| null | Resolved severity (override → CVSS-derived). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
+| `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
+| `cve` | CVEDetail \| null | Expanded CVE data with dates and sources, or `null` if no CVE |
+| `cve_data_pending` | boolean | `true` when CVE data is being fetched in the background; `false` otherwise |
+| `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
+| `is_confidential` | boolean | Whether the ticket is confidential |
+| `packages` | PackageDetail[] | Full package/track/product tree with bugowner data |
+| `created_at` | datetime | Creation timestamp (UTC) |
+| `updated_at` | datetime | Last modification timestamp (UTC) |
+| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+
+Note: TicketDetail does not include `package_names` — the same
+information is available from `packages[].package_name`.
+
+Note: the API field `duplicate_of` exposes the resolved canonical target
+as a human-readable `SNTL-{n}` string (after chain resolution). This
+corresponds to the database column `duplicate_of_id` (UUID FK), but the
+API performs resolution and format conversion before serialization.
+
+#### Endpoint → Schema Mapping
+
+| Endpoint | Response Schema |
+|----------|----------------|
+| `GET /api/v1/tickets` | `TicketSummary[]` (paginated) |
+| `GET /api/v1/tickets/{ticket_id}` | `TicketDetail` |
+| `POST /api/v1/tickets` | `TicketDetail` (201 Created) |
+| `POST .../associate-cve` | `TicketDetail` |
+| `POST .../set-severity` | `TicketDetail` |
+| `POST .../assign` | `TicketDetail` |
+| `POST .../ignore` | `TicketDetail` |
+| `POST .../duplicate` | `TicketDetail` |
+| `POST .../reopen` | `TicketDetail` |
+| `POST .../revert-duplicate` | `TicketDetail` |
+| `POST .../restore` | `TicketDetail` |
+| `POST .../set-confidentiality` | `TicketDetail` |
+| `DELETE .../cve` | 204 No Content (no body) |
+| `DELETE /api/v1/tickets/{ticket_id}` | 204 No Content (no body) |
+
 ### List Tickets
 
 ```
 GET /api/v1/tickets
 ```
+
+- **Access level**: Public
+- **Response schema**: `TicketSummary[]` (paginated)
 
 Lists tickets with filtering, search, pagination, and sorting.
 
@@ -1318,10 +1500,12 @@ Query parameters:
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
+  Valid values: `created_at`, `updated_at`, `severity`, `status`,
+  `identifier` (sorts by numeric `sequence_id`).
 - `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
 
-Response: paginated list in `{"data": [...], "meta": {...}}` envelope
-(200 OK).
+Response: paginated `TicketSummary` array in standard
+`{"data": [...], "meta": {...}}` envelope (200 OK).
 
 ### Get Ticket
 
@@ -1329,13 +1513,17 @@ Response: paginated list in `{"data": [...], "meta": {...}}` envelope
 GET /api/v1/tickets/{ticket_id}
 ```
 
+- **Access level**: Public
+- **Response schema**: `TicketDetail`
+
 Returns a single ticket by UUID or `SNTL-{n}`. The response includes
-bugowner information for each package (type, name, email, and group
-members when applicable — see
+the full package/track/product tree with bugowner information for each
+package (type, name, email, and group members when applicable — see
 `docs/features/packages/package-bugowner.md`). See
 [Soft-Delete](#soft-delete) for soft-deleted ticket visibility rules.
 
-Response: ticket object in `{"data": ...}` envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
@@ -1346,6 +1534,9 @@ Error responses:
 ```
 POST /api/v1/tickets
 ```
+
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail` (201 Created)
 
 Creates a ticket manually. The creating user is automatically assigned.
 
@@ -1371,8 +1562,8 @@ Request body:
   created as confidential (see
   [Confidential Tickets](#confidential-tickets)). Default: `false`
 
-Response: the created ticket object wrapped in the standard `{"data": ...}`
-envelope (201 Created). Includes `cve_data_pending: true` when a CVE-ID
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(201 Created). The `cve_data_pending` field is `true` when a CVE-ID
 was provided and the CVE data is being fetched in the background.
 
 Error responses:
@@ -1381,13 +1572,14 @@ Error responses:
   another ticket. Response body includes `existing_ticket_id` (UUID) to
   allow the frontend to link to the existing ticket
 
-Requires the Vulnerability Analyst role.
-
 ### Associate CVE
 
 ```
 POST /api/v1/tickets/{ticket_id}/associate-cve
 ```
+
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
 
 Associates a CVE with a ticket that does not have one. If the CVE is not
 yet in the Sentinel database, a minimal CVE record is created and on-demand
@@ -1404,9 +1596,9 @@ Request body:
 
 - `cve_id` (string, required): CVE identifier string
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK). Includes `cve_data_pending: true` when the CVE data
-is being fetched in the background.
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK). The `cve_data_pending` field is `true` when the CVE data is
+being fetched in the background.
 
 Error responses:
 
@@ -1419,19 +1611,18 @@ Error responses:
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
   status
 
-Requires the Vulnerability Analyst role.
-
 ### Remove CVE from Ticket (Admin Only)
 
 ```
 DELETE /api/v1/tickets/{ticket_id}/cve
 ```
 
+- **Access level**: Admin
+- **Response**: 204 No Content
+
 Removes the CVE association from a ticket. The CVE record itself is not
 deleted. After removal, severity resolution falls back to
 `severity_override`.
-
-Response: 204 No Content.
 
 Error responses:
 
@@ -1441,13 +1632,14 @@ Error responses:
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
   status
 
-Requires the Admin role.
-
 ### Set Severity Override
 
 ```
 POST /api/v1/tickets/{ticket_id}/set-severity
 ```
+
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
 
 Sets the severity override for a ticket without a CVE.
 
@@ -1462,8 +1654,8 @@ Request body:
 - `severity` (string, required): severity value (Critical, High, Medium,
   Low, None)
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
@@ -1473,13 +1665,14 @@ Error responses:
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
   status
 
-Requires the Vulnerability Analyst role.
-
 ### Assign Ticket
 
 ```
 POST /api/v1/tickets/{ticket_id}/assign
 ```
+
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
 
 Assigns or reassigns a ticket to a VA. See
 [Reassignment](#reassignment) for reassignment rules and
@@ -1506,8 +1699,8 @@ Request body:
 > promotional-only assignee gate ensures this never causes status
 > regression.
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
@@ -1519,21 +1712,24 @@ Error responses:
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
   status (use the dedicated reopen or revert-duplicate endpoints instead)
 
-Requires the Vulnerability Analyst role.
-
 ### Ignore Ticket
 
 ```
 POST /api/v1/tickets/{ticket_id}/ignore
 ```
 
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
+
 Marks a ticket as Ignored. Allowed transitions: New → Ignored,
 Analysis → Ignored (see [Status Transitions](#status-transitions)). If
 the ticket has no assignee, auto-assignment applies (see
 [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK).
+No request body is required.
+
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
@@ -1543,13 +1739,14 @@ Error responses:
 - 409 with code `TICKET_INVALID_TRANSITION`: current status does not
   allow transition to Ignored
 
-Requires the Vulnerability Analyst role.
-
 ### Mark Ticket as Duplicate
 
 ```
 POST /api/v1/tickets/{ticket_id}/duplicate
 ```
+
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
 
 Marks a ticket as a duplicate of another ticket. The target is resolved
 following the chain if it is itself Duplicated. Existing tickets pointing
@@ -1568,8 +1765,8 @@ Request body:
 - `duplicate_of_id` (string, required): UUID or `SNTL-{n}` of the
   target ticket
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
@@ -1581,13 +1778,14 @@ Error responses:
 - 409 with code `TICKET_DUPLICATE_CHAIN_DEPTH`: chain depth exceeded
   (indicates data corruption requiring manual intervention)
 
-Requires the Vulnerability Analyst role.
-
 ### Reopen Ticket
 
 ```
 POST /api/v1/tickets/{ticket_id}/reopen
 ```
+
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
 
 Reopens an Ignored ticket. The calling VA becomes the new assignee. After
 assignment, `_reenter_gate_zone()` determines the correct gate-zone
@@ -1596,16 +1794,14 @@ status (typically Analysis, since an assignee is now present). See
 
 No request body is required.
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Ignored
   status
-
-Requires the Vulnerability Analyst role.
 
 This endpoint is **not** subject to the `require_ticket_mutable` guard
 (it is the dedicated exit from the Ignored manual-zone status).
@@ -1616,14 +1812,17 @@ This endpoint is **not** subject to the `require_ticket_mutable` guard
 POST /api/v1/tickets/{ticket_id}/revert-duplicate
 ```
 
+- **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
+
 Reverts a Duplicated ticket to its previous status. The ticket is
 reassigned to the VA who performed the revert. After restoring the
 status, `evaluate_ticket_status` reconciles with current gate conditions.
 See [Duplicate Handling](#duplicate-handling) for revert behavior and
 status reconciliation.
 
-Response: the updated ticket object wrapped in the standard `{"data": ...}`
-envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
@@ -1631,26 +1830,23 @@ Error responses:
 - 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Duplicated
   status
 
-Requires the Vulnerability Analyst role.
-
 ### Soft-Delete Ticket
 
 ```
 DELETE /api/v1/tickets/{ticket_id}
 ```
 
+- **Access level**: Admin
+- **Response**: 204 No Content
+
 Soft-deletes a ticket by setting `deleted_at`. Creates a `ticket_deleted`
 TicketAuditEvent. See [Soft-Delete](#soft-delete) for visibility rules and
 sub-resource behavior.
-
-Response: 204 No Content.
 
 Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 409 with code `TICKET_ALREADY_DELETED`: ticket is already soft-deleted
-
-Requires the Admin role.
 
 ### Restore Ticket
 
@@ -1658,19 +1854,20 @@ Requires the Admin role.
 POST /api/v1/tickets/{ticket_id}/restore
 ```
 
+- **Access level**: Admin
+- **Response schema**: `TicketDetail`
+
 Restores a soft-deleted ticket by clearing `deleted_at`. Creates a
 `ticket_restored` TicketAuditEvent. See [Soft-Delete](#soft-delete) for
 soft-delete lifecycle.
 
-Response: the restored ticket object wrapped in the standard
-`{"data": ...}` envelope (200 OK).
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
 
 Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 409 with code `TICKET_NOT_DELETED`: ticket is not soft-deleted
-
-Requires the Admin role.
 
 ### Set Confidentiality
 
@@ -1678,12 +1875,9 @@ Requires the Admin role.
 POST /api/v1/tickets/{ticket_id}/set-confidentiality
 ```
 
-Sets the confidentiality status of a ticket.
-
 - **Access level**: Vulnerability Analyst
+- **Response schema**: `TicketDetail`
 - **Request body**: `{ "is_confidential": boolean }`
-- **Response body**: The updated ticket object in the standard
-  `{"data": <ticket>}` envelope.
 - **Idempotency**: If the ticket already has the requested status, the
   operation returns 200 OK without creating an audit event or modifying
   the database.
@@ -1694,13 +1888,16 @@ Sets the confidentiality status of a ticket.
 - **Audit**: Creates `TicketAuditEvent` with
   `event_type = confidentiality_changed`.
 
+Sets the confidentiality status of a ticket.
+
+Response: `TicketDetail` object in standard `{"data": ...}` envelope
+(200 OK).
+
 | Status | Code | Condition |
 |--------|------|-----------|
 | 200    | -    | Success (or already in requested state) |
 | 404    | `TICKET_NOT_FOUND` | Ticket not found |
 | 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
-
-Requires the Vulnerability Analyst role.
 
 ### Access Grant Management
 

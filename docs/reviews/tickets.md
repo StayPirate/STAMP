@@ -280,23 +280,17 @@ The ignore endpoint requires Vulnerability Analyst access level but does not spe
 ### TKT-API-01 — List Tickets endpoint missing explicit access level declaration (Low)
 
 **Category**: Authorization
-**Status**: OPEN
-
-The "List Tickets" endpoint section does not explicitly declare its access level using the standard labels (Public / Authenticated / Vulnerability Analyst / Admin).
+**Status**: RESOLVED — Access level `Public` declared inline using structured format. (2026-05-20)
 
 ### TKT-API-02 — Get Ticket endpoint missing explicit access level declaration (Low)
 
 **Category**: Authorization
-**Status**: OPEN
-
-Same as finding TKT-API-01 — the "Get Ticket" endpoint does not explicitly declare its access level inline.
+**Status**: RESOLVED — Access level `Public` declared inline using structured format. (2026-05-20)
 
 ### TKT-API-03 — List Tickets missing sortable fields specification (Low)
 
 **Category**: Sorting
-**Status**: OPEN
-
-The List Tickets endpoint declares sort_by and sort_order parameters but does not enumerate which fields are valid for sort_by.
+**Status**: RESOLVED — Sortable fields enumerated: `created_at`, `updated_at`, `severity`, `status`, `identifier`. (2026-05-20)
 
 ### TKT-API-04 — DELETE /tickets/{ticket_id}/cve returns 204 but does not use data envelope (Low)
 
@@ -309,16 +303,12 @@ The List Tickets endpoint declares sort_by and sort_order parameters but does no
 ### TKT-API-06 — Ticket object response schema not defined (Medium)
 
 **Category**: API completeness
-**Status**: OPEN
-
-The tickets spec does not define which fields are included in the "ticket object" returned by the list endpoint (GET /api/v1/tickets) vs the detail endpoint (GET /api/v1/tickets/{ticket_id}). The spec only says "paginated list in data/meta envelope" for lists and "ticket object in data envelope" for detail. The only mentioned difference is that detail "includes bugowner information for each package." Fields like duplicate_of_id, previous_status, is_confidential, and nested relationships (packages, tracks, products) have no explicit inclusion/exclusion per endpoint. This makes it ambiguous for implementers and API consumers which fields to expect in each context.
+**Status**: RESOLVED — Response Schemas section added to tickets.md defining `TicketSummary` (list), `TicketDetail` (detail/mutations), and all sub-schemas. Endpoint → Schema mapping table included. (2026-05-20)
 
 ### TKT-API-07 — Inconsistent access level declaration format across endpoints (Low)
 
 **Category**: Consistency
-**Status**: OPEN
-
-Some endpoints in the tickets spec declare access levels inline in the endpoint description while others rely on the RBAC spec's Endpoint Permission Map. The spec should use a consistent format for all endpoints, preferably the inline declaration pattern used by other reviewed specs.
+**Status**: RESOLVED — All endpoints now use the structured `- **Access level**: ...` format consistently. (2026-05-20)
 
 ### TKT-API-08 — New error codes not in examples (Low)
 
