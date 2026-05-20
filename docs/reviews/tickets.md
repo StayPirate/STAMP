@@ -215,17 +215,11 @@ The search parameter on GET /api/v1/tickets searches across ticket title, CVE-ID
 
 ### TKT-SEC-02 — Confidential ticket existence leakage via 409 CVE conflict response (Medium)
 
-**Category**: Data exposure
-**Status**: OPEN
-
-When creating a ticket or associating a CVE, if the CVE is already associated with another ticket, the API returns 409 with existing_ticket_id. If that existing ticket is confidential, this response leaks the UUID of a confidential ticket to any VA who may not be authorized to access it.
+**Status**: RESOLVED — Auto-resolved: finding premise invalid — both endpoints require VA role, and all VAs have access to all confidential tickets per Authorization Rule #1 (2026-05-20)
 
 ### TKT-SEC-03 — Cascade update on duplicate marking modifies tickets without authorization check (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-When marking ticket B as duplicate of C, all tickets whose duplicate_of_id points to B are automatically updated to point to C. This cascade modifies other tickets (potentially confidential ones) without checking whether the acting VA has access to them. The spec should explicitly state that cascade updates bypass confidentiality checks as a system operation.
+**Status**: RESOLVED — Auto-resolved: finding premise invalid — mark-as-duplicate requires VA role, all VAs have access to all confidential tickets; cascade already marked as system operation (user_id=NULL in audit events) (2026-05-20)
 
 ### TKT-SEC-04 — No rate limiting on ticket creation endpoint (Low)
 
@@ -250,10 +244,7 @@ The search parameter on GET /api/v1/tickets searches across package names. While
 
 ### TKT-SEC-07 — Mark-as-duplicate target confidentiality check missing (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The mark-as-duplicate endpoint validates that the target ticket exists, is not soft-deleted, and is not the same ticket. However, it does not specify a confidentiality check on the target. A VA could mark their ticket as duplicate of a confidential ticket they are not authorized to view, confirming the confidential ticket's existence and creating a relationship to it.
+**Status**: RESOLVED — Auto-resolved: finding premise invalid — endpoint requires VA role, all VAs have access to all confidential tickets per Authorization Rule #1 (2026-05-20)
 
 ### TKT-SEC-08 — Public ticket endpoints expose vulnerability information (Low)
 

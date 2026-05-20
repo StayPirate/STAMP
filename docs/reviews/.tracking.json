@@ -19,18 +19,7 @@
     "admin": {
       "enabled": false,
       "abbr": "ADM",
-      "cache": {
-        "last_review": "2026-05-06T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 3,
-        "not_reviewed": ["GAP", "COH", "DES", "SEC"]
-      }
+      "cache": null
     },
     "api-key-service": {
       "enabled": true,
@@ -66,7 +55,7 @@
     },
     "authentication": {
       "enabled": true,
-      "abbr": "AUTH",
+      "abbr": "AUT",
       "cache": {
         "last_review": "2026-05-18T00:00:00+0000",
         "open": {
@@ -82,22 +71,22 @@
     },
     "cve-tracking": {
       "enabled": false,
-      "abbr": "CVE",
+      "abbr": "CVET",
       "cache": null
     },
     "cvss-scoring": {
       "enabled": false,
-      "abbr": "CVSS",
+      "abbr": "CVS",
       "cache": null
     },
     "fetcher-dashboard": {
       "enabled": false,
-      "abbr": "FDB",
+      "abbr": "FED",
       "cache": null
     },
     "fetcher-infrastructure": {
       "enabled": false,
-      "abbr": "FIF",
+      "abbr": "FEI",
       "cache": null
     },
     "git-product-release-detection": {
@@ -153,7 +142,7 @@
     },
     "local-authentication": {
       "enabled": true,
-      "abbr": "LAUTH",
+      "abbr": "LOA",
       "cache": {
         "last_review": "2026-05-07T00:00:00+0000",
         "open": {
@@ -169,12 +158,12 @@
     },
     "maintainer-dashboard": {
       "enabled": false,
-      "abbr": "MDB",
+      "abbr": "MAD",
       "cache": null
     },
     "package-bugowner": {
       "enabled": false,
-      "abbr": "PBO",
+      "abbr": "PAB",
       "cache": null
     },
     "package-tracking": {
@@ -189,7 +178,7 @@
     },
     "product-catalog": {
       "enabled": false,
-      "abbr": "PCG",
+      "abbr": "PRC",
       "cache": null
     },
     "product-lifecycle-transitions": {
@@ -220,7 +209,7 @@
     },
     "sso-authentication": {
       "enabled": true,
-      "abbr": "SSO",
+      "abbr": "SSOA",
       "cache": {
         "last_review": "2026-05-07T00:00:00+0000",
         "open": {
@@ -254,21 +243,21 @@
       "enabled": true,
       "abbr": "TKT",
       "cache": {
-        "last_review": "2026-05-19T16:56:22+0200",
+        "last_review": "2026-05-19T00:00:00+0000",
         "open": {
           "GAP": { "H": 0, "M": 0, "L": 7 },
           "COH": { "H": 0, "M": 0, "L": 1 },
           "DES": { "H": 0, "M": 0, "L": 3 },
-          "SEC": { "H": 0, "M": 3, "L": 5 },
-          "API": { "H": 0, "M": 1, "L": 4 }
+          "SEC": { "H": 0, "M": 0, "L": 5 },
+          "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 33,
+        "resolved": 41,
         "not_reviewed": []
       }
     },
     "user-management": {
       "enabled": true,
-      "abbr": "UMGT",
+      "abbr": "USM",
       "cache": {
         "last_review": "2026-05-09T00:00:00+0000",
         "open": {
