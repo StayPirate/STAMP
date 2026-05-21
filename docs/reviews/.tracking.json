@@ -168,7 +168,7 @@
       }
     },
     "maintainer": {
-      "enabled": true,
+      "enabled": false,
       "abbr": "MNT",
       "cache": {
         "last_review": "2026-05-20T00:00:00+0000",
@@ -189,7 +189,7 @@
       "cache": null
     },
     "package-model": {
-      "enabled": false,
+      "enabled": true,
       "abbr": "PKM",
       "cache": null
     },
@@ -257,7 +257,7 @@
       "cache": null
     },
     "ticket-references": {
-      "enabled": true,
+      "enabled": false,
       "abbr": "TRF",
       "cache": {
         "last_review": "2026-05-20T00:00:00+0000",
@@ -275,7 +275,18 @@
     "tickets": {
       "enabled": true,
       "abbr": "TKT",
-      "cache": null
+      "cache": {
+        "last_review": "2026-05-20T21:59:20+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 23,
+        "not_reviewed": []
+      }
     },
     "user-management": {
       "enabled": true,

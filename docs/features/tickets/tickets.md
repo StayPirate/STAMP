@@ -43,12 +43,21 @@ hex characters; `SNTL-{n}` starts with the literal prefix `SNTL-`).
 
 ### Search
 
-The `search` query parameter on `GET /api/v1/tickets` searches across:
+The `search` query parameter on `GET /api/v1/tickets` searches across
+the following fields. A ticket matches if any field matches.
 
-- `SNTL-{n}` identifier (exact or partial match on the numeric part)
-- CVE ID (if the ticket has an associated CVE)
-- CVE description
-- Package names
+- **SNTL-{n} identifier**: prefix-match on the numeric part of the
+  sequence number. The `SNTL-` prefix is optional in the query — a
+  purely numeric term is treated as a sequence number search (e.g.,
+  `42` matches SNTL-42 and SNTL-420 but not SNTL-1042). A query of
+  just `SNTL-` with no digits is ignored for this field.
+- **CVE ID** (if the ticket has an associated CVE): prefix-match on
+  the full CVE-ID string (e.g., `CVE-2024-12` matches `CVE-2024-1234`
+  and `CVE-2024-1200`). The `CVE-` prefix is optional if the format is
+  recognizable as year-number (e.g., `2024-1234`).
+- **Package names**: case-insensitive substring match (ILIKE). Matches
+  any package associated with the ticket whose name contains the search
+  term.
 
 ## CVE Association
 
@@ -397,7 +406,7 @@ performed by `deactivate_user` (see
 [user-service.md](../identity/user-service.md#deactivate_user)),
 `evaluate_ticket_status` also performs system-initiated unassignment
 when it encounters an inactive assignee on a non-final ticket (see
-[Inactive Assignee Sanitization](#inactive-assignee-sanitization)).
+[Inactive Assignee Sanitization](ticket-mutations.md#inactive-assignee-sanitization)).
 This ensures that even if a ticket enters the gate zone or is evaluated
 after the deactivation event, the stale assignee is cleared.
 
@@ -585,6 +594,12 @@ includes `duplicate_of_id`. This ensures:
 - The transient state (interrupted cascade) is invisible to API
   consumers.
 
+When the resolver follows the `duplicate_of_id` chain and the canonical
+target has `deleted_at IS NOT NULL`, the resolver still returns the
+`SNTL-{n}` identifier of that soft-deleted ticket. The duplicate link is
+historical data; the duplicated ticket remains in Duplicated status
+regardless of the target's lifecycle state.
+
 The raw value remains accessible through the audit history
 (`duplicate_set` and `duplicate_target_changed` events record what was
 written to the DB).
@@ -612,6 +627,21 @@ COMMITTED isolation. This is accepted as a residual risk because:
 - Adding `FOR UPDATE` on the target ticket would lock two tickets in the
   same transaction, contradicting the single-ticket-scope rule — a
   disproportionate cost for an essentially impossible scenario.
+
+#### Cycle Resolution
+
+When `TICKET_DUPLICATE_CYCLE_DETECTED` is encountered, a VA or Admin
+must invoke `POST /api/v1/tickets/{ticket_id}/revert-duplicate` on at
+least one ticket in the cycle to break it.
+
+The `revert-duplicate` operation is designed to work correctly in the
+presence of cycles — it clears `duplicate_of_id` unconditionally
+regardless of chain state. No chain resolution is performed during
+revert, so the cycle does not interfere with the operation.
+
+After breaking the cycle, the reverted ticket returns to its
+pre-duplicate status (determined by `_reenter_gate_zone` based on
+current gate conditions) and can be re-evaluated normally.
 
 #### Correctness Guarantee
 
@@ -642,6 +672,11 @@ row before any modification (see
   shared dependency on the ticket sub-resource router — see
   `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses))
   for the HTTP-level contract (410 `TICKET_DELETED`)
+- Soft-deleting a ticket does NOT alter or invalidate `duplicate_of_id`
+  links from other tickets pointing to it. This is a controlled exception
+  to the general invisibility invariant — the duplicate link is historical
+  data and the duplicated ticket remains in Duplicated status regardless
+  of the target's lifecycle state.
 - A soft-deleted ticket can be restored by clearing `deleted_at`.
   After restoring the ticket and creating the `TicketAuditEvent`
   (`ticket_restored`), `evaluate_ticket_status` is called within the
@@ -1041,7 +1076,7 @@ views without the full package tree.
 | `id` | UUID | Ticket primary key |
 | `identifier` | string | Human-readable identifier (`SNTL-{n}`) |
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
-| `severity` | string \| null | Resolved severity (override → CVSS-derived). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
+| `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
 | `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
@@ -1061,7 +1096,7 @@ TicketSummary with the full package tree and expanded CVE data.
 | `id` | UUID | Ticket primary key |
 | `identifier` | string | Human-readable identifier (`SNTL-{n}`) |
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
-| `severity` | string \| null | Resolved severity (override → CVSS-derived). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
+| `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates and sources, or `null` if no CVE |
 | `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
@@ -1112,8 +1147,9 @@ Lists tickets with filtering, search, pagination, and sorting.
 Query parameters:
 
 - `search` (string, optional): free-text search across `SNTL-{n}`
-  identifier, CVE ID, CVE description, and package names. See
-  [Search](#search) for search behavior across fields.
+  identifier (prefix-match on numeric part), CVE ID (prefix-match),
+  and package names (case-insensitive substring). See
+  [Search](#search) for detailed matching behavior per field.
 - `status` (string, repeatable, optional): filter by ticket status.
   Accepts one or more values from: `new`, `analysis`, `analyzed`,
   `resolved`, `ignored`, `duplicated`. When multiple values are provided,
@@ -1182,7 +1218,7 @@ Request body:
 ```json
 {
   "cve_id": "CVE-2024-1234",
-  "severity": "High",
+  "severity": "high",
   "is_confidential": false
 }
 ```
@@ -1191,8 +1227,8 @@ Request body:
   the ticket. If the CVE is not in the database, a minimal CVE record
   is created and on-demand fetch is triggered (see
   `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch")
-- `severity` (string, optional): initial severity override (Critical,
-  High, Medium, Low, None). If omitted, severity is `None` until set
+- `severity` (string, optional): initial severity override (critical,
+  high, medium, low, none). If omitted, severity is `None` until set
   by the VA. Ignored if `cve_id` is provided (severity is derived from
   CVSS)
 - `is_confidential` (boolean, optional): if `true`, the ticket is
@@ -1282,12 +1318,12 @@ Request body:
 
 ```json
 {
-  "severity": "High"
+  "severity": "high"
 }
 ```
 
-- `severity` (string, required): severity value (Critical, High, Medium,
-  Low, None)
+- `severity` (string, required): severity value (critical, high, medium,
+  low, none)
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -1370,9 +1406,9 @@ Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status
+  status (ticket is in Ignored or Duplicated status)
 - 409 with code `TICKET_INVALID_TRANSITION`: current status does not
-  allow transition to Ignored
+  allow transition to Ignored (ticket is in Analyzed or Resolved status)
 
 ### Mark Ticket as Duplicate
 

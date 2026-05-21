@@ -30,8 +30,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [maintainer](maintainer.md) | 13 | 4 | — | — | 4 | 21 | 2026-05-20 | ⚠️ |
-|  | 1:🔴 6:🟠 6:🟡 | 3:🟠 1:🟡 |  |  | 2:🟠 2:🟡 |  |  |  |
+| [package-model](package-model.md) | — | — | — | — | — | 0 |  | — |
+|  |  |  |  |  |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
@@ -40,16 +40,14 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-mutations](ticket-mutations.md) | — | — | — | — | — | 0 |  | — |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-references](ticket-references.md) | 13 | 2 | — | — | 2 | 17 | 2026-05-20 | ⚠️ |
-|  | 6:🟠 7:🟡 | 1:🟠 1:🟡 |  |  | 1:🟠 1:🟡 |  |  |  |
-| [tickets](tickets.md) | — | — | — | — | — | 0 |  | — |
+| [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-20 |  |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **26** | **6** | **0** | **0** | **6** | **38** |  |  |
-|  | 1:🔴 12:🟠 13:🟡 | 4:🟠 2:🟡 |  |  | 3:🟠 3:🟡 |  |  |  |
+| **Total** | **0** | **0** | **0** | **0** | **0** | **0** |  |  |
+|  |  |  |  |  |  |  |  |  |
 
 ### Disabled specs
 
@@ -65,7 +63,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - ibs-rabbitmq-integration
 - ibs-submission-tracking
 - ibs-track-release-detection
+- maintainer
 - package-bugowner
-- package-model
 - product-catalog
 - product-lifecycle-transitions
+- ticket-references

@@ -768,7 +768,7 @@ Summary:
   still met)
 - Resolved -> Analysis (automatic: both resolved and analyzed gates
   broken)
-- Any except Duplicated -> Duplicated (manual, reversible)
+- Any except Ignored and Duplicated -> Duplicated (manual, reversible)
 - Duplicated -> (evaluated status) (manual: revert via
   `_reenter_gate_zone`; reassigns to the reverting VA)
 - Ignored -> (evaluated status) (manual: VA assigns; or automatic:
