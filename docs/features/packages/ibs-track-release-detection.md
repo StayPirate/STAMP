@@ -26,10 +26,11 @@ package:
 2. **Product level** (separate spec): the fix has been published to the
    product's update repository.
 
-The codestream level updates `TicketPackageTrack.status` to `FIXED` and
-`TicketPackageTrack.delivery_status` to `RELEASED` as soon as the fix
-appears in the codestream IBS project, **regardless of the status of the
-products under it**.
+The codestream level updates `TicketPackageTrack.status` to `FIXED` as
+soon as the fix appears in the codestream IBS project, **regardless of the
+status of the products under it**. The `delivery_status` is not modified by
+track release detection — it is managed independently by the submission
+tracking mechanism (see `docs/features/packages/ibs-submission-tracking.md`).
 
 The automatic transition is suppressed when the current status is `WONT_FIX`
 (protected state — see `docs/features/packages/package-model.md`, "Status
@@ -127,15 +128,11 @@ codestream C, the detector evaluates three cases:
 A `TicketPackageTrack` record exists for the ticket's CVE with
 `package_name = P` and `reference = C`.
 
-- Set `TicketPackageTrack.status` to `FIXED` and
-  `TicketPackageTrack.delivery_status` to `RELEASED` through the
+- Set `TicketPackageTrack.status` to `FIXED` through the
   `package_service` module (unless current status is `WONT_FIX`).
 - Create a `TicketAuditEvent` with `event_type = track_status_changed`,
   `user_id = NULL` (system action), `old_value` = previous status,
   `new_value = FIXED`, `comment` = `"{C} {P}"` (track_name package_name).
-- Create a `TicketAuditEvent` with `event_type = track_released`,
-  `user_id = NULL` (system action), `old_value = NULL`,
-  `new_value = RELEASED`, `comment` = `"{C} {P}"` (track_name package_name).
 
 ### Case B — Ticket exists, package NOT tracked in the ticket
 
@@ -147,9 +144,9 @@ for package P (in any codestream).
   `TicketPackageTrack` records with status `ANALYSIS` (record creation
   goes through `package_service`). See
   `docs/features/packages/package-model.md`, "Adding Packages to a Ticket".
-- Set the `TicketPackageTrack` for codestream C to `status = FIXED` and
-  `delivery_status = RELEASED` through `package_service` (the specific
-  codestream where the fix was detected).
+- Set the `TicketPackageTrack` for codestream C to `status = FIXED`
+  through `package_service` (the specific codestream where the fix was
+  detected).
 - Create a `TicketAuditEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
   detected in `{C}`".
@@ -174,8 +171,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
       `TicketPackage` + `TicketPackageTrack` records with status
       `ANALYSIS` (record creation goes through `package_service`).
    5. Set the `TicketPackageTrack` for the originating codestream to
-      `status = FIXED` and `delivery_status = RELEASED` through
-      `package_service`.
+      `status = FIXED` through `package_service`.
    6. Create a `TicketAuditEvent` with `event_type = ticket_created`,
        `user_id = NULL`, comment: `"CVE fix detected in {package}
        ({codestream})"`.

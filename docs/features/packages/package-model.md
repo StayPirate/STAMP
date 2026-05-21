@@ -93,8 +93,9 @@ vulnerable" (`NOT_AFFECTED`). Both mean the code is not currently
 vulnerable, but they carry different history and workload implications.
 
 - The VA can set `FIXED` manually
-- The system sets `FIXED` automatically when delivery reaches `RELEASED`
-  (one-shot event, not continuous reconciliation)
+- The system sets `FIXED` automatically when track release detection
+  confirms the fix in the codestream (MD5 match — see
+  `docs/features/packages/ibs-track-release-detection.md`)
 - The VA can change `FIXED` back to `AFFECTED` if the fix is insufficient
 - No `is_status_override` flag is needed on tracks — the VA has direct
   control
@@ -463,14 +464,23 @@ RR (Release Request) created
         |
         v
 RR accepted (incident closed)            --> delivery: RELEASED
-        |                                     affectedness: FIXED (automatic)
+        |
         v
-Fix lands in track AND eligible products (nearly simultaneously)
+Fix lands in track (package.commit)      --> affectedness: FIXED (automatic, via MD5 detection)
+        |
+        v
+Fix lands in eligible products (updateinfo.xml) --> released_at set
 ```
 
-When the system detects that delivery has reached `RELEASED`, it
-automatically sets the track's affectedness to `FIXED` (one-shot
-event). See Design Decision 10.
+The two axes are managed independently:
+- `delivery_status` transitions to `RELEASED` when the RR is accepted
+  (via IBS submission tracking)
+- `status` transitions to `FIXED` when track release detection confirms
+  the fix in the codestream (MD5 match)
+
+In practice, the RR acceptance and the package appearing in the
+codestream happen nearly simultaneously, but Sentinel detects them
+through independent mechanisms.
 
 #### Product Release Confirmation
 
@@ -522,7 +532,7 @@ context of the current affectedness — see
 | `NOT_AFFECTED` | `PENDING` | **No** | | Not affected; delivery is the system default — not meaningful |
 | `NOT_AFFECTED` | `IN_PROGRESS` | Yes | Yes | SR in progress for unaffected code — possible confusion |
 | `NOT_AFFECTED` | `RELEASED` | Yes | Yes | Fix released for unaffected code — possible confusion |
-| `FIXED` | `PENDING` | **No** | | VA set FIXED manually; delivery is the system default — not meaningful |
+| `FIXED` | `PENDING` | **No** | | Fix confirmed (manually or via track release detection); no SR submitted yet — delivery not meaningful |
 | `FIXED` | `IN_PROGRESS` | Yes | | Fix confirmed, SR still in pipeline |
 | `FIXED` | `RELEASED` | Yes | | Fix confirmed and delivered |
 | `WONT_FIX` | `PENDING` | **No** | | Decided not to fix; delivery is the system default — not meaningful |
@@ -600,7 +610,7 @@ any active product under it has `eligible = true`.
 
 | From | To | Applies to | Trigger |
 |------|----|------------|---------|
-| `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Release detected (delivery reaches `RELEASED`, one-shot) |
+| `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Track release detection (MD5 match confirms fix in codestream) |
 | any non-protected | inherited from track | TicketPackageProduct | Track status changed by VA (propagation) |
 
 **Protected state** (pending removal — see `docs/drafts/open-points.md`,
@@ -641,19 +651,12 @@ Specific SR state change effects on `delivery_status`:
 
 Once `delivery_status` reaches `RELEASED`, it cannot regress. This is
 guaranteed by the IBS model: `accepted` is a final state for release
-requests, so a released RR cannot be revoked or declined. The one-shot
-FIXED trigger (automatic track status transition to `FIXED` upon
-`RELEASED`) is therefore also irreversible by this mechanism.
+requests, so a released RR cannot be revoked or declined.
 
 These transitions are detected via IBS RabbitMQ events
 (`suse.obs.request.create`, `suse.obs.request.state_change`) and the
 `RequestSyncFetcher` catch-up mechanism. See
 `docs/features/packages/ibs-submission-tracking.md`.
-
-When `delivery_status` transitions to `RELEASED`:
-- The system automatically sets the track's `status` to `FIXED`
-  (one-shot, see Design Decision 10)
-- This triggers normal propagation to products
 
 ### Manual Transitions
 
@@ -937,13 +940,12 @@ The following scenarios invoke `add_package_to_ticket`:
 3. **Track release detection (Case B)**: the release detector finds a
    CVE fix in a package that is not tracked in the ticket. It calls
    `add_package_to_ticket` to add all tracks and products, then sets
-   the specific track where the fix was detected to `FIXED` and
-   `delivery_status` to `RELEASED`. See
+   the specific track where the fix was detected to `FIXED`. See
    `docs/features/packages/ibs-track-release-detection.md` (Case B).
 4. **Ticket auto-creation (Case C)**: a CVE fix is detected for a CVE
    with no existing ticket. After creating the ticket,
    `add_package_to_ticket` is called, then the originating track is
-   set to `FIXED` and `delivery_status` to `RELEASED`. See
+   set to `FIXED`. See
    `docs/features/packages/ibs-track-release-detection.md` (Case C).
 5. **Restore from soft-deletion**: restoring a package, track, or
    product clears its `deleted_at` only. New tracks/products that
@@ -1069,9 +1071,12 @@ affected package:
 The two levels are detected through different mechanisms and update
 different data:
 
+- The track level updates `TicketPackageTrack.status` to `FIXED`
+  (automatic) when track release detection confirms the fix in the
+  codestream (MD5 match).
 - The track level updates `TicketPackageTrack.delivery_status` to
-  `RELEASED` and `TicketPackageTrack.status` to `FIXED` (automatic,
-  one-shot) when the fix appears in the track's IBS project.
+  `RELEASED` when the Release Request (RR) for the track is accepted
+  (via IBS submission tracking).
 - The product level sets `TicketPackageProduct.released_at` when the
   fix appears in that specific product's update repository.
 
@@ -1091,9 +1096,9 @@ including:
 
 - **Analysis → Analyzed**: requires at least one package, all tracks and
   products decided, severity set, SUSE CVSS provided
-- **Analyzed → Resolved**: requires all tracks in final status, all
-  `FIXED` tracks with `delivery_status = RELEASED`, all eligible
-  products with `released_at IS NOT NULL`
+- **Analyzed → Resolved**: requires all tracks in final status
+  (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), all eligible products with
+  `released_at IS NOT NULL`
 - Reverse transitions when gate conditions are no longer met
 
 ---
@@ -1862,7 +1867,6 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `docs/features/integrations/ibs-rabbitmq-integration.md`). See
   `docs/features/packages/ibs-track-release-detection.md` for the
   full procedure. When a release is detected, sets
-  `TicketPackageTrack.delivery_status = RELEASED` and
   `TicketPackageTrack.status = FIXED`.
 - `check_product_releases`: periodic task that invokes the
   `ProductReleaseDetector` (`updateinfo.xml`-based) for
@@ -1873,8 +1877,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `IBSTrackReleaseDetector` or the `IBSEventConsumer` when a CVE fix
   is detected for a CVE that has no ticket in Sentinel. Fetches CVE
   data from NVD, creates the ticket, resolves packages via SMELT, and
-  sets the originating track to `FIXED` with
-  `delivery_status = RELEASED`. See
+  sets the originating track to `FIXED`. See
   `docs/features/packages/ibs-track-release-detection.md` (Case C)
   for details.
 - `check_lifecycle_phase_transitions`: periodic task (daily at 04:00

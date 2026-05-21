@@ -75,8 +75,7 @@ Codestreams where:
 Codestreams where:
 
 1. The user is bugowner of the package (direct or via group membership)
-2. The `TicketPackageTrack.status` is `FIXED` with
-   `delivery_status = RELEASED`, OR
+2. The `TicketPackageTrack.status` is `FIXED`, OR
 3. There is a `ReleaseRequest` in `accepted` state correlated to this
    track
 

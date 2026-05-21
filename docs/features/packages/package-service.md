@@ -750,12 +750,12 @@ individual endpoints.
 | Package API mutation endpoints | `set_track_status()`, `set_product_status()`, soft-delete/restore functions | VA-initiated operations |
 | Package API read endpoints | `get_ticket_packages()`, `search_packages()` | Public read access |
 | Ticket detail endpoint | `get_ticket_packages()` | Populates `packages` field in `TicketDetail` |
-| IBS track release detection | `set_track_status()`, `set_track_delivery_status()` | Automated track release |
+| IBS track release detection | `set_track_status()` | Automated track release (sets FIXED) |
 | IBS product release detection | `set_product_status()` (released_at) | Automated product release |
 | `add_package_to_ticket` | `add_package_records()` | Package addition flow (internal) |
 | Product lifecycle transitions | `set_product_eligibility()`, `soft_delete_ticket_package_product()` | AIMAAS threshold changes |
-| IBS RabbitMQ consumer | `set_track_status()`, `set_track_delivery_status()` | Real-time release detection |
-| IBS submission tracking | `set_track_delivery_status()` | SR/RR state changes |
+| IBS RabbitMQ consumer (`package.commit`) | `set_track_status()` | Real-time track release detection (sets FIXED) |
+| IBS submission tracking | `set_track_delivery_status()` | SR/RR state changes (sets delivery_status) |
 
 ## Architectural Test Requirement
 

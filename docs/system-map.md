@@ -379,7 +379,7 @@ flowchart LR
         PERIODIC["Periodic:<br/>check_ibs_track_releases<br/>(daily 02:00 UTC)"]
         MD5["Shared MD5 cache<br/>(CodestreamPackageChecksum)"]
         DIFF["IBS diff analysis<br/>(CVE-ID in changes)"]
-        CS_REL["Codestream → FIXED<br/>(delivery_status = RELEASED)"]
+        CS_REL["Codestream → FIXED"]
 
         RT --> MD5
         PERIODIC --> MD5
@@ -460,11 +460,12 @@ flowchart TD
 - Severity is set (non-None)
 - If CVE is associated: SUSE CVSS assessment exists
 
-**Resolved gate**: all `TicketPackageTrack` and `TicketPackageProduct`
-records are in a final status (`NOT_AFFECTED`, `FIXED`, or `WONT_FIX`) —
-tracks/products are soft-deleted rather than using a separate `IGNORED`
-status, and `RELEASED` is represented by `FIXED` with
-`delivery_status = RELEASED`.
+**Resolved gate**: all active `TicketPackageTrack` records are in a final
+status (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`) and all eligible products
+under `FIXED` tracks have `released_at IS NOT NULL`. Tracks/products are
+soft-deleted rather than using a separate `IGNORED` status. Delivery status
+(`PENDING`/`IN_PROGRESS`/`RELEASED`) is tracked independently for workflow
+visibility but is not a gate condition.
 
 ---
 

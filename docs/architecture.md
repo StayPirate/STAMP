@@ -253,8 +253,10 @@ authoritative details.
    (see `docs/features/integrations/ibs-integration.md` and
    `docs/features/packages/ibs-track-release-detection.md`) to detect whether
    the fix for the ticket's CVE has landed in the codestream IBS project.
-   When detected, `TicketPackageTrack.status` is set to `FIXED` and
-   `TicketPackageTrack.delivery_status` is set to `RELEASED`.
+   When detected, `TicketPackageTrack.status` is set to `FIXED`.
+   Separately, `TicketPackageTrack.delivery_status` is set to `RELEASED`
+   when the Release Request (RR) is accepted (via IBS submission tracking).
+   The two axes are independent.
 3. **Product level**: workers fetch `updateinfo.xml` from each product's
    update repository and look for advisories that reference the ticket's
    CVE. A package match cascade (title → heuristic → `primary.xml`)

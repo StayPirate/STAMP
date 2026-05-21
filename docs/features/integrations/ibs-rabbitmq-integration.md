@@ -177,13 +177,12 @@ For each `suse.obs.package.commit` event:
    `state="added"` and `tracker="cve"`, apply the same match logic as the
    periodic fetcher:
      - **Case A** — ticket exists, package tracked in the codestream:
-       set `TicketPackageTrack.status` to `FIXED` and
-       `TicketPackageTrack.delivery_status` to `RELEASED` via
+       set `TicketPackageTrack.status` to `FIXED` via
        `package_service` (unless protected status `WONT_FIX`)
      - **Case B** — ticket exists, package not tracked: call
        `add_package_to_ticket(ticket_id, package_name)` to resolve
        codestreams/products via SMELT, then set the originating track's
-       status to `FIXED` and `delivery_status` to `RELEASED`
+       status to `FIXED`
    - **Case C** — no ticket exists: enqueue
      `create_ticket_from_detection` task
 

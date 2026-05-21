@@ -7,12 +7,13 @@ parallel to the package affectedness status, giving Vulnerability Analysts
 visibility into the progression of fixes without altering the existing
 `PackageStatus` model.
 
-Today the track status stays `AFFECTED` with no visibility into what
-happens between fix submission and delivery. A maintainer may have
-already submitted a fix days ago, but the VA has no way to know until
-the system sets `delivery_status` to `RELEASED` (when the RR is
-accepted). This feature fills that gap by tracking both SRs and RRs
-and showing them alongside the track affectedness status.
+Today the track affectedness status stays `AFFECTED` with no visibility
+into what happens between fix submission and delivery. A maintainer may
+have already submitted a fix days ago, but the VA has no way to know
+the progression. This feature fills that gap by tracking both SRs and RRs
+and showing them alongside the track affectedness status, while also
+managing the `delivery_status` axis independently (transitioning to
+`RELEASED` when the RR is accepted).
 
 ## Domain Concepts
 
@@ -98,10 +99,11 @@ Sentinel must handle this by transitioning the record back to `open` state.
 ## Design Principle: Parallel Tracking
 
 SRs and RRs are tracked as **separate entities** with their own lifecycle,
-not as modifications to `PackageStatus`. The track remains `AFFECTED`
-until the system sets it to `FIXED` when `delivery_status` reaches
-`RELEASED` — SR/RR status is purely informational for tracking the
-MU progression.
+not as modifications to `PackageStatus`. The track's `delivery_status` is
+managed exclusively by the submission tracking mechanism (SR/RR lifecycle),
+while the track's affectedness `status` is managed independently by track
+release detection (MD5 match) or manual VA action. The two axes are fully
+decoupled — neither triggers changes on the other.
 
 **Why not a new PackageStatus value?** Adding an intermediate status (e.g.,
 `FIX_IN_PROGRESS`) between `AFFECTED` and `FIXED` was considered and

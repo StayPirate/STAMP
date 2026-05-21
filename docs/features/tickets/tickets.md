@@ -333,9 +333,7 @@ Model"):
 
 1. Every active `TicketPackageTrack` has a final status:
    `FIXED`, `NOT_AFFECTED`, or `WONT_FIX`
-2. Every active track with status `FIXED` has
-   `delivery_status = RELEASED`
-3. Every eligible product (`eligible = true`) under a `FIXED` track has
+2. Every eligible product (`eligible = true`) under a `FIXED` track has
    `released_at IS NOT NULL` (confirmed receipt of the update)
 
 This evaluation is performed by the centralized status evaluation
