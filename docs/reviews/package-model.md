@@ -41,10 +41,7 @@ The spec states that `WONT_FIX` is never modified by automatic transitions, and 
 
 ### PKM-GAP-008 — Automatic FIXED transition when delivery reaches RELEASED does not check if track status is already FIXED (Low)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The Automatic Transitions table states that AFFECTED or ANALYSIS transitions to FIXED when delivery reaches RELEASED. But the spec says "The VA can set FIXED manually" and "The VA can change FIXED back to AFFECTED if the fix is insufficient." If a VA manually set the track to FIXED, then changed it back to AFFECTED because the fix was insufficient, and then the same delivery event is re-processed (e.g., by reconciliation), the system would set it back to FIXED. The "one-shot" qualifier is ambiguous — it's unclear whether "one-shot" means "only triggered once per delivery event" or "only transitions forward once ever." No mechanism to prevent re-triggering is specified.
+**Status**: RESOLVED — Decoupled affectedness and delivery axes: FIXED is now triggered exclusively by track release detection (MD5 match), RELEASED exclusively by RR acceptance. One-shot coupling rule removed. (2026-05-21)
 
 ---
 
