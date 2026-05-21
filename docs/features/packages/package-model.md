@@ -807,6 +807,19 @@ When a VA soft-deletes a track, 1 event is created (`track_excluded`).
 Products under the track are implicitly excluded via the hierarchy but
 do not produce individual events.
 
+**Upward cascade (orphan cleanup)**: when orphan cleanup cascades upward
+(e.g., deleting the last product triggers track deletion, which may
+trigger package deletion), each record soft-deleted by orphan cleanup
+generates its **own** `TicketAuditEvent` with the appropriate event type
+(`track_excluded`, `package_excluded`). These cascade audit events use
+`user_id = NULL` to indicate they are system-triggered (not directly
+requested by the VA). The total number of `TicketAuditEvent` records
+created by a soft-delete operation is `1 + len(cascade)`: one for the
+directly excluded record (with the VA's `user_id`) plus one for each
+ancestor cascaded by orphan cleanup (with `user_id = NULL`). Ticket
+status re-evaluation occurs once at the end, after all cascade events
+are created.
+
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
 | VA soft-deletes a package | `package_excluded` | VA user | `package_name` |
@@ -1150,9 +1163,13 @@ for the full behavior.
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `package_name` | string | Yes | Name of the source package to add |
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| `package_name` | string | Yes | Max 255 chars. Pattern: `^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$` (min 2 chars). Only alphanumeric, dots, underscores, hyphens, and plus signs allowed. | Source package name |
+
+The `package_name` value is URL-encoded before interpolation in the SMELT
+API query (`GET /api/v1/basic/maintainedpackage/?package={url_encode(name)}`).
+This prevents injection of URL control characters regardless of validation.
 
 **Response** (201 Created):
 
@@ -1181,7 +1198,7 @@ added, all counts will be zero in the `created` fields.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
-| 422 | `VALIDATION_ERROR` | Missing or empty `package_name` |
+| 422 | `VALIDATION_ERROR` | Missing or empty `package_name`, exceeds 255 characters, or contains invalid characters |
 | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
 | 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
 
@@ -1228,7 +1245,7 @@ gate and Analysis gate).
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
-| 422 | `PACKAGE_ALREADY_EXCLUDED` | Package is already soft-deleted |
+| 409 | `PACKAGE_ALREADY_EXCLUDED` | Package is already soft-deleted |
 
 ---
 
@@ -1278,7 +1295,10 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude
 
 Soft-delete a track from the ticket. Sets `deleted_at` on the track
 record only — products under it are not modified but become effectively
-excluded via the hierarchy. Creates a single `TicketAuditEvent`.
+excluded via the hierarchy. Creates a `TicketAuditEvent` for the excluded
+record. If orphan cleanup cascades to ancestors, additional
+system-triggered audit events are created (see
+[Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
 After the soft-delete (and any orphan cleanup cascade), the system
 re-evaluates ticket status via `ticket_mutations`. This is necessary
@@ -1330,7 +1350,7 @@ their local tree state without a full refetch.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
-| 422 | `PACKAGE_ALREADY_EXCLUDED` | Track is already soft-deleted |
+| 409 | `PACKAGE_ALREADY_EXCLUDED` | Track is already soft-deleted |
 
 ---
 
@@ -1377,8 +1397,10 @@ only — products under it are not modified. Creates a single
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude
 ```
 
-Soft-delete a single product from a track. Creates a single
-`TicketAuditEvent`.
+Soft-delete a single product from a track. Creates a `TicketAuditEvent`
+for the excluded record. If orphan cleanup cascades to ancestors,
+additional system-triggered audit events are created (see
+[Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
 After the soft-delete (and any orphan cleanup cascade), the system
 re-evaluates ticket status via `ticket_mutations`. This is necessary
@@ -1434,7 +1456,7 @@ their local tree state without a full refetch.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
-| 422 | `PACKAGE_ALREADY_EXCLUDED` | Product is already soft-deleted |
+| 409 | `PACKAGE_ALREADY_EXCLUDED` | Product is already soft-deleted |
 
 ---
 

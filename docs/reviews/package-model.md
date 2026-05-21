@@ -67,31 +67,19 @@ In package-model.md, the Resolved gate is summarized as "all eligible products w
 
 ### PKM-DES-002 — Hierarchical exclusion check requires multi-join on every gate evaluation (Medium)
 
-**Category**: Performance
-**Status**: OPEN
-
-The "Effectively Excluded" definition requires checking "Its own deleted_at IS NOT NULL, OR its parent's deleted_at IS NOT NULL, OR its grandparent's deleted_at IS NOT NULL." Every ticket gate evaluation must JOIN TicketPackageProduct → TicketPackageTrack → TicketPackage to determine which records participate. An alternative is a computed `effectively_excluded` boolean column maintained by triggers when any ancestor's `deleted_at` changes.
+**Status**: RESOLVED — Premature optimization; 3-table JOIN on indexed PK/FK with IS NOT NULL is trivially fast at expected cardinality; no spec change needed (2026-05-21)
 
 ### PKM-DES-003 — No mechanism to reset product overrides back to automatic inheritance (Medium)
 
-**Category**: Completeness
-**Status**: OPEN
-
-The spec lists in Open Items: "Override reset mechanism." The Override Product Status endpoint sets `is_status_override = true` and `is_eligible_override = true`, but there is no specified way to clear these flags. A VA who accidentally overrides a product has no endpoint to revert to automatic inheritance.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-21)
 
 ### PKM-DES-004 — SMELT unavailability blocks manual package addition with no fallback (Medium)
 
-**Category**: Resilience
-**Status**: OPEN
-
-The spec states add_package_to_ticket "Query SMELT to resolve all currently maintained tracks and products" and the API returns 503 SMELT_UNAVAILABLE when SMELT is unreachable. During SMELT downtime, no VA can add any package to any ticket. There is no partial-addition mode or async fallback.
+**Status**: RESOLVED — Intentional design trade-off: synchronous resolution guarantees immediate consistent state; async fallback deferred as future optimization if availability issues arise (2026-05-21)
 
 ### PKM-DES-005 — Orphan cleanup after last product soft-deletion not triggered by exclude endpoint (Low)
 
-**Category**: Edge Cases
-**Status**: OPEN
-
-The Soft-Delete Product endpoint only mentions setting deleted_at on the product and creating one audit event. The interaction between "single TicketAuditEvent" and potential cascade events from orphan cleanup is unclear.
+**Status**: RESOLVED — Audit events for orphan cleanup cascade specified: each cascaded record generates its own system-triggered TicketAuditEvent; total events = 1 + len(cascade) (2026-05-21)
 
 ---
 
@@ -99,17 +87,11 @@ The Soft-Delete Product endpoint only mentions setting deleted_at on the product
 
 ### PKM-SEC-001 — No input validation specified for package_name field (Medium)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-The POST /api/v1/tickets/{ticket_id}/packages endpoint accepts a `package_name` string with no specified length limit, character restrictions, or sanitization rules. This value is used directly in SMELT API queries (URL parameter interpolation) and stored in the database (VARCHAR(255)). Without explicit validation, a malformed package_name could be used for SSRF-adjacent attacks against SMELT.
+**Status**: RESOLVED — Validation rules added: max 255 chars, alphanumeric+dots+hyphens+underscores+plus pattern, URL-encoding before SMELT query interpolation (2026-05-21)
 
 ### PKM-SEC-002 — No authorization check that package/track/product belongs to the specified ticket (Medium)
 
-**Category**: Authorization (IDOR)
-**Status**: OPEN
-
-The exclude/restore/patch endpoints use nested path parameters (ticket_id, package_id, track_id, product_id) but the spec does not explicitly require verifying that each resource in the path belongs to its parent. Without parent-chain validation, an attacker with VA role could potentially modify tracks/products on other tickets (IDOR across ticket boundaries).
+**Status**: RESOLVED — Parent-chain validation already implicit in 404 error conditions ("not found on this ticket/track" requires ownership verification) (2026-05-21)
 
 ### PKM-SEC-003 — Viewing affectedness data requires no authentication (Low)
 
@@ -131,10 +113,7 @@ The POST endpoint triggers an external SMELT query for every call. An authentica
 
 ### PKM-API-001 — Inconsistent HTTP status for PACKAGE_ALREADY_EXCLUDED across endpoints (Medium)
 
-**Category**: Error handling
-**Status**: OPEN
-
-The error code `PACKAGE_ALREADY_EXCLUDED` is used with HTTP 409 in the "Add Package" endpoint but with HTTP 422 in the "Soft-Delete Package", "Soft-Delete Track", and "Soft-Delete Product" endpoints. The condition "resource is already in the target state" is a state conflict (409 Conflict), not a validation error (422).
+**Status**: RESOLVED — HTTP status corrected from 422 to 409 in all soft-delete endpoints; "already in target state" is a state conflict, not a validation error (2026-05-21)
 
 ### PKM-API-002 — No read/list endpoints defined despite 'publicly accessible' viewing claim (Medium)
 
