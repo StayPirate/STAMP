@@ -545,7 +545,7 @@ status inheritance, eligibility rules, and override model.
 | product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
 | status                   | ENUM      | NOT NULL, DEFAULT ANALYSIS                  | PackageStatus enum (affectedness)  |
 | is_status_override       | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the status |
-| eligible                 | BOOLEAN   | NOT NULL                                    | Whether the product will receive the fix |
+| eligible                 | BOOLEAN   | NOT NULL, DEFAULT false                     | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
 | released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
 | deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |

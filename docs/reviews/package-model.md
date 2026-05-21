@@ -1,0 +1,151 @@
+# Review: package-model
+
+**Spec**: `docs/features/packages/package-model.md`
+**Last reviewed**: 2026-05-21
+**Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
+
+---
+
+## Gap Analysis
+
+### PKM-GAP-005 — No specification for querying/listing packages, tracks, and products on a ticket (High)
+
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-21)
+
+### PKM-GAP-001 — No endpoint to clear product status/eligibility override back to automatic (Medium)
+
+**Status**: RESOLVED — Override reset mechanism specified via null values in PATCH endpoint; DEFAULT false added to eligible column (2026-05-21)
+
+### PKM-GAP-002 — Behavior when soft-deleting the last active track under a package is unspecified at API level (Medium)
+
+**Status**: RESOLVED — Cascade array added to Soft-Delete Track and Soft-Delete Product endpoint responses to signal orphan cleanup to clients (2026-05-21)
+
+### PKM-GAP-003 — Delivery status transition from RELEASED back to IN_PROGRESS or PENDING unspecified (Medium)
+
+**Status**: RESOLVED — Delivery status regression from IN_PROGRESS to PENDING specified (triggered by SR revocation/decline); RELEASED declared irreversible (2026-05-21)
+
+### PKM-GAP-006 — Eligibility not recalculated when CVSS score or threshold changes for existing AFFECTED products (Medium)
+
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-21)
+
+### PKM-GAP-007 — Soft-deleting a product that is the last active product under a track triggers orphan cleanup but endpoint doesn't document it (Medium)
+
+**Status**: RESOLVED — Cascade response documented by PKM-GAP-002 fix; ticket re-evaluation after soft-delete now explicitly documented in all three exclusion endpoints (2026-05-21)
+
+### PKM-GAP-004 — WONT_FIX protected state interaction with delivery-triggered FIXED is underspecified for products (Low)
+
+**Category**: State machine completeness
+**Status**: OPEN
+
+The spec states that `WONT_FIX` is never modified by automatic transitions, and "the automatic transition is suppressed when the current affectedness status is `WONT_FIX`." However, when delivery reaches RELEASED, the track is set to FIXED, which "triggers normal propagation to products." The spec says propagation skips products with `is_status_override = true`, but does not explicitly state whether propagation also skips products whose status is `WONT_FIX` via override. If a product inherited `WONT_FIX` from the track (before the track changed to FIXED), the `is_status_override` is false, so propagation would overwrite it to FIXED — which contradicts the "protected state" rule. The interaction between track-level protection and product-level inheritance needs clarification.
+
+### PKM-GAP-008 — Automatic FIXED transition when delivery reaches RELEASED does not check if track status is already FIXED (Low)
+
+**Category**: State machine completeness
+**Status**: OPEN
+
+The Automatic Transitions table states that AFFECTED or ANALYSIS transitions to FIXED when delivery reaches RELEASED. But the spec says "The VA can set FIXED manually" and "The VA can change FIXED back to AFFECTED if the fix is insufficient." If a VA manually set the track to FIXED, then changed it back to AFFECTED because the fix was insufficient, and then the same delivery event is re-processed (e.g., by reconciliation), the system would set it back to FIXED. The "one-shot" qualifier is ambiguous — it's unclear whether "one-shot" means "only triggered once per delivery event" or "only transitions forward once ever." No mechanism to prevent re-triggering is specified.
+
+---
+
+## Coherence
+
+### PKM-COH-001 — Resolved gate description in package-model omits 'under a FIXED track' qualifier for product release check (Low)
+
+**Category**: Contradictory definitions
+**Status**: OPEN
+
+In package-model.md, the Resolved gate is summarized as "all eligible products with `released_at IS NOT NULL`", without qualifying that this applies only to eligible products under FIXED tracks. The authoritative definition in tickets.md is more precise: "Every eligible product (`eligible = true`) under a `FIXED` track has `released_at IS NOT NULL`". The package-model's summary could mislead implementers into checking `released_at` on eligible products under all tracks (including NOT_AFFECTED or WONT_FIX tracks where `released_at` would be NULL).
+
+---
+
+## Design
+
+### PKM-DES-001 — Continued updates to soft-deleted records creates unnecessary load (Medium)
+
+**Status**: RESOLVED — Design trade-off is intentional and documented; scope clarified to active tickets only; track-level detection aligned with product-level by adding explicit active-ticket filter (2026-05-21)
+
+### PKM-DES-002 — Hierarchical exclusion check requires multi-join on every gate evaluation (Medium)
+
+**Category**: Performance
+**Status**: OPEN
+
+The "Effectively Excluded" definition requires checking "Its own deleted_at IS NOT NULL, OR its parent's deleted_at IS NOT NULL, OR its grandparent's deleted_at IS NOT NULL." Every ticket gate evaluation must JOIN TicketPackageProduct → TicketPackageTrack → TicketPackage to determine which records participate. An alternative is a computed `effectively_excluded` boolean column maintained by triggers when any ancestor's `deleted_at` changes.
+
+### PKM-DES-003 — No mechanism to reset product overrides back to automatic inheritance (Medium)
+
+**Category**: Completeness
+**Status**: OPEN
+
+The spec lists in Open Items: "Override reset mechanism." The Override Product Status endpoint sets `is_status_override = true` and `is_eligible_override = true`, but there is no specified way to clear these flags. A VA who accidentally overrides a product has no endpoint to revert to automatic inheritance.
+
+### PKM-DES-004 — SMELT unavailability blocks manual package addition with no fallback (Medium)
+
+**Category**: Resilience
+**Status**: OPEN
+
+The spec states add_package_to_ticket "Query SMELT to resolve all currently maintained tracks and products" and the API returns 503 SMELT_UNAVAILABLE when SMELT is unreachable. During SMELT downtime, no VA can add any package to any ticket. There is no partial-addition mode or async fallback.
+
+### PKM-DES-005 — Orphan cleanup after last product soft-deletion not triggered by exclude endpoint (Low)
+
+**Category**: Edge Cases
+**Status**: OPEN
+
+The Soft-Delete Product endpoint only mentions setting deleted_at on the product and creating one audit event. The interaction between "single TicketAuditEvent" and potential cascade events from orphan cleanup is unclear.
+
+---
+
+## Security
+
+### PKM-SEC-001 — No input validation specified for package_name field (Medium)
+
+**Category**: Input Validation
+**Status**: OPEN
+
+The POST /api/v1/tickets/{ticket_id}/packages endpoint accepts a `package_name` string with no specified length limit, character restrictions, or sanitization rules. This value is used directly in SMELT API queries (URL parameter interpolation) and stored in the database (VARCHAR(255)). Without explicit validation, a malformed package_name could be used for SSRF-adjacent attacks against SMELT.
+
+### PKM-SEC-002 — No authorization check that package/track/product belongs to the specified ticket (Medium)
+
+**Category**: Authorization (IDOR)
+**Status**: OPEN
+
+The exclude/restore/patch endpoints use nested path parameters (ticket_id, package_id, track_id, product_id) but the spec does not explicitly require verifying that each resource in the path belongs to its parent. Without parent-chain validation, an attacker with VA role could potentially modify tracks/products on other tickets (IDOR across ticket boundaries).
+
+### PKM-SEC-003 — Viewing affectedness data requires no authentication (Low)
+
+**Category**: Data Exposure
+**Status**: OPEN
+
+The Security section states "Viewing affectedness data is publicly accessible (no authentication required)." Exposing which specific SUSE products are affected by which CVEs without authentication could provide attackers with actionable intelligence about unpatched systems.
+
+### PKM-SEC-004 — No rate limiting on SMELT-triggering endpoint (Low)
+
+**Category**: Denial of Service
+**Status**: OPEN
+
+The POST endpoint triggers an external SMELT query for every call. An authenticated VA could repeatedly call this with different non-existent package names, causing numerous outbound requests to SMELT.
+
+---
+
+## API Conventions
+
+### PKM-API-001 — Inconsistent HTTP status for PACKAGE_ALREADY_EXCLUDED across endpoints (Medium)
+
+**Category**: Error handling
+**Status**: OPEN
+
+The error code `PACKAGE_ALREADY_EXCLUDED` is used with HTTP 409 in the "Add Package" endpoint but with HTTP 422 in the "Soft-Delete Package", "Soft-Delete Track", and "Soft-Delete Product" endpoints. The condition "resource is already in the target state" is a state conflict (409 Conflict), not a validation error (422).
+
+### PKM-API-002 — No read/list endpoints defined despite 'publicly accessible' viewing claim (Medium)
+
+**Category**: Response envelope
+**Status**: OPEN
+
+The Security section states "Viewing affectedness data is publicly accessible" but the spec defines no GET endpoints for listing or retrieving package/track/product data. No pagination, filtering, sorting, or `include_deleted` parameter is specified.
+
+### PKM-API-003 — PATCH endpoints with significant side-effects deviate from mutation pattern convention (Low)
+
+**Category**: Mutation patterns
+**Status**: OPEN
+
+The "Change Track Status" and "Override Product Status" endpoints use PATCH despite triggering significant side effects. The spec acknowledges this deviation with a justification note.

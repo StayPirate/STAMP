@@ -191,7 +191,18 @@
     "package-model": {
       "enabled": true,
       "abbr": "PKM",
-      "cache": null
+      "cache": {
+        "last_review": "2026-05-21T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 2 },
+          "COH": { "H": 0, "M": 0, "L": 1 },
+          "DES": { "H": 0, "M": 3, "L": 1 },
+          "SEC": { "H": 0, "M": 2, "L": 2 },
+          "API": { "H": 0, "M": 2, "L": 1 }
+        },
+        "resolved": 7,
+        "not_reviewed": []
+      }
     },
     "product-catalog": {
       "enabled": false,

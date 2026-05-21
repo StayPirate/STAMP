@@ -557,6 +557,19 @@ For RRs:
    - "declined" -> declined
    - "revoked" -> revoked
 6. Update RR.state
+
+Delivery status regression on SR state change:
+7. After updating SR state to 'revoked' or 'declined' (step 6 for SRs):
+   a. Look up all TicketPackageTrack records linked to this SR via
+      SubmissionRequestTrack
+   b. For each linked track where delivery_status = IN_PROGRESS:
+      - Query all other SRs linked to the same track (via
+        SubmissionRequestTrack) that are in 'open' or 'accepted' state
+      - If no active SR remains: set delivery_status = PENDING
+      - If at least one active SR remains: no change
+   Note: SR 'superseded' does NOT trigger regression (the superseding
+   SR inherits the delivery role). RR 'revoked'/'declined' does NOT
+   trigger regression (the accepted SR/incident remains valid).
 ```
 
 **Note on reopens**: IBS does not emit `state_change` events for
@@ -635,18 +648,22 @@ Step 2 — Reconcile requests no longer in new/review:
 
   5. For each such record:
      GET /request/{number}
-     -> Update state to the current IBS state (accepted, declined,
-       revoked, superseded)
-     -> If accepted: call set_sr_incident_number(SR, extracted
-        incident_number)
+      -> Update state to the current IBS state (accepted, declined,
+        revoked, superseded)
+      -> If accepted: call set_sr_incident_number(SR, extracted
+         incident_number)
+      -> If declined or revoked: evaluate delivery status regression
+         for all linked tracks (same logic as Pipeline 1 step 7)
 
   6. Query all ReleaseRequest records with state = 'open' that were
      NOT seen in Step 1
 
   7. For each such record:
      GET /request/{number}
-     -> Update state to the current IBS state (accepted, declined,
-       revoked)
+      -> Update state to the current IBS state (accepted, declined,
+        revoked)
+      -> If declined or revoked: evaluate delivery status regression
+         for all linked tracks (same logic as Pipeline 1 step 7)
 
 Step 3 — Delivery status reconciliation:
 

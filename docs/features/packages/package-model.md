@@ -613,8 +613,37 @@ that `WONT_FIX` behaves identically to the other final statuses.
 
 | From | To | Trigger |
 |------|----|---------|
-| `PENDING` | `IN_PROGRESS` | SR created for the track |
+| `PENDING` | `IN_PROGRESS` | SR created (state `open` or `accepted`) for the track |
 | `IN_PROGRESS` | `RELEASED` | RR accepted for the track |
+| `IN_PROGRESS` | `PENDING` | All SRs linked to this track reach a negative final state (`revoked` or `declined`) with no remaining SR in `open` or `accepted` state |
+
+#### Delivery status regression
+
+`delivery_status` can regress from `IN_PROGRESS` back to `PENDING` when
+all submission requests linked to the track (via `SubmissionRequestTrack`)
+reach a negative terminal or non-final state (`revoked`, `declined`, or
+`superseded`) with no remaining SR in `open` or `accepted` state for the
+same track. This signals to the VA that the maintainer's submission
+attempt has failed and a new submission is needed.
+
+Specific SR state change effects on `delivery_status`:
+
+- **SR `revoked` or `declined`**: evaluate whether any other SR linked to
+  the track is still in `open` or `accepted` state. If none remains,
+  regress `delivery_status` to `PENDING`
+- **SR `superseded`**: no regression — a superseding SR already exists and
+  inherits the delivery role
+- **RR `revoked` or `declined`**: no regression — `delivery_status` remains
+  `IN_PROGRESS`. The RR failure does not invalidate the accepted SR /
+  incident; a new RR can be created from the same incident
+
+#### RELEASED is irreversible
+
+Once `delivery_status` reaches `RELEASED`, it cannot regress. This is
+guaranteed by the IBS model: `accepted` is a final state for release
+requests, so a released RR cannot be revoked or declined. The one-shot
+FIXED trigger (automatic track status transition to `FIXED` upon
+`RELEASED`) is therefore also irreversible by this mechanism.
 
 These transitions are detected via IBS RabbitMQ events
 (`suse.obs.request.create`, `suse.obs.request.state_change`) and the
@@ -699,6 +728,12 @@ processes:
 - Eligibility recalculation (CVSS/threshold/lifecycle changes)
 - Delivery status updates (SR/RR state changes)
 - Release detection (codestream and product level)
+
+These continued updates apply only to records under **active tickets**
+(status `New`, `Analysis`, or `Analyzed` — see
+`docs/features/tickets/tickets.md`). Records under inactive tickets
+(`Resolved`, `Ignored`, `Duplicated`) are not subject to automated
+processing regardless of their soft-deletion status.
 
 This means the state of a soft-deleted record always reflects the
 current reality, not the state at the time of deletion.
@@ -1169,6 +1204,11 @@ record only — tracks and products are not modified but become
 effectively excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 See [Soft-Deletion](#soft-deletion) for the full behavior.
 
+After the soft-delete, the system re-evaluates ticket status via
+`ticket_mutations`. This is necessary because excluding the package
+changes the set of active records considered by ticket gates (Resolution
+gate and Analysis gate).
+
 **Response** (200 OK):
 
 ```json
@@ -1240,15 +1280,46 @@ Soft-delete a track from the ticket. Sets `deleted_at` on the track
 record only — products under it are not modified but become effectively
 excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 
+After the soft-delete (and any orphan cleanup cascade), the system
+re-evaluates ticket status via `ticket_mutations`. This is necessary
+because excluding a track changes the set of active records considered
+by ticket gates (Resolution gate and Analysis gate).
+
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "reference": "SUSE:SLE-15-SP6:Update"
+    "reference": "SUSE:SLE-15-SP6:Update",
+    "cascade": []
   }
 }
 ```
+
+When this is the last active track under the parent package, orphan cleanup
+removes the package as well. In that case, `cascade` contains the affected
+ancestor:
+
+```json
+{
+  "data": {
+    "reference": "SUSE:SLE-15-SP6:Update",
+    "cascade": [
+      {"level": "package", "package_name": "openssl-3"}
+    ]
+  }
+}
+```
+
+`cascade` is an array of ancestors that were automatically soft-deleted by
+orphan cleanup. Empty array if no cascade occurred. Maximum 1 element for
+track exclusion (the parent package). Each element identifies the level
+(`"package"`) and the identifying field (`package_name`).
+
+**Orphan cleanup behavior**: when exclusion leaves a parent record with no
+remaining active children (`deleted_at IS NULL`), the parent is also
+soft-deleted automatically. The `cascade` array allows clients to update
+their local tree state without a full refetch.
 
 **Permissions**: Vulnerability Analyst role required.
 
@@ -1306,7 +1377,13 @@ only — products under it are not modified. Creates a single
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude
 ```
 
-Soft-delete a single product from a track.
+Soft-delete a single product from a track. Creates a single
+`TicketAuditEvent`.
+
+After the soft-delete (and any orphan cleanup cascade), the system
+re-evaluates ticket status via `ticket_mutations`. This is necessary
+because excluding a product changes the set of active records considered
+by ticket gates (Resolution gate and Analysis gate).
 
 **Response** (200 OK):
 
@@ -1314,10 +1391,39 @@ Soft-delete a single product from a track.
 {
   "data": {
     "product_id": "uuid",
-    "product_name": "SLES-LTSS 15-SP4"
+    "product_name": "SLES 15-SP6",
+    "cascade": []
   }
 }
 ```
+
+When orphan cleanup triggers (this was the last active product under the
+parent track, and/or the last active track under the grandparent package):
+
+```json
+{
+  "data": {
+    "product_id": "uuid",
+    "product_name": "SLES 15-SP6",
+    "cascade": [
+      {"level": "track", "reference": "SUSE:SLE-15-SP6:Update"},
+      {"level": "package", "package_name": "openssl-3"}
+    ]
+  }
+}
+```
+
+`cascade` is an array of ancestors automatically soft-deleted by orphan
+cleanup, ordered from immediate parent upward. Empty array if no cascade
+occurred. Maximum 2 elements for product exclusion (parent track, then
+grandparent package). Each element identifies the level (`"track"` or
+`"package"`) and the identifying field (`reference` for tracks,
+`package_name` for packages).
+
+**Orphan cleanup behavior**: when exclusion leaves a parent record with no
+remaining active children (`deleted_at IS NULL`), the parent is also
+soft-deleted automatically. The `cascade` array allows clients to update
+their local tree state without a full refetch.
 
 **Permissions**: Vulnerability Analyst role required.
 
@@ -1484,12 +1590,54 @@ Or both:
 }
 ```
 
+Reset status override:
+
+```json
+{"status": null}
+```
+
+Reset eligibility override:
+
+```json
+{"eligible": null}
+```
+
+Reset both overrides:
+
+```json
+{"status": null, "eligible": null}
+```
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `status` | string | No | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`, `WONT_FIX` |
-| `eligible` | boolean | No | Eligibility override |
+| `status` | string \| null | No | New status value (`ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`, `WONT_FIX`) or `null` to reset to automatic inheritance from parent track |
+| `eligible` | boolean \| null | No | Eligibility override value, or `null` to reset to automatic calculation |
 
 At least one of `status` or `eligible` must be provided.
+
+#### Reset behavior
+
+When a field is sent as `null`, the corresponding override is removed and the
+value reverts to automatic:
+
+- **`status: null`** — sets `is_status_override = false`. The product status is
+  immediately updated to match the parent track's current status (same
+  propagation logic as when a track status changes)
+- **`eligible: null`** — sets `is_eligible_override = false`. Eligibility is
+  immediately recalculated using the standard rules (CVSS threshold + lifecycle
+  phase). Recalculation applies only if the product's resulting status is
+  `AFFECTED`; otherwise `eligible` is set to `false`
+
+Both override and reset operations follow the same post-modification flow:
+
+1. One `TicketAuditEvent` is created **per field changed** (e.g., if both
+   `status` and `eligible` are modified in the same request, two separate
+   audit events are created)
+2. A single ticket status re-evaluation is performed at the end of the
+   transaction (via `ticket_mutations`)
+
+This applies to all operations through this endpoint: setting an override,
+changing an override value, and resetting an override.
 
 **Note on PATCH with side effects**: same rationale as the track
 endpoint above — single-field update from the client's perspective.
@@ -1606,9 +1754,6 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - [ ] Inference heuristic for workflow_type — define the exact pattern
       matching rules
 - [ ] Submission tracking (SR/RR) equivalent for git workflow, if any
-- [ ] Override reset mechanism — define how a VA can reset a product
-      status or eligibility override back to automatic inheritance from
-      the parent track
 
 ---
 
