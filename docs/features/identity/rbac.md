@@ -193,6 +193,8 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
+| GET | `/api/v1/packages` | Public | [package-model](../packages/package-model.md#search-packages-across-tickets) |
+| GET | `/api/v1/tickets/{ticket_id}/packages` | Public | [package-model](../packages/package-model.md#list-ticket-packages) |
 | POST | `/api/v1/tickets/{ticket_id}/packages` | Vulnerability Analyst | [package-model](../packages/package-model.md#add-package-to-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/exclude` | Vulnerability Analyst | [package-model](../packages/package-model.md#soft-delete-package-from-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | Vulnerability Analyst | [package-model](../packages/package-model.md#restore-package) |

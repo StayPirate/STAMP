@@ -2,19 +2,22 @@
 
 ## Purpose
 
-Centralize all operations that modify data relevant to ticket status
-gates in a single service module (`ticket_mutations`). This ensures that
-`evaluate_ticket_status` is always called after gate-relevant changes,
-preventing tickets from remaining in inconsistent states regardless of
-the entry point (API endpoint, Celery task, IBS RabbitMQ consumer, or
-future integrations).
+Centralize ticket-centric operations that modify data relevant to ticket
+status gates — CVSS assessment management, severity overrides, and
+manual-zone exits — in a single service module (`ticket_mutations`).
+This module also provides the shared `evaluate_ticket_status()` function
+and the `auto_assign_if_needed()` helper, which are called by both this
+module and `package_service`.
+
+Package-centric mutations (track/product status, delivery status,
+eligibility, soft-deletion/restore, record creation) are handled by
+`package_service` (`docs/features/packages/package-service.md`).
 
 Without this centralization, each caller would need to independently:
 
 - Acquire the correct row-level lock
 - Apply the data mutation
 - Call `evaluate_ticket_status`
-- Enforce orphan cleanup invariants
 - Create the correct `TicketAuditEvent`
 
 Leading to inconsistency, missed re-evaluations, and bugs.
@@ -32,11 +35,10 @@ primary consumer and calls the service directly with `await`. Entry
 points that operate in a synchronous context (Celery tasks, IBS
 RabbitMQ consumer) call the service via `asyncio.run()`.
 
-| Entry point               | Invocation pattern                                            |
-|---------------------------|---------------------------------------------------------------|
-| API endpoint              | `await ticket_mutations.set_track_status(session, ...)`       |
-| Celery task (release det.)| `asyncio.run(ticket_mutations.set_track_status(session, ...))` |
-| IBS RabbitMQ consumer     | `asyncio.run(ticket_mutations.set_track_status(session, ...))` |
+| Entry point               | Invocation pattern                                              |
+|---------------------------|-----------------------------------------------------------------|
+| API endpoint              | `await ticket_mutations.set_severity_override(session, ...)`    |
+| Celery task (CVSS sync)   | `asyncio.run(ticket_mutations.create_cvss_assessment(session, ...))` |
 
 ### Transaction ownership
 
@@ -47,8 +49,8 @@ caller.
 This matches the `user_service` pattern — the module applies mutations
 and creates audit events, but the transaction boundary is the caller's
 decision. This enables callers to compose multiple operations within a
-single transaction when needed (e.g., `add_package_to_ticket` creates
-records then calls orphan checks).
+single transaction when needed (e.g., `revert_duplicate` clears
+`duplicate_of_id` then calls `_reenter_gate_zone`).
 
 ### Acting user convention
 
@@ -69,7 +71,7 @@ reserved exclusively for system entry points.
 | Module | Relationship |
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
-| `add_package_to_ticket` | Handles SMELT resolution and external I/O. Delegates the actual creation of `TicketPackage`, `TicketPackageTrack`, and `TicketPackageProduct` records to `ticket_mutations.add_package_records()`. The SMELT query logic does not belong in `ticket_mutations` — only the record mutations do |
+| `services/package_service.py` | Handles all package-centric mutations (track/product status, delivery status, eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `evaluate_ticket_status()` and `auto_assign_if_needed()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
 | `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality). These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
 
 ## State Machine Zones
@@ -237,161 +239,17 @@ module acquires the lock as its first operation, and
 Each function below follows the same pattern:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Apply the mutation
-4. Create `TicketAuditEvent`
-5. Call `evaluate_ticket_status()`
-6. Return the updated record
-
-### `set_track_status()`
-
-Sets the affectedness status of a `TicketPackageTrack` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `track_id` | `UUID` | Yes | TicketPackageTrack to modify |
-| `status` | `PackageStatus` | Yes | New status value |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Track must exist and have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone (not Ignored or Duplicated)
-- Status must be a valid `PackageStatus` value
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. If status unchanged, return (no-op)
-4. Update `TicketPackageTrack.status`
-5. Propagate status to child products per the rules in
-   `docs/features/packages/package-model.md` (Status Propagation)
-6. Create `TicketAuditEvent` (`track_status_changed`)
-7. Call `evaluate_ticket_status()`
-8. Return updated track
-
-**TicketAuditEvent**: `track_status_changed`
-
-**Idempotency**: no-op if status is unchanged.
-
----
-
-### `set_track_delivery_status()`
-
-Sets the delivery status of a `TicketPackageTrack` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `track_id` | `UUID` | Yes | TicketPackageTrack to modify |
-| `delivery_status` | `DeliveryStatus` | Yes | New delivery status value |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Track must exist and have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. If delivery_status unchanged, return (no-op)
-4. Update `TicketPackageTrack.delivery_status`
-5. If new delivery_status is `RELEASED`: create `TicketAuditEvent`
-   (`track_released`)
+2. Call `auto_assign_if_needed()`
+3. Validate preconditions
+4. Apply the mutation
+5. Create `TicketAuditEvent`
 6. Call `evaluate_ticket_status()`
-7. Return updated track
+7. Return the updated record
 
-**TicketAuditEvent**: `track_released` (only when transitioning to
-`RELEASED`). Intermediate delivery status transitions (`PENDING` →
-`IN_PROGRESS`) do not generate ticket audit events — they are tracked
-through the submission tracking system (see
-`docs/features/packages/ibs-submission-tracking.md`).
-
-**Idempotency**: no-op if delivery_status is unchanged.
-
----
-
-### `set_product_status()`
-
-Sets the status of a `TicketPackageProduct` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
-| `status` | `PackageStatus` | Yes | New status value |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Product must exist and have `deleted_at IS NULL`
-- Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. If status unchanged, return (no-op)
-4. Update `TicketPackageProduct.status`
-5. Create `TicketAuditEvent` (`product_status_overridden`)
-6. Call `evaluate_ticket_status()`
-7. Return updated product
-
-**TicketAuditEvent**: `product_status_overridden`
-
-**Idempotency**: no-op if status is unchanged.
-
----
-
-### `set_product_eligibility()`
-
-Sets the eligibility flag of a `TicketPackageProduct` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
-| `eligible` | `bool` | Yes | New eligibility value |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Product must exist and have `deleted_at IS NULL`
-- Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. If eligibility unchanged, return (no-op)
-4. Update `TicketPackageProduct.eligible`
-5. Create `TicketAuditEvent` (`product_eligibility_changed`)
-6. Call `evaluate_ticket_status()`
-7. Return updated product
-
-**TicketAuditEvent**: `product_eligibility_changed`
-
-**Idempotency**: no-op if eligibility is unchanged.
-
----
+Package-centric mutations (`set_track_status`, `set_track_delivery_status`,
+`set_product_status`, `set_product_eligibility`, `add_package_records`,
+soft-delete/restore for packages, tracks, and products) have been moved to
+`package_service` — see `docs/features/packages/package-service.md`.
 
 ### `create_cvss_assessment()`
 
@@ -549,249 +407,6 @@ The module function always calls `evaluate_ticket_status()` regardless
 
 ---
 
-### `add_package_records()`
-
-Creates `TicketPackage`, `TicketPackageTrack`, and
-`TicketPackageProduct` records for a package being added to a ticket.
-Called by `add_package_to_ticket` after SMELT resolution completes.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `ticket_id` | `UUID` | Yes | Target ticket |
-| `package_name` | `str` | Yes | Source package name |
-| `tracks` | `list[TrackData]` | Yes | Track/product data from SMELT resolution |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Ticket must exist and have `deleted_at IS NULL`
-- Ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the Ticket row
-2. Validate preconditions
-3. Create or skip `TicketPackage` (idempotent — skip if exists)
-4. For each track in `tracks`:
-   - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
-     including soft-deleted records)
-   - Initial status: `ANALYSIS`, delivery_status: `PENDING`
-   - For each product under the track:
-     - Create or skip `TicketPackageProduct` (idempotent — skip if
-       exists, including soft-deleted records)
-     - Initial status: inherited from parent track (see Record Creation
-       Logic below)
-5. Create `TicketAuditEvent` (`package_added`)
-6. Call `evaluate_ticket_status()`
-7. Return created records
-
-**TicketAuditEvent**: `package_added`
-
-**Idempotency**: if a `TicketPackageTrack` or `TicketPackageProduct`
-record already exists for the given combination (including soft-deleted
-records), it is skipped without modification. Only missing records are
-created. This ensures re-running `add_package_to_ticket` after a
-partial failure does not produce duplicate records.
-
----
-
-### `soft_delete_ticket_package()`
-
-Soft-deletes a `TicketPackage` record (sets `deleted_at`).
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `package_id` | `UUID` | Yes | TicketPackage to soft-delete |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Package must exist and have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Set `package.deleted_at = now()`
-4. Create `TicketAuditEvent` (`package_excluded`)
-5. Call `evaluate_ticket_status()`
-6. Return updated package
-
-Note: child tracks and products are NOT modified (hierarchical exclusion
-model — only the directly targeted record receives `deleted_at`).
-
-**TicketAuditEvent**: `package_excluded`
-
----
-
-### `soft_delete_ticket_package_track()`
-
-Soft-deletes a `TicketPackageTrack` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `track_id` | `UUID` | Yes | TicketPackageTrack to soft-delete |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Track must exist and have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Set `track.deleted_at = now()`
-4. Create `TicketAuditEvent` (`track_excluded`)
-5. Enforce package orphan rule (see Orphan Cleanup Invariants)
-6. Call `evaluate_ticket_status()`
-7. Return updated track
-
-Note: child products are NOT modified (hierarchical exclusion model).
-
-**TicketAuditEvent**: `track_excluded`
-
----
-
-### `soft_delete_ticket_package_product()`
-
-Soft-deletes a `TicketPackageProduct` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to soft-delete |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Product must exist and have `deleted_at IS NULL`
-- Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Set `product.deleted_at = now()`
-4. Create `TicketAuditEvent` (`product_excluded`)
-5. Enforce track orphan rule (see Orphan Cleanup Invariants)
-6. Call `evaluate_ticket_status()`
-7. Return updated product
-
-**TicketAuditEvent**: `product_excluded`
-
----
-
-### `restore_ticket_package()`
-
-Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `package_id` | `UUID` | Yes | TicketPackage to restore |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Package must exist and have `deleted_at IS NOT NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Clear `package.deleted_at`
-4. Create `TicketAuditEvent` (`package_restored`)
-5. Call `evaluate_ticket_status()`
-6. Return updated package
-
-**TicketAuditEvent**: `package_restored`
-
----
-
-### `restore_ticket_package_track()`
-
-Restores a soft-deleted `TicketPackageTrack` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `track_id` | `UUID` | Yes | TicketPackageTrack to restore |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Track must exist and have `deleted_at IS NOT NULL`
-- Parent package must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Clear `track.deleted_at`
-4. Create `TicketAuditEvent` (`track_restored`)
-5. Call `evaluate_ticket_status()`
-6. Return updated track
-
-**TicketAuditEvent**: `track_restored`
-
----
-
-### `restore_ticket_package_product()`
-
-Restores a soft-deleted `TicketPackageProduct` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to restore |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Product must exist and have `deleted_at IS NOT NULL`
-- Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
-
-**Behavior**:
-
-1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
-3. Clear `product.deleted_at`
-4. Create `TicketAuditEvent` (`product_restored`)
-5. Call `evaluate_ticket_status()`
-6. Return updated product
-
-**TicketAuditEvent**: `product_restored`
-
 ## Manual-Zone Exit Operations
 
 These operations transition tickets out of the manual zone (Ignored or
@@ -924,83 +539,44 @@ does not include an explicit status change (e.g., marking as duplicate
 or ignored), the assignee gate (`assignee_id IS NOT NULL`) promotes
 the ticket to `Analysis` automatically.
 
-This rule is enforced within each public function of the module: before
-applying the main mutation, check `ticket.assignee_id`. If `None` and
-`acting_user_id` is a UUID (not `None`), set
-`ticket.assignee_id = acting_user_id` and create the assignment audit
-event.
+This rule is enforced via the shared helper `auto_assign_if_needed()`
+(see below), which is called by all modules that modify tickets under
+a `FOR UPDATE` lock (`ticket_mutations`, `package_service`).
 
 This rule does not apply to system operations (`acting_user_id = None`).
 Only VA-initiated actions trigger auto-assignment.
 
-## Orphan Cleanup Invariants
+### `auto_assign_if_needed()`
 
-The module enforces automatic cleanup of empty parent records. These are
-generic rules that apply regardless of the trigger — any current or
-future feature that soft-deletes a product or track automatically
-benefits from these invariants. The orphan rule triggers **only on
-soft-deletion events**, not on restore or other mutations.
+A public helper function that implements the auto-assignment check. All
+modules that modify tickets under a `FOR UPDATE` lock call this helper
+as the first operation after acquiring the lock.
 
-### Invariant 1 — Track orphan rule
+**Signature**:
 
-After every product soft-deletion, check whether the parent
-`TicketPackageTrack` has zero remaining products with
-`deleted_at IS NULL` (direct check). If zero directly-active products
-remain, the track receives its own `deleted_at` (direct soft-deletion).
-Products under the track are NOT modified — they already have their own
-`deleted_at`.
+```python
+async def auto_assign_if_needed(
+    ticket: Ticket,
+    acting_user_id: UUID | None,
+    db: AsyncSession,
+) -> bool:
+    """Assign ticket to acting VA if unassigned.
 
-### Invariant 2 — Package orphan rule
+    Returns True if assignment was applied (audit event created),
+    False otherwise (ticket already assigned or system action).
 
-After every track soft-deletion, check whether the parent
-`TicketPackage` has zero remaining tracks with `deleted_at IS NULL`
-(direct check). If zero directly-active tracks remain, the package
-receives its own `deleted_at`. Tracks and products under the package
-are NOT modified.
-
-### Cascading composition
-
-The invariants compose naturally. Soft-deleting a product may trigger
-the track orphan rule, which may trigger the package orphan rule:
-
-```
-soft_delete_ticket_package_product(record, user)
-  → TicketAuditEvent (product_excluded)
-  → evaluate_ticket_status()
-  → _enforce_track_orphan_rule()
-      → if 0 directly-active products:
-          set track.deleted_at (direct)
-          → TicketAuditEvent (track_excluded, user_id=NULL)
-          → evaluate_ticket_status()
-          → _enforce_package_orphan_rule()
-              → if 0 directly-active tracks:
-                  set package.deleted_at (direct)
-                  → TicketAuditEvent (package_excluded, user_id=NULL)
-                  → evaluate_ticket_status()
+    Precondition: caller MUST hold FOR UPDATE on the ticket row.
+    """
 ```
 
-Orphan-triggered soft-deletions create `TicketAuditEvent` records with
-`user_id = NULL` (system action), distinguishing them from VA-initiated
-exclusions. Each orphan soft-deletion sets `deleted_at` only on the
-parent — no cascade to children (per the hierarchical exclusion model).
+**Behavior**:
 
-## Record Creation Logic
-
-When `ticket_mutations` creates a new `TicketPackageTrack` record, the
-initial status is always `ANALYSIS` and `delivery_status` is `PENDING`.
-
-When it creates a new `TicketPackageProduct` record, it determines the
-initial status by inheriting from the parent `TicketPackageTrack`:
-
-- Parent in `ANALYSIS` → `ANALYSIS`
-- Parent in `AFFECTED` → status is set to `AFFECTED`; eligibility is
-  calculated separately (CVSS threshold, Reactive LTSS override) and
-  stored in the `eligible` boolean
-- Parent in any other status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) →
-  inherit the same status
-
-This logic is internal to `ticket_mutations` — callers (including
-`add_package_to_ticket`) do not specify the initial status.
+1. If `acting_user_id is None` -> return False (system action, no
+   auto-assignment)
+2. If `ticket.assignee_id is not None` -> return False (already assigned)
+3. Set `ticket.assignee_id = acting_user_id`
+4. Create `TicketAuditEvent` with `event_type = assignment`
+5. Return True
 
 ## Related Operations
 
@@ -1041,45 +617,43 @@ Ticket row. Full behavioral steps in
 ## Contract
 
 Every service-layer operation that modifies data relevant to ticket
-status gates MUST go through the `ticket_mutations` module. Direct
-modification of `TicketPackageTrack`, `TicketPackageProduct`, or
-`CVECVSSAssessment` records outside this module is a bug — it bypasses
-status re-evaluation and may leave the ticket in an inconsistent state.
+status gates MUST go through the appropriate centralized module:
 
-Relevant data includes:
+- **Package/track/product mutations**: `package_service`
+  (`TicketPackageTrack`, `TicketPackageProduct` status, delivery
+  status, eligibility, soft-delete/restore, record creation)
+- **CVSS and severity mutations**: `ticket_mutations`
+  (`CVECVSSAssessment` records, severity override)
+- **Ticket status evaluation**: `ticket_mutations` (called by both
+  modules after any gate-relevant mutation)
 
-- `TicketPackageTrack` records (creation, soft-deletion/restore, status
-  change, delivery status change)
-- `TicketPackageProduct` records (creation, soft-deletion/restore,
-  status change, eligibility change)
-- `CVECVSSAssessment` records (creation, update, deletion)
-- Ticket severity (`severity_override` or CVSS-derived severity)
-- Package addition or soft-deletion/restore
+Direct modification of gate-relevant records outside the owning
+module is a bug.
 
 Operations that do NOT modify gate-relevant data (assignment, duplicate
 set/remove, CVE association/removal, ticket-level soft-delete/restore)
-are NOT required to go through this module — they create
+are NOT required to go through either module — they create
 `TicketAuditEvent` records in their own services.
 
 ## Architectural Test Requirement
 
 A parametrized integration test MUST be implemented to verify that the
 `ticket_mutations` module produces the correct ticket status after every
-type of relevant mutation. The test must cover:
+type of ticket-centric mutation (CVSS assessment operations, severity
+override, manual-zone exits). The test must cover:
 
-- **Forward transitions**: each gate condition being satisfied one by
-  one until the ticket advances (Analysis → Analyzed → Resolved)
-- **Backward transitions**: each gate condition being broken after the
-  ticket has advanced (Analyzed → Analysis, Resolved → Analyzed,
-  Resolved → Analysis)
+- **Forward transitions**: CVSS and severity changes causing ticket
+  advancement
+- **Backward transitions**: CVSS deletion breaking gate conditions
 - **No-op cases**: mutations that do not affect gate conditions
-- **Edge cases**: ticket with no packages, ticket without CVE (no SUSE
-  CVSS gate), all tracks in final status but severity not set
+- **Edge cases**: ticket without CVE (no SUSE CVSS gate), severity
+  override on CVE-less ticket
+- **Manual-zone exits**: `reopen_from_ignored` and `revert_duplicate`
+  producing correct status transitions
 
-This test serves as a permanent architectural fitness function: if a
-new service operation modifies gate-relevant data without going through
-the `ticket_mutations` module, the test will fail because the ticket
-status will not match the expected state.
+Package-centric mutation tests are specified in
+`docs/features/packages/package-service.md` (Architectural Test
+Requirement).
 
 ## Service Exceptions
 
@@ -1088,32 +662,36 @@ status will not match the expected state.
 | `TicketNotFoundError` | `FOR UPDATE` returns no row |
 | `TicketNotMutableError` | Ticket is in manual zone (defense in depth — API layer catches first) |
 | `TicketSoftDeletedError` | Ticket has `deleted_at IS NOT NULL` |
-| `TrackNotFoundError` | Track ID does not exist or is soft-deleted |
-| `ProductNotFoundError` | Product ID does not exist or is soft-deleted |
-| `PackageNotFoundError` | Package ID does not exist or is soft-deleted |
 | `DuplicateCycleDetectedError` | Resolver detects a cycle in the chain |
 | `DuplicateChainDepthError` | Resolver exceeds 50-hop limit |
+
+Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
+`PackageNotFoundError`) are defined in `package_service` — see
+`docs/features/packages/package-service.md`.
 
 ## Callers
 
 The callers table is scoped to operation categories rather than
-individual endpoints. Maintaining an exhaustive per-endpoint table is
-unrealistic at this scale and would rot.
+individual endpoints.
 
 | Caller Category | Operations Used | Context |
 |-----------------|-----------------|---------|
-| Ticket API mutation endpoints | All gate-relevant + manual-zone exits | VA-initiated operations |
+| Ticket API mutation endpoints | CVSS operations, `set_severity_override()`, manual-zone exits | VA-initiated operations |
 | CVSS sync fetcher | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Background CVSS ingestion |
-| IBS track release detection | `set_track_status()`, `set_track_delivery_status()` | Automated track release |
-| IBS product release detection | `set_product_status()` (released_at) | Automated product release |
-| `add_package_to_ticket` | `add_package_records()` | Package addition flow |
-| Product lifecycle transitions | `set_product_eligibility()`, `soft_delete_ticket_package_product()` | AIMAAS threshold changes |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
 | Admin: default CVSS version change | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Re-evaluation triggered by config change |
+| `package_service` | `evaluate_ticket_status()`, `auto_assign_if_needed()` | Called after every package mutation |
 | User deactivation side effects | (none — deactivation unassigns via direct query, not through ticket_mutations) | Clarification: NOT a caller |
+
+Package-centric callers (IBS release detection, product lifecycle
+transitions, `add_package_to_ticket`) now call `package_service`
+directly — see `docs/features/packages/package-service.md`.
 
 ## Cross-references
 
+- `docs/features/packages/package-service.md` — package-centric
+  mutations, orchestration, and query operations (imports
+  `evaluate_ticket_status()` and `auto_assign_if_needed()`)
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, API endpoints
 - `docs/features/tickets/ticket-audit-log.md` — event type contract

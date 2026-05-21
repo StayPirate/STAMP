@@ -129,7 +129,7 @@ A `TicketPackageTrack` record exists for the ticket's CVE with
 
 - Set `TicketPackageTrack.status` to `FIXED` and
   `TicketPackageTrack.delivery_status` to `RELEASED` through the
-  `ticket_mutations` module (unless current status is `WONT_FIX`).
+  `package_service` module (unless current status is `WONT_FIX`).
 - Create a `TicketAuditEvent` with `event_type = track_status_changed`,
   `user_id = NULL` (system action), `old_value` = previous status,
   `new_value = FIXED`, `comment` = `"{C} {P}"` (track_name package_name).
@@ -145,10 +145,10 @@ for package P (in any codestream).
 - Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
   and products via SMELT and create the `TicketPackage` +
   `TicketPackageTrack` records with status `ANALYSIS` (record creation
-  goes through `ticket_mutations`). See
+  goes through `package_service`). See
   `docs/features/packages/package-model.md`, "Adding Packages to a Ticket".
 - Set the `TicketPackageTrack` for codestream C to `status = FIXED` and
-  `delivery_status = RELEASED` through `ticket_mutations` (the specific
+  `delivery_status = RELEASED` through `package_service` (the specific
   codestream where the fix was detected).
 - Create a `TicketAuditEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
@@ -172,10 +172,10 @@ No ticket exists in Sentinel for the extracted CVE-ID.
    4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
       all codestreams and products via SMELT and create the
       `TicketPackage` + `TicketPackageTrack` records with status
-      `ANALYSIS` (record creation goes through `ticket_mutations`).
+      `ANALYSIS` (record creation goes through `package_service`).
    5. Set the `TicketPackageTrack` for the originating codestream to
       `status = FIXED` and `delivery_status = RELEASED` through
-      `ticket_mutations`.
+      `package_service`.
    6. Create a `TicketAuditEvent` with `event_type = ticket_created`,
        `user_id = NULL`, comment: `"CVE fix detected in {package}
        ({codestream})"`.

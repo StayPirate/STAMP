@@ -6,7 +6,7 @@ Define the automated behavior when a product transitions to the Reactive
 LTSS phase or reaches End of Life (EOL) while it has non-final
 `TicketPackageProduct` records in active tickets. This specification
 relies on the soft-deletion mechanism and track orphan cleanup invariants
-in `ticket_mutations` (defined in `docs/features/tickets/ticket-mutations.md`
+in `package_service` (defined in `docs/features/packages/package-service.md`
 and `docs/features/packages/package-model.md`) that ensure tracks and
 packages are automatically soft-deleted when they no longer have active
 children.
@@ -85,7 +85,7 @@ triggered by parent fetchers, with no independent schedule).
 For all `TicketPackageProduct` records referencing this product in open
 tickets with status `AFFECTED`:
 
-- Call `ticket_mutations.set_product_eligibility(record, eligible=false)`
+- Call `package_service.set_product_eligibility(record, eligible=false)`
 
 The product status remains `AFFECTED`. Only the `eligible` flag is
 changed. Records with `is_eligible_override = true` are not modified.
@@ -99,8 +99,8 @@ tickets with non-final status:
 
 | Current status | Action |
 |----------------|--------|
-| `AFFECTED` | Soft-delete the product: call `ticket_mutations.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
-| `ANALYSIS` | Soft-delete the product: call `ticket_mutations.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `AFFECTED` | Soft-delete the product: call `package_service.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+| `ANALYSIS` | Soft-delete the product: call `package_service.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 
 Records in final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
 modified. Note: `WONT_FIX` is additionally protected from automatic
@@ -117,7 +117,7 @@ Existing behavior as specified in `docs/features/packages/package-model.md` and
 
 When `re_evaluate_product_eligibility` soft-deletes a `TicketPackageProduct`
 (for EOL), the orphan cleanup invariants defined in
-`docs/features/tickets/ticket-mutations.md` (Orphan Cleanup Invariants)
+`docs/features/packages/package-service.md` (Orphan Cleanup Invariants)
 apply upward: if the parent track has zero remaining products
 with `deleted_at IS NULL` (not directly excluded), the track itself is
 soft-deleted (`deleted_at` set on the track record only), and if the parent
@@ -178,5 +178,5 @@ transitions. This behavior is pending removal — see
   authentication involved
 - `re_evaluate_product_eligibility` is an internal sub-task, not exposed
   via API
-- All mutations go through `ticket_mutations` which enforces TicketAuditEvent
+- All mutations go through `package_service` which enforces TicketAuditEvent
   creation

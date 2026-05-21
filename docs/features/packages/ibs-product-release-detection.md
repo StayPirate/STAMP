@@ -64,7 +64,7 @@ below for how `<repo_url>` is constructed):
 ### Outcome per matched (ticket, product, package)
 
 - `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
-  of the advisory through the `ticket_mutations` module.
+  of the advisory through the `package_service` module.
 - The product's affectedness status is NOT changed.
 
 ### Update Repository URL Resolution

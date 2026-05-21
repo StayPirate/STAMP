@@ -117,10 +117,7 @@ The POST endpoint triggers an external SMELT query for every call. An authentica
 
 ### PKM-API-002 — No read/list endpoints defined despite 'publicly accessible' viewing claim (Medium)
 
-**Category**: Response envelope
-**Status**: OPEN
-
-The Security section states "Viewing affectedness data is publicly accessible" but the spec defines no GET endpoints for listing or retrieving package/track/product data. No pagination, filtering, sorting, or `include_deleted` parameter is specified.
+**Status**: RESOLVED — Two read endpoints added: `GET /api/v1/tickets/{ticket_id}/packages` (per-ticket, unpaginated) and `GET /api/v1/packages` (cross-ticket, paginated with `PackageListItem` schema, filtering, sorting). Security section updated to document access rules for both (2026-05-21)
 
 ### PKM-API-003 — PATCH endpoints with significant side-effects deviate from mutation pattern convention (Low)
 
@@ -128,3 +125,17 @@ The Security section states "Viewing affectedness data is publicly accessible" b
 **Status**: OPEN
 
 The "Change Track Status" and "Override Product Status" endpoints use PATCH despite triggering significant side effects. The spec acknowledges this deviation with a justification note.
+
+### PKM-API-004 — Fixed sorting on unpaginated endpoint not explicitly stated as non-client-controlled (Low)
+
+**Category**: Sorting conventions
+**Status**: OPEN
+
+The `GET /api/v1/tickets/{ticket_id}/packages` endpoint states "Fixed alphabetical order by `package_name`" but does not explicitly state that client-controlled sorting (`sort_by`, `sort_order` parameters) is not supported, nor does it provide a justification. The `api-spec.md` Sorting convention requires endpoints that intentionally omit client-controlled sorting to state so with justification.
+
+### PKM-API-005 — search parameter match strategy not specified (Low)
+
+**Category**: Query parameter conventions
+**Status**: OPEN
+
+The `GET /api/v1/packages` endpoint's `search` parameter is described as "Partial match on `package_name` (case-insensitive)" but does not specify the matching strategy (prefix match, substring match via ILIKE, or other). The service function spec in `package-service.md` clarifies this is ILIKE substring match, but the endpoint definition in `package-model.md` should state the strategy explicitly for API consumers.

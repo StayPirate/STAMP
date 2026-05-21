@@ -337,6 +337,13 @@ containing the UUID of the original ticket.
   server-side via email matching)
 - The per-ticket endpoint filters by the authenticated user's packages;
   users cannot see other maintainers' pending work through this endpoint
+- **Confidentiality filtering**: all maintainer endpoints MUST apply
+  `confidential_ticket_filter()` (see
+  `docs/features/tickets/tickets.md`, Confidentiality Filtering) to
+  exclude packages belonging to confidential tickets that the caller is
+  not authorized to access. Although the bugowner email match already
+  coincides with authorization rules 3 and 4, the confidentiality filter
+  MUST be applied explicitly as defense in depth
 
 ## Performance Considerations
 

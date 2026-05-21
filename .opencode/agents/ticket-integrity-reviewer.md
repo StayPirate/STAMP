@@ -3,10 +3,11 @@ description: >
   Reviews ticket-related code and specification changes to verify two
   invariants: (1) every ticket mutation produces a corresponding TicketAuditEvent
   record with correct field values, and (2) every modification to
-  gate-relevant data goes through the `ticket_mutations` module. Use this
-  agent after modifying services or tasks that mutate tickets, or after
-  creating/modifying feature specs that describe ticket operations.
-  Read-only: does not modify files.
+  gate-relevant data goes through the appropriate centralized module —
+  `package_service` for package/track/product mutations, `ticket_mutations`
+  for CVSS and severity mutations. Use this agent after modifying services
+  or tasks that mutate tickets, or after creating/modifying feature specs
+  that describe ticket operations. Read-only: does not modify files.
 mode: subagent
 permission:
   edit: deny
@@ -21,9 +22,11 @@ You review ticket-related changes at two levels — **code** and
 
 1. Every ticket mutation is covered by a `TicketAuditEvent` record following
    the contract in `docs/features/tickets/ticket-audit-log.md`
-2. Every modification to gate-relevant data goes through the
-   `ticket_mutations` module, ensuring automatic ticket status evaluation
-   (see `docs/features/tickets/tickets.md`, Centralized Status Evaluation)
+2. Every modification to gate-relevant data goes through the appropriate
+   centralized module — `package_service` for package/track/product
+   mutations, `ticket_mutations` for CVSS and severity mutations —
+   ensuring automatic ticket status evaluation (see
+   `docs/features/tickets/tickets.md`, Centralized Status Evaluation)
 
 You do NOT write or modify code.
 
@@ -104,37 +107,45 @@ For each `TicketAuditEvent` creation, verify:
   - `user_id` is set or `NULL` as expected
 - Flag missing assertions as test coverage gaps
 
-#### Ticket mutations module compliance
+#### Gate-relevant module compliance
 
 - Identify every code path that modifies gate-relevant data:
-  `TicketPackageTrack` records (creation, deletion, status change),
-  `TicketPackageProduct` records (creation, deletion, status change,
-  eligibility change), `CVECVSSAssessment` records (creation, update,
-  deletion), ticket severity (`severity_override` or CVSS-derived), and
-  package addition or removal
-- For each modification, verify that it goes through a function in the
-  `ticket_mutations` module — NOT via direct model attribute assignment
-  (e.g., `track.status = X`) outside the module
-- Flag any direct modification of gate-relevant data outside
-  `ticket_mutations` as a defect
+  `TicketPackageTrack` records (creation, deletion, status change,
+  delivery status change), `TicketPackageProduct` records (creation,
+  deletion, status change, eligibility change), `CVECVSSAssessment`
+  records (creation, update, deletion), ticket severity
+  (`severity_override` or CVSS-derived), and package addition or removal
+- For each modification, verify that it goes through the appropriate
+  centralized module:
+  - **Package/track/product mutations**: `package_service`
+    (`backend/app/services/package_service.py`)
+  - **CVSS and severity mutations**: `ticket_mutations`
+    (`backend/app/services/ticket_mutations.py`)
+- Flag any direct modification of gate-relevant data outside the owning
+  module as a defect (e.g., `track.status = X` outside `package_service`)
 - If a new type of gate-relevant mutation is needed and no suitable
-  function exists in `ticket_mutations`, flag it as **Needs revision**
-  and propose adding a new function to the module
+  function exists in the appropriate module, flag it as **Needs revision**
+  and propose adding a new function
 - Note: operations that do NOT modify gate-relevant data (assignment,
   duplicate set/remove, CVE association/removal, soft-delete, restore)
-  are NOT required to go through `ticket_mutations` — they create
+  are NOT required to go through either module — they create
   `TicketAuditEvent` records in their own services
 
 #### Locking compliance
 
-- Every public function in `ticket_mutations` MUST begin with a
-  `SELECT ... FOR UPDATE` on the `Ticket` row (SQLAlchemy:
+- Every public mutation function in `ticket_mutations` and
+  `package_service` MUST begin with a `SELECT ... FOR UPDATE` on the
+  `Ticket` row (SQLAlchemy:
   `select(Ticket).where(...).with_for_update()`) before performing
   any mutation
-- Flag any public function in `ticket_mutations` that modifies
+- Flag any public mutation function in either module that modifies
   gate-relevant data without first acquiring a `FOR UPDATE` lock on
   the ticket as a defect
-- Every service function **outside** `ticket_mutations` that modifies
+- **I/O-then-Lock**: in `package_service`, orchestration functions
+  (e.g., `add_package_to_ticket`) that perform external I/O MUST NOT
+  acquire `FOR UPDATE` locks — only the mutation functions they
+  delegate to (e.g., `add_package_records`) acquire locks
+- Every service function **outside** these modules that modifies
   the `Ticket` row (any column: `status`, `assignee_id`, `cve_id`,
   `duplicate_of_id`, `previous_status`, `deleted_at`) or that calls
   `evaluate_ticket_status` MUST also acquire `FOR UPDATE` on the
@@ -155,10 +166,10 @@ For each `TicketAuditEvent` creation, verify:
 - Within the locked transaction, verify that there are **no expensive
   queries** — analytical aggregations, full-table scans, or
   computationally intensive operations
-- If a caller of `ticket_mutations` performs external I/O and the
-  mutation call within the same transaction scope, flag it as a defect
-  — external I/O must complete **before** the transaction that
-  acquires the lock
+- If a caller of `ticket_mutations` or `package_service` performs
+  external I/O and the mutation call within the same transaction scope,
+  flag it as a defect — external I/O must complete **before** the
+  transaction that acquires the lock
 - See `docs/conventions.md` (Transaction and Locking) for the
   rationale and correct pattern
 
@@ -199,15 +210,16 @@ Apply this level when the change creates or modifies a feature spec in
 - Verify that status values, field names, and terminology match the
   existing contract
 
-#### Ticket mutations module coverage
+#### Gate-relevant module coverage
 
 - For each identified mutation that modifies gate-relevant data (see
-  `docs/features/tickets/tickets.md`, Centralized Status Evaluation → Ticket
-  Mutations Module), verify that the spec describes the operation as
-  going through the `ticket_mutations` module (or at minimum does not
-  describe direct model manipulation)
+  `docs/features/tickets/tickets.md`, Centralized Status Evaluation),
+  verify that the spec describes the operation as going through the
+  appropriate centralized module:
+  - Package/track/product mutations -> `package_service`
+  - CVSS and severity mutations -> `ticket_mutations`
 - If the spec describes a new type of gate-relevant mutation, verify
-  that a corresponding function is planned for `ticket_mutations`
+  that a corresponding function is planned for the appropriate module
 - Flag specs that describe direct model manipulation of gate-relevant
   data as **Needs revision**
 
@@ -231,11 +243,12 @@ Provide a structured summary with these sections:
 7. **Spec gaps**: mutations described in feature specs that lack a
    corresponding `TicketAuditEventType` in the contract
 8. **Module bypass (code)**: code paths that modify gate-relevant data
-   outside the `ticket_mutations` module — include file/line, the data
-   modified, and the expected `ticket_mutations` function to use
+   outside the owning module — include file/line, the data modified,
+   and the expected module/function to use (`package_service` for
+   package/track/product data, `ticket_mutations` for CVSS/severity)
 9. **Module bypass (spec)**: spec sections that describe direct
-   manipulation of gate-relevant data without routing through
-   `ticket_mutations`
+   manipulation of gate-relevant data without routing through the
+   appropriate module
 10. **Verdict**: one of:
     - **Clean** — all mutations are tracked with correct events, no
       module bypasses, no gaps
@@ -243,4 +256,4 @@ Provide a structured summary with these sections:
       that should be fixed but don't block
     - **Needs revision** — untracked mutations, missing event types,
       atomicity violations, or gate-relevant data modified outside the
-      `ticket_mutations` module — must be addressed before merging
+      owning module — must be addressed before merging

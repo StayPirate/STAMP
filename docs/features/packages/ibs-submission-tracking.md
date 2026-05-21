@@ -775,9 +775,9 @@ release detection Case B/C).
   side-effect of `add_package_to_ticket`, same category as
   `create_ticket_from_detection`.
 - **Location of trigger**: the enqueue lives in `add_package_to_ticket`
-  (service layer), not in `ticket_mutations`. The discovery task performs
-  external I/O (IBS queries) which is outside the responsibility of
-  `ticket_mutations` (record mutations only).
+  (in `package_service`). The discovery task performs external I/O (IBS
+  queries) which is outside the responsibility of the record mutation
+  functions.
 - **Reuse of `correlate_submission_request`**: Pipeline 3 delegates
   diff API calls and CVE correlation to `correlate_submission_request`
   (Pipeline 1) instead of reimplementing the logic. This ensures that

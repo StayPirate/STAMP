@@ -261,7 +261,10 @@ The dependency evaluates conditions in this exact order:
    (`is_confidential=TRUE`) and the caller does not satisfy any
     authorization rule from `docs/features/tickets/tickets.md`
     (Authorization Rules), return `404 TICKET_NOT_FOUND` — indistinguishable from a
-    non-existent ticket
+    non-existent ticket. The confidentiality evaluation reuses the shared
+    `confidential_ticket_filter()` utility (see
+    `docs/features/tickets/tickets.md`, Confidentiality Filtering) with
+    the single-ticket column reference
 3. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and the
    caller does not hold the Admin role, return `410 TICKET_DELETED`
 

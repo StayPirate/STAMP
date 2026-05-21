@@ -82,7 +82,7 @@ Delivery progress is tracked independently from affectedness:
 The `delivery_status` is persisted as a column (not computed from SR/RR
 joins) because the ticket resolution gate queries it frequently and
 anomaly detection benefits from having both axes on the same record.
-Disalignment risk is mitigated by `ticket_mutations` and the
+Disalignment risk is mitigated by `package_service` and the
 `RequestSyncFetcher` reconciliation phase (see
 [Delivery Reconciliation](#delivery-reconciliation)).
 
@@ -552,13 +552,13 @@ defined in a dedicated specification.
 ## Status Behavior
 
 All track and product status changes described in this section MUST go
-through the `ticket_mutations` module (see
-`docs/features/tickets/ticket-mutations.md`), which
+through the `package_service` module (see
+`docs/features/packages/package-service.md`), which
 ensures automatic ticket status re-evaluation after each change.
 
 ### VA Sets "Affected" on a Track
 
-1. Track status is set to `AFFECTED` (via `ticket_mutations`)
+1. Track status is set to `AFFECTED` (via `package_service`)
 2. Sentinel propagates to all active (not effectively excluded) products
    under that track:
    - Products with `is_status_override = true` are not modified
@@ -694,7 +694,7 @@ are NOT modified — they are implicitly excluded through the hierarchy.
 
 When a soft-deletion leaves a parent record with no remaining children
 that have `deleted_at IS NULL`, the orphan cleanup invariants (defined in
-`docs/features/tickets/ticket-mutations.md`, Orphan Cleanup Invariants)
+`docs/features/packages/package-service.md`, Orphan Cleanup Invariants)
 apply upward: the parent is also soft-deleted. See
 also `docs/features/packages/product-lifecycle-transitions.md` for the
 EOL-triggered cascade.
@@ -817,8 +817,9 @@ requested by the VA). The total number of `TicketAuditEvent` records
 created by a soft-delete operation is `1 + len(cascade)`: one for the
 directly excluded record (with the VA's `user_id`) plus one for each
 ancestor cascaded by orphan cleanup (with `user_id = NULL`). Ticket
-status re-evaluation occurs once at the end, after all cascade events
-are created.
+status re-evaluation occurs after each cascade step (up to 3 times
+for a full product -> track -> package cascade — see
+`docs/features/packages/package-service.md`, Cascading Composition).
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
@@ -859,7 +860,7 @@ automatically (status via propagation from parent track, eligibility via
 CVSS threshold + lifecycle phase calculation). When
 `is_*_override = true`, automatic updates skip the field.
 
-Both dimensions go through `ticket_mutations` and trigger
+Both dimensions go through `package_service` and trigger
 `evaluate_ticket_status`.
 
 ---
@@ -891,10 +892,10 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 3. Infer `workflow_type` for each resolved track (see Design
    Decision 5).
 4. For each resolved track, delegate `TicketPackageTrack` record
-   creation to `ticket_mutations` (if a record does not already exist,
+   creation to `package_service` (if a record does not already exist,
    including soft-deleted).
 5. For each resolved product under each track, delegate
-   `TicketPackageProduct` record creation to `ticket_mutations` (if a
+   `TicketPackageProduct` record creation to `package_service` (if a
    record does not already exist, including soft-deleted).
 6. Resolve and cache the IBS bugowner for the package. If a
    `PackageBugowner` record already exists for this `package_name`,
@@ -910,9 +911,9 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
    - `tracks_created`, `tracks_skipped`, `products_created`,
      `products_skipped`: counts of records created vs. skipped.
 
-`ticket_mutations` handles idempotency (skipping existing records,
+`package_service` handles idempotency (skipping existing records,
 including soft-deleted), initial status determination, and eligibility
-logic internally — see `docs/features/tickets/ticket-mutations.md`.
+logic internally — see `docs/features/packages/package-service.md`.
 
 New records are created with `deleted_at = NULL`. If the parent package
 or track is soft-deleted, these records are automatically **effectively
@@ -1081,11 +1082,11 @@ affectedness status is `WONT_FIX` (protected state).
 
 ## Ticket Lifecycle Integration
 
-All track and product status changes go through the `ticket_mutations`
+All track and product status changes go through the `package_service`
 module, which automatically re-evaluates ticket status after each change.
 See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the
 authoritative gate conditions and status transition rules, and
-`docs/features/tickets/ticket-mutations.md` for the module contract,
+`docs/features/packages/package-service.md` for the module contract,
 including:
 
 - **Analysis → Analyzed**: requires at least one package, all tracks and
@@ -1105,7 +1106,7 @@ The following concerns are identical regardless of `workflow_type`:
 - `DeliveryStatus` enum (the delivery concept exists for both workflows)
 - Status propagation (track → products)
 - Protected state (`WONT_FIX` never modified automatically)
-- `ticket_mutations` module — operates on `TicketPackageTrack` and
+- `package_service` module — operates on `TicketPackageTrack` and
   `TicketPackageProduct`
 - Ticket status gates (Analysis → Analyzed → Resolved)
 - Product eligibility (CVSS threshold, Reactive LTSS phase)
@@ -1151,7 +1152,7 @@ POST /api/v1/tickets/{ticket_id}/packages
 Add a source package to a ticket. Sentinel queries SMELT to resolve all
 maintained tracks and products for the package, creates `TicketPackage`,
 `TicketPackageTrack`, and `TicketPackageProduct` records via
-`ticket_mutations`, resolves the IBS bugowner, and enqueues submission
+`package_service`, resolves the IBS bugowner, and enqueues submission
 discovery. See [Adding Packages to a Ticket](#adding-packages-to-a-ticket)
 for the full behavior.
 
@@ -1222,7 +1223,7 @@ effectively excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 See [Soft-Deletion](#soft-deletion) for the full behavior.
 
 After the soft-delete, the system re-evaluates ticket status via
-`ticket_mutations`. This is necessary because excluding the package
+`package_service`. This is necessary because excluding the package
 changes the set of active records considered by ticket gates (Resolution
 gate and Analysis gate).
 
@@ -1301,7 +1302,7 @@ system-triggered audit events are created (see
 [Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
 After the soft-delete (and any orphan cleanup cascade), the system
-re-evaluates ticket status via `ticket_mutations`. This is necessary
+re-evaluates ticket status via `package_service`. This is necessary
 because excluding a track changes the set of active records considered
 by ticket gates (Resolution gate and Analysis gate).
 
@@ -1403,7 +1404,7 @@ additional system-triggered audit events are created (see
 [Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
 After the soft-delete (and any orphan cleanup cascade), the system
-re-evaluates ticket status via `ticket_mutations`. This is necessary
+re-evaluates ticket status via `package_service`. This is necessary
 because excluding a product changes the set of active records considered
 by ticket gates (Resolution gate and Analysis gate).
 
@@ -1503,7 +1504,7 @@ PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}
 Change the affectedness status of a track. Triggers status propagation
 to all active child products (with eligibility evaluation for
 "Affected"), TicketAuditEvent creation, and ticket status re-evaluation — all
-via `ticket_mutations`.
+via `package_service`.
 
 **Request body**:
 
@@ -1585,7 +1586,7 @@ PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/produc
 Override the affectedness status and/or eligibility of a specific
 product. Sets the corresponding `is_*_override` flag to `true`.
 Triggers TicketAuditEvent creation and ticket status re-evaluation via
-`ticket_mutations`.
+`package_service`.
 
 **Request body**:
 
@@ -1656,7 +1657,7 @@ Both override and reset operations follow the same post-modification flow:
    `status` and `eligible` are modified in the same request, two separate
    audit events are created)
 2. A single ticket status re-evaluation is performed at the end of the
-   transaction (via `ticket_mutations`)
+   transaction (via `package_service`)
 
 This applies to all operations through this endpoint: setting an override,
 changing an override value, and resetting an override.
@@ -1692,6 +1693,157 @@ endpoint above — single-field update from the client's perspective.
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |
 | 422 | `VALIDATION_ERROR` | Invalid status value, or neither `status` nor `eligible` provided |
+
+---
+
+### List Ticket Packages
+
+```
+GET /api/v1/tickets/{ticket_id}/packages
+```
+
+Returns the complete package tree for a specific ticket — all packages,
+tracks, and products including soft-deleted records (with `deleted_at`
+visible on each level). Identical data to the `packages` field in
+`TicketDetail` from `GET /api/v1/tickets/{ticket_id}`, but available as
+a standalone endpoint for clients that only need package data.
+
+| Aspect | Design |
+|--------|--------|
+| **Access** | Public (consistent with `GET /api/v1/tickets/{ticket_id}`) |
+| **Guard** | `require_accessible_ticket` (404/410 for missing/confidential/soft-deleted tickets) |
+| **Pagination** | No — package count per ticket is bounded (typically 1-5, rarely >20) |
+| **Envelope** | `{"data": [...]}` (unpaginated list) |
+| **Soft-deleted records** | All package/track/product records are returned (including soft-deleted), with `deleted_at` visible on each — identical to `TicketDetail.packages` behavior |
+| **Response schema** | `PackageDetail[]` — reuses the existing schema (full tree: package -> tracks -> products) |
+| **Sorting** | Fixed alphabetical order by `package_name` |
+| **Delegation** | Delegates to `package_service.get_ticket_packages()` |
+
+**Response** (200 OK):
+
+```json
+{
+  "data": [...]
+}
+```
+
+The response body is a `PackageDetail[]` array — the same schema used in
+`TicketDetail.packages`.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `TICKET_NOT_FOUND` | Ticket does not exist |
+| 410 | `TICKET_DELETED` | Ticket is soft-deleted and caller is not Admin |
+
+(Global errors from `api-spec.md` apply but are not repeated.)
+
+---
+
+### Search Packages Across Tickets
+
+```
+GET /api/v1/packages
+```
+
+Search and list packages across all tickets. Each result represents a
+single `TicketPackage` record — i.e., one `(package_name, ticket)` pair.
+If the same source package is tracked in multiple tickets, it appears
+once per ticket in the results.
+
+| Aspect | Design |
+|--------|--------|
+| **Access** | Public (consistent with `GET /api/v1/tickets`) |
+| **Confidentiality** | Packages belonging to confidential tickets are excluded for unauthorized callers (same filter as `GET /api/v1/tickets`). The endpoint handler constructs `confidential_ticket_filter()` and passes it to `search_packages(confidentiality_filter=...)` |
+| **Soft-deleted packages** | Always excluded — soft-deleted `TicketPackage` records (`deleted_at IS NOT NULL`) are never returned |
+| **Soft-deleted tickets** | Controlled by `include_deleted` parameter (Admin-only), consistent with `GET /api/v1/tickets` |
+| **Pagination** | Yes — `page` (default 1), `per_page` (default 20, max 100) |
+| **Envelope** | `{"data": [...], "meta": {"total": N, "page": P, "per_page": PP}}` |
+| **Delegation** | Delegates to `package_service.search_packages()` |
+
+#### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `search` | string | Partial match on `package_name` (case-insensitive). Max 500 chars |
+| `name` | string | Exact match on `package_name`. Max 500 chars |
+| `ticket_status` | string (repeatable) | Ticket statuses to include: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated`. Repeatable — multiple values are specified as separate query parameters (e.g., `?ticket_status=new&ticket_status=analysis`). Invalid values are silently ignored per `api-spec.md` (Enum Filter Validation). If all values are invalid, an empty result set is returned. Default: no filter (all statuses) |
+| `include_deleted` | string | Controls visibility of packages belonging to **soft-deleted tickets**. `true` (include packages from active and deleted tickets), `only` (return only packages from deleted tickets). Any other value (including `false`) is treated as absent. Accepted from any caller, but effective only for Admins — silently ignored for non-admin callers. Default (absent or unrecognized value): return only packages from active tickets |
+| `sort_by` | string | `package_name` or `created_at` (default: `created_at`). Refers to `TicketPackage.created_at` (the date the package was added to the ticket), not `Ticket.created_at`. Secondary sort: `id` (deterministic pagination when primary key has duplicates) |
+| `sort_order` | string | `asc` or `desc` (default: `desc`) |
+| `page` | integer | Page number (default: 1, min: 1) |
+| `per_page` | integer | Items per page (default: 20, min: 1, max: 100) |
+
+`search` and `name` are mutually exclusive. If both are provided,
+return 422 `VALIDATION_ERROR`.
+
+Pagination constraints: `page < 1` or `per_page < 1` or `per_page > 100`
+return 422 `VALIDATION_ERROR`. If `page` exceeds the total number of
+pages, an empty `data` array is returned with the correct `total` in
+`meta` — this is not an error.
+
+**Naming note**: the parameter is named `ticket_status` (not `status`)
+to disambiguate from package-level statuses visible in `track_summary`.
+On `GET /api/v1/tickets`, `status` is unambiguous because the resource
+itself is a ticket.
+
+#### Response Schema: `PackageListItem`
+
+```json
+{
+  "id": "uuid",
+  "package_name": "openssl-3",
+  "ticket": {
+    "id": "uuid",
+    "identifier": "SNTL-123",
+    "status": "analysis",
+    "severity": "high",
+    "deleted_at": null
+  },
+  "track_summary": {
+    "total": 5,
+    "affected": 2,
+    "fixed": 1,
+    "not_affected": 1,
+    "wont_fix": 0,
+    "analysis": 1
+  },
+  "created_at": "2026-05-15T10:30:00Z",
+  "updated_at": "2026-05-16T08:00:00Z"
+}
+```
+
+**`ticket`** (`TicketPackageRef`) — lightweight ticket reference:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Ticket ID |
+| `identifier` | string | Human-readable identifier (e.g., `SNTL-123`) |
+| `status` | string | Current ticket status |
+| `severity` | string \| null | Ticket severity |
+| `deleted_at` | datetime \| null | Soft-deletion timestamp. Always present in the schema; `null` for active tickets or when the caller is not Admin |
+
+**`track_summary`** (`TrackSummary`) — aggregated track status counts
+for the package within this ticket. Counts only active tracks
+(`deleted_at IS NULL`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total` | integer | Total active tracks |
+| `affected` | integer | Tracks with status `AFFECTED` |
+| `fixed` | integer | Tracks with status `FIXED` |
+| `not_affected` | integer | Tracks with status `NOT_AFFECTED` |
+| `wont_fix` | integer | Tracks with status `WONT_FIX` |
+| `analysis` | integer | Tracks with status `ANALYSIS` |
+
+#### Error Responses
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `VALIDATION_ERROR` | Both `search` and `name` provided; `per_page` > 100 |
+
+(Global errors from `api-spec.md` apply but are not repeated.)
 
 ---
 
@@ -1745,7 +1897,12 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - Changing track/product status or eligibility requires the
   Vulnerability Analyst role
 - Viewing affectedness data is publicly accessible (no authentication
-  required)
+  required):
+  - `GET /api/v1/tickets/{ticket_id}/packages` — subject to
+    `require_accessible_ticket` (confidentiality check)
+  - `GET /api/v1/packages` — packages belonging to confidential tickets
+    are excluded for unauthorized callers via
+    `confidential_ticket_filter()`
 
 ---
 
@@ -1783,10 +1940,14 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 
 - `docs/api-spec.md` — global API conventions (envelope format, error
   codes, pagination, shared 422 responses)
+- `docs/features/packages/package-service.md` — package-centric
+  mutations, orchestration, and query operations
 - `docs/features/packages/product-catalog.md` — product catalog, SMELT
   product sync, AIMAAS lifecycle/threshold sync, `GET /api/v1/products`
 - `docs/features/tickets/tickets.md` — ticket lifecycle, status gates,
-  ticket mutations module
+  confidentiality filtering (`confidential_ticket_filter()`)
+- `docs/features/tickets/ticket-mutations.md` — ticket-centric mutations,
+  `evaluate_ticket_status()`, `auto_assign_if_needed()`
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
 - `docs/features/tickets/ticket-audit-log.md` — TicketAuditEvent field mapping

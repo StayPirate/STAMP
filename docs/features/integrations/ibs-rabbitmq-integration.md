@@ -179,7 +179,7 @@ For each `suse.obs.package.commit` event:
      - **Case A** — ticket exists, package tracked in the codestream:
        set `TicketPackageTrack.status` to `FIXED` and
        `TicketPackageTrack.delivery_status` to `RELEASED` via
-       `ticket_mutations` (unless protected status `WONT_FIX`)
+       `package_service` (unless protected status `WONT_FIX`)
      - **Case B** — ticket exists, package not tracked: call
        `add_package_to_ticket(ticket_id, package_name)` to resolve
        codestreams/products via SMELT, then set the originating track's

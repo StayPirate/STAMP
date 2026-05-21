@@ -243,6 +243,13 @@ as possible. Two categories of work are forbidden inside it:
    contain only fast reads (single-row lookups for validation) and
    writes.
 
+**I/O-then-Lock corollary**: in modules that contain both orchestration
+functions (with external I/O) and mutation functions (with `FOR UPDATE`
+locks), the two concerns MUST be separated into distinct functions —
+orchestration functions MUST NOT acquire locks. See
+`docs/features/packages/package-service.md` (Module Invariant) for the
+canonical application of this rule.
+
 ### Testing Conventions
 
 - Test files mirror the `app/` directory structure

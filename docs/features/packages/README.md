@@ -13,6 +13,7 @@ package-model.md                      Status model, eligibility, delivery, soft-
 ├── git-product-release-detection.md     Git product-level release detection (TBD)
 └── product-lifecycle-transitions.md     Reactive LTSS / EOL automation
 
+package-service.md                       package_service module contract (mutations, orchestration, queries)
 product-catalog.md                       Product/ProductRepository, SMELT/AIMAAS sync, lifecycle phases
 ibs-submission-tracking.md               SR/RR tracking via RabbitMQ + periodic sync
 package-bugowner.md                      IBS bugowner resolution and cache
@@ -28,6 +29,11 @@ maintainer.md                            Maintainer operations (pending fixes, i
   SMELT product sync, AIMAAS lifecycle/threshold sync, and the
   `GET /api/v1/products` endpoint. `package-model.md` consumes
   product data for eligibility evaluation and track-to-product mapping.
+- `package-service.md` is the service-layer companion to
+  `package-model.md` — it centralizes all package-centric mutations
+  (track/product status, delivery, eligibility, soft-delete/restore),
+  orchestration (`add_package_to_ticket`), and query operations.
+  Depends on `ticket_mutations.evaluate_ticket_status()`.
 - `ibs-submission-tracking.md` is independent but shares the
   `TicketPackageTrack` model and `IBSEventConsumer` infrastructure.
 - `package-bugowner.md` is self-contained — it caches IBS maintainer

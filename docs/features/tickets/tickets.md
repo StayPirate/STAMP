@@ -432,9 +432,12 @@ This rule does not apply to system operations (background tasks,
 automated ingestion). Only VA-initiated actions trigger
 auto-assignment.
 
-This rule is enforced by the `ticket_mutations` module — see
-[ticket-mutations.md](ticket-mutations.md#auto-assignment-rule)
-for implementation details.
+This rule is enforced via the shared helper
+`ticket_mutations.auto_assign_if_needed()`, which is called by all
+modules that modify tickets under a `FOR UPDATE` lock
+(`ticket_mutations`, `package_service`). See
+[ticket-mutations.md](ticket-mutations.md#auto_assign_if_needed) for
+the helper's signature and behavior.
 
 ### Duplicate Handling
 
@@ -879,6 +882,13 @@ rule from [Authorization Rules](#authorization-rules). For
 unauthenticated users, only non-confidential tickets are returned.
 Pagination counts reflect only the tickets visible to the caller.
 
+**Package Search (`GET /api/v1/packages`)**:
+The cross-ticket package search endpoint applies the same
+confidentiality filtering as the ticket list. Packages belonging to
+confidential tickets are excluded for unauthorized callers. See
+`docs/features/packages/package-model.md` (Search Packages Across
+Tickets).
+
 **Maintainer Dashboard (`GET /api/v1/my/packages/*`)**:
 The maintainer dashboard endpoints MUST apply the same confidentiality
 filtering as the ticket list. Although the bugowner email match used by
@@ -893,6 +903,75 @@ If the CVE is linked to a confidential ticket that the caller is not
 authorized to access (or is unauthenticated), the ticket reference MUST
 be omitted entirely from the response. The caller sees no indication
 that a ticket exists for this CVE.
+
+#### Shared Utility: `confidential_ticket_filter()`
+
+The confidentiality filtering logic is implemented as a shared stateless
+function in `backend/app/core/filters.py`. It returns a SQLAlchemy
+`ColumnElement` (a WHERE clause fragment) that any query can apply. The
+endpoint handler constructs the filter; the service function receives it
+as a parameter.
+
+```python
+# backend/app/core/filters.py
+
+def confidential_ticket_filter(
+    ticket_id_col: Column,          # e.g., Ticket.id or TicketPackage.ticket_id
+    is_confidential_col: Column,    # e.g., Ticket.is_confidential
+    caller_is_privileged: bool,     # True if caller has VA or Admin role
+    caller_user_id: UUID | None,    # for TicketAccessGrant lookup
+    caller_email: str | None,       # for bugowner matching (case-insensitive)
+) -> ColumnElement:
+    """Build a SQL filter expression for confidential ticket visibility.
+
+    Returns a boolean SQL expression that evaluates to TRUE for rows
+    the caller is authorized to see. Apply with query.where(...).
+
+    Authorization rules (from tickets.md):
+    - Privileged callers (VA/Admin): see everything (returns TRUE)
+    - Unauthenticated (user_id and email both None): only non-confidential
+    - Authenticated non-privileged: non-confidential OR any of:
+        - TicketAccessGrant exists for (ticket_id, user_id)
+        - PackageBugowner.bugowner_email matches caller_email (person)
+        - PackageBugownerMember.email matches caller_email (group)
+    """
+```
+
+**Behavior**:
+
+```
+IF caller_is_privileged:
+    return literal(True)  # no filter -- VA/Admin see everything
+
+IF caller_user_id is None AND caller_email is None:
+    return is_confidential_col == False  # unauthenticated
+
+return OR(
+    is_confidential_col == False,
+    EXISTS(TicketAccessGrant for caller_user_id),
+    EXISTS(PackageBugowner person match for caller_email),
+    EXISTS(PackageBugownerMember match for caller_email),
+)
+```
+
+**Design properties**:
+
+- **Stateless**: pure function, no side effects, no database calls
+- **Decoupled**: accepts column references, not model instances — works
+  with any query shape (ticket list, package list, CVE details, etc.)
+- **Testable**: can be tested in isolation by inspecting the generated
+  SQL expression
+- **Single responsibility**: the handler knows the user; the service
+  knows the query; the filter knows the rules
+
+**Consumers**:
+
+| Consumer | `ticket_id_col` | Notes |
+|----------|-----------------|-------|
+| `GET /api/v1/tickets` | `Ticket.id` | Ticket list endpoint |
+| `GET /api/v1/packages` | `Ticket.id` (via JOIN) | Cross-ticket package search |
+| `GET /api/v1/my/packages/*` | `Ticket.id` (via JOIN) | Maintainer operations |
+| `require_accessible_ticket` | `Ticket.id` | Single-ticket access guard |
 
 **Accepted risk — `duplicate_of_id` and confidential targets**: A
 Duplicated ticket that is non-confidential may have a `duplicate_of_id`
@@ -1189,7 +1268,10 @@ GET /api/v1/tickets/{ticket_id}
 - **Access level**: Public
 - **Response schema**: `TicketDetail`
 
-Returns a single ticket by UUID or `SNTL-{n}`. The response includes
+Returns a single ticket by UUID or `SNTL-{n}`. The `packages` field
+in the response is populated via
+`package_service.get_ticket_packages()` — the same function used by
+`GET /api/v1/tickets/{ticket_id}/packages`. The response includes
 the full package/track/product tree with bugowner information for each
 package (type, name, email, and group members when applicable — see
 `docs/features/packages/package-bugowner.md`). See
@@ -1707,9 +1789,11 @@ table:
 
 ## Cross-references
 
-- `docs/features/tickets/ticket-mutations.md` — service-layer contract for
-  all gate-relevant mutations, function signatures, concurrency rules,
-  orphan invariants, and architectural test requirements
+- `docs/features/tickets/ticket-mutations.md` — ticket-centric mutations,
+  `evaluate_ticket_status()`, `auto_assign_if_needed()`, concurrency rules,
+  and architectural test requirements
+- `docs/features/packages/package-service.md` — package-centric mutations,
+  orchestration, and query operations (populates `TicketDetail.packages`)
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
 - `docs/features/tickets/ticket-audit-log.md` — audit event contract, detail

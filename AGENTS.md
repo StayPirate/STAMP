@@ -523,24 +523,29 @@ after modifying cross-cutting documents (`docs/data-model.md`,
 ### 16. Centralized ticket status evaluation
 
 CRITICAL: Every service-layer function that modifies data relevant to
-ticket status gates MUST go through the `ticket_mutations` module.
-Direct modification of `TicketPackageTrack`,
-`TicketPackageProduct`, `CVECVSSAssessment` records, or ticket
-severity outside this module is a bug.
+ticket status gates MUST go through the appropriate centralized module:
 
-Relevant data includes: `TicketPackageTrack` records,
-`TicketPackageProduct` records, `CVECVSSAssessment` records, ticket
-severity, and package addition/removal.
+- **Package/track/product mutations** (`TicketPackageTrack`,
+  `TicketPackageProduct`, package soft-delete/restore): `package_service`
+  (`backend/app/services/package_service.py`)
+- **CVSS and severity mutations** (`CVECVSSAssessment` records, severity
+  override): `ticket_mutations`
+  (`backend/app/services/ticket_mutations.py`)
 
-If there is no suitable function in `ticket_mutations` for a new type
-of gate-relevant mutation, add one before proceeding with the
+Both modules call `ticket_mutations.evaluate_ticket_status()` after
+every gate-relevant mutation. Direct modification of gate-relevant
+records outside the owning module is a bug.
+
+If there is no suitable function in the appropriate module for a new
+type of gate-relevant mutation, add one before proceeding with the
 implementation.
 
 The `@ticket-integrity-reviewer` (Guardrail 11) verifies module usage
 compliance after implementation.
 
-See `docs/features/tickets/ticket-mutations.md` for the full
-specification.
+See `docs/features/tickets/ticket-mutations.md` and
+`docs/features/packages/package-service.md` for the full
+specifications.
 
 ### 17. Specification completeness
 
