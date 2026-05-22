@@ -30,10 +30,10 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-22 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
-| [package-service](package-service.md) | 11 | 6 | 2 | 4 | 🟢 | 23 | 2026-05-22 | |
-| | 1:🔴 7:🟠 3:🟡 | 2:🔴 3:🟠 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| [package-model](package-model.md) | 2 | 🟢 | 🟢 | 🟢 | 🟢 | 2 | 2026-05-22 | ⚠️ |
+| | 2:🔴 |  |  |  |  |  |  |  |
+| [package-service](package-service.md) | 10 | 2 | 2 | 4 | 🟢 | 18 | 2026-05-22 | |
+| | 7:🟠 3:🟡 | 1:🔴 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
@@ -48,8 +48,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **11** | **6** | **2** | **4** | **0** | **23** |  |  |
-|  | 1:🔴 7:🟠 3:🟡 | 2:🔴 3:🟠 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| **Total** | **12** | **2** | **2** | **4** | **0** | **20** |  |  |
+|  | 2:🔴 7:🟠 3:🟡 | 1:🔴 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
 
 ### Disabled specs
 

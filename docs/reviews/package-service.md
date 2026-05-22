@@ -18,10 +18,7 @@
 
 ### PKS-GAP-03 — set_product_status() does not distinguish VA override from propagation (High)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The function always creates a `product_status_overridden` audit event, implying it is exclusively for VA overrides. However, `package-model.md` describes automatic product status changes via track propagation. When `set_track_status()` propagates to child products (step 6), it is unclear whether it calls `set_product_status()` — which would incorrectly set `is_status_override = true` and emit `product_status_overridden`. If so, every track status change would incorrectly mark all child products as VA-overridden, breaking future automatic propagation.
+**Status**: RESOLVED — set_product_status() removed; product-level affectedness eliminated. Products no longer have status or is_status_override columns. (2026-05-22)
 
 ### PKS-GAP-04 — add_package_to_ticket() behavior when SMELT returns zero tracks (Medium)
 
@@ -99,10 +96,7 @@ When `add_package_records()` creates `TicketPackageProduct` records, it must cal
 
 ### PKS-COH-01 — set_product_status() does not specify setting is_status_override = true (High)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-package-model.md (VA Overrides a Product Status) states: '1. Product status is set to the chosen value, 2. is_status_override is set to true'. However, package-service.md set_product_status() only mentions 'Update TicketPackageProduct.status' and does not mention setting is_status_override. The audit event is named 'product_status_overridden' (implying override semantics), but the function spec omits the critical flag that prevents future automatic propagation from overwriting the VA's decision.
+**Status**: RESOLVED — set_product_status() removed; no product-level is_status_override to set. Products no longer have affectedness status. (2026-05-22)
 
 ### PKS-COH-02 — set_product_eligibility() does not specify setting is_eligible_override = true (High)
 
@@ -113,24 +107,15 @@ package-model.md (VA Overrides Product Eligibility) states: '1. Product eligible
 
 ### PKS-COH-03 — Propagation to soft-deleted products contradicts 'active only' rule (Medium)
 
-**Category**: Conflicting business rules
-**Status**: OPEN
-
-package-service.md set_track_status() step 6 references package-model.md 'VA Sets a Status on a Track' which states propagation applies to 'all active (not effectively excluded) products'. However, package-model.md Continued Updates section states soft-deleted records 'continue to receive updates from: Status propagation (track → product)'. These two rules within package-model.md contradict each other, and package-service references the first rule while the second rule applies to the same operation.
+**Status**: RESOLVED — Status propagation (track → product) removed entirely. Products no longer have affectedness status; contradiction no longer exists. (2026-05-22)
 
 ### PKS-COH-04 — set_track_status() propagation mechanism for child products unspecified vs set_product_status() (Medium)
 
-**Category**: Incompatible data flows
-**Status**: OPEN
-
-package-service.md set_track_status() step 6 says 'Propagate status to child products' but does not specify whether this calls set_product_status() or uses internal logic. If it calls set_product_status(), it would incorrectly create 'product_status_overridden' audit events. package-model.md's Ticket Events table shows VA override events are distinct from propagation — propagation does not generate product_status_overridden events. This implies set_track_status() must use internal propagation logic separate from set_product_status().
+**Status**: RESOLVED — Propagation step removed from set_track_status(); no child product status changes. Products no longer have affectedness status. (2026-05-22)
 
 ### PKS-COH-05 — IBS product release detection caller uses wrong operation (Medium)
 
-**Category**: Incompatible data flows
-**Status**: OPEN
-
-package-service.md Callers table says 'IBS product release detection' uses 'set_product_status() (released_at)'. However, set_product_status() modifies the affectedness status field, not released_at. Product release detection sets TicketPackageProduct.released_at per package-model.md. There is no set_product_released_at() function defined in package-service.md. Either the callers table is wrong or a function is missing.
+**Status**: RESOLVED — Callers table corrected: set_product_released_at() replaces set_product_status() for IBS product release detection. (2026-05-22)
 
 ### PKS-COH-06 — track_released audit event user_id conflict between package-service and audit-log (Low)
 
