@@ -22,10 +22,7 @@
 
 ### PKS-GAP-04 — add_package_to_ticket() behavior when SMELT returns zero tracks (Medium)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The `package-model.md` API endpoint spec defines error `422 PACKAGE_NOT_FOUND_IN_SMELT` but `add_package_to_ticket()` in this spec does not mention this condition. It is ambiguous what happens when SMELT returns valid responses but with zero tracks: does a `TicketPackage` get created with no tracks? Is the bugowner still resolved? Is the `package_added` audit event still emitted?
+**Status**: RESOLVED — Spec updated: add_package_to_ticket() now documents SMELT validation gate (zero tracks → 422, unavailable → 503) before any DB writes (2026-05-22)
 
 ### PKS-GAP-05 — Product-to-ProductRepository lookup location unspecified (Medium)
 
@@ -100,10 +97,7 @@ When `add_package_records()` creates `TicketPackageProduct` records, it must cal
 
 ### PKS-COH-02 — set_product_eligibility() does not specify setting is_eligible_override = true (High)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-package-model.md (VA Overrides Product Eligibility) states: '1. Product eligible is set to the chosen value, 2. is_eligible_override is set to true'. However, package-service.md set_product_eligibility() only mentions 'Update TicketPackageProduct.eligible' and does not mention setting is_eligible_override. Without this flag, automatic eligibility recalculation would overwrite the VA's manual override.
+**Status**: RESOLVED — Spec updated: set_product_eligibility() now documents is_eligible_override management for both override (bool) and reset (None) cases (2026-05-22)
 
 ### PKS-COH-03 — Propagation to soft-deleted products contradicts 'active only' rule (Medium)
 

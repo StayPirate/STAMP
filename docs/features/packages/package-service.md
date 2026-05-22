@@ -279,7 +279,7 @@ to soft-delete the product record, not to clear `released_at`.
 
 ### `set_product_eligibility()`
 
-Sets the eligibility flag of a `TicketPackageProduct` record.
+Sets or resets the eligibility override of a `TicketPackageProduct` record.
 
 **Parameters**:
 
@@ -287,7 +287,7 @@ Sets the eligibility flag of a `TicketPackageProduct` record.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
-| `eligible` | `bool` | Yes | New eligibility value |
+| `eligible` | `bool \| None` | Yes | New eligibility value (`true`/`false` for override, `None` to reset to automatic calculation) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -299,18 +299,43 @@ Sets the eligibility flag of a `TicketPackageProduct` record.
 
 **Behavior**:
 
+If `eligible` is `bool` (override):
+
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `auto_assign_if_needed()`
 3. Validate preconditions
-4. If eligibility unchanged, return (no-op)
-5. Update `TicketPackageProduct.eligible`
-6. Create `TicketAuditEvent` (`product_eligibility_changed`)
-7. Call `evaluate_ticket_status()`
-8. Return updated product
+4. If `TicketPackageProduct.eligible == eligible` AND `is_eligible_override == true`, return (no-op)
+5. Update `TicketPackageProduct.eligible` to the given value
+6. Set `TicketPackageProduct.is_eligible_override = true`
+7. Create `TicketAuditEvent` (`product_eligibility_changed`)
+8. Call `evaluate_ticket_status()`
+9. Return updated product
+
+If `eligible` is `None` (reset to automatic):
+
+1. Acquire `FOR UPDATE` on the parent Ticket row
+2. Call `auto_assign_if_needed()`
+3. Validate preconditions
+4. If `is_eligible_override == false`, return (no-op — already automatic)
+5. Set `TicketPackageProduct.is_eligible_override = false`
+6. Recalculate eligibility using standard rules (CVSS score resolution per configured version → compare against product threshold from AIMAAS)
+7. Update `TicketPackageProduct.eligible` to the calculated value
+8. Create `TicketAuditEvent` (`product_eligibility_changed`)
+9. Call `evaluate_ticket_status()`
+10. Return updated product
+
+> **Note**: Eligibility recalculation uses the same resolution logic as
+> `re_evaluate_product_eligibility` (CVSS score resolution per
+> `default_cvss_version` → compare against product threshold). Since this
+> requires only single-row database reads (CVE assessments + product
+> threshold), it is acceptable inside the `FOR UPDATE` lock.
 
 **TicketAuditEvent**: `product_eligibility_changed`
 
-**Idempotency**: no-op if eligibility is unchanged.
+**Idempotency**:
+
+- Override (`eligible` is `bool`): no-op if `eligible` matches current value AND `is_eligible_override` is already `true`
+- Reset (`eligible` is `None`): no-op if `is_eligible_override` is already `false` (the current `eligible` value is already system-managed)
 
 ---
 
@@ -589,18 +614,29 @@ async def add_package_to_ticket(
 
 **Behavior**:
 
-1. Create a `TicketPackage` record for the package if one does not
+1. Query SMELT to resolve all currently maintained tracks and products
+   for the given package name (external I/O — no lock held).
+2. If SMELT is unreachable or returns a server error (HTTP 4xx/5xx),
+   raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
+   No records are created.
+3. If SMELT returns a successful response but with zero tracks, raise an
+   application error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`.
+   No records are created.
+4. Create a `TicketPackage` record for the package if one does not
    already exist. If a record already exists (active or soft-deleted),
-   skip creation and proceed to step 2.
-2. Query SMELT to resolve all currently maintained tracks and products
-   for the given package.
-3. Infer `workflow_type` for each resolved track.
-4. Delegate record creation to `add_package_records()` — this is where
+   skip creation and proceed.
+5. Infer `workflow_type` for each resolved track.
+6. Delegate record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
-5. Resolve and cache the IBS bugowner for the package.
-6. Enqueue `discover_submissions_for_ticket_package()` for retroactive
+7. Resolve and cache the IBS bugowner for the package.
+8. Enqueue `discover_submissions_for_ticket_package()` for retroactive
    SR/RR discovery.
-7. Return an `AddPackageResult` with creation/skip counts.
+9. Return an `AddPackageResult` with creation/skip counts.
+
+**Error handling**: steps 1–3 form the validation gate. If any of these
+steps fails, the function raises without side effects (no database writes
+occur). The endpoint handler translates service-layer exceptions to the
+corresponding HTTP error codes defined in `package-model.md`.
 
 **Auto-assignment**: applied by `add_package_records()` (the function
 that acquires the lock), NOT by `add_package_to_ticket()`.
