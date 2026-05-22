@@ -674,12 +674,21 @@ Step 3 — Delivery status reconciliation:
       - track type is IBS (codestream-based)
       - delivery_status != RELEASED
       - the parent ticket is in an open state
+     Note: tracks with delivery_status = RELEASED are pre-filtered as an
+     optimization — they are already in final delivery state and no
+     reconciliation can advance them further.
   9. For each such track, verify that delivery_status is consistent
      with the current SR/RR state:
      - If an SR is correlated and in open or accepted state but
        delivery_status is PENDING -> set to IN_PROGRESS
      - If an accepted RR exists for the correlated incident but
        delivery_status is not RELEASED -> set to RELEASED
+     If set_track_delivery_status() raises InvalidDeliveryStatusTransition
+     (possible due to a TOCTOU race with the real-time RabbitMQ consumer
+     advancing the delivery status between the query and the mutation),
+     log a warning: "RequestSyncFetcher: transition to delivery status
+     {status} blocked for track {track_id}" and continue with the next
+     track without failing the batch.
 ```
 
 #### Why This Approach

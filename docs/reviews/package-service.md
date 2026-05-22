@@ -1,100 +1,212 @@
 # Review: package-service
 
 **Spec**: `docs/features/packages/package-service.md`
-**Last reviewed**: 2026-05-21
-**Reviewers**: Gap Analysis
+**Last reviewed**: 2026-05-22
+**Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
 
 ## Gap Analysis
 
-### PKS-GAP-001 — set_track_status() does not specify WONT_FIX protection enforcement (High)
+### PKS-GAP-01 — set_track_status() does not specify WONT_FIX protection enforcement (High)
+
+**Status**: RESOLVED — Final-status protection added to set_track_status(): system callers rejected with warning log when track is in final state (2026-05-22)
+
+### PKS-GAP-02 — set_track_delivery_status() does not specify delivery status transition validation (High)
+
+**Status**: RESOLVED — Delivery status transition validation added to set_track_delivery_status(); caller error handling documented in ibs-submission-tracking (2026-05-22)
+
+### PKS-GAP-03 — set_product_status() does not distinguish VA override from propagation (High)
 
 **Category**: State machine completeness
 **Status**: OPEN
 
-The `package-model.md` spec states that `WONT_FIX` is never modified by automatic transitions. `set_track_status()` is used by both VA-initiated and system-initiated callers (IBS release detection sets `FIXED` automatically). The spec does not state whether `set_track_status()` enforces the `WONT_FIX` protection itself or delegates that to the caller. When IBS release detection calls `set_track_status(track_id, FIXED, acting_user_id=None)` on a track whose current status is `WONT_FIX`, it is unclear whether the function should silently no-op, raise an error, or apply the change. An implementer could either skip the protection (corrupting the VA's decision) or enforce it (conflicting with callers that expect the function to always succeed).
+The function always creates a `product_status_overridden` audit event, implying it is exclusively for VA overrides. However, `package-model.md` describes automatic product status changes via track propagation. When `set_track_status()` propagates to child products (step 6), it is unclear whether it calls `set_product_status()` — which would incorrectly set `is_status_override = true` and emit `product_status_overridden`. If so, every track status change would incorrectly mark all child products as VA-overridden, breaking future automatic propagation.
 
-### PKS-GAP-002 — set_track_delivery_status() does not specify delivery status transition validation (High)
-
-**Category**: State machine completeness
-**Status**: OPEN
-
-The `package-model.md` defines specific delivery status transitions (`PENDING -> IN_PROGRESS`, `IN_PROGRESS -> RELEASED`, `IN_PROGRESS -> PENDING`) and explicitly states "RELEASED is irreversible." The `set_track_delivery_status()` function accepts any `DeliveryStatus` value with no documented transition validation. A bug in the `RequestSyncFetcher` reconciliation phase could call `set_track_delivery_status(track_id, IN_PROGRESS)` on a track already at `RELEASED`. The spec does not state whether the function should reject this invalid regression, no-op, or apply it. Violating the "RELEASED is irreversible" invariant would corrupt delivery tracking data and could falsely reopen resolved tickets via `evaluate_ticket_status()`.
-
-### PKS-GAP-003 — set_product_status() does not distinguish VA override from propagation (High)
-
-**Category**: State machine completeness
-**Status**: OPEN
-
-The function always creates a `product_status_overridden` audit event, implying it is exclusively for VA overrides. However, `package-model.md` describes automatic product status changes via track propagation (when a VA sets a track status, products inherit). There is no separate function specified for propagation-driven product status updates (which should inherit from the parent track without setting `is_status_override = true`). When `set_track_status()` propagates to child products (step 6), it is unclear whether it calls `set_product_status()` — which would incorrectly set `is_status_override = true` and emit `product_status_overridden`. If so, every track status change would incorrectly mark all child products as VA-overridden, breaking future automatic propagation.
-
-### PKS-GAP-004 — add_package_to_ticket() behavior when SMELT returns zero tracks (Medium)
+### PKS-GAP-04 — add_package_to_ticket() behavior when SMELT returns zero tracks (Medium)
 
 **Category**: Error paths
 **Status**: OPEN
 
-The `package-model.md` API endpoint spec defines error `422 PACKAGE_NOT_FOUND_IN_SMELT` ("SMELT returned no results for the given package name"), but `add_package_to_ticket()` in this spec does not mention this condition. It is ambiguous what happens when SMELT returns valid responses but with zero tracks: does a `TicketPackage` get created with no tracks? Is the bugowner still resolved? Is the `package_added` audit event still emitted?
+The `package-model.md` API endpoint spec defines error `422 PACKAGE_NOT_FOUND_IN_SMELT` but `add_package_to_ticket()` in this spec does not mention this condition. It is ambiguous what happens when SMELT returns valid responses but with zero tracks: does a `TicketPackage` get created with no tracks? Is the bugowner still resolved? Is the `package_added` audit event still emitted?
 
-### PKS-GAP-005 — Product-to-ProductRepository lookup location unspecified (Medium)
-
-**Category**: Error paths
-**Status**: OPEN
-
-The `package-model.md` spec states: "If no matching product is found for a target, log a warning but do not fail." This rule is in `package-model.md` but not in `package-service.md`. If some products resolve and others don't, `add_package_records()` receives a partial `tracks` list. The spec does not clarify who is responsible for the product-to-`ProductRepository` lookup — `add_package_to_ticket()` (before the lock, consistent with I/O-then-Lock) or `add_package_records()` (inside the lock). The I/O-then-Lock invariant suggests the lookup must happen before the lock, but this is not stated.
-
-### PKS-GAP-006 — Bugowner resolution and submission discovery failure behavior unspecified (Medium)
+### PKS-GAP-05 — Product-to-ProductRepository lookup location unspecified (Medium)
 
 **Category**: Error paths
 **Status**: OPEN
 
-Steps 5 and 6 of `add_package_to_ticket()` involve external I/O (IBS API for bugowner, task enqueue for submission discovery). The spec does not specify what happens if bugowner resolution fails (IBS unreachable, package has no bugowner) or if the task enqueue fails (Redis unreachable). It is unclear whether these failures cause the entire operation to fail and rollback the record creation from step 4, or whether they are best-effort. If a bugowner resolution failure rolls back the transaction (including records created by `add_package_records()`), the VA would see the operation fail even though SMELT resolution and record creation succeeded.
+The `package-model.md` spec states: "If no matching product is found for a target, log a warning but do not fail." The spec does not clarify who is responsible for the product-to-`ProductRepository` lookup — `add_package_to_ticket()` (before the lock, consistent with I/O-then-Lock) or `add_package_records()` (inside the lock). The I/O-then-Lock invariant suggests the lookup must happen before the lock, but this is not stated.
 
-### PKS-GAP-007 — add_package_records() with empty tracks list creates orphan (Medium)
+### PKS-GAP-06 — Bugowner resolution and submission discovery failure behavior unspecified (Medium)
+
+**Category**: Error paths
+**Status**: OPEN
+
+Steps 5 and 6 of `add_package_to_ticket()` involve external I/O (IBS API for bugowner, task enqueue for submission discovery). The spec does not specify what happens if bugowner resolution fails or if the task enqueue fails. It is unclear whether these failures cause the entire operation to fail and rollback the record creation from step 4, or whether they are best-effort.
+
+### PKS-GAP-07 — add_package_records() with empty tracks list creates orphan (Medium)
 
 **Category**: Boundary conditions
 **Status**: OPEN
 
-If `tracks` is an empty list, the function would create/skip a `TicketPackage` record, create a `package_added` audit event, and call `evaluate_ticket_status()`, but create zero track/product records. This produces a package with no tracks — which is immediately an orphan. The orphan cleanup invariant only triggers "on soft-deletion events," not on creation with zero children. The result is a `TicketPackage` that exists but has no active tracks, which is an inconsistent state that could block ticket progression.
+If `tracks` is an empty list, the function would create/skip a `TicketPackage` record, create a `package_added` audit event, and call `evaluate_ticket_status()`, but create zero track/product records. This produces a package with no tracks — which is immediately an orphan. The orphan cleanup invariant only triggers "on soft-deletion events," not on creation with zero children.
 
-### PKS-GAP-008 — Restore pre-checks from package-model.md not reflected in module spec (Medium)
+### PKS-GAP-08 — Restore pre-checks from package-model.md not reflected in module spec (Medium)
 
 **Category**: Boundary conditions
 **Status**: OPEN
 
-The `package-model.md` spec defines detailed restore pre-checks: restoring a package requires at least one track with `deleted_at IS NULL` that has at least one product with `deleted_at IS NULL`; restoring a track requires at least one product with `deleted_at IS NULL`. These pre-checks (returning `PACKAGE_RESTORE_BLOCKED`) are absent from the `package_service.md` restore function specs. An implementer following only the module spec would skip them, allowing restoration of packages with no active children.
+The `package-model.md` spec defines detailed restore pre-checks: restoring a package requires at least one track with `deleted_at IS NULL` that has at least one product with `deleted_at IS NULL`; restoring a track requires at least one product with `deleted_at IS NULL`. These pre-checks (returning `PACKAGE_RESTORE_BLOCKED`) are absent from the `package_service.md` restore function specs.
 
-### PKS-GAP-009 — TicketPackage creation in step 1 of add_package_to_ticket outside FOR UPDATE lock (Medium)
+### PKS-GAP-09 — TicketPackage creation in step 1 of add_package_to_ticket outside FOR UPDATE lock (Medium)
 
 **Category**: Data lifecycle
 **Status**: OPEN
 
-Step 1 of `add_package_to_ticket()` creates a `TicketPackage` record, and step 4 delegates to `add_package_records()` which acquires the `FOR UPDATE` lock. The `TicketPackage` creation in step 1 happens before the lock is acquired. Two concurrent calls for the same ticket and package could both attempt to create the record, causing a unique constraint violation on `(ticket_id, package_name)`. The spec should clarify whether step 1's creation is moved inside `add_package_records()` (inside the lock) or whether the constraint violation should be caught as a no-op.
+Step 1 of `add_package_to_ticket()` creates a `TicketPackage` record before the lock is acquired in step 4. Two concurrent calls for the same ticket and package could both attempt to create the record, causing a unique constraint violation. The spec should clarify whether step 1's creation is moved inside `add_package_records()` or whether the constraint violation should be caught as a no-op.
 
-### PKS-GAP-010 — TrackData type not defined (Medium)
+### PKS-GAP-10 — TrackData type not defined (Medium)
 
 **Category**: Data lifecycle
 **Status**: OPEN
 
-The `TrackData` type is referenced in the `add_package_records()` parameter table but never defined. What fields does it contain? At minimum it must include `reference`, `workflow_type`, and a list of products. But the structure is unspecified. The I/O-then-Lock pattern implies all external resolution (SMELT, ProductRepository lookups) happens before `add_package_records()`, so `TrackData` must contain resolved data — but this is not stated. Without a definition, implementers must reverse-engineer the structure from the behavioral description.
+The `TrackData` type is referenced in the `add_package_records()` parameter table but never defined. What fields does it contain? The I/O-then-Lock pattern implies all external resolution happens before `add_package_records()`, so `TrackData` must contain fully resolved data — but this is not stated. Without a definition, implementers must reverse-engineer the structure.
 
-### PKS-GAP-011 — Mutations on effectively-excluded records not explicitly permitted or denied (Low)
+### PKS-GAP-11 — Mutations on effectively-excluded records not explicitly permitted or denied (Low)
 
 **Category**: Boundary conditions
 **Status**: OPEN
 
-The preconditions for `set_track_status()` check that the track itself is not soft-deleted and the ticket is not soft-deleted, but do not check whether the parent `TicketPackage` is soft-deleted. Per the hierarchical exclusion model, a track whose parent package is soft-deleted is "effectively excluded." The same gap exists for product-level mutations. Soft-deleted records "continue to receive updates" per `package-model.md`, so allowing mutations on effectively-excluded records may be intentional, but the spec should be explicit.
+The preconditions for `set_track_status()` check that the track itself is not soft-deleted and the ticket is not soft-deleted, but do not check whether the parent `TicketPackage` is soft-deleted. Per the hierarchical exclusion model, a track whose parent package is soft-deleted is "effectively excluded." The spec should be explicit about whether mutations on effectively-excluded records are permitted.
 
-### PKS-GAP-012 — Delivery status regression audit event omitted (Low)
+### PKS-GAP-12 — Delivery status regression audit event omitted (Low)
 
 **Category**: State machine completeness
 **Status**: OPEN
 
-When delivery regresses from `IN_PROGRESS` to `PENDING` (all SRs revoked/declined), no `TicketAuditEvent` is created. The spec only documents that `RELEASED` generates an event and "intermediate" transitions do not. A regression signals a failed delivery attempt worth a VA's attention but produces no ticket-level audit trail. The omission is likely intentional (submission tracking handles this), but the gap means there is no ticket-level record for delivery regressions.
+When delivery regresses from `IN_PROGRESS` to `PENDING` (all SRs revoked/declined), no `TicketAuditEvent` is created. The spec only documents that `RELEASED` generates an event and "intermediate" transitions do not. A regression signals a failed delivery attempt worth a VA's attention but produces no ticket-level audit trail.
 
-### PKS-GAP-013 — Eligibility calculation I/O location within lock not specified (Low)
+### PKS-GAP-13 — Eligibility calculation I/O location within lock not specified (Low)
 
 **Category**: Configuration and defaults
 **Status**: OPEN
 
-When `add_package_records()` creates `TicketPackageProduct` records with parent status `AFFECTED`, it must calculate eligibility. This requires resolving the CVSS score and looking up product lifecycle data. The spec says the module "delegates CVSS resolution and eligibility calculation to pure functions in `cvss.py`" but does not specify whether these database reads happen inside the `FOR UPDATE` lock. The "pure functions" characterization of `cvss.py` strongly implies no external I/O, making this a minor documentation gap.
+When `add_package_records()` creates `TicketPackageProduct` records, it must calculate eligibility. This requires resolving the CVSS score and looking up product lifecycle data. The spec says the module "delegates CVSS resolution and eligibility calculation to pure functions in `cvss.py`" but does not specify whether these database reads happen inside the `FOR UPDATE` lock.
+
+---
+
+## Coherence
+
+### PKS-COH-01 — set_product_status() does not specify setting is_status_override = true (High)
+
+**Category**: Contradictory definitions
+**Status**: OPEN
+
+package-model.md (VA Overrides a Product Status) states: '1. Product status is set to the chosen value, 2. is_status_override is set to true'. However, package-service.md set_product_status() only mentions 'Update TicketPackageProduct.status' and does not mention setting is_status_override. The audit event is named 'product_status_overridden' (implying override semantics), but the function spec omits the critical flag that prevents future automatic propagation from overwriting the VA's decision.
+
+### PKS-COH-02 — set_product_eligibility() does not specify setting is_eligible_override = true (High)
+
+**Category**: Contradictory definitions
+**Status**: OPEN
+
+package-model.md (VA Overrides Product Eligibility) states: '1. Product eligible is set to the chosen value, 2. is_eligible_override is set to true'. However, package-service.md set_product_eligibility() only mentions 'Update TicketPackageProduct.eligible' and does not mention setting is_eligible_override. Without this flag, automatic eligibility recalculation would overwrite the VA's manual override.
+
+### PKS-COH-03 — Propagation to soft-deleted products contradicts 'active only' rule (Medium)
+
+**Category**: Conflicting business rules
+**Status**: OPEN
+
+package-service.md set_track_status() step 6 references package-model.md 'VA Sets a Status on a Track' which states propagation applies to 'all active (not effectively excluded) products'. However, package-model.md Continued Updates section states soft-deleted records 'continue to receive updates from: Status propagation (track → product)'. These two rules within package-model.md contradict each other, and package-service references the first rule while the second rule applies to the same operation.
+
+### PKS-COH-04 — set_track_status() propagation mechanism for child products unspecified vs set_product_status() (Medium)
+
+**Category**: Incompatible data flows
+**Status**: OPEN
+
+package-service.md set_track_status() step 6 says 'Propagate status to child products' but does not specify whether this calls set_product_status() or uses internal logic. If it calls set_product_status(), it would incorrectly create 'product_status_overridden' audit events. package-model.md's Ticket Events table shows VA override events are distinct from propagation — propagation does not generate product_status_overridden events. This implies set_track_status() must use internal propagation logic separate from set_product_status().
+
+### PKS-COH-05 — IBS product release detection caller uses wrong operation (Medium)
+
+**Category**: Incompatible data flows
+**Status**: OPEN
+
+package-service.md Callers table says 'IBS product release detection' uses 'set_product_status() (released_at)'. However, set_product_status() modifies the affectedness status field, not released_at. Product release detection sets TicketPackageProduct.released_at per package-model.md. There is no set_product_released_at() function defined in package-service.md. Either the callers table is wrong or a function is missing.
+
+### PKS-COH-06 — track_released audit event user_id conflict between package-service and audit-log (Low)
+
+**Category**: Contradictory definitions
+**Status**: OPEN
+
+ticket-audit-log.md defines track_released with user_id = NULL (system action). package-service.md set_track_delivery_status() creates track_released when delivery_status transitions to RELEASED. Since delivery status is system-managed per package-model.md, acting_user_id should always be None for this function. However, the function signature accepts acting_user_id: UUID | None, and the general pattern calls auto_assign_if_needed() — implying it could be called with a user context.
+
+---
+
+## Design
+
+### PKS-DES-01 — Orphan cascade calls evaluate_ticket_status() multiple times per operation (Medium)
+
+**Category**: Complexity and performance
+**Status**: OPEN
+
+The orphan cascade shows evaluate_ticket_status() being called at each level: after the product soft-delete, after the orphan-triggered track soft-delete, and after the orphan-triggered package soft-delete. In the worst case, this calls evaluate_ticket_status() three times within the same transaction. Since the function queries all active tracks/products to determine ticket status, only the final evaluation matters. Alternative: call evaluate_ticket_status() once at the end of the entire cascade.
+
+### PKS-DES-02 — No mechanism to batch-set track statuses without repeated lock acquisition (Low)
+
+**Category**: Scalability
+**Status**: OPEN
+
+Each mutation function independently acquires FOR UPDATE on the parent ticket. When a VA sets status on multiple tracks of the same ticket (common workflow: marking 20 tracks as NOT_AFFECTED), each call independently locks, evaluates, and releases. Alternative: add a batch variant that acquires the lock once, applies all mutations, then evaluates once. Acceptable to defer.
+
+### PKS-DES-03 — set_track_status() lacks WONT_FIX protection specification (High)
+
+**Status**: RESOLVED — Cross-agent duplicate of PKS-GAP-001 (2026-05-22)
+
+### PKS-DES-04 — set_track_delivery_status() lacks transition validation (High)
+
+**Status**: RESOLVED — Cross-agent duplicate of PKS-GAP-002 (2026-05-22)
+
+### PKS-DES-05 — TicketPackage creation in add_package_to_ticket() is outside the FOR UPDATE lock (Medium)
+
+**Status**: RESOLVED — Cross-agent duplicate of PKS-GAP-009 (2026-05-22)
+
+### PKS-DES-06 — Product status propagation mechanism unspecified (internal vs set_product_status) (High)
+
+**Status**: RESOLVED — Cross-agent duplicate of PKS-GAP-003 (2026-05-22)
+
+---
+
+## Security
+
+### PKS-SEC-01 — No authorization enforcement specified at service layer for acting_user_id (Medium)
+
+**Category**: Authorization
+**Status**: OPEN
+
+The spec defines an acting_user_id parameter convention but does not specify any validation that the provided UUID actually corresponds to the authenticated caller. If an API handler passes a different user's UUID (due to a bug or IDOR in the handler), the service would auto-assign the ticket to that user and create audit events attributing the action to them. The service layer trusts the caller completely for identity — which is acceptable if the API layer is the only entry point, but the spec should acknowledge this trust boundary explicitly.
+
+### PKS-SEC-02 — Confidentiality filter delegation creates risk of bypass in new callers (Medium)
+
+**Category**: Authorization
+**Status**: OPEN
+
+The search_packages() function receives a pre-built confidentiality_filter from the endpoint handler and states 'The service function is unaware of access rules.' Similarly, get_ticket_packages() relies on the caller performing require_accessible_ticket before invocation. Any new caller that forgets to apply the confidentiality check will expose confidential ticket package data. The spec does not define a defensive fallback.
+
+### PKS-SEC-03 — No input validation specified for package_name parameter (Low)
+
+**Category**: Input validation
+**Status**: OPEN
+
+The add_package_to_ticket() function accepts a package_name: str that is used to query SMELT and create database records. The spec does not specify any validation (length limit, allowed characters, format).
+
+### PKS-SEC-04 — search_packages ILIKE pattern not escaped (Low)
+
+**Category**: Input validation
+**Status**: OPEN
+
+The search_packages() function applies search as ILIKE '%term%' substring match. The spec does not mention escaping SQL LIKE metacharacters (%, _, \) in user input.
+
+---
+
+## API Conventions
+
+_No findings — the spec defines service functions, not API endpoints._

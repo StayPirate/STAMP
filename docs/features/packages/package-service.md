@@ -144,22 +144,37 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `auto_assign_if_needed()`
 3. Validate preconditions
-4. If status unchanged, return (no-op)
-5. Update `TicketPackageTrack.status`
-6. Propagate status to child products and recalculate eligibility per the
+4. If status unchanged → return (no-op, no log, no audit event)
+5. If `acting_user_id` is `None` and current status is final
+   (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) → reject: log warning
+   `"Rejected automatic transition from {current_status} to {new_status}
+   on track {track_id}: track is in final status"`, return track
+   unchanged (no audit event)
+6. Update `TicketPackageTrack.status`
+7. Propagate status to child products and recalculate eligibility per the
    rules in `docs/features/packages/package-model.md`
    ([VA Sets a Status on a Track](package-model.md#va-sets-a-status-on-a-track)).
    For each product whose `eligible` value actually changes during
    recalculation, create a `TicketAuditEvent`
    (`product_eligibility_changed`, `user_id = NULL`). Products whose
    eligibility is unchanged produce no event
-7. Create `TicketAuditEvent` (`track_status_changed`)
-8. Call `evaluate_ticket_status()`
-9. Return updated track
+8. Create `TicketAuditEvent` (`track_status_changed`)
+9. Call `evaluate_ticket_status()`
+10. Return updated track
 
 **TicketAuditEvent**: `track_status_changed`
 
-**Idempotency**: no-op if status is unchanged.
+**Idempotency**: no-op if status is unchanged (step 4).
+
+**Final-status protection**: system callers (`acting_user_id = None`)
+cannot transition tracks out of final states. If the requested status
+differs from the current final status, the transition is rejected with a
+warning log (step 5). This enforces the invariant from
+`package-model.md`
+([Automatic Transitions](package-model.md#automatic-transitions)) that
+final-status records are not eligible as source states for automatic
+transitions. VA callers (`acting_user_id` present) can transition from
+any state — the VA has full override authority.
 
 ---
 
@@ -181,14 +196,23 @@ Sets the delivery status of a `TicketPackageTrack` record.
 - Track must exist and have `deleted_at IS NULL`
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone
+- The transition `current_delivery_status → new_delivery_status` must be
+  valid per the delivery status transition rules in
+  `docs/features/packages/package-model.md`. In particular, any regression
+  from `RELEASED` is illegal.
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `auto_assign_if_needed()`
 3. Validate preconditions
-4. If delivery_status unchanged, return (no-op)
-5. Update `TicketPackageTrack.delivery_status`
+4. Validate transition: verify that `current_delivery_status →
+   new_delivery_status` is a legal transition per the delivery status
+   state machine defined in `package-model.md`. If the transition is
+   illegal (e.g., `RELEASED → IN_PROGRESS`, `RELEASED → PENDING`), raise
+   `InvalidDeliveryStatusTransition` without modifying the record.
+5. If delivery_status unchanged, return (no-op)
+6. Update `TicketPackageTrack.delivery_status`
 6. If new delivery_status is `RELEASED`: create `TicketAuditEvent`
    (`track_released`)
 7. Return updated track
@@ -760,6 +784,7 @@ external I/O MUST NOT acquire `FOR UPDATE` locks.
 | `TrackNotFoundError` | Track ID does not exist or is soft-deleted |
 | `ProductNotFoundError` | Product ID does not exist or is soft-deleted |
 | `PackageNotFoundError` | Package ID does not exist or is soft-deleted |
+| `InvalidDeliveryStatusTransition` | Requested delivery status transition is illegal (e.g., regression from `RELEASED`) |
 
 ## Callers
 
