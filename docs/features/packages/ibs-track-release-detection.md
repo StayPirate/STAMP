@@ -32,9 +32,9 @@ status of the products under it**. The `delivery_status` is not modified by
 track release detection — it is managed independently by the submission
 tracking mechanism (see `docs/features/packages/ibs-submission-tracking.md`).
 
-The automatic transition is suppressed when the current status is `WONT_FIX`
-(protected state — see `docs/features/packages/package-model.md`, "Status
-Behavior").
+The automatic transition applies only when the current track status is
+`AFFECTED` or `ANALYSIS` (see `docs/features/packages/package-model.md`,
+Automatic Transitions).
 
 ## Detection Mechanism
 
@@ -129,7 +129,8 @@ A `TicketPackageTrack` record exists for the ticket's CVE with
 `package_name = P` and `reference = C`.
 
 - Set `TicketPackageTrack.status` to `FIXED` through the
-  `package_service` module (unless current status is `WONT_FIX`).
+  `package_service` module (only when current status is `AFFECTED` or
+  `ANALYSIS`).
 - Create a `TicketAuditEvent` with `event_type = track_status_changed`,
   `user_id = NULL` (system action), `old_value` = previous status,
   `new_value = FIXED`, `comment` = `"{C} {P}"` (track_name package_name).

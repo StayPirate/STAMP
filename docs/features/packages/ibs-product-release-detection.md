@@ -27,10 +27,6 @@ fix appears in that specific product's update repository. The product's
 affectedness status is NOT changed — release confirmation is tracked
 exclusively via the `released_at` timestamp.
 
-Products with status `WONT_FIX` (protected state — see
-`docs/features/packages/package-model.md`, "Status Behavior") are
-excluded from scanning.
-
 ## Detection Mechanism
 
 Sentinel uses an internal abstraction `ProductReleaseDetector` based on the
@@ -51,11 +47,11 @@ below for how `<repo_url>` is constructed):
 3. Download and parse `updateinfo.xml`.
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
-   matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-   records reference P, have `eligible = true`, and
-   `released_at IS NULL`. Soft-deleted products are included — release
-   detection applies regardless of exclusion status (see hierarchical
-   exclusion model in `docs/features/packages/package-model.md`).
+    matching the CVE-ID of any active ticket whose `TicketPackageProduct`
+    records reference P and have `released_at IS NULL`. Soft-deleted
+    products are included — release detection applies regardless of
+    exclusion status (see hierarchical exclusion model in
+    `docs/features/packages/package-model.md`).
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received
@@ -233,9 +229,6 @@ Then:
 
 - `TicketPackageProduct(S, P).released_at` = advisory's `<issued date>`.
 - The product's affectedness status is NOT changed.
-- Products with status `WONT_FIX` (protected state) are excluded from
-  scanning and will never reach this outcome (see scope filter in
-  [Background Task](#background-task)).
 
 ### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
 
@@ -256,9 +249,9 @@ not tracked in ticket, or no ticket exists at all) is described in
 - **Task name**: `check_product_releases`
 - **Type**: `BaseFetcher` subclass
 - **Schedule**: TBD (see [Open Items](#open-items))
-- **Scope**: scans products with `eligible = true` and `released_at IS NULL`,
-  excluding those with status `WONT_FIX` (protected state). Soft-deleted
-  products are included (see hierarchical exclusion model)
+- **Scope**: scans all `TicketPackageProduct` records with
+  `released_at IS NULL` belonging to active tickets. Soft-deleted
+  products are included (see hierarchical exclusion model).
 
 ## Open Items
 

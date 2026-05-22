@@ -344,7 +344,8 @@ with an active ticket, Sentinel performs the following recalculation:
    - If the new score is **below** a product's threshold (and the product
      was previously above): set `eligible = false`
    - Products whose status was set directly by a VA are not modified
-   - Products in the protected state `WONT_FIX` are not modified
+   - Products in a final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`)
+     are not modified
    - Products in Reactive LTSS phase remain `eligible = false` regardless
 3. **Ticket status re-evaluation**: eligibility changes in step 2 MUST be
    applied through the `ticket_mutations` module, which then calls

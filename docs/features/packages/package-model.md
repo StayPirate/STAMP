@@ -611,13 +611,10 @@ any active product under it has `eligible = true`.
 | From | To | Applies to | Trigger |
 |------|----|------------|---------|
 | `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Track release detection (MD5 match confirms fix in codestream) |
-| any non-protected | inherited from track | TicketPackageProduct | Track status changed by VA (propagation) |
+| non-final | inherited from track | TicketPackageProduct | Track status changed by VA (propagation) |
 
-**Protected state** (pending removal — see `docs/drafts/open-points.md`,
-section 4): `WONT_FIX` is currently never modified by automatic
-transitions. If a track or product has status `WONT_FIX`, no automatic
-status change is applied. This behavior will be removed in the future so
-that `WONT_FIX` behaves identically to the other final statuses.
+Records in a final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
+eligible as source states for automatic transitions.
 
 **Delivery status transitions** (system-managed):
 
@@ -1080,8 +1077,11 @@ different data:
 - The product level sets `TicketPackageProduct.released_at` when the
   fix appears in that specific product's update repository.
 
-In both cases, the automatic transition is suppressed when the current
-affectedness status is `WONT_FIX` (protected state).
+The track-level automatic transition applies only when the current
+status is `AFFECTED` or `ANALYSIS` (see Automatic Transitions above).
+The product-level `released_at` timestamp is set regardless of
+affectedness status — it records a factual observation about the
+product's update repository.
 
 ---
 
@@ -1110,7 +1110,8 @@ The following concerns are identical regardless of `workflow_type`:
 - `PackageStatus` enum and all valid transitions
 - `DeliveryStatus` enum (the delivery concept exists for both workflows)
 - Status propagation (track → products)
-- Protected state (`WONT_FIX` never modified automatically)
+- Final-status immunity (records in `NOT_AFFECTED`, `FIXED`, or `WONT_FIX`
+  are never modified by automatic transitions)
 - `package_service` module — operates on `TicketPackageTrack` and
   `TicketPackageProduct`
 - Ticket status gates (Analysis → Analyzed → Resolved)

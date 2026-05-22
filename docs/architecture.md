@@ -263,8 +263,10 @@ authoritative details.
    identifies the specific source package fixed by the advisory. When
    matched, `TicketPackageProduct.released_at` is set to the advisory's
    `<issued date>`.
-4. Both levels honor the protected state `WONT_FIX`, which is never
-   modified automatically.
+4. Track-level detection only transitions records in `AFFECTED` or
+   `ANALYSIS` status; records in a final status are not modified.
+   Product-level detection sets `released_at` regardless of affectedness
+   status (it is a factual observation, not a status transition).
 5. When all packages in a ticket reach a final status, the ticket can
    transition to Resolved.
 

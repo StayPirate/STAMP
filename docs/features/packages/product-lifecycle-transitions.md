@@ -103,10 +103,7 @@ tickets with non-final status:
 | `ANALYSIS` | Soft-delete the product: call `package_service.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
 
 Records in final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
-modified. Note: `WONT_FIX` is additionally protected from automatic
-transitions (see `docs/features/packages/package-model.md`, "Automatic
-Transitions") — this behavior is pending removal (see
-`docs/drafts/open-points.md`, section 4).
+modified.
 
 #### Reason: `threshold_change` / `cvss_change`
 
@@ -163,14 +160,6 @@ Existing behavior unchanged: when a product's threshold changes, enqueue
 Existing behavior unchanged: syncs lifecycle dates from AIMAAS. Does NOT
 perform re-evaluation — phase detection is handled by
 `check_lifecycle_phase_transitions`.
-
-## Protected States
-
-Consistent with the rest of the system, `WONT_FIX` is currently never
-modified by automatic transitions. Records with status `WONT_FIX` are
-not soft-deleted or have their eligibility changed by lifecycle
-transitions. This behavior is pending removal — see
-`docs/drafts/open-points.md`, section 4.
 
 ## Security
 

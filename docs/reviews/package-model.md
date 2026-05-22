@@ -35,9 +35,7 @@
 ### PKM-GAP-004 — WONT_FIX protected state interaction with delivery-triggered FIXED is underspecified for products (Low)
 
 **Category**: State machine completeness
-**Status**: OPEN
-
-The spec states that `WONT_FIX` is never modified by automatic transitions, and "the automatic transition is suppressed when the current affectedness status is `WONT_FIX`." However, when delivery reaches RELEASED, the track is set to FIXED, which "triggers normal propagation to products." The spec says propagation skips products with `is_status_override = true`, but does not explicitly state whether propagation also skips products whose status is `WONT_FIX` via override. If a product inherited `WONT_FIX` from the track (before the track changed to FIXED), the `is_status_override` is false, so propagation would overwrite it to FIXED — which contradicts the "protected state" rule. The interaction between track-level protection and product-level inheritance needs clarification.
+**Status**: RESOLVED — "Protected state" concept removed entirely; WONT_FIX is now treated identically to other final statuses (not in the source set for automatic transitions). See `docs/drafts/remove-protected-state.md` (2026-05-22)
 
 ### PKM-GAP-008 — Automatic FIXED transition when delivery reaches RELEASED does not check if track status is already FIXED (Low)
 
