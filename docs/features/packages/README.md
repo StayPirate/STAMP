@@ -31,7 +31,7 @@ maintainer.md                            Maintainer operations (pending fixes, i
   product data for eligibility evaluation and track-to-product mapping.
 - `package-service.md` is the service-layer companion to
   `package-model.md` — it centralizes all package-centric mutations
-  (track/product status, delivery, eligibility, soft-delete/restore),
+  (track status, delivery, product eligibility, soft-delete/restore),
   orchestration (`add_package_to_ticket`), and query operations.
   Depends on `ticket_mutations.evaluate_ticket_status()`.
 - `ibs-submission-tracking.md` is independent but shares the

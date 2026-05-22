@@ -53,8 +53,9 @@ re-evaluation.
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
 2. Find all products currently in **EOL** phase (past all applicable
    lifecycle dates)
-   - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     or `ANALYSIS` in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
+   - For each: query `TicketPackageProduct` records whose parent
+     `TicketPackageTrack` has status `AFFECTED` or `ANALYSIS` in active
+     tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
 3. If no actionable records found for a product, no sub-task is enqueued
@@ -88,22 +89,22 @@ tickets with `eligible = true` and `is_eligible_override = false`:
 
 - Call `package_service.set_product_eligibility(record, eligible=false)`
 
-Only the `eligible` flag is changed — the product's affectedness status
-is not modified. Records with `is_eligible_override = true` are not
-modified (already filtered out by the query).
+Only the `eligible` flag is changed. Records with
+`is_eligible_override = true` are not modified (already filtered out by
+the query).
 
 #### Reason: `eol`
 
 For all `TicketPackageProduct` records referencing this product in open
-tickets with non-final status:
+tickets whose parent `TicketPackageTrack` has a non-final status
+(`AFFECTED` or `ANALYSIS`):
 
-| Current status | Action |
-|----------------|--------|
-| `AFFECTED` | Soft-delete the product: call `package_service.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
-| `ANALYSIS` | Soft-delete the product: call `package_service.soft_delete_ticket_package_product(record)` with a `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason) |
+- Soft-delete the product: call
+  `package_service.soft_delete_ticket_package_product(record)` with a
+  `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason)
 
-Records in final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
-modified.
+Products under tracks with a final status (`NOT_AFFECTED`, `FIXED`,
+`WONT_FIX`) are not modified.
 
 #### Reason: `threshold_change` / `cvss_change`
 

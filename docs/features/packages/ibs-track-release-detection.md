@@ -28,7 +28,7 @@ package:
 
 The codestream level updates `TicketPackageTrack.status` to `FIXED` as
 soon as the fix appears in the codestream IBS project, **regardless of the
-status of the products under it**. The `delivery_status` is not modified by
+state of the products under it**. The `delivery_status` is not modified by
 track release detection — it is managed independently by the submission
 tracking mechanism (see `docs/features/packages/ibs-submission-tracking.md`).
 

@@ -151,16 +151,9 @@ Sets the affectedness status of a `TicketPackageTrack` record.
    on track {track_id}: track is in final status"`, return track
    unchanged (no audit event)
 6. Update `TicketPackageTrack.status`
-7. Propagate status to child products and recalculate eligibility per the
-   rules in `docs/features/packages/package-model.md`
-   ([VA Sets a Status on a Track](package-model.md#va-sets-a-status-on-a-track)).
-   For each product whose `eligible` value actually changes during
-   recalculation, create a `TicketAuditEvent`
-   (`product_eligibility_changed`, `user_id = NULL`). Products whose
-   eligibility is unchanged produce no event
-8. Create `TicketAuditEvent` (`track_status_changed`)
-9. Call `evaluate_ticket_status()`
-10. Return updated track
+7. Create `TicketAuditEvent` (`track_status_changed`)
+8. Call `evaluate_ticket_status()`
+9. Return updated track
 
 **TicketAuditEvent**: `track_status_changed`
 
@@ -234,9 +227,11 @@ through the submission tracking system (see
 
 ---
 
-### `set_product_status()`
+### `set_product_released_at()`
 
-Sets the status of a `TicketPackageProduct` record.
+Sets the `released_at` timestamp on a `TicketPackageProduct` record when
+product release detection confirms the fix in the product's update
+repository.
 
 **Parameters**:
 
@@ -244,37 +239,39 @@ Sets the status of a `TicketPackageProduct` record.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
-| `status` | `PackageStatus` | Yes | New status value |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `released_at` | `datetime` | Yes | Advisory issued date (UTC) |
+| `advisory_id` | `str` | Yes | Advisory identifier (e.g., `SUSE-SU-2025:1234-1`) |
 
-**Preconditions**:
-
-- Product must exist and have `deleted_at IS NULL`
-- Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
+**Preconditions**: none — release detection applies regardless of
+soft-deletion status or parent track status (it is a factual
+observation).
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
-3. Validate preconditions
-4. If status unchanged, return (no-op)
-5. Update `TicketPackageProduct.status`
-6. Recalculate eligibility if `is_eligible_override = false` (products
-   with eligibility override are not recalculated). See
-   `docs/features/packages/package-model.md`
-   ([Axis 2: Eligibility](package-model.md#axis-2-eligibility-per-product-only))
-   for the computation rules. If eligibility recalculation changes the
-   `eligible` value, create a `TicketAuditEvent`
-   (`product_eligibility_changed`) in the same transaction
-7. Create `TicketAuditEvent` (`product_status_overridden`)
-8. Call `evaluate_ticket_status()`
-9. Return updated product
+2. Load the product record (no `deleted_at` filter — soft-deleted
+   products are included)
+3. If `released_at` is already set, return (no-op — release confirmation
+   is irreversible; see below)
+4. Set `TicketPackageProduct.released_at` to the provided value
+5. Create `TicketAuditEvent` (`product_released`, `user_id = NULL`)
+   with detail: `{"track": "...", "package": "...", "product_id": "...",
+   "advisory_id": "..."}`
+6. Call `evaluate_ticket_status()`
+7. Return updated product
 
-**TicketAuditEvent**: `product_status_overridden`
+**TicketAuditEvent**: `product_released`
 
-**Idempotency**: no-op if status is unchanged.
+**Idempotency**: no-op if `released_at` is already set (step 3).
+
+**Irreversibility**: once set, `released_at` cannot be cleared or
+modified. An advisory present in `updateinfo.xml` is a factual
+observation — it cannot be "un-published". If an advisory is
+misidentified (wrong source package match), the correct resolution is
+to soft-delete the product record, not to clear `released_at`.
+
+**Callers**: IBS product release detection tasks only
+(`acting_user_id` is always `None`; auto-assignment does not apply).
 
 ---
 
@@ -349,8 +346,7 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
    - For each product under the track:
      - Create or skip `TicketPackageProduct` (idempotent — skip if
        exists, including soft-deleted records)
-     - Initial status: inherited from parent track (see Record Creation
-       Logic below)
+     - Calculate initial eligibility (see Record Creation Logic below)
 6. Create `TicketAuditEvent` (`package_added`)
 7. Call `evaluate_ticket_status()`
 8. Return created records
@@ -743,21 +739,14 @@ parent — no cascade to children (per the hierarchical exclusion model).
 When `package_service` creates a new `TicketPackageTrack` record, the
 initial status is always `ANALYSIS` and `delivery_status` is `PENDING`.
 
-When it creates a new `TicketPackageProduct` record, it determines the
-initial status by inheriting from the parent `TicketPackageTrack`:
-
-- Parent in `ANALYSIS` -> `ANALYSIS`
-- Parent in `AFFECTED` -> `AFFECTED`
-- Parent in any other status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) ->
-  inherit the same status
-
-Eligibility is always calculated at creation time regardless of the
-inherited status. See `docs/features/packages/package-model.md`
+When it creates a new `TicketPackageProduct` record, eligibility is
+calculated at creation time. See `docs/features/packages/package-model.md`
 ([Axis 2: Eligibility](package-model.md#axis-2-eligibility-per-product-only))
-for the computation rules.
+for the computation rules. Products do not have their own status — they
+inherit affectedness implicitly from the parent track.
 
 This logic is internal to `package_service` — callers (including
-`add_package_to_ticket`) do not specify the initial status.
+`add_package_to_ticket`) do not specify initial values.
 
 ## Concurrency Control
 
@@ -793,11 +782,11 @@ individual endpoints.
 
 | Caller Category | Operations Used | Context |
 |-----------------|-----------------|---------|
-| Package API mutation endpoints | `set_track_status()`, `set_product_status()`, soft-delete/restore functions | VA-initiated operations |
+| Package API mutation endpoints | `set_track_status()`, `set_product_eligibility()`, soft-delete/restore functions | VA-initiated operations |
 | Package API read endpoints | `get_ticket_packages()`, `search_packages()` | Public read access |
 | Ticket detail endpoint | `get_ticket_packages()` | Populates `packages` field in `TicketDetail` |
 | IBS track release detection | `set_track_status()` | Automated track release (sets FIXED) |
-| IBS product release detection | `set_product_status()` (released_at) | Automated product release |
+| IBS product release detection | `set_product_released_at()` | Automated product release |
 | `add_package_to_ticket` | `add_package_records()` | Package addition flow (internal) |
 | Product lifecycle transitions | `set_product_eligibility()`, `soft_delete_ticket_package_product()` | AIMAAS threshold changes |
 | IBS RabbitMQ consumer (`package.commit`) | `set_track_status()` | Real-time track release detection (sets FIXED) |
@@ -830,7 +819,7 @@ transitions. The test must cover:
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
 - `docs/features/packages/package-model.md` — track/product concepts,
-  status propagation, hierarchical exclusion model, API endpoints
+  hierarchical exclusion model, API endpoints
 - `docs/features/packages/product-lifecycle-transitions.md` — AIMAAS
   threshold changes triggering eligibility mutations
 - `docs/features/packages/ibs-track-release-detection.md` — IBS

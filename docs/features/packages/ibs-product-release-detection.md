@@ -23,8 +23,8 @@ package:
    consumed by `zypper`).
 
 The product level sets `TicketPackageProduct.released_at` as soon as the
-fix appears in that specific product's update repository. The product's
-affectedness status is NOT changed — release confirmation is tracked
+fix appears in that specific product's update repository. Products do
+not have their own affectedness status — release confirmation is tracked
 exclusively via the `released_at` timestamp.
 
 ## Detection Mechanism
@@ -61,7 +61,6 @@ below for how `<repo_url>` is constructed):
 
 - `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
   of the advisory through the `package_service` module.
-- The product's affectedness status is NOT changed.
 
 ### Update Repository URL Resolution
 
@@ -228,7 +227,6 @@ Then:
 ### Positive match (source package S of the ticket on product P)
 
 - `TicketPackageProduct(S, P).released_at` = advisory's `<issued date>`.
-- The product's affectedness status is NOT changed.
 
 ### No-match (advisory cites the ticket's CVE but no ticket package matches, even via `primary.xml`)
 

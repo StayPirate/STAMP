@@ -227,15 +227,15 @@ the full ticket specification.
 ### Package Affectedness Flow
 
 1. VA analyzes a ticket and sets affectedness status per track
-2. Sentinel propagates track status to products. Products inherit the track
-   status directly; eligibility is always evaluated as a boolean flag
-   (`eligible`) based on CVSS score vs product threshold from AIMAAS,
-   regardless of affectedness status
-3. Products not eligible (CVSS below threshold, Reactive LTSS phase, etc.)
-   are marked `eligible=false` but retain the inherited status (e.g.,
-   AFFECTED with `eligible=false` — no separate AFFECTED_RESOLVED status)
-4. VA can override individual product statuses when needed
-5. See `docs/features/packages/package-model.md` for full status propagation rules
+2. Products track only eligibility and delivery confirmation —
+   affectedness is determined exclusively at the track level
+3. Eligibility is evaluated per product as a boolean flag (`eligible`)
+   based on CVSS score vs product threshold from AIMAAS, regardless of
+   track affectedness status
+4. Products not eligible (CVSS below threshold, Reactive LTSS phase,
+   etc.) are marked `eligible=false`. The VA can override eligibility on
+   individual products
+5. See `docs/features/packages/package-model.md` for the full package model
 
 ### Release Tracking Flow
 

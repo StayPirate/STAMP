@@ -303,12 +303,10 @@ when ALL of the following conditions are met:
    added (at least one active `TicketPackageTrack` record exists)
 2. **All track affectedness decided**: no active `TicketPackageTrack`
    records in `ANALYSIS` status
-3. **All product affectedness decided**: no active `TicketPackageProduct`
-   records in `ANALYSIS` status
-4. **Severity set**: the ticket must have a determined severity (not
+3. **Severity set**: the ticket must have a determined severity (not
    `None`). For tickets with CVE, this is derived from CVSS. For tickets
    without CVE, `severity_override` must be set by the VA
-5. **SUSE CVSS provided** (only for tickets with CVE): the VA must have
+4. **SUSE CVSS provided** (only for tickets with CVE): the VA must have
    provided BOTH SUSE CVSS v3.1 AND v4.0 assessments (see
    `docs/features/tickets/cvss-scoring.md`)
 
@@ -319,9 +317,9 @@ every operation that modifies gate-relevant data. There is no manual
 conditions are satisfied.
 
 Conversely, if any of these conditions ceases to be met (e.g., a package
-is added with tracks or products in ANALYSIS, a SUSE CVSS assessment
-is deleted, or severity becomes undetermined), the ticket automatically
-transitions back from Analyzed to Analysis.
+is added with tracks in ANALYSIS, a SUSE CVSS assessment is deleted, or
+severity becomes undetermined), the ticket automatically transitions back
+from Analyzed to Analysis.
 
 ### Gate: Analyzed → Resolved
 
@@ -1113,8 +1111,6 @@ is `null` rather than an object.
 | `id` | UUID | TicketPackageProduct primary key |
 | `product_id` | UUID | Product foreign key |
 | `product_name` | string | Product display name (from `Product.display_name`) |
-| `status` | string | PackageStatus enum: `analysis`, `affected`, `not_affected`, `fixed`, `wont_fix` |
-| `is_status_override` | boolean | `true` if VA manually set this product's status |
 | `eligible` | boolean | Whether this product receives the fix |
 | `is_eligible_override` | boolean | `true` if VA manually set eligibility |
 | `released_at` | datetime \| null | When the fix was detected in the product repository (UTC) |

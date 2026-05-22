@@ -64,11 +64,10 @@ coexist under the same package.
 
 Product eligibility (whether a product will receive the fix) is a
 separate persisted boolean (`eligible`) on `TicketPackageProduct`, with
-its own override mechanism (`is_eligible_override`). This keeps status
-propagation unidirectional (track → product) with no rollup: the track
-retains its affectedness status regardless of whether any product is
-eligible. CVSS score changes only flip the `eligible` flag — no status
-changes, no rollup cascades.
+its own override mechanism (`is_eligible_override`). The track retains
+its affectedness status regardless of whether any product is eligible.
+CVSS score changes only flip the `eligible` flag — no status changes,
+no rollup cascades.
 
 ### 4. Delivery as a separate dimension
 
@@ -260,19 +259,17 @@ per-package via the SMELT `maintainedpackage` endpoint.
 
 ### TicketPackageProduct
 
-Records the affectedness status, eligibility, and release confirmation
-of a source package for a specific product, within the context of a
-ticket and track. Status is inherited from the parent TicketPackageTrack
-and adjusted for eligibility, but both dimensions can be overridden by
-the VA.
+Records the eligibility and release confirmation of a source package for
+a specific product, within the context of a ticket and track.
+Affectedness is determined exclusively at the track level (see
+[Axis 1](#axis-1-affectedness-per-track)). Products track only
+eligibility and delivery confirmation.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `id` | UUID | PK | Internal identifier |
 | `ticket_package_track_id` | UUID | FK(ticket_package_track.id), NOT NULL | Parent track record |
 | `product_id` | UUID | FK(product.id), NOT NULL | Related product |
-| `status` | PackageStatus | NOT NULL, DEFAULT ANALYSIS | Effective affectedness status |
-| `is_status_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the status |
 | `eligible` | BOOLEAN | NOT NULL, DEFAULT true | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the eligibility |
 | `released_at` | TIMESTAMPTZ | nullable | When Sentinel detected the fix in the product's update repository |
@@ -296,7 +293,7 @@ below.
 
 The package tracking model separates three independent dimensions:
 
-### Axis 1: Affectedness (per track, inherited by products)
+### Axis 1: Affectedness (per track)
 
 Property of the source code relative to the CVE. Determined by the VA
 during analysis, or automatically by track release detection.
@@ -314,9 +311,8 @@ lifecycle phase, and delivery pipeline state.
 
 **Status classification**: statuses are classified as either *final* or
 *non-final*. A final status indicates that no further work is expected on
-the track or product for this ticket. A non-final status indicates that
-the track or product still requires attention (analysis pending or fix
-in progress).
+the track for this ticket. A non-final status indicates that the track
+still requires attention (analysis pending or fix in progress).
 
 - **Final statuses**: `NOT_AFFECTED`, `FIXED`, `WONT_FIX`
 - **Non-final statuses**: `ANALYSIS`, `AFFECTED`
@@ -324,9 +320,9 @@ in progress).
 Other specifications that reference "final status" or "non-final status"
 use this classification as defined here.
 
-The VA sets affectedness at the **track level**. Products
-inherit the track's status unless the VA overrides a specific product
-(`is_status_override = true`).
+The VA sets affectedness at the **track level**. Products do not have
+their own affectedness status — they inherit the track's affectedness
+implicitly through the hierarchy.
 
 ### Axis 2: Eligibility (per product only)
 
@@ -581,35 +577,21 @@ defined in a dedicated specification.
 
 ## Status Behavior
 
-All track and product status changes described in this section MUST go
-through the `package_service` module (see
-`docs/features/packages/package-service.md`), which
-ensures automatic ticket status re-evaluation after each change.
+All track status changes and product eligibility overrides described in
+this section MUST go through the `package_service` module (see
+`docs/features/packages/package-service.md`), which ensures automatic
+ticket status re-evaluation after each change.
 
 ### VA Sets a Status on a Track
 
 1. Track status is set to the chosen value (via `package_service`)
-2. Sentinel propagates the same status to all active (not effectively
-   excluded) products under that track:
-   - Products with `is_status_override = true` are not modified
-   - For remaining products: status is set to the track's status
-3. Eligibility is recalculated for each propagated product (see
-   [Axis 2: Eligibility](#axis-2-eligibility-per-product-only)):
-   - Products with `is_eligible_override = true` are not modified
-   - For remaining products: `eligible` is recalculated based on CVSS
-     threshold and lifecycle phase
+2. A `TicketAuditEvent` (`track_status_changed`) is created
+3. Ticket status is re-evaluated via `evaluate_ticket_status()`
 
 There is **no codestream eligibility rollup** — the track retains its
 affectedness status regardless of whether any product is eligible. The
 question "is there work to do on this track?" is answered by checking
 whether any active product under it has `eligible = true`.
-
-### VA Overrides a Product Status
-
-1. Product status is set to the chosen value
-2. `is_status_override` is set to `true`
-3. Eligibility is recalculated (unless `is_eligible_override = true`)
-4. The track status is not affected
 
 ### VA Overrides Product Eligibility
 
@@ -623,7 +605,6 @@ whether any active product under it has `eligible = true`.
 | From | To | Applies to | Trigger |
 |------|----|------------|---------|
 | `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Track release detection (MD5 match confirms fix in codestream) |
-| non-final | inherited from track | TicketPackageProduct | Track status changed by VA (propagation) |
 
 Records in a final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
 eligible as source states for automatic transitions.
@@ -736,7 +717,6 @@ not just the record's own `deleted_at`.
 Soft-deleted records **continue to receive updates** from all automated
 processes:
 
-- Status propagation (track → product)
 - Eligibility recalculation (CVSS/threshold/lifecycle changes)
 - Delivery status updates (SR/RR state changes)
 - Release detection (codestream and product level)
@@ -853,21 +833,19 @@ rationale, and override model are defined in
 
 ### Override Model
 
-Product-level overrides follow a symmetric pattern for both dimensions:
+Product-level eligibility has an override mechanism:
 
 | Column | Type | Default | Description |
 |--------|------|---------|-------------|
-| `status` | PackageStatus | inherited | Effective affectedness status |
-| `is_status_override` | bool | false | VA has manually set the status |
 | `eligible` | bool | calculated | Effective eligibility |
 | `is_eligible_override` | bool | false | VA has manually set the eligibility |
 
-When `is_*_override = false`, the system maintains the value
-automatically (status via propagation from parent track, eligibility via
-CVSS threshold + lifecycle phase calculation). When
-`is_*_override = true`, automatic updates skip the field.
+When `is_eligible_override = false`, the system maintains `eligible`
+automatically via CVSS threshold + lifecycle phase calculation. When
+`is_eligible_override = true`, automatic recalculation skips the
+product.
 
-Both dimensions go through `package_service` and trigger
+Eligibility changes go through `package_service` and trigger
 `evaluate_ticket_status`.
 
 ---
@@ -968,8 +946,8 @@ The VA manages packages at the **package level only**:
   determined exclusively by SMELT when a package is added via
   `add_package_to_ticket`.
 - The VA **can** change the affectedness status of individual tracks
-  (via the status dropdown) and override the status and eligibility of
-  individual products.
+  (via the status dropdown) and override the eligibility of individual
+  products.
 
 ### Removing a Package from a Ticket
 
@@ -1036,7 +1014,6 @@ types are defined:
 | VA restores track | `track_restored` | VA user | `track_name`, `package_name` |
 | VA restores product | `product_restored` | VA user | `track_name`, `package_name`, `product_id` |
 | VA changes track status | `track_status_changed` | VA user | `track_name`, `package_name`, `old_status`, `new_status` |
-| VA overrides product status | `product_status_overridden` | VA user | `track_name`, `package_name`, `product_id`, `old_status`, `new_status` |
 | VA overrides product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
 | Track release detected | `track_released` | `NULL` | `track_name`, `package_name` |
@@ -1094,15 +1071,15 @@ product's update repository.
 
 ## Ticket Lifecycle Integration
 
-All track and product status changes go through the `package_service`
-module, which automatically re-evaluates ticket status after each change.
-See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the
-authoritative gate conditions and status transition rules, and
-`docs/features/packages/package-service.md` for the module contract,
-including:
+All track status and product eligibility changes go through the
+`package_service` module, which automatically re-evaluates ticket status
+after each change. See `docs/features/tickets/tickets.md` (Ticket
+Lifecycle) for the authoritative gate conditions and status transition
+rules, and `docs/features/packages/package-service.md` for the module
+contract, including:
 
-- **Analysis → Analyzed**: requires at least one package, all tracks and
-  products decided, severity set, SUSE CVSS provided
+- **Analysis → Analyzed**: requires at least one package, all tracks
+  decided, severity set, SUSE CVSS provided
 - **Analyzed → Resolved**: requires all tracks in final status
   (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), all eligible products
   (`eligible = true`) under `FIXED` tracks with `released_at IS NOT NULL`
@@ -1116,7 +1093,6 @@ The following concerns are identical regardless of `workflow_type`:
 
 - `PackageStatus` enum and all valid transitions
 - `DeliveryStatus` enum (the delivery concept exists for both workflows)
-- Status propagation (track → products)
 - Final-status immunity (records in `NOT_AFFECTED`, `FIXED`, or `WONT_FIX`
   are never modified by automatic transitions)
 - `package_service` module — operates on `TicketPackageTrack` and
@@ -1514,10 +1490,8 @@ single `TicketAuditEvent`.
 PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}
 ```
 
-Change the affectedness status of a track. Triggers status propagation
-to all active child products with eligibility recalculation,
-TicketAuditEvent creation, and ticket status re-evaluation — all via
-`package_service`.
+Change the affectedness status of a track. Triggers TicketAuditEvent
+creation and ticket status re-evaluation via `package_service`.
 
 **Request body**:
 
@@ -1546,17 +1520,13 @@ TicketAuditEvent creation, and ticket status re-evaluation — all via
       {
         "product_id": "uuid",
         "product_name": "SLES 15 SP6",
-        "status": "AFFECTED",
         "eligible": true,
-        "is_status_override": false,
         "is_eligible_override": false
       },
       {
         "product_id": "uuid",
         "product_name": "SLES-LTSS 15-SP4",
-        "status": "AFFECTED",
         "eligible": false,
-        "is_status_override": false,
         "is_eligible_override": false
       }
     ]
@@ -1565,9 +1535,8 @@ TicketAuditEvent creation, and ticket status re-evaluation — all via
 ```
 
 The response includes the updated track and all its active child
-products with their resulting statuses and eligibility (after
-propagation), allowing the client to update the UI tree without a
-separate fetch.
+products with their current eligibility, allowing the client to update
+the UI tree without a separate fetch.
 
 **Permissions**: Vulnerability Analyst role required.
 
@@ -1582,46 +1551,22 @@ separate fetch.
 
 ---
 
-### Override Product Status
+### Override Product Eligibility
 
 ```
 PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}
 ```
 
-Override the affectedness status and/or eligibility of a specific
-product. Sets the corresponding `is_*_override` flag to `true`.
-Triggers TicketAuditEvent creation and ticket status re-evaluation via
-`package_service`.
+Override the eligibility of a specific product. Sets
+`is_eligible_override = true`. Triggers TicketAuditEvent creation and
+ticket status re-evaluation via `package_service`.
 
 **Request body**:
 
 ```json
 {
-  "status": "WONT_FIX"
-}
-```
-
-Or for eligibility override:
-
-```json
-{
   "eligible": false
 }
-```
-
-Or both:
-
-```json
-{
-  "status": "AFFECTED",
-  "eligible": false
-}
-```
-
-Reset status override:
-
-```json
-{"status": null}
 ```
 
 Reset eligibility override:
@@ -1630,36 +1575,22 @@ Reset eligibility override:
 {"eligible": null}
 ```
 
-Reset both overrides:
-
-```json
-{"status": null, "eligible": null}
-```
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `status` | string \| null | No | New status value (`ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`, `WONT_FIX`) or `null` to reset to automatic inheritance from parent track |
-| `eligible` | boolean \| null | No | Eligibility override value, or `null` to reset to automatic calculation |
-
-At least one of `status` or `eligible` must be provided.
+| `eligible` | boolean \| null | Yes | Eligibility override value, or `null` to reset to automatic calculation |
 
 #### Reset behavior
 
-When a field is sent as `null`, the corresponding override is removed and the
-value reverts to automatic:
+When `eligible` is sent as `null`, the override is removed and the value
+reverts to automatic:
 
-- **`status: null`** — sets `is_status_override = false`. The product status is
-  immediately updated to match the parent track's current status (same
-  propagation logic as when a track status changes)
 - **`eligible: null`** — sets `is_eligible_override = false`. Eligibility is
   immediately recalculated using the standard rules (CVSS threshold + lifecycle
   phase)
 
 Both override and reset operations follow the same post-modification flow:
 
-1. One `TicketAuditEvent` is created **per field changed** (e.g., if both
-   `status` and `eligible` are modified in the same request, two separate
-   audit events are created)
+1. A `TicketAuditEvent` (`product_eligibility_changed`) is created
 2. A single ticket status re-evaluation is performed at the end of the
    transaction (via `package_service`)
 
@@ -1676,9 +1607,7 @@ changing an override value, and resetting an override.
     "reference": "SUSE:SLE-15-SP6:Update",
     "product_id": "uuid",
     "product_name": "SLES-LTSS 15-SP4",
-    "status": "WONT_FIX",
     "eligible": false,
-    "is_status_override": true,
     "is_eligible_override": true
   }
 }
@@ -1693,7 +1622,7 @@ changing an override value, and resetting an override.
 | 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |
-| 422 | `VALIDATION_ERROR` | Invalid status value, or neither `status` nor `eligible` provided |
+| 422 | `VALIDATION_ERROR` | `eligible` field not provided |
 
 ---
 
@@ -1893,7 +1822,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 
 - Adding/removing/excluding/restoring packages on a ticket requires the
   Vulnerability Analyst role
-- Changing track/product status or eligibility requires the
+- Changing track status or product eligibility requires the
   Vulnerability Analyst role
 - Viewing affectedness data is publicly accessible (no authentication
   required):

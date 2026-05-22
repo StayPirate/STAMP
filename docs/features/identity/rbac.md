@@ -34,7 +34,7 @@ Operates the triage and assessment workflow:
 - Associate a CVE with a ticket (see `docs/features/tickets/tickets.md`)
 - Set and update severity override for tickets without CVE
 - Add and remove packages from tickets
-- Change track and product affectedness status
+- Change track affectedness status
 - Add, edit, and delete SUSE CVSS assessments
 - Add, edit, and delete ticket references
 - Set ticket confidentiality (see `docs/features/tickets/tickets.md`)
@@ -75,7 +75,7 @@ capabilities must hold both roles.
 | Associate CVE with ticket        | No    | Yes | No            | No     |
 | Set/update severity override     | No    | Yes | No            | No     |
 | Add/remove packages              | No    | Yes | No            | No     |
-| Change track/product status      | No    | Yes | No            | No     |
+| Change track status              | No    | Yes | No            | No     |
 | Add/edit/delete SUSE CVSS        | No    | Yes | No            | No     |
 | Add/edit/delete references       | No    | Yes | No            | No     |
 | Set ticket confidentiality       | No    | Yes | No            | No     |
@@ -203,7 +203,7 @@ here with the required access level and a link to the owning spec.
 | PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | Vulnerability Analyst | [package-model](../packages/package-model.md#change-track-status) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude` | Vulnerability Analyst | [package-model](../packages/package-model.md#soft-delete-product) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore` | Vulnerability Analyst | [package-model](../packages/package-model.md#restore-product) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | Vulnerability Analyst | [package-model](../packages/package-model.md#override-product-status) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | Vulnerability Analyst | [package-model](../packages/package-model.md#override-product-eligibility) |
 
 ### Products
 

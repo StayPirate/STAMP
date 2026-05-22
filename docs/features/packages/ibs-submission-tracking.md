@@ -111,11 +111,9 @@ rejected because:
 
 - It would impact the ticket gate logic (is the new status final?
   non-final? does it block progression?)
-- It would complicate the track-to-product propagation rules
 - It would require handling regression (submission declined -> revert to
   `AFFECTED`)
-- The PackageStatus enum is shared between track and product levels,
-  but submissions only exist at the track level
+- Submissions only exist at the track level
 
 **Why SR + RR instead of SR + MaintenanceIncident?** The VA's mental model
 is centered on requests: "is there an SR? what state is it in? is there a

@@ -35,7 +35,6 @@ fields populated according to this table:
 | `package_excluded` | Package directly soft-deleted (excluded) from ticket. One event per action — child tracks and products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Package name | `NULL` | Optional VA note for manual; `NULL` for automatic | `NULL` for manual; `{"reason": "..."}` for automatic (see detail contract) |
 | `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | Optional VA note | `NULL` |
 | `track_status_changed` | Track status changed (VA action or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | Optional VA note for manual; `NULL` for automatic | `{"track": "...", "package": "..."}` (see detail contract) |
-| `product_status_overridden` | VA overrides product status | VA user | Old status | New status | Optional VA note or `NULL` | `{"track": "...", "package": "...", "product_id": "..."}` (see detail contract) |
 | `track_released` | Track release detected | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "..."}` (see detail contract) |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "advisory_id": "..."}` (see detail contract) |
 | `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) | `NULL` |
@@ -83,7 +82,6 @@ types not listed here MUST set `detail` to `NULL`.
 |---|---|---|---|
 | `package_excluded` | — | `reason` (string) | `{"reason": "no_tracks_remaining"}` |
 | `track_status_changed` | `track` (string), `package` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl"}` |
-| `product_status_overridden` | `track` (string), `package` (string), `product_id` (UUID string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000"}` |
 | `track_released` | `track` (string), `package` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl"}` |
 | `track_excluded` | `track` (string), `package` (string), `reason` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "reason": "orphan_cleanup"}` |
 | `product_released` | `track` (string), `package` (string), `product_id` (UUID string), `advisory_id` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000", "advisory_id": "SUSE-SU-2025:1234-1"}` |

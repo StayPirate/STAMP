@@ -167,8 +167,6 @@ erDiagram
         UUID id PK
         UUID ticket_package_track_id FK "NOT NULL"
         UUID product_id FK "NOT NULL"
-        ENUM status "NOT NULL, DEFAULT ANALYSIS"
-        BOOLEAN is_status_override "DEFAULT false"
         BOOLEAN eligible "NOT NULL, DEFAULT true"
         BOOLEAN is_eligible_override "DEFAULT false"
         TIMESTAMPTZ released_at "nullable"
@@ -513,9 +511,8 @@ Records the affectedness and delivery status of a source package in a
 specific maintenance track within the context of a ticket. The VA sets
 the affectedness status at this level. The delivery status is maintained
 by the system based on IBS SR/RR tracking data. See
-`docs/features/packages/package-model.md` for status propagation
-rules and the three orthogonal dimensions (affectedness, eligibility,
-delivery).
+`docs/features/packages/package-model.md` for the three orthogonal
+dimensions (affectedness, eligibility, delivery).
 
 | Column            | Type      | Constraints                           | Description                        |
 |-------------------|-----------|---------------------------------------|------------------------------------|
@@ -533,18 +530,17 @@ delivery).
 
 ### TicketPackageProduct
 
-Records the affectedness status, eligibility, and release confirmation
-of a source package for a specific product within the context of a
-ticket and track. See `docs/features/packages/package-model.md` for
-status inheritance, eligibility rules, and override model.
+Records the eligibility and release confirmation of a source package
+for a specific product within the context of a ticket and track.
+Affectedness is determined exclusively at the track level. See
+`docs/features/packages/package-model.md` for the eligibility rules and
+override model.
 
 | Column                   | Type      | Constraints                                 | Description                        |
 |--------------------------|-----------|---------------------------------------------|------------------------------------|
 | id                       | UUID      | PK                                          | Internal identifier                |
 | ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL       | Parent track record                |
 | product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
-| status                   | ENUM      | NOT NULL, DEFAULT ANALYSIS                  | PackageStatus enum (affectedness)  |
-| is_status_override       | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the status |
 | eligible                 | BOOLEAN   | NOT NULL, DEFAULT true                      | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
 | released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
@@ -556,8 +552,7 @@ status inheritance, eligibility rules, and override model.
 
 ### PackageStatus Enum
 
-Affectedness status, used by both TicketPackageTrack and
-TicketPackageProduct.
+Affectedness status, used by TicketPackageTrack.
 
 | Value        |
 |--------------|
@@ -759,7 +754,7 @@ Summary:
 - New -> Analysis (manual: assignment or any modifying operation)
 - New -> Ignored (manual or automatic: NVD rejection)
 - Analysis -> Analyzed (automatic: all gates met — at least one package,
-  no track or product records in ANALYSIS, severity set, SUSE CVSS
+  no track records in ANALYSIS, severity set, SUSE CVSS
   provided if CVE present)
 - Analysis -> Ignored (manual)
 - Analyzed -> Resolved (automatic: all packages in final status)
@@ -870,7 +865,6 @@ system action).
 | track_excluded             | Track directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the track reference. `user_id` is the VA, or NULL for system (orphan cleanup). `detail` carries `{"track", "package", "reason"}` context. Child products are not modified — they become effectively excluded via the hierarchy. |
 | track_restored             | Directly soft-deleted track restored by VA. `new_value` contains the track reference. `user_id` is the VA. Only the track record is restored — child products are not modified. |
 | track_released             | Track delivery status set to `RELEASED` by IBS submission tracking (RR accepted). `detail` carries `{"track", "package"}` context. |
-| product_status_overridden  | VA overrode product affectedness status. `detail` carries `{"track", "package", "product_id"}` context. |
 | product_released           | Product release detected via updateinfo.xml advisory. `detail` carries `{"track", "package", "product_id", "advisory_id"}` context. |
 | product_excluded           | Product directly soft-deleted from ticket by VA or lifecycle transition (EOL). `old_value` contains the product display name. `user_id` is the VA, or NULL for system (EOL, orphan). `detail` carries `{"track", "package", "product_id", "reason"}` context. |
 | product_restored           | Directly soft-deleted product restored by VA. `new_value` contains the product display name. `user_id` is the VA. |

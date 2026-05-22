@@ -9,7 +9,7 @@ This module also provides the shared `evaluate_ticket_status()` function
 and the `auto_assign_if_needed()` helper, which are called by both this
 module and `package_service`.
 
-Package-centric mutations (track/product status, delivery status,
+Package-centric mutations (track status, delivery status, product
 eligibility, soft-deletion/restore, record creation) are handled by
 `package_service` (`docs/features/packages/package-service.md`).
 
@@ -71,7 +71,7 @@ reserved exclusively for system entry points.
 | Module | Relationship |
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
-| `services/package_service.py` | Handles all package-centric mutations (track/product status, delivery status, eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `evaluate_ticket_status()` and `auto_assign_if_needed()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
+| `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `evaluate_ticket_status()` and `auto_assign_if_needed()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
 | `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality). These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
 
 ## State Machine Zones
@@ -247,9 +247,10 @@ Each function below follows the same pattern:
 7. Return the updated record
 
 Package-centric mutations (`set_track_status`, `set_track_delivery_status`,
-`set_product_status`, `set_product_eligibility`, `add_package_records`,
-soft-delete/restore for packages, tracks, and products) have been moved to
-`package_service` — see `docs/features/packages/package-service.md`.
+`set_product_eligibility`, `set_product_released_at`,
+`add_package_records`, soft-delete/restore for packages, tracks, and
+products) have been moved to `package_service` — see
+`docs/features/packages/package-service.md`.
 
 ### `create_cvss_assessment()`
 
@@ -620,8 +621,9 @@ Every service-layer operation that modifies data relevant to ticket
 status gates MUST go through the appropriate centralized module:
 
 - **Package/track/product mutations**: `package_service`
-  (`TicketPackageTrack`, `TicketPackageProduct` status, delivery
-  status, eligibility, soft-delete/restore, record creation)
+  (`TicketPackageTrack` status, delivery status,
+  `TicketPackageProduct` eligibility, soft-delete/restore, record
+  creation)
 - **CVSS and severity mutations**: `ticket_mutations`
   (`CVECVSSAssessment` records, severity override)
 - **Ticket status evaluation**: `ticket_mutations` (called by both

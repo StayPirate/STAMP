@@ -155,8 +155,8 @@ erDiagram
         UUID id PK
         UUID tpc_id FK
         UUID product_id FK
-        ENUM status
-        BOOLEAN is_status_override
+        BOOLEAN eligible
+        BOOLEAN is_eligible_override
     }
 
     Product {
@@ -366,11 +366,10 @@ flowchart LR
         CREATE_PR["Create<br/>TicketPackageProduct<br/>(per product)"]
     end
 
-    subgraph status["Status Propagation"]
+    subgraph status["Track Status & Eligibility"]
         VA_SET["VA sets codestream<br/>status"]
-        INHERIT["Products inherit<br/>codestream status"]
         ELIG["Eligibility check<br/>(CVSS vs threshold)"]
-        OVERRIDE["VA overrides<br/>product status"]
+        ELIG_OVR["VA overrides<br/>product eligibility"]
     end
 
     subgraph release["Release Detection"]
@@ -399,8 +398,8 @@ flowchart LR
     CPE_MATCH --> SMELT_Q
     SMELT_Q --> CREATE_CS --> CREATE_PR
 
-    VA_SET --> INHERIT --> ELIG
-    OVERRIDE -.->|manual| ELIG
+    VA_SET --> ELIG
+    ELIG_OVR -.->|manual| ELIG
 
     style add_pkg fill:#e0f2fe,stroke:#0284c7
     style resolve fill:#fef3c7,stroke:#d97706
@@ -456,7 +455,7 @@ flowchart TD
 
 **Analyzed gate** (all must be true):
 - At least one package added to the ticket
-- No `TicketPackageTrack` or `TicketPackageProduct` in `ANALYSIS` status
+- No `TicketPackageTrack` in `ANALYSIS` status
 - Severity is set (non-None)
 - If CVE is associated: SUSE CVSS assessment exists
 
@@ -565,7 +564,7 @@ other feature:
 |------|--------|---------|
 | [tickets](features/tickets/tickets.md) | Core | Ticket entity, lifecycle, gates, severity resolution |
 | [ticket-audit-log](features/tickets/ticket-audit-log.md) | Core | Audit trail via TicketAuditEvent records |
-| [package-model](features/packages/package-model.md) | Core | Codestream/product affectedness and release detection |
+| [package-model](features/packages/package-model.md) | Core | Track affectedness, product eligibility, and release detection |
 | [cve-tracking](features/tickets/cve-tracking.md) | Ingestion | CVE sync from NVD, MITRE, and other sources |
 | [cvss-scoring](features/tickets/cvss-scoring.md) | Ingestion | Multi-provider CVSS assessment and severity derivation |
 | [references](features/tickets/ticket-references.md) | Ingestion | External links on tickets (auto and manual) |
