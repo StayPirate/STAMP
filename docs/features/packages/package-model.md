@@ -16,11 +16,13 @@ independent dimensions:
 2. **Eligibility** — will this product receive the fix?
 3. **Delivery** — has the fix been distributed?
 
-Each dimension has its own status values, update rules, and override
-mechanisms. This separation keeps business logic simple: status
-propagation never needs to consider eligibility, eligibility never
-changes the status label, and delivery tracking is fully independent
-from both.
+Each dimension is independently computable — its value depends only on
+its own inputs, never on the current state of another dimension.
+Status propagation does not affect eligibility computation, eligibility
+never changes the status label, and delivery tracking is fully
+independent from both. The three dimensions are combined only at
+observation points (the Resolved gate, the anomaly matrix, and
+presentation views) — never during computation or mutation.
 
 The entity hierarchy (Ticket → Package → Track → Product) uses a
 workflow-agnostic abstraction ("track") that covers both IBS codestreams
@@ -64,9 +66,9 @@ Product eligibility (whether a product will receive the fix) is a
 separate persisted boolean (`eligible`) on `TicketPackageProduct`, with
 its own override mechanism (`is_eligible_override`). This keeps status
 propagation unidirectional (track → product) with no rollup: the track
-stays `AFFECTED` regardless of whether any product is eligible. CVSS
-score changes only flip the `eligible` flag — no status changes, no
-rollup cascades.
+retains its affectedness status regardless of whether any product is
+eligible. CVSS score changes only flip the `eligible` flag — no status
+changes, no rollup cascades.
 
 ### 4. Delivery as a separate dimension
 
@@ -271,7 +273,7 @@ the VA.
 | `product_id` | UUID | FK(product.id), NOT NULL | Related product |
 | `status` | PackageStatus | NOT NULL, DEFAULT ANALYSIS | Effective affectedness status |
 | `is_status_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the status |
-| `eligible` | BOOLEAN | NOT NULL | Effective eligibility |
+| `eligible` | BOOLEAN | NOT NULL, DEFAULT true | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the eligibility |
 | `released_at` | TIMESTAMPTZ | nullable | When Sentinel detected the fix in the product's update repository |
 | `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
@@ -296,7 +298,11 @@ The package tracking model separates three independent dimensions:
 
 ### Axis 1: Affectedness (per track, inherited by products)
 
-Property of the source code. Determined by the VA during analysis.
+Property of the source code relative to the CVE. Determined by the VA
+during analysis, or automatically by track release detection.
+Affectedness depends only on whether the source code contains the
+vulnerability — it is independent of CVSS thresholds, product
+lifecycle phase, and delivery pipeline state.
 
 | State | Meaning |
 |-------|---------|
@@ -324,18 +330,29 @@ inherit the track's status unless the VA overrides a specific product
 
 ### Axis 2: Eligibility (per product only)
 
-Whether the product will receive the fix. Calculated automatically by
-Sentinel based on CVSS threshold and product lifecycle phase.
+Property of the product relative to the CVE. Determined purely by CVSS
+score vs. product threshold and product lifecycle phase. Eligibility
+does not logically depend on whether the code is vulnerable — it
+answers "does this product meet the criteria for receiving a fix?"
+regardless of the current affectedness status.
 
 | Eligible | Meaning |
 |----------|---------|
-| `true` | Product will receive the update |
-| `false` | Product will not receive the update (CVSS threshold or Reactive LTSS) |
+| `true` | Product meets the CVSS threshold and lifecycle criteria for receiving the update |
+| `false` | Product does not meet the criteria (CVSS below threshold or Reactive LTSS phase) |
 
-Eligibility is evaluated **only when a product's status is or becomes
-`AFFECTED`**. It is never applied when the status is `ANALYSIS` or any
-other value — eligibility is meaningful only in the context of an
-affected product.
+Eligibility is evaluated for all products regardless of affectedness
+status. It represents whether the product meets the CVSS threshold and
+lifecycle criteria for receiving a fix.
+
+The database default is `true` (conservative toward fix delivery — a
+missing calculation results in a visible product rather than a silently
+hidden one, consistent with the CVSS 10.0 fallback principle). If
+eligibility calculation is skipped due to a bug, falsely-eligible
+products block ticket resolution (the Resolved gate requires
+`released_at IS NOT NULL` for all `eligible = true` products under
+FIXED tracks). This is the intended safety net — blocked resolution is
+visible and correctable; silent omission of eligible products is not.
 
 **Eligibility rules** (evaluated in order):
 
@@ -367,9 +384,12 @@ eligibility recalculation skips the product.
 
 ### Axis 3: Delivery (per track)
 
-Progress of the fix through the SUSE maintenance pipeline. Derived from
-SR/incident/RR state in IBS and persisted as a column on
-`TicketPackageTrack`.
+Factual observation of the fix's progress through the SUSE maintenance
+pipeline (SR/incident/RR lifecycle at the track level, `updateinfo.xml`
+advisory detection at the product level). Delivery tracking records
+what happened in IBS — it is independent of whether the code is
+vulnerable (affectedness) or whether the product meets threshold
+criteria (eligibility).
 
 | State | Meaning | Condition |
 |-------|---------|-----------|
@@ -566,37 +586,29 @@ through the `package_service` module (see
 `docs/features/packages/package-service.md`), which
 ensures automatic ticket status re-evaluation after each change.
 
-### VA Sets "Affected" on a Track
+### VA Sets a Status on a Track
 
-1. Track status is set to `AFFECTED` (via `package_service`)
-2. Sentinel propagates to all active (not effectively excluded) products
-   under that track:
+1. Track status is set to the chosen value (via `package_service`)
+2. Sentinel propagates the same status to all active (not effectively
+   excluded) products under that track:
    - Products with `is_status_override = true` are not modified
-   - For remaining products: status is set to `AFFECTED`
-3. Eligibility is calculated separately for each product (see
+   - For remaining products: status is set to the track's status
+3. Eligibility is recalculated for each propagated product (see
    [Axis 2: Eligibility](#axis-2-eligibility-per-product-only)):
    - Products with `is_eligible_override = true` are not modified
    - For remaining products: `eligible` is recalculated based on CVSS
      threshold and lifecycle phase
 
-There is **no codestream eligibility rollup** — the track stays
-`AFFECTED` regardless of whether any product is eligible. The question
-"is there work to do on this track?" is answered by checking whether
-any active product under it has `eligible = true`.
-
-### VA Sets Any Other Status on a Track
-
-1. Track status is set to the chosen value
-2. Sentinel propagates the same status to all active products under
-   that track
-3. Products with `is_status_override = true` are not modified
+There is **no codestream eligibility rollup** — the track retains its
+affectedness status regardless of whether any product is eligible. The
+question "is there work to do on this track?" is answered by checking
+whether any active product under it has `eligible = true`.
 
 ### VA Overrides a Product Status
 
 1. Product status is set to the chosen value
 2. `is_status_override` is set to `true`
-3. If the chosen value is `AFFECTED`, eligibility is recalculated
-   (unless `is_eligible_override = true`)
+3. Eligibility is recalculated (unless `is_eligible_override = true`)
 4. The track status is not affected
 
 ### VA Overrides Product Eligibility
@@ -835,13 +847,8 @@ for a full product -> track -> package cascade — see
 ## Package Eligibility
 
 Eligibility determines whether a product will receive a security update
-for a given CVE. Eligibility is evaluated **only when a product's status
-is or becomes `AFFECTED`** — either through VA-initiated track
-propagation, status inheritance during package addition, or
-CVSS/threshold/lifecycle recalculation. It is never applied when the
-status is `ANALYSIS` or any other value.
-
-The rules are described in
+for a given CVE. The eligibility computation rules, default value
+rationale, and override model are defined in
 [Axis 2: Eligibility](#axis-2-eligibility-per-product-only).
 
 ### Override Model
@@ -1097,8 +1104,8 @@ including:
 - **Analysis → Analyzed**: requires at least one package, all tracks and
   products decided, severity set, SUSE CVSS provided
 - **Analyzed → Resolved**: requires all tracks in final status
-  (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), all eligible products with
-  `released_at IS NOT NULL`
+  (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), all eligible products
+  (`eligible = true`) under `FIXED` tracks with `released_at IS NOT NULL`
 - Reverse transitions when gate conditions are no longer met
 
 ---
@@ -1508,9 +1515,9 @@ PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}
 ```
 
 Change the affectedness status of a track. Triggers status propagation
-to all active child products (with eligibility evaluation for
-"Affected"), TicketAuditEvent creation, and ticket status re-evaluation — all
-via `package_service`.
+to all active child products with eligibility recalculation,
+TicketAuditEvent creation, and ticket status re-evaluation — all via
+`package_service`.
 
 **Request body**:
 
@@ -1654,8 +1661,7 @@ value reverts to automatic:
   propagation logic as when a track status changes)
 - **`eligible: null`** — sets `is_eligible_override = false`. Eligibility is
   immediately recalculated using the standard rules (CVSS threshold + lifecycle
-  phase). Recalculation applies only if the product's resulting status is
-  `AFFECTED`; otherwise `eligible` is set to `false`
+  phase)
 
 Both override and reset operations follow the same post-modification flow:
 

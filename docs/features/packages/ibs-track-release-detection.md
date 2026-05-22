@@ -81,13 +81,12 @@ by the real-time `IBSEventConsumer` during downtime — see
 
 1. **Identify active codestreams**: query the distinct `reference`
    values from `TicketPackageTrack` records with `status` in
-   (`ANALYSIS`, `AFFECTED`) and `delivery_status != RELEASED`, belonging
-   to **active tickets** (ticket status in `New`, `Analysis`, `Analyzed`
-   and `deleted_at IS NULL`). Soft-deleted tracks under active tickets
-   are included — release detection applies regardless of exclusion
-   status (see hierarchical exclusion model in
-   `docs/features/packages/package-model.md`). Only codestreams with
-   at least one such track are scanned.
+   (`ANALYSIS`, `AFFECTED`), belonging to **active tickets** (ticket
+   status in `New`, `Analysis`, `Analyzed` and `deleted_at IS NULL`).
+   Soft-deleted tracks under active tickets are included — release
+   detection applies regardless of exclusion status (see hierarchical
+   exclusion model in `docs/features/packages/package-model.md`). Only
+   codestreams with at least one such track are scanned.
 
 2. **Fetch current MD5 checksums**: for each active codestream, call
    `GET /source/{codestream}?view=info` via the `IBSClient` service. This
@@ -202,10 +201,10 @@ No ticket exists in Sentinel for the extracted CVE-ID.
   `IBSEventConsumer` (see `docs/features/integrations/ibs-rabbitmq-integration.md`)
 - **Scope**: scans all codestreams that have at least one
   `TicketPackageTrack` record with `status` in
-  (`ANALYSIS`, `AFFECTED`) and `delivery_status != RELEASED`, belonging
-  to active tickets (status in `New`, `Analysis`, `Analyzed` and
-  `deleted_at IS NULL`). Soft-deleted tracks under active tickets are
-  included (see hierarchical exclusion model)
+  (`ANALYSIS`, `AFFECTED`), belonging to active tickets (status in
+  `New`, `Analysis`, `Analyzed` and `deleted_at IS NULL`). Soft-deleted
+  tracks under active tickets are included (see hierarchical exclusion
+  model)
 
 ## Open Items
 

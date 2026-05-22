@@ -807,3 +807,50 @@ system into a specification or documentation file:
 
 If you are unsure whether a value constitutes PII, treat it as PII and
 replace it.
+
+### 24. Dimension orthogonality
+
+CRITICAL: The package tracking model defines three orthogonal
+dimensions — Affectedness, Eligibility, and Delivery — as specified
+in `docs/features/packages/package-model.md` (Three Orthogonal
+Dimensions). Each dimension MUST be independently computable: its
+value depends only on its own inputs, never on the current state of
+another dimension.
+
+Before introducing any dependency where one dimension's computation,
+filtering, or mutation depends on the state of another dimension,
+STOP and:
+
+1. Verify whether the coupling is necessary for business correctness
+   (e.g., the Resolved gate inherently combines all three dimensions)
+   or is an accidental optimization or shortcut
+2. If necessary, document the justification in the relevant
+   specification with an explicit note: "This is a deliberate
+   cross-dimensional dependency because [reason]"
+3. If avoidable, restructure the logic to use only the dimension's
+   own inputs
+
+Allowed cross-dimensional combinations:
+
+- **Observation points**: gates, anomaly detection, and presentation
+  views may read multiple dimensions to produce decisions or display
+  — but they must not modify any dimension as a side effect
+- **Post-mutation hooks**: calling `evaluate_ticket_status()` after a
+  mutation is acceptable because the evaluator reads dimensions but
+  does not modify them
+
+Forbidden patterns:
+
+- Filtering dimension A's computation scope by dimension B's state
+  (e.g., "only recalculate eligibility when status is AFFECTED")
+- Skipping dimension A's update because dimension B is in a
+  particular state (e.g., "skip CVSS recalculation for final-status
+  products")
+- Setting dimension A as a side effect of dimension B's mutation
+  (e.g., "set delivery_status = RELEASED when setting status = FIXED")
+
+Note: **intra-dimensional scope optimizations** — where dimension A's
+computation is skipped for records where the result is provably
+inconsequential within the same dimension (e.g., skipping release
+detection for tracks already in `FIXED` status) — are not
+cross-dimensional couplings and do not trigger this guardrail.

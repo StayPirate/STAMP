@@ -128,3 +128,44 @@ reactive and narrow, not a general orphan scan.
 
 **Decision needed**: which approach to adopt for resolving the
 inconsistency between `tickets.md` and `cve-tracking.md`.
+
+---
+
+## 4. Anomaly Observer Replacing Static Anomaly Matrix
+
+**Origin**: dimension decoupling analysis (C9 — Anomaly matrix,
+Affectedness x Delivery, observational coupling classified as KEEP).
+
+**Context**: the anomaly matrix in `package-model.md:523-558` defines 5
+anomalous combinations of affectedness and delivery as a static table.
+With eligibility decoupled from affectedness, the matrix could be
+extended to include eligibility-related
+anomalies (7+ combinations). The spec notes these are "destined to be
+integrated into the future Review Queue" but no implementation design
+exists.
+
+**Proposed approach**: replace the static matrix with an independent
+Anomaly Observer service — a pure function that reads the current values
+of all three dimensions (affectedness, eligibility, delivery) and
+produces anomaly tags. The observer would be called as a post-mutation
+hook (similar to `evaluate_ticket_status()`) and write results to a
+separate table consumed by the Review Queue UI. It would NEVER modify
+any dimension's state.
+
+**Infrastructure prerequisite**: if the observer needs to detect fixes
+present in codestreams where the track is in a final affectedness status
+(`NOT_AFFECTED`, `WONT_FIX`, or already `FIXED`), the IBS consumer
+(`IBSEventConsumer`) and the periodic fetcher
+(`check_ibs_track_releases`) would need to be extended to also scan
+final-status tracks. Currently, both filter their scope to tracks with
+`status in (ANALYSIS, AFFECTED)` because the release detector only
+transitions non-final tracks. The anomaly observer would need the raw
+detection signal without the transition, requiring a broader scan scope.
+
+**Decision needed**: (a) timing — implement alongside the Review Queue
+feature or earlier as infrastructure, (b) storage — separate
+`TicketAnomaly` table vs. flags on existing records, (c) whether the
+observer should also detect intra-dimensional anomalies (e.g., a track
+in `FIXED` status whose parent ticket has no CVE), (d) whether to
+extend the IBS consumer and fetcher scan scope immediately (as part of
+the decoupling work) or defer until the observer is implemented.

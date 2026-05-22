@@ -46,8 +46,9 @@ re-evaluation.
 
 1. Find all products currently in **Reactive LTSS** phase
    (`end_of_ltss < today < end_of_reactive_ltss`)
-   - For each: query `TicketPackageProduct` records with status `AFFECTED`
-     in active tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
+   - For each: query `TicketPackageProduct` records with `eligible = true`
+     and `is_eligible_override = false` in active tickets (status New,
+     Analysis, or Analyzed; `deleted_at IS NULL`)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
 2. Find all products currently in **EOL** phase (past all applicable
@@ -83,14 +84,13 @@ triggered by parent fetchers, with no independent schedule).
 #### Reason: `reactive_ltss`
 
 For all `TicketPackageProduct` records referencing this product in open
-tickets with status `AFFECTED`:
+tickets with `eligible = true` and `is_eligible_override = false`:
 
 - Call `package_service.set_product_eligibility(record, eligible=false)`
 
-The product status remains `AFFECTED`. Only the `eligible` flag is
-changed. Records with `is_eligible_override = true` are not modified.
-Records in other statuses are not modified (eligibility is meaningful
-only when status is `AFFECTED`).
+Only the `eligible` flag is changed — the product's affectedness status
+is not modified. Records with `is_eligible_override = true` are not
+modified (already filtered out by the query).
 
 #### Reason: `eol`
 

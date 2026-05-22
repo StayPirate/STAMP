@@ -140,21 +140,38 @@ The consumer dispatches messages based on routing key. The
 `suse.obs.request.create` and `suse.obs.request.state_change` pipelines
 are specified in `docs/features/packages/ibs-submission-tracking.md`.
 
+All event types share the same monitored codestream set (a
+`Dict[codestream_name, has_non_final_tracks: bool]` — see step 2 below
+for construction). The filtering differs by event type:
+
+- **`package.commit`**: check `project in set AND
+  set[project].has_non_final_tracks == true`
+- **`request.create` / `request.state_change`**: check only
+  `project in set` (no additional filter — SR/RR events are processed
+  for all tracked codestreams regardless of track affectedness status)
+
 For each `suse.obs.package.commit` event:
 
 1. **Parse payload**: extract `project`, `package`, `srcmd5` from the JSON
    message body
 
-2. **Filter by active codestream**: check if `project` is in the set of
-   active codestreams. This set is built from the distinct
-   `codestream_name` values of `TicketPackageTrack` records with status
-   `ANALYSIS` or `AFFECTED`. Soft-deleted tracks are included — release
-   detection applies regardless of exclusion status (see hierarchical
-   exclusion model in `docs/features/packages/package-model.md`).
+2. **Filter by monitored codestream**: check if `project` is in the
+   monitored codestream set **and** `has_non_final_tracks` is `true`.
+   The monitored codestream set is a `Dict[codestream_name,
+   has_non_final_tracks: bool]` built from the distinct
+   `codestream_name` values of `TicketPackageTrack` records belonging to
+   active tickets (ticket status in New, Analysis, Analyzed; ticket
+   `deleted_at IS NULL`). The `has_non_final_tracks` flag is `true` if
+   the codestream has at least one track in `ANALYSIS` or `AFFECTED`.
+   Soft-deleted tracks are included — release detection applies
+   regardless of exclusion status (see hierarchical exclusion model in
+   `docs/features/packages/package-model.md`).
    The set is cached in memory and refreshed periodically (every 5
-   minutes) or on cache miss.
-   If the project is not in the set → **acknowledge and discard** the
-   message. No further processing.
+   minutes) or on cache miss. A single DB query builds the entire dict
+   atomically.
+   If the project is not in the set, or `has_non_final_tracks` is
+   `false` → **acknowledge and discard** the message. No further
+   processing.
 
 3. **Lookup cached MD5**: query `CodestreamPackageChecksum` for the
    `(codestream_name=project, package_name=package)` pair.
@@ -356,9 +373,9 @@ for the response schema.
 
 ### Unmonitored codestreams
 
-If a maintainer commits a CVE fix to a codestream that has no
-tickets (no `TicketPackageTrack` records in `ANALYSIS` or `AFFECTED`
-status across any ticket), the event is
+If a maintainer commits a CVE fix to a codestream that has no active
+tickets (no `TicketPackageTrack` records belonging to tickets in New,
+Analysis, or Analyzed status with `deleted_at IS NULL`), the event is
 discarded by the codestream filter. This applies equally to the RabbitMQ
 consumer and the periodic fetcher — neither monitors codestreams without
 active tickets.

@@ -116,6 +116,28 @@ the spec under review.
 - When multiple specs describe steps of the same end-to-end process, do the
   steps compose correctly without gaps or overlaps?
 
+### Dimension orthogonality (Guardrail 24)
+
+- Does the spec introduce a dependency where one dimension's computation,
+  scope filter, or mutation uses the state of another dimension?
+  The three dimensions are: Affectedness (status), Eligibility (eligible),
+  and Delivery (delivery_status, released_at) — defined in
+  `docs/features/packages/package-model.md` (Three Orthogonal Dimensions)
+- Allowed cross-dimensional combinations (NOT violations):
+  - Observation points (gates, anomaly detection, presentation views)
+    that read multiple dimensions but do not modify any
+  - Post-mutation hooks (e.g., `evaluate_ticket_status()`) that read
+    dimensions but do not modify them
+  - Intra-dimensional scope optimizations (e.g., skipping release
+    detection for tracks already in `FIXED` status)
+- Forbidden patterns (flag as contradictions):
+  - Filtering dimension A's computation scope by dimension B's state
+  - Skipping dimension A's update because dimension B is in a particular
+    state
+  - Setting dimension A as a side effect of dimension B's mutation
+- If a cross-dimensional dependency exists, verify that it includes an
+  explicit justification referencing the allowed combinations
+
 ### Terminology inconsistencies
 
 - Is the same concept referred to by different terms in different specs?

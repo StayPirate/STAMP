@@ -482,8 +482,8 @@ updates:
    - codestream_name = target_releaseproject
    - package_name = extract from sourcepackage by stripping the
      codestream suffix (see Package Name Extraction in Data Sources)
-4. Is codestream_name an active codestream with at least one
-   TicketPackageTrack in ANALYSIS or AFFECTED?
+4. Is codestream_name an active codestream from an active ticket
+   (ticket status in New, Analysis, Analyzed; ticket deleted_at IS NULL)?
    If no -> skip
 5. Is package_name tracked in at least one ticket for that
    codestream? If no -> skip
@@ -597,7 +597,8 @@ both down).
 Step 1 — Discover missed open SRs and reconcile known ones:
 
   1. Identify active codestreams (distinct codestream_name values from
-     TicketPackageTrack records with status ANALYSIS or AFFECTED).
+     TicketPackageTrack records belonging to active tickets — ticket
+     status in New, Analysis, Analyzed; ticket deleted_at IS NULL).
      Soft-deleted tracks are included — submission tracking applies
      regardless of exclusion status.
 
@@ -848,9 +849,11 @@ New SRs that are pending but not yet associated with an active incident
 are **not included** while an incident chain is active. They appear in the
 chain only after the UM accepts them into the incident.
 
-The chain is only relevant for non-final track statuses (`ANALYSIS`,
-`AFFECTED`). Tracks with `FIXED` or `WONT_FIX` status do not have an
-active chain (though the data remains in the database).
+The chain is tracked for all tracks regardless of affectedness status.
+Display relevance is a presentation concern — the frontend can
+emphasize the chain for non-final statuses (`ANALYSIS`, `AFFECTED`) and
+de-emphasize it for final statuses (similar to the `delivery_relevant`
+computed field). The data remains in the database regardless of status.
 
 ## API Endpoints
 

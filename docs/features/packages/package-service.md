@@ -146,8 +146,13 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 3. Validate preconditions
 4. If status unchanged, return (no-op)
 5. Update `TicketPackageTrack.status`
-6. Propagate status to child products per the rules in
-   `docs/features/packages/package-model.md` (Status Propagation)
+6. Propagate status to child products and recalculate eligibility per the
+   rules in `docs/features/packages/package-model.md`
+   ([VA Sets a Status on a Track](package-model.md#va-sets-a-status-on-a-track)).
+   For each product whose `eligible` value actually changes during
+   recalculation, create a `TicketAuditEvent`
+   (`product_eligibility_changed`, `user_id = NULL`). Products whose
+   eligibility is unchanged produce no event
 7. Create `TicketAuditEvent` (`track_status_changed`)
 8. Call `evaluate_ticket_status()`
 9. Return updated track
@@ -186,8 +191,14 @@ Sets the delivery status of a `TicketPackageTrack` record.
 5. Update `TicketPackageTrack.delivery_status`
 6. If new delivery_status is `RELEASED`: create `TicketAuditEvent`
    (`track_released`)
-7. Call `evaluate_ticket_status()`
-8. Return updated track
+7. Return updated track
+
+**Note**: this function does not trigger ticket status re-evaluation
+because `delivery_status` is not part of any gate condition. Only
+`released_at` on products (set by product-level release detection)
+participates in the Resolved gate. If `delivery_status` ever enters a
+gate condition in the future, the `evaluate_ticket_status()` call can be
+reintroduced at that time.
 
 **TicketAuditEvent**: `track_released` (only when transitioning to
 `RELEASED`). Intermediate delivery status transitions (`PENDING` ->
@@ -226,9 +237,16 @@ Sets the status of a `TicketPackageProduct` record.
 3. Validate preconditions
 4. If status unchanged, return (no-op)
 5. Update `TicketPackageProduct.status`
-6. Create `TicketAuditEvent` (`product_status_overridden`)
-7. Call `evaluate_ticket_status()`
-8. Return updated product
+6. Recalculate eligibility if `is_eligible_override = false` (products
+   with eligibility override are not recalculated). See
+   `docs/features/packages/package-model.md`
+   ([Axis 2: Eligibility](package-model.md#axis-2-eligibility-per-product-only))
+   for the computation rules. If eligibility recalculation changes the
+   `eligible` value, create a `TicketAuditEvent`
+   (`product_eligibility_changed`) in the same transaction
+7. Create `TicketAuditEvent` (`product_status_overridden`)
+8. Call `evaluate_ticket_status()`
+9. Return updated product
 
 **TicketAuditEvent**: `product_status_overridden`
 
@@ -705,11 +723,14 @@ When it creates a new `TicketPackageProduct` record, it determines the
 initial status by inheriting from the parent `TicketPackageTrack`:
 
 - Parent in `ANALYSIS` -> `ANALYSIS`
-- Parent in `AFFECTED` -> status is set to `AFFECTED`; eligibility is
-  calculated separately (CVSS threshold, Reactive LTSS override) and
-  stored in the `eligible` boolean
+- Parent in `AFFECTED` -> `AFFECTED`
 - Parent in any other status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) ->
   inherit the same status
+
+Eligibility is always calculated at creation time regardless of the
+inherited status. See `docs/features/packages/package-model.md`
+([Axis 2: Eligibility](package-model.md#axis-2-eligibility-per-product-only))
+for the computation rules.
 
 This logic is internal to `package_service` — callers (including
 `add_package_to_ticket`) do not specify the initial status.

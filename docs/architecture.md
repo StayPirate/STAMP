@@ -228,8 +228,9 @@ the full ticket specification.
 
 1. VA analyzes a ticket and sets affectedness status per track
 2. Sentinel propagates track status to products. Products inherit the track
-   status directly; eligibility is evaluated as a boolean flag (`eligible`)
-   based on CVSS score vs product threshold from AIMAAS
+   status directly; eligibility is always evaluated as a boolean flag
+   (`eligible`) based on CVSS score vs product threshold from AIMAAS,
+   regardless of affectedness status
 3. Products not eligible (CVSS below threshold, Reactive LTSS phase, etc.)
    are marked `eligible=false` but retain the inherited status (e.g.,
    AFFECTED with `eligible=false` — no separate AFFECTED_RESOLVED status)
