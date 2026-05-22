@@ -335,7 +335,8 @@ Model"):
    `released_at IS NOT NULL` (confirmed receipt of the update)
 
 This evaluation is performed by the centralized status evaluation
-function after every operation that modifies package or product statuses.
+function after every operation that modifies track statuses, product
+eligibility, or product release confirmation.
 There is no manual "Mark as Resolved" action.
 
 Conversely, if any of these conditions ceases to be met (e.g., CVSS

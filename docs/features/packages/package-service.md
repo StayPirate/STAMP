@@ -109,7 +109,9 @@ signature and behavior.
 
 ## Package Mutation Operations
 
-Each function below follows the same pattern:
+Each function below follows the same pattern (except
+`set_product_released_at()`, which is system-only and omits
+auto-assignment — see its section for details):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `auto_assign_if_needed()`

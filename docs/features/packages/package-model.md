@@ -597,8 +597,7 @@ whether any active product under it has `eligible = true`.
 
 1. Product `eligible` is set to the chosen value
 2. `is_eligible_override` is set to `true`
-3. The product status is not affected
-4. The track status is not affected
+3. The track status is not affected
 
 ### Automatic Transitions
 

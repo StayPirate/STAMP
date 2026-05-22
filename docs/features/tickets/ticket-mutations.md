@@ -392,7 +392,7 @@ Sets or clears the `severity_override` field on a ticket.
 **Conditional gate relevance**:
 
 - When `cve_id IS NULL`: setting `severity_override` affects the
-  ticket's resolved severity, which is gate-relevant (Analyzed gate #4
+  ticket's resolved severity, which is gate-relevant (Analyzed gate #3
   requires severity). `evaluate_ticket_status()` is always called
 - When `cve_id IS NOT NULL`: severity is derived from CVSS, and
   `severity_override` is ignored. The API endpoint rejects the
