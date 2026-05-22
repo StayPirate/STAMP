@@ -22,29 +22,73 @@ ticket workflow progression.
    notifications). Initially set to `3.1`, changeable by Admin. See
    `docs/features/platform/admin.md`.
 4. **SUSE assessment is authoritative**: when Sentinel needs a CVSS score to
-   make a decision, it follows the resolution cascade defined below.
+   make a decision, it follows one of the two resolution strategies defined
+   below (Severity Resolution Cascade or Eligibility Score Resolution),
+   both of which prioritize SUSE's assessment.
 5. **Default version awareness**: every component of the system that needs
    a CVSS score for any decision MUST resolve the version from the system
    configuration — never hardcode `3.1` or `4.0`.
 
-## CVSS Score Resolution Cascade
+## CVSS Score Resolution
 
-Whenever Sentinel needs a CVSS score for a decision (severity calculation,
-eligibility threshold comparison, or any future logic), it MUST follow
-this cascade:
+Sentinel uses two distinct resolution strategies depending on the consumer.
+Each is described below.
 
-1. **SUSE assessment** of the configured default CVSS version. If present,
-   use this score.
-2. **Highest score** among all providers for the configured default CVSS
-   version. If at least one assessment of the default version exists from
-   any provider, use the highest score.
-3. **No score available**. If no assessment of the default version exists
-   from any provider, the score is treated as absent.
+### Severity Resolution Cascade
 
-When the score is absent and a decision requires a numeric value (e.g.,
-eligibility threshold comparison), the system uses **10.0** (worst-case,
-conservative approach). See `docs/features/packages/package-model.md` for
-eligibility rules.
+Used for: severity derivation, display, notifications, and any future
+informational/triage logic.
+
+This cascade resolves the best available CVSS score, preferring SUSE's
+assessment and the configured default version, but falling back to other
+providers and versions to maximize informational coverage:
+
+1. **SUSE assessment, default version**. If SUSE has published an
+   assessment for the configured default CVSS version, use this score.
+2. **SUSE assessment, other version**. If SUSE has published an assessment
+   for a non-default version, use it. If multiple non-default versions
+   exist, prefer the most recent version number.
+3. **Highest provider, default version**. If at least one external provider
+   has an assessment for the default version, use the highest score among
+   them.
+4. **Highest provider, other version**. If at least one external provider
+   has an assessment for any non-default version, use the highest score
+   among those. If multiple non-default versions exist, prefer the most
+   recent version number; within the same version, prefer the highest
+   score.
+5. **Absent**. No provider has published any assessment for any supported
+   version. The score is treated as absent (severity = `None`).
+
+**Cross-version severity mapping**: when the resolved score comes from a
+version other than the default (steps 2 or 4), severity is mapped using
+the rating scale thresholds specific to that score's version. Sentinel
+uses SUSE-defined severity thresholds per version. Until explicit
+thresholds are configured, the standard CVSS thresholds for each version
+apply (see Severity Rating Scale above).
+
+### Eligibility Score Resolution
+
+Used for: product eligibility threshold comparison (see
+`docs/features/packages/package-model.md`, Axis 2: Eligibility).
+
+This resolution uses **only** the SUSE assessment of the configured default
+CVSS version. No fallback to other providers or other versions is applied:
+
+1. **SUSE assessment, default version**. If present, use this score.
+2. **Not resolvable**. If the SUSE assessment for the default version does
+   not exist (for any reason: the ticket has no associated CVE, the CVE
+   has no SUSE assessment, or SUSE has not scored the default version),
+   the score is treated as **10.0** (worst-case, conservative approach —
+   the product is always eligible unless excluded by the Reactive LTSS
+   override).
+
+**Rationale**: eligibility drives automated decisions about which products
+receive a fix. Only the authoritative internal assessment (SUSE) should
+determine this. External provider scores are informational and useful for
+triage (severity cascade) but not authoritative for eligibility decisions.
+The 10.0 fallback ensures that products are never silently excluded before
+SUSE has assessed the vulnerability — blocked resolution is visible and
+correctable; silent omission is not.
 
 ## Providers
 
@@ -175,11 +219,12 @@ for the unified resolution logic.
 
 ### Calculation Rules
 
-1. Resolve the CVSS score using the resolution cascade (SUSE default
-   version → highest default version → absent)
-2. If a score is found: map it to a severity using the rating scale above
-3. If no score is found (no assessment of the default version exists from
-   any provider): severity is `None`
+1. Resolve the CVSS score using the **Severity resolution cascade** (see
+   above): SUSE default version → SUSE other version → highest provider
+   default version → highest provider other version → absent
+2. If a score is found: map it to a severity using the rating scale
+   thresholds for the version of that score
+3. If no score is found (absent): severity is `None`
 
 ### When Severity is Recalculated
 

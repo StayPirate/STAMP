@@ -358,14 +358,14 @@ visible and correctable; silent omission of eligible products is not.
 2. **Check CVSS threshold**: look up the product's `cvss_threshold` from
    AIMAAS. If no entry exists, the threshold is implicitly 0 (all CVEs
    eligible).
-3. **Resolve the CVSS score**: via the CVSS resolution cascade (see
-   `docs/features/tickets/cvss-scoring.md`):
-   - SUSE assessment of the system-wide default CVSS version → if
-     present, use this score
-   - Highest score among all providers for the default CVSS version → if
-     at least one exists, use the highest
-   - No score available → treat as **10.0** (worst-case; the product is
-     always eligible — a CVE without CVSS data is never excluded)
+3. **Resolve the CVSS score**: via the Eligibility Score Resolution (see
+   `docs/features/tickets/cvss-scoring.md`). Only the SUSE assessment of
+   the system-wide default CVSS version is used — no fallback to other
+   providers or other versions:
+   - SUSE assessment of the default version present → use this score
+   - Not resolvable (ticket has no CVE, CVE has no SUSE assessment for
+     the default version, or SUSE has not scored the default version) →
+     treat as **10.0** (worst-case; the product is always eligible)
 4. **Apply threshold**: if the resolved CVSS score is below the product's
    threshold, `eligible = false`. Otherwise, `eligible = true`.
 
@@ -1585,7 +1585,10 @@ reverts to automatic:
 
 - **`eligible: null`** — sets `is_eligible_override = false`. Eligibility is
   immediately recalculated using the standard rules (CVSS threshold + lifecycle
-  phase)
+  phase). The recalculation uses the Eligibility Score Resolution: only the
+  SUSE assessment of the default CVSS version is considered. If not resolvable
+  (including tickets without an associated CVE), the 10.0 fallback applies —
+  making the product eligible unless the Reactive LTSS override applies.
 
 Both override and reset operations follow the same post-modification flow:
 

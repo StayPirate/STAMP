@@ -42,17 +42,11 @@
 
 ### PKM-GAP-009 — Eligibility computation for CVE-less tickets undefined (High)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The eligibility rules (Axis 2) depend on the CVSS resolution cascade (`docs/features/tickets/cvss-scoring.md`) to obtain a score for threshold comparison. The cascade explicitly requires a CVE — it resolves SUSE assessments and provider scores for the ticket's CVE. However, tickets can exist without a CVE (`cve_id IS NULL`, e.g., manually created tickets). For these tickets, the entire resolution cascade has no input. The spec defines a 10.0 fallback for "no score available" but this covers the case where a CVE exists but has no assessments, not the case where no CVE exists at all. Without a defined computation path, it is ambiguous whether products on CVE-less tickets are eligible or not — this directly impacts the Resolved gate (`eligible = true` products under FIXED tracks must have `released_at IS NOT NULL`).
+**Status**: RESOLVED — Eligibility rules rewritten: introduced "Eligibility Score Resolution" (SUSE default-version only, fallback 10.0) covering all cases of unresolvable score including CVE-less tickets (2026-05-22)
 
 ### PKM-GAP-010 — Reset eligibility override on CVE-less ticket unspecified (High)
 
-**Category**: User-facing scenario gaps
-**Status**: OPEN
-
-The Override Product Eligibility endpoint specifies that sending `eligible: null` resets the override: `is_eligible_override` is set to `false` and "eligibility is immediately recalculated using the standard rules (CVSS threshold + lifecycle phase)." For CVE-less tickets, the standard rules cannot resolve a CVSS score (see PKM-GAP-009). This creates a concrete user scenario gap: a VA creates a manual ticket (no CVE), adds packages, overrides eligibility on a product, and later wants to undo the override. The recalculation path is undefined — it is unclear whether the product reverts to `eligible = true` (the database default), uses the 10.0 fallback (treating no-CVE as worst-case), or fails.
+**Status**: RESOLVED — Reset override behavior clarified: explicitly references Eligibility Score Resolution with 10.0 fallback when SUSE default-version score is not resolvable (2026-05-22)
 
 ---
 
