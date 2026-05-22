@@ -162,6 +162,16 @@ final-status tracks. Currently, both filter their scope to tracks with
 transitions non-final tracks. The anomaly observer would need the raw
 detection signal without the transition, requiring a broader scan scope.
 
+**Use case — rejected automatic transitions**: when `set_track_status()`
+rejects an automatic transition on a final-status track (e.g., IBS
+release detection finds a fix for a track marked `NOT_AFFECTED`), this
+is currently logged as a warning (see `package-service.md`,
+`set_track_status()` step 5). A future Anomaly Observer could consume
+these signals to surface them in the Review Queue as actionable
+anomalies (e.g., "IBS detected a fix in codestream X for track Y, but
+the VA marked it `NOT_AFFECTED` — review recommended"). This would
+replace the passive warning log with an active notification to the VA.
+
 **Decision needed**: (a) timing — implement alongside the Review Queue
 feature or earlier as infrastructure, (b) storage — separate
 `TicketAnomaly` table vs. flags on existing records, (c) whether the
