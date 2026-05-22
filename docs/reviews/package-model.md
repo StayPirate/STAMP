@@ -1,7 +1,7 @@
 # Review: package-model
 
 **Spec**: `docs/features/packages/package-model.md`
-**Last reviewed**: 2026-05-21
+**Last reviewed**: 2026-05-22
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -34,8 +34,7 @@
 
 ### PKM-GAP-004 — WONT_FIX protected state interaction with delivery-triggered FIXED is underspecified for products (Low)
 
-**Category**: State machine completeness
-**Status**: RESOLVED — "Protected state" concept removed entirely; WONT_FIX is now treated identically to other final statuses (not in the source set for automatic transitions). See `docs/drafts/remove-protected-state.md` (2026-05-22)
+**Status**: RESOLVED — "Protected state" concept removed entirely; WONT_FIX is now treated identically to other final statuses (2026-05-22)
 
 ### PKM-GAP-008 — Automatic FIXED transition when delivery reaches RELEASED does not check if track status is already FIXED (Low)
 
@@ -47,10 +46,7 @@
 
 ### PKM-COH-001 — Resolved gate description in package-model omits 'under a FIXED track' qualifier for product release check (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-In package-model.md, the Resolved gate is summarized as "all eligible products with `released_at IS NOT NULL`", without qualifying that this applies only to eligible products under FIXED tracks. The authoritative definition in tickets.md is more precise: "Every eligible product (`eligible = true`) under a `FIXED` track has `released_at IS NOT NULL`". The package-model's summary could mislead implementers into checking `released_at` on eligible products under all tracks (including NOT_AFFECTED or WONT_FIX tracks where `released_at` would be NULL).
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-22)
 
 ---
 
@@ -90,17 +86,11 @@ In package-model.md, the Resolved gate is summarized as "all eligible products w
 
 ### PKM-SEC-003 — Viewing affectedness data requires no authentication (Low)
 
-**Category**: Data Exposure
-**Status**: OPEN
-
-The Security section states "Viewing affectedness data is publicly accessible (no authentication required)." Exposing which specific SUSE products are affected by which CVEs without authentication could provide attackers with actionable intelligence about unpatched systems.
+**Status**: RESOLVED — Accepted risk: public access to affectedness data is an intentional design choice aligned with open-source transparency principles (2026-05-22)
 
 ### PKM-SEC-004 — No rate limiting on SMELT-triggering endpoint (Low)
 
-**Category**: Denial of Service
-**Status**: OPEN
-
-The POST endpoint triggers an external SMELT query for every call. An authenticated VA could repeatedly call this with different non-existent package names, causing numerous outbound requests to SMELT.
+**Status**: RESOLVED — Accepted risk: rate limiting deferred to infrastructure layer (reverse proxy); low impact given VA-only access requirement (2026-05-22)
 
 ---
 
@@ -116,21 +106,12 @@ The POST endpoint triggers an external SMELT query for every call. An authentica
 
 ### PKM-API-003 — PATCH endpoints with significant side-effects deviate from mutation pattern convention (Low)
 
-**Category**: Mutation patterns
-**Status**: OPEN
-
-The "Change Track Status" and "Override Product Status" endpoints use PATCH despite triggering significant side effects. The spec acknowledges this deviation with a justification note.
+**Status**: RESOLVED — Convention formalized in api-spec.md (Mutation Patterns section); PATCH with domain cascading consequences is now the documented pattern. Deviation notes removed from package-model.md (2026-05-22)
 
 ### PKM-API-004 — Fixed sorting on unpaginated endpoint not explicitly stated as non-client-controlled (Low)
 
-**Category**: Sorting conventions
-**Status**: OPEN
-
-The `GET /api/v1/tickets/{ticket_id}/packages` endpoint states "Fixed alphabetical order by `package_name`" but does not explicitly state that client-controlled sorting (`sort_by`, `sort_order` parameters) is not supported, nor does it provide a justification. The `api-spec.md` Sorting convention requires endpoints that intentionally omit client-controlled sorting to state so with justification.
+**Status**: RESOLVED — Added explicit non-support declaration and justification for fixed sorting per api-spec.md Sorting convention (2026-05-22)
 
 ### PKM-API-005 — search parameter match strategy not specified (Low)
 
-**Category**: Query parameter conventions
-**Status**: OPEN
-
-The `GET /api/v1/packages` endpoint's `search` parameter is described as "Partial match on `package_name` (case-insensitive)" but does not specify the matching strategy (prefix match, substring match via ILIKE, or other). The service function spec in `package-service.md` clarifies this is ILIKE substring match, but the endpoint definition in `package-model.md` should state the strategy explicitly for API consumers.
+**Status**: RESOLVED — Clarified search parameter matching strategy as substring (ILIKE %term%) in endpoint definition (2026-05-22)

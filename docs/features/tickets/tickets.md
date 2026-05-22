@@ -395,7 +395,7 @@ history.
 holding the `vulnerability_analyst` role. Attempting to assign a ticket
 to a user without this role, or to an inactive user, fails with 400 Bad
 Request. This applies to the
-explicit assignment endpoint (`POST /assign`); auto-assignment is
+explicit assignment endpoint (`PATCH .../assignee`); auto-assignment is
 inherently safe because only VAs can perform modifying operations on
 tickets.
 
@@ -1199,14 +1199,14 @@ API performs resolution and format conversion before serialization.
 | `GET /api/v1/tickets/{ticket_id}` | `TicketDetail` |
 | `POST /api/v1/tickets` | `TicketDetail` (201 Created) |
 | `POST .../associate-cve` | `TicketDetail` |
-| `POST .../set-severity` | `TicketDetail` |
-| `POST .../assign` | `TicketDetail` |
+| `PATCH .../severity` | `TicketDetail` |
+| `PATCH .../assignee` | `TicketDetail` |
 | `POST .../ignore` | `TicketDetail` |
 | `POST .../duplicate` | `TicketDetail` |
 | `POST .../reopen` | `TicketDetail` |
 | `POST .../revert-duplicate` | `TicketDetail` |
 | `POST .../restore` | `TicketDetail` |
-| `POST .../set-confidentiality` | `TicketDetail` |
+| `PATCH .../confidentiality` | `TicketDetail` |
 | `DELETE .../cve` | 204 No Content (no body) |
 | `DELETE /api/v1/tickets/{ticket_id}` | 204 No Content (no body) |
 
@@ -1386,7 +1386,7 @@ Error responses:
 ### Set Severity Override
 
 ```
-POST /api/v1/tickets/{ticket_id}/set-severity
+PATCH /api/v1/tickets/{ticket_id}/severity
 ```
 
 - **Access level**: Vulnerability Analyst
@@ -1419,7 +1419,7 @@ Error responses:
 ### Assign Ticket
 
 ```
-POST /api/v1/tickets/{ticket_id}/assign
+PATCH /api/v1/tickets/{ticket_id}/assignee
 ```
 
 - **Access level**: Vulnerability Analyst
@@ -1623,7 +1623,7 @@ Error responses:
 ### Set Confidentiality
 
 ```
-POST /api/v1/tickets/{ticket_id}/set-confidentiality
+PATCH /api/v1/tickets/{ticket_id}/confidentiality
 ```
 
 - **Access level**: Vulnerability Analyst

@@ -1531,14 +1531,6 @@ TicketAuditEvent creation, and ticket status re-evaluation — all via
 |-------|------|----------|-------------|
 | `status` | string | Yes | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`, `WONT_FIX` |
 
-**Note on PATCH with side effects**: this endpoint uses PATCH because
-from the client's perspective it is a single-field update on a specific
-resource. The side effects (product propagation, eligibility evaluation,
-ticket status re-evaluation) are a consequence of the domain model, not
-of additional business operations. This is a documented deviation from
-the `POST /resource/{id}/verb` convention for operations with side
-effects.
-
 **Response** (200 OK):
 
 ```json
@@ -1674,9 +1666,6 @@ Both override and reset operations follow the same post-modification flow:
 This applies to all operations through this endpoint: setting an override,
 changing an override value, and resetting an override.
 
-**Note on PATCH with side effects**: same rationale as the track
-endpoint above — single-field update from the client's perspective.
-
 **Response** (200 OK):
 
 ```json
@@ -1728,7 +1717,7 @@ a standalone endpoint for clients that only need package data.
 | **Envelope** | `{"data": [...]}` (unpaginated list) |
 | **Soft-deleted records** | All package/track/product records are returned (including soft-deleted), with `deleted_at` visible on each — identical to `TicketDetail.packages` behavior |
 | **Response schema** | `PackageDetail[]` — reuses the existing schema (full tree: package -> tracks -> products) |
-| **Sorting** | Fixed alphabetical order by `package_name` |
+| **Sorting** | Fixed alphabetical order by `package_name`. Client-controlled sorting (`sort_by`/`sort_order`) is not supported — the dataset has bounded cardinality and fixed ordering provides consistent display without configuration overhead. |
 | **Delegation** | Delegates to `package_service.get_ticket_packages()` |
 
 **Response** (200 OK):
@@ -1778,7 +1767,7 @@ once per ticket in the results.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `search` | string | Partial match on `package_name` (case-insensitive). Max 500 chars |
+| `search` | string | Substring match on `package_name` (case-insensitive, equivalent to SQL ILIKE `%term%`). Max 500 chars |
 | `name` | string | Exact match on `package_name`. Max 500 chars |
 | `ticket_status` | string (repeatable) | Ticket statuses to include: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated`. Repeatable — multiple values are specified as separate query parameters (e.g., `?ticket_status=new&ticket_status=analysis`). Invalid values are silently ignored per `api-spec.md` (Enum Filter Validation). If all values are invalid, an empty result set is returned. Default: no filter (all statuses) |
 | `include_deleted` | string | Controls visibility of packages belonging to **soft-deleted tickets**. `true` (include packages from active and deleted tickets), `only` (return only packages from deleted tickets). Any other value (including `false`) is treated as absent. Accepted from any caller, but effective only for Admins — silently ignored for non-admin callers. Default (absent or unrecognized value): return only packages from active tickets |

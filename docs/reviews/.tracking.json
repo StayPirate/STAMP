@@ -192,15 +192,15 @@
       "enabled": true,
       "abbr": "PKM",
       "cache": {
-        "last_review": "2026-05-21T00:00:00+0000",
+        "last_review": "2026-05-22T00:00:00+0000",
         "open": {
-          "GAP": { "H": 0, "M": 0, "L": 1 },
-          "COH": { "H": 0, "M": 0, "L": 1 },
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
           "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 2 },
-          "API": { "H": 0, "M": 0, "L": 3 }
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 16,
+        "resolved": 22,
         "not_reviewed": []
       }
     },
@@ -266,16 +266,16 @@
       "enabled": true,
       "abbr": "PKS",
       "cache": {
-        "last_review": "2026-05-21T00:00:00+0000",
+        "last_review": "2026-05-22T15:36:27+0200",
         "open": {
           "GAP": { "H": 3, "M": 7, "L": 3 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 2, "M": 3, "L": 1 },
+          "DES": { "H": 0, "M": 1, "L": 1 },
+          "SEC": { "H": 0, "M": 2, "L": 2 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 0,
-        "not_reviewed": ["COH", "DES", "SEC", "API"]
+        "resolved": 4,
+        "not_reviewed": []
       }
     },
     "ticket-mutations": {

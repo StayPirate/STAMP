@@ -30,10 +30,10 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [package-model](package-model.md) | 1 | 1 | 🟢 | 2 | 3 | 7 | 2026-05-21 |  |
-| | 1:🟡 | 1:🟡 |  | 2:🟡 | 3:🟡 |  |  |  |
-| [package-service](package-service.md) | 13 | — | — | — | — | 13 | 2026-05-21 |  |
-| | 3:🔴 7:🟠 3:🟡 |  |  |  |  |  |  |  |
+| [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-22 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
+| [package-service](package-service.md) | 13 | 6 | 2 | 4 | 🟢 | 25 | 2026-05-22 | |
+| | 3:🔴 7:🟠 3:🟡 | 2:🔴 3:🟠 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
@@ -42,14 +42,14 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-mutations](ticket-mutations.md) | — | — | — | — | — | 0 |  | — |
 |  |  |  |  |  |  |  |  |  |
-| [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-20 |  |
+| [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-20 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **14** | **1** | **0** | **2** | **3** | **20** |  |  |
-| | 3:🔴 7:🟠 4:🟡 | 1:🟡 |  | 2:🟡 | 3:🟡 |  |  |  |
+| **Total** | **13** | **6** | **2** | **4** | **0** | **25** |  |  |
+|  | 3:🔴 7:🟠 3:🟡 | 2:🔴 3:🟠 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
 
 ### Disabled specs
 

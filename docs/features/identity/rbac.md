@@ -176,15 +176,15 @@ here with the required access level and a link to the owning spec.
 | POST | `/api/v1/tickets` | Vulnerability Analyst | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | Vulnerability Analyst | [tickets](../tickets/tickets.md#associate-cve) |
 | DELETE | `/api/v1/tickets/{ticket_id}/cve` | Admin | [tickets](../tickets/tickets.md#remove-cve-from-ticket-admin-only) |
-| POST | `/api/v1/tickets/{ticket_id}/set-severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-severity-override) |
-| POST | `/api/v1/tickets/{ticket_id}/assign` | Vulnerability Analyst | [tickets](../tickets/tickets.md#assign-ticket) |
+| PATCH | `/api/v1/tickets/{ticket_id}/severity` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-severity-override) |
+| PATCH | `/api/v1/tickets/{ticket_id}/assignee` | Vulnerability Analyst | [tickets](../tickets/tickets.md#assign-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/ignore` | Vulnerability Analyst | [tickets](../tickets/tickets.md#ignore-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/reopen` | Vulnerability Analyst | [tickets](../tickets/tickets.md#reopen-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#mark-ticket-as-duplicate) |
 | POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revert-duplicate-status) |
 | DELETE | `/api/v1/tickets/{ticket_id}` | Admin | [tickets](../tickets/tickets.md#soft-delete-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/restore` | Admin | [tickets](../tickets/tickets.md#restore-ticket) |
-| POST | `/api/v1/tickets/{ticket_id}/set-confidentiality` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-confidentiality) |
+| PATCH | `/api/v1/tickets/{ticket_id}/confidentiality` | Vulnerability Analyst | [tickets](../tickets/tickets.md#set-confidentiality) |
 | GET | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [tickets](../tickets/tickets.md#list-access-grants) |
 | POST | `/api/v1/tickets/{ticket_id}/access` | Vulnerability Analyst | [tickets](../tickets/tickets.md#grant-access) |
 | DELETE | `/api/v1/tickets/{ticket_id}/access/{user}` | Vulnerability Analyst | [tickets](../tickets/tickets.md#revoke-access) |

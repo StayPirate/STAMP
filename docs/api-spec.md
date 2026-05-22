@@ -392,28 +392,55 @@ implementation pattern.
 
 Two patterns exist for modifying resources:
 
-**PATCH — field update without significant side-effects:**
+**PATCH — field update on an identified resource:**
 
 ```
-PATCH /api/v1/fetchers/{name}/config
-Body: {"enabled": true}
+PATCH /api/v1/tickets/{ticket_id}/severity
+Body: {"severity_override": "critical"}
 ```
 
-Used when the operation is a direct attribute change with no additional
-business logic beyond validation.
+Used when the client sets one or more fields on a resource clearly
+identified by the URL and the field assumes the requested value
+(predictable outcome). Side effects are permitted when they are **domain
+cascading consequences** — that is, reactions intrinsic to the data model
+such as:
 
-**POST with action verb — operation with business logic or side-effects:**
+- Status propagation to related entities
+- Eligibility or threshold re-evaluation
+- Audit event creation
+- Notification dispatch
+
+These side effects are a consequence of the domain model, not additional
+business workflows. The operation remains a PATCH because from the
+client's perspective the semantics are "update this field on this
+resource."
+
+**POST with action verb — operation or command:**
 
 ```
-POST /api/v1/tickets/{id}/assign
-Body: {"user_id": "..."}
+POST /api/v1/tickets/{ticket_id}/ignore
+Body: {"reason": "..."}
 ```
 
-Used when the operation triggers additional logic such as notifications,
-event logging, state transitions, or cross-entity validation.
+Used when the operation has characteristics that go beyond a field
+update:
 
-Rule of thumb: if the operation requires a dedicated service method (not
-just a field setter), it is an action endpoint (POST with verb).
+- **State machine guards** that may reject the operation (the field is
+  not freely settable to any value)
+- **Creation or destruction of separate entities** (not just cascading
+  re-evaluation of existing records)
+- **Irreversible operations** where the semantic weight is "execute a
+  procedure" (revoke, delete, deactivate)
+- **Lifecycle transitions** with cross-entity destructive mutations
+  (session invalidation, key revocation, ticket reassignment)
+- **Multi-entity commands** that affect multiple independent resources
+  in a single operation
+
+Rule of thumb: if the client perceives the operation as "set this field
+to this value" and the field will reliably assume that value (barring
+validation errors), use PATCH. If the client perceives the operation as
+"perform this action" with guards, workflows, or irreversible
+consequences beyond the target field, use POST with an action verb.
 
 ### Audit Trail Endpoint Naming
 
