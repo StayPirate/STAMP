@@ -1,9 +1,9 @@
-# Administration
+# System Settings
 
 ## Purpose
 
 System-wide configuration and administrative operations for the Sentinel
-platform. The Admin panel provides settings that affect platform behavior
+platform. The System Settings page provides settings that affect platform behavior
 across all users and tickets.
 
 ## Access Control

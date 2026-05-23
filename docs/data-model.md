@@ -431,7 +431,7 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 ### SystemSetting
 
 Key-value store for system-wide configuration. See
-`docs/features/platform/admin.md` for details.
+`docs/features/platform/system-settings.md` for details.
 
 | Column     | Type        | Constraints        | Description                      |
 |------------|-------------|--------------------|----------------------------------|
@@ -959,7 +959,7 @@ Audit trail for system setting modifications. Inherits `id`,
 |---|---|
 | setting_changed | Admin modified a system setting |
 
-See `docs/features/platform/admin.md` for the full specification.
+See `docs/features/platform/system-settings.md` for the full specification.
 
 ### CodestreamPackageChecksum
 

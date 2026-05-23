@@ -53,7 +53,7 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 
 ### Disabled specs
 
-- admin
+- system-settings
 - cve-tracking
 - cvss-scoring
 - fetcher-infrastructure

@@ -8,7 +8,7 @@ Cross-cutting infrastructure and system administration.
 fetcher-infrastructure.md       BaseFetcher base class, registry, execution tracking
 fetcher-operations.md           Monitoring, API, and CLI for fetchers
 audit-trail-infrastructure.md   BaseAuditLog base class, AuditEventMixin
-admin.md                        System settings (default CVSS version, etc.)
+system-settings.md              System settings (default CVSS version, etc.)
 ```
 
 ## Relationships
@@ -17,5 +17,5 @@ admin.md                        System settings (default CVSS version, etc.)
   background data-fetching tasks inherit from.
 - `fetcher-operations.md` is the monitoring layer built on top of
   `fetcher-infrastructure.md` — it consumes `FetcherRun` records.
-- `admin.md` defines the system settings API; settings like
+- `system-settings.md` defines the system settings API; settings like
   `default_cvss_version` are consumed by `tickets/cvss-scoring.md`.

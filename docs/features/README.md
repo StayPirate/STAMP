@@ -49,7 +49,7 @@ Index of all feature specification domains.
 - [fetcher-infrastructure.md](platform/fetcher-infrastructure.md) — BaseFetcher base class, registry, execution tracking
 - [fetcher-operations.md](platform/fetcher-operations.md) — Monitoring, API, and CLI for fetchers
 - [audit-trail-infrastructure.md](platform/audit-trail-infrastructure.md) — BaseAuditLog base class, AuditEventMixin
-- [admin.md](platform/admin.md) — System settings (default CVSS version, etc.)
+- [system-settings.md](platform/system-settings.md) — System settings (default CVSS version, etc.)
 
 ### Tickets
 

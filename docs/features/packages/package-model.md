@@ -372,7 +372,7 @@ visible and correctable; silent omission of eligible products is not.
 **Important**: the CVSS version used for threshold comparison MUST always
 be resolved from the system-wide default CVSS version configuration —
 never hardcoded. See `docs/features/tickets/cvss-scoring.md` and
-`docs/features/platform/admin.md`.
+`docs/features/platform/system-settings.md`.
 
 **Override model**: the VA can override eligibility on individual products
 by setting `is_eligible_override = true`. When overridden, automatic
@@ -1892,5 +1892,5 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - `docs/features/packages/product-lifecycle-transitions.md` — EOL and
   Reactive LTSS handling
 - `docs/features/packages/package-bugowner.md` — bugowner resolution
-- `docs/features/platform/admin.md` — default CVSS version configuration
+- `docs/features/platform/system-settings.md` — default CVSS version configuration
 - `docs/data-model.md` — full database schema

@@ -20,7 +20,7 @@ ticket workflow progression.
 3. **Configurable default version**: a system-wide setting determines which
    CVSS version is used for all automated decisions (severity, eligibility,
    notifications). Initially set to `3.1`, changeable by Admin. See
-   `docs/features/platform/admin.md`.
+   `docs/features/platform/system-settings.md`.
 4. **SUSE assessment is authoritative**: when Sentinel needs a CVSS score to
    make a decision, it follows one of the two resolution strategies defined
    below (Severity Resolution Cascade or Eligibility Score Resolution),
@@ -585,7 +585,7 @@ the severity, eligibility, and ticket state adjustments are committed
 together.
 
 **Exception — batch recalculation on default version change**: when the
-Admin changes the default CVSS version (see `docs/features/platform/admin.md`),
+Admin changes the default CVSS version (see `docs/features/platform/system-settings.md`),
 the cascade must run for all active tickets. This batch operation is
 executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
@@ -628,7 +628,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - Viewing CVSS data: publicly accessible (no authentication required)
 - Adding/editing/deleting SUSE CVSS: Vulnerability Analyst role
 - Changing default CVSS version: Admin role only (see
-  `docs/features/platform/admin.md`)
+  `docs/features/platform/system-settings.md`)
 - External CVSS data is read-only — cannot be modified through Sentinel
 
 ## Cross-references

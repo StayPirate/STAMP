@@ -16,7 +16,7 @@
         "not_reviewed": []
       }
     },
-    "admin": {
+    "system-settings": {
       "enabled": false,
       "abbr": "ADM",
       "cache": {

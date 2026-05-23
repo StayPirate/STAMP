@@ -268,9 +268,9 @@ here with the required access level and a link to the owning spec.
 
 | Method | Endpoint | Access | Owning Spec |
 |--------|----------|--------|-------------|
-| GET | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md#get-system-settings) |
-| PATCH | `/api/v1/admin/settings` | Admin | [admin](../platform/admin.md#update-system-settings) |
-| GET | `/api/v1/admin/settings/audit-log` | Admin | [admin](../platform/admin.md#api) |
+| GET | `/api/v1/admin/settings` | Admin | [system-settings](../platform/system-settings.md#get-system-settings) |
+| PATCH | `/api/v1/admin/settings` | Admin | [system-settings](../platform/system-settings.md#update-system-settings) |
+| GET | `/api/v1/admin/settings/audit-log` | Admin | [system-settings](../platform/system-settings.md#api) |
 | GET | `/api/v1/admin/identity/audit-log` | Admin | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | Admin | [authentication](authentication.md#get-apiv1adminapi-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | Admin | [authentication](authentication.md#post-apiv1adminapi-keyskey_idrevoke) |

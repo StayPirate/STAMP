@@ -298,7 +298,7 @@ When adding a new audit trail, update this index.
 | Ticket | `ticket_audit_event` | 24 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
 | Identity | `identity_audit_event` | 14 | Indefinite | `docs/features/identity/identity-audit-log.md` |
-| Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/admin.md` |
+| Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/system-settings.md` |
 
 ## Access Level
 
@@ -362,6 +362,6 @@ All audit trail endpoints MUST apply standard pagination as defined in
 - `docs/data-model.md` — table definitions for all audit event models
 - `docs/features/tickets/ticket-audit-log.md` — ticket audit trail
 - `docs/features/identity/identity-audit-log.md` — identity audit trail
-- `docs/features/platform/admin.md` — setting audit trail
+- `docs/features/platform/system-settings.md` — setting audit trail
 - `docs/features/platform/fetcher-infrastructure.md` — fetcher audit trail
 - `AGENTS.md` — Audit trail atomicity guardrail

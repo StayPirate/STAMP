@@ -246,5 +246,5 @@ List all products synced from SMELT. Paginated.
   Reactive LTSS automated actions
 - `docs/features/tickets/cvss-scoring.md` -- CVSS resolution cascade
   used for threshold comparison
-- `docs/features/platform/admin.md` -- default CVSS version
+- `docs/features/platform/system-settings.md` -- default CVSS version
   configuration

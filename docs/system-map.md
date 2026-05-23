@@ -501,7 +501,7 @@ flowchart TD
     end
 
     subgraph platform["Platform"]
-        ADMIN["admin"]
+        SETTINGS["system-settings"]
         FETCHER_INFRA["fetcher-infrastructure"]
         FETCHER["fetcher-operations"]
     end
@@ -531,8 +531,8 @@ flowchart TD
     RBAC --> TICKETS
 
     %% Platform → everything
-    ADMIN --> CVSS
-    ADMIN --> TICKETS
+    SETTINGS --> CVSS
+    SETTINGS --> TICKETS
     FETCHER --> CVE
     FETCHER --> RABBIT
 
@@ -573,7 +573,7 @@ other feature:
 | [package-bugowner](features/packages/package-bugowner.md) | Integration | IBS package maintainer cache |
 | [ad-integration](features/identity/ad-integration.md) | Identity | SUSE AD sync for user provisioning and roles |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
-| [admin](features/platform/admin.md) | Platform | System settings (default CVSS version) |
+| [system-settings](features/platform/system-settings.md) | Platform | System settings (default CVSS version) |
 | [fetcher-infrastructure](features/platform/fetcher-infrastructure.md) | Platform | BaseFetcher base class, registry, data model |
 | [fetcher-operations](features/platform/fetcher-operations.md) | Platform | Background task monitoring, API, and CLI |
 | [maintainer](features/packages/maintainer.md) | Integration | Maintainer-oriented package/ticket views |
