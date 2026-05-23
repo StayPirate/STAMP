@@ -45,10 +45,7 @@ The `package-model.md` spec states: "If no matching product is found for a targe
 
 ### PKS-GAP-09 — TicketPackage creation in step 1 of add_package_to_ticket outside FOR UPDATE lock (Medium)
 
-**Category**: Data lifecycle
-**Status**: OPEN
-
-Step 1 of `add_package_to_ticket()` creates a `TicketPackage` record before the lock is acquired in step 4. Two concurrent calls for the same ticket and package could both attempt to create the record, causing a unique constraint violation. The spec should clarify whether step 1's creation is moved inside `add_package_records()` or whether the constraint violation should be caught as a no-op.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-23)
 
 ### PKS-GAP-10 — TrackData type not defined (Medium)
 
