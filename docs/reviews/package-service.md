@@ -33,24 +33,15 @@ The `package-model.md` spec states: "If no matching product is found for a targe
 
 ### PKS-GAP-06 — Bugowner resolution and submission discovery failure behavior unspecified (Medium)
 
-**Category**: Error paths
-**Status**: OPEN
-
-Steps 5 and 6 of `add_package_to_ticket()` involve external I/O (IBS API for bugowner, task enqueue for submission discovery). The spec does not specify what happens if bugowner resolution fails or if the task enqueue fails. It is unclear whether these failures cause the entire operation to fail and rollback the record creation from step 4, or whether they are best-effort.
+**Status**: RESOLVED — Spec updated: add_package_to_ticket() error handling now documents steps 7-8 as best-effort with explicit failure semantics (2026-05-23)
 
 ### PKS-GAP-07 — add_package_records() with empty tracks list creates orphan (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-If `tracks` is an empty list, the function would create/skip a `TicketPackage` record, create a `package_added` audit event, and call `evaluate_ticket_status()`, but create zero track/product records. This produces a package with no tracks — which is immediately an orphan. The orphan cleanup invariant only triggers "on soft-deletion events," not on creation with zero children.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-23)
 
 ### PKS-GAP-08 — Restore pre-checks from package-model.md not reflected in module spec (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The `package-model.md` spec defines detailed restore pre-checks: restoring a package requires at least one track with `deleted_at IS NULL` that has at least one product with `deleted_at IS NULL`; restoring a track requires at least one product with `deleted_at IS NULL`. These pre-checks (returning `PACKAGE_RESTORE_BLOCKED`) are absent from the `package_service.md` restore function specs.
+**Status**: RESOLVED — Spec updated: restore functions now include child-existence pre-checks with PACKAGE_RESTORE_BLOCKED error (2026-05-23)
 
 ### PKS-GAP-09 — TicketPackage creation in step 1 of add_package_to_ticket outside FOR UPDATE lock (Medium)
 

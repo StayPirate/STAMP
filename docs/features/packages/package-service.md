@@ -509,6 +509,11 @@ Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
 - Package must exist and have `deleted_at IS NOT NULL`
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone
+- At least one `TicketPackageTrack` under this package must have
+  `deleted_at IS NULL`, AND that track must have at least one
+  `TicketPackageProduct` with `deleted_at IS NULL`. If not satisfied,
+  raise application error corresponding to `422 PACKAGE_RESTORE_BLOCKED`
+  (see `package-model.md`)
 
 **Behavior**:
 
@@ -542,6 +547,9 @@ Restores a soft-deleted `TicketPackageTrack` record.
 - Parent package must have `deleted_at IS NULL`
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone
+- At least one `TicketPackageProduct` under this track must have
+  `deleted_at IS NULL`. If not satisfied, raise application error
+  corresponding to `422 PACKAGE_RESTORE_BLOCKED` (see `package-model.md`)
 
 **Behavior**:
 
@@ -575,6 +583,8 @@ Restores a soft-deleted `TicketPackageProduct` record.
 - Parent track must have `deleted_at IS NULL`
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone
+
+No child-existence pre-check required (product is a leaf record).
 
 **Behavior**:
 
@@ -633,10 +643,28 @@ async def add_package_to_ticket(
    SR/RR discovery.
 9. Return an `AddPackageResult` with creation/skip counts.
 
-**Error handling**: steps 1–3 form the validation gate. If any of these
-steps fails, the function raises without side effects (no database writes
-occur). The endpoint handler translates service-layer exceptions to the
-corresponding HTTP error codes defined in `package-model.md`.
+**Error handling**:
+
+- **Steps 1–3 (validation gate)**: blocking. If any of these steps fails,
+  the function raises without side effects (no database writes occur). The
+  endpoint handler translates service-layer exceptions to the corresponding
+  HTTP error codes defined in `package-model.md`.
+- **Steps 4–6 (record creation)**: transactional. Record creation occurs
+  under the `FOR UPDATE` lock acquired by `add_package_records()`. If any
+  failure occurs during these steps, the transaction is rolled back and no
+  records are persisted.
+- **Steps 7–8 (post-record-creation)**: best-effort. These steps execute
+  after the transaction from steps 4–6 has committed successfully. Failures
+  do not roll back the created records.
+  - **Step 7 (bugowner resolution)**: if bugowner resolution fails (IBS
+    unreachable, API error, timeout), log a warning and continue. The
+    package addition is not rolled back. See
+    `docs/features/packages/package-bugowner.md`: "Package addition to the
+    ticket MUST NOT fail due to a bugowner resolution failure."
+  - **Step 8 (submission discovery enqueue)**: if the task enqueue fails
+    (e.g., Redis unavailable), log a warning and continue. The periodic
+    `RequestSyncFetcher` (catch-up every 24h at 02:30 UTC) ensures
+    eventual consistency.
 
 **Auto-assignment**: applied by `add_package_records()` (the function
 that acquires the lock), NOT by `add_package_to_ticket()`.
