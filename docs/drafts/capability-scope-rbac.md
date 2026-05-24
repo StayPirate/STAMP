@@ -52,7 +52,7 @@ cohesive set of operations that would logically be granted or denied together.
 
 | Capability | Operations covered |
 |---|---|
-| `manage_users` | Update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view identity audit log |
+| `manage_users` | Update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log (self-scoped audit log is Authenticated, not capability-protected) |
 | `manage_role_mappings` | AD role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error tracebacks |
@@ -137,25 +137,34 @@ are independent:
 
 Both checks must pass for a write operation to succeed.
 
-The `confidential_ticket_filter()` function signature changes from:
+The `confidential_ticket_filter()` function signature changes only the
+`caller_is_privileged` parameter. Other parameters (`caller_user_id`,
+`caller_email`) remain unchanged — they are still needed for grant and
+bugowner lookups:
 
 ```python
+# Before
 def confidential_ticket_filter(
     ...,
     caller_is_privileged: bool,     # True if VA or Admin
+    caller_user_id: UUID | None,
+    caller_email: str | None,
     ...
 )
-```
 
-to:
-
-```python
+# After
 def confidential_ticket_filter(
     ...,
     caller_scope: Scope | None,     # None for unauthenticated
+    caller_user_id: UUID | None,
+    caller_email: str | None,
     ...
 )
 ```
+
+When `caller_scope` is `None` (unauthenticated), the function
+short-circuits: only non-confidential tickets are returned, and
+grant/bugowner checks are skipped (no user identity to match against).
 
 ## Endpoint Authorization Pattern
 
@@ -193,6 +202,35 @@ The `require_capability()` dependency:
 Scope is applied separately as a query filter (not at the endpoint level)
 by `confidential_ticket_filter()` and similar scope-aware filters.
 
+### Authorization chain evaluation order
+
+For ticket endpoints that are capability-protected and operate on a
+specific ticket, the authorization chain evaluates in this order:
+
+1. **Authentication** (`get_current_user`) — extract the current user
+   from the session/token. Returns 401 if not authenticated.
+2. **Capability** (`require_capability`) — check the user has the
+   required capability. Returns 403 `AUTH_INSUFFICIENT_PERMISSION` if
+   not. This check is user-level (does not depend on the specific
+   ticket), so it does not leak information about ticket existence.
+3. **Ticket accessibility** (`require_accessible_ticket`) — check that
+   the ticket exists, is visible to the caller (scope + grant +
+   bugowner), and is not soft-deleted (unless caller has
+   `admin_ticket_ops` capability). Returns 404 for invisible tickets,
+   410 for soft-deleted tickets.
+4. **Mutability guard** (`require_ticket_mutable`) — check that the
+   ticket is in a mutable state (not in a final status). Returns 409
+   if the ticket cannot be modified.
+
+This ordering is security-significant: the capability check (step 2)
+fires before the accessibility check (step 3). A user without the
+required capability receives 403 regardless of whether the ticket
+exists — this prevents probing for ticket existence via differentiated
+error codes.
+
+For non-ticket endpoints (user management, settings, fetchers), only
+steps 1 and 2 apply.
+
 ### Conditional capability checks
 
 Some endpoints are Public but accept optional parameters that require a
@@ -200,8 +238,12 @@ capability. For example, `GET /api/v1/tickets` is Public, but the
 `include_deleted` query parameter requires `admin_ticket_ops` capability.
 In these cases, the capability check is performed inline in the handler
 (not via the `require_capability()` dependency) only when the parameter
-is present. If the caller lacks the capability, the parameter is ignored
-or returns 403.
+is present. If the caller lacks the required capability, the parameter
+is **silently ignored** — the endpoint returns results as if the
+parameter were not provided. The endpoint never returns 403 for a
+missing query parameter on a Public or Authenticated endpoint; 403 is
+reserved for capability-protected endpoints where the caller cannot
+access the endpoint itself.
 
 ## Business Rules
 
@@ -230,6 +272,24 @@ ticket remains unassigned for a human VA to claim.
 
 This ensures bots never become ticket assignees, which would block
 human triage workflows.
+
+### Reopen and revert-duplicate assignment
+
+The existing ticket flows for reopen and revert-duplicate embed an
+explicit reassignment: the ticket is assigned to the user who performed
+the operation. Since the assignment target constraint requires the
+`vulnerability_analyst` role, a user who holds only `automation_agent`
+(or any non-VA role) cannot be the assignment target.
+
+When a non-VA user performs reopen or revert-duplicate (they have the
+`triage_ticket` capability to do so), the reassignment step is skipped
+— the ticket retains its current assignee. If the ticket was
+unassigned, it remains unassigned.
+
+This is consistent with the auto-assignment rule: bots can trigger
+status transitions but never become ticket owners. The audit trail
+records the bot as the actor of the status change, which is correct
+— the bot performed the operation.
 
 ### AD role mapping for `automation_agent`
 
@@ -297,7 +357,15 @@ Changes:
   - Zero-role users have effective scope `non_confidential`
 - [ ] Rename `AUTH_INSUFFICIENT_ROLE` to `AUTH_INSUFFICIENT_PERMISSION`
 - [ ] Document conditional capability checks for Public endpoints with
-      privileged parameters (e.g., `include_deleted`)
+      privileged parameters (silently ignored convention)
+- [ ] Document authorization chain evaluation order (authentication →
+      capability → ticket accessibility → mutability)
+- [ ] Update Business Rule 8: zero-role users have scope
+      `non_confidential` but can access specific confidential tickets via
+      `TicketAccessGrant` or bugowner (unlike unauthenticated users)
+- [ ] Add business rule: reopen/revert-duplicate skip reassignment for
+      non-VA users (ticket retains current assignee)
+- [ ] Add design note: scope is API-layer only (background tasks bypass)
 
 ### Phase 2 — Update `docs/data-model.md`
 
@@ -315,6 +383,13 @@ Changes:
 - [ ] Rename error code `AUTH_INSUFFICIENT_ROLE` to `AUTH_INSUFFICIENT_PERMISSION`
 - [ ] Update `require_accessible_ticket` specification to use scope-based
       logic instead of role-based `caller_is_privileged`
+- [ ] Update `require_accessible_ticket` soft-delete check: use
+      `admin_ticket_ops` capability instead of Admin role
+- [ ] Document endpoint declaration field naming convention: `Access` for
+      Public/Authenticated, `Capability` for capability-protected
+- [ ] Document the "silently ignored" convention for conditional capability
+      checks on Public/Authenticated endpoints
+- [ ] Document authorization chain evaluation order
 
 ### Phase 4 — Update `docs/conventions.md`
 
@@ -328,14 +403,22 @@ Changes:
 
 This is the most impacted feature spec due to confidentiality rules.
 
-- [ ] Update confidentiality authorization rules to use scope-based language
-- [ ] Update `confidential_ticket_filter()` specification (scope parameter)
+- [ ] Explicitly retire Authorization Rule #1 (role-based: VA or Admin) and
+      replace with scope-based rule ("user's effective scope is `all`") —
+      remove the old rule, do not leave both in place
+- [ ] Update `confidential_ticket_filter()` specification: replace
+      `caller_is_privileged: bool` with `caller_scope: Scope | None`
+      (other parameters unchanged)
 - [ ] Update all endpoint declarations from "Access: Vulnerability Analyst"
       to "Capability: X"
 - [ ] Ensure TicketAccessGrant override behavior is clearly documented
-      (read-write access, scope + capability independence)
+      (visibility only, write requires capability)
 - [ ] Update auto-assignment rule: skip for users without VA role
 - [ ] Update assignment target constraint: explicitly role-based (VA only)
+- [ ] Add reopen/revert-duplicate rule: reassignment step is skipped for
+      non-VA users (ticket retains current assignee)
+- [ ] Update duplicate target resolution: note accepted risk applies equally
+      to `automation_agent` users
 - [ ] Confirm that mutation endpoints on invisible tickets return 404
       (not 403) — consistent with the existing invisible-ticket pattern
 
@@ -476,7 +559,108 @@ spec phase with no deployed instances, this is not a breaking change.
 access (e.g., `include_deleted` on `GET /api/v1/tickets`) perform
 capability checks inline in the handler, not via the
 `require_capability()` dependency. If the caller lacks the capability,
-the parameter is ignored or returns 403.
+the parameter is **silently ignored** — the endpoint returns results as
+if the parameter were not provided. 403 is never returned for a missing
+query parameter on a Public or Authenticated endpoint.
+
+### Scope is API-layer only
+
+**Decision**: Scope is enforced only at the API layer — via
+`confidential_ticket_filter()` in query endpoints and
+`require_accessible_ticket` in single-ticket endpoints. It does not
+apply to the service layer or background tasks. Celery workers,
+fetchers, and event consumers continue to process all tickets
+(including confidential ones) without scope restrictions. Scope is an
+access-control concept, not a data-partitioning concept.
+
+### Retirement of role-based confidentiality access
+
+**Decision**: The existing Authorization Rule #1 in `tickets.md` —
+"Role-based: The user holds the `Vulnerability Analyst` or `Admin`
+role" — is **retired** and replaced by the scope check: "The user's
+effective scope is `all`". This is semantically equivalent today
+(only VA and Admin have scope `all`), but the mechanism changes from
+role enumeration to scope evaluation. Phase 5 must explicitly
+replace this rule in `tickets.md` to prevent implementers from
+applying both checks (role AND scope), which would create a
+redundant or conflicting condition.
+
+### Soft-delete visibility uses capability, not role
+
+**Decision**: The `require_accessible_ticket` soft-delete check — "if
+`deleted_at IS NOT NULL` and the caller does not hold the Admin role,
+return 410" — is updated to use the `admin_ticket_ops` capability
+instead of the Admin role directly. This ensures consistency with the
+capability model: any future role that includes `admin_ticket_ops`
+would also see soft-deleted tickets.
+
+### Endpoint declaration field naming
+
+**Decision**: Feature specs use two distinct field names to declare
+endpoint authorization:
+
+- `**Access**: Public` or `**Access**: Authenticated` — for endpoints
+  that check authentication state only (no capability required)
+- `**Capability**: <capability_name>` — for endpoints that require a
+  specific capability
+
+The intentional field name change serves as a visual indicator: `Access`
+means "authentication level only", `Capability` means "specific
+authorization check required". This distinction helps reviewers and
+implementers immediately identify the authorization model of each
+endpoint. The format is defined in `api-spec.md` (updated in Phase 3).
+
+### Duplicate target resolution and `automation_agent`
+
+**Decision**: The existing accepted risk for duplicate target resolution
+— where `resolve_canonical_target` traverses the `duplicate_of_id`
+chain at the service layer without confidentiality checks — applies
+equally to `automation_agent` users. The canonical resolver may expose
+the `SNTL-{n}` identifier of a confidential ticket in the API response
+when the canonical target is confidential. This is the same accepted
+risk documented in `tickets.md` for VA operations. The risk profile is
+noted as slightly different for bots (which may expose data in automated
+reports), but the mitigation is the same: the bot only reaches this
+code path if it has `triage_ticket` capability and visibility on the
+source ticket.
+
+### TicketAccessGrant provides visibility, not write access
+
+**Decision**: `TicketAccessGrant` grants **visibility only** — the
+ability to see a confidential ticket that would otherwise be hidden by
+the user's scope. Write access requires capabilities (from roles).
+A zero-role user with a grant can read the ticket but cannot modify it.
+An `automation_agent` with a grant can read and modify the ticket
+because they have capabilities like `triage_ticket` and
+`manage_packages`. The grant does not elevate capabilities — it only
+overrides the scope restriction for that specific ticket. This is by
+design: the VA deliberately shares a specific ticket with a bot for
+automation purposes.
+
+### Reopen/revert-duplicate for non-VA users
+
+**Decision**: When a user with `triage_ticket` capability but without
+the `vulnerability_analyst` role performs reopen or revert-duplicate,
+the embedded reassignment step is skipped. The ticket retains its
+current assignee (or remains unassigned). This is consistent with the
+auto-assignment and assignment target rules: non-VA users can trigger
+status transitions but cannot become ticket owners.
+
+### Zero-role users and Business Rule 8
+
+**Decision**: The current `rbac.md` Business Rule 8 ("A user with no
+roles has the same access as an unauthenticated user") is inaccurate
+and predates the `TicketAccessGrant` and bugowner visibility
+mechanisms. Under the capability + scope model, zero-role users have:
+
+- Effective scope: `non_confidential` (same default visibility as
+  unauthenticated)
+- Per-ticket visibility: can access specific confidential tickets via
+  `TicketAccessGrant` or bugowner matching (unlike unauthenticated
+  users)
+- Capabilities: none (cannot modify any data)
+
+Business Rule 8 must be updated in Phase 1 to reflect this distinction.
 
 ## Open Points
 
