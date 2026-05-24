@@ -179,3 +179,50 @@ observer should also detect intra-dimensional anomalies (e.g., a track
 in `FIXED` status whose parent ticket has no CVE), (d) whether to
 extend the IBS consumer and fetcher scan scope immediately (as part of
 the decoupling work) or defer until the observer is implemented.
+
+---
+
+## 5. Response Header for Silently Ignored Parameters
+
+**Origin**: design review of `docs/drafts/capability-scope-rbac.md` —
+the "conditional capability checks" convention where Public/Authenticated
+endpoints silently ignore privileged parameters when the caller lacks
+the required capability.
+
+**Context**: when an API endpoint silently ignores a parameter (e.g.,
+`include_deleted` on `GET /api/v1/tickets` when the caller lacks
+`admin_ticket_ops`), there is no feedback to the API consumer that the
+parameter was not applied. A misconfigured bot or integration could
+operate on incomplete data without any indication. The only diagnostic
+is a server-side DEBUG log, which the API consumer does not have access
+to.
+
+**Proposed approach**: introduce a response header
+`X-Sentinel-Ignored-Params` that lists the names of parameters that were
+present in the request but silently ignored due to insufficient
+capability. Example:
+
+```
+X-Sentinel-Ignored-Params: include_deleted
+```
+
+This would apply broadly — not just to capability-gated parameters, but
+to any scenario where a request parameter is accepted syntactically but
+not applied (e.g., unknown filter values, unsupported sort fields). The
+header preserves the "no 403 on Public endpoints" convention while
+making the behavior observable to API consumers.
+
+**Scope**: this is a cross-cutting API convention, not specific to RBAC.
+It should be specified in `docs/api-spec.md` and applied uniformly
+across all endpoints.
+
+**Considerations**:
+- The header MUST NOT include the parameter value (only the name) to
+  avoid information leakage or log injection
+- Multiple ignored parameters are comma-separated
+- The header is omitted entirely when no parameters were ignored
+- Clients that do not inspect headers see no change in behavior
+
+**Decision needed**: whether to adopt this as a standard API convention,
+and the exact header name (`X-Sentinel-Ignored-Params` vs. a more
+generic alternative).
