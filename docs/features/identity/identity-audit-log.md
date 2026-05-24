@@ -125,7 +125,7 @@ entries are always displayed in reverse chronological order).
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
-**Permissions**: Admin role required. For non-admin users, a self-scoped
+**Capability**: `manage_users`. For non-admin users, a self-scoped
 endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
 
 **Response** (200 OK):
@@ -161,7 +161,7 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
 
 | Status | Code | Condition |
 |---|---|---|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 
 ### List My Identity Audit Events
 

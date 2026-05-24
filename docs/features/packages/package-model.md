@@ -1178,13 +1178,13 @@ The response reports how many records were created vs. skipped (already
 existed). This supports idempotent re-calls — if the package was already
 added, all counts will be zero in the `created` fields.
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
 | 422 | `VALIDATION_ERROR` | Missing or empty `package_name`, exceeds 255 characters, or contains invalid characters |
@@ -1225,13 +1225,13 @@ gate and Analysis gate).
 }
 ```
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package is already soft-deleted |
@@ -1262,13 +1262,13 @@ record only — child records are not modified. Creates a single
 }
 ```
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Package is not directly soft-deleted |
@@ -1330,13 +1330,13 @@ remaining active children (`deleted_at IS NULL`), the parent is also
 soft-deleted automatically. The `cascade` array allows clients to update
 their local tree state without a full refetch.
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Track is already soft-deleted |
@@ -1366,13 +1366,13 @@ only — products under it are not modified. Creates a single
 }
 ```
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Track is not directly soft-deleted |
@@ -1436,13 +1436,13 @@ remaining active children (`deleted_at IS NULL`), the parent is also
 soft-deleted automatically. The `cascade` array allows clients to update
 their local tree state without a full refetch.
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Product is already soft-deleted |
@@ -1470,13 +1470,13 @@ single `TicketAuditEvent`.
 }
 ```
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Product is not directly soft-deleted |
@@ -1537,13 +1537,13 @@ The response includes the updated track and all its active child
 products with their current eligibility, allowing the client to update
 the UI tree without a separate fetch.
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or track not found on this ticket |
 | 422 | `VALIDATION_ERROR` | Invalid status value |
@@ -1615,13 +1615,13 @@ changing an override value, and resetting an override.
 }
 ```
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_packages`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Vulnerability Analyst role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |
 | 422 | `VALIDATION_ERROR` | `eligible` field not provided |
@@ -1689,7 +1689,7 @@ once per ticket in the results.
 | **Access** | Public (consistent with `GET /api/v1/tickets`) |
 | **Confidentiality** | Packages belonging to confidential tickets are excluded for unauthorized callers (same filter as `GET /api/v1/tickets`). The endpoint handler constructs `confidential_ticket_filter()` and passes it to `search_packages(confidentiality_filter=...)` |
 | **Soft-deleted packages** | Always excluded — soft-deleted `TicketPackage` records (`deleted_at IS NOT NULL`) are never returned |
-| **Soft-deleted tickets** | Controlled by `include_deleted` parameter (Admin-only), consistent with `GET /api/v1/tickets` |
+| **Soft-deleted tickets** | Controlled by `include_deleted` parameter (requires `admin_ticket_ops` capability), consistent with `GET /api/v1/tickets` |
 | **Pagination** | Yes — `page` (default 1), `per_page` (default 20, max 100) |
 | **Envelope** | `{"data": [...], "meta": {"total": N, "page": P, "per_page": PP}}` |
 | **Delegation** | Delegates to `package_service.search_packages()` |
@@ -1701,7 +1701,7 @@ once per ticket in the results.
 | `search` | string | Substring match on `package_name` (case-insensitive, equivalent to SQL ILIKE `%term%`). Max 500 chars |
 | `name` | string | Exact match on `package_name`. Max 500 chars |
 | `ticket_status` | string (repeatable) | Ticket statuses to include: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated`. Repeatable — multiple values are specified as separate query parameters (e.g., `?ticket_status=new&ticket_status=analysis`). Invalid values are silently ignored per `api-spec.md` (Enum Filter Validation). If all values are invalid, an empty result set is returned. Default: no filter (all statuses) |
-| `include_deleted` | string | Controls visibility of packages belonging to **soft-deleted tickets**. `true` (include packages from active and deleted tickets), `only` (return only packages from deleted tickets). Any other value (including `false`) is treated as absent. Accepted from any caller, but effective only for Admins — silently ignored for non-admin callers. Default (absent or unrecognized value): return only packages from active tickets |
+| `include_deleted` | string | Controls visibility of packages belonging to **soft-deleted tickets**. `true` (include packages from active and deleted tickets), `only` (return only packages from deleted tickets). Any other value (including `false`) is treated as absent. Accepted from any caller, but effective only for users with the `admin_ticket_ops` capability — silently ignored for other callers. Default (absent or unrecognized value): return only packages from active tickets |
 | `sort_by` | string | `package_name` or `created_at` (default: `created_at`). Refers to `TicketPackage.created_at` (the date the package was added to the ticket), not `Ticket.created_at`. Secondary sort: `id` (deterministic pagination when primary key has duplicates) |
 | `sort_order` | string | `asc` or `desc` (default: `desc`) |
 | `page` | integer | Page number (default: 1, min: 1) |
@@ -1823,9 +1823,9 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 ## Security
 
 - Adding/removing/excluding/restoring packages on a ticket requires the
-  Vulnerability Analyst role
+  `manage_packages` capability
 - Changing track status or product eligibility requires the
-  Vulnerability Analyst role
+  `manage_packages` capability
 - Viewing affectedness data is publicly accessible (no authentication
   required):
   - `GET /api/v1/tickets/{ticket_id}/packages` — subject to

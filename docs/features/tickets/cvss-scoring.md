@@ -497,7 +497,7 @@ the standard `{"data": ...}` envelope.
 | 404 | `TICKET_NOT_FOUND` | Ticket not found |
 | 422 | `VALIDATION_ERROR` | Invalid vector format or unsupported CVSS version |
 
-Requires the Vulnerability Analyst role.
+**Capability**: `manage_cvss`.
 
 ### Delete SUSE CVSS Assessment
 
@@ -519,7 +519,7 @@ Response: 204 No Content.
 | 404 | `TICKET_NOT_FOUND` | Ticket not found |
 | 404 | `RESOURCE_NOT_FOUND` | No SUSE assessment exists for the specified version |
 
-Requires the Vulnerability Analyst role.
+**Capability**: `manage_cvss`.
 
 ## Service Architecture
 
@@ -626,8 +626,8 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 ## Security
 
 - Viewing CVSS data: publicly accessible (no authentication required)
-- Adding/editing/deleting SUSE CVSS: Vulnerability Analyst role
-- Changing default CVSS version: Admin role only (see
+- Adding/editing/deleting SUSE CVSS: `manage_cvss` capability
+- Changing default CVSS version: `manage_settings` capability (see
   `docs/features/platform/system-settings.md`)
 - External CVSS data is read-only — cannot be modified through Sentinel
 

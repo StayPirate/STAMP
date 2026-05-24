@@ -264,7 +264,7 @@ Adds a manual reference to a ticket.
 - `created_by` is set to the authenticated user
 - `tags` is set to `NULL` (manual references do not use tags)
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_references`.
 
 **Error responses**:
 
@@ -309,7 +309,7 @@ At least one field must be provided.
 **Response** (200 OK): the updated reference object (same format as
 create response).
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_references`.
 
 **Error responses**:
 
@@ -330,7 +330,7 @@ source (automatic or manual).
 
 **Response** (204 No Content)
 
-**Permissions**: Vulnerability Analyst role required.
+**Capability**: `manage_references`.
 
 **Error responses**:
 
@@ -348,11 +348,11 @@ does not include reference-related event types.
 ## Security
 
 - Reference list is publicly accessible (no authentication required)
-- Adding, editing, and deleting references requires the Vulnerability Analyst
-  role
-- All references are editable/deletable by any Vulnerability Analyst,
-  regardless of who created them or whether they were created
-  automatically
+- Adding, editing, and deleting references requires the `manage_references`
+  capability
+- All references are editable/deletable by any user with the
+  `manage_references` capability, regardless of who created them or
+  whether they were created automatically
 - See `docs/features/identity/rbac.md` for the full permission model
 
 ## Dependencies

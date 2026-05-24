@@ -302,8 +302,9 @@ When adding a new audit trail, update this index.
 
 ## Access Level
 
-Most audit trail endpoints are restricted to **Admin** role. Two
-exceptions exist:
+Most audit trail endpoints require a specific capability (typically
+`manage_users`, `manage_settings`, or `manage_fetchers`). Two exceptions
+exist:
 
 - **Ticket audit log** (`GET /api/v1/tickets/{ticket_id}/audit-log`):
   **Authenticated**, because the response includes actor details
@@ -318,7 +319,8 @@ exceptions exist:
   field changes from AD sync). The actor field is anonymized to
   `"system"`, `"self"`, or `"admin"` to prevent identification of the
   specific administrator. The full, unmasked audit log remains
-  admin-only at `GET /api/v1/admin/identity/audit-log`.
+  restricted to users with `manage_users` capability at
+  `GET /api/v1/admin/identity/audit-log`.
 
 The self-service pattern (authenticated access with implicit user
 scoping and actor anonymization) is reusable for future audit trails

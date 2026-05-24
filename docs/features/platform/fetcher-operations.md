@@ -302,15 +302,16 @@ Returns full detail for a single run.
 **Response** (200 OK):
 
 Same fields as the list response, plus:
-- `error_detail`: included ONLY if the requesting user has the Admin
-  role. The field is **absent from the response body** for
-  unauthenticated callers and authenticated users without the Admin role.
-- `error_traceback`: included ONLY if the requesting user has the Admin
-  role. The field is **absent from the response body** for
-  unauthenticated callers and authenticated users without the Admin role.
+- `error_detail`: included ONLY if the requesting user has the
+  `manage_fetchers` capability. The field is **absent from the response
+  body** for callers without this capability.
+- `error_traceback`: included ONLY if the requesting user has the
+  `manage_fetchers` capability. The field is **absent from the response
+  body** for callers without this capability.
 
-**Permissions**: publicly accessible (no authentication required). Admin
-users see additional fields (`error_detail`, `error_traceback`).
+**Permissions**: publicly accessible (no authentication required). Users
+with `manage_fetchers` capability see additional fields (`error_detail`,
+`error_traceback`).
 
 **Error responses**:
 
@@ -406,7 +407,7 @@ time-series and must be in chronological order for chart rendering.
 |---|---|---|
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
-### Trigger Fetcher (Admin Only)
+### Trigger Fetcher
 
 ```
 POST /api/v1/fetchers/{fetcher_name}/trigger
@@ -434,7 +435,7 @@ Enqueues a manual run of the specified fetcher.
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
 | 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
 
-**Permissions**: Admin only.
+**Capability**: `manage_fetchers`.
 
 **Side effects**:
 - Creates a `FetcherAuditEvent` record with `event_type = triggered`
@@ -452,7 +453,7 @@ endpoint). These on-demand fetches are sub-operations that do not create
 dashboard. See `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE
 Fetch" for details.
 
-### Get Fetcher Config (Admin Only)
+### Get Fetcher Config
 
 ```
 GET /api/v1/fetchers/{fetcher_name}/config
@@ -513,7 +514,7 @@ class is no longer available. The `custom_settings` field contains the
 raw stored values without schema context (descriptions, defaults, and
 ranges are unavailable).
 
-**Permissions**: Admin only.
+**Capability**: `manage_fetchers`.
 
 **Error responses**:
 
@@ -521,7 +522,7 @@ ranges are unavailable).
 |---|---|---|
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
-### Update Fetcher Config (Admin Only)
+### Update Fetcher Config
 
 ```
 PATCH /api/v1/fetchers/{fetcher_name}/config
@@ -606,7 +607,7 @@ include the fields to change.
 - If `schedule_override` changed: the Celery Beat schedule for this
   fetcher MUST be updated dynamically
 
-**Permissions**: Admin only.
+**Capability**: `manage_fetchers`.
 
 **Error responses**:
 
@@ -618,7 +619,7 @@ include the fields to change.
 | 422 | `FETCHER_SETTING_INVALID` | Value in `custom_settings` fails type, range, or choices validation |
 | 422 | `VALIDATION_ERROR` | Invalid cron expression, timeout, or rate limit format |
 
-### Get Fetcher Audit Log (Admin Only)
+### Get Fetcher Audit Log
 
 ```
 GET /api/v1/fetchers/{fetcher_name}/audit-log
@@ -684,7 +685,7 @@ entry first). Follows the project-wide default sorting convention.
 }
 ```
 
-**Permissions**: Admin only.
+**Capability**: `manage_fetchers`.
 
 **Error responses**:
 
@@ -694,19 +695,19 @@ entry first). Follows the project-wide default sorting convention.
 
 ## Access Control
 
-| Action | Admin | VA | Unauth |
-|---|---|---|---|
-| View IBS RabbitMQ consumer status | Yes | Yes | Yes |
-| View fetcher list | Yes | Yes | Yes |
-| View fetcher detail + charts | Yes | Yes | Yes |
-| View run history | Yes | Yes | Yes |
-| View error messages | Yes | Yes | Yes |
-| View error details | Yes | No | No |
-| View error tracebacks | Yes | No | No |
-| Trigger manual run | Yes | No | No |
-| Enable/disable fetcher | Yes | No | No |
-| Modify fetcher config | Yes | No | No |
-| View audit log | Yes | No | No |
+| Action | Required |
+|---|---|
+| View IBS RabbitMQ consumer status | Public |
+| View fetcher list | Public |
+| View fetcher detail + charts | Public |
+| View run history | Public |
+| View error messages | Public |
+| View error details | `manage_fetchers` |
+| View error tracebacks | `manage_fetchers` |
+| Trigger manual run | `manage_fetchers` |
+| Enable/disable fetcher | `manage_fetchers` |
+| Modify fetcher config | `manage_fetchers` |
+| View audit log | `manage_fetchers` |
 
 ## Background Tasks
 

@@ -56,8 +56,9 @@ single transaction when needed (e.g., `revert_duplicate` clears
 
 All operations accept an `acting_user_id: UUID | None` parameter:
 
-- `UUID` — action performed by an authenticated VA (enables
-  auto-assignment on unassigned tickets)
+- `UUID` — action performed by an authenticated user (enables
+  auto-assignment on unassigned tickets if the user holds the
+  `vulnerability_analyst` role)
 - `None` — system action (release detection, CVSS sync, product
   lifecycle transitions). Auto-assignment does not apply
 
@@ -423,7 +424,7 @@ Reopens a ticket from Ignored status.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to reopen |
-| `assignee_id` | `UUID \| None` | No | VA to assign (for manual reopen) or `None` (for system reopen — restores last assignee or leaves unassigned) |
+| `assignee_id` | `UUID \| None` | No | User to assign (for manual reopen by a user holding the `vulnerability_analyst` role) or `None` (for system reopen, or for manual reopen by a non-VA user — restores last assignee or leaves unassigned) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -436,7 +437,11 @@ Reopens a ticket from Ignored status.
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Verify current status is Ignored
 3. Set assignee (if applicable):
-   - Manual reopen: `assignee_id` is the acting VA
+   - Manual reopen by VA: `assignee_id` is the acting user (caller
+     checks that the user holds the `vulnerability_analyst` role before
+     passing their UUID as `assignee_id`)
+   - Manual reopen by non-VA: `assignee_id` is `None` — the ticket
+     retains its current assignee or remains unassigned
    - System reopen: restore the last active assignee, or leave
      unassigned if none exists or previous assignee is deactivated
 4. Call `_reenter_gate_zone()`:
@@ -463,7 +468,7 @@ Reverts a ticket from Duplicated status.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to revert |
-| `acting_user_id` | `UUID` | Yes | VA performing the revert (becomes new assignee) |
+| `acting_user_id` | `UUID` | Yes | User performing the revert (becomes new assignee only if the user holds the `vulnerability_analyst` role) |
 
 **Preconditions**:
 
@@ -475,16 +480,17 @@ Reverts a ticket from Duplicated status.
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Verify current status is Duplicated
 3. Clear `duplicate_of_id` (set to NULL)
-4. Reassign the ticket to the acting VA
+4. Load the acting user's roles. If the user holds the
+   `vulnerability_analyst` role, reassign the ticket to them. If not,
+   skip the reassignment — the ticket retains its current assignee (or
+   remains unassigned)
 5. Call `_reenter_gate_zone()`:
    - Saves `original_status = Duplicated`
    - Sets `status = New`
    - Calls `evaluate_ticket_status(previous_status=Duplicated)`
-   - Since the revert assigns a new VA (satisfying the assignee gate),
-     the typical outcomes are:
-     - All Resolved gates met → Resolved
-     - All Analyzed gates met → Analyzed
-     - Assignee present but not all Analyzed gates met → Analysis
+   - Typical outcomes depend on assignee presence:
+     - VA actor (assigned): Analysis, Analyzed, or Resolved based on gates
+     - Non-VA actor (unassigned): New (assignee gate not met)
 6. Create `TicketAuditEvent` (`duplicate_removed`)
 
 Produces two `TicketAuditEvent` records in the same transaction:
@@ -529,10 +535,13 @@ tasks.
 
 ## Auto-Assignment Rule
 
-When a VA performs any modifying operation on a ticket with
-`assignee_id = NULL`, the ticket is automatically assigned to the
-acting VA. A `TicketAuditEvent` with `event_type = assignment` is
-created atomically in the same transaction as the modifying operation.
+When a user with the `vulnerability_analyst` role performs any modifying
+operation on a ticket with `assignee_id = NULL`, the ticket is
+automatically assigned to the acting user. A `TicketAuditEvent` with
+`event_type = assignment` is created atomically in the same transaction
+as the modifying operation. If the acting user does not hold the
+`vulnerability_analyst` role (e.g., an `automation_agent`),
+auto-assignment is skipped — the ticket remains unassigned.
 
 After the assignment, `evaluate_ticket_status` is called within the
 same transaction. If the ticket was in `New` status and the operation
@@ -544,8 +553,8 @@ This rule is enforced via the shared helper `auto_assign_if_needed()`
 (see below), which is called by all modules that modify tickets under
 a `FOR UPDATE` lock (`ticket_mutations`, `package_service`).
 
-This rule does not apply to system operations (`acting_user_id = None`).
-Only VA-initiated actions trigger auto-assignment.
+This rule does not apply to system operations (`acting_user_id = None`)
+or to users without the `vulnerability_analyst` role.
 
 ### `auto_assign_if_needed()`
 
@@ -561,10 +570,11 @@ async def auto_assign_if_needed(
     acting_user_id: UUID | None,
     db: AsyncSession,
 ) -> bool:
-    """Assign ticket to acting VA if unassigned.
+    """Assign ticket to acting user if unassigned and user holds VA role.
 
     Returns True if assignment was applied (audit event created),
-    False otherwise (ticket already assigned or system action).
+    False otherwise (ticket already assigned, system action, or acting
+    user does not hold the vulnerability_analyst role).
 
     Precondition: caller MUST hold FOR UPDATE on the ticket row.
     """
@@ -575,9 +585,12 @@ async def auto_assign_if_needed(
 1. If `acting_user_id is None` -> return False (system action, no
    auto-assignment)
 2. If `ticket.assignee_id is not None` -> return False (already assigned)
-3. Set `ticket.assignee_id = acting_user_id`
-4. Create `TicketAuditEvent` with `event_type = assignment`
-5. Return True
+3. Load the acting user's roles (from `User.roles` relationship,
+   already in memory if loaded with `selectinload`). If the user does
+   not hold the `vulnerability_analyst` role -> return False
+4. Set `ticket.assignee_id = acting_user_id`
+5. Create `TicketAuditEvent` with `event_type = assignment`
+6. Return True
 
 ## Related Operations
 
@@ -596,7 +609,8 @@ gate-relevant by itself), but the side effect on severity triggers
 
 ### Ticket soft-delete and restore
 
-Admin operations that set/clear `Ticket.deleted_at`. Restore calls
+Operations requiring `admin_ticket_ops` capability that set/clear
+`Ticket.deleted_at`. Restore calls
 `evaluate_ticket_status` to reconcile status with current gate
 conditions. Full behavioral steps in
 [tickets.md](tickets.md#soft-delete).

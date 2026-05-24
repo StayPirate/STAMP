@@ -8,7 +8,8 @@ across all users and tickets.
 
 ## Access Control
 
-All administration endpoints and UI pages require the **Admin** role.
+All administration endpoints and UI pages require the `manage_settings`
+capability.
 
 ## Settings
 
@@ -50,10 +51,11 @@ full batch execution specification.
 
 ## API Endpoints
 
-All endpoints in this section require the Admin role. Global responses
+All endpoints in this section require the `manage_settings` capability.
+Global responses
 (401, 422) apply per `api-spec.md` "Global Responses" section. 403
-(`AUTH_INSUFFICIENT_ROLE`) is returned for authenticated users without
-Admin role.
+(`AUTH_INSUFFICIENT_PERMISSION`) is returned for authenticated users
+without the required capability.
 
 ### Get System Settings
 
@@ -71,13 +73,13 @@ Response:
 }
 ```
 
-Requires: Admin role.
+**Capability**: `manage_settings`.
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 
 ### Update System Settings
 
@@ -108,13 +110,13 @@ instant confirmation. This is a documented deviation from the
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 422 | `VALIDATION_ERROR` | Invalid setting value (e.g., unsupported CVSS version) |
 
 Response: the updated settings object in the standard `{"data": ...}`
 envelope.
 
-Requires: Admin role.
+**Capability**: `manage_settings`.
 
 ## Data Model
 
@@ -162,7 +164,7 @@ always displayed in reverse chronological order).
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
-**Permissions**: Admin role required.
+**Capability**: `manage_settings`.
 
 **Response** (200 OK):
 
@@ -196,7 +198,7 @@ always displayed in reverse chronological order).
 
 | Status | Code | Condition |
 |---|---|---|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 
 ### Data Retention
 

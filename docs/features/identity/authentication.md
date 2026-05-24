@@ -508,10 +508,10 @@ Every authenticated user can manage their own API keys:
 
 ### Admin management
 
-Users with the `admin` role can view and revoke API keys belonging to
-other users from a dedicated page in the administration panel. Admins
-**cannot** create keys on behalf of other users — key creation is always
-a self-service action by the key owner.
+Users with the `manage_users` capability can view and revoke API keys
+belonging to other users from a dedicated page in the administration
+panel. They **cannot** create keys on behalf of other users — key
+creation is always a self-service action by the key owner.
 
 When an admin revokes another user's key, `revoked_by` is set to the
 admin's user ID.
@@ -808,9 +808,9 @@ endpoints with `revoked_at` populated.
 
 ### `GET /api/v1/admin/api-keys`
 
-Lists API keys across all users. Admin only.
+Lists API keys across all users.
 
-**Authentication**: required. **Permission**: `admin` role.
+**Capability**: `manage_users`.
 
 **Query parameters**:
 
@@ -851,11 +851,11 @@ Lists API keys across all users. Admin only.
 
 ### `POST /api/v1/admin/api-keys/{key_id}/revoke`
 
-Revokes any user's API key. Admin only. The key record is preserved in
-the database (not deleted) and remains visible in list endpoints with
-`revoked_at` populated.
+Revokes any user's API key. The key record is preserved in the database
+(not deleted) and remains visible in list endpoints with `revoked_at`
+populated.
 
-**Authentication**: required. **Permission**: `admin` role.
+**Capability**: `manage_users`.
 
 **Behavior**:
 
@@ -895,7 +895,7 @@ using it are rejected.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_ROLE` | Caller does not have Admin role |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found |
 
 ## Use Cases: Bots and AI Agents
@@ -928,7 +928,8 @@ attributed to the agent's own identity.
 **Setup**:
 
 1. Admin creates a local user: `sentinel manage-user create --username
-   security-scanner --role vulnerability_analyst`
+   security-scanner --role automation_agent` (or `--role
+   vulnerability_analyst` if confidential ticket access is needed)
 2. Operator logs in to Sentinel as `security-scanner` (using the
    password set at creation)
 3. Operator creates an API key from the personal API Keys page

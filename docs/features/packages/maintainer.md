@@ -263,7 +263,7 @@ specific ticket, filtered to the authenticated user's packages.
 |------|------------|-----------|
 | 200  | — | Ticket exists — response contains either normal data or an error state object |
 | 404  | `TICKET_NOT_FOUND` | Ticket does not exist |
-| 410  | `TICKET_DELETED` | Ticket is soft-deleted (non-admin caller) |
+| 410  | `TICKET_DELETED` | Ticket is soft-deleted (caller lacks `admin_ticket_ops` capability) |
 
 **Response (normal view)**: returned when ticket status is `Analyzed` and
 the user is a bugowner of at least one package. Object with three arrays

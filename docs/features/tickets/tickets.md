@@ -108,11 +108,12 @@ An VA can associate a CVE with a ticket that does not yet have one, via
 
 ### Dissociating a CVE
 
-Dissociating a CVE from a ticket is restricted to the **Admin role**.
-Vulnerability Analysts cannot remove a CVE from a ticket. If an VA believes
-a CVE was associated in error, they should request an Admin to remove it.
+Dissociating a CVE from a ticket requires the `admin_ticket_ops`
+capability. Users without this capability cannot remove a CVE from a
+ticket. If a user believes a CVE was associated in error, they should
+request an admin to remove it.
 
-An Admin can remove a CVE from a ticket via
+A user with `admin_ticket_ops` can remove a CVE from a ticket via
 `DELETE /api/v1/tickets/{ticket_id}/cve`.
 
 **Effects**:
@@ -147,7 +148,7 @@ row before any modification (see
   not lost. If the Admin intends to re-associate the CVE with a
   different ticket, this should be done before the next sync cycle
 
-**Required role**: Admin.
+**Capability**: `admin_ticket_ops`.
 
 ## Ticket Creation
 
@@ -178,27 +179,33 @@ creates the ticket. See `docs/features/packages/ibs-track-release-detection.md`
 
 ### Manual Creation
 
-An Vulnerability Analyst can create a ticket manually via
-`POST /api/v1/tickets` or through the UI.
+A user with the `create_ticket` capability can create a ticket manually
+via `POST /api/v1/tickets` or through the UI.
 
-- `cve_id`: optionally, the VA may specify a CVE-ID string (e.g.,
+- `cve_id`: optionally, the user may specify a CVE-ID string (e.g.,
   `"CVE-2024-1234"`) at creation time. If omitted, the ticket is
   created without a CVE (can be associated later)
 - When a CVE-ID is provided:
   - [CVE Resolution Behavior](#cve-resolution-behavior) applies
-- `status`: `Analysis` (direct, bypasses `New` — the creating user is
-  automatically assigned)
-- `assignee_id`: set to the creating user
-- Two `TicketAuditEvent` records are created atomically in the same
-  transaction (three if a CVE-ID is provided):
+- If the creating user holds the `vulnerability_analyst` role:
+  - `status`: `Analysis` (direct, bypasses `New` — the creating user is
+    automatically assigned)
+  - `assignee_id`: set to the creating user
+- If the creating user does NOT hold the `vulnerability_analyst` role
+  (e.g., `automation_agent`):
+  - `status`: `New` (auto-assignment is skipped — see
+    [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
+  - `assignee_id`: `NULL`
+- `TicketAuditEvent` records are created atomically in the same
+  transaction:
   1. `event_type = ticket_created`, `user_id = creating user`,
      `comment = "Ticket created manually"`
-  2. `event_type = assignment`, `user_id = creating user`,
+  2. (if assigned) `event_type = assignment`, `user_id = creating user`,
      `new_value = creating user's username`
   3. (if CVE-ID provided) `event_type = cve_associated`,
      `user_id = creating user`, `new_value = CVE-ID string`
 
-**Required role**: Vulnerability Analyst.
+**Capability**: `create_ticket`.
 
 ### Future: External Sources
 
@@ -279,18 +286,18 @@ New ──→ Analysis ──────────→ Analyzed ────�
 
 | From       | To         | Trigger                                                | Mode               | Who                                    |
 |------------|------------|--------------------------------------------------------|--------------------|----------------------------------------|
-| New        | Analysis   | VA assigned, or any modifying operation on unassigned ticket | Manual (implicit)  | Any VA                                 |
-| New        | Ignored    | VA clicks "Ignore" action                              | Manual             | Any VA                                 |
+| New        | Analysis   | User assigned, or any modifying operation on unassigned ticket | Manual (implicit)  | `triage_ticket`                        |
+| New        | Ignored    | User clicks "Ignore" action                            | Manual             | `triage_ticket`                        |
 | New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`)          | Automatic          | System                                 |
 | Analysis   | Analyzed   | All "Analyzed" gate conditions met                     | Automatic          | System                                 |
-| Analysis   | Ignored    | VA determines issue is not relevant                    | Manual             | Assignee                               |
+| Analysis   | Ignored    | User determines issue is not relevant                  | Manual             | `triage_ticket`                        |
 | Analyzed   | Resolved   | All "Resolved" gate conditions met                     | Automatic          | System                                 |
-| Analyzed   | Analysis   | "Analyzed" gate conditions no longer met               | Automatic          | System (triggered by VA or system action) |
-| Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by VA or system action) |
-| Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by VA or system action) |
-| New, Analysis, Analyzed, Resolved | Duplicated | VA marks ticket as duplicate | Manual | Any VA |
-| Duplicated | (evaluated) | VA reverts duplicate status; `_reenter_gate_zone` determines target | Manual | Any VA (becomes new assignee) |
-| Ignored    | (evaluated) | VA assigns themselves or system reopens (e.g., NVD rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | VA or System |
+| Analyzed   | Analysis   | "Analyzed" gate conditions no longer met               | Automatic          | System (triggered by user or system action) |
+| Resolved   | Analyzed   | "Resolved" gate conditions no longer met, but "Analyzed" gates still met | Automatic | System (triggered by user or system action) |
+| Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by user or system action) |
+| New, Analysis, Analyzed, Resolved | Duplicated | User marks ticket as duplicate | Manual | `triage_ticket` |
+| Duplicated | (evaluated) | User reverts duplicate status; `_reenter_gate_zone` determines target | Manual | `triage_ticket` (assignment only if actor holds VA role) |
+| Ignored    | (evaluated) | User reopens or system reopens (e.g., NVD rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | `triage_ticket` or System (assignment only if actor holds VA role) |
 
 **Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned; instead, a notification is sent to the assignee for manual review. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
 
@@ -393,10 +400,11 @@ history.
 **Target constraint**: the assignment target MUST be an **active** user
 holding the `vulnerability_analyst` role. Attempting to assign a ticket
 to a user without this role, or to an inactive user, fails with 400 Bad
-Request. This applies to the
-explicit assignment endpoint (`PATCH .../assignee`); auto-assignment is
-inherently safe because only VAs can perform modifying operations on
-tickets.
+Request. This applies to the explicit assignment endpoint
+(`PATCH .../assignee`). Auto-assignment checks internally whether the
+acting user holds the `vulnerability_analyst` role — if not (e.g., an
+`automation_agent`), auto-assignment is skipped and the ticket remains
+unassigned.
 
 **System-initiated unassignment**: in addition to the bulk unassignment
 performed by `deactivate_user` (see
@@ -409,10 +417,14 @@ after the deactivation event, the stale assignee is cleared.
 
 ### Auto-Assignment on Unassigned Tickets
 
-When a VA performs any modifying operation on a ticket with
-`assignee_id = NULL`, the ticket is automatically assigned to the acting
-VA. A `TicketAuditEvent` with `event_type = assignment` is created atomically
-in the same transaction as the modifying operation.
+When a user with the `vulnerability_analyst` role performs any modifying
+operation on a ticket with `assignee_id = NULL`, the ticket is
+automatically assigned to the acting user. A `TicketAuditEvent` with
+`event_type = assignment` is created atomically in the same transaction
+as the modifying operation. If the acting user does not hold the
+`vulnerability_analyst` role (e.g., an `automation_agent`),
+auto-assignment is skipped — the ticket remains unassigned for a human
+to claim.
 
 After the assignment, `evaluate_ticket_status` is called within the same
 transaction. If the ticket was in `New` status and the operation does not
@@ -426,8 +438,8 @@ transition and the assignee is set — the assignee gate does not override
 explicit transitions.
 
 This rule does not apply to system operations (background tasks,
-automated ingestion). Only VA-initiated actions trigger
-auto-assignment.
+automated ingestion) or to users without the `vulnerability_analyst`
+role.
 
 This rule is enforced via the shared helper
 `ticket_mutations.auto_assign_if_needed()`, which is called by all
@@ -495,9 +507,12 @@ Steps:
    per the single-ticket-scope rule).
 6. Set `duplicate_of_id = canonical_target_id`.
 7. Set `status = Duplicated`.
-8. If the ticket had no assignee (`assignee_id = NULL`), the acting VA
-   becomes the assignee (see
+8. If the ticket had no assignee (`assignee_id = NULL`) and the acting
+   user holds the `vulnerability_analyst` role, the user becomes the
+   assignee (see
    [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
+   If the acting user does not hold the VA role, the assignment step is
+   skipped — the ticket remains unassigned.
 9. Create `TicketAuditEvent` (`duplicate_set`).
 10. Commit.
 11. Cascade (synchronous, same request): find all tickets whose
@@ -548,7 +563,10 @@ When reverting a ticket from Duplicated status
 (`ticket_mutations.revert_duplicate()`):
 
 - `duplicate_of_id` is cleared (set to NULL)
-- The ticket is reassigned to the VA who performed the revert
+- If the acting user holds the `vulnerability_analyst` role, the ticket
+  is reassigned to them. If the acting user does not hold the VA role
+  (e.g., an `automation_agent`), the reassignment step is skipped — the
+  ticket retains its current assignee (or remains unassigned)
 - The ticket re-enters the gate zone; `evaluate_ticket_status`
   determines the correct status based on current gate conditions
 - Creates two `TicketAuditEvent` records: `duplicate_removed` (user
@@ -661,17 +679,19 @@ row before any modification (see
 
 - Soft-delete is performed by setting `deleted_at` to the current
   timestamp
-- Only users with the Admin role may soft-delete or restore tickets
+- Only users with the `admin_ticket_ops` capability may soft-delete or
+  restore tickets
 - Soft-deleted tickets (`deleted_at IS NOT NULL`) are invisible to all
   business logic — no operation (API query, service-layer side effect,
   or background task) queries, modifies, or produces side effects for
   soft-deleted tickets unless it explicitly deals with deletion or
   restoration management
 - All sub-resources of a soft-deleted ticket remain intact but are
-  inaccessible to non-admin users. This is enforced centrally by a
-  shared dependency on the ticket sub-resource router — see
-  `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses))
-  for the HTTP-level contract (410 `TICKET_DELETED`)
+  inaccessible to users without the `admin_ticket_ops` capability. This
+  is enforced centrally by a shared dependency on the ticket sub-resource
+  router — see `docs/api-spec.md`
+  ([Scoped Responses](docs/api-spec.md#scoped-responses)) for the
+  HTTP-level contract (410 `TICKET_DELETED`)
 - Soft-deleting a ticket does NOT alter or invalidate `duplicate_of_id`
   links from other tickets pointing to it. This is a controlled exception
   to the general invisibility invariant — the duplicate link is historical
@@ -838,8 +858,8 @@ When a ticket is `is_confidential=True`, any read/write HTTP request
 MUST be evaluated against these rules. Access is **GRANTED** if the user
 meets at least one condition:
 
-1. **Role-based**: The user holds the `Vulnerability Analyst` or `Admin`
-   role.
+1. **Scope-based**: The user's effective scope is `all` (see
+   `docs/features/identity/rbac.md`, Scope).
 2. **Explicit Grant**: The user's `id` exists in the `TicketAccessGrant`
    table for the requested `ticket_id`.
 3. **Bugowner (Person)**: The user's `email` matches the
@@ -915,7 +935,7 @@ as a parameter.
 def confidential_ticket_filter(
     ticket_id_col: Column,          # e.g., Ticket.id or TicketPackage.ticket_id
     is_confidential_col: Column,    # e.g., Ticket.is_confidential
-    caller_is_privileged: bool,     # True if caller has VA or Admin role
+    caller_scope: Scope | None,     # None for unauthenticated
     caller_user_id: UUID | None,    # for TicketAccessGrant lookup
     caller_email: str | None,       # for bugowner matching (case-insensitive)
 ) -> ColumnElement:
@@ -924,10 +944,11 @@ def confidential_ticket_filter(
     Returns a boolean SQL expression that evaluates to TRUE for rows
     the caller is authorized to see. Apply with query.where(...).
 
-    Authorization rules (from tickets.md):
-    - Privileged callers (VA/Admin): see everything (returns TRUE)
-    - Unauthenticated (user_id and email both None): only non-confidential
-    - Authenticated non-privileged: non-confidential OR any of:
+    Visibility rules (from rbac.md, Scope and Confidential Ticket
+    Visibility):
+    - Scope 'all': see everything (returns TRUE)
+    - Unauthenticated (scope is None): only non-confidential
+    - Scope 'non_confidential': non-confidential OR any of:
         - TicketAccessGrant exists for (ticket_id, user_id)
         - PackageBugowner.bugowner_email matches caller_email (person)
         - PackageBugownerMember.email matches caller_email (group)
@@ -937,11 +958,11 @@ def confidential_ticket_filter(
 **Behavior**:
 
 ```
-IF caller_is_privileged:
-    return literal(True)  # no filter -- VA/Admin see everything
-
-IF caller_user_id is None AND caller_email is None:
+IF caller_scope is None:
     return is_confidential_col == False  # unauthenticated
+
+IF caller_scope == Scope.ALL:
+    return literal(True)  # no filter -- scope 'all' sees everything
 
 return OR(
     is_confidential_col == False,
@@ -981,8 +1002,11 @@ but not its content (the detail endpoint returns 404 for unauthorized
 callers, indistinguishable from a non-existent ticket). This is an
 accepted risk because: (a) only the identifier is exposed — no title,
 CVE, severity, or package data leaks; (b) creating the duplicate link
-requires Vulnerability Analyst role, which already has full access to
-confidential tickets; (c) the reverse scenario (target becomes
+requires `triage_ticket` capability — users with this capability via
+the `vulnerability_analyst` role already have scope `all`;
+`automation_agent` users have `non_confidential` scope but only reach
+this code path for non-confidential source tickets; (c) the reverse
+scenario (target becomes
 confidential after the link is created) is rare and the leak is limited
 to existence inference; (d) implementing bidirectional cascading
 confidentiality adds significant complexity (reverse chain traversal,
@@ -995,9 +1019,9 @@ Three `TicketAuditEventType` values support confidentiality operations:
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
-| `confidentiality_changed` | `is_confidential` toggled | VA user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
-| `access_grant_added` | User manually added to access grants | VA user | `NULL` | Target username | `NULL` | `NULL` |
-| `access_grant_removed` | User manually removed from access grants | VA user | Target username | `NULL` | `NULL` | `NULL` |
+| `confidentiality_changed` | `is_confidential` toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
+| `access_grant_added` | User manually added to access grants | Acting user | `NULL` | Target username | `NULL` | `NULL` |
+| `access_grant_removed` | User manually removed from access grants | Acting user | Target username | `NULL` | `NULL` | `NULL` |
 
 See `docs/features/tickets/ticket-audit-log.md` for the audit event
 contract and detail JSONB schema.
@@ -1049,8 +1073,8 @@ always lowercase.
 **Soft-deletion visibility**: all entities with soft-deletion include a
 `deleted_at` field (`datetime | null`). This field is present only when
 the request includes `include_deleted=true` or `include_deleted=only`
-and the caller holds the Admin role. When not applicable, the field is
-omitted from the response.
+and the caller has the `admin_ticket_ops` capability. When not
+applicable, the field is omitted from the response.
 
 #### Shared Sub-Schemas
 
@@ -1240,8 +1264,8 @@ Query parameters:
   `docs/features/packages/package-bugowner.md`).
 - `include_deleted` (string, optional): `true` or `only`. Accepted from
   any caller, but soft-deleted tickets are included only if the caller
-  holds the Admin role. For non-admin callers the parameter is silently
-  ignored. Values: `true` (include active and deleted tickets), `only`
+  has the `admin_ticket_ops` capability. For callers without this
+  capability, the parameter is silently ignored. Values: `true` (include active and deleted tickets), `only`
   (return only deleted tickets). Default (absent or `false`): return only
   active tickets.
 - `page` (integer, optional): page number for pagination (default: 1).
@@ -1285,10 +1309,12 @@ Error responses:
 POST /api/v1/tickets
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `create_ticket`
 - **Response schema**: `TicketDetail` (201 Created)
 
-Creates a ticket manually. The creating user is automatically assigned.
+Creates a ticket manually. The creating user is automatically assigned
+(if the user holds the `vulnerability_analyst` role — see
+[Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
 
 Request body:
 
@@ -1306,11 +1332,13 @@ Request body:
   `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch")
 - `severity` (string, optional): initial severity override (critical,
   high, medium, low, none). If omitted, severity is `None` until set
-  by the VA. Ignored if `cve_id` is provided (severity is derived from
+  by the user. Ignored if `cve_id` is provided (severity is derived from
   CVSS)
 - `is_confidential` (boolean, optional): if `true`, the ticket is
-  created as confidential (see
-  [Confidential Tickets](#confidential-tickets)). Default: `false`
+  created as confidential. Requires the `manage_confidentiality`
+  capability in addition to `create_ticket`. If the caller lacks
+  `manage_confidentiality`, the endpoint returns 403
+  `AUTH_INSUFFICIENT_PERMISSION`. Default: `false`
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (201 Created).
@@ -1327,7 +1355,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/associate-cve
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
 Associates a CVE with a ticket that does not have one. If the CVE is not
@@ -1365,7 +1393,7 @@ Error responses:
 DELETE /api/v1/tickets/{ticket_id}/cve
 ```
 
-- **Access level**: Admin
+- **Capability**: `admin_ticket_ops`
 - **Response**: 204 No Content
 
 Removes the CVE association from a ticket. The CVE record itself is not
@@ -1386,7 +1414,7 @@ Error responses:
 PATCH /api/v1/tickets/{ticket_id}/severity
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
 Sets the severity override for a ticket without a CVE.
@@ -1419,10 +1447,10 @@ Error responses:
 PATCH /api/v1/tickets/{ticket_id}/assignee
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
-Assigns or reassigns a ticket to a VA. See
+Assigns or reassigns a ticket. See
 [Reassignment](#reassignment) for reassignment rules and
 [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)
 for auto-assignment behavior.
@@ -1466,7 +1494,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/ignore
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
 Marks a ticket as Ignored. Allowed transitions: New → Ignored,
@@ -1493,7 +1521,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/duplicate
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
 Marks a ticket as a duplicate of another ticket. The target is resolved
@@ -1532,13 +1560,16 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/reopen
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
-Reopens an Ignored ticket. The calling VA becomes the new assignee. After
-assignment, `_reenter_gate_zone()` determines the correct gate-zone
-status (typically Analysis, since an assignee is now present). See
-[Ignored](#ignored) for the full reopen behavior and audit trail.
+Reopens an Ignored ticket. If the calling user holds the
+`vulnerability_analyst` role, they become the new assignee; otherwise,
+the ticket retains its current assignee (or remains unassigned). After
+assignment (if applicable), `_reenter_gate_zone()` determines the
+correct gate-zone status (typically Analysis, since an assignee is now
+present). See [Ignored](#ignored) for the full reopen behavior and
+audit trail.
 
 No request body is required.
 
@@ -1560,12 +1591,14 @@ This endpoint is **not** subject to the `require_ticket_mutable` guard
 POST /api/v1/tickets/{ticket_id}/revert-duplicate
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `triage_ticket`
 - **Response schema**: `TicketDetail`
 
-Reverts a Duplicated ticket to its previous status. The ticket is
-reassigned to the VA who performed the revert. After restoring the
-status, `evaluate_ticket_status` reconciles with current gate conditions.
+Reverts a Duplicated ticket to its previous status. If the user who
+performed the revert holds the `vulnerability_analyst` role, the ticket
+is reassigned to them; otherwise, the ticket retains its current
+assignee. After restoring the status, `evaluate_ticket_status`
+reconciles with current gate conditions.
 See [Duplicate Handling](#duplicate-handling) for revert behavior and
 status reconciliation.
 
@@ -1584,7 +1617,7 @@ Error responses:
 DELETE /api/v1/tickets/{ticket_id}
 ```
 
-- **Access level**: Admin
+- **Capability**: `admin_ticket_ops`
 - **Response**: 204 No Content
 
 Soft-deletes a ticket by setting `deleted_at`. Creates a `ticket_deleted`
@@ -1602,7 +1635,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/restore
 ```
 
-- **Access level**: Admin
+- **Capability**: `admin_ticket_ops`
 - **Response schema**: `TicketDetail`
 
 Restores a soft-deleted ticket by clearing `deleted_at`. Creates a
@@ -1623,7 +1656,7 @@ Error responses:
 PATCH /api/v1/tickets/{ticket_id}/confidentiality
 ```
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `manage_confidentiality`
 - **Response schema**: `TicketDetail`
 - **Request body**: `{ "is_confidential": boolean }`
 - **Idempotency**: If the ticket already has the requested status, the
@@ -1649,8 +1682,8 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 
 ### Access Grant Management
 
-Endpoints to manage `TicketAccessGrant` records. Available ONLY to
-users with the `Vulnerability Analyst` role.
+Endpoints to manage `TicketAccessGrant` records. Requires the
+`manage_confidentiality` capability.
 
 #### List Access Grants
 
@@ -1660,7 +1693,7 @@ GET /api/v1/tickets/{ticket_id}/access
 
 List all users with explicit access grants for a confidential ticket.
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `manage_confidentiality`
 - **Response** (200 OK, unpaginated):
   ```json
   {
@@ -1700,7 +1733,7 @@ POST /api/v1/tickets/{ticket_id}/access
 
 Grant explicit access to a user on a confidential ticket.
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `manage_confidentiality`
 - **Request body**: `{ "user": str }` (Accepts UUID or username per User
   Identifier Resolution convention; backend resolves via
   `resolve_user_identifier`).
@@ -1733,7 +1766,7 @@ Revoke explicit access from a user on a confidential ticket. The
 `{user}` path parameter is of type `str` and accepts either a UUID or
 username.
 
-- **Access level**: Vulnerability Analyst
+- **Capability**: `manage_confidentiality`
 - **Idempotency**: If the grant does not exist, returns 204 No Content
   without creating an audit event.
 - **Response**: 204 No Content.
@@ -1773,13 +1806,17 @@ table:
   authentication required). Exceptions: (1) the ticket audit log
   sub-resource (`/audit-log`) requires authentication — see
   `docs/features/tickets/ticket-audit-log.md`; (2) confidential tickets
-  are invisible to unauthorized and unauthenticated users — see
+  are invisible to users whose effective scope is not `all` (unless they
+  have an explicit `TicketAccessGrant` or bugowner match) — see
   [Confidential Tickets](#confidential-tickets)
-- Creating tickets, assigning, changing status, associating CVE,
-  managing packages, setting severity override, setting confidentiality:
-  Vulnerability Analyst role
-- Removing a CVE from a ticket: Admin role
-- Soft-deleting and restoring tickets: Admin role
+- Creating tickets: `create_ticket` capability
+- Assigning, changing status, associating CVE, setting severity override:
+  `triage_ticket` capability
+- Managing packages: `manage_packages` capability
+- Setting confidentiality, managing access grants: `manage_confidentiality`
+  capability
+- Removing a CVE from a ticket: `admin_ticket_ops` capability
+- Soft-deleting and restoring tickets: `admin_ticket_ops` capability
 - See `docs/features/identity/rbac.md` for the full permission model
 
 ## Cross-references

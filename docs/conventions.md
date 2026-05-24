@@ -161,6 +161,23 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 
   Location: `backend/app/core/dependencies.py` (or equivalent shared module)
 
+- **Capability-based authorization**: use `require_capability()` as the
+  standard authorization dependency for capability-protected endpoints.
+  Example:
+
+  ```python
+  @router.post("/tickets")
+  async def create_ticket(
+      ...,
+      _: User = Depends(require_capability(Capability.CREATE_TICKET)),
+  ):
+  ```
+
+  Scope filtering (confidential ticket visibility) is handled by shared
+  query utilities (`confidential_ticket_filter()`,
+  `require_accessible_ticket`), not per-endpoint logic. See
+  `docs/features/identity/rbac.md` for the full authorization model
+
 - **Cross-cutting query parameter constraints**: enforce global constraints
   (such as the 500-character string parameter length limit defined in
   `docs/api-spec.md`) via a shared dependency injected at the app or router

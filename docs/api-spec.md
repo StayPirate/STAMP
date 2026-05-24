@@ -17,17 +17,73 @@ API keys (programmatic access). See `docs/features/identity/authentication.md`,
 ### Authorization
 
 Every endpoint definition in a feature specification MUST declare its
-access level using one of:
+authorization level using one of the following formats:
 
-- **Public** — no authentication required
-- **Authenticated** — any logged-in user regardless of role
-- **Vulnerability Analyst** — requires the `vulnerability_analyst` role
-- **Admin** — requires the `admin` role
+- **`Access: Public`** — no authentication required
+- **`Access: Authenticated`** — any logged-in user regardless of role
+- **`Capability: <capability_name>`** — requires the specified capability
+  (e.g., `Capability: create_ticket`)
 
-The access level declared in the owning feature specification is the
+The intentional field name change between `Access` and `Capability`
+serves as a visual indicator: `Access` means "authentication level
+only", `Capability` means "specific authorization check required". See
+`docs/features/identity/rbac.md` for the full list of capabilities and
+which roles include them.
+
+**Scope** is an orthogonal dimension applied as an implicit query filter
+(not at the endpoint level). Scope controls confidential ticket
+visibility — it is evaluated by `confidential_ticket_filter()` and
+`require_accessible_ticket`, not by endpoint decorators. See
+`docs/features/identity/rbac.md` (Scope and Confidential Ticket
+Visibility) for details.
+
+The authorization declared in the owning feature specification is the
 **authoritative source**. `docs/features/identity/rbac.md` maintains a
 derived summary index (Endpoint Permission Map) for cross-referencing —
 it is not the source of truth.
+
+#### Authorization Chain Evaluation Order
+
+For ticket endpoints that are capability-protected and operate on a
+specific ticket, the authorization chain evaluates in this exact order:
+
+1. **Authentication** (`get_current_user`) — returns 401 if not
+   authenticated
+2. **Capability** (`require_capability`) — returns 403
+   `AUTH_INSUFFICIENT_PERMISSION` if the user lacks the required
+   capability. This check does not depend on the specific ticket
+3. **Ticket accessibility** (`require_accessible_ticket`) — returns 404
+   for non-existent or invisible tickets, 410 for soft-deleted tickets
+4. **Mutability guard** (`require_ticket_mutable`) — returns 409 if the
+   ticket cannot be modified
+
+This ordering is security-significant: the capability check (step 2)
+fires before the accessibility check (step 3), preventing ticket
+existence probing via differentiated error codes.
+
+For non-ticket endpoints, only steps 1 and 2 apply.
+
+#### Conditional Capability Checks
+
+Some endpoints are Public or Authenticated but accept optional parameters
+that require a capability. For example, `GET /api/v1/tickets` is Public,
+but the `include_deleted` query parameter requires `admin_ticket_ops`
+capability.
+
+Rules:
+
+- The capability check is performed inline in the handler (not via the
+  `require_capability()` dependency) only when the parameter is present
+- If the caller lacks the required capability, the parameter is
+  **silently ignored** — the endpoint returns results as if the parameter
+  were not provided
+- The endpoint never returns 403 for a missing query parameter on a
+  Public or Authenticated endpoint; 403 is reserved for
+  capability-protected endpoints
+- When a parameter is silently ignored due to insufficient capability,
+  the backend SHOULD emit a DEBUG-level log entry recording the caller
+  identity and the ignored parameter name. The log MUST NOT include the
+  parameter value to avoid log injection
 
 ### Response Format
 
@@ -91,7 +147,7 @@ Error codes are grouped by prefix:
 | Prefix | Domain | Examples |
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
-| `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_ROLE`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
+| `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
@@ -227,7 +283,7 @@ only endpoint-specific errors; global responses are not repeated.
 | Status | Code                     | Condition                                      | Source                         |
 |--------|--------------------------|------------------------------------------------|--------------------------------|
 | 401    | `AUTH_NOT_AUTHENTICATED` | Missing, malformed, or invalid credentials     | `get_current_user` dependency  |
-| 403    | `AUTH_INSUFFICIENT_ROLE` | User authenticated but lacks required role     | `require_role` dependency      |
+| 403    | `AUTH_INSUFFICIENT_PERMISSION` | User authenticated but lacks required capability | `require_capability` dependency |
 | 422    | `VALIDATION_ERROR`       | Request body/query/path fails schema validation | FastAPI automatic (Pydantic)   |
 | 500    | `INTERNAL_ERROR`         | Unhandled server error                         | Framework                      |
 
@@ -239,8 +295,10 @@ Notes:
   reason — no information about the failure cause is disclosed
 - The 422 response uses Pydantic's native format with the `errors` array
   populated with field-level details
+- The 403 response detail is always `"Insufficient permissions"` — it
+  MUST NOT disclose which capability was required
 - Endpoint error tables should only list responses that are specific to
-  that endpoint's logic (e.g., 404, 409, 403 for role requirements)
+  that endpoint's logic (e.g., 404, 409, 403 for capability requirements)
 
 ### Scoped Responses
 
@@ -259,26 +317,30 @@ The dependency evaluates conditions in this exact order:
 1. **Existence**: if the ticket does not exist, return `404 TICKET_NOT_FOUND`
 2. **Confidentiality**: if the ticket is confidential
    (`is_confidential=TRUE`) and the caller does not satisfy any
-    authorization rule from `docs/features/tickets/tickets.md`
-    (Authorization Rules), return `404 TICKET_NOT_FOUND` — indistinguishable from a
-    non-existent ticket. The confidentiality evaluation reuses the shared
+    visibility rule from `docs/features/identity/rbac.md` (Scope and
+    Confidential Ticket Visibility) — scope `all`, explicit
+    `TicketAccessGrant`, or bugowner match — return `404
+    TICKET_NOT_FOUND` — indistinguishable from a non-existent ticket.
+    The confidentiality evaluation reuses the shared
     `confidential_ticket_filter()` utility (see
     `docs/features/tickets/tickets.md`, Confidentiality Filtering) with
     the single-ticket column reference
 3. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and the
-   caller does not hold the Admin role, return `410 TICKET_DELETED`
+   caller does not have the `admin_ticket_ops` capability, return
+   `410 TICKET_DELETED`
 
 | Status | Code              | Condition                                            |
 |--------|-------------------|------------------------------------------------------|
 | 404    | `TICKET_NOT_FOUND`| Ticket does not exist, or is confidential and caller is not authorized |
-| 410    | `TICKET_DELETED`  | Ticket is soft-deleted and caller does not hold the Admin role |
+| 410    | `TICKET_DELETED`  | Ticket is soft-deleted and caller does not have the `admin_ticket_ops` capability |
 
 The evaluation order is security-critical: returning `410` before
 checking confidentiality would confirm the existence of a confidential
 ticket to an unauthorized user.
 
-When a ticket has `deleted_at IS NOT NULL`, Admin callers proceed normally
-while all other callers receive 410 Gone. This applies uniformly to read
+When a ticket has `deleted_at IS NOT NULL`, callers with the
+`admin_ticket_ops` capability proceed normally while all other callers
+receive 410 Gone. This applies uniformly to read
 and write operations on the ticket and its sub-resources (packages, tracks,
 products, CVSS assessments, references, audit log, submission requests).
 

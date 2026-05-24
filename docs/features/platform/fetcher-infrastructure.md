@@ -120,8 +120,8 @@ Sentinel uses a **three-tier error field architecture**:
 | Field | Audience | Content |
 |-------|----------|---------|
 | `error_message` | All users (public) | Intentional, sanitized message written by the developer or by BaseFetcher's generic fallback |
-| `error_detail` | Admin only | Raw exception message (`str(exception)`) |
-| `error_traceback` | Admin only | Full Python traceback |
+| `error_detail` | `manage_fetchers` only | Raw exception message (`str(exception)`) |
+| `error_traceback` | `manage_fetchers` only | Full Python traceback |
 
 ### Fetcher responsibilities
 
@@ -488,8 +488,8 @@ the dashboard charts.
 | items_updated | INTEGER | NOT NULL, DEFAULT 0 | Number of existing records updated |
 | items_failed | INTEGER | NOT NULL, DEFAULT 0 | Number of items that failed processing |
 | error_message | TEXT | nullable | Sanitized error description (for all users). Written explicitly by the fetcher (`FetcherError`) or by BaseFetcher's generic fallback (see "Error Message Sanitization") |
-| error_detail | TEXT | nullable | Raw exception message — `str(exception)` (admin-only visibility) |
-| error_traceback | TEXT | nullable | Full Python traceback (admin-only visibility) |
+| error_detail | TEXT | nullable | Raw exception message — `str(exception)` (`manage_fetchers` capability required for visibility) |
+| error_traceback | TEXT | nullable | Full Python traceback (`manage_fetchers` capability required for visibility) |
 | triggered_by | ENUM | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
@@ -498,7 +498,8 @@ the dashboard charts.
 - `finished_at` is NULL while a run is in progress (status `running`).
   This can be used to detect stale runs (running for too long).
 - `error_detail` and `error_traceback` are stored for debugging but MUST
-  NOT be exposed to non-admin users via the API.
+  NOT be exposed to users without the `manage_fetchers` capability via
+  the API.
 - `duration_seconds` is stored (not computed at query time) because it is
   the primary Y-axis value for timeline charts and benefits from indexing.
 

@@ -822,9 +822,10 @@ or with `ad_group_cn = '_manual'` will retain the role.
    `docs/features/identity/user-management.md`. There is no user creation through
    the UI or API
 2. **Login is open**: any SUSE employee can authenticate via SSO (see
-   `docs/features/identity/sso-authentication.md`). A user with no roles
-   has the same access as an unauthenticated user (read-only on public
-   data)
+   `docs/features/identity/sso-authentication.md`). Authenticated users
+   with no roles have an effective scope of `non_confidential` and no
+   capabilities; unlike unauthenticated users, they can access specific
+   confidential tickets via `TicketAccessGrant` or bugowner matching
 3. **Role assignment is hybrid**: roles can come from AD group mappings
    (automatic, managed by sync) or manual assignment by an admin.
    AD-derived roles cannot be removed manually — only by removing the

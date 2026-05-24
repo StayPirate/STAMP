@@ -408,7 +408,9 @@ an orchestrated deployment.
 
 ## Security Considerations
 
-- Role-based access control (RBAC) for all operations
+- Capability-based access control (RBAC with capabilities and scope)
+  for all operations
 - API authentication required for all non-public endpoints
 - Secrets managed via environment variables, never in code
-- See `docs/features/identity/rbac.md` for detailed permission model
+- See `docs/features/identity/rbac.md` for the full authorization model
+  (capabilities, scope, predefined roles, endpoint permission map)

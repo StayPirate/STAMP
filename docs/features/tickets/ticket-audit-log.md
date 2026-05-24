@@ -39,7 +39,7 @@ fields populated according to this table:
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "advisory_id": "..."}` (see detail contract) |
 | `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) | `NULL` |
 | `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | `NULL` |
-| `cve_removed` | Admin removed CVE association from a ticket | Admin user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | Optional admin note | `NULL` |
+| `cve_removed` | CVE association removed from a ticket (`admin_ticket_ops`) | Acting user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | Optional note | `NULL` |
 | `severity_changed` | CVSS recalculation changes ticket severity | `NULL` | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
@@ -47,11 +47,11 @@ fields populated according to this table:
 | `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | Optional VA note | `NULL` |
 | `product_excluded` | Product directly soft-deleted from ticket | VA user for manual, `NULL` for system (EOL, orphan cleanup) | Product display name | `NULL` | Optional VA note for manual; `NULL` for automatic | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
 | `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note | `NULL` |
-| `ticket_deleted` | Admin soft-deletes a ticket | Admin user | `NULL` | `NULL` | Optional admin note | `NULL` |
-| `ticket_restored` | Admin restores a soft-deleted ticket | Admin user | `NULL` | `NULL` | Optional admin note | `NULL` |
-| `confidentiality_changed` | Ticket `is_confidential` flag toggled | VA user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
-| `access_grant_added` | VA manually granted a user explicit access to a confidential ticket | VA user | `NULL` | Target username | `NULL` | `NULL` |
-| `access_grant_removed` | VA manually revoked a user's explicit access to a confidential ticket | VA user | Target username | `NULL` | `NULL` | `NULL` |
+| `ticket_deleted` | Ticket soft-deleted (`admin_ticket_ops`) | Acting user | `NULL` | `NULL` | Optional note | `NULL` |
+| `ticket_restored` | Soft-deleted ticket restored (`admin_ticket_ops`) | Acting user | `NULL` | `NULL` | Optional note | `NULL` |
+| `confidentiality_changed` | Ticket `is_confidential` flag toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
+| `access_grant_added` | User manually granted explicit access to a confidential ticket | Acting user | `NULL` | Target username | `NULL` | `NULL` |
+| `access_grant_removed` | User manually revoked explicit access to a confidential ticket | Acting user | Target username | `NULL` | `NULL` | `NULL` |
 
 **Rules**:
 

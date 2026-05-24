@@ -588,8 +588,10 @@ Delivery pipeline status, used by TicketPackageTrack.
 Platform users with role-based access. Users are populated from SUSE
 Active Directory via the `sync_ldap_directory` fetcher (see
 `docs/features/identity/ad-integration.md`). Users can hold zero, one, or
-multiple roles via the UserRole junction table. A user with no roles has
-the same access as an unauthenticated user (read-only on public data).
+multiple roles via the UserRole junction table. Authenticated users with
+no roles have an effective scope of `non_confidential` and no
+capabilities; unlike unauthenticated users, they can access specific
+confidential tickets via `TicketAccessGrant` or bugowner matching.
 
 | Column           | Type        | Constraints              | Description                      |
 |------------------|-------------|--------------------------|----------------------------------|
@@ -627,7 +629,7 @@ process and cannot be removed via the API. See
 |--------------|-------------|------------------------------|----------------------------------|
 | id           | UUID        | PK                           | Internal identifier              |
 | user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
-| role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst    |
+| role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst, Automation Agent |
 | ad_group_cn  | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
 | assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
@@ -640,6 +642,11 @@ process and cannot be removed via the API. See
 |-------------------|--------------------------------------------------|
 | Admin             | Platform administration (users, settings, fetchers) |
 | Vulnerability Analyst  | CVE triage and assessment (tickets, packages, CVSS) |
+| Automation Agent  | Automated ticket operations (same as VA except confidentiality management); scope limited to non-confidential tickets |
+
+The capability-to-role mapping and scope-to-role mapping are static
+definitions in code (not stored in the database). See
+`docs/features/identity/rbac.md` for the full authorization model.
 
 **ad_group_cn semantics**:
 
@@ -660,7 +667,7 @@ membership. See `docs/features/identity/ad-integration.md`.
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
 | ad_group_cn  | VARCHAR(256) | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
-| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin` or `Vulnerability Analyst` |
+| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Automation Agent` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
@@ -738,14 +745,15 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/tickets.md` (Confidential Tickets) |
-| deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp. NULL means active. Set by Admin only |
+| deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp. NULL means active. Set by users with `admin_ticket_ops` capability only |
 
 **Deletion policy**: tickets MUST NOT be hard-deleted from the database.
 Soft-delete is performed by setting `deleted_at` to the current timestamp.
-Only users with the Admin role may soft-delete or restore tickets.
-Soft-deleted tickets are excluded from all default queries. All sub-resources
-of a soft-deleted ticket (references, events, packages, tracks, products)
-remain intact in the database but are inaccessible to non-admin users.
+Only users with the `admin_ticket_ops` capability may soft-delete or
+restore tickets. Soft-deleted tickets are excluded from all default
+queries. All sub-resources of a soft-deleted ticket (references, events,
+packages, tracks, products) remain intact in the database but are
+inaccessible to users without the `admin_ticket_ops` capability.
 
 **Status transitions**: see `docs/features/tickets/tickets.md` (Ticket Lifecycle)
 for the full transition diagram, gates, and rules.
