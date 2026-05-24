@@ -81,7 +81,15 @@ Design notes:
   set the confidentiality flag or manage access grants.
 - A user holding multiple roles receives the union of all capabilities and
   the least restrictive scope (i.e., if any role has `all`, the effective
-  scope is `all`).
+  scope is `all`). This is intentional: if an admin assigns both
+  `vulnerability_analyst` and `automation_agent` to the same user, the
+  effective scope is `all`. The admin is responsible for role assignments
+  — the system does not enforce mutual exclusivity between roles. If the
+  combination is unintended, the admin removes the extra role.
+- A user with no roles has an effective scope of `non_confidential`. They
+  can still access specific confidential tickets via `TicketAccessGrant`
+  or bugowner matching — these per-ticket mechanisms are independent of
+  scope.
 
 ### Access Levels (unchanged, not roles)
 
@@ -112,7 +120,22 @@ A ticket is visible to a user if ANY of the following is true:
 
 This means a VA can grant explicit access to a confidential ticket to a bot
 with `non_confidential` scope. The grant overrides the scope restriction for
-that specific ticket only.
+that specific ticket only. The grant provides full access (read and write)
+— the bot can perform any operation its capabilities allow on the granted
+ticket. There is no read-only vs read-write distinction in access grants;
+this is consistent with how grants work for all users.
+
+Note that visibility alone does not imply write access. An authenticated
+user with no roles who receives a `TicketAccessGrant` can see the ticket
+but cannot modify it — they have no capabilities. An `automation_agent`
+with a grant can both see and modify the ticket because they have
+capabilities like `triage_ticket` and `manage_packages`. The two checks
+are independent:
+
+- **Scope** (+ grant/bugowner) determines: *can you see this ticket?*
+- **Capability** determines: *can you perform this operation?*
+
+Both checks must pass for a write operation to succeed.
 
 The `confidential_ticket_filter()` function signature changes from:
 
@@ -136,7 +159,7 @@ def confidential_ticket_filter(
 
 ## Endpoint Authorization Pattern
 
-### Current (RBAC puro)
+### Current (pure RBAC)
 
 ```python
 @router.post("/tickets")
@@ -162,10 +185,58 @@ The `require_capability()` dependency:
 2. Loads the user's roles
 3. Checks if any of the user's roles includes the required capability
    (using the static role definition map)
-4. If yes, allows the request; if no, returns 403
+4. If yes, allows the request; if no, returns 403 with error code
+   `AUTH_INSUFFICIENT_PERMISSION` (replaces the current
+   `AUTH_INSUFFICIENT_ROLE` code — since we are in spec phase with no
+   deployed instances, this is not a breaking change)
 
 Scope is applied separately as a query filter (not at the endpoint level)
 by `confidential_ticket_filter()` and similar scope-aware filters.
+
+### Conditional capability checks
+
+Some endpoints are Public but accept optional parameters that require a
+capability. For example, `GET /api/v1/tickets` is Public, but the
+`include_deleted` query parameter requires `admin_ticket_ops` capability.
+In these cases, the capability check is performed inline in the handler
+(not via the `require_capability()` dependency) only when the parameter
+is present. If the caller lacks the capability, the parameter is ignored
+or returns 403.
+
+## Business Rules
+
+### Assignment target constraint (role-based)
+
+The assignment target constraint remains **role-based**, not
+capability-based. Only users holding the `vulnerability_analyst` role can
+be assigned as ticket owners. Users with only `automation_agent` (or any
+other role) are not valid assignment targets. This is a business rule
+("who can own a ticket"), not an authorization check ("who can invoke the
+assign endpoint").
+
+- The `triage_ticket` capability controls who can *perform* the
+  assignment operation
+- The `vulnerability_analyst` role requirement controls who can *be the
+  target* of the assignment
+
+### Auto-assignment
+
+The existing auto-assignment rule ("when a user modifies an unassigned
+ticket, the ticket is auto-assigned to the acting user") applies **only
+if the acting user holds the `vulnerability_analyst` role**. If the
+acting user holds only `automation_agent` (or any other role without VA),
+auto-assignment is skipped — the bot performs the operation but the
+ticket remains unassigned for a human VA to claim.
+
+This ensures bots never become ticket assignees, which would block
+human triage workflows.
+
+### AD role mapping for `automation_agent`
+
+AD groups can be mapped to `automation_agent` via `RoleMapping`. This is
+a valid use case — for example, a team of humans who should perform
+ticket operations but must not access embargoed (confidential) data. The
+admin is responsible for ensuring the mapping is intentional.
 
 ## Feature Spec Endpoint Declarations
 
@@ -219,9 +290,14 @@ Changes:
 - [ ] Add design note on multi-role resolution (union of capabilities,
       least restrictive scope)
 - [ ] Add design note on scope vs TicketAccessGrant interaction
-- [ ] Update "Business Rules" — existing rules remain, add any new rules
-      for automation_agent (e.g., cannot be assignment target per existing
-      assignment constraint: target must hold VA role)
+- [ ] Update "Business Rules" — existing rules remain, add:
+  - Assignment target constraint stays role-based (VA role required)
+  - Auto-assignment skips non-VA users (bots never become assignees)
+  - Multi-role scope resolution is union (admin responsibility)
+  - Zero-role users have effective scope `non_confidential`
+- [ ] Rename `AUTH_INSUFFICIENT_ROLE` to `AUTH_INSUFFICIENT_PERMISSION`
+- [ ] Document conditional capability checks for Public endpoints with
+      privileged parameters (e.g., `include_deleted`)
 
 ### Phase 2 — Update `docs/data-model.md`
 
@@ -236,6 +312,9 @@ Changes:
 - [ ] Document the three access levels: Public, Authenticated, Capability-protected
 - [ ] Document that scope is applied as an implicit query filter, not as an
       endpoint-level check
+- [ ] Rename error code `AUTH_INSUFFICIENT_ROLE` to `AUTH_INSUFFICIENT_PERMISSION`
+- [ ] Update `require_accessible_ticket` specification to use scope-based
+      logic instead of role-based `caller_is_privileged`
 
 ### Phase 4 — Update `docs/conventions.md`
 
@@ -254,6 +333,11 @@ This is the most impacted feature spec due to confidentiality rules.
 - [ ] Update all endpoint declarations from "Access: Vulnerability Analyst"
       to "Capability: X"
 - [ ] Ensure TicketAccessGrant override behavior is clearly documented
+      (read-write access, scope + capability independence)
+- [ ] Update auto-assignment rule: skip for users without VA role
+- [ ] Update assignment target constraint: explicitly role-based (VA only)
+- [ ] Confirm that mutation endpoints on invisible tickets return 404
+      (not 403) — consistent with the existing invisible-ticket pattern
 
 ### Phase 6 — Update remaining feature specs with endpoints
 
@@ -265,8 +349,11 @@ Identity specs:
 - [ ] `docs/features/identity/authentication.md`
 - [ ] `docs/features/identity/local-authentication.md`
 - [ ] `docs/features/identity/sso-authentication.md`
-- [ ] `docs/features/identity/user-management.md`
-- [ ] `docs/features/identity/ad-integration.md`
+- [ ] `docs/features/identity/user-management.md` — also update CLI
+      `--role` parameter to accept `automation_agent` in `manage-user`
+      commands (`create`, `update`, `list --role`)
+- [ ] `docs/features/identity/ad-integration.md` — note that AD groups
+      can be mapped to `automation_agent`
 - [ ] `docs/features/identity/identity-audit-log.md`
 
 Ticket specs:
@@ -317,19 +404,79 @@ to verify coherence and completeness:
 
 ---
 
-## Open Questions (resolved)
+## Design Decisions (resolved)
 
 ### TicketAccessGrant + `non_confidential` scope
 
 **Decision**: The grant overrides the scope. A user with `non_confidential`
 scope can access a specific confidential ticket if they have an explicit
-`TicketAccessGrant` for it. Rationale: this allows VAs to deliberately
-share specific confidential tickets with bots when needed for automation.
+`TicketAccessGrant` for it. The grant provides full access (read and
+write) — no read-only vs read-write distinction. Rationale: this allows
+VAs to deliberately share specific confidential tickets with bots when
+needed for automation, and keeps the model simple.
+
+### TicketAccessGrant visibility vs write access
+
+**Decision**: Visibility and write capability are independent checks.
+A user with no roles but a `TicketAccessGrant` can see the ticket but
+cannot modify it (no capabilities). A user with `automation_agent` role
+and a grant can see and modify the ticket (capabilities + visibility).
 
 ### Authenticated and Anonymous as roles
 
 **Decision**: Not needed. These are access levels (authentication state),
 not authorization profiles. They do not carry capabilities or scope.
+
+### Multi-role scope resolution
+
+**Decision**: Union (least restrictive). If an admin assigns both
+`vulnerability_analyst` and `automation_agent` to the same user, the
+effective scope is `all`. This is the admin's responsibility — no
+mutual exclusivity enforcement or warnings. Rationale: adding guards
+increases complexity for a scenario that is simply an admin
+configuration mistake, correctable by removing the extra role.
+
+### Effective scope for zero-role users
+
+**Decision**: Authenticated users with no roles have an effective scope
+of `non_confidential`. They can still access specific confidential
+tickets via `TicketAccessGrant` or bugowner matching. Unauthenticated
+users have `caller_scope = None` — they see only non-confidential
+tickets with no grant/bugowner checks.
+
+### Auto-assignment for `automation_agent`
+
+**Decision**: Auto-assignment is skipped for users who do not hold the
+`vulnerability_analyst` role. Bots perform operations on tickets but
+never become assignees. Rationale: ticket ownership implies human
+accountability in the triage workflow.
+
+### Assignment target constraint
+
+**Decision**: Remains role-based. Only users with the
+`vulnerability_analyst` role can be assignment targets. This is a
+business rule (who can own tickets), not an authorization check (who can
+invoke the endpoint). The `triage_ticket` capability controls who can
+perform the assignment; the VA role controls who can be the target.
+
+### AD group mapping to `automation_agent`
+
+**Decision**: Allowed. AD groups can be mapped to `automation_agent` via
+`RoleMapping`. Valid use case: a team of humans who should perform ticket
+operations but must not access embargoed data.
+
+### `AUTH_INSUFFICIENT_ROLE` error code
+
+**Decision**: Renamed to `AUTH_INSUFFICIENT_PERMISSION`. Since we are in
+spec phase with no deployed instances, this is not a breaking change.
+
+### Conditional capability checks on Public endpoints
+
+**Decision**: Public endpoints that accept parameters requiring elevated
+access (e.g., `include_deleted` on `GET /api/v1/tickets`) perform
+capability checks inline in the handler, not via the
+`require_capability()` dependency. If the caller lacks the capability,
+the parameter is ignored or returns 403.
 
 ## Cross-references
 
