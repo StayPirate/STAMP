@@ -478,6 +478,56 @@ capability checks inline in the handler, not via the
 `require_capability()` dependency. If the caller lacks the capability,
 the parameter is ignored or returns 403.
 
+## Open Points
+
+### Capability granularity: coarse now or fine-grained from the start?
+
+The current draft defines ~11 grouped capabilities (e.g., `triage_ticket`
+bundles assign, change status, mark duplicate, associate CVE, and set
+severity). An alternative is to define finer-grained capabilities from
+the start (e.g., separate `assign_ticket`, `change_ticket_status`,
+`associate_cve`, `set_severity`).
+
+**What splitting a capability later costs:**
+
+- **Spec changes**: the capability enum gains new values, the role
+  definition map is updated, and the Endpoint Permission Map rows that
+  referenced the old capability are split. Moderate effort (~1 spec
+  session).
+- **Code changes**: every `require_capability(Cap.TRIAGE_TICKET)` call
+  site must be reviewed and replaced with the appropriate fine-grained
+  capability. The number of call sites equals the number of endpoints
+  that used the old capability. Mechanical but error-prone — missing one
+  site silently breaks authorization.
+- **Test changes**: every test that sets up a role with the old
+  capability must be updated. Parametrized tests over capabilities need
+  new cases.
+- **Role backward compatibility**: existing roles that had the coarse
+  capability must receive all the fine-grained capabilities it was split
+  into, to avoid regressions. If the split is done in production, this
+  requires a data migration (or seed update) to maintain equivalence.
+- **AD role mappings**: unaffected (they map to roles, not capabilities).
+
+**Arguments for coarse now:**
+
+- Simpler to reason about and maintain with 3 roles
+- No foreseeable use case today for "can assign but not change status"
+- Splitting later is a bounded, mechanical refactor — not an
+  architectural change
+- YAGNI: fine-grained capabilities that are always granted together
+  add complexity without value
+
+**Arguments for fine-grained from the start:**
+
+- Splitting later touches code, tests, and potentially production data
+  — doing it now (spec phase, no code, no data) has zero migration cost
+- More fine-grained capabilities give maximum flexibility for future
+  roles without any spec/code refactoring
+- The Permission Matrix already defines operations at roughly this
+  granularity level (~20 rows), so the mapping is natural
+
+**Decision**: deferred — to be resolved before Phase 1 begins.
+
 ## Cross-references
 
 - `docs/features/identity/rbac.md` — authoritative RBAC specification
