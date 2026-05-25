@@ -140,7 +140,8 @@ directly on the assessment record.
   v4.0 will be supported when Red Hat adds it
 - **Response format**: the `cvss3` object contains `cvss3_base_score`
   (string), `cvss3_scoring_vector` (string), and `status` (`"draft"` or
-  `"verified"`)
+  `"verified"`). Only the vector string is used — the score is recomputed
+  locally by the `cvss` library for consistency
 - **Deduplication**: if Red Hat also appears as a CNA Secondary in NVD
   (same provider name `"Red Hat"`), the direct fetch from the Red Hat API
   takes priority and overwrites the NVD Secondary record
@@ -153,8 +154,9 @@ directly on the assessment record.
 - **Provider name in Sentinel**: `"SUSE"`
 - **CVSS versions**: the VA MUST provide both v3.1 and v4.0 assessments
   before the ticket can progress beyond Analysis (see Workflow Gates)
-- **Input method**: the VA enters a CVSS vector string; the backend
-  validates the vector format and calculates the score automatically
+- **Input method**: the VA enters a CVSS vector string (which embeds the
+  version in its prefix); the backend derives the CVSS version from the
+  prefix and calculates the score automatically using the `cvss` library
 - **Editability**: the SUSE assessment can be modified at any time,
   regardless of ticket status. Changes trigger severity and eligibility
   recalculation
@@ -309,14 +311,18 @@ changes.
    ```
 3. For each returned CVE:
    - Update CVE metadata (description, references, etc.)
-   - Extract all CVSS assessments from `cvssMetricV31`, `cvssMetricV40`,
-     and any other `cvssMetricV*` arrays
-   - For Primary assessments (`type: "Primary"`): save with
-     `provider_name = "NVD"`
+   - Extract CVSS vector strings from `cvssMetricV31`, `cvssMetricV40`,
+     and any other `cvssMetricV*` arrays. Assessments that provide only
+     a numeric score without a vector string are skipped (not imported)
+   - For Primary assessments (`type: "Primary"`): pass vector to
+     `ticket_mutations.create_cvss_assessment()` with
+     `provider = "NVD"`. Version and score are derived from the vector
    - For Secondary assessments (`type: "Secondary"`): resolve `source`
-     email to display name via NVD Source API, save with the resolved name
+     email to display name via NVD Source API, then pass vector with
+     the resolved name as `provider`
    - Skip Secondary assessments where a direct source (e.g., Red Hat)
-     already has data for the same `provider_name` and `cvss_version`
+     already has data for the same `provider_name` and derived
+     `cvss_version`
 4. If any CVSS assessment changed for a CVE with an active ticket →
    trigger recalculation (see Recalculation Cascade)
 
@@ -338,9 +344,10 @@ only.
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
    ```
-2. Extract `cvss3.cvss3_base_score` and `cvss3.cvss3_scoring_vector`
-3. Save as `CVECVSSAssessment` with `provider_name = "Red Hat"`,
-   `cvss_version = "3.1"`
+2. Extract `cvss3.cvss3_scoring_vector`
+3. Pass the vector to `ticket_mutations.create_cvss_assessment()` with
+   `provider = "Red Hat"`. The service derives `cvss_version` and `score`
+   from the vector automatically
 4. If the assessment differs from an existing NVD Secondary with the same
    provider name → overwrite
 
@@ -356,8 +363,9 @@ only.
 3. A configurable delay (controlled by the `throttle_delay_seconds`
    custom setting, default: **2 seconds**) is added between requests to
    avoid overloading the Red Hat API. Speed is not important.
-4. Compare the fetched score and vector with the stored values
-5. If different → update the assessment and trigger recalculation
+4. Compare the fetched vector with the stored vector
+5. If different → update the assessment via
+   `ticket_mutations.update_cvss_assessment()` (triggers recalculation)
 6. `last_redhat_sync_at` is derived from the `started_at` timestamp of
    the most recent successful `FetcherRun` for the `sync_cvss_redhat`
    fetcher. Used for operational monitoring only (Red Hat sync is not
@@ -474,16 +482,17 @@ Request body:
 
 ```json
 {
-  "cvss_version": "3.1",
   "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 }
 ```
 
-- `cvss_version`: must be `"3.1"` or `"4.0"`
-- `vector`: valid CVSS vector string for the specified version
+- `vector`: valid CVSS vector string. The CVSS version is derived from the
+  vector prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
+  no prefix → 2.0). The base score is computed automatically by the `cvss`
+  library.
 
-The backend validates the vector, calculates the score, and saves the
-assessment. If an existing SUSE assessment for the same version exists, it
+The backend parses the vector, derives the version and score, and saves the
+assessment. If an existing SUSE assessment for the derived version exists, it
 is updated (upsert). Triggers recalculation cascade.
 
 Response (200 OK): the created or updated assessment object wrapped in
@@ -495,7 +504,7 @@ the standard `{"data": ...}` envelope.
 |--------|------|-----------|
 | 400 | `TICKET_CVE_NOT_SET` | Ticket has no associated CVE |
 | 404 | `TICKET_NOT_FOUND` | Ticket not found |
-| 422 | `VALIDATION_ERROR` | Invalid vector format or unsupported CVSS version |
+| 422 | `CVSS_INVALID_VECTOR` | Vector string is malformed or unparseable |
 
 **Capability**: `manage_cvss`.
 
@@ -536,7 +545,7 @@ never mutate the database — they receive data and return results.
 |-------------------------|--------------------------------------------|---------------------------------|----------------------------------------------------------|
 | `resolve_cvss_score`    | CVE assessments, default CVSS version      | (score, provider) or None       | Implements the 3-step resolution cascade                 |
 | `calculate_severity`    | CVSS score (float)                         | Severity enum                   | Maps score to severity using the rating scale            |
-| `validate_cvss_vector`  | Vector string, CVSS version                | Parsed metrics + calculated score | Validates vector format and computes the base score     |
+| `validate_cvss_vector`  | Vector string                              | Parsed metrics + version + calculated score | Parses vector, detects version from prefix, validates format, and computes the base score |
 
 These functions are used in two contexts:
 

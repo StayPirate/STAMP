@@ -279,6 +279,14 @@ Package-centric mutations (`set_track_status`, `set_track_delivery_status`,
 products) have been moved to `package_service` — see
 `docs/features/packages/package-service.md`.
 
+### CVSS Vector Parsing
+
+The `cvss` Python library (PyPI: `cvss`, maintained by Red Hat Product
+Security) is used for vector parsing, version detection, and score
+computation. Score and version are never accepted as external inputs —
+they are always derived from the vector string. Providers that supply
+only a numeric score without a vector string are not imported.
+
 ### `create_cvss_assessment()`
 
 Creates a new `CVECVSSAssessment` record for a ticket's CVE.
@@ -290,16 +298,17 @@ Creates a new `CVECVSSAssessment` record for a ticket's CVE.
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket whose CVE receives the assessment |
 | `provider` | `str` | Yes | Assessment provider (e.g., `"suse"`, `"nvd"`) |
-| `cvss_version` | `str` | Yes | CVSS version (e.g., `"3.1"`, `"4.0"`) |
-| `score` | `Decimal` | Yes | CVSS score |
-| `vector` | `str` | Yes | CVSS vector string |
+| `vector` | `str` | Yes | CVSS vector string (version and score are derived from the vector) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
 
 - Ticket must exist and have `deleted_at IS NULL`
 - Ticket must be in the gate zone
-- Ticket must have an associated CVE (`cve_id IS NOT NULL`)
+- Ticket must have an associated CVE (`cve_id IS NOT NULL`) — raises
+  `TicketNoCVEError` (HTTP 409 Conflict, `error_code: "TICKET_NO_CVE"`)
+- Vector must be parseable — raises `InvalidCVSSVectorError` (HTTP 422
+  Unprocessable Entity, `error_code: "CVSS_INVALID_VECTOR"`)
 - No existing assessment for the same (CVE, provider, version) combination
   — raises `DuplicateCVSSAssessmentError` (HTTP 409 Conflict,
   `error_code: "DUPLICATE_CVSS_ASSESSMENT"`)
@@ -308,12 +317,16 @@ Creates a new `CVECVSSAssessment` record for a ticket's CVE.
 
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Validate preconditions
-3. Create `CVECVSSAssessment` record
-4. Recalculate ticket severity via `cvss.py` resolution cascade
-5. Create `TicketAuditEvent` (`cvss_assessment_changed`,
+3. Parse the vector string using the `cvss` library. Determine version from
+   prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
+   no prefix → 2.0). Compute base score. If parsing fails, raise
+   `InvalidCVSSVectorError`
+4. Create `CVECVSSAssessment` record (with derived version and score)
+5. Recalculate ticket severity via `cvss.py` resolution cascade
+6. Create `TicketAuditEvent` (`cvss_assessment_changed`,
    `old_value = NULL`, `new_value = "provider vX.Y score"`)
-6. Call `reconcile_ticket_status()`
-7. Return created assessment
+7. Call `reconcile_ticket_status()`
+8. Return created assessment
 
 **TicketAuditEvent**: `cvss_assessment_changed`
 
@@ -329,8 +342,7 @@ Updates an existing `CVECVSSAssessment` record.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `assessment_id` | `UUID` | Yes | CVECVSSAssessment to modify |
-| `score` | `Decimal \| None` | No | New CVSS score (if changed) |
-| `vector` | `str \| None` | No | New CVSS vector (if changed) |
+| `vector` | `str` | Yes | New CVSS vector string (version and score are re-derived) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -339,13 +351,22 @@ Updates an existing `CVECVSSAssessment` record.
   `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
 - Parent ticket must have `deleted_at IS NULL`
 - Parent ticket must be in the gate zone
+- New vector must be parseable — raises `InvalidCVSSVectorError` (HTTP 422
+  Unprocessable Entity, `error_code: "CVSS_INVALID_VECTOR"`)
+- Derived version must match the existing assessment's version — raises
+  `CVSSVersionMismatchError` (HTTP 409 Conflict,
+  `error_code: "CVSS_VERSION_MISMATCH"`)
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Validate preconditions
-3. If no fields changed, return (no-op)
-4. Update assessment fields
+3. Parse the new vector string using the `cvss` library. Determine version
+   and compute base score. If parsing fails, raise `InvalidCVSSVectorError`.
+   If the derived version differs from the existing assessment's version,
+   raise `CVSSVersionMismatchError` (message suggests creating a new
+   assessment for the target version instead)
+4. Update assessment fields (vector and recomputed score)
 5. Recalculate ticket severity via `cvss.py` resolution cascade
 6. Create `TicketAuditEvent` (`cvss_assessment_changed`,
    `old_value = "provider vX.Y old_score"`,
@@ -354,8 +375,6 @@ Updates an existing `CVECVSSAssessment` record.
 8. Return updated assessment
 
 **TicketAuditEvent**: `cvss_assessment_changed`
-
-**Idempotency**: no-op if no fields changed.
 
 ---
 
@@ -696,6 +715,9 @@ Requirement).
 | `DuplicateChainDepthError` | Resolver exceeds 50-hop limit |
 | `DuplicateCVSSAssessmentError` | Assessment for the same (CVE, provider, version) combination already exists (maps to 409 `DUPLICATE_CVSS_ASSESSMENT`) |
 | `CVSSAssessmentNotFoundError` | `assessment_id` does not match any existing `CVECVSSAssessment` record (maps to 404 `CVSS_ASSESSMENT_NOT_FOUND`) |
+| `TicketNoCVEError` | `create_cvss_assessment()` called on a ticket with `cve_id IS NULL` — cannot create CVSS assessment without an associated CVE (maps to 409 `TICKET_NO_CVE`) |
+| `InvalidCVSSVectorError` | Vector string is malformed or unparseable by the `cvss` library (maps to 422 `CVSS_INVALID_VECTOR`) |
+| `CVSSVersionMismatchError` | `update_cvss_assessment()` called with a vector of a different CVSS version than the existing assessment — create a new assessment for the target version instead (maps to 409 `CVSS_VERSION_MISMATCH`) |
 | `SeverityDerivedError` | `set_severity_override()` called on a ticket with `cve_id IS NOT NULL` — severity is derived from CVSS scores and cannot be manually overridden (maps to 409 `TICKET_SEVERITY_DERIVED`) |
 
 Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
