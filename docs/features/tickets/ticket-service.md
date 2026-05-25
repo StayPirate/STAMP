@@ -269,12 +269,26 @@ async def dissociate_cve(
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Immutability guard check
 3. Verify `ticket.cve_id IS NOT NULL` (else `TicketCVENotSetError`)
-4. Set `ticket.cve_id = NULL`
-5. Create `TicketAuditEvent` (`cve_removed`)
-6. Call `reconcile_ticket_status(ticket)` — severity falls back to
+4. Delete all `CVECVSSAssessment` records where `cve_id` matches the CVE
+   being dissociated
+5. For each deleted assessment, create a `TicketAuditEvent`
+   (`cvss_assessment_deleted`) — matching the per-record audit pattern
+   used by `ticket_mutations.delete_cvss_assessment()`
+6. Set `ticket.cve_id = NULL`
+7. Create `TicketAuditEvent` (`cve_removed`)
+8. Call `reconcile_ticket_status(ticket)` — severity falls back to
    `severity_override`; if that is also NULL, severity = None and
-   gate #3 fails, causing regression
-7. Return updated Ticket
+   gate #3 fails, causing regression. Without CVSS assessments, the
+   conservative fallback (10.0) applies for eligibility threshold
+   comparisons
+9. Return updated Ticket
+
+**Note on CVSS assessment cleanup**: Deleting CVSS assessments on CVE
+dissociation prevents orphaned records and ensures that
+`update_cvss_assessment()` / `delete_cvss_assessment()` in
+`ticket_mutations` never encounter an assessment whose CVE has no parent
+ticket. This deletion happens within the same transaction (inside the
+`FOR UPDATE` lock) to maintain atomicity.
 
 **Note on auto-assignment**: `auto_assign_actor` is NOT called.
 CVE dissociation requires `admin_ticket_ops` capability, making it an
@@ -294,8 +308,8 @@ manage these records or re-associate a CVE. See `tickets.md`
 resolution. If `severity_override` is NULL, severity becomes None and
 the Analyzed gate #3 fails.
 
-**Audit events**: `cve_removed`. Possibly `status_change` (from
-evaluate).
+**Audit events**: `cvss_assessment_deleted` (one per deleted assessment).
+`cve_removed`. Possibly `status_change` (from evaluate).
 
 ### assign_ticket
 

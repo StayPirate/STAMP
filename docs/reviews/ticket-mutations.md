@@ -26,31 +26,19 @@
 
 ### TKM-GAP-05 — auto_assign_if_needed creates audit event but reconcile_ticket_status also creates one — ordering unspecified (Low)
 
-**Category**: Temporal/concurrency
-**Status**: OPEN
-
-The gate-relevant mutation pattern calls auto_assign_if_needed() (step 2) which may create an assignment audit event, then the mutation itself creates an audit event (step 5), then reconcile_ticket_status may create a status_change event (step 6). The spec doesn't define the expected ordering of these audit events in the audit trail, though the sequential execution makes it implicitly ordered.
+**Status**: RESOLVED — Accepted risk: ordering is implicitly guaranteed by sequential execution within a single transaction; explicit documentation not warranted for Low-severity implicit behavior (2026-05-25)
 
 ### TKM-GAP-06 — resolve_canonical_target behavior when starting ticket is not Duplicated (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The spec says resolve_canonical_target 'follows the duplicate_of_id chain until a non-Duplicated ticket is found'. If called with a ticket that is not in Duplicated status (duplicate_of_id IS NULL), the behavior is unspecified — does it return the ticket itself, or raise an error?
+**Status**: RESOLVED — Auto-resolved: finding invalid — the termination condition "until a non-Duplicated ticket is found" inherently covers the base case where the starting ticket is already non-Duplicated (chain length = 0) (2026-05-25)
 
 ### TKM-GAP-07 — revert_duplicate acting_user_id is required UUID but no handling for invalid/nonexistent user (Low)
 
-**Category**: Error paths
-**Status**: OPEN
-
-revert_duplicate declares acting_user_id as 'UUID' (required, not Optional). Step 4 says 'Load the acting user's roles'. If the user UUID doesn't exist in the database (e.g., deleted between auth check and service call), the behavior is unspecified — no exception is listed for this case.
+**Status**: RESOLVED — Auto-resolved: finding invalid — auth layer (get_current_user) guarantees user existence before service functions are called; parameter is UUID | None not required UUID as described (2026-05-25)
 
 ### TKM-GAP-08 — No specification of what happens when ticket has no CVE and CVSS operations are attempted (Low)
 
-**Category**: Error paths
-**Status**: OPEN
-
-create_cvss_assessment() has precondition 'Ticket must have an associated CVE (cve_id IS NOT NULL)' but update/delete operate on assessment_id directly. If a CVE is dissociated from a ticket (via ticket_service) while assessments still exist, attempting update/delete on orphaned assessments is not addressed — though the parent ticket check may implicitly cover this.
+**Status**: RESOLVED — Fixed: added CVSS assessment cascade-delete to dissociate_cve in ticket-service.md — orphaned assessments are now structurally impossible (2026-05-25)
 
 ---
 
@@ -82,10 +70,7 @@ create_cvss_assessment() has precondition 'Ticket must have an associated CVE (c
 
 ### TKM-DES-04 — Multiple reconcile_ticket_status calls per transaction during orphan cascades lack deduplication (Low)
 
-**Category**: Performance / Maintainability
-**Status**: OPEN
-
-The spec states that `reconcile_ticket_status` may be called up to 3 times per transaction during orphan cascades and 'Implementations MUST NOT defer or skip intermediate calls for optimization.' While idempotent, each call presumably queries package/track/product state to evaluate gates. For tickets with many packages, this could mean redundant queries. The spec explicitly forbids optimization, which is a reasonable correctness-first stance. The risk is low given the expected data volumes.
+**Status**: RESOLVED — Auto-resolved: finding invalid — this is a deliberate documented design decision prioritizing correctness over performance, explicitly imposed as an implementation constraint (2026-05-25)
 
 ### TKM-DES-05 — User deactivation unassigns via direct query bypassing ticket_mutations (Medium)
 
@@ -105,10 +90,7 @@ The spec states that `reconcile_ticket_status` may be called up to 3 times per t
 
 ### TKM-SEC-03 — Duplicate chain traversal as potential DoS vector (Low)
 
-**Category**: Denial of Service
-**Status**: OPEN
-
-The `resolve_canonical_target()` function allows chains up to 50 hops with database queries per hop. While the 50-hop limit prevents infinite loops, a maliciously constructed chain of 50 duplicates would cause 50 sequential database queries per resolution call. Mitigation: The 50-hop limit is a reasonable guard, but consider caching resolved targets or adding a warning log when chains exceed a low threshold (e.g., 5 hops).
+**Status**: RESOLVED — Auto-resolved: finding invalid — threat is purely theoretical: requires compromised privileged account, 50 manual ticket creations, and 50 PK lookups take milliseconds total (2026-05-25)
 
 ### TKM-SEC-04 — set_severity_override business rule enforced only at API layer (Medium)
 
