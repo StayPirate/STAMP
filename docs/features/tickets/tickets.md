@@ -254,7 +254,7 @@ layer.
 in Analyzed status has had all its packages and tracks fully evaluated. If a VA
 later determines the CVE does not require action, the natural workflow is to
 remove (soft-delete) the remaining packages. This triggers the orphan cleanup
-cascade, which calls `evaluate_ticket_status()` — the "at least one package"
+cascade, which calls `reconcile_ticket_status()` — the "at least one package"
 gate condition (Analyzed gate #1) fails and the ticket automatically regresses
 to Analysis. At that point the VA can use the existing Analysis → Ignored
 transition. Adding a direct Analyzed → Ignored transition would bypass the
@@ -349,7 +349,7 @@ are also no longer met).
 
 Forward and reverse transitions between Analysis, Analyzed, and
 Resolved are governed by a single mechanism: the centralized status
-evaluation function (`evaluate_ticket_status`) in the
+evaluation function (`reconcile_ticket_status`) in the
 `ticket_mutations` module. This function re-evaluates gate conditions
 after every relevant data change and sets the ticket to the highest
 valid status. It is the sole authority for gate-zone status.
@@ -401,7 +401,7 @@ unassigned.
 **System-initiated unassignment**: in addition to the bulk unassignment
 performed by `deactivate_user` (see
 [user-service.md](../identity/user-service.md#deactivate_user)),
-`evaluate_ticket_status` also performs system-initiated unassignment
+`reconcile_ticket_status` also performs system-initiated unassignment
 when it encounters an inactive assignee on a non-final ticket (see
 [Inactive Assignee Sanitization](ticket-mutations.md#inactive-assignee-sanitization)).
 This ensures that even if a ticket enters the gate zone or is evaluated
@@ -418,7 +418,7 @@ as the modifying operation. If the acting user does not hold the
 auto-assignment is skipped — the ticket remains unassigned for a human
 to claim.
 
-After the assignment, `evaluate_ticket_status` is called within the same
+After the assignment, `reconcile_ticket_status` is called within the same
 transaction. If the ticket was in `New` status and the operation does not
 include an explicit status change (e.g., marking as duplicate or ignored),
 the assignee gate (`assignee_id IS NOT NULL`) promotes the ticket to
@@ -434,10 +434,10 @@ automated ingestion) or to users without the `vulnerability_analyst`
 role.
 
 This rule is enforced via the shared helper
-`ticket_mutations.auto_assign_if_needed()`, which is called by all
+`ticket_mutations.auto_assign_actor()`, which is called by all
 modules that modify tickets under a `FOR UPDATE` lock
 (`ticket_mutations`, `package_service`, `ticket_service`). See
-[ticket-mutations.md](ticket-mutations.md#auto_assign_if_needed) for
+[ticket-mutations.md](ticket-mutations.md#auto_assign_actor) for
 the helper's signature and behavior.
 
 ### Duplicate Handling
@@ -542,7 +542,7 @@ When reverting a ticket from Duplicated status
   is reassigned to them. If the acting user does not hold the VA role
   (e.g., an `automation_agent`), the reassignment step is skipped — the
   ticket retains its current assignee (or remains unassigned)
-- The ticket re-enters the gate zone; `evaluate_ticket_status`
+- The ticket re-enters the gate zone; `reconcile_ticket_status`
   determines the correct status based on current gate conditions
 - Creates two `TicketAuditEvent` records: `duplicate_removed` (user
   action) + `status_change` (system action)
@@ -646,7 +646,7 @@ Correctness MUST NOT depend on immediate flatness of the link. Multiple
 tickets may reference the same canonical target.
 
 This operation modifies the `Ticket` row and calls
-`evaluate_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`
+`reconcile_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`
 row before any modification (see
 [Concurrency Control](#concurrency-control)).
 
@@ -708,7 +708,7 @@ that soft-deleted tickets are excluded. At minimum:
 
 ### Ignored
 
-Ignored is a **manual-zone status** — `evaluate_ticket_status` never
+Ignored is a **manual-zone status** — `reconcile_ticket_status` never
 operates on Ignored tickets. Two exit transitions are allowed:
 
 1. **VA assigns themselves (manual):** the VA becomes the assignee.
@@ -721,7 +721,7 @@ Both transitions go through `ticket_mutations.reopen_from_ignored()`:
 1. Acquires `FOR UPDATE` on the ticket
 2. Verifies current status is Ignored
 3. Sets assignee (if applicable)
-4. Re-enters the gate zone; `evaluate_ticket_status` determines the
+4. Re-enters the gate zone; `reconcile_ticket_status` determines the
    correct status (typically Analysis if an assignee is present)
 
 See [ticket-mutations.md](ticket-mutations.md#reopen_from_ignored) for
@@ -1573,7 +1573,7 @@ POST /api/v1/tickets/{ticket_id}/revert-duplicate
 Reverts a Duplicated ticket to its previous status. If the user who
 performed the revert holds the `vulnerability_analyst` role, the ticket
 is reassigned to them; otherwise, the ticket retains its current
-assignee. After restoring the status, `evaluate_ticket_status`
+assignee. After restoring the status, `reconcile_ticket_status`
 reconciles with current gate conditions.
 See [Duplicate Handling](#duplicate-handling) for revert behavior and
 status reconciliation.
@@ -1795,7 +1795,7 @@ table:
 - `docs/features/tickets/ticket-service.md` — service-layer contract for
   non-gate ticket lifecycle operations and confidentiality management
 - `docs/features/tickets/ticket-mutations.md` — ticket-centric mutations,
-  `evaluate_ticket_status()`, `auto_assign_if_needed()`, concurrency rules,
+  `reconcile_ticket_status()`, `auto_assign_actor()`, concurrency rules,
   and architectural test requirements
 - `docs/features/packages/package-service.md` — package-centric mutations,
   orchestration, and query operations (populates `TicketDetail.packages`)

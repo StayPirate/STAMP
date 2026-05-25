@@ -281,7 +281,18 @@
     "ticket-mutations": {
       "enabled": true,
       "abbr": "TKM",
-      "cache": null
+      "cache": {
+        "last_review": "2026-05-25T11:55:59+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 4 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 1 },
+          "SEC": { "H": 0, "M": 0, "L": 1 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 14,
+        "not_reviewed": []
+      }
     },
     "ticket-service": {
       "enabled": true,

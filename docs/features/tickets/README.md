@@ -22,11 +22,11 @@ ticket-references.md    External links on tickets (auto + manual fetcher ingesti
   operations — it defines the `ticket_service` module contract (creation,
   CVE management, assignment, ignore, mark-as-duplicate, soft-delete/restore,
   confidentiality, access grants). Some operations call
-  `evaluate_ticket_status` due to indirect gate effects.
+  `reconcile_ticket_status` due to indirect gate effects.
 - `ticket-mutations.md` is the service-layer companion for gate-relevant
   mutations — it defines the `ticket_mutations` module contract
   (CVSS/severity mutations, status evaluation, manual-zone exits,
-  concurrency control, `auto_assign_if_needed()`).
+  concurrency control, `auto_assign_actor()`).
   Package-centric mutations are in `packages/package-service.md`.
 - `cve-tracking.md` feeds tickets: each ingested CVE creates a ticket.
 - `cvss-scoring.md` drives ticket severity and product eligibility

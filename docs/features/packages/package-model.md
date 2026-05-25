@@ -586,7 +586,7 @@ ticket status re-evaluation after each change.
 
 1. Track status is set to the chosen value (via `package_service`)
 2. A `TicketAuditEvent` (`track_status_changed`) is created
-3. Ticket status is re-evaluated via `evaluate_ticket_status()`
+3. Ticket status is re-evaluated via `reconcile_ticket_status()`
 
 There is **no codestream eligibility rollup** — the track retains its
 affectedness status regardless of whether any product is eligible. The
@@ -845,7 +845,7 @@ automatically via CVSS threshold + lifecycle phase calculation. When
 product.
 
 Eligibility changes go through `package_service` and trigger
-`evaluate_ticket_status`.
+`reconcile_ticket_status`.
 
 ---
 
@@ -1070,7 +1070,7 @@ product's update repository.
 ## Ticket Lifecycle Integration
 
 All track status and product eligibility changes go through the
-`package_service` module, which automatically re-evaluates ticket status
+`package_service` module, which automatically reconciles ticket status
 after each change. See `docs/features/tickets/tickets.md` (Ticket
 Lifecycle) for the authoritative gate conditions and status transition
 rules, and `docs/features/packages/package-service.md` for the module
@@ -1209,7 +1209,7 @@ record only — tracks and products are not modified but become
 effectively excluded via the hierarchy. Creates a single `TicketAuditEvent`.
 See [Soft-Deletion](#soft-deletion) for the full behavior.
 
-After the soft-delete, the system re-evaluates ticket status via
+After the soft-delete, the system reconciles ticket status via
 `package_service`. This is necessary because excluding the package
 changes the set of active records considered by ticket gates (Resolution
 gate and Analysis gate).
@@ -1289,7 +1289,7 @@ system-triggered audit events are created (see
 [Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
 After the soft-delete (and any orphan cleanup cascade), the system
-re-evaluates ticket status via `package_service`. This is necessary
+reconciles ticket status via `package_service`. This is necessary
 because excluding a track changes the set of active records considered
 by ticket gates (Resolution gate and Analysis gate).
 
@@ -1391,7 +1391,7 @@ additional system-triggered audit events are created (see
 [Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
 After the soft-delete (and any orphan cleanup cascade), the system
-re-evaluates ticket status via `package_service`. This is necessary
+reconciles ticket status via `package_service`. This is necessary
 because excluding a product changes the set of active records considered
 by ticket gates (Resolution gate and Analysis gate).
 
@@ -1876,7 +1876,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - `docs/features/tickets/tickets.md` — ticket lifecycle, status gates,
   confidentiality filtering (`confidential_ticket_filter()`)
 - `docs/features/tickets/ticket-mutations.md` — ticket-centric mutations,
-  `evaluate_ticket_status()`, `auto_assign_if_needed()`
+  `reconcile_ticket_status()`, `auto_assign_actor()`
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
 - `docs/features/tickets/ticket-audit-log.md` — TicketAuditEvent field mapping

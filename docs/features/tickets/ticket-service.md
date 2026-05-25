@@ -9,9 +9,9 @@ confidentiality management — in a single service module
 
 - `FOR UPDATE` locking is consistently applied on the Ticket row
 - `TicketAuditEvent` records are always created atomically
-- `evaluate_ticket_status()` is called when operations have side effects
+- `reconcile_ticket_status()` is called when operations have side effects
   on gate conditions (severity changes, status reconciliation)
-- `auto_assign_if_needed()` is applied uniformly for unassigned tickets
+- `auto_assign_actor()` is applied uniformly for unassigned tickets
 - Business rules (immutability guards, idempotency) are enforced
   regardless of entry point
 
@@ -82,9 +82,9 @@ revoking explicit access.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `ticket_service` imports `evaluate_ticket_status()`, `auto_assign_if_needed()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
+| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
 | `services/package_service.py` | No direct dependency. Both modules independently depend on `ticket_mutations` for status evaluation |
-| `services/cvss.py` | No direct dependency. CVSS resolution is triggered indirectly via `evaluate_ticket_status()` |
+| `services/cvss.py` | No direct dependency. CVSS resolution is triggered indirectly via `reconcile_ticket_status()` |
 
 ## Scope Boundary
 
@@ -191,7 +191,7 @@ to `409 TICKET_CVE_CONFLICT`.
 
 **Locking**: None (INSERT).
 
-**evaluate_ticket_status**: Not called — initial status is determined by
+**reconcile_ticket_status**: Not called — initial status is determined by
 fixed rules, and the ticket cannot have packages at creation time.
 
 **Audit events**: Up to 3 (`ticket_created`, `assignment`,
@@ -225,17 +225,17 @@ async def associate_cve(
 4. Resolve CVE via CVE Resolution Behavior (may raise
    `TicketCVEConflictError` if CVE is already associated with another
    ticket)
-5. `auto_assign_if_needed(ticket, acting_user_id)`
+5. `auto_assign_actor(ticket, acting_user_id)`
 6. Set `ticket.cve_id`
 7. Create `TicketAuditEvent` (`cve_associated`)
-8. Call `evaluate_ticket_status(ticket)` — severity source changes from
+8. Call `reconcile_ticket_status(ticket)` — severity source changes from
    `severity_override` to CVSS-derived; gate #3 (severity set) and
    gate #4 (SUSE CVSS provided) may now fail, causing regression
 9. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: YES — associating a CVE changes the severity
+**reconcile_ticket_status**: YES — associating a CVE changes the severity
 resolution source. If the ticket was Analyzed without a CVE (using
 `severity_override`), associating a CVE causes: (a) severity to become
 CVSS-derived, which may be `None` until CVSS data arrives (gate #3
@@ -271,12 +271,12 @@ async def dissociate_cve(
 3. Verify `ticket.cve_id IS NOT NULL` (else `TicketCVENotSetError`)
 4. Set `ticket.cve_id = NULL`
 5. Create `TicketAuditEvent` (`cve_removed`)
-6. Call `evaluate_ticket_status(ticket)` — severity falls back to
+6. Call `reconcile_ticket_status(ticket)` — severity falls back to
    `severity_override`; if that is also NULL, severity = None and
    gate #3 fails, causing regression
 7. Return updated Ticket
 
-**Note on auto-assignment**: `auto_assign_if_needed` is NOT called.
+**Note on auto-assignment**: `auto_assign_actor` is NOT called.
 CVE dissociation requires `admin_ticket_ops` capability, making it an
 administrative correction rather than a triage operation. If the admin
 also holds the VA role and the ticket is unassigned, the admin should
@@ -290,7 +290,7 @@ manage these records or re-associate a CVE. See `tickets.md`
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: YES — removing a CVE changes severity
+**reconcile_ticket_status**: YES — removing a CVE changes severity
 resolution. If `severity_override` is NULL, severity becomes None and
 the Analyzed gate #3 fails.
 
@@ -327,13 +327,13 @@ async def assign_ticket(
    ticket unchanged (no audit event, no status evaluation)
 5. Set `ticket.assignee_id = assignee_id`
 6. Create `TicketAuditEvent` (`assignment`)
-7. Call `evaluate_ticket_status(ticket)` — assignment affects the
+7. Call `reconcile_ticket_status(ticket)` — assignment affects the
    Analysis gate (New → Analysis promotion when assignee is set)
 8. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: YES — assignment satisfies a precondition
+**reconcile_ticket_status**: YES — assignment satisfies a precondition
 for Analysis status (a ticket in New with an assignee should promote to
 Analysis). While `ticket-mutations.md` classifies assignment as "not
 gate-relevant" in the sense that it does not modify CVSS/severity/
@@ -367,15 +367,15 @@ async def ignore_ticket(
 
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Verify status is New or Analysis (else `InvalidTransitionError`)
-3. `auto_assign_if_needed(ticket, acting_user_id)`
+3. `auto_assign_actor(ticket, acting_user_id)`
 4. Set `ticket.status = Ignored`
 5. Create `TicketAuditEvent` (`status_change`)
 6. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: NOT called — this is a direct transition
-into the manual zone. `evaluate_ticket_status` never operates on
+**reconcile_ticket_status**: NOT called — this is a direct transition
+into the manual zone. `reconcile_ticket_status` never operates on
 Ignored tickets.
 
 **Audit events**: `status_change`. Possibly `assignment` (from
@@ -416,6 +416,12 @@ database model).
   Resolved; else `InvalidTransitionError`)
 - Target ticket must exist and not be soft-deleted (else
   `TicketNotFoundError`)
+- Target ticket must be accessible to the acting user (API-layer scope
+  check). If the target ticket is confidential and the acting user's
+  scope is `non_confidential`, the endpoint returns `404
+  TicketNotFoundError` (to avoid confirming the existence of the
+  confidential ticket). This is an API-layer constraint — the service
+  function itself does not enforce scope filtering
 - Target is resolved through `ticket_mutations.resolve_canonical_target()`
   to follow the duplicate chain to its end (may raise
   `DuplicateChainDepthError` if chain exceeds 50 hops)
@@ -429,7 +435,7 @@ database model).
 3. Resolve canonical target via
    `ticket_mutations.resolve_canonical_target()`
 4. Verify no circular reference (else `SelfDuplicateError`)
-5. `auto_assign_if_needed(ticket, acting_user_id)`
+5. `auto_assign_actor(ticket, acting_user_id)`
 6. Set `ticket.status = Duplicated`, `ticket.duplicate_of_id = resolved_target`
 7. Create `TicketAuditEvent` (`duplicate_set`)
 8. Query tickets that currently point to this ticket via
@@ -456,7 +462,7 @@ allowing cascade updates in independent transactions as required by
 operations each acquire their own FOR UPDATE in independent transactions
 managed by the caller.
 
-**evaluate_ticket_status**: NOT called — this is a direct transition
+**reconcile_ticket_status**: NOT called — this is a direct transition
 into the manual zone (Duplicated).
 
 **Audit events**: `duplicate_set`. Cascade produces
@@ -497,7 +503,7 @@ async def soft_delete_ticket(
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: NOT called — soft-deletion makes the ticket
+**reconcile_ticket_status**: NOT called — soft-deletion makes the ticket
 invisible to all business logic; no gate reconciliation needed.
 
 **Audit events**: `ticket_deleted`.
@@ -528,13 +534,13 @@ async def restore_ticket(
 2. Verify `ticket.deleted_at IS NOT NULL` (else `TicketNotDeletedError`)
 3. Clear `ticket.deleted_at`
 4. Create `TicketAuditEvent` (`ticket_restored`)
-5. Call `evaluate_ticket_status(ticket)` — reconcile status with current
+5. Call `reconcile_ticket_status(ticket)` — reconcile status with current
    gate conditions (data may have changed while the ticket was deleted)
 6. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: YES — the ticket's status at deletion time
+**reconcile_ticket_status**: YES — the ticket's status at deletion time
 may no longer be valid given current gate conditions.
 
 **Audit events**: `ticket_restored`. Possibly `status_change` (from
@@ -579,7 +585,7 @@ See `tickets.md` (Stale Access Grant Cleanup) for details.
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**evaluate_ticket_status**: NOT called — confidentiality is not
+**reconcile_ticket_status**: NOT called — confidentiality is not
 gate-relevant.
 
 **Audit events**: `confidentiality_changed` (only if value actually
@@ -628,7 +634,7 @@ resulting `IntegrityError` and treats it as an idempotent success
 modify the Ticket entity. The unique constraint provides concurrency
 safety.
 
-**evaluate_ticket_status**: NOT called — access grants are not
+**reconcile_ticket_status**: NOT called — access grants are not
 gate-relevant.
 
 **Audit events**: `access_grant_added` (only if grant is new).
@@ -667,7 +673,7 @@ async def revoke_access(
 
 **Locking**: Not required on the Ticket row.
 
-**evaluate_ticket_status**: NOT called.
+**reconcile_ticket_status**: NOT called.
 
 **Audit events**: `access_grant_removed` (only if grant existed).
 
@@ -698,7 +704,7 @@ async def list_access_grants(
 
 **Locking**: None (read-only).
 
-**evaluate_ticket_status**: NOT called.
+**reconcile_ticket_status**: NOT called.
 
 **Audit events**: None (read-only).
 
@@ -753,8 +759,8 @@ above for the architectural rationale.
 
 ```
 ticket_mutations (infrastructure)
-    ├── evaluate_ticket_status()
-    ├── auto_assign_if_needed()
+    ├── reconcile_ticket_status()
+    ├── auto_assign_actor()
     └── resolve_canonical_target()
          ▲                ▲
          │                │
@@ -762,7 +768,7 @@ ticket_mutations (infrastructure)
   (non-gate ops)    (package ops)
 ```
 
-| ticket_service function | evaluate_ticket_status | auto_assign_if_needed | resolve_canonical_target |
+| ticket_service function | reconcile_ticket_status | auto_assign_actor | resolve_canonical_target |
 |------------------------|:----------------------:|:---------------------:|:------------------------:|
 | create_ticket          | —                      | —                     | —                        |
 | associate_cve          | ✓                      | ✓                     | —                        |
@@ -812,7 +818,7 @@ behavior of `ticket_service` operations:
 ## Cross-references
 
 - `docs/features/tickets/ticket-mutations.md` — gate-relevant mutations,
-  `evaluate_ticket_status` contract
+  `reconcile_ticket_status` contract
 - `docs/features/tickets/tickets.md` — ticket lifecycle, status gates,
   API endpoint definitions
 - `docs/features/tickets/ticket-audit-log.md` — audit event types and

@@ -8,7 +8,7 @@ records, orchestration with external systems (SMELT), and package query
 functions — in a single service module (`package_service`). This
 ensures that:
 
-- `ticket_mutations.evaluate_ticket_status()` is always called after
+- `ticket_mutations.reconcile_ticket_status()` is always called after
   gate-relevant package changes
 - Orphan cleanup invariants are consistently enforced
 - Record creation logic (initial status, eligibility) is centralized
@@ -70,7 +70,7 @@ reserved exclusively for system entry points.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `package_service` imports `evaluate_ticket_status()` and `auto_assign_if_needed()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service` |
+| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()` and `auto_assign_actor()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service` |
 | `services/cvss.py` | `package_service` delegates CVSS resolution and eligibility calculation to pure functions in `cvss.py` (for record creation and eligibility evaluation) |
 | `core/filters.py` | `search_packages()` receives a `confidentiality_filter` (a SQLAlchemy `ColumnElement`) built by the endpoint handler via `confidential_ticket_filter()`. The service function is unaware of access rules |
 
@@ -96,13 +96,13 @@ duration of an external HTTP call.
 When a VA performs any modifying operation on a ticket with
 `assignee_id = NULL`, the ticket is automatically assigned to the
 acting VA. This is enforced via the shared helper
-`ticket_mutations.auto_assign_if_needed()`.
+`ticket_mutations.auto_assign_actor()`.
 
 **Module-level rule**: auto-assignment is always applied by the function
 that acquires the `FOR UPDATE` lock, never by orchestration wrappers.
 For example, `add_package_to_ticket` does NOT apply auto-assignment —
 it delegates to `add_package_records()`, which calls
-`auto_assign_if_needed` after acquiring the lock.
+`auto_assign_actor` after acquiring the lock.
 
 See `docs/features/tickets/ticket-mutations.md` for the helper's
 signature and behavior.
@@ -114,11 +114,11 @@ Each function below follows the same pattern (except
 auto-assignment — see its section for details):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Apply the mutation
 5. Create `TicketAuditEvent`
-6. Call `ticket_mutations.evaluate_ticket_status()`
+6. Call `ticket_mutations.reconcile_ticket_status()`
 7. Return the updated record
 
 ### `set_track_status()`
@@ -144,7 +144,7 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. If status unchanged → return (no-op, no log, no audit event)
 5. If `acting_user_id` is `None` and current status is final
@@ -154,7 +154,7 @@ Sets the affectedness status of a `TicketPackageTrack` record.
    unchanged (no audit event)
 6. Update `TicketPackageTrack.status`
 7. Create `TicketAuditEvent` (`track_status_changed`)
-8. Call `evaluate_ticket_status()`
+8. Call `reconcile_ticket_status()`
 9. Return updated track
 
 **TicketAuditEvent**: `track_status_changed`
@@ -199,7 +199,7 @@ Sets the delivery status of a `TicketPackageTrack` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Validate transition: verify that `current_delivery_status →
    new_delivery_status` is a legal transition per the delivery status
@@ -255,7 +255,7 @@ observation).
 5. Create `TicketAuditEvent` (`product_released`, `user_id = NULL`)
    with detail: `{"track": "...", "package": "...", "product_id": "...",
    "advisory_id": "..."}`
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return updated product
 
 **TicketAuditEvent**: `product_released`
@@ -297,26 +297,26 @@ Sets or resets the eligibility override of a `TicketPackageProduct` record.
 If `eligible` is `bool` (override):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. If `TicketPackageProduct.eligible == eligible` AND `is_eligible_override == true`, return (no-op)
 5. Update `TicketPackageProduct.eligible` to the given value
 6. Set `TicketPackageProduct.is_eligible_override = true`
 7. Create `TicketAuditEvent` (`product_eligibility_changed`)
-8. Call `evaluate_ticket_status()`
+8. Call `reconcile_ticket_status()`
 9. Return updated product
 
 If `eligible` is `None` (reset to automatic):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. If `is_eligible_override == false`, return (no-op — already automatic)
 5. Set `TicketPackageProduct.is_eligible_override = false`
 6. Recalculate eligibility using standard rules (CVSS score resolution per configured version → compare against product threshold from AIMAAS)
 7. Update `TicketPackageProduct.eligible` to the calculated value
 8. Create `TicketAuditEvent` (`product_eligibility_changed`)
-9. Call `evaluate_ticket_status()`
+9. Call `reconcile_ticket_status()`
 10. Return updated product
 
 > **Note**: Eligibility recalculation uses the same resolution logic as
@@ -358,7 +358,7 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Create or skip `TicketPackage` (idempotent — skip if exists)
 5. For each track in `tracks`:
@@ -370,7 +370,7 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
        exists, including soft-deleted records)
      - Calculate initial eligibility (see Record Creation Logic below)
 6. Create `TicketAuditEvent` (`package_added`)
-7. Call `evaluate_ticket_status()`
+7. Call `reconcile_ticket_status()`
 8. Return created records
 
 **TicketAuditEvent**: `package_added`
@@ -404,11 +404,11 @@ Soft-deletes a `TicketPackage` record (sets `deleted_at`).
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Set `package.deleted_at = now()`
 5. Create `TicketAuditEvent` (`package_excluded`)
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return updated package
 
 Note: child tracks and products are NOT modified (hierarchical exclusion
@@ -439,12 +439,12 @@ Soft-deletes a `TicketPackageTrack` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Set `track.deleted_at = now()`
 5. Create `TicketAuditEvent` (`track_excluded`)
 6. Enforce package orphan rule (see Orphan Cleanup Invariants)
-7. Call `evaluate_ticket_status()`
+7. Call `reconcile_ticket_status()`
 8. Return updated track
 
 Note: child products are NOT modified (hierarchical exclusion model).
@@ -475,12 +475,12 @@ Soft-deletes a `TicketPackageProduct` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Set `product.deleted_at = now()`
 5. Create `TicketAuditEvent` (`product_excluded`)
 6. Enforce track orphan rule (see Orphan Cleanup Invariants)
-7. Call `evaluate_ticket_status()`
+7. Call `reconcile_ticket_status()`
 8. Return updated product
 
 **TicketAuditEvent**: `product_excluded`
@@ -513,11 +513,11 @@ Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Clear `package.deleted_at`
 5. Create `TicketAuditEvent` (`package_restored`)
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return updated package
 
 **TicketAuditEvent**: `package_restored`
@@ -549,11 +549,11 @@ Restores a soft-deleted `TicketPackageTrack` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Clear `track.deleted_at`
 5. Create `TicketAuditEvent` (`track_restored`)
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return updated track
 
 **TicketAuditEvent**: `track_restored`
@@ -584,11 +584,11 @@ No child-existence pre-check required (product is a leaf record).
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Clear `product.deleted_at`
 5. Create `TicketAuditEvent` (`product_restored`)
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return updated product
 
 **TicketAuditEvent**: `product_restored`
@@ -785,10 +785,10 @@ soft_delete_ticket_package_product(record, user)
               -> if 0 directly-active tracks:
                   set package.deleted_at (direct)
                   -> TicketAuditEvent (package_excluded, user_id=NULL)
-  -> evaluate_ticket_status()   # once, after entire cascade completes
+  -> reconcile_ticket_status()   # once, after entire cascade completes
 ```
 
-> `evaluate_ticket_status()` is called once after the entire cascade
+> `reconcile_ticket_status()` is called once after the entire cascade
 > completes — not at each intermediate level. The function is idempotent
 > and queries the current state of all active records, so only the final
 > invocation after all soft-deletions have been applied produces the
@@ -883,7 +883,7 @@ individual endpoints.
 
 A parametrized integration test MUST be implemented to verify that the
 `package_service` mutation functions correctly trigger
-`evaluate_ticket_status` and produce the expected ticket status
+`reconcile_ticket_status` and produce the expected ticket status
 transitions. The test must cover:
 
 - **Forward transitions**: package mutations causing ticket advancement
@@ -898,8 +898,8 @@ transitions. The test must cover:
 
 ## Cross-references
 
-- `docs/features/tickets/ticket-mutations.md` — `evaluate_ticket_status()`,
-  `auto_assign_if_needed()`, ticket-centric mutations
+- `docs/features/tickets/ticket-mutations.md` — `reconcile_ticket_status()`,
+  `auto_assign_actor()`, ticket-centric mutations
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, confidentiality filtering (`confidential_ticket_filter()`)
 - `docs/features/tickets/ticket-audit-log.md` — event type contract

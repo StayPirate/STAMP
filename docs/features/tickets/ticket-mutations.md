@@ -5,8 +5,8 @@
 Centralize ticket-centric operations that modify data relevant to ticket
 status gates — CVSS assessment management, severity overrides, and
 manual-zone exits — in a single service module (`ticket_mutations`).
-This module also provides the shared `evaluate_ticket_status()` function
-and the `auto_assign_if_needed()` helper, which are called by both this
+This module also provides the shared `reconcile_ticket_status()` function
+and the `auto_assign_actor()` helper, which are called by both this
 module and `package_service`.
 
 Package-centric mutations (track status, delivery status, product
@@ -17,7 +17,7 @@ Without this centralization, each caller would need to independently:
 
 - Acquire the correct row-level lock
 - Apply the data mutation
-- Call `evaluate_ticket_status`
+- Call `reconcile_ticket_status`
 - Create the correct `TicketAuditEvent`
 
 Leading to inconsistency, missed re-evaluations, and bugs.
@@ -67,12 +67,23 @@ the authenticated user as `acting_user_id`. Passing `None` from an API
 handler is a bug — it would silently bypass auto-assignment. `None` is
 reserved exclusively for system entry points.
 
+#### Authorization responsibility
+
+The module does NOT perform capability checks — this is by design.
+API-layer callers MUST apply the appropriate `require_capability()`
+dependency before invoking any module function; the module trusts that
+the caller has already verified the user's permissions. System callers
+(fetchers, Celery tasks) use `acting_user_id=None` and operate as
+trusted internal processes — capability checks do not apply to them.
+Adding a new caller that passes a non-None `acting_user_id` without
+having verified the corresponding capability is a security bug.
+
 ### Relationship with other modules
 
 | Module | Relationship |
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
-| `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `evaluate_ticket_status()` and `auto_assign_if_needed()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
+| `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `reconcile_ticket_status()` and `auto_assign_actor()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
 | `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
 
 ## State Machine Zones
@@ -82,14 +93,14 @@ are valid:
 
 ### Gate zone (New, Analysis, Analyzed, Resolved)
 
-Status is determined automatically by `evaluate_ticket_status` based on
+Status is determined automatically by `reconcile_ticket_status` based on
 gate conditions. The `ticket_mutations` module operates exclusively on
 tickets in this zone (with the exception of manual-zone exit functions).
 
 ### Manual zone (Ignored, Duplicated)
 
 Status is set by explicit user actions or specific system events.
-`evaluate_ticket_status` never operates on tickets in the manual zone.
+`reconcile_ticket_status` never operates on tickets in the manual zone.
 Gate-relevant mutations are blocked at the API level
 (`require_ticket_mutable` returns 409 `TICKET_NOT_MUTABLE`).
 
@@ -101,7 +112,7 @@ helper `_reenter_gate_zone()`:
 1. Saves the ticket's current status (Ignored or Duplicated) as
    `original_status`
 2. Sets `status = New` (entering the gate zone at the lowest rung)
-3. Calls `evaluate_ticket_status(previous_status=original_status)`
+3. Calls `reconcile_ticket_status(previous_status=original_status)`
 
 This produces a single `TicketAuditEvent` with the real transition
 (e.g., `old_value = Ignored, new_value = Analysis`). The intermediate
@@ -112,11 +123,26 @@ Only the two manual-zone exit functions (`reopen_from_ignored`,
 `revert_duplicate`) call this helper. It is never called directly by
 external code.
 
-## `evaluate_ticket_status()`
+## `reconcile_ticket_status()`
 
-The sole authority for determining a ticket's status based on its
-current data. This function is internal to the module — external code
-interacts with it indirectly through the public mutation functions.
+The sole authority for reconciling a ticket's status and assignment
+state with current reality. This function is internal to the module —
+external code interacts with it indirectly through the public mutation
+functions.
+
+**Purpose**: Reconciles the ticket's status and assignment state with
+current reality (gate conditions + data freshness).
+
+**Side effects** (documented, intentional):
+
+- May transition ticket status (forward or backward) based on gate
+  evaluation
+- May null `assignee_id` and create an `assignment` audit event if the
+  current assignee is inactive (inactive assignee sanitization)
+- May add ticket to revisit queue after sanitization
+
+Callers must be aware that invoking this function may produce mutations
+beyond status changes.
 
 ### Parameters
 
@@ -174,14 +200,14 @@ after the deactivation event.
 
 The `previous_status` parameter exists to handle manual-zone exit
 operations correctly. When `_reenter_gate_zone()` sets `status = New`
-before calling `evaluate_ticket_status`, the ticket's current status
+before calling `reconcile_ticket_status`, the ticket's current status
 field is `New`. But the real transition for the audit trail is
 `Ignored → Analysis` (not `New → Analysis`). Passing
 `previous_status = Ignored` records the correct semantic transition.
 
 ### Multiple invocations within a transaction
 
-`evaluate_ticket_status` may be called multiple times in a single
+`reconcile_ticket_status` may be called multiple times in a single
 transaction during orphan cascades (up to 3 times: product → track →
 package). The function is idempotent — each call ensures consistent
 state based on the ticket's current data at that point in the
@@ -198,7 +224,7 @@ section documents ticket-specific refinements only.
 
 Every operation that modifies the `Ticket` row (any column: `status`,
 `assignee_id`, `cve_id`, `duplicate_of_id`, `is_confidential`,
-`deleted_at`) or that calls `evaluate_ticket_status` MUST acquire
+`deleted_at`) or that calls `reconcile_ticket_status` MUST acquire
 `FOR UPDATE` on the Ticket row before any modification — not just
 module functions. This prevents non-gate operations (assignment,
 duplicate set/revert, CVE dissociation, soft-delete, restore, ignore)
@@ -228,23 +254,23 @@ raise a domain-specific exception (`TicketNotFoundError`). It MUST NOT
 proceed silently or operate on `None`. Callers handle the exception as
 appropriate: background tasks log and skip; API endpoints return 404.
 
-### `evaluate_ticket_status` does not acquire the lock
+### `reconcile_ticket_status` does not acquire the lock
 
 The function assumes the caller has already acquired `FOR UPDATE` on the
 ticket. This is always the case because every public function in the
 module acquires the lock as its first operation, and
-`evaluate_ticket_status` is only called from within those functions.
+`reconcile_ticket_status` is only called from within those functions.
 
 ## Gate-Relevant Mutation Operations
 
 Each function below follows the same pattern:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_if_needed()`
+2. Call `auto_assign_actor()`
 3. Validate preconditions
 4. Apply the mutation
 5. Create `TicketAuditEvent`
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return the updated record
 
 Package-centric mutations (`set_track_status`, `set_track_delivery_status`,
@@ -275,6 +301,8 @@ Creates a new `CVECVSSAssessment` record for a ticket's CVE.
 - Ticket must be in the gate zone
 - Ticket must have an associated CVE (`cve_id IS NOT NULL`)
 - No existing assessment for the same (CVE, provider, version) combination
+  — raises `DuplicateCVSSAssessmentError` (HTTP 409 Conflict,
+  `error_code: "DUPLICATE_CVSS_ASSESSMENT"`)
 
 **Behavior**:
 
@@ -284,7 +312,7 @@ Creates a new `CVECVSSAssessment` record for a ticket's CVE.
 4. Recalculate ticket severity via `cvss.py` resolution cascade
 5. Create `TicketAuditEvent` (`cvss_assessment_changed`,
    `old_value = NULL`, `new_value = "provider vX.Y score"`)
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 7. Return created assessment
 
 **TicketAuditEvent**: `cvss_assessment_changed`
@@ -307,7 +335,8 @@ Updates an existing `CVECVSSAssessment` record.
 
 **Preconditions**:
 
-- Assessment must exist
+- Assessment must exist — raises `CVSSAssessmentNotFoundError` (HTTP 404,
+  `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
 - Parent ticket must have `deleted_at IS NULL`
 - Parent ticket must be in the gate zone
 
@@ -321,7 +350,7 @@ Updates an existing `CVECVSSAssessment` record.
 6. Create `TicketAuditEvent` (`cvss_assessment_changed`,
    `old_value = "provider vX.Y old_score"`,
    `new_value = "provider vX.Y new_score"`)
-7. Call `evaluate_ticket_status()`
+7. Call `reconcile_ticket_status()`
 8. Return updated assessment
 
 **TicketAuditEvent**: `cvss_assessment_changed`
@@ -344,7 +373,8 @@ Deletes a `CVECVSSAssessment` record (hard delete).
 
 **Preconditions**:
 
-- Assessment must exist
+- Assessment must exist — raises `CVSSAssessmentNotFoundError` (HTTP 404,
+  `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
 - Parent ticket must have `deleted_at IS NULL`
 - Parent ticket must be in the gate zone
 
@@ -356,7 +386,7 @@ Deletes a `CVECVSSAssessment` record (hard delete).
 4. Recalculate ticket severity via `cvss.py` resolution cascade
 5. Create `TicketAuditEvent` (`cvss_assessment_changed`,
    `old_value = "provider vX.Y score"`, `new_value = NULL`)
-6. Call `evaluate_ticket_status()`
+6. Call `reconcile_ticket_status()`
 
 **TicketAuditEvent**: `cvss_assessment_changed`
 
@@ -379,6 +409,9 @@ Sets or clears the `severity_override` field on a ticket.
 
 - Ticket must exist and have `deleted_at IS NULL`
 - Ticket must be in the gate zone
+- Ticket must have `cve_id IS NULL` — raises `SeverityDerivedError`
+  if the ticket has an associated CVE (severity is derived from CVSS
+  scores and cannot be manually overridden)
 
 **Behavior**:
 
@@ -386,22 +419,15 @@ Sets or clears the `severity_override` field on a ticket.
 2. Validate preconditions
 3. If severity unchanged, return (no-op)
 4. Update `ticket.severity_override`
-5. Create `TicketAuditEvent` (`severity_changed`)
-6. Call `evaluate_ticket_status()`
+5. Create `TicketAuditEvent` (`severity_changed`, `user_id = acting_user_id`)
+6. Call `reconcile_ticket_status()`
 7. Return updated ticket
 
-**Conditional gate relevance**:
-
-- When `cve_id IS NULL`: setting `severity_override` affects the
-  ticket's resolved severity, which is gate-relevant (Analyzed gate #3
-  requires severity). `evaluate_ticket_status()` is always called
-- When `cve_id IS NOT NULL`: severity is derived from CVSS, and
-  `severity_override` is ignored. The API endpoint rejects the
-  operation with `TICKET_SEVERITY_DERIVED` (400) — this check is at the
-  API layer (endpoint handler), not in the module function itself
-
-The module function always calls `evaluate_ticket_status()` regardless
-(it is cheap and maintains the invariant).
+**Gate relevance**: setting `severity_override` affects the ticket's
+resolved severity, which is gate-relevant (Analyzed gate #3 requires
+severity). This operation is only valid when `cve_id IS NULL` — when a
+CVE is associated, severity is derived from CVSS scores via the
+resolution cascade and `severity_override` is not applicable.
 
 **TicketAuditEvent**: `severity_changed`
 
@@ -424,7 +450,6 @@ Reopens a ticket from Ignored status.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to reopen |
-| `assignee_id` | `UUID \| None` | No | User to assign (for manual reopen by a user holding the `vulnerability_analyst` role) or `None` (for system reopen, or for manual reopen by a non-VA user — restores last assignee or leaves unassigned) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -436,25 +461,24 @@ Reopens a ticket from Ignored status.
 
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Verify current status is Ignored
-3. Set assignee (if applicable):
-   - Manual reopen by VA: `assignee_id` is the acting user (caller
-     checks that the user holds the `vulnerability_analyst` role before
-     passing their UUID as `assignee_id`)
-   - Manual reopen by non-VA: `assignee_id` is `None` — the ticket
-     retains its current assignee or remains unassigned
-   - System reopen: restore the last active assignee, or leave
-     unassigned if none exists or previous assignee is deactivated
+3. Call `auto_assign_actor(ticket, acting_user_id, db, force=True)`:
+   - `acting_user_id` is `None` (system): ticket retains current
+     assignee; `reconcile_ticket_status` handles inactive assignees in
+     the final step
+   - `acting_user_id` is VA: becomes new assignee
+   - `acting_user_id` is non-VA: ticket retains current assignee;
+     `reconcile_ticket_status` handles inactive assignees in the final
+     step
 4. Call `_reenter_gate_zone()`:
    - Saves `original_status = Ignored`
    - Sets `status = New`
-   - Calls `evaluate_ticket_status(previous_status=Ignored)`
+   - Calls `reconcile_ticket_status(previous_status=Ignored)`
    - Produces `status_change` event with
      `old_value = Ignored, new_value = (evaluated target)` — typically
      Analysis if an assignee is present
-5. Create `TicketAuditEvent` (`assignment` if assignee was set)
 
-**TicketAuditEvent**: `status_change` (via `evaluate_ticket_status`) +
-optionally `assignment`
+**TicketAuditEvent**: `status_change` (via `reconcile_ticket_status`) +
+optionally `assignment` (via `auto_assign_actor`)
 
 ---
 
@@ -468,7 +492,7 @@ Reverts a ticket from Duplicated status.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to revert |
-| `acting_user_id` | `UUID` | Yes | User performing the revert (becomes new assignee only if the user holds the `vulnerability_analyst` role) |
+| `acting_user_id` | `UUID \| None` | No | User performing the revert. Currently no system caller exists; this signature enables future system-initiated revert scenarios |
 
 **Preconditions**:
 
@@ -480,14 +504,13 @@ Reverts a ticket from Duplicated status.
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Verify current status is Duplicated
 3. Clear `duplicate_of_id` (set to NULL)
-4. Load the acting user's roles. If the user holds the
-   `vulnerability_analyst` role, reassign the ticket to them. If not,
-   skip the reassignment — the ticket retains its current assignee (or
-   remains unassigned)
+4. Call `auto_assign_actor(ticket, acting_user_id, db, force=True)`:
+   assigns the acting user if they hold the `vulnerability_analyst`
+   role; otherwise the ticket retains its current assignee
 5. Call `_reenter_gate_zone()`:
    - Saves `original_status = Duplicated`
    - Sets `status = New`
-   - Calls `evaluate_ticket_status(previous_status=Duplicated)`
+   - Calls `reconcile_ticket_status(previous_status=Duplicated)`
    - Typical outcomes depend on assignee presence:
      - VA actor (assigned): Analysis, Analyzed, or Resolved based on gates
      - Non-VA actor (unassigned): New (assignee gate not met)
@@ -543,13 +566,13 @@ as the modifying operation. If the acting user does not hold the
 `vulnerability_analyst` role (e.g., an `automation_agent`),
 auto-assignment is skipped — the ticket remains unassigned.
 
-After the assignment, `evaluate_ticket_status` is called within the
+After the assignment, `reconcile_ticket_status` is called within the
 same transaction. If the ticket was in `New` status and the operation
 does not include an explicit status change (e.g., marking as duplicate
 or ignored), the assignee gate (`assignee_id IS NOT NULL`) promotes
 the ticket to `Analysis` automatically.
 
-This rule is enforced via the shared helper `auto_assign_if_needed()`
+This rule is enforced via the shared helper `auto_assign_actor()`
 (see below), which is called by all modules that modify tickets under
 a `FOR UPDATE` lock (`ticket_mutations`, `package_service`,
 `ticket_service`).
@@ -557,7 +580,7 @@ a `FOR UPDATE` lock (`ticket_mutations`, `package_service`,
 This rule does not apply to system operations (`acting_user_id = None`)
 or to users without the `vulnerability_analyst` role.
 
-### `auto_assign_if_needed()`
+### `auto_assign_actor()`
 
 A public helper function that implements the auto-assignment check. All
 modules that modify tickets under a `FOR UPDATE` lock call this helper
@@ -566,16 +589,23 @@ as the first operation after acquiring the lock.
 **Signature**:
 
 ```python
-async def auto_assign_if_needed(
+async def auto_assign_actor(
     ticket: Ticket,
     acting_user_id: UUID | None,
     db: AsyncSession,
+    force: bool = False,
 ) -> bool:
-    """Assign ticket to acting user if unassigned and user holds VA role.
+    """Assign ticket to acting user if user holds VA role.
+
+    When force=False (default): assigns only if ticket is currently
+    unassigned. Used by all gate-relevant mutations as step 2.
+
+    When force=True: assigns regardless of current assignee. Used by
+    manual-zone exit functions (reopen_from_ignored, revert_duplicate)
+    to take ownership.
 
     Returns True if assignment was applied (audit event created),
-    False otherwise (ticket already assigned, system action, or acting
-    user does not hold the vulnerability_analyst role).
+    False otherwise.
 
     Precondition: caller MUST hold FOR UPDATE on the ticket row.
     """
@@ -583,15 +613,18 @@ async def auto_assign_if_needed(
 
 **Behavior**:
 
-1. If `acting_user_id is None` -> return False (system action, no
-   auto-assignment)
-2. If `ticket.assignee_id is not None` -> return False (already assigned)
-3. Load the acting user's roles (from `User.roles` relationship,
-   already in memory if loaded with `selectinload`). If the user does
-   not hold the `vulnerability_analyst` role -> return False
+1. If `acting_user_id is None` → return False (system action)
+2. If not `force` and `ticket.assignee_id is not None` → return False
+   (already assigned)
+3. Load the acting user's roles. If not VA → return False
 4. Set `ticket.assignee_id = acting_user_id`
 5. Create `TicketAuditEvent` with `event_type = assignment`
 6. Return True
+
+> **Caller responsibility**: this function performs assignment only. It
+> does not call `reconcile_ticket_status()`. Callers MUST call
+> `reconcile_ticket_status()` after completing all mutations to ensure
+> inactive assignee sanitization and correct gate evaluation.
 
 ## Related Operations
 
@@ -602,7 +635,7 @@ see [ticket-service.md](ticket-service.md) for the full service contract.
 
 These operations use the same `FOR UPDATE` pattern documented in
 [Concurrency Control](#concurrency-control) and create their own
-`TicketAuditEvent` records. Some call `evaluate_ticket_status()` due
+`TicketAuditEvent` records. Some call `reconcile_ticket_status()` due
 to indirect gate effects (severity source change, assignee gate
 satisfaction, status reconciliation after restore).
 
@@ -626,10 +659,10 @@ module is a bug.
 Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations
 (CVE association/removal, assignment, restore) call
-`evaluate_ticket_status` due to indirect gate effects: severity
+`reconcile_ticket_status` due to indirect gate effects: severity
 source changes, assignee gate satisfaction, or status reconciliation
 after restore. The per-function documentation in `ticket-service.md`
-specifies exactly which operations call `evaluate_ticket_status` and
+specifies exactly which operations call `reconcile_ticket_status` and
 why.
 
 ## Architectural Test Requirement
@@ -661,6 +694,9 @@ Requirement).
 | `TicketSoftDeletedError` | Ticket has `deleted_at IS NOT NULL` |
 | `DuplicateCycleDetectedError` | Resolver detects a cycle in the chain |
 | `DuplicateChainDepthError` | Resolver exceeds 50-hop limit |
+| `DuplicateCVSSAssessmentError` | Assessment for the same (CVE, provider, version) combination already exists (maps to 409 `DUPLICATE_CVSS_ASSESSMENT`) |
+| `CVSSAssessmentNotFoundError` | `assessment_id` does not match any existing `CVECVSSAssessment` record (maps to 404 `CVSS_ASSESSMENT_NOT_FOUND`) |
+| `SeverityDerivedError` | `set_severity_override()` called on a ticket with `cve_id IS NOT NULL` — severity is derived from CVSS scores and cannot be manually overridden (maps to 409 `TICKET_SEVERITY_DERIVED`) |
 
 Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
 `PackageNotFoundError`) are defined in `package_service` — see
@@ -677,8 +713,8 @@ individual endpoints.
 | CVSS sync fetcher | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Background CVSS ingestion |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
 | Admin: default CVSS version change | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Re-evaluation triggered by config change |
-| `package_service` | `evaluate_ticket_status()`, `auto_assign_if_needed()` | Called after every package mutation |
-| User deactivation side effects | (none — deactivation unassigns via direct query, not through ticket_mutations) | Clarification: NOT a caller |
+| `package_service` | `reconcile_ticket_status()`, `auto_assign_actor()` | Called after every package mutation |
+| `user_service.deactivate_user` | `reconcile_ticket_status()` | Calls reconcile per-ticket after bulk unassignment (indirect caller — does not use mutation functions) |
 
 Package-centric callers (IBS release detection, product lifecycle
 transitions, `add_package_to_ticket`) now call `package_service`
@@ -688,7 +724,7 @@ directly — see `docs/features/packages/package-service.md`.
 
 - `docs/features/packages/package-service.md` — package-centric
   mutations, orchestration, and query operations (imports
-  `evaluate_ticket_status()` and `auto_assign_if_needed()`)
+  `reconcile_ticket_status()` and `auto_assign_actor()`)
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, API endpoints
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
@@ -703,6 +739,6 @@ directly — see `docs/features/packages/package-service.md`.
 - `docs/conventions.md` — Transaction and Locking (generic pessimistic
   locking pattern)
 - `docs/features/tickets/ticket-service.md` — non-gate ticket lifecycle
-  operations (imports `evaluate_ticket_status()`,
-  `auto_assign_if_needed()`, `resolve_canonical_target()`)
+  operations (imports `reconcile_ticket_status()`,
+  `auto_assign_actor()`, `resolve_canonical_target()`)
 - `docs/api-spec.md` — general API conventions

@@ -494,6 +494,14 @@ in this specific order):
    - `old_value` = deactivated user's username
    - `new_value` = `NULL`
    - `comment` = `"Unassigned from {old}: employee deactivated"`
+5. Reconcile ticket status: after the bulk unassignment, iterate over
+   the affected ticket IDs and call
+   `ticket_mutations.reconcile_ticket_status()` for each one. This
+   ensures immediate gate re-evaluation (the Analysis gate requires
+   `assignee_id IS NOT NULL`) so that no ticket remains in an incorrect
+   status after the unassignment. This call happens in the same
+   transaction, guaranteeing atomicity with the unassignment and audit
+   event creation.
 
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
 user is marked as inactive. This ensures that if the process is
