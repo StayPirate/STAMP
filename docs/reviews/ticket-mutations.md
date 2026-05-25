@@ -38,7 +38,7 @@
 
 ### TKM-GAP-08 — No specification of what happens when ticket has no CVE and CVSS operations are attempted (Low)
 
-**Status**: RESOLVED — Fixed: added CVSS assessment cascade-delete to dissociate_cve in ticket-service.md — orphaned assessments are now structurally impossible (2026-05-25)
+**Status**: RESOLVED — Preconditions in ticket_mutations naturally reject operations on assessments whose CVE has no parent ticket; assessments are preserved for data reuse on re-association (2026-05-25)
 
 ### TKM-GAP-09 — Missing exception for create_cvss_assessment when ticket has no CVE (Medium)
 
@@ -66,7 +66,7 @@
 
 ### TKM-GAP-15 — CVSS assessments linked to CVE persist after dissociation (Low)
 
-**Status**: RESOLVED — Auto-resolved: dissociate_cve now explicitly deletes all CVECVSSAssessment records during dissociation (ticket-service.md lines 272-291) preventing orphaned assessments (2026-05-25)
+**Status**: RESOLVED — Design decision: assessments intentionally persist after dissociation for data preservation; unreachable for mutation without parent ticket, available for immediate reuse on re-association (2026-05-25)
 
 ### TKM-GAP-16 — auto_assign_actor with force=True creates noise on self-reassignment (Low)
 

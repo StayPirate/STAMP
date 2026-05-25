@@ -233,7 +233,12 @@ async def associate_cve(
    gate #4 (SUSE CVSS provided) may now fail, causing regression
 9. Return updated Ticket
 
-**Locking**: FOR UPDATE on Ticket row.
+**Locking**: FOR UPDATE on Ticket row. Step 4 (CVE Resolution Behavior)
+executes entirely within the locked transaction but involves only local
+database operations: a `SELECT` on the CVE table, possibly an `INSERT`
+of a minimal CVE record, and a Celery task enqueue (Redis LPUSH) for
+asynchronous NVD fetch. No synchronous external HTTP calls occur while
+the lock is held.
 
 **reconcile_ticket_status**: YES — associating a CVE changes the severity
 resolution source. If the ticket was Analyzed without a CVE (using
@@ -241,6 +246,14 @@ resolution source. If the ticket was Analyzed without a CVE (using
 CVSS-derived, which may be `None` until CVSS data arrives (gate #3
 fails); (b) gate #4 (SUSE CVSS v3.1 + v4.0 required) to become
 applicable and likely fail. The ticket may regress to Analysis.
+
+**Note on pre-existing CVSS assessments**: If the CVE being associated
+already has `CVECVSSAssessment` records (e.g., from a previous
+association with another ticket, or from a prior NVD sync), these
+assessments are immediately available to the CVSS resolution cascade.
+The `reconcile_ticket_status` call in step 8 uses them to derive
+severity and evaluate eligibility gates without requiring a fresh NVD
+fetch.
 
 **Audit events**: `cve_associated`. Possibly `assignment` (from
 auto-assign). Possibly `status_change` (from evaluate).
@@ -269,26 +282,23 @@ async def dissociate_cve(
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Immutability guard check
 3. Verify `ticket.cve_id IS NOT NULL` (else `TicketCVENotSetError`)
-4. Delete all `CVECVSSAssessment` records where `cve_id` matches the CVE
-   being dissociated
-5. For each deleted assessment, create a `TicketAuditEvent`
-   (`cvss_assessment_deleted`) — matching the per-record audit pattern
-   used by `ticket_mutations.delete_cvss_assessment()`
-6. Set `ticket.cve_id = NULL`
-7. Create `TicketAuditEvent` (`cve_removed`)
-8. Call `reconcile_ticket_status(ticket)` — severity falls back to
+4. Set `ticket.cve_id = NULL`
+5. Create `TicketAuditEvent` (`cve_removed`)
+6. Call `reconcile_ticket_status(ticket)` — severity falls back to
    `severity_override`; if that is also NULL, severity = None and
-   gate #3 fails, causing regression. Without CVSS assessments, the
-   conservative fallback (10.0) applies for eligibility threshold
-   comparisons
-9. Return updated Ticket
+   gate #3 fails, causing regression
+7. Return updated Ticket
 
-**Note on CVSS assessment cleanup**: Deleting CVSS assessments on CVE
-dissociation prevents orphaned records and ensures that
-`update_cvss_assessment()` / `delete_cvss_assessment()` in
-`ticket_mutations` never encounter an assessment whose CVE has no parent
-ticket. This deletion happens within the same transaction (inside the
-`FOR UPDATE` lock) to maintain atomicity.
+**Note on CVSS assessment preservation**: `CVECVSSAssessment` records
+are NOT deleted on dissociation. They are factual data belonging to the
+CVE entity (linked via `CVECVSSAssessment.cve_id → CVE.id`), not to the
+ticket. After dissociation, these records remain in the database but are
+unreachable through the ticket-centric mutation layer — the
+`ticket_mutations` precondition "parent ticket must exist" naturally
+rejects any operation on assessments whose CVE has no referencing ticket.
+If the CVE is later re-associated with a ticket (same or different),
+the pre-existing assessments are immediately available for the CVSS
+resolution cascade without requiring a fresh NVD fetch.
 
 **Note on auto-assignment**: `auto_assign_actor` is NOT called.
 CVE dissociation requires `admin_ticket_ops` capability, making it an
@@ -308,8 +318,8 @@ manage these records or re-associate a CVE. See `tickets.md`
 resolution. If `severity_override` is NULL, severity becomes None and
 the Analyzed gate #3 fails.
 
-**Audit events**: `cvss_assessment_deleted` (one per deleted assessment).
-`cve_removed`. Possibly `status_change` (from evaluate).
+**Audit events**: `cve_removed`. Possibly `status_change` (from
+evaluate).
 
 ### assign_ticket
 

@@ -32,7 +32,7 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-22 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [package-service](package-service.md) | 3 | 🟢 | 🟢 | 🟢 | 🟢 | 3 | 2026-05-22 | |
+| [package-service](package-service.md) | 3 | 🟢 | 🟢 | 🟢 | 🟢 | 3 | 2026-05-22 | ⚠️ |
 | | 2:🟠 1:🟡 |  |  |  |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -40,18 +40,18 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1 | 2026-05-25 | |
+| [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1 | 2026-05-25 | ⚠️ |
 | |  |  | 1:🟡 |  |  |  |  |  |
-| [ticket-service](ticket-service.md) | 4 | 🟢 | 🟢 | 🟢 | 🟢 | 4 | 2026-05-25 | |
-| | 4:🟠 |  |  |  |  |  |  |  |
+| [ticket-service](ticket-service.md) | 8 | 1 | 6 | 5 | 🟢 | 20 | 2026-05-25 | |
+| | 3:🟠 5:🟡 | 1:🟠 | 3:🟠 3:🟡 | 3:🟠 2:🟡 |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-20 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **7** | **0** | **1** | **0** | **0** | **8** |  |  |
-|  | 6:🟠 1:🟡 |  | 1:🟡 |  |  |  |  |  |
+| **Total** | **11** | **1** | **7** | **5** | **0** | **24** |  |  |
+|  | 5:🟠 6:🟡 | 1:🟠 | 3:🟠 4:🟡 | 3:🟠 2:🟡 |  |  |  |  |
 
 ### Disabled specs
 
