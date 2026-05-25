@@ -1,68 +1,3 @@
-# Draft: Ticket Service Specification
-
-## Status
-
-**Draft** — not yet applied. This document contains the full plan for
-creating `docs/features/tickets/ticket-service.md` and updating related
-specs.
-
-## Context & Motivation
-
-### The naming pattern across domains
-
-| Domain | Service specs |
-|--------|--------------|
-| `identity/` | `user-service.md`, `api-key-service.md` |
-| `packages/` | `package-service.md` |
-| `tickets/` | `ticket-mutations.md` (no `-service.md`) |
-
-### The gap
-
-`ticket-mutations.md` (section "Architecture") references a module
-`services/ticket_service.py` that handles non-gate operations:
-assignment, CVE association/dissociation, soft-delete/restore,
-mark-as-duplicate, set-confidentiality. This module has **no
-specification**.
-
-These operations are described fragmentarily across `tickets.md`
-(endpoint definitions) and `ticket-mutations.md` (Related Operations
-section), but no spec defines the service-layer contract:
-function signatures, locking patterns, audit event rules, transaction
-ownership, or the dependency on `ticket_mutations`.
-
-### Why NOT rename `ticket-mutations.md`
-
-1. The name reflects a deliberate architectural split (gate-relevant vs
-   non-gate operations), not a naming oversight
-2. `ticket_mutations` is deeply referenced across guardrails, conventions,
-   and 7+ other specs
-3. Unifying everything into one module would create the largest service in
-   the project without a clear organizing principle
-
-### Solution
-
-Create `docs/features/tickets/ticket-service.md` as a new spec for the
-`ticket_service` module, covering all non-gate ticket lifecycle
-operations. The ticket domain will then have two service specs with
-distinct, complementary scopes:
-
-- `ticket-mutations.md` → gate-relevant mutations + status evaluation
-  infrastructure
-- `ticket-service.md` → non-gate ticket lifecycle operations +
-  confidentiality management
-
----
-
-## New Spec: `docs/features/tickets/ticket-service.md`
-
-The full content below should be placed at
-`docs/features/tickets/ticket-service.md`.
-
----
-
-### Begin spec content
-
-```markdown
 # Ticket Service
 
 ## Purpose
@@ -207,7 +142,7 @@ async def create_ticket(
     *,
     acting_user_id: UUID | None,
     cve_id: str | None = None,
-    severity_override: SeverityEnum | None = None,
+    severity_override: Severity | None = None,
     is_confidential: bool = False,
     source: TicketCreationSource,
 ) -> Ticket:
@@ -777,7 +712,7 @@ async def list_access_grants(
 | `TicketCVEAlreadySetError` | `TICKET_CVE_ALREADY_SET` | `associate_cve` |
 | `TicketCVENotSetError` | `TICKET_CVE_NOT_SET` | `dissociate_cve` |
 | `TicketCVEConflictError` | `TICKET_CVE_CONFLICT` | `create_ticket`, `associate_cve` |
-| `InvalidAssigneeError` | `INVALID_ASSIGNEE` | `assign_ticket` |
+| `InvalidAssigneeError` | `TICKET_ASSIGNEE_NOT_VA` or `TICKET_ASSIGNEE_INACTIVE` | `assign_ticket` |
 | `SelfDuplicateError` | `TICKET_SELF_DUPLICATE` | `mark_as_duplicate` |
 | `DuplicateChainDepthError` | `TICKET_DUPLICATE_CHAIN_DEPTH` | `mark_as_duplicate` (via `resolve_canonical_target`) |
 | `TicketAlreadyDeletedError` | `TICKET_ALREADY_DELETED` | `soft_delete_ticket` |
@@ -788,6 +723,11 @@ async def list_access_grants(
 All exceptions inherit from a common `TicketServiceError` base class.
 API endpoint handlers catch `TicketServiceError` subclasses and map them
 to the corresponding HTTP status code and error code per `api-spec.md`.
+
+Note: `InvalidAssigneeError` carries a `reason` attribute that
+distinguishes between the two failure modes. The API handler maps
+`reason="not_va"` to `TICKET_ASSIGNEE_NOT_VA` (400) and
+`reason="inactive"` to `TICKET_ASSIGNEE_INACTIVE` (400).
 
 ## Callers
 
@@ -885,173 +825,3 @@ behavior of `ticket_service` operations:
   `create_ticket`)
 - `docs/conventions.md` — Transaction and Locking pattern
 - `docs/api-spec.md` — general API conventions, error code categories
-```
-
----
-
-## Spec Gap: CVE Association and Assignment + evaluate_ticket_status
-
-### Problem
-
-`ticket-mutations.md` (section "Contract", subsection "Module
-boundary") states:
-
-> Operations that do NOT modify gate-relevant data (assignment, duplicate
-> set/remove, **CVE association/removal**, ticket-level soft-delete/restore)
-> are NOT required to go through either module
-
-And `tickets.md` (section "Associating a CVE Later") does not mention
-calling `evaluate_ticket_status` after CVE association.
-
-However, the "CVE Dissociation" section in `tickets.md` explicitly
-calls it:
-
-> `evaluate_ticket_status` is called after the dissociation: if severity
-> becomes `None` and the Analyzed gate requires severity, the ticket may
-> regress to Analysis
-
-The asymmetry is a gap. CVE association changes the severity resolution
-source from `severity_override` to CVSS-derived. For a ticket that was
-Analyzed without a CVE:
-
-1. Gate #3 (severity set) may fail — CVSS-derived severity is initially
-   `None` until data arrives via on-demand fetch
-2. Gate #4 (SUSE CVSS v3.1 + v4.0 provided) now becomes applicable and
-   almost certainly fails — SUSE assessments don't exist yet for a
-   newly associated CVE
-
-Without `evaluate_ticket_status`, the ticket would remain in Analyzed
-despite failing its gate conditions.
-
-Additionally, **assignment** has an indirect gate effect: the Analysis
-gate requires `assignee_id IS NOT NULL`. Assigning a ticket in New
-status should promote it to Analysis via `evaluate_ticket_status`. The
-current wording in `ticket-mutations.md` incorrectly groups assignment
-with operations that have no gate effect.
-
-### Resolution
-
-When applying this draft:
-
-1. **In `tickets.md`** (section "Associating a CVE Later"): add a
-   bullet:
-   ```
-   - `evaluate_ticket_status` is called after the association: the
-     severity resolution source changes from `severity_override` to
-     CVSS-derived. Gate #3 (severity set) may fail if CVSS data has not
-     arrived yet. Gate #4 (SUSE CVSS provided) becomes applicable and
-     may also fail. The ticket may regress from Analyzed to Analysis.
-   ```
-
-2. **In `ticket-mutations.md`** (section "Contract", subsection "Module
-   boundary"): reword to:
-   ```
-   Non-gate ticket lifecycle operations live in `ticket_service` — see
-   `docs/features/tickets/ticket-service.md`. Some of these operations
-   (CVE association/removal, assignment, restore) call
-   `evaluate_ticket_status` due to indirect gate effects: severity
-   source changes, assignee gate satisfaction, or status reconciliation
-   after restore. The per-function documentation in `ticket-service.md`
-   specifies exactly which operations call `evaluate_ticket_status` and
-   why.
-   ```
-
----
-
-## Modifications to Existing Specs
-
-### 1. `docs/features/tickets/ticket-mutations.md`
-
-**Replace "Related Operations" section** with:
-
-```markdown
-## Related Operations
-
-Non-gate ticket lifecycle operations (assignment, CVE association/
-dissociation, soft-delete/restore, mark-as-duplicate, set-
-confidentiality, access grant management) live in `ticket_service` —
-see [ticket-service.md](ticket-service.md) for the full service contract.
-
-These operations use the same `FOR UPDATE` pattern documented in
-[Concurrency Control](#concurrency-control) and create their own
-`TicketAuditEvent` records. Some call `evaluate_ticket_status()` due
-to indirect gate effects (severity source change, assignee gate
-satisfaction, status reconciliation after restore).
-```
-
-**Update "Contract" section** (subsection "Module boundary") per the
-spec gap resolution above.
-
-### 2. `docs/features/tickets/tickets.md`
-
-Add a note in the API Endpoints preamble referencing the service-layer
-contract:
-
-```markdown
-For the service-layer contract (function signatures, locking, audit
-event creation) of these operations, see
-[ticket-service.md](ticket-service.md).
-```
-
-Add `evaluate_ticket_status` note to "Associating a CVE Later" section
-(per spec gap resolution above).
-
-### 3. `docs/features/tickets/README.md`
-
-Add `ticket-service.md` to the spec index with description:
-
-```markdown
-| [ticket-service.md](ticket-service.md) | Service-layer contract for non-gate ticket lifecycle operations and confidentiality management |
-```
-
-### 4. `AGENTS.md` — Guardrail 16
-
-Extend the centralized modules list to include `ticket_service`:
-
-```markdown
-- **Non-gate ticket lifecycle mutations** (assignment, CVE association/
-  dissociation, soft-delete/restore, mark-as-duplicate, confidentiality):
-  `ticket_service` (`backend/app/services/ticket_service.py`)
-```
-
-Note: Guardrail 16 currently focuses on gate-relevant mutations
-(`ticket_mutations` and `package_service`). Adding `ticket_service`
-documents that these operations are also centralized, but the guardrail's
-enforcement focus remains on gate-relevant operations (since the risk of
-missed `evaluate_ticket_status` calls is the primary concern).
-
-### 5. `docs/features/tickets/ticket-mutations.md` — Architecture table
-
-Update the Architecture table row for `services/ticket_service.py` to
-reference the new spec:
-
-```markdown
-| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
-```
-
----
-
-## Checklist — Steps to Apply This Draft
-
-1. [ ] Create `docs/features/tickets/ticket-service.md` with the spec
-       content from the "Begin spec content" section above
-2. [ ] Apply modifications to `docs/features/tickets/ticket-mutations.md`
-       (Related Operations section + Contract section + Architecture table)
-3. [ ] Apply modification to `docs/features/tickets/tickets.md`
-       (CVE association + evaluate_ticket_status note + service-layer
-       cross-reference)
-4. [ ] Update `docs/features/tickets/README.md` (add to index)
-5. [ ] Update `docs/features/README.md` (add `ticket-service.md` to
-       Tickets section; also add preexisting missing entries:
-       `ticket-mutations.md` in Tickets, `package-service.md` in Packages)
-6. [ ] Update `docs/reviews/README.md` (add row for `ticket-service`)
-7. [ ] Update `docs/reviews/.tracking.json` (add `ticket-service` entry
-       with `enabled: true`, `abbr: "TKS"`, `cache: null`)
-8. [ ] Update `AGENTS.md` Guardrail 16 (add `ticket_service` mention)
-9. [ ] Run `@spec-gap-analyzer` on the new `ticket-service.md`
-10. [ ] Run `@spec-coherence-reviewer` on `ticket-service.md`
-11. [ ] Run `@docs-reviewer` on all modified files
-12. [ ] Run `@docs-placement-reviewer` on `ticket-service.md`
-13. [ ] Run `@api-convention-reviewer` (the new spec references but does
-        not define API endpoints — verify no issues)
-14. [ ] Delete this draft file (`docs/drafts/ticket-service.md`)

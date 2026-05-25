@@ -73,7 +73,7 @@ reserved exclusively for system entry points.
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
 | `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `evaluate_ticket_status()` and `auto_assign_if_needed()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
-| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality). These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
+| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
 
 ## State Machine Zones
 
@@ -551,7 +551,8 @@ the ticket to `Analysis` automatically.
 
 This rule is enforced via the shared helper `auto_assign_if_needed()`
 (see below), which is called by all modules that modify tickets under
-a `FOR UPDATE` lock (`ticket_mutations`, `package_service`).
+a `FOR UPDATE` lock (`ticket_mutations`, `package_service`,
+`ticket_service`).
 
 This rule does not apply to system operations (`acting_user_id = None`)
 or to users without the `vulnerability_analyst` role.
@@ -594,40 +595,16 @@ async def auto_assign_if_needed(
 
 ## Related Operations
 
-Operations that follow the module's concurrency pattern (`FOR UPDATE` on
-the Ticket row + `evaluate_ticket_status` call where applicable) but are
-NOT routed through the `ticket_mutations` module. Documented here for
-implementers to have a single reference for the full `FOR UPDATE`
-landscape on the Ticket entity.
+Non-gate ticket lifecycle operations (assignment, CVE association/
+dissociation, soft-delete/restore, mark-as-duplicate, set-
+confidentiality, access grant management) live in `ticket_service` —
+see [ticket-service.md](ticket-service.md) for the full service contract.
 
-### CVE dissociation
-
-Removes the CVE association from a ticket. Modifies `Ticket.cve_id` (not
-gate-relevant by itself), but the side effect on severity triggers
-`evaluate_ticket_status`. Full behavioral steps in
-[tickets.md](tickets.md#cve-dissociation).
-
-### Ticket soft-delete and restore
-
-Operations requiring `admin_ticket_ops` capability that set/clear
-`Ticket.deleted_at`. Restore calls
-`evaluate_ticket_status` to reconcile status with current gate
-conditions. Full behavioral steps in
-[tickets.md](tickets.md#soft-delete).
-
-### Mark-as-duplicate
-
-Sets `Ticket.status = Duplicated` and `Ticket.duplicate_of_id`. Enters
-the manual zone directly — does NOT call `evaluate_ticket_status`. Full
-behavioral steps in
-[tickets.md](tickets.md#mark-as-duplicate-operation).
-
-### Set-confidentiality
-
-Modifies `Ticket.is_confidential`. Not gate-relevant, does not call
-`evaluate_ticket_status`. Requires `FOR UPDATE` because it modifies the
-Ticket row. Full behavioral steps in
-[tickets.md](tickets.md#set-confidentiality).
+These operations use the same `FOR UPDATE` pattern documented in
+[Concurrency Control](#concurrency-control) and create their own
+`TicketAuditEvent` records. Some call `evaluate_ticket_status()` due
+to indirect gate effects (severity source change, assignee gate
+satisfaction, status reconciliation after restore).
 
 ## Contract
 
@@ -646,10 +623,14 @@ status gates MUST go through the appropriate centralized module:
 Direct modification of gate-relevant records outside the owning
 module is a bug.
 
-Operations that do NOT modify gate-relevant data (assignment, duplicate
-set/remove, CVE association/removal, ticket-level soft-delete/restore)
-are NOT required to go through either module — they create
-`TicketAuditEvent` records in their own services.
+Non-gate ticket lifecycle operations live in `ticket_service` — see
+`docs/features/tickets/ticket-service.md`. Some of these operations
+(CVE association/removal, assignment, restore) call
+`evaluate_ticket_status` due to indirect gate effects: severity
+source changes, assignee gate satisfaction, or status reconciliation
+after restore. The per-function documentation in `ticket-service.md`
+specifies exactly which operations call `evaluate_ticket_status` and
+why.
 
 ## Architectural Test Requirement
 
@@ -721,4 +702,7 @@ directly — see `docs/features/packages/package-service.md`.
   unassignment (complementary to inactive assignee sanitization)
 - `docs/conventions.md` — Transaction and Locking (generic pessimistic
   locking pattern)
+- `docs/features/tickets/ticket-service.md` — non-gate ticket lifecycle
+  operations (imports `evaluate_ticket_status()`,
+  `auto_assign_if_needed()`, `resolve_canonical_target()`)
 - `docs/api-spec.md` — general API conventions

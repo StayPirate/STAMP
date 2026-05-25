@@ -33,6 +33,7 @@ Index of all feature specification domains.
 
 ### Packages
 
+- [package-service.md](packages/package-service.md) — Service-layer contract for package mutations and queries
 - [package-model.md](packages/package-model.md) — Status model, eligibility, add/remove packages
 - [ibs-track-release-detection.md](packages/ibs-track-release-detection.md) — MD5 cache, IBS diff
 - [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — updateinfo.xml, advisory match
@@ -54,6 +55,8 @@ Index of all feature specification domains.
 ### Tickets
 
 - [tickets.md](tickets/tickets.md) — Ticket lifecycle, status gates, centralized evaluation
+- [ticket-service.md](tickets/ticket-service.md) — Service-layer contract for non-gate ticket lifecycle operations and confidentiality management
+- [ticket-mutations.md](tickets/ticket-mutations.md) — Gate-relevant mutations, status evaluation, manual-zone exits
 - [cve-tracking.md](tickets/cve-tracking.md) — CVE ingestion from NVD/MITRE, on-demand fetch
 - [cvss-scoring.md](tickets/cvss-scoring.md) — Multi-provider CVSS assessments, severity resolution
 - [ticket-audit-log.md](tickets/ticket-audit-log.md) — TicketAuditEvent audit trail, event type contract

@@ -103,8 +103,12 @@ An VA can associate a CVE with a ticket that does not yet have one, via
     [Severity Resolution](#severity-resolution)) — initially `None` if
     the CVE data has not been fetched yet; updated automatically once
     CVSS data arrives from the on-demand fetch
-  - A `TicketAuditEvent` with `event_type = cve_associated` is created
   - CVSS sync and release tracking begin applying to the ticket
+  - The ticket may regress from Analyzed to Analysis if CVSS data has
+    not arrived yet (gate #3 and #4 may fail)
+
+See [ticket-service.md](ticket-service.md#associate_cve) for the full
+service-layer contract (locking, audit events, status evaluation).
 
 ### Dissociating a CVE
 
@@ -121,9 +125,8 @@ A user with `admin_ticket_ops` can remove a CVE from a ticket via
 - `Ticket.cve_id` is set to `NULL`
 - Severity resolution falls back to `severity_override` (see
   [Severity Resolution](#severity-resolution)). If `severity_override`
-  is also `NULL`, the ticket severity becomes `None`
-- A `TicketAuditEvent` with `event_type = cve_removed` is created (see
-  `docs/features/tickets/ticket-audit-log.md`)
+  is also `NULL`, the ticket severity becomes `None` — the ticket may
+  regress to Analysis
 - CVSS sync and release tracking cease applying to the ticket
 - Existing `TicketPackageTrack` and `TicketPackageProduct` records
   are preserved. However, without an associated CVE, automatic release
@@ -134,19 +137,14 @@ A user with `admin_ticket_ops` can remove a CVE from a ticket via
   ticket to progress toward Resolved. If a CVE is later re-associated
   with the ticket (via `POST .../associate-cve`), automatic release
   detection resumes
-- `evaluate_ticket_status` is called after the dissociation: if severity
-    becomes `None` and the Analyzed gate requires severity, the ticket may
-    regress to Analysis
-
-This operation modifies the `Ticket` row and calls
-`evaluate_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`
-row before any modification (see
-[Concurrency Control](#concurrency-control)).
 - The CVE record itself is not deleted — it remains in the database.
   If no other ticket references this CVE, a subsequent CVE sync will
   create a new ticket for it — this is intentional to ensure CVEs are
   not lost. If the Admin intends to re-associate the CVE with a
   different ticket, this should be done before the next sync cycle
+
+See [ticket-service.md](ticket-service.md#dissociate_cve) for the full
+service-layer contract (locking, audit events, status evaluation).
 
 **Capability**: `admin_ticket_ops`.
 
@@ -196,14 +194,9 @@ via `POST /api/v1/tickets` or through the UI.
   - `status`: `New` (auto-assignment is skipped — see
     [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
   - `assignee_id`: `NULL`
-- `TicketAuditEvent` records are created atomically in the same
-  transaction:
-  1. `event_type = ticket_created`, `user_id = creating user`,
-     `comment = "Ticket created manually"`
-  2. (if assigned) `event_type = assignment`, `user_id = creating user`,
-     `new_value = creating user's username`
-  3. (if CVE-ID provided) `event_type = cve_associated`,
-     `user_id = creating user`, `new_value = CVE-ID string`
+
+See [ticket-service.md](ticket-service.md#create_ticket) for the full
+service-layer contract (audit events, CVE uniqueness handling).
 
 **Capability**: `create_ticket`.
 
@@ -379,13 +372,12 @@ orphan cleanup invariants, and architectural test requirements.
 
 #### Concurrency Control
 
-Every operation that modifies the `Ticket` row or calls
-`evaluate_ticket_status` MUST acquire `FOR UPDATE` on the Ticket row
-before any modification. See
+Every operation that modifies the `Ticket` row MUST acquire
+`FOR UPDATE` on the Ticket row before any modification. See
 [ticket-mutations.md](ticket-mutations.md#concurrency-control) for
-the full rules. The same pattern applies to non-module operations
-(CVE dissociation, mark-as-duplicate, soft-delete/restore,
-set-confidentiality).
+the full locking rules and
+[ticket-service.md](ticket-service.md#concurrency-control) for the
+per-operation locking matrix.
 
 ### Reassignment
 
@@ -444,7 +436,7 @@ role.
 This rule is enforced via the shared helper
 `ticket_mutations.auto_assign_if_needed()`, which is called by all
 modules that modify tickets under a `FOR UPDATE` lock
-(`ticket_mutations`, `package_service`). See
+(`ticket_mutations`, `package_service`, `ticket_service`). See
 [ticket-mutations.md](ticket-mutations.md#auto_assign_if_needed) for
 the helper's signature and behavior.
 
@@ -503,39 +495,22 @@ Steps:
    logic per the soft-delete invariant.
 4. If the canonical target equals the ticket being modified, reject with
    400 Bad Request ("a ticket cannot be a duplicate of itself").
-5. Acquire `FOR UPDATE` on the ticket being modified (single ticket —
-   per the single-ticket-scope rule).
-6. Set `duplicate_of_id = canonical_target_id`.
-7. Set `status = Duplicated`.
-8. If the ticket had no assignee (`assignee_id = NULL`) and the acting
-   user holds the `vulnerability_analyst` role, the user becomes the
-   assignee (see
-   [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
-   If the acting user does not hold the VA role, the assignment step is
-   skipped — the ticket remains unassigned.
-9. Create `TicketAuditEvent` (`duplicate_set`).
-10. Commit.
-11. Cascade (synchronous, same request): find all tickets whose
-    `duplicate_of_id` points to the just-duplicated ticket. For each, in
-    an independent transaction (best-effort per-item):
-    - Acquire `FOR UPDATE` on that single ticket.
-    - Update `duplicate_of_id` to the canonical target.
-    - Create `TicketAuditEvent` (`duplicate_target_changed`,
-      `user_id = NULL`,
-      `detail = {"triggered_by_ticket": "SNTL-{n}"}`) where `SNTL-{n}`
-      is the identifier of the ticket that was just marked as duplicate
-      (the operation that triggered this cascade).
-    - Commit.
-    - If this individual transaction fails (DB error, constraint
-      violation), log a warning and continue to the next ticket. Do NOT
-      abort the entire cascade.
-12. If the cascade is interrupted (crash, timeout) or individual steps
-    fail, the system is NOT corrupted — subsequent operations and reads
-    resolve the chain through the canonical resolver.
+5. Set `duplicate_of_id = canonical_target_id` and
+   `status = Duplicated`.
+6. Cascade: all tickets whose `duplicate_of_id` points to the
+   just-duplicated ticket are updated to point to the canonical target
+   (synchronous, best-effort per-item in independent transactions).
+7. If the cascade is interrupted or individual steps fail, the system
+   is NOT corrupted — subsequent reads resolve the chain through the
+   canonical resolver.
 
 The cascade is synchronous (completes before the API response returns)
 because chains longer than two tickets are almost nonexistent, making
 the overhead negligible (1–2 extra DB operations in the worst case).
+
+See [ticket-service.md](ticket-service.md#mark_as_duplicate) for the
+full service-layer contract (locking, auto-assignment, audit events,
+cascade transaction isolation).
 
 > **Note — soft-deleted source ticket**: attempting to mark a
 > soft-deleted ticket itself as duplicate is already rejected by the
@@ -698,20 +673,17 @@ row before any modification (see
   data and the duplicated ticket remains in Duplicated status regardless
   of the target's lifecycle state.
 - A soft-deleted ticket can be restored by clearing `deleted_at`.
-  After restoring the ticket and creating the `TicketAuditEvent`
-  (`ticket_restored`), `evaluate_ticket_status` is called within the
-  same transaction to reconcile the ticket's status with current gate
-  conditions. While the ticket was soft-deleted, gate-relevant data may
-  have changed externally (CVSS scores deleted, product eligibility
+  After restoring, the ticket's status is reconciled with current gate
+  conditions — while the ticket was soft-deleted, gate-relevant data
+  may have changed externally (CVSS scores deleted, product eligibility
   changed, AIMAAS thresholds updated). If the gates for the ticket's
-  current status are no longer met, the ticket is automatically regressed
-  to the appropriate status. If the ticket is in the manual zone
-  (Ignored or Duplicated), `evaluate_ticket_status` is a no-op — the
-  ticket retains its pre-deletion status unchanged. This may produce two
-  `TicketAuditEvent` records in the same transaction: `ticket_restored`
-  followed by `status_change` (system action, only for gate-zone tickets)
-- Both operations (soft-delete and restore) create a `TicketAuditEvent`
-  record (see `docs/features/tickets/ticket-audit-log.md`)
+  current status are no longer met, the ticket is automatically
+  regressed to the appropriate status. Manual-zone tickets (Ignored or
+  Duplicated) retain their pre-deletion status unchanged
+
+See [ticket-service.md](ticket-service.md#soft_delete_ticket) for the
+full service-layer contract (locking, audit events, status evaluation
+after restore).
 
 **Automated verification**: every service-layer operation that queries
 tickets as part of its logic MUST include a parametrized test verifying
@@ -1054,6 +1026,10 @@ This single condition covers all cases:
   VA removes confidentiality — the cleanup runs 14 days later
 
 ## API Endpoints
+
+For the service-layer contract (function signatures, locking, audit
+event creation) of these operations, see
+[ticket-service.md](ticket-service.md).
 
 ### Response Schemas
 
@@ -1659,17 +1635,12 @@ PATCH /api/v1/tickets/{ticket_id}/confidentiality
 - **Capability**: `manage_confidentiality`
 - **Response schema**: `TicketDetail`
 - **Request body**: `{ "is_confidential": boolean }`
-- **Idempotency**: If the ticket already has the requested status, the
-  operation returns 200 OK without creating an audit event or modifying
-  the database.
-- **Concurrency**: Acquires `FOR UPDATE` on the `Ticket` row (because
-  it modifies the Ticket entity, fulfilling the Concurrency Control
-  convention in [Concurrency Control](#concurrency-control)). It does NOT
-  go through `ticket_mutations` as it is not gate-relevant data.
-- **Audit**: Creates `TicketAuditEvent` with
-  `event_type = confidentiality_changed`.
+- **Idempotency**: If the ticket already has the requested value, the
+  operation returns 200 OK without side effects.
 
-Sets the confidentiality status of a ticket.
+Sets the confidentiality status of a ticket. See
+[ticket-service.md](ticket-service.md#set_confidentiality) for the
+service-layer contract (locking, audit events).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -1821,6 +1792,8 @@ table:
 
 ## Cross-references
 
+- `docs/features/tickets/ticket-service.md` — service-layer contract for
+  non-gate ticket lifecycle operations and confidentiality management
 - `docs/features/tickets/ticket-mutations.md` — ticket-centric mutations,
   `evaluate_ticket_status()`, `auto_assign_if_needed()`, concurrency rules,
   and architectural test requirements
