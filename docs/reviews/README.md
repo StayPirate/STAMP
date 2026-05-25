@@ -32,8 +32,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-22 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [package-service](package-service.md) | 5 | 1 | 2 | 4 | 🟢 | 12 | 2026-05-22 | |
-| | 2:🟠 3:🟡 | 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| [package-service](package-service.md) | 3 | 🟢 | 🟢 | 🟢 | 🟢 | 3 | 2026-05-22 | |
+| | 2:🟠 1:🟡 |  |  |  |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-15 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
@@ -48,8 +48,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **5** | **1** | **2** | **4** | **0** | **12** |  |  |
-|  | 2:🟠 3:🟡 | 1:🟡 | 1:🟠 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| **Total** | **3** | **0** | **0** | **0** | **0** | **3** |  |  |
+|  | 2:🟠 1:🟡 |  |  |  |  |  |  |  |
 
 ### Disabled specs
 

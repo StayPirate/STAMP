@@ -872,7 +872,6 @@ system action).
 | track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). `detail` carries `{"track", "package"}` context. |
 | track_excluded             | Track directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the track reference. `user_id` is the VA, or NULL for system (orphan cleanup). `detail` carries `{"track", "package", "reason"}` context. Child products are not modified — they become effectively excluded via the hierarchy. |
 | track_restored             | Directly soft-deleted track restored by VA. `new_value` contains the track reference. `user_id` is the VA. Only the track record is restored — child products are not modified. |
-| track_released             | Track delivery status set to `RELEASED` by IBS submission tracking (RR accepted). `detail` carries `{"track", "package"}` context. |
 | product_released           | Product release detected via updateinfo.xml advisory. `detail` carries `{"track", "package", "product_id", "advisory_id"}` context. |
 | product_excluded           | Product directly soft-deleted from ticket by VA or lifecycle transition (EOL). `old_value` contains the product display name. `user_id` is the VA, or NULL for system (EOL, orphan). `detail` carries `{"track", "package", "product_id", "reason"}` context. |
 | product_restored           | Directly soft-deleted product restored by VA. `new_value` contains the product display name. `user_id` is the VA. |

@@ -136,7 +136,7 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 
 **Preconditions**:
 
-- Track must exist and have `deleted_at IS NULL`
+- Track must exist
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone (not Ignored or Duplicated)
 - Status must be a valid `PackageStatus` value
@@ -188,7 +188,7 @@ Sets the delivery status of a `TicketPackageTrack` record.
 
 **Preconditions**:
 
-- Track must exist and have `deleted_at IS NULL`
+- Track must exist
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone
 - The transition `current_delivery_status → new_delivery_status` must be
@@ -208,22 +208,18 @@ Sets the delivery status of a `TicketPackageTrack` record.
    `InvalidDeliveryStatusTransition` without modifying the record.
 5. If delivery_status unchanged, return (no-op)
 6. Update `TicketPackageTrack.delivery_status`
-6. If new delivery_status is `RELEASED`: create `TicketAuditEvent`
-   (`track_released`)
 7. Return updated track
 
-**Note**: this function does not trigger ticket status re-evaluation
-because `delivery_status` is not part of any gate condition. Only
-`released_at` on products (set by product-level release detection)
-participates in the Resolved gate. If `delivery_status` ever enters a
-gate condition in the future, the `evaluate_ticket_status()` call can be
-reintroduced at that time.
+**Note**: delivery status transitions do NOT generate `TicketAuditEvent`
+records. The delivery progress is tracked by the submission tracking
+system (see `docs/features/packages/ibs-submission-tracking.md`). The
+meaningful milestones for the ticket timeline are: (1) `track_status_changed`
+when the track transitions to FIXED (triggered by release detection after
+the RR is accepted and code is merged into the codestream), and
+(2) `product_released` when the update reaches the product repository.
+Delivery status is an intermediate signal — not a customer-facing event.
 
-**TicketAuditEvent**: `track_released` (only when transitioning to
-`RELEASED`). Intermediate delivery status transitions (`PENDING` ->
-`IN_PROGRESS`) do not generate ticket audit events — they are tracked
-through the submission tracking system (see
-`docs/features/packages/ibs-submission-tracking.md`).
+**TicketAuditEvent**: none.
 
 **Idempotency**: no-op if delivery_status is unchanged.
 
@@ -292,8 +288,7 @@ Sets or resets the eligibility override of a `TicketPackageProduct` record.
 
 **Preconditions**:
 
-- Product must exist and have `deleted_at IS NULL`
-- Parent track must have `deleted_at IS NULL`
+- Product must exist
 - Parent ticket must not be soft-deleted
 - Parent ticket must be in the gate zone
 
@@ -782,18 +777,23 @@ the track orphan rule, which may trigger the package orphan rule:
 ```
 soft_delete_ticket_package_product(record, user)
   -> TicketAuditEvent (product_excluded)
-  -> evaluate_ticket_status()
   -> _enforce_track_orphan_rule()
       -> if 0 directly-active products:
           set track.deleted_at (direct)
           -> TicketAuditEvent (track_excluded, user_id=NULL)
-          -> evaluate_ticket_status()
           -> _enforce_package_orphan_rule()
               -> if 0 directly-active tracks:
                   set package.deleted_at (direct)
                   -> TicketAuditEvent (package_excluded, user_id=NULL)
-                  -> evaluate_ticket_status()
+  -> evaluate_ticket_status()   # once, after entire cascade completes
 ```
+
+> `evaluate_ticket_status()` is called once after the entire cascade
+> completes — not at each intermediate level. The function is idempotent
+> and queries the current state of all active records, so only the final
+> invocation after all soft-deletions have been applied produces the
+> correct result. Calling it at intermediate levels would produce
+> redundant evaluations whose results are immediately overwritten.
 
 Orphan-triggered soft-deletions create `TicketAuditEvent` records with
 `user_id = NULL` (system action), distinguishing them from VA-initiated
@@ -836,10 +836,31 @@ external I/O MUST NOT acquire `FOR UPDATE` locks.
 | `TicketNotFoundError` | `FOR UPDATE` returns no row |
 | `TicketNotMutableError` | Ticket is in manual zone (defense in depth — API layer catches first) |
 | `TicketSoftDeletedError` | Ticket has `deleted_at IS NOT NULL` |
-| `TrackNotFoundError` | Track ID does not exist or is soft-deleted |
-| `ProductNotFoundError` | Product ID does not exist or is soft-deleted |
-| `PackageNotFoundError` | Package ID does not exist or is soft-deleted |
+| `TrackNotFoundError` | Track ID does not exist |
+| `ProductNotFoundError` | Product ID does not exist |
+| `PackageNotFoundError` | Package ID does not exist |
 | `InvalidDeliveryStatusTransition` | Requested delivery status transition is illegal (e.g., regression from `RELEASED`) |
+
+## Soft-Deleted Records and Mutations
+
+Soft-deleted packages, tracks, and products **continue to receive
+updates** from all automated processes (release detection, eligibility
+recalculation, delivery status changes). The `deleted_at` field controls
+only **exclusion from decision-making** (gate evaluation, anomaly
+detection, resolution logic) — not from mutations.
+
+Mutation functions (`set_track_status`, `set_track_delivery_status`,
+`set_product_eligibility`, `set_product_released_at`) do NOT require
+`deleted_at IS NULL` as a precondition. This ensures that soft-deleted
+records remain current with reality, enabling accurate re-evaluation if
+the record is later restored.
+
+Restore functions (`restore_ticket_package_track`,
+`restore_ticket_package_product`) DO require that all ancestor records
+(parent package for tracks, parent package and parent track for
+products) have `deleted_at IS NULL`. Restoring a record whose ancestor
+is still excluded would leave it effectively excluded with no observable
+effect.
 
 ## Callers
 

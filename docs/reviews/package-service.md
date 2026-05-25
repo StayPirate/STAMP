@@ -56,17 +56,11 @@ The `TrackData` type is referenced in the `add_package_records()` parameter tabl
 
 ### PKS-GAP-11 — Mutations on effectively-excluded records not explicitly permitted or denied (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The preconditions for `set_track_status()` check that the track itself is not soft-deleted and the ticket is not soft-deleted, but do not check whether the parent `TicketPackage` is soft-deleted. Per the hierarchical exclusion model, a track whose parent package is soft-deleted is "effectively excluded." The spec should be explicit about whether mutations on effectively-excluded records are permitted.
+**Status**: RESOLVED — Finding invalid: soft-deleted records continue receiving all mutations per package-model.md; preconditions corrected (2026-05-25)
 
 ### PKS-GAP-12 — Delivery status regression audit event omitted (Low)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-When delivery regresses from `IN_PROGRESS` to `PENDING` (all SRs revoked/declined), no `TicketAuditEvent` is created. The spec only documents that `RELEASED` generates an event and "intermediate" transitions do not. A regression signals a failed delivery attempt worth a VA's attention but produces no ticket-level audit trail.
+**Status**: RESOLVED — track_released event removed; delivery_status transitions never generate TicketAuditEvents (2026-05-25)
 
 ### PKS-GAP-13 — Eligibility calculation I/O location within lock not specified (Low)
 
@@ -101,10 +95,7 @@ When `add_package_records()` creates `TicketPackageProduct` records, it must cal
 
 ### PKS-COH-06 — track_released audit event user_id conflict between package-service and audit-log (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-ticket-audit-log.md defines track_released with user_id = NULL (system action). package-service.md set_track_delivery_status() creates track_released when delivery_status transitions to RELEASED. Since delivery status is system-managed per package-model.md, acting_user_id should always be None for this function. However, the function signature accepts acting_user_id: UUID | None, and the general pattern calls auto_assign_if_needed() — implying it could be called with a user context.
+**Status**: RESOLVED — Moot: track_released event type removed entirely from the system (2026-05-25)
 
 ---
 
@@ -112,17 +103,11 @@ ticket-audit-log.md defines track_released with user_id = NULL (system action). 
 
 ### PKS-DES-01 — Orphan cascade calls evaluate_ticket_status() multiple times per operation (Medium)
 
-**Category**: Complexity and performance
-**Status**: OPEN
-
-The orphan cascade shows evaluate_ticket_status() being called at each level: after the product soft-delete, after the orphan-triggered track soft-delete, and after the orphan-triggered package soft-delete. In the worst case, this calls evaluate_ticket_status() three times within the same transaction. Since the function queries all active tracks/products to determine ticket status, only the final evaluation matters. Alternative: call evaluate_ticket_status() once at the end of the entire cascade.
+**Status**: RESOLVED — Cascade now calls evaluate_ticket_status() once at the end (2026-05-25)
 
 ### PKS-DES-02 — No mechanism to batch-set track statuses without repeated lock acquisition (Low)
 
-**Category**: Scalability
-**Status**: OPEN
-
-Each mutation function independently acquires FOR UPDATE on the parent ticket. When a VA sets status on multiple tracks of the same ticket (common workflow: marking 20 tracks as NOT_AFFECTED), each call independently locks, evaluates, and releases. Alternative: add a batch variant that acquires the lock once, applies all mutations, then evaluates once. Acceptable to defer.
+**Status**: RESOLVED — Accepted risk: batch optimization deferred intentionally; single-call-per-track is functionally correct (2026-05-25)
 
 ### PKS-DES-03 — set_track_status() lacks WONT_FIX protection specification (High)
 
@@ -146,31 +131,19 @@ Each mutation function independently acquires FOR UPDATE on the parent ticket. W
 
 ### PKS-SEC-01 — No authorization enforcement specified at service layer for acting_user_id (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The spec defines an acting_user_id parameter convention but does not specify any validation that the provided UUID actually corresponds to the authenticated caller. If an API handler passes a different user's UUID (due to a bug or IDOR in the handler), the service would auto-assign the ticket to that user and create audit events attributing the action to them. The service layer trusts the caller completely for identity — which is acceptable if the API layer is the only entry point, but the spec should acknowledge this trust boundary explicitly.
+**Status**: RESOLVED — Accepted risk: trust boundary is by design; API handler is the sole guarantor of acting_user_id correctness (2026-05-25)
 
 ### PKS-SEC-02 — Confidentiality filter delegation creates risk of bypass in new callers (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The search_packages() function receives a pre-built confidentiality_filter from the endpoint handler and states 'The service function is unaware of access rules.' Similarly, get_ticket_packages() relies on the caller performing require_accessible_ticket before invocation. Any new caller that forgets to apply the confidentiality check will expose confidential ticket package data. The spec does not define a defensive fallback.
+**Status**: RESOLVED — Accepted risk: confidentiality delegation to callers is by design; defensive fallback deferred (2026-05-25)
 
 ### PKS-SEC-03 — No input validation specified for package_name parameter (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-The add_package_to_ticket() function accepts a package_name: str that is used to query SMELT and create database records. The spec does not specify any validation (length limit, allowed characters, format).
+**Status**: RESOLVED — Accepted risk: SMELT acts as implicit validator (non-existent packages return empty results); SQL injection mitigated by SQLAlchemy; global 500-char API limit applies (2026-05-25)
 
 ### PKS-SEC-04 — search_packages ILIKE pattern not escaped (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-The search_packages() function applies search as ILIKE '%term%' substring match. The spec does not mention escaping SQL LIKE metacharacters (%, _, \) in user input.
+**Status**: RESOLVED — Accepted risk: no security impact; unescaped LIKE metacharacters can only produce broader search results, not data exposure (2026-05-25)
 
 ---
 

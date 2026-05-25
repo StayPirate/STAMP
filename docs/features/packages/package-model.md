@@ -1015,7 +1015,6 @@ types are defined:
 | VA changes track status | `track_status_changed` | VA user | `track_name`, `package_name`, `old_status`, `new_status` |
 | VA overrides product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
-| Track release detected | `track_released` | `NULL` | `track_name`, `package_name` |
 | Product release detected | `product_released` | `NULL` | `track_name`, `package_name`, `product_id`, `advisory_id` |
 | Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
 
