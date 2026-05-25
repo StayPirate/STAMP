@@ -226,3 +226,52 @@ across all endpoints.
 **Decision needed**: whether to adopt this as a standard API convention,
 and the exact header name (`X-Sentinel-Ignored-Params` vs. a more
 generic alternative).
+
+---
+
+## 6. Periodic Ticket Status Reconciliation as Drift Detection
+
+**Origin**: analysis of TKM-DES-07 (race window between
+`deactivate_user` and concurrent ticket mutations) and broader
+consideration of status drift scenarios.
+
+**Context**: `reconcile_ticket_status` is called inline after every
+mutation, making the system event-driven correct. However, if a bug
+causes a mutation path to skip reconciliation — or if a race condition
+leaves a ticket in a transiently inconsistent state that never receives
+a subsequent mutation — the ticket remains silently drifted with no
+mechanism to detect or correct it. Today, no one would notice.
+
+**Proposed approach**: create a daily scheduled task (BaseFetcher
+subclass) that iterates over all tickets in non-final status and calls
+`reconcile_ticket_status` on each. For every ticket where
+reconciliation actually changes the status (i.e., a drift was found and
+corrected), the task MUST emit a prominent log entry (WARNING level)
+containing:
+
+- Ticket ID and CVE
+- Previous status → new status after reconciliation
+- Timestamp of last mutation on the ticket (to help identify when the
+  drift was introduced)
+
+This allows administrators to discover that a drift occurred, identify
+the affected ticket(s), and investigate the root cause — potentially
+uncovering a bug in a mutation path that failed to call reconciliation.
+
+**Why logging matters**: the primary value is not the self-healing (which
+is a nice side effect) but the **observability**. A silent self-heal
+hides bugs. A logged self-heal surfaces them. The task effectively acts
+as a continuous integration test for the event-driven reconciliation
+architecture.
+
+**Expected behavior under normal operation**: the task completes with
+zero corrections on every run, confirming that all mutation paths are
+correctly calling `reconcile_ticket_status`. Any non-zero correction
+count is an indicator of a defect somewhere in the system.
+
+**Decision needed**: (a) whether this should be a standalone fetcher or
+integrated into an existing periodic task, (b) log level and alerting
+strategy (WARNING + optional webhook notification to ops channel), (c)
+whether to also emit a `TicketAuditEvent` for drift corrections (to
+distinguish admin-triggered reconciliation from bug-induced drift in
+the audit trail).

@@ -308,7 +308,12 @@ when ALL of the following conditions are met:
    without CVE, `severity_override` must be set by the VA
 4. **SUSE CVSS provided** (only for tickets with CVE): the VA must have
    provided BOTH SUSE CVSS v3.1 AND v4.0 assessments (see
-   `docs/features/tickets/cvss-scoring.md`)
+   `docs/features/tickets/cvss-scoring.md`). Note: this is a data
+   completeness requirement — both versions are always required regardless
+   of the system-wide `default_cvss_version` setting. That setting (see
+   `cvss-scoring.md`) controls which version is used for operational
+   decisions (severity resolution, eligibility threshold comparison) but
+   does not affect this gate, which ensures complete CVSS data coverage
 
 This evaluation is performed automatically by the centralized status
 evaluation function (see "Centralized Status Evaluation" below) after

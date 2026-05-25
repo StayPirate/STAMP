@@ -208,11 +208,11 @@ field is `New`. But the real transition for the audit trail is
 ### Multiple invocations within a transaction
 
 `reconcile_ticket_status` may be called multiple times in a single
-transaction during orphan cascades (up to 3 times: product → track →
-package). The function is idempotent — each call ensures consistent
+transaction during orphan cascades. However, `package_service` calls
+reconcile once after the entire orphan cascade completes (not at each
+level). The function is idempotent — each call ensures consistent
 state based on the ticket's current data at that point in the
-transaction. Implementations MUST NOT defer or skip intermediate calls
-for optimization.
+transaction.
 
 ## Concurrency Control
 
@@ -526,14 +526,14 @@ Reverts a ticket from Duplicated status.
 4. Call `auto_assign_actor(ticket, acting_user_id, db, force=True)`:
    assigns the acting user if they hold the `vulnerability_analyst`
    role; otherwise the ticket retains its current assignee
-5. Call `_reenter_gate_zone()`:
+5. Create `TicketAuditEvent` (`duplicate_removed`)
+6. Call `_reenter_gate_zone()`:
    - Saves `original_status = Duplicated`
    - Sets `status = New`
    - Calls `reconcile_ticket_status(previous_status=Duplicated)`
    - Typical outcomes depend on assignee presence:
      - VA actor (assigned): Analysis, Analyzed, or Resolved based on gates
      - Non-VA actor (unassigned): New (assignee gate not met)
-6. Create `TicketAuditEvent` (`duplicate_removed`)
 
 Produces two `TicketAuditEvent` records in the same transaction:
 `duplicate_removed` (user action) followed by `status_change` with
@@ -621,7 +621,9 @@ async def auto_assign_actor(
 
     When force=True: assigns regardless of current assignee. Used by
     manual-zone exit functions (reopen_from_ignored, revert_duplicate)
-    to take ownership.
+    to take ownership. External callers (`package_service`,
+    `ticket_service`, API handlers, background tasks) MUST NOT pass
+    `force=True` — doing so is a bug.
 
     Returns True if assignment was applied (audit event created),
     False otherwise.
@@ -636,9 +638,11 @@ async def auto_assign_actor(
 2. If not `force` and `ticket.assignee_id is not None` → return False
    (already assigned)
 3. Load the acting user's roles. If not VA → return False
-4. Set `ticket.assignee_id = acting_user_id`
-5. Create `TicketAuditEvent` with `event_type = assignment`
-6. Return True
+4. If `ticket.assignee_id == acting_user_id` → return False (assignment
+   unchanged, no audit event)
+5. Set `ticket.assignee_id = acting_user_id`
+6. Create `TicketAuditEvent` with `event_type = assignment`
+7. Return True
 
 > **Caller responsibility**: this function performs assignment only. It
 > does not call `reconcile_ticket_status()`. Callers MUST call
@@ -718,6 +722,7 @@ Requirement).
 | `TicketNoCVEError` | `create_cvss_assessment()` called on a ticket with `cve_id IS NULL` — cannot create CVSS assessment without an associated CVE (maps to 409 `TICKET_NO_CVE`) |
 | `InvalidCVSSVectorError` | Vector string is malformed or unparseable by the `cvss` library (maps to 422 `CVSS_INVALID_VECTOR`) |
 | `CVSSVersionMismatchError` | `update_cvss_assessment()` called with a vector of a different CVSS version than the existing assessment — create a new assessment for the target version instead (maps to 409 `CVSS_VERSION_MISMATCH`) |
+| `TicketInvalidTransitionError` | Ticket is not in the required status for the requested operation (e.g., not Ignored for `reopen_from_ignored`, not Duplicated for `revert_duplicate`). Maps to 409 `TICKET_INVALID_TRANSITION` |
 | `SeverityDerivedError` | `set_severity_override()` called on a ticket with `cve_id IS NOT NULL` — severity is derived from CVSS scores and cannot be manually overridden (maps to 409 `TICKET_SEVERITY_DERIVED`) |
 
 Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
