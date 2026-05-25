@@ -148,10 +148,10 @@ For each `TicketAuditEvent` creation, verify:
 - Every service function **outside** these modules that modifies
   the `Ticket` row (any column: `status`, `assignee_id`, `cve_id`,
   `duplicate_of_id`, `previous_status`, `deleted_at`) or that calls
-  `evaluate_ticket_status` MUST also acquire `FOR UPDATE` on the
+  `reconcile_ticket_status` MUST also acquire `FOR UPDATE` on the
   `Ticket` row as its first database operation
 - Flag any non-gate service that writes to the `Ticket` row or
-  invokes `evaluate_ticket_status` without first acquiring a
+  invokes `reconcile_ticket_status` without first acquiring a
   `FOR UPDATE` lock as a defect
 - See `docs/features/tickets/tickets.md` (Concurrency Control) and
   `docs/conventions.md` (Transaction and Locking) for the full

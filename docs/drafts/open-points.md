@@ -148,7 +148,7 @@ exists.
 Anomaly Observer service — a pure function that reads the current values
 of all three dimensions (affectedness, eligibility, delivery) and
 produces anomaly tags. The observer would be called as a post-mutation
-hook (similar to `evaluate_ticket_status()`) and write results to a
+hook (similar to `reconcile_ticket_status()`) and write results to a
 separate table consumed by the Review Queue UI. It would NEVER modify
 any dimension's state.
 

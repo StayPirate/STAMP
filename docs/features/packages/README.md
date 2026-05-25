@@ -33,7 +33,7 @@ maintainer.md                            Maintainer operations (pending fixes, i
   `package-model.md` — it centralizes all package-centric mutations
   (track status, delivery, product eligibility, soft-delete/restore),
   orchestration (`add_package_to_ticket`), and query operations.
-  Depends on `ticket_mutations.evaluate_ticket_status()`.
+  Depends on `ticket_mutations.reconcile_ticket_status()`.
 - `ibs-submission-tracking.md` is independent but shares the
   `TicketPackageTrack` model and `IBSEventConsumer` infrastructure.
 - `package-bugowner.md` is self-contained — it caches IBS maintainer

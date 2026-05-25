@@ -782,7 +782,7 @@ are handled automatically by the `ticket_mutations` module — see
 `docs/features/tickets/ticket-mutations.md`.
 Exits from the manual zone (Ignored, Duplicated) use the shared
 `_reenter_gate_zone` helper which sets `status = New` and calls
-`evaluate_ticket_status`.
+`reconcile_ticket_status`.
 
 **Status categories**:
 - **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`

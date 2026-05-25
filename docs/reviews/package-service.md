@@ -101,9 +101,9 @@ When `add_package_records()` creates `TicketPackageProduct` records, it must cal
 
 ## Design
 
-### PKS-DES-01 — Orphan cascade calls evaluate_ticket_status() multiple times per operation (Medium)
+### PKS-DES-01 — Orphan cascade calls reconcile_ticket_status() multiple times per operation (Medium)
 
-**Status**: RESOLVED — Cascade now calls evaluate_ticket_status() once at the end (2026-05-25)
+**Status**: RESOLVED — Cascade now calls reconcile_ticket_status() once at the end (2026-05-25)
 
 ### PKS-DES-02 — No mechanism to batch-set track statuses without repeated lock acquisition (Low)
 

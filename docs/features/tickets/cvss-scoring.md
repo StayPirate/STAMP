@@ -392,7 +392,7 @@ with an active ticket, Sentinel performs the following recalculation:
    - Products in Reactive LTSS phase remain `eligible = false` regardless
 3. **Ticket status re-evaluation**: eligibility changes in step 2 MUST be
    applied through the `ticket_mutations` module, which then calls
-   `evaluate_ticket_status` to re-evaluate the ticket status (see
+   `reconcile_ticket_status` to re-evaluate the ticket status (see
    `docs/features/tickets/ticket-mutations.md`).
    The centralized evaluator determines the correct target status.
    **Note**: this re-evaluation can only occur when a VA manually modifies
@@ -559,7 +559,7 @@ records MUST go through the `ticket_mutations` module (see
 4. Updates `CVE.severity` if it changed
 5. Re-evaluates product eligibility using the new score
 6. Creates `TicketAuditEvent` records for each change
-7. Calls `evaluate_ticket_status()` to re-evaluate the ticket status
+7. Calls `reconcile_ticket_status()` to re-evaluate the ticket status
 
 All steps execute within the **same database transaction** as the
 triggering change (atomicity guarantee).

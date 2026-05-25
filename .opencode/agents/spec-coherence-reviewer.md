@@ -126,7 +126,7 @@ the spec under review.
 - Allowed cross-dimensional combinations (NOT violations):
   - Observation points (gates, anomaly detection, presentation views)
     that read multiple dimensions but do not modify any
-  - Post-mutation hooks (e.g., `evaluate_ticket_status()`) that read
+  - Post-mutation hooks (e.g., `reconcile_ticket_status()`) that read
     dimensions but do not modify them
   - Intra-dimensional scope optimizations (e.g., skipping release
     detection for tracks already in `FIXED` status)

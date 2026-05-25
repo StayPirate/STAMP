@@ -121,7 +121,7 @@ with `deleted_at IS NULL` (not directly excluded), the track itself is
 soft-deleted (`deleted_at` set on the track record only), and if the parent
 package has zero remaining tracks with `deleted_at IS NULL`, the package
 itself is soft-deleted. Each step produces a `TicketAuditEvent` (with
-`user_id = NULL`) and calls `evaluate_ticket_status`.
+`user_id = NULL`) and calls `reconcile_ticket_status`.
 
 This is an upward cascade only — child records are never modified. Each
 soft-deletion sets `deleted_at` on the targeted record; descendants become

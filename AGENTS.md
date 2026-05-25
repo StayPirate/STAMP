@@ -536,7 +536,7 @@ ticket status gates MUST go through the appropriate centralized module:
   `ticket_service` (`backend/app/services/ticket_service.py`)
 
 Both `package_service` and `ticket_mutations` call
-`ticket_mutations.evaluate_ticket_status()` after every gate-relevant
+`ticket_mutations.reconcile_ticket_status()` after every gate-relevant
 mutation. `ticket_service` also calls it for operations with indirect
 gate effects (CVE association/removal, assignment, restore). Direct
 modification of gate-relevant records outside the owning module is a
@@ -842,7 +842,7 @@ Allowed cross-dimensional combinations:
 - **Observation points**: gates, anomaly detection, and presentation
   views may read multiple dimensions to produce decisions or display
   — but they must not modify any dimension as a side effect
-- **Post-mutation hooks**: calling `evaluate_ticket_status()` after a
+- **Post-mutation hooks**: calling `reconcile_ticket_status()` after a
   mutation is acceptable because the evaluator reads dimensions but
   does not modify them
 
