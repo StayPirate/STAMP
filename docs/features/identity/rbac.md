@@ -216,6 +216,11 @@ A ticket is visible to a user if ANY of the following is true:
 5. The user's email matches a `PackageBugownerMember` (group member) for
    a package associated with this ticket
 
+Email comparison for rules 4 and 5 is case-insensitive, guaranteed by
+normalized lowercase storage on both sides: User.email (from AD sync)
+and bugowner emails (from IBS sync). A standard equality operator (`=`)
+is sufficient — no runtime ILIKE or lower() is needed.
+
 This means a user with `manage_confidentiality` capability can grant
 explicit access to a confidential ticket to a bot with
 `non_confidential` scope. The grant overrides the scope restriction for
@@ -280,6 +285,14 @@ The 403 response MUST NOT disclose which capability was required. The
 generic message prevents information leakage about the internal
 authorization model.
 
+**Assumption**: this dependency assumes that the request has already
+passed the authentication layer, which verifies `User.active` (step 5
+of the authentication middleware). `require_capability()` does not
+independently verify user active status. Any future authentication
+mechanism that bypasses the standard middleware MUST replicate the
+active-user check before the request reaches capability-protected
+endpoints.
+
 ### Authorization Chain Evaluation Order
 
 For ticket endpoints that are capability-protected and operate on a
@@ -316,22 +329,46 @@ steps 1 and 2 apply.
 
 ### Conditional Capability Checks
 
-Some endpoints are Public or Authenticated but accept optional parameters
-that require a capability. For example, `GET /api/v1/tickets` is Public,
-but the `include_deleted` query parameter requires `admin_ticket_ops`
-capability. In these cases, the capability check is performed inline in
-the handler (not via the `require_capability()` dependency) only when the
-parameter is present. If the caller lacks the required capability, the
-parameter is **silently ignored** — the endpoint returns results as if
-the parameter were not provided. The endpoint never returns 403 for a
-missing query parameter on a Public or Authenticated endpoint; 403 is
-reserved for capability-protected endpoints where the caller cannot
-access the endpoint itself.
+Some endpoints apply conditional capability requirements on optional
+parameters or request body fields. Two distinct patterns exist:
+
+#### Soft Conditional Check (Silent Ignore)
+
+Applies to **query parameters** on list/read endpoints. When the caller
+lacks the required capability, the parameter is silently ignored — the
+request succeeds but the parameter has no effect. The endpoint never
+returns 403 for a missing query parameter on a Public or Authenticated
+endpoint; 403 is reserved for capability-protected endpoints where the
+caller cannot access the endpoint itself.
+
+The capability check is performed inline in the handler (not via the
+`require_capability()` dependency) only when the parameter is present.
+
+The server logs the ignored parameter at DEBUG level (caller identity +
+parameter name). The response includes an `X-Ignored-Parameters` header
+listing parameter names that were silently ignored (see Open Points).
 
 When a parameter is silently ignored due to insufficient capability, the
 backend SHOULD emit a DEBUG-level log entry recording the caller identity
 and the ignored parameter name. The log MUST NOT include the parameter
 value to avoid log injection.
+
+| Endpoint | Parameter | Required Capability |
+|----------|-----------|-------------------|
+| GET /api/v1/tickets | include_deleted | admin_ticket_ops |
+
+#### Hard Conditional Check (403 Rejection)
+
+Applies to **request body fields** on mutation endpoints. When the caller
+provides a field that requires an additional capability and lacks it, the
+endpoint returns 403 (AUTH_INSUFFICIENT_PERMISSION). The field is NOT
+silently ignored — this is a hard authorization failure.
+
+| Endpoint | Field | Required Capability |
+|----------|-------|-------------------|
+| POST /api/v1/tickets | is_confidential: true | manage_confidentiality |
+
+See Business Rule 13 for the full specification of this check.
 
 ## Endpoint Permission Map
 
@@ -374,9 +411,9 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets` | Public | [tickets](../tickets/tickets.md#list-tickets) |
+| GET | `/api/v1/tickets` | Public ‡admin_ticket_ops | [tickets](../tickets/tickets.md#list-tickets) |
 | GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#get-ticket) |
-| POST | `/api/v1/tickets` | `create_ticket` | [tickets](../tickets/tickets.md#create-ticket) |
+| POST | `/api/v1/tickets` | `create_ticket` †manage_confidentiality | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | `triage_ticket` | [tickets](../tickets/tickets.md#associate-cve) |
 | DELETE | `/api/v1/tickets/{ticket_id}/cve` | `admin_ticket_ops` | [tickets](../tickets/tickets.md#remove-cve-from-ticket-admin-only) |
 | PATCH | `/api/v1/tickets/{ticket_id}/severity` | `triage_ticket` | [tickets](../tickets/tickets.md#set-severity-override) |
@@ -499,6 +536,9 @@ here with the required authorization level and a link to the owning spec.
   [ad-integration](ad-integration.md#ldap-sync-fetcher)); local users are created by admins
   via CLI (see [user-management](user-management.md#cli-commands))
 
+† Hard conditional — returns 403 if caller lacks this capability when the triggering field is provided.
+‡ Soft conditional — parameter silently ignored if caller lacks this capability.
+
 ## Business Rules
 
 1. An admin cannot remove their own Admin role. This is enforced by
@@ -578,7 +618,9 @@ here with the required authorization level and a link to the owning spec.
     `is_confidential: true`. If the field is present and the caller lacks
     `manage_confidentiality`, the endpoint returns 403 with error code
     `AUTH_INSUFFICIENT_PERMISSION`. This prevents bots from creating
-    confidential tickets they cannot subsequently access
+    confidential tickets they cannot subsequently access.
+    (This is a _hard conditional check_ — see Conditional Capability Checks
+    above for the pattern definition.)
 14. **Bot account bootstrap**: bot accounts are local users created via
     CLI with the `automation_agent` role:
 

@@ -205,14 +205,22 @@ resolves the bugowner as follows:
    stop
 3. Extract the bugowner type (`person` or `group`) and name from the
    response
-4. If the type is `person`:
+4. **Email normalization**: all email addresses obtained from IBS API
+   responses (`/person/{userid}` and `/group/{group_name}`) MUST be
+   normalized to lowercase before storage (`value.lower()`). This
+   applies to `bugowner_email` in `PackageBugowner` records (person and
+   group bugowners) and `email` in `PackageBugownerMember` records
+   (group members). This guarantees case-insensitive matching with
+   `User.email` (also stored as lowercase from AD sync) without
+   requiring runtime `ILIKE` or `lower()` in queries.
+5. If the type is `person`:
    a. Query `GET /person/{userid}` to obtain the email
    b. Create or update the `PackageBugowner` record with
       `bugowner_type = 'person'`, `bugowner_name = {userid}`,
       `bugowner_email = {email}`
    c. If any `PackageBugownerMember` records exist for this
       `PackageBugowner` (from a previous group assignment), delete them
-5. If the type is `group`:
+6. If the type is `group`:
    a. Query `GET /group/{group_name}` to obtain the group email and
       member list
    b. Create or update the `PackageBugowner` record with

@@ -606,7 +606,7 @@ confidential tickets via `TicketAccessGrant` or bugowner matching.
 |------------------|-------------|--------------------------|----------------------------------|
 | id               | UUID        | PK                       | Internal identifier              |
 | username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username (from AD `sAMAccountName`). Updated by LDAP sync if `sAMAccountName` changes in AD |
-| email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (from AD `mail`)   |
+| email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (from AD `mail`; stored as lowercase)   |
 | full_name        | VARCHAR(255) |                          | Display name (from AD `cn`)      |
 | active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for AD users. See `docs/features/identity/local-authentication.md` |
@@ -1016,7 +1016,7 @@ longer appears in any active ticket. See
 | package_name   | VARCHAR(255) | UNIQUE, NOT NULL     | Source package name (matches `TicketPackage.package_name`) |
 | bugowner_type  | ENUM        | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
 | bugowner_name  | VARCHAR(100) | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
-| bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group. NULL if unresolved |
+| bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group (stored as lowercase). NULL if unresolved |
 | created_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record creation timestamp          |
 | updated_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record update timestamp            |
 
@@ -1039,7 +1039,7 @@ represents one member of the IBS group. See
 | id                   | UUID        | PK                                   | Internal identifier                |
 | package_bugowner_id  | UUID        | FK(package_bugowner.id), NOT NULL    | Parent bugowner record             |
 | userid               | VARCHAR(64)  | NOT NULL                             | IBS username of the group member   |
-| email                | VARCHAR(255) | NOT NULL                             | Email of the group member          |
+| email                | VARCHAR(255) | NOT NULL                             | Email of the group member (stored as lowercase) |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT                    | Record creation timestamp          |
 
 **Unique constraint**: (package_bugowner_id, userid)

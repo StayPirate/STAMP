@@ -63,10 +63,16 @@ model.
 | `objectGUID`        | `ad_object_guid`  | Immutable AD identifier (UUID). Used as the stable matching key during sync |
 | `sAMAccountName`    | `username`          | Username (e.g., `jdoe`). Updated on every sync if changed in AD |
 | `cn`                | `full_name`         | Full display name                    |
-| `mail`              | `email`             | Primary email (`.com`)               |
+| `mail`              | `email`             | Primary email (`.com`). Normalized to lowercase before storage |
 | `manager`           | `manager_id`        | DN of the direct line manager (resolved to `user.id` FK) |
 | `EMPLOYEESTATUS`    | `active`            | Employee status (`Active` or other; absent = skipped)  |
 | `distinguishedName` | *(not persisted)*   | Fetched for in-memory manager resolution (DN to `objectGUID` mapping) and diagnostic logging. Not stored in the database |
+
+The `mail` attribute MUST be normalized to lowercase before storage
+(`value.lower()`). Active Directory does not guarantee consistent casing
+for email addresses. Lowercase normalization ensures reliable equality
+comparison with other email sources (e.g., IBS bugowner emails) without
+requiring runtime case-insensitive operations.
 
 The `MEMBEROF` attribute is read during sync to apply role mappings but
 is not persisted in the database.

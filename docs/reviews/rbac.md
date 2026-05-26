@@ -30,31 +30,19 @@
 
 ### RBAC-GAP-06 — Role removal from user who is sole holder has no impact analysis (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The spec says "An admin cannot remove their own Admin role" (Business Rule 1) but does not specify what happens when removing the admin role from a user who is the last admin OTHER than the acting user. Two admins exist: Admin A removes the admin role from Admin B. Admin B was the sole other admin. The system now has only one admin (A). There is no warning or confirmation for this scenario, unlike deactivation which has an impact preview endpoint.
+**Status**: RESOLVED — Accepted risk: self-removal guard is sufficient; reducing to one admin is an operational choice, not a system defect (2026-05-26)
 
 ### RBAC-GAP-07 — automation_agent scope vs ticket creation visibility paradox unaddressed (Medium)
 
-**Category**: User-facing scenario gaps
-**Status**: OPEN
-
-Business Rule 13 states that automation_agent cannot set is_confidential:true. However, the spec does not address what happens when a ticket auto-created by a fetcher (which has no scope restriction per the "scope is API-layer only" note) is later marked confidential by a VA. The automation_agent loses visibility of a ticket it created. The spec does not specify whether the creator should receive an automatic TicketAccessGrant or whether this is accepted behavior.
+**Status**: RESOLVED — Accepted risk: automation_agent role is only assigned to local bot accounts; internal fetchers operate at service layer without roles or scope restrictions (2026-05-26)
 
 ### RBAC-GAP-08 — Conditional capability check behavior undocumented for non-query parameters (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The spec describes conditional capability checks for "optional parameters" (section Conditional Capability Checks) using include_deleted as the example. It states the parameter is "silently ignored". The spec does not clarify whether this pattern applies only to query parameters or also to optional fields in request bodies (e.g., is_confidential in POST /tickets uses a 403, not silent ignore). The two patterns coexist but the boundary between them is implicit.
+**Status**: RESOLVED — Resolved by RBAC-DES-09 fix: soft/hard conditional pattern distinction now explicit (2026-05-26)
 
 ### RBAC-GAP-09 — No specification for capability check on deactivated but authenticated user (Low)
 
-**Category**: Temporal and concurrency
-**Status**: OPEN
-
-Business Rule 5 states deactivated users cannot authenticate and middleware checks User.active. The authorization chain (section Authorization Chain Evaluation Order) starts with authentication. However, the spec does not explicitly state that require_capability() assumes the user is active (since authentication would have already rejected inactive users). This is obvious but creates a gap if a future auth mechanism bypasses the middleware check.
+**Status**: RESOLVED — Fixed: added defensive assumption note in require_capability() documenting dependency on authentication layer active-user check (2026-05-26)
 
 ---
 
@@ -118,24 +106,15 @@ Business Rule 5 states deactivated users cannot authenticate and middleware chec
 
 ### RBAC-DES-09 — Confidential ticket create requires dual-capability check but no inline pattern defined (Medium)
 
-**Category**: Authorization mechanism consistency
-**Status**: OPEN
-
-Business Rule 13 states that POST /api/v1/tickets requires create_ticket AND manage_confidentiality when is_confidential: true is set. However, the Endpoint Permission Map lists only create_ticket as the authorization. The spec defines the conditional check in BR13 but the mechanism differs from the "Conditional Capability Checks" pattern (which silently ignores parameters). BR13 instead returns 403, creating a hybrid: a capability-protected endpoint that conditionally requires a second capability with hard failure. If a future developer applies the "silently ignored" pattern from the Conditional Capability Checks section, the confidentiality flag would be silently dropped instead of rejected — a security regression.
+**Status**: RESOLVED — Fixed: restructured Conditional Capability Checks into named soft/hard sub-patterns; annotated Endpoint Permission Map with †/‡ conditional notation (2026-05-26)
 
 ### RBAC-DES-10 — Bugowner-based visibility relies on email matching without normalization guarantees (Medium)
 
-**Category**: Edge cases
-**Status**: OPEN
-
-Visibility rule 4-5 grants confidential ticket access when a user's email matches a PackageBugowner or PackageBugownerMember email. If IBS returns emails with different casing (e.g., John.Doe@suse.com) while Sentinel stores AD-synced emails as lowercase (john.doe@suse.com), the match fails silently and the user loses access to tickets they should see. The spec does not mandate case-insensitive comparison or email normalization for bugowner data.
+**Status**: RESOLVED — Fixed: added email lowercase normalization requirement for IBS bugowner and AD ingestion; added case-insensitive matching guarantee in visibility rules (2026-05-26)
 
 ### RBAC-DES-11 — automation_agent scope restriction bypassed by TicketAccessGrant without lifecycle control (Low)
 
-**Category**: Scope model coherence
-**Status**: OPEN
-
-The spec explicitly allows granting a bot (automation_agent, scope non_confidential) access to confidential tickets via TicketAccessGrant. Since the bot has full write capabilities (triage_ticket, manage_packages, etc.), it can modify confidential data it was architecturally scoped out of. The grant has no expiration or auto-revocation mechanism. If an admin forgets to revoke the grant after the bot completes its task, the bot retains permanent access to embargoed data. This is documented as intentional but creates a latent security posture gap with no guardrails.
+**Status**: RESOLVED — Accepted risk: intentional design; TicketAccessGrant lifecycle is admin responsibility; no auto-expiry needed for current use cases (2026-05-26)
 
 ---
 
@@ -178,10 +157,7 @@ The "Conditional Capability Checks" section specifies that parameters requiring 
 
 ### RBAC-SEC-09 — No maximum roles-per-user limit specified (Low)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The spec states users can hold "zero, one, or multiple roles" with union semantics for capabilities and least-restrictive scope. With AD-derived roles creating separate UserRole records per group, there is no specified upper bound on UserRole records per user. While currently only 3 roles exist, the coexistence model (multiple origins per role) could produce unbounded records if many AD groups map to the same role. This is a minor concern given the small role set but worth noting for future extensibility.
+**Status**: RESOLVED — Accepted risk: only 3 predefined roles exist; unbounded UserRole records per user have no practical impact on authorization performance (2026-05-26)
 
 ---
 
