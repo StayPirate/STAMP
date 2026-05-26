@@ -42,16 +42,16 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1 | 2026-05-25 | ⚠️ |
 | |  |  | 1:🟡 |  |  |  |  |  |
-| [ticket-service](ticket-service.md) | 5 | 🟢 | 1 | 4 | 🟢 | 10 | 2026-05-26 | ⚠️ |
-| | 5:🟡 |  | 1:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-26 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-20 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **8** | **0** | **2** | **4** | **0** | **14** |  |  |
-|  | 2:🟠 6:🟡 |  | 2:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| **Total** | **3** | **0** | **1** | **0** | **0** | **4** |  |  |
+|  | 2:🟠 1:🟡 |  | 1:🟡 |  |  |  |  |  |
 
 ### Disabled specs
 

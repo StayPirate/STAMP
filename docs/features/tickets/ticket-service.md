@@ -180,11 +180,11 @@ comment (e.g., "Ticket created manually", "CVE ingested from NVD",
   ticket)
 - If `is_confidential` is True: the acting user must hold
   `manage_confidentiality` capability (enforced at the API layer)
-- If both `cve_id` and `severity_override` are provided:
-  `severity_override` is stored but not used for severity resolution
-  while the CVE is associated (severity is derived from CVSS). The
-  override serves as a historical record of the VA's initial assessment
-  and as a fallback if the CVE is later dissociated
+- If both `cve_id` and `severity_override` are provided: the service
+  raises `SeverityDerivedError`. When a CVE is associated, severity is
+  derived exclusively from CVSS assessments — manual override is not
+  applicable. UI implementations should disable the severity field when
+  a CVE is provided at creation time
 
 **Behavioral steps**:
 
@@ -197,9 +197,11 @@ comment (e.g., "Ticket created manually", "CVE ingested from NVD",
      `status = Analysis`, `assignee_id = acting_user_id`
    - Otherwise: `status = New`
 4. Create `TicketAuditEvent` (`ticket_created`, comment from `source`)
-5. If assigned (step 3): create `TicketAuditEvent` (`assignment`)
-6. If CVE associated: create `TicketAuditEvent` (`cve_associated`)
-7. Return the created Ticket
+5. If `severity_override` provided: create `TicketAuditEvent`
+   (`severity_changed`, `old_value = NULL`, `new_value = <override>`)
+6. If assigned (step 3): create `TicketAuditEvent` (`assignment`)
+7. If CVE associated: create `TicketAuditEvent` (`cve_associated`)
+8. Return the created Ticket
 
 **Concurrency — CVE uniqueness**: If the INSERT raises an
 `IntegrityError` due to the UNIQUE constraint on `Ticket.cve_id` (race
@@ -212,8 +214,8 @@ to `409 TICKET_CVE_CONFLICT`.
 **reconcile_ticket_status**: Not called — initial status is determined by
 fixed rules, and the ticket cannot have packages at creation time.
 
-**Audit events**: Up to 3 (`ticket_created`, `assignment`,
-`cve_associated`).
+**Audit events**: Up to 4 (`ticket_created`, `severity_changed`,
+`assignment`, `cve_associated`).
 
 ### associate_cve
 
@@ -385,6 +387,10 @@ package data, it has an indirect gate effect: the Analysis gate requires
 **Audit events**: `assignment` (only if assignee actually changes).
 Possibly `status_change` (from evaluate).
 
+**auto_assign_actor**: Not called — this operation performs an explicit
+assignment to a specified user, which supersedes implicit
+auto-assignment of the acting user.
+
 ### ignore_ticket
 
 Transitions a ticket to Ignored status (manual-zone entry).
@@ -541,7 +547,9 @@ Transaction ownership above).
 1. Open a new session via `db_session_factory()`
 2. Acquire `FOR UPDATE` on the cascade ticket
 3. Verify the ticket is still in Duplicated status and still points to
-   the original ticket (skip if reverted concurrently)
+   the original ticket. If reverted concurrently, the function logs an
+   informational message (ticket ID + observed state) and skips to the
+   next ticket
 4. Set `duplicate_of_id = canonical_target_id`
 5. Create `TicketAuditEvent` (`duplicate_target_changed`)
 6. Commit the session
@@ -700,6 +708,9 @@ async def grant_access(
 - Ticket must be confidential (`is_confidential = true`; else
   `TicketNotConfidentialError`)
 - Target user must exist (else `UserNotFoundError`)
+- Target user must be active (else `InactiveUserError`). Note: this
+  check does not apply to `revoke_access` — revoking a grant from an
+  inactive user is a legitimate cleanup operation
 - Requires `manage_confidentiality` capability (enforced at API layer)
 
 **Behavioral steps**:
@@ -707,12 +718,13 @@ async def grant_access(
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Call `ensure_ticket_operable(ticket)`
 3. Verify ticket is confidential (else `TicketNotConfidentialError`)
-4. **Idempotency check**: if grant already exists for this user, return
+4. Verify target user is active (else `InactiveUserError`)
+5. **Idempotency check**: if grant already exists for this user, return
     existing grant unchanged (no audit event)
-5. INSERT `TicketAccessGrant` record (`ticket_id`, `user_id`,
+6. INSERT `TicketAccessGrant` record (`ticket_id`, `user_id`,
     `granted_by = acting_user_id`, `granted_at = now(UTC)`)
-6. Create `TicketAuditEvent` (`access_grant_added`)
-7. Return the created grant
+7. Create `TicketAuditEvent` (`access_grant_added`)
+8. Return the created grant
 
 **Concurrency**: If two concurrent requests attempt to grant access to
 the same user, the UNIQUE constraint on `TicketAccessGrant`

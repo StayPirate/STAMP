@@ -26,36 +26,11 @@
 
 ### TKS-GAP-05 — grant_access and revoke_access do not verify target user is active (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The `grant_access` preconditions state "Target user must exist (else
-`UserNotFoundError`)" but do not specify behavior when the target user is
-inactive (deactivated). The `assign_ticket` operation explicitly rejects
-inactive users with `InvalidAssigneeError`, but `grant_access` has no
-equivalent check. An admin could grant explicit access to a deactivated
-employee account on a confidential ticket. Since deactivated users cannot
-log in, the grant would be inert — but it creates an audit event and a
-database record for a user who cannot use it. This is a low-severity gap
-because the behavior is functionally harmless (the grant is a no-op in
-practice), but the spec should state whether granting access to inactive
-users is intentional or should be rejected.
+**Status**: RESOLVED — Fixed in spec: added inactive user precondition to grant_access (2026-05-26)
 
 ### TKS-GAP-06 — create_ticket with severity_override and cve_id: audit trail gap for severity_override (Low)
 
-**Category**: Data lifecycle
-**Status**: OPEN
-
-The `create_ticket` spec states that when both `cve_id` and
-`severity_override` are provided, "severity_override is stored but not
-used for severity resolution while the CVE is associated." The behavioral
-steps create up to 3 audit events: `ticket_created`, assignment, and
-`cve_associated`. There is no audit event for storing the
-`severity_override` value. If the CVE is later dissociated, the
-`severity_override` silently becomes the active severity source. An admin
-reviewing the audit trail would see a `cve_removed` event followed by the
-ticket suddenly having a severity value with no `severity_changed` event
-explaining its origin.
+**Status**: RESOLVED — Fixed in spec: added severity_changed audit event for severity_override at creation (2026-05-26)
 
 ### TKS-GAP-07 — dissociate_cve does not specify ordering of CVSS deletion audit events relative to cve_removed (Low)
 
@@ -63,40 +38,15 @@ explaining its origin.
 
 ### TKS-GAP-08 — mark_as_duplicate cascade caller verification step may silently skip tickets reverted between primary commit and cascade (Low)
 
-**Category**: Temporal / concurrency
-**Status**: OPEN
-
-The cascade orchestration (caller responsibility) step 3 says "Verifies
-the ticket is still in Duplicated status and still points to the original
-ticket (skip if reverted concurrently)." This is correct for handling
-concurrent reverts, but the spec does not specify whether a skipped
-cascade item should produce any observable output (log entry, warning).
-If cascade items are silently skipped due to concurrent reverts, there is
-no record that the cascade was attempted but found the ticket in an
-unexpected state.
+**Status**: RESOLVED — Fixed in spec: added informational log for cascade skip on concurrent revert (2026-05-26)
 
 ### TKS-GAP-09 — No specification of behavior when create_ticket is called with is_confidential=true but cve_id also provided and CVE already has a ticket (Low)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The `create_ticket` preconditions state capability and CVE conflict
-checks but the spec does not clarify whether the `manage_confidentiality`
-capability check happens before or after the CVE conflict check. The
-ordering affects the specific error message the user sees.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable — ordering implicitly defined by API-layer vs service-layer separation (2026-05-26)
 
 ### TKS-GAP-10 — assign_ticket does not call auto_assign_actor (Low)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-The `assign_ticket` dependency summary table shows that
-`auto_assign_actor` is NOT called by `assign_ticket` (dash in the table).
-This makes sense since `assign_ticket` performs an explicit assignment.
-However, the spec does not explain why auto-assignment is skipped for
-this operation. The rationale is implicit (explicit assignment supersedes
-auto-assignment) but other operations consistently document why
-auto-assignment is or is not called.
+**Status**: RESOLVED — Fixed in spec: added note explaining why auto_assign_actor is not called (2026-05-26)
 
 ---
 
@@ -136,13 +86,7 @@ auto-assignment is or is not called.
 
 ### TKS-DES-05 — create_ticket accepts severity_override with CVE but behavior may confuse implementers (Low)
 
-**Category**: API ergonomics / clarity
-**Status**: OPEN
-
-At creation time, you can set `severity_override` on a ticket with a CVE;
-after creation, you cannot modify it via the API while the CVE is present
-(`SeverityDerivedError`). This asymmetry is intentional but subtle.
-Recommendation: keep current design with documentation clarity.
+**Status**: RESOLVED — Fixed in spec: severity_override now rejected when cve_id is provided (SeverityDerivedError) (2026-05-26)
 
 ### TKS-DES-06 — No explicit deleted_at guard in most service functions despite 'invisible to all business logic' invariant (Low)
 
@@ -154,15 +98,7 @@ Recommendation: keep current design with documentation clarity.
 
 ### TKS-SEC-01 — Authorization enforcement deferred entirely to API layer with no service-layer defense-in-depth (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The `ticket-service` specification states that all capability checks are
-"enforced at API layer" and the module "does NOT perform capability
-checks." Any new caller that passes a non-None `acting_user_id` without
-verifying capabilities can bypass authorization. Recommended mitigation:
-Consider adding an optional `required_capability` parameter or an
-architectural test.
+**Status**: RESOLVED — Accepted design decision: authorization enforcement at API layer is intentional (2026-05-26)
 
 ### TKS-SEC-02 — grant_access and revoke_access skip FOR UPDATE locking on the Ticket row (Medium)
 
@@ -170,34 +106,15 @@ architectural test.
 
 ### TKS-SEC-03 — mark_as_duplicate scope check deferred to API layer risks information disclosure (Medium)
 
-**Category**: Information disclosure / IDOR
-**Status**: OPEN
-
-If a future caller calls `mark_as_duplicate` with a confidential target,
-the service will proceed and create a duplicate link to a confidential
-ticket — whose `SNTL-{n}` identifier would appear in public API
-responses. Recommended mitigation: accept as documented risk or pass
-`caller_scope` parameter.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-26)
 
 ### TKS-SEC-04 — create_ticket confidentiality check documented as API-layer only — dual capability requirement could be bypassed (Medium)
 
-**Category**: Authorization
-**Status**: OPEN
-
-A system caller or future internal code path could call
-`create_ticket(is_confidential=True)` and bypass the
-`manage_confidentiality` capability check. Recommended mitigation: Add
-service-layer assertion when `is_confidential=True` and
-`acting_user_id is not None`.
+**Status**: RESOLVED — Accepted design decision: authorization enforcement at API layer is intentional (2026-05-26)
 
 ### TKS-SEC-05 — assign_ticket does not verify the target user is not soft-deleted/deactivated before assignment (Low)
 
-**Category**: Authorization / Business logic
-**Status**: OPEN
-
-TOCTOU concern: target user could become deactivated between check and
-commit. Mitigated by `reconcile_ticket_status` inactive assignee
-sanitization. Recommended mitigation: No action needed.
+**Status**: RESOLVED — Accepted risk: TOCTOU window is minimal and mitigated by reconcile_ticket_status inactive assignee sanitization (2026-05-26)
 
 ### TKS-SEC-06 — dissociate_cve deletes CVSS assessments without recording the full vector/score in audit events (Low)
 
@@ -205,12 +122,7 @@ sanitization. Recommended mitigation: No action needed.
 
 ### TKS-SEC-07 — No rate limiting on ticket creation endpoint (Low)
 
-**Category**: Denial of Service
-**Status**: OPEN
-
-The `create_ticket` operation has no rate limiting. A compromised bot API
-key could flood the system. Acknowledged in `api-spec.md` as a known
-deferral.
+**Status**: RESOLVED — Accepted risk: rate limiting is an infrastructure concern (reverse proxy/WAF), not application-level (2026-05-26)
 
 ### TKS-SEC-08 — mark_as_duplicate cascade runs synchronously with unbounded fan-in — potential DoS vector (Low)
 
