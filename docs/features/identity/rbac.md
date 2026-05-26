@@ -546,10 +546,18 @@ here with the required authorization level and a link to the owning spec.
     `vulnerability_analyst` role can be assigned as ticket owners. The
     `triage_ticket` capability controls who can *perform* the assignment;
     the VA role controls who can *be the target*. This constraint is
-    enforced only at assignment time (prospective) — if a user loses the
-    VA role while assigned to tickets, existing assignments are not
-    retroactively invalidated. This is a business rule, not a capability
-    check
+    enforced at two levels:
+    - **Prospective** (assignment time): attempting to assign a ticket to
+      a user without the VA role, or to an inactive user, is rejected
+      with 400 Bad Request
+    - **Retroactive** (role removal): if a user loses the
+      `vulnerability_analyst` role entirely (no remaining `UserRole`
+      records from any origin), all their active ticket assignments (New,
+      Analysis, Analyzed) are automatically unassigned, with
+      corresponding `TicketAuditEvent` records and status reconciliation
+      — identical to the behavior on user deactivation. See
+      `docs/features/identity/user-service.md`,
+      `_unassign_tickets_on_va_role_loss()`
 11. **Auto-assignment**: when a user modifies an unassigned ticket, the
     ticket is auto-assigned to the acting user **only if** the acting user
     holds the `vulnerability_analyst` role. If the acting user holds only

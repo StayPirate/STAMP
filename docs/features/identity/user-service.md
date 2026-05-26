@@ -155,6 +155,80 @@ and `reset_password()` MUST NOT be logged, included in error messages, or
 exposed in stack traces. Implementations must treat these fields as opaque
 secrets that exist only for the duration of hashing.
 
+### Private Helpers
+
+These are internal functions not exposed to callers. They encapsulate
+shared logic used by multiple public operations.
+
+#### `_unassign_active_tickets(db, user_id, reason)`
+
+Performs bulk ticket unassignment for a user. No guard on roles or active
+status — executes the unassignment unconditionally.
+
+**Behavior**:
+
+1. Query all tickets where `assignee_id = user_id`, `deleted_at IS NULL`,
+   and status is active (New, Analysis, or Analyzed — see
+   `docs/features/tickets/tickets.md` § Status Categories)
+2. For each matching ticket, set `assignee_id = NULL`
+3. For each matching ticket, create a `TicketAuditEvent` with
+   `event_type = assignment`:
+   - `user_id = NULL` (system action)
+   - `old_value` = user's username
+   - `new_value` = `NULL`
+   - `comment` = `"Unassigned from {username}: {reason}"`
+4. Add each de-assigned ticket to the revisit queue for follow-up
+   reassignment (see future specification)
+5. For each matching ticket, call
+   `ticket_mutations.reconcile_ticket_status()` to re-evaluate gates
+   (the Analysis gate requires `assignee_id IS NOT NULL`, so the ticket
+   regresses accordingly)
+
+Tickets in inactive statuses (Resolved, Ignored, Duplicated) are not
+touched — they are closed and do not need an active assignee. Ticket
+history preserves the previous assignment via the TicketAuditEvent record.
+No attempt is made to reassign to the manager or any other user.
+
+#### `_unassign_tickets_on_va_role_loss(db, user_id, reason)`
+
+Conditionally unassigns tickets when a user may have lost the
+`vulnerability_analyst` role entirely. Serializes concurrent checks via
+row-level locking.
+
+**Behavior**:
+
+1. Acquire a row-level lock on the User record:
+   `SELECT ... FROM user WHERE id = user_id FOR UPDATE`. This serializes
+   concurrent VA role loss checks for the same user (see Concurrency
+   Considerations)
+2. Query: does at least one `UserRole` record exist with
+   `user_id = user_id` and `role = vulnerability_analyst` (any
+   `ad_group_cn`)?
+3. If yes → no-op, return. The user still holds the VA role from at
+   least one origin
+4. If no → call `_unassign_active_tickets(db, user_id, reason)`
+
+**Design rationale**: the guard in step 2 ensures that removing one
+source of the VA role (e.g., manual) does not trigger unassignment when
+another source (e.g., AD-derived) still exists. The `FOR UPDATE` lock
+in step 1 prevents a race condition where two concurrent transactions
+(each removing one VA role source) both see the other source as still
+present and skip unassignment — leaving the user with no VA role but
+tickets still assigned.
+
+**Lock contention**: when called from `sync_role_mapping()` or
+`delete_role_mapping_roles()` for multiple users within a single
+transaction, each call acquires a separate `FOR UPDATE` lock on its
+target user. All locks are held until the transaction commits. If a lock
+cannot be acquired (blocked by a concurrent transaction on the same
+user), the calling transaction waits. If PostgreSQL's `lock_timeout` or
+`statement_timeout` fires, the resulting exception propagates to the
+caller and rolls back the entire transaction — this is the intended
+behavior (atomicity). Callers operating on bounded user sets (role
+mappings are expected to have <100 members) accept this cost.
+Large-scale operations (LDAP sync) process each mapping independently
+via per-service-call transactions, limiting the blast radius.
+
 ### `create_user()`
 
 Creates a new User record with optional initial roles.
@@ -334,13 +408,25 @@ Adds or removes roles for a user.
 4. For each entry in `effective_add`, create UserRole if not already
    present, with `assigned_by = acting_user_id`
 5. For each entry in `effective_remove`, delete matching UserRole record
-6. For each role added, create `IdentityAuditEvent` with `event_type =
+6. VA role loss check: if `vulnerability_analyst` appears in
+   `effective_remove`, call
+   `_unassign_tickets_on_va_role_loss(db, user_id,
+   "vulnerability_analyst role removed")`.
+   **Ordering invariant**: this step MUST execute after step 5's
+   deletion, because `_unassign_tickets_on_va_role_loss()` checks for
+   *remaining* VA roles — if the role being removed has not yet been
+   deleted, the check would always find it and never trigger
+   unassignment
+7. For each role added, create `IdentityAuditEvent` with `event_type =
    role_added`; for each role removed, `event_type = role_removed`. All
    events created via `IdentityAuditLog.log_event()` in the same
    transaction.
-7. Return updated User with current roles
+8. Return updated User with current roles
 
-**TicketAuditEvent**: none (role changes do not directly affect tickets)
+**TicketAuditEvent**: if removing the `vulnerability_analyst` role causes
+the user to lose it entirely (no remaining `UserRole` records for that
+role from any origin), one `assignment` event per unassigned active
+ticket. See `_unassign_tickets_on_va_role_loss()`. Otherwise, none.
 
 **IdentityAuditEvent**: `role_added` / `role_removed` per effective
 change. See `docs/features/identity/identity-audit-log.md`.
@@ -383,19 +469,28 @@ created.
    system-assigned regardless of the initiator)
 5. Delete all `UserRole` records where `user_id` is in `to_remove`,
    `role` matches, and `ad_group_cn` matches
-6. For each user in `to_add`, create `IdentityAuditEvent` with
+6. VA role loss check: if `role` is `vulnerability_analyst` and
+   `to_remove` is non-empty, call
+   `_unassign_tickets_on_va_role_loss(db, user_id,
+   "vulnerability_analyst role removed (AD sync)")` for each user in
+   `to_remove`
+7. For each user in `to_add`, create `IdentityAuditEvent` with
    `event_type = role_added`, `user_id = NULL` (system), `detail`
    including `{"source": "ad_sync", "mapping": "..."}`. For each user
    in `to_remove`, `event_type = role_removed` with same detail. All
    events via `IdentityAuditLog.log_event()`.
-7. Return `(added_count, removed_count)`
+8. Return `(added_count, removed_count)`
 
 **Idempotency**: calling this function twice with the same
 `current_member_user_ids` produces the same result — the second call
 finds nothing to add or remove. The UNIQUE constraint on
 `(user_id, role, ad_group_cn)` prevents duplicate records.
 
-**TicketAuditEvent**: none (role changes do not directly affect tickets)
+**TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
+it causes any user to lose the role entirely (no remaining `UserRole`
+records from any origin), one `assignment` event per unassigned active
+ticket per affected user. See `_unassign_tickets_on_va_role_loss()`.
+Otherwise, none.
 
 **IdentityAuditEvent**: `role_added` / `role_removed` per effective
 change, with `user_id = NULL` (AD sync, system action). See
@@ -428,11 +523,19 @@ Used when a role mapping is deleted via
    Assign admin via another mapping or manually before retrying."
    No `UserRole` records are removed — the operation is atomic
 3. Delete all matching `UserRole` records
-4. For each removed `UserRole`, create `IdentityAuditEvent` with
+4. VA role loss check: if `role` is `vulnerability_analyst`, call
+   `_unassign_tickets_on_va_role_loss(db, user_id,
+   "vulnerability_analyst role removed (role mapping deleted)")` for
+   each user in `affected_user_ids`
+5. For each removed `UserRole`, create `IdentityAuditEvent` with
    `event_type = role_removed` via `IdentityAuditLog.log_event()`
-5. Return `affected_users_count`
+6. Return `affected_users_count`
 
-**TicketAuditEvent**: none (role changes do not directly affect tickets)
+**TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
+it causes any user to lose the role entirely (no remaining `UserRole`
+records from any origin), one `assignment` event per unassigned active
+ticket per affected user. See `_unassign_tickets_on_va_role_loss()`.
+Otherwise, none.
 
 **IdentityAuditEvent**: `role_removed` per affected user. See
 `docs/features/identity/identity-audit-log.md`.
@@ -477,31 +580,12 @@ in this specific order):
    `docs/features/identity/authentication.md` (Session invalidation) for the
    session service contract.
 3. Set `User.active = false`
-4. Unassign open tickets: for each ticket where `assignee_id` points to
-   the deactivated user, `deleted_at IS NULL`, and the ticket is in
-   active status (New, Analysis, or Analyzed — see
-   `docs/features/tickets/tickets.md` § Status Categories), set
-   `assignee_id = NULL`. Each de-assigned ticket is added to the revisit
-   queue for follow-up reassignment (see future specification). Tickets
-   in inactive statuses (Resolved, Ignored, Duplicated) retain their
-   current assignee. No active ticket should retain an assignee pointing
-   to an inactive user — ticket history preserves the previous assignment
-   via the TicketAuditEvent record. No attempt is made to reassign to
-   the manager or any other user.
-   Create a `TicketAuditEvent` of type
-   `assignment` with:
-   - `user_id = NULL` (system action)
-   - `old_value` = deactivated user's username
-   - `new_value` = `NULL`
-   - `comment` = `"Unassigned from {old}: employee deactivated"`
-5. Reconcile ticket status: after the bulk unassignment, iterate over
-   the affected ticket IDs and call
-   `ticket_mutations.reconcile_ticket_status()` for each one. This
-   ensures immediate gate re-evaluation (the Analysis gate requires
-   `assignee_id IS NOT NULL`) so that no ticket remains in an incorrect
-   status after the unassignment. This call happens in the same
-   transaction, guaranteeing atomicity with the unassignment and audit
-   event creation.
+4. Unassign open tickets and reconcile status: call
+   `_unassign_active_tickets(db, user_id, reason)` where `reason` is the
+   value passed to `deactivate_user()`. This unassigns all active tickets,
+   creates TicketAuditEvents, adds tickets to the revisit queue, and
+   reconciles ticket status — all within the same transaction. See
+   Private Helpers for the full contract.
 
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
 user is marked as inactive. This ensures that if the process is
@@ -653,11 +737,17 @@ entire operation is rolled back. This ensures that a user is never left in
 a partially-deactivated state (e.g., marked inactive but tickets not
 unassigned).
 
+Operations that conditionally produce side effects (`update_roles`,
+`sync_role_mapping`, `delete_role_mapping_roles`) MUST also execute within
+a single database transaction when removing the `vulnerability_analyst`
+role, ensuring atomicity between role removal, ticket unassignment,
+TicketAuditEvent creation, and status reconciliation. When no VA role is
+being removed, these operations perform a single logical write and
+atomicity is less critical.
+
 Operations without side effects (`create_user`, `update_user`,
-`update_roles`, `sync_role_mapping`, `delete_role_mapping_roles`,
-`reactivate_user`) are also transactional but the
-atomicity requirement is less critical since they perform a single
-logical write.
+`reactivate_user`) are also transactional but the atomicity requirement is
+less critical since they perform a single logical write.
 
 ## Concurrency Considerations
 
@@ -679,10 +769,10 @@ want to adjust a user's roles before reactivating them.
 
 ### Concurrent role modification from multiple entry points
 
-`update_roles()` does not require row-level locking. Each role is an
-independent tuple `(user_id, role, ad_group_cn)` managed via atomic
-INSERT/DELETE operations — there is no read-modify-write pattern.
-Concurrency safety is guaranteed by:
+`update_roles()` does not require row-level locking for the role
+INSERT/DELETE operations themselves. Each role is an independent tuple
+`(user_id, role, ad_group_cn)` managed via atomic INSERT/DELETE
+operations. Concurrency safety for role records is guaranteed by:
 
 1. **UNIQUE constraint** `(user_id, role, ad_group_cn)` — prevents
    duplicate records regardless of timing
@@ -693,8 +783,24 @@ Concurrency safety is guaranteed by:
    a role not present is a no-op. Two concurrent identical operations
    produce the same final state as one
 
-No locking, serialization, or coordination is needed between CLI, API,
-and LDAP sync entry points for role modifications.
+**Exception — VA role removal**: when `vulnerability_analyst` is being
+removed, `_unassign_tickets_on_va_role_loss()` introduces a
+read-modify-write pattern (check remaining VA roles → conditionally
+unassign tickets). This is serialized by a `SELECT ... FOR UPDATE` lock
+on the `User` row inside the helper. Without this lock, two concurrent
+transactions removing the last two VA role sources (e.g., admin removing
+manual role + LDAP sync removing AD-derived role) could each see the
+other source as still present and skip unassignment, leaving the user
+with no VA role but tickets still assigned.
+
+### Concurrent role removal and deactivation
+
+If `update_roles()` removes the VA role and `deactivate_user()` runs
+concurrently for the same user, both may attempt ticket unassignment.
+The `FOR UPDATE` lock on the User row in both operations serializes
+them. The first to commit performs the unassignment; the second finds no
+assigned tickets (or finds the user already inactive) and is a no-op. No
+duplicate TicketAuditEvents are created.
 
 ## Service Exceptions
 

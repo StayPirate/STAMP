@@ -413,15 +413,20 @@ only if you understand the impact."
 
    **Step ordering rationale (5→6→7)**: steps 5, 6, and 7 operate on
    independent data and produce independent side effects. Step 5
-   manages `UserRole` records (no TicketAuditEvents). Step 6 manages
-   `active` status, API keys, sessions, and ticket assignments (with
-   TicketAuditEvents). Step 7 sets `active = true` (no TicketAuditEvents). Roles
-   are not affected by deactivation or reactivation — they persist
-   across status changes. The `newly_deactivated` and
-   `newly_reactivated` lists are mutually exclusive by construction
-   (a user cannot be both `active = true` and `active = false` in the
-   DB). Therefore the ordering of these steps does not affect
-    correctness or TicketAuditEvent content.
+   manages `UserRole` records. When it removes the
+   `vulnerability_analyst` role and no other origin remains for a user,
+   it also produces `TicketAuditEvent` records via
+   `_unassign_tickets_on_va_role_loss()` — but only for tickets not
+   already unassigned by a prior deactivation (step 6 in a previous
+   sync run), making the two steps operationally independent within any
+   single run. Step 6 manages `active` status, API keys, sessions, and
+   ticket assignments (with TicketAuditEvents). Step 7 sets
+   `active = true` (no TicketAuditEvents). Roles are not affected by
+   deactivation or reactivation — they persist across status changes.
+   The `newly_deactivated` and `newly_reactivated` lists are mutually
+   exclusive by construction (a user cannot be both `active = true` and
+   `active = false` in the DB). Therefore the ordering of these steps
+   does not affect correctness or produce duplicate TicketAuditEvents.
 
 #### Transaction boundaries
 

@@ -403,14 +403,26 @@ acting user holds the `vulnerability_analyst` role — if not (e.g., an
 `automation_agent`), auto-assignment is skipped and the ticket remains
 unassigned.
 
-**System-initiated unassignment**: in addition to the bulk unassignment
-performed by `deactivate_user` (see
-[user-service.md](../identity/user-service.md#deactivate_user)),
-`reconcile_ticket_status` also performs system-initiated unassignment
-when it encounters an inactive assignee on a non-final ticket (see
-[Inactive Assignee Sanitization](ticket-mutations.md#inactive-assignee-sanitization)).
-This ensures that even if a ticket enters the gate zone or is evaluated
-after the deactivation event, the stale assignee is cleared.
+**System-initiated unassignment**: tickets are automatically unassigned
+in three scenarios:
+
+1. **User deactivation**: bulk unassignment via `deactivate_user` when a
+   user is deactivated (see
+   [user-service.md](../identity/user-service.md#deactivate_user))
+2. **VA role loss**: bulk unassignment via
+   `_unassign_tickets_on_va_role_loss` when a user loses the
+   `vulnerability_analyst` role entirely — no remaining `UserRole`
+   records from any origin (see
+   [user-service.md](../identity/user-service.md#private-helpers))
+3. **Inactive assignee sanitization**: individual cleanup by
+   `reconcile_ticket_status` when it encounters an inactive assignee on
+   a non-final ticket (see
+   [Inactive Assignee Sanitization](ticket-mutations.md#inactive-assignee-sanitization))
+
+Scenarios 1 and 2 are proactive (triggered at the point of mutation).
+Scenario 3 is reactive (catch-up mechanism that runs during gate
+evaluation, ensuring that even if a ticket enters the gate zone after
+the triggering event, the stale assignee is cleared).
 
 ### Auto-Assignment on Unassigned Tickets
 
