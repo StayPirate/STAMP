@@ -83,8 +83,8 @@ having verified the corresponding capability is a security bug.
 | Module | Relationship |
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
-| `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `reconcile_ticket_status()` and `auto_assign_actor()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
-| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern but are NOT routed through `ticket_mutations` |
+| `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
+| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern and import `ensure_ticket_operable()` from `ticket_mutations` |
 
 ## State Machine Zones
 
@@ -101,8 +101,9 @@ tickets in this zone (with the exception of manual-zone exit functions).
 
 Status is set by explicit user actions or specific system events.
 `reconcile_ticket_status` never operates on tickets in the manual zone.
-Gate-relevant mutations are blocked at the API level
-(`require_ticket_mutable` returns 409 `TICKET_NOT_MUTABLE`).
+Gate-relevant mutations are blocked at the service layer by
+`ensure_ticket_operable()` (raises `TicketNotMutableError` → 409
+`TICKET_NOT_MUTABLE`).
 
 ### `_reenter_gate_zone()` (private helper)
 
@@ -261,17 +262,71 @@ ticket. This is always the case because every public function in the
 module acquires the lock as its first operation, and
 `reconcile_ticket_status` is only called from within those functions.
 
+## `ensure_ticket_operable()`
+
+A shared guard function that rejects mutations on non-operable tickets.
+Called after acquiring `FOR UPDATE` on the ticket row by all mutation
+functions in `ticket_mutations`, `ticket_service`, and `package_service`
+— except for explicit opt-outs documented per function.
+
+**Signature**:
+
+```python
+def ensure_ticket_operable(ticket: Ticket) -> None:
+    """Reject mutations on soft-deleted or manually-closed tickets.
+
+    Call after acquiring FOR UPDATE on the ticket row.
+    Raises TicketSoftDeletedError if deleted_at is set.
+    Raises TicketNotMutableError if status is Ignored or Duplicated.
+
+    Precedence: when a ticket is both soft-deleted AND in Ignored/Duplicated
+    status, TicketSoftDeletedError wins (soft-delete is checked first).
+    This ordering is intentional and contractual.
+    """
+```
+
+**Behavior**:
+
+1. If `ticket.deleted_at is not None` → raise `TicketSoftDeletedError`
+2. If `ticket.status ∈ {Ignored, Duplicated}` → raise
+   `TicketNotMutableError`
+
+This function performs no database operations. It validates invariants
+on an already-loaded `Ticket` object. The caller is responsible for
+loading the ticket with `SELECT ... FOR UPDATE` before invoking this
+function.
+
+**Opt-out cases**:
+
+- `reopen_from_ignored` — must operate on Ignored tickets; retains only
+  the soft-delete guard inline
+- `revert_duplicate` — must operate on Duplicated tickets; retains only
+  the soft-delete guard inline
+- `soft_delete_ticket` (in `ticket_service`) — operates on any status;
+  retains only a soft-delete idempotency check
+- `restore_ticket` (in `ticket_service`) — operates on soft-deleted
+  tickets by definition
+
+**Consumers**:
+
+| Module | Functions that call `ensure_ticket_operable` |
+|--------|----------------------------------------------|
+| `ticket_mutations` | `create_cvss_assessment`, `update_cvss_assessment`, `delete_cvss_assessment`, `set_severity_override` |
+| `ticket_service` | `associate_cve`, `dissociate_cve`, `assign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_confidentiality`, `grant_access`, `revoke_access` |
+| `package_service` | `set_track_status`, `set_track_delivery_status`, `set_product_eligibility`, `set_product_released_at`, and other mutation functions |
+
 ## Gate-Relevant Mutation Operations
 
 Each function below follows the same pattern:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
-4. Apply the mutation
-5. Create `TicketAuditEvent`
-6. Call `reconcile_ticket_status()`
-7. Return the updated record
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate additional preconditions
+5. Apply the mutation
+6. Create `TicketAuditEvent`
+7. Call `reconcile_ticket_status()`
+8. Return the updated record
 
 Package-centric mutations (`set_track_status`, `set_track_delivery_status`,
 `set_product_eligibility`, `set_product_released_at`,
@@ -303,8 +358,7 @@ Creates a new `CVECVSSAssessment` record for a ticket's CVE.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL`
-- Ticket must be in the gate zone
+- Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must have an associated CVE (`cve_id IS NOT NULL`) — raises
   `TicketNoCVEError` (HTTP 409 Conflict, `error_code: "TICKET_NO_CVE"`)
 - Vector must be parseable — raises `InvalidCVSSVectorError` (HTTP 422
@@ -316,7 +370,8 @@ Creates a new `CVECVSSAssessment` record for a ticket's CVE.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Validate preconditions
 3. Parse the vector string using the `cvss` library. Determine version from
    prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
    no prefix → 2.0). Compute base score. If parsing fails, raise
@@ -349,8 +404,7 @@ Updates an existing `CVECVSSAssessment` record.
 
 - Assessment must exist — raises `CVSSAssessmentNotFoundError` (HTTP 404,
   `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
-- Parent ticket must have `deleted_at IS NULL`
-- Parent ticket must be in the gate zone
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - New vector must be parseable — raises `InvalidCVSSVectorError` (HTTP 422
   Unprocessable Entity, `error_code: "CVSS_INVALID_VECTOR"`)
 - Derived version must match the existing assessment's version — raises
@@ -360,7 +414,8 @@ Updates an existing `CVECVSSAssessment` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Validate preconditions
 3. Parse the new vector string using the `cvss` library. Determine version
    and compute base score. If parsing fails, raise `InvalidCVSSVectorError`.
    If the derived version differs from the existing assessment's version,
@@ -394,13 +449,13 @@ Deletes a `CVECVSSAssessment` record (hard delete).
 
 - Assessment must exist — raises `CVSSAssessmentNotFoundError` (HTTP 404,
   `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
-- Parent ticket must have `deleted_at IS NULL`
-- Parent ticket must be in the gate zone
+- Parent ticket must be operable (`ensure_ticket_operable`)
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Validate preconditions
 3. Delete the assessment record
 4. Recalculate ticket severity via `cvss.py` resolution cascade
 5. Create `TicketAuditEvent` (`cvss_assessment_changed`,
@@ -426,8 +481,7 @@ Sets or clears the `severity_override` field on a ticket.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL`
-- Ticket must be in the gate zone
+- Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must have `cve_id IS NULL` — raises `SeverityDerivedError`
   if the ticket has an associated CVE (severity is derived from CVSS
   scores and cannot be manually overridden)
@@ -435,7 +489,8 @@ Sets or clears the `severity_override` field on a ticket.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Validate preconditions
 3. If severity unchanged, return (no-op)
 4. Update `ticket.severity_override`
 5. Create `TicketAuditEvent` (`severity_changed`, `user_id = acting_user_id`)
@@ -473,7 +528,9 @@ Reopens a ticket from Ignored status.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL`
+- Ticket must exist and have `deleted_at IS NULL` (soft-delete guard
+  only — `ensure_ticket_operable` is NOT called; this function must
+  operate on Ignored tickets)
 - Ticket must be in `Ignored` status
 
 **Behavior**:
@@ -515,7 +572,9 @@ Reverts a ticket from Duplicated status.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL`
+- Ticket must exist and have `deleted_at IS NULL` (soft-delete guard
+  only — `ensure_ticket_operable` is NOT called; this function must
+  operate on Duplicated tickets)
 - Ticket must be in `Duplicated` status
 
 **Behavior**:
@@ -751,7 +810,8 @@ directly — see `docs/features/packages/package-service.md`.
 
 - `docs/features/packages/package-service.md` — package-centric
   mutations, orchestration, and query operations (imports
-  `reconcile_ticket_status()` and `auto_assign_actor()`)
+  `reconcile_ticket_status()`, `auto_assign_actor()`, and
+  `ensure_ticket_operable()`)
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, API endpoints
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
@@ -767,5 +827,6 @@ directly — see `docs/features/packages/package-service.md`.
   locking pattern)
 - `docs/features/tickets/ticket-service.md` — non-gate ticket lifecycle
   operations (imports `reconcile_ticket_status()`,
-  `auto_assign_actor()`, `resolve_canonical_target()`)
+  `auto_assign_actor()`, `ensure_ticket_operable()`,
+  `resolve_canonical_target()`)
 - `docs/api-spec.md` — general API conventions

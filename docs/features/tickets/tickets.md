@@ -485,14 +485,14 @@ for:
 
 A ticket can be marked as duplicate from any **gate-zone** status (New,
 Analysis, Analyzed, Resolved). Tickets in the manual zone (Ignored or
-Duplicated) are blocked by the `require_ticket_mutable` guard (409
-`TICKET_NOT_MUTABLE`) — an Ignored ticket must be reopened first, and a
-Duplicated ticket must be reverted first.
+Duplicated) are blocked by `ensure_ticket_operable` at the service layer
+(409 `TICKET_NOT_MUTABLE`) — an Ignored ticket must be reopened first,
+and a Duplicated ticket must be reverted first.
 
 Steps:
 
-1. Verify the ticket is not in `Ignored` or `Duplicated` status (the
-   `require_ticket_mutable` guard handles this — 409 if violated).
+1. Verify the ticket is operable (`ensure_ticket_operable` in the
+   service layer — rejects soft-deleted, Ignored, and Duplicated).
 2. Resolve the requested target to its canonical target using the
    resolver.
 3. If the resolved canonical target has `deleted_at IS NOT NULL`, reject
@@ -746,40 +746,42 @@ not monitored by background tasks.
 - **Resolved**: modifying gate-relevant data triggers centralized status
   evaluation, which may regress the ticket to Analyzed or Analysis
 - **Ignored and Duplicated** (manual zone): mutation endpoints return
-  409 `TICKET_NOT_MUTABLE` via the `require_ticket_mutable` dependency.
-  Only the dedicated exit endpoints (`POST .../reopen` for Ignored,
-  `POST .../revert-duplicate` for Duplicated) bypass this guard. See
-  [Mutability Guard](#mutability-guard) for the enforcement mechanism.
+  409 `TICKET_NOT_MUTABLE` via `ensure_ticket_operable()` in the service
+  layer. Only the dedicated exit endpoints (`POST .../reopen` for
+  Ignored, `POST .../revert-duplicate` for Duplicated) bypass this
+  guard. See [Mutability Guard](#mutability-guard) for the enforcement
+  mechanism.
 
 ### Mutability Guard
 
-Enforcement of the manual-zone immutability is centralized in a shared
-FastAPI dependency `require_ticket_mutable`, applied as a `Depends()` on
-each mutation endpoint's handler signature:
+Enforcement of the manual-zone mutability and soft-delete guard is
+centralized in the service-layer function `ensure_ticket_operable()`
+(defined in `ticket_mutations`). This function is called by all mutation
+functions in `ticket_mutations`, `ticket_service`, and `package_service`
+after acquiring `FOR UPDATE` on the ticket row.
 
 ```python
-async def require_ticket_mutable(ticket: Ticket = Depends(get_ticket)):
+def ensure_ticket_operable(ticket: Ticket) -> None:
+    if ticket.deleted_at is not None:
+        raise TicketSoftDeletedError(ticket.id)
     if ticket.status in (TicketStatus.Ignored, TicketStatus.Duplicated):
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "TICKET_NOT_MUTABLE", ...}
-        )
-    return ticket
+        raise TicketNotMutableError(ticket.id)
 ```
 
 **Scope**:
-- Applied to: all endpoints that modify ticket data
-- NOT applied to: read endpoints (GET), manual-zone exit endpoints
-  (`POST .../reopen`, `POST .../revert-duplicate`), and soft-delete/restore
-  (which have their own admin-only guard)
+- Applied to: all service-layer functions that modify ticket data
+- NOT applied to: read operations, manual-zone exit functions
+  (`reopen_from_ignored`, `revert_duplicate`), `soft_delete_ticket`,
+  and `restore_ticket`
 
 **Relationship with `require_accessible_ticket`**: the accessibility
-check is a router-level dependency (applies to all operations on a
+check is a router-level API dependency (applies to all operations on a
 single ticket, including reads — see `docs/api-spec.md`, Ticket
-Accessibility Check). `require_ticket_mutable` is per-endpoint
-(applies only to mutations). A ticket can be both accessible and
-not-mutable (e.g., an active Duplicated ticket). The two guards are
-independent checks evaluated in sequence.
+Accessibility Check). `ensure_ticket_operable` is a service-layer guard
+(applied by all mutation functions). The two guards are independent
+checks: accessibility is verified at the API layer before the request
+reaches the service; operability is verified at the service layer under
+the `FOR UPDATE` lock (the authoritative check).
 
 ## Tickets Without CVE: Behavioral Differences
 
@@ -1563,7 +1565,7 @@ Error responses:
 - 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Ignored
   status
 
-This endpoint is **not** subject to the `require_ticket_mutable` guard
+This endpoint is **not** subject to `ensure_ticket_operable`
 (it is the dedicated exit from the Ignored manual-zone status).
 
 ### Revert Duplicate Status
@@ -1608,7 +1610,7 @@ sub-resource behavior.
 Error responses:
 
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_ALREADY_DELETED`: ticket is already soft-deleted
+- 410 with code `TICKET_DELETED`: ticket is already soft-deleted
 
 ### Restore Ticket
 

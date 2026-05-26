@@ -54,8 +54,14 @@ specific ticket, the authorization chain evaluates in this exact order:
    capability. This check does not depend on the specific ticket
 3. **Ticket accessibility** (`require_accessible_ticket`) — returns 404
    for non-existent or invisible tickets, 410 for soft-deleted tickets
-4. **Mutability guard** (`require_ticket_mutable`) — returns 409 if the
-   ticket cannot be modified
+
+For mutation endpoints, a fourth check occurs at the **service layer**
+(not as an API dependency):
+
+4. **Operability guard** (`ensure_ticket_operable`) — raises 410
+   `TICKET_DELETED` if soft-deleted, 409 `TICKET_NOT_MUTABLE` if the
+   ticket is in Ignored or Duplicated status. This check executes under
+   the `FOR UPDATE` lock and is the authoritative enforcement
 
 This ordering is security-significant: the capability check (step 2)
 fires before the accessibility check (step 3), preventing ticket
@@ -148,7 +154,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_ALREADY_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
@@ -347,8 +353,8 @@ products, CVSS assessments, references, audit log, submission requests).
 **Exceptions** — the following endpoints are excluded from this check
 because they manage the soft-delete lifecycle directly:
 
-- `DELETE /api/v1/tickets/{ticket_id}` (soft-delete): returns 409
-  `TICKET_ALREADY_DELETED` if the ticket is already soft-deleted
+- `DELETE /api/v1/tickets/{ticket_id}` (soft-delete): returns 410
+  `TICKET_DELETED` if the ticket is already soft-deleted
 - `POST /api/v1/tickets/{ticket_id}/restore` (restore): returns 409
   `TICKET_NOT_DELETED` if the ticket is not soft-deleted
 
@@ -360,18 +366,19 @@ sub-resource behavior, automated verification requirements).
 
 Tickets in the **manual zone** (status `Ignored` or `Duplicated`) are
 immutable — mutation endpoints return `409 TICKET_NOT_MUTABLE`. This is
-enforced by a per-endpoint dependency (`require_ticket_mutable`) on all
-endpoints that modify ticket data.
+enforced at the service layer by `ensure_ticket_operable()` (defined in
+`ticket_mutations`), which is called by all mutation functions after
+acquiring `FOR UPDATE` on the ticket row.
 
 | Status | Code                  | Condition                                          |
 |--------|-----------------------|----------------------------------------------------|
 | 409    | `TICKET_NOT_MUTABLE`  | Ticket is in Ignored or Duplicated status          |
 
-**Exceptions** — the following endpoints are excluded from this check
-because they manage the manual-zone exit lifecycle:
+**Exceptions** — the following service functions are excluded from this
+check because they manage the manual-zone exit lifecycle:
 
-- `POST /api/v1/tickets/{ticket_id}/reopen` (exit Ignored)
-- `POST /api/v1/tickets/{ticket_id}/revert-duplicate` (exit Duplicated)
+- `reopen_from_ignored` (exit Ignored)
+- `revert_duplicate` (exit Duplicated)
 
 Read endpoints (GET) are never subject to this guard.
 

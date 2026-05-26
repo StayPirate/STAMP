@@ -12,8 +12,9 @@ confidentiality management — in a single service module
 - `reconcile_ticket_status()` is called when operations have side effects
   on gate conditions (severity changes, status reconciliation)
 - `auto_assign_actor()` is applied uniformly for unassigned tickets
-- Business rules (immutability guards, idempotency) are enforced
-  regardless of entry point
+- `ensure_ticket_operable()` enforces operability (soft-delete +
+  mutability) regardless of entry point
+- Business rules (idempotency) are enforced regardless of entry point
 
 Gate-relevant mutations (CVSS assessments, severity overrides,
 manual-zone exits) are handled by `ticket_mutations`
@@ -82,7 +83,7 @@ revoking explicit access.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
+| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, `ensure_ticket_operable()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
 | `services/package_service.py` | No direct dependency. Both modules independently depend on `ticket_mutations` for status evaluation |
 | `services/cvss.py` | No direct dependency. CVSS resolution is triggered indirectly via `reconcile_ticket_status()` |
 
@@ -101,29 +102,32 @@ exit operations:
 See [ticket-mutations.md](ticket-mutations.md) for these operations'
 contracts.
 
-### Immutability guard
+### Operability guard
 
 Operations that modify the Ticket row (all mutation functions except
-`create_ticket`) MUST reject tickets in Ignored or Duplicated status
-with `TicketNotMutableError`, unless the operation is specifically
-designed for those statuses (e.g., `restore_ticket` operates on any
-soft-deleted ticket regardless of status; `soft_delete_ticket` operates
-on any status). This guard is applied after acquiring `FOR UPDATE`.
+`create_ticket`) call `ensure_ticket_operable(ticket)` from
+`ticket_mutations` after acquiring `FOR UPDATE`. This consolidates two
+checks:
 
-Note: `mark_as_duplicate` does not use the immutability guard directly —
-it has its own gate-zone status check that is semantically equivalent
-(rejects Ignored and Duplicated tickets) but produces a more specific
-error (`InvalidTransitionError`).
+1. **Soft-delete guard**: `deleted_at IS NOT NULL` →
+   `TicketSoftDeletedError`
+2. **Mutability guard**: status ∈ {Ignored, Duplicated} →
+   `TicketNotMutableError`
 
-### Soft-delete guard
+Explicit opt-outs (functions that do NOT call `ensure_ticket_operable`):
 
-All mutation functions (except `restore_ticket`) reject soft-deleted
-tickets (`deleted_at IS NOT NULL` → `TicketAlreadyDeletedError`). This
-check is performed inside the service function after acquiring the
-`FOR UPDATE` lock, in addition to the API layer's
-`require_accessible_ticket` dependency. This provides defense-in-depth:
-even if a non-API caller (Celery task, CLI, future code path) invokes a
-service function on a soft-deleted ticket, the operation is rejected.
+- `soft_delete_ticket` — operates on any status; retains only an inline
+  soft-delete idempotency check (`TicketSoftDeletedError`)
+- `restore_ticket` — must operate on soft-deleted tickets by definition
+- `ignore_ticket` — calls `ensure_ticket_operable` (which catches
+  Ignored/Duplicated), then applies its own status check (New/Analysis
+  required). See ordering constraint below
+
+**Ordering constraint for `ignore_ticket`**:
+`ensure_ticket_operable` executes first. For Ignored/Duplicated tickets
+it raises `TicketNotMutableError` before the function's own status check
+fires. For other non-valid statuses (Analyzed, Resolved), the function's
+own check raises `InvalidTransitionError`. This ordering is contractual.
 
 ### Concurrency control
 
@@ -223,26 +227,25 @@ async def associate_cve(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must have `cve_id IS NULL` (else `TicketCVEAlreadySetError`)
 - CVE Resolution Behavior applies (on-demand fetch, conflict check)
-- Immutability guard applies
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Immutability guard check
-4. Verify `ticket.cve_id IS NULL` (else `TicketCVEAlreadySetError`)
-5. Resolve CVE via CVE Resolution Behavior (may raise
+2. Call `ensure_ticket_operable(ticket)`
+3. Verify `ticket.cve_id IS NULL` (else `TicketCVEAlreadySetError`)
+4. Resolve CVE via CVE Resolution Behavior (may raise
     `TicketCVEConflictError` if CVE is already associated with another
     ticket)
-6. `auto_assign_actor(ticket, acting_user_id)`
-7. Set `ticket.cve_id`
-8. Create `TicketAuditEvent` (`cve_associated`)
-9. Call `reconcile_ticket_status(ticket)` — severity source changes from
+5. `auto_assign_actor(ticket, acting_user_id)`
+6. Set `ticket.cve_id`
+7. Create `TicketAuditEvent` (`cve_associated`)
+8. Call `reconcile_ticket_status(ticket)` — severity source changes from
     `severity_override` to CVSS-derived; gate #3 (severity set) and
     gate #4 (SUSE CVSS provided) may now fail, causing regression
-10. Return updated Ticket
+9. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row. Step 4 (CVE Resolution Behavior)
 executes entirely within the locked transaction but involves only local
@@ -284,22 +287,21 @@ async def dissociate_cve(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must have `cve_id IS NOT NULL` (else `TicketCVENotSetError`)
 - Requires `admin_ticket_ops` capability (enforced at API layer)
-- Immutability guard applies
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Immutability guard check
-4. Verify `ticket.cve_id IS NOT NULL` (else `TicketCVENotSetError`)
-5. Set `ticket.cve_id = NULL`
-6. Create `TicketAuditEvent` (`cve_removed`)
-7. Call `reconcile_ticket_status(ticket)` — severity falls back to
+2. Call `ensure_ticket_operable(ticket)`
+3. Verify `ticket.cve_id IS NOT NULL` (else `TicketCVENotSetError`)
+4. Set `ticket.cve_id = NULL`
+5. Create `TicketAuditEvent` (`cve_removed`)
+6. Call `reconcile_ticket_status(ticket)` — severity falls back to
     `severity_override`; if that is also NULL, severity = None and
     gate #3 fails, causing regression
-8. Return updated Ticket
+7. Return updated Ticket
 
 **Note on CVSS assessment preservation**: `CVECVSSAssessment` records
 are NOT deleted on dissociation. They are factual data belonging to the
@@ -349,24 +351,23 @@ async def assign_ticket(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`)
 - Target user must be active and hold the `vulnerability_analyst` role
   (else `InvalidAssigneeError`)
-- Immutability guard applies
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Immutability guard check
-4. Validate target user (active, holds VA role; else
+2. Call `ensure_ticket_operable(ticket)`
+3. Validate target user (active, holds VA role; else
     `InvalidAssigneeError`)
-5. **Idempotency check**: if `ticket.assignee_id == assignee_id`, return
+4. **Idempotency check**: if `ticket.assignee_id == assignee_id`, return
     ticket unchanged (no audit event, no status evaluation)
-6. Set `ticket.assignee_id = assignee_id`
-7. Create `TicketAuditEvent` (`assignment`)
-8. Call `reconcile_ticket_status(ticket)` — assignment affects the
+5. Set `ticket.assignee_id = assignee_id`
+6. Create `TicketAuditEvent` (`assignment`)
+7. Call `reconcile_ticket_status(ticket)` — assignment affects the
     Analysis gate (New → Analysis promotion when assignee is set)
-9. Return updated Ticket
+8. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row.
 
@@ -395,16 +396,20 @@ async def ignore_ticket(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`) — catches
+  soft-deleted, Ignored, and Duplicated tickets before the status check
 - Ticket must be in New or Analysis status (only valid source states;
   else `InvalidTransitionError`)
-- Immutability guard does not apply here (by definition, Ignored tickets
-  would fail it — the transition itself is the operation)
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Verify status is New or Analysis (else `InvalidTransitionError`)
+2. Call `ensure_ticket_operable(ticket)` — rejects soft-deleted
+   (`TicketSoftDeletedError`), Ignored, or Duplicated
+   (`TicketNotMutableError`) tickets
+3. Verify status is New or Analysis (else `InvalidTransitionError` —
+   this catches Analyzed and Resolved, which pass `ensure_ticket_operable`
+   but are not valid source states for ignore)
 4. `auto_assign_actor(ticket, acting_user_id)`
 5. Set `ticket.status = Ignored`
 6. Create `TicketAuditEvent` (`status_change`)
@@ -450,8 +455,8 @@ database model).
 
 **Preconditions**:
 
-- Ticket must be in a gate-zone status (New, Analysis, Analyzed,
-  Resolved; else `InvalidTransitionError`)
+- Ticket must be operable (`ensure_ticket_operable`) — rejects
+  soft-deleted, Ignored, and Duplicated tickets
 - Target ticket must exist and not be soft-deleted (else
   `TicketNotFoundError`)
 - Target ticket must be accessible to the acting user (API-layer scope
@@ -469,8 +474,7 @@ database model).
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row (single ticket scope)
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Verify ticket is in gate-zone status (else `InvalidTransitionError`)
+2. Call `ensure_ticket_operable(ticket)`
 3. Resolve canonical target via
    `ticket_mutations.resolve_canonical_target()`
 4. Verify no circular reference (else `SelfDuplicateError`)
@@ -523,14 +527,14 @@ async def soft_delete_ticket(
 **Preconditions**:
 
 - Ticket must not already be soft-deleted (else
-  `TicketAlreadyDeletedError`)
+  `TicketSoftDeletedError`)
 - Requires `admin_ticket_ops` capability (enforced at API layer)
-- Allowed from any status (immutability guard does not apply)
+- Allowed from any status (`ensure_ticket_operable` is NOT called)
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Verify `ticket.deleted_at IS NULL` (else `TicketAlreadyDeletedError`)
+2. Verify `ticket.deleted_at IS NULL` (else `TicketSoftDeletedError`)
 3. Set `ticket.deleted_at = now(UTC)`
 4. Create `TicketAuditEvent` (`ticket_deleted`)
 5. Return updated Ticket
@@ -565,7 +569,8 @@ async def restore_ticket(
 - Ticket must be soft-deleted (`deleted_at IS NOT NULL`; else
   `TicketNotDeletedError`)
 - Requires `admin_ticket_ops` capability (enforced at API layer)
-- Allowed regardless of ticket status (immutability guard does not apply)
+- Allowed regardless of ticket status (`ensure_ticket_operable` is NOT
+  called — this function must operate on soft-deleted tickets)
 
 **Behavioral steps**:
 
@@ -603,19 +608,18 @@ async def set_confidentiality(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`)
 - Requires `manage_confidentiality` capability (enforced at API layer)
-- Immutability guard applies
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Immutability guard check
-4. **Idempotency check**: if `ticket.is_confidential == is_confidential`,
+2. Call `ensure_ticket_operable(ticket)`
+3. **Idempotency check**: if `ticket.is_confidential == is_confidential`,
     return ticket unchanged (no audit event)
-5. Set `ticket.is_confidential = is_confidential`
-6. Create `TicketAuditEvent` (`confidentiality_changed`)
-7. Return updated Ticket
+4. Set `ticket.is_confidential = is_confidential`
+5. Create `TicketAuditEvent` (`confidentiality_changed`)
+6. Return updated Ticket
 
 **Note on access grants**: When setting `is_confidential = false`,
 existing `TicketAccessGrant` records are NOT deleted immediately. They
@@ -647,26 +651,23 @@ async def grant_access(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must be confidential (`is_confidential = true`; else
   `TicketNotConfidentialError`)
 - Target user must exist (else `UserNotFoundError`)
 - Requires `manage_confidentiality` capability (enforced at API layer)
-- Immutability guard is enforced both inside the service function AND at
-  the API layer via `require_ticket_mutable` dependency
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Immutability guard check (reject Ignored/Duplicated; else
-    `TicketNotMutableError`)
-4. Verify ticket is confidential (else `TicketNotConfidentialError`)
-5. **Idempotency check**: if grant already exists for this user, return
+2. Call `ensure_ticket_operable(ticket)`
+3. Verify ticket is confidential (else `TicketNotConfidentialError`)
+4. **Idempotency check**: if grant already exists for this user, return
     existing grant unchanged (no audit event)
-6. INSERT `TicketAccessGrant` record (`ticket_id`, `user_id`,
+5. INSERT `TicketAccessGrant` record (`ticket_id`, `user_id`,
     `granted_by = acting_user_id`, `granted_at = now(UTC)`)
-7. Create `TicketAuditEvent` (`access_grant_added`)
-8. Return the created grant
+6. Create `TicketAuditEvent` (`access_grant_added`)
+7. Return the created grant
 
 **Concurrency**: If two concurrent requests attempt to grant access to
 the same user, the UNIQUE constraint on `TicketAccessGrant`
@@ -698,25 +699,22 @@ async def revoke_access(
 
 **Preconditions**:
 
+- Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must be confidential (`is_confidential = true`; else
   `TicketNotConfidentialError`)
 - Target user must exist (else `UserNotFoundError`)
 - Requires `manage_confidentiality` capability (enforced at API layer)
-- Immutability guard is enforced both inside the service function AND at
-  the API layer via `require_ticket_mutable` dependency
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Soft-delete guard (`deleted_at IS NULL`; else `TicketAlreadyDeletedError`)
-3. Immutability guard check (reject Ignored/Duplicated; else
-    `TicketNotMutableError`)
-4. Verify ticket is confidential (else `TicketNotConfidentialError`)
-5. **Idempotency check**: if grant does not exist for this user, return
+2. Call `ensure_ticket_operable(ticket)`
+3. Verify ticket is confidential (else `TicketNotConfidentialError`)
+4. **Idempotency check**: if grant does not exist for this user, return
     without side effects (no audit event)
-6. Delete `TicketAccessGrant` record
-7. Create `TicketAuditEvent` (`access_grant_removed`)
-8. Return
+5. Delete `TicketAccessGrant` record
+6. Create `TicketAuditEvent` (`access_grant_removed`)
+7. Return
 
 **Locking**: FOR UPDATE on Ticket row (provides immutability guard and
 soft-delete guard consistency with other mutation functions).
@@ -761,15 +759,15 @@ async def list_access_grants(
 | Exception class | Mapped API error code | Raised by |
 |----------------|----------------------|-----------|
 | `TicketNotFoundError` | `TICKET_NOT_FOUND` | All operations (ticket lookup) |
-| `TicketNotMutableError` | `TICKET_NOT_MUTABLE` | Operations with immutability guard |
-| `InvalidTransitionError` | `TICKET_INVALID_TRANSITION` | `ignore_ticket`, `mark_as_duplicate` |
+| `TicketSoftDeletedError` | `TICKET_DELETED` (HTTP 410) | `ensure_ticket_operable`, `soft_delete_ticket` (idempotency check) |
+| `TicketNotMutableError` | `TICKET_NOT_MUTABLE` | `ensure_ticket_operable` (Ignored/Duplicated tickets) |
+| `InvalidTransitionError` | `TICKET_INVALID_TRANSITION` | `ignore_ticket` (Analyzed/Resolved tickets) |
 | `TicketCVEAlreadySetError` | `TICKET_CVE_ALREADY_SET` | `associate_cve` |
 | `TicketCVENotSetError` | `TICKET_CVE_NOT_SET` | `dissociate_cve` |
 | `TicketCVEConflictError` | `TICKET_CVE_CONFLICT` | `create_ticket`, `associate_cve` |
 | `InvalidAssigneeError` | `TICKET_ASSIGNEE_NOT_VA` or `TICKET_ASSIGNEE_INACTIVE` | `assign_ticket` |
 | `SelfDuplicateError` | `TICKET_SELF_DUPLICATE` | `mark_as_duplicate` |
 | `DuplicateChainDepthError` | `TICKET_DUPLICATE_CHAIN_DEPTH` | `mark_as_duplicate` (via `resolve_canonical_target`) |
-| `TicketAlreadyDeletedError` | `TICKET_ALREADY_DELETED` | `soft_delete_ticket`, all mutation functions (soft-delete guard) |
 | `TicketNotDeletedError` | `TICKET_NOT_DELETED` | `restore_ticket` |
 | `TicketNotConfidentialError` | `TICKET_NOT_CONFIDENTIAL` | `grant_access`, `revoke_access`, `list_access_grants` |
 | `UserNotFoundError` | `USER_NOT_FOUND` | `grant_access`, `revoke_access` |
@@ -809,6 +807,7 @@ above for the architectural rationale.
 ticket_mutations (infrastructure)
     ├── reconcile_ticket_status()
     ├── auto_assign_actor()
+    ├── ensure_ticket_operable()
     └── resolve_canonical_target()
          ▲                ▲
          │                │
@@ -816,20 +815,20 @@ ticket_mutations (infrastructure)
   (non-gate ops)    (package ops)
 ```
 
-| ticket_service function | reconcile_ticket_status | auto_assign_actor | resolve_canonical_target |
-|------------------------|:----------------------:|:---------------------:|:------------------------:|
-| create_ticket          | —                      | —                     | —                        |
-| associate_cve          | ✓                      | ✓                     | —                        |
-| dissociate_cve         | ✓                      | —                     | —                        |
-| assign_ticket          | ✓                      | —                     | —                        |
-| ignore_ticket          | —                      | ✓                     | —                        |
-| mark_as_duplicate      | —                      | ✓                     | ✓                        |
-| soft_delete_ticket     | —                      | —                     | —                        |
-| restore_ticket         | ✓                      | —                     | —                        |
-| set_confidentiality    | —                      | —                     | —                        |
-| grant_access           | —                      | —                     | —                        |
-| revoke_access          | —                      | —                     | —                        |
-| list_access_grants     | —                      | —                     | —                        |
+| ticket_service function | ensure_ticket_operable | reconcile_ticket_status | auto_assign_actor | resolve_canonical_target |
+|------------------------|:----------------------:|:----------------------:|:---------------------:|:------------------------:|
+| create_ticket          | —                      | —                      | —                     | —                        |
+| associate_cve          | ✓                      | ✓                      | ✓                     | —                        |
+| dissociate_cve         | ✓                      | ✓                      | —                     | —                        |
+| assign_ticket          | ✓                      | ✓                      | —                     | —                        |
+| ignore_ticket          | ✓                      | —                      | ✓                     | —                        |
+| mark_as_duplicate      | ✓                      | —                      | ✓                     | ✓                        |
+| soft_delete_ticket     | —                      | —                      | —                     | —                        |
+| restore_ticket         | —                      | ✓                      | —                     | —                        |
+| set_confidentiality    | ✓                      | —                      | —                     | —                        |
+| grant_access           | ✓                      | —                      | —                     | —                        |
+| revoke_access          | ✓                      | —                      | —                     | —                        |
+| list_access_grants     | —                      | —                      | —                     | —                        |
 
 ## Architectural Test Requirement
 
@@ -866,7 +865,7 @@ behavior of `ticket_service` operations:
 ## Cross-references
 
 - `docs/features/tickets/ticket-mutations.md` — gate-relevant mutations,
-  `reconcile_ticket_status` contract
+  `reconcile_ticket_status` contract, `ensure_ticket_operable` contract
 - `docs/features/tickets/tickets.md` — ticket lifecycle, status gates,
   API endpoint definitions
 - `docs/features/tickets/ticket-audit-log.md` — audit event types and

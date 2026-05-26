@@ -70,7 +70,7 @@ reserved exclusively for system entry points.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()` and `auto_assign_actor()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service` |
+| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service` |
 | `services/cvss.py` | `package_service` delegates CVSS resolution and eligibility calculation to pure functions in `cvss.py` (for record creation and eligibility evaluation) |
 | `core/filters.py` | `search_packages()` receives a `confidentiality_filter` (a SQLAlchemy `ColumnElement`) built by the endpoint handler via `confidential_ticket_filter()`. The service function is unaware of access rules |
 
@@ -114,12 +114,13 @@ Each function below follows the same pattern (except
 auto-assignment — see its section for details):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
-4. Apply the mutation
-5. Create `TicketAuditEvent`
-6. Call `ticket_mutations.reconcile_ticket_status()`
-7. Return the updated record
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate additional preconditions
+5. Apply the mutation
+6. Create `TicketAuditEvent`
+7. Call `ticket_mutations.reconcile_ticket_status()`
+8. Return the updated record
 
 ### `set_track_status()`
 
@@ -136,16 +137,16 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Track must exist
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone (not Ignored or Duplicated)
 - Status must be a valid `PackageStatus` value
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. If status unchanged → return (no-op, no log, no audit event)
 5. If `acting_user_id` is `None` and current status is final
    (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) → reject: log warning
@@ -188,9 +189,8 @@ Sets the delivery status of a `TicketPackageTrack` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Track must exist
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 - The transition `current_delivery_status → new_delivery_status` must be
   valid per the delivery status transition rules in
   `docs/features/packages/package-model.md`. In particular, any regression
@@ -199,8 +199,9 @@ Sets the delivery status of a `TicketPackageTrack` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Validate transition: verify that `current_delivery_status →
    new_delivery_status` is a legal transition per the delivery status
    state machine defined in `package-model.md`. If the transition is
@@ -240,14 +241,20 @@ repository.
 | `released_at` | `datetime` | Yes | Advisory issued date (UTC) |
 | `advisory_id` | `str` | Yes | Advisory identifier (e.g., `SUSE-SU-2025:1234-1`) |
 
-**Preconditions**: none — release detection applies regardless of
-soft-deletion status or parent track status (it is a factual
-observation).
+**Preconditions**:
+
+- Parent ticket must be operable (`ensure_ticket_operable`) — release
+  detection does NOT apply to non-operable tickets (soft-deleted,
+  Ignored, or Duplicated)
+- No precondition on track or product `deleted_at` — release detection
+  applies to soft-deleted child records (factual observation that keeps
+  them current with reality)
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Load the product record (no `deleted_at` filter — soft-deleted
+2. Call `ensure_ticket_operable(ticket)`
+3. Load the product record (no `deleted_at` filter — soft-deleted
    products are included)
 3. If `released_at` is already set, return (no-op — release confirmation
    is irreversible; see below)
@@ -288,17 +295,17 @@ Sets or resets the eligibility override of a `TicketPackageProduct` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Product must exist
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 
 **Behavior**:
 
 If `eligible` is `bool` (override):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. If `TicketPackageProduct.eligible == eligible` AND `is_eligible_override == true`, return (no-op)
 5. Update `TicketPackageProduct.eligible` to the given value
 6. Set `TicketPackageProduct.is_eligible_override = true`
@@ -309,8 +316,9 @@ If `eligible` is `bool` (override):
 If `eligible` is `None` (reset to automatic):
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. If `is_eligible_override == false`, return (no-op — already automatic)
 5. Set `TicketPackageProduct.is_eligible_override = false`
 6. Recalculate eligibility using standard rules (CVSS score resolution per configured version → compare against product threshold from AIMAAS)
@@ -352,14 +360,14 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL`
-- Ticket must be in the gate zone
+- Parent ticket must be operable (`ensure_ticket_operable`)
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Create or skip `TicketPackage` (idempotent — skip if exists)
 5. For each track in `tracks`:
    - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
@@ -397,15 +405,15 @@ Soft-deletes a `TicketPackage` record (sets `deleted_at`).
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Package must exist and have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Set `package.deleted_at = now()`
 5. Create `TicketAuditEvent` (`package_excluded`)
 6. Call `reconcile_ticket_status()`
@@ -432,15 +440,15 @@ Soft-deletes a `TicketPackageTrack` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Track must exist and have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Set `track.deleted_at = now()`
 5. Create `TicketAuditEvent` (`track_excluded`)
 6. Enforce package orphan rule (see Orphan Cleanup Invariants)
@@ -467,16 +475,16 @@ Soft-deletes a `TicketPackageProduct` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Product must exist and have `deleted_at IS NULL`
 - Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Set `product.deleted_at = now()`
 5. Create `TicketAuditEvent` (`product_excluded`)
 6. Enforce track orphan rule (see Orphan Cleanup Invariants)
@@ -501,9 +509,8 @@ Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Package must exist and have `deleted_at IS NOT NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 - At least one `TicketPackageTrack` under this package must have
   `deleted_at IS NULL`, AND that track must have at least one
   `TicketPackageProduct` with `deleted_at IS NULL`. If not satisfied,
@@ -513,8 +520,9 @@ Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Clear `package.deleted_at`
 5. Create `TicketAuditEvent` (`package_restored`)
 6. Call `reconcile_ticket_status()`
@@ -538,10 +546,9 @@ Restores a soft-deleted `TicketPackageTrack` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Track must exist and have `deleted_at IS NOT NULL`
 - Parent package must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 - At least one `TicketPackageProduct` under this track must have
   `deleted_at IS NULL`. If not satisfied, raise application error
   corresponding to `422 PACKAGE_RESTORE_BLOCKED` (see `package-model.md`)
@@ -549,8 +556,9 @@ Restores a soft-deleted `TicketPackageTrack` record.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Clear `track.deleted_at`
 5. Create `TicketAuditEvent` (`track_restored`)
 6. Call `reconcile_ticket_status()`
@@ -574,18 +582,18 @@ Restores a soft-deleted `TicketPackageProduct` record.
 
 **Preconditions**:
 
+- Parent ticket must be operable (`ensure_ticket_operable`)
 - Product must exist and have `deleted_at IS NOT NULL`
 - Parent track must have `deleted_at IS NULL`
-- Parent ticket must not be soft-deleted
-- Parent ticket must be in the gate zone
 
 No child-existence pre-check required (product is a leaf record).
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
-2. Call `auto_assign_actor()`
-3. Validate preconditions
+2. Call `ensure_ticket_operable(ticket)`
+3. Call `auto_assign_actor()`
+4. Validate preconditions
 4. Clear `product.deleted_at`
 5. Create `TicketAuditEvent` (`product_restored`)
 6. Call `reconcile_ticket_status()`
@@ -843,17 +851,36 @@ external I/O MUST NOT acquire `FOR UPDATE` locks.
 
 ## Soft-Deleted Records and Mutations
 
-Soft-deleted packages, tracks, and products **continue to receive
-updates** from all automated processes (release detection, eligibility
-recalculation, delivery status changes). The `deleted_at` field controls
-only **exclusion from decision-making** (gate evaluation, anomaly
-detection, resolution logic) — not from mutations.
+This section distinguishes two distinct levels of soft-deletion that have
+different semantics:
+
+### Ticket-level operability
+
+Non-operable tickets (soft-deleted, Ignored, or Duplicated) MUST NOT
+receive any package mutations. `ensure_ticket_operable(ticket)` enforces
+this for all mutation functions in this module (including
+`set_product_released_at`). Automated callers (release detection
+fetchers, IBS RabbitMQ consumer) scope their queries to active tickets
+at query time (a stricter subset — excludes Resolved in addition to
+non-operable statuses); the guard fires only in race conditions.
+Required caller behavior: catch `TicketSoftDeletedError` and
+`TicketNotMutableError`, log a WARNING, and continue processing the
+next item.
+
+### Package/track/product-level soft-deletion
+
+Soft-deleted packages, tracks, and products on **operable tickets**
+continue to receive updates from all automated processes (release
+detection, eligibility recalculation, delivery status changes). The
+`deleted_at` field on child records controls only **exclusion from
+decision-making** (gate evaluation, anomaly detection, resolution
+logic) — not from mutations.
 
 Mutation functions (`set_track_status`, `set_track_delivery_status`,
 `set_product_eligibility`, `set_product_released_at`) do NOT require
-`deleted_at IS NULL` as a precondition. This ensures that soft-deleted
-records remain current with reality, enabling accurate re-evaluation if
-the record is later restored.
+child-record `deleted_at IS NULL` as a precondition. This ensures that
+soft-deleted records remain current with reality, enabling accurate
+re-evaluation if the record is later restored.
 
 Restore functions (`restore_ticket_package_track`,
 `restore_ticket_package_product`) DO require that all ancestor records
@@ -899,7 +926,7 @@ transitions. The test must cover:
 ## Cross-references
 
 - `docs/features/tickets/ticket-mutations.md` — `reconcile_ticket_status()`,
-  `auto_assign_actor()`, ticket-centric mutations
+  `auto_assign_actor()`, `ensure_ticket_operable()`, ticket-centric mutations
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, confidentiality filtering (`confidential_ticket_filter()`)
 - `docs/features/tickets/ticket-audit-log.md` — event type contract

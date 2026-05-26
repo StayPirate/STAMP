@@ -296,9 +296,14 @@ specific ticket, the authorization chain evaluates in this order:
    bugowner), and is not soft-deleted (unless caller has
    `admin_ticket_ops` capability). Returns 404 for invisible tickets,
    410 for soft-deleted tickets.
-4. **Mutability guard** (`require_ticket_mutable`) — check that the
-   ticket is in a mutable state (not in a final status). Returns 409
-   if the ticket cannot be modified.
+
+For mutation endpoints, a fourth check occurs at the **service layer**
+(not as an API dependency):
+
+4. **Operability guard** (`ensure_ticket_operable`) — rejects mutations
+   on soft-deleted tickets (410 `TICKET_DELETED`) or tickets in a
+   manual-zone status (409 `TICKET_NOT_MUTABLE`). This check executes
+   under the `FOR UPDATE` lock and is the authoritative enforcement.
 
 This ordering is security-significant: the capability check (step 2)
 fires before the accessibility check (step 3). A user without the

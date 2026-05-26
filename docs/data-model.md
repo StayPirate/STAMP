@@ -550,6 +550,15 @@ override model.
 
 **Unique constraint**: (ticket_package_track_id, product_id)
 
+> **Soft-deletion semantics — two levels**: Ticket-level `deleted_at`
+> blocks all mutations on the ticket and its children via
+> `ensure_ticket_operable()`. Package/track/product-level `deleted_at`
+> does NOT block mutations on those child records — soft-deleted children
+> on operable tickets continue receiving updates (release detection,
+> eligibility recalculation) to stay current with reality. See
+> `docs/features/packages/package-service.md` (Soft-Deleted Records and
+> Mutations) for the full semantics.
+
 ### PackageStatus Enum
 
 Affectedness status, used by TicketPackageTrack.
