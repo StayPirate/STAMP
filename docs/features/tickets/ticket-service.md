@@ -51,12 +51,16 @@ This matches the `ticket_mutations`, `package_service`, and
 events, but the transaction boundary is the caller's decision.
 
 **Exception — cascade operations**: `mark_as_duplicate` has a cascade
-phase that updates other tickets' `duplicate_of_id`. Each cascade update
-runs in its own database session (opened and committed by the caller or
-endpoint handler after the primary transaction commits). The service
-function returns the list of ticket IDs requiring cascade updates; the
-caller is responsible for orchestrating the cascade transactions. See
-`mark_as_duplicate` for details.
+phase that updates other tickets' `duplicate_of_id`. The cascade is
+executed by a dedicated service function `execute_duplicate_cascade`
+which accepts a `db_session_factory` and opens/commits independent
+sessions internally. This is the only function in the module that
+commits transactions — it is an explicit, limited exception to the
+"module does not commit" rule, justified by the requirement for
+independent per-ticket transactions (see `tickets.md` and
+`ticket_mutations.md` single-ticket scope rule). The caller invokes
+`execute_duplicate_cascade` after committing the primary transaction.
+See `mark_as_duplicate` and `execute_duplicate_cascade` for details.
 
 ### Acting user convention
 
@@ -439,8 +443,9 @@ async def mark_as_duplicate(
 ```
 
 Returns a `MarkAsDuplicateResult` containing the updated ticket and
-a list of ticket IDs requiring cascade updates (see Transaction
-ownership exception above).
+a list of ticket IDs requiring cascade updates. The caller passes
+`cascade_ticket_ids` to `execute_duplicate_cascade` after committing
+the primary transaction (see below).
 
 ```python
 @dataclass
@@ -485,31 +490,71 @@ database model).
     `deleted_at IS NULL` — return their IDs as `cascade_ticket_ids`
 9. Return `MarkAsDuplicateResult(ticket=ticket, cascade_ticket_ids=...)`
 
-**Cascade orchestration** (caller responsibility):
+**Cascade orchestration** — handled by `execute_duplicate_cascade`
+(see below). The caller's only responsibility is to invoke
+`execute_duplicate_cascade(db_session_factory, cascade_ticket_ids,
+canonical_target_id, acting_user_id)` after committing the primary
+transaction. The endpoint handler pattern is:
 
-After committing the primary transaction, the caller (endpoint handler)
-iterates over `cascade_ticket_ids` and for each:
-1. Opens a new database session
-2. Acquires `FOR UPDATE` on the cascade ticket
-3. Verifies the ticket is still in Duplicated status and still points to
-   the original ticket (skip if reverted concurrently)
-4. Sets `duplicate_of_id = resolved_target`
-5. Creates `TicketAuditEvent` (`duplicate_target_changed`)
-6. Commits the session
-
-This separation preserves the "module does not commit" invariant while
-allowing cascade updates in independent transactions as required by
-`tickets.md`.
+```python
+result = await mark_as_duplicate(db, ticket_id=..., ...)
+await db.commit()
+await execute_duplicate_cascade(
+    session_factory, result.cascade_ticket_ids, resolved_target, acting_user_id
+)
+return result.ticket
+```
 
 **Locking**: FOR UPDATE on the source Ticket row only. Cascade
 operations each acquire their own FOR UPDATE in independent transactions
-managed by the caller.
+managed by `execute_duplicate_cascade`.
 
 **reconcile_ticket_status**: NOT called — this is a direct transition
 into the manual zone (Duplicated).
 
 **Audit events**: `duplicate_set`. Cascade produces
-`duplicate_target_changed` events (in separate transactions).
+`duplicate_target_changed` events (in separate transactions managed by
+`execute_duplicate_cascade`).
+
+### execute_duplicate_cascade
+
+Executes the cascade phase of `mark_as_duplicate`: updates
+`duplicate_of_id` for all tickets that pointed to the just-duplicated
+ticket.
+
+```python
+async def execute_duplicate_cascade(
+    db_session_factory: async_sessionmaker[AsyncSession],
+    *,
+    cascade_ticket_ids: list[UUID],
+    canonical_target_id: UUID,
+    acting_user_id: UUID | None,
+) -> None:
+```
+
+This function opens and commits independent database sessions — it is
+the sole exception to the "module does not commit" invariant (see
+Transaction ownership above).
+
+**Behavioral steps** (for each ticket ID in `cascade_ticket_ids`):
+
+1. Open a new session via `db_session_factory()`
+2. Acquire `FOR UPDATE` on the cascade ticket
+3. Verify the ticket is still in Duplicated status and still points to
+   the original ticket (skip if reverted concurrently)
+4. Set `duplicate_of_id = canonical_target_id`
+5. Create `TicketAuditEvent` (`duplicate_target_changed`)
+6. Commit the session
+
+**Best-effort semantics**: if an individual cascade step fails (e.g.,
+database error on one ticket), the function logs the failure and
+continues with the remaining tickets. This matches the "cascade is not
+a correctness requirement" invariant from `tickets.md` — the canonical
+resolver handles unflattened chains.
+
+**Locking**: each cascade ticket is locked independently in its own
+transaction. No multi-ticket locks are held simultaneously (as required
+by `ticket_mutations.md` single-ticket scope rule).
 
 ### soft_delete_ticket
 
@@ -785,7 +830,7 @@ distinguishes between the two failure modes. The API handler maps
 
 | Caller | Operations used |
 |--------|----------------|
-| API endpoint handlers (`api/v1/tickets.py`) | All 12 operations |
+| API endpoint handlers (`api/v1/tickets.py`) | All 12 operations + `execute_duplicate_cascade` |
 | CVE ingestion fetcher (`tasks/cve_sync.py`) | `create_ticket` (source=`cve_ingestion`) |
 | IBS track release detection (`tasks/check_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
 
@@ -823,6 +868,7 @@ ticket_mutations (infrastructure)
 | assign_ticket          | ✓                      | ✓                      | —                     | —                        |
 | ignore_ticket          | ✓                      | —                      | ✓                     | —                        |
 | mark_as_duplicate      | ✓                      | —                      | ✓                     | ✓                        |
+| execute_duplicate_cascade | —                   | —                      | —                     | —                        |
 | soft_delete_ticket     | —                      | —                      | —                     | —                        |
 | restore_ticket         | —                      | ✓                      | —                     | —                        |
 | set_confidentiality    | ✓                      | —                      | —                     | —                        |

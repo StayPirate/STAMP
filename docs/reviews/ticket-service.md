@@ -124,36 +124,15 @@ auto-assignment is or is not called.
 
 ### TKS-DES-02 — grant_access and revoke_access skip FOR UPDATE locking while creating ticket-scoped records (Medium)
 
-**Category**: Concurrency control consistency
-**Status**: OPEN
-
-The spec states that `grant_access` and `revoke_access` do "Not require"
-FOR UPDATE locking on the Ticket row. However, these operations read
-`ticket.is_confidential` as a precondition. Without FOR UPDATE, a
-concurrent `set_confidentiality(is_confidential=False)` could execute
-between the check and the INSERT, resulting in a `TicketAccessGrant` being
-created on a now-non-confidential ticket.
+**Status**: RESOLVED — Auto-resolved: spec now explicitly states FOR UPDATE locking on Ticket row for both grant_access and revoke_access (2026-05-26)
 
 ### TKS-DES-03 — mark_as_duplicate cascade transaction pattern pushes orchestration responsibility to API handler (Medium)
 
-**Category**: Architectural complexity / layer responsibility
-**Status**: OPEN
-
-The `mark_as_duplicate` function returns `cascade_ticket_ids` and the
-spec pushes the cascade orchestration loop into the API endpoint handler.
-This violates the project's "thin handlers" principle. Recommendation:
-Move cascade orchestration into a separate service function.
+**Status**: RESOLVED — Cascade orchestration moved to dedicated service function execute_duplicate_cascade; handler pattern reduced to two service calls (2026-05-26)
 
 ### TKS-DES-04 — dissociate_cve deletes CVSS assessments inside FOR UPDATE lock without bounding the set (Low)
 
-**Category**: Lock hold duration
-**Status**: OPEN
-
-The `dissociate_cve` behavioral step 4 deletes all `CVECVSSAssessment`
-records inside the FOR UPDATE lock. While in practice CVEs have a bounded
-number of CVSS assessments, the spec does not state an upper bound.
-Recommendation: document the expected upper bound rather than
-restructure.
+**Status**: RESOLVED — Auto-resolved: dissociate_cve no longer deletes CVSS assessments; records are preserved as factual CVE data (2026-05-26)
 
 ### TKS-DES-05 — create_ticket accepts severity_override with CVE but behavior may confuse implementers (Low)
 
@@ -187,14 +166,7 @@ architectural test.
 
 ### TKS-SEC-02 — grant_access and revoke_access skip FOR UPDATE locking on the Ticket row (Medium)
 
-**Category**: Authorization / Concurrency
-**Status**: OPEN
-
-Without a lock, a concurrent `set_confidentiality(is_confidential=False)`
-could execute between the `is_confidential` check and the grant INSERT,
-resulting in a `TicketAccessGrant` on a non-confidential ticket. Impact:
-Low — cosmetic inconsistency. Recommended mitigation: acknowledge the
-race or add a note.
+**Status**: RESOLVED — Auto-resolved: spec now explicitly states FOR UPDATE locking on Ticket row for both grant_access and revoke_access (2026-05-26)
 
 ### TKS-SEC-03 — mark_as_duplicate scope check deferred to API layer risks information disclosure (Medium)
 
