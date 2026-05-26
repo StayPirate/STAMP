@@ -1416,7 +1416,7 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 
 Error responses:
 
-- 400 with code `TICKET_SEVERITY_DERIVED`: ticket has an associated CVE
+- 409 with code `TICKET_SEVERITY_DERIVED`: ticket has an associated CVE
   (severity is derived from CVSS, not manually settable)
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated

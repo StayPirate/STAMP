@@ -14,51 +14,15 @@
 
 ### TKS-GAP-02 — mark_as_duplicate cascade does not filter soft-deleted tickets (Medium)
 
-**Category**: Data lifecycle
-**Status**: OPEN
-
-The `mark_as_duplicate` behavioral step 8 states: "Query tickets that
-currently point to this ticket via `duplicate_of_id` — return their IDs
-as `cascade_ticket_ids`." The query does not specify a `deleted_at IS
-NULL` filter. If a soft-deleted ticket has `duplicate_of_id` pointing to
-the source ticket, the cascade would update its `duplicate_of_id` and
-create a `TicketAuditEvent` (`duplicate_target_changed`) on a ticket that
-is "invisible to all business logic" per `tickets.md` (Soft-Delete). The
-spec should clarify whether the cascade query filters out soft-deleted
-tickets to maintain the soft-delete invariant.
+**Status**: RESOLVED — Spec updated: added deleted_at IS NULL filter to cascade query (2026-05-26)
 
 ### TKS-GAP-03 — mark_as_duplicate cascade fan-in without bound (Medium)
 
-**Category**: Temporal / concurrency
-**Status**: OPEN
-
-The cascade phase of `mark_as_duplicate` runs synchronously in the
-caller's request-response cycle — each cascade ticket is updated in its
-own transaction before the API response returns. While `tickets.md` notes
-that chains "longer than two tickets are almost nonexistent," a fan-in
-scenario (many tickets all marked as duplicates of the same target) could
-produce a large cascade set. If 100 tickets point to ticket B and B is
-marked as duplicate of C, the cascade updates all 100 tickets
-synchronously, each requiring FOR UPDATE, a write, and a commit. The spec
-should either acknowledge this as an accepted slow-but-correct case or
-set a bound (e.g., defer to a background task if cascade exceeds N
-items).
+**Status**: RESOLVED — Accepted risk: fan-in cascade without bound acknowledged as extremely rare case; adding complexity is counterproductive (2026-05-26)
 
 ### TKS-GAP-04 — set_confidentiality on soft-deleted ticket has no deleted_at guard (Medium)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The `set_confidentiality` function applies the immutability guard (rejects
-Ignored/Duplicated tickets) but does not check `deleted_at`. The API
-layer's `require_accessible_ticket` dependency returns 410
-`TICKET_DELETED` before the service function is reached, but the service
-function itself has no guard. A system caller (or a future code path that
-bypasses the API layer) could toggle confidentiality on a soft-deleted
-ticket, creating an audit event on a ticket that is supposed to be
-"invisible to all business logic." The service function should either
-check `deleted_at IS NULL` or the spec should explicitly document that
-the API layer is the sole enforcement point.
+**Status**: RESOLVED — Spec updated: added cross-cutting soft-delete module invariant plus explicit deleted_at check step in all mutation functions (2026-05-26)
 
 ### TKS-GAP-05 — grant_access and revoke_access do not verify target user is active (Low)
 
@@ -144,16 +108,7 @@ auto-assignment is or is not called.
 
 ### TKS-COH-02 — TICKET_SEVERITY_DERIVED HTTP status code conflict between tickets.md (400) and ticket-mutations.md (409) (Medium)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-`tickets.md` (Set Severity Override endpoint, error responses) says "400
-with code `TICKET_SEVERITY_DERIVED`". `ticket-mutations.md` (Service
-Exceptions table) says "`SeverityDerivedError` ... maps to 409
-`TICKET_SEVERITY_DERIVED`". Both specs describe the error for the same
-endpoint but disagree on the HTTP status code. Since
-`ticket-mutations.md` consistently uses 409 for all state-dependent
-rejections, 409 appears correct. `tickets.md` should be updated to 409.
+**Status**: RESOLVED — Spec updated: changed HTTP 400 to 409 for TICKET_SEVERITY_DERIVED in tickets.md (2026-05-26)
 
 ### TKS-COH-03 — SeverityEnum vs Severity naming inconsistency (Low)
 
@@ -165,17 +120,7 @@ rejections, 409 appears correct. `tickets.md` should be updated to 409.
 
 ### TKS-DES-01 — grant_access and revoke_access immutability guard split across API and service layers (Medium)
 
-**Category**: Separation of concerns / defense in depth
-**Status**: OPEN
-
-The `grant_access` and `revoke_access` functions state: "Immutability
-guard is enforced at the API layer via `require_ticket_mutable` dependency
-(not inside this function)." However, all other mutation operations
-enforce the immutability guard inside the service function itself. This
-creates an asymmetry: if `grant_access` or `revoke_access` is called from
-a non-API entry point, the immutability guard will not fire.
-Recommendation: Move the immutability guard into the service functions for
-`grant_access` and `revoke_access`.
+**Status**: RESOLVED — Spec updated: moved immutability guard into grant_access and revoke_access service functions (2026-05-26)
 
 ### TKS-DES-02 — grant_access and revoke_access skip FOR UPDATE locking while creating ticket-scoped records (Medium)
 
@@ -222,14 +167,7 @@ Recommendation: keep current design with documentation clarity.
 
 ### TKS-DES-06 — No explicit deleted_at guard in most service functions despite 'invisible to all business logic' invariant (Low)
 
-**Category**: Defense in depth
-**Status**: OPEN
-
-Most `ticket_service` functions rely on the API layer's
-`require_accessible_ticket` dependency to enforce the `deleted_at IS
-NULL` check. The service functions themselves do not verify `deleted_at`.
-A non-API caller could mutate a soft-deleted ticket. Recommendation:
-consider adding `deleted_at IS NULL` check as a standard precondition.
+**Status**: RESOLVED — Cross-agent duplicate of TKS-GAP-04 (2026-05-26)
 
 ---
 
