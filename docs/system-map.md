@@ -115,6 +115,13 @@ erDiagram
         DECIMAL score
     }
 
+    CVEExternalIdentifier {
+        UUID id PK
+        UUID cve_id FK
+        ENUM source
+        VARCHAR identifier
+    }
+
     Ticket {
         UUID id PK
         INTEGER sequence_id UK
@@ -248,6 +255,7 @@ erDiagram
 
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
+    CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
     CVE |o--o| Ticket : "tracked by"
 
     Ticket ||--o{ TicketAuditEvent : "has events"
@@ -277,7 +285,7 @@ erDiagram
 
 | Group | Tables | Purpose |
 |-------|--------|---------|
-| **CVE Domain** | CVE, CVESource, CVECVSSAssessment | Vulnerability data from external sources |
+| **CVE Domain** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier | Vulnerability data from external sources |
 | **Ticket Domain** | Ticket, TicketAuditEvent, TicketReference, TicketPackage, TicketPackageTrack, TicketPackageProduct | Security workflow and audit trail |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
 | **Identity Domain** | User, UserRole, RoleMapping | Users, roles, and AD group mappings |

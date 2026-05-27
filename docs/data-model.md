@@ -5,7 +5,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
 
-The data model comprises 30 entities organized into five domains. The
+The data model comprises 31 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -21,6 +21,7 @@ implicit relationships (joined by convention, no FK constraint).
 flowchart TB
     subgraph cve_tickets["CVE & Tickets"]
         CVE
+        CVEExternalIdentifier
         Ticket
         TicketAuditEvent
         TicketAccessGrant
@@ -89,6 +90,12 @@ erDiagram
         VARCHAR_10 cvss_version "NOT NULL"
         DECIMAL score "NOT NULL"
     }
+    CVEExternalIdentifier {
+        UUID id PK
+        UUID cve_id FK "NOT NULL"
+        ENUM source "NOT NULL"
+        VARCHAR_100 identifier "NOT NULL"
+    }
     Ticket {
         UUID id PK
         INTEGER sequence_id UK "auto-increment"
@@ -129,6 +136,7 @@ erDiagram
 
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
+    CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
     CVE |o--o| Ticket : "tracked by"
     Ticket ||--o{ TicketAccessGrant : "has access grants"
     Ticket ||--o{ TicketAuditEvent : "has events"
@@ -427,6 +435,44 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 - When a direct source (e.g., Red Hat API) provides data that also exists
   as an NVD Secondary, the direct source takes priority and overwrites the
   NVD Secondary record for the same `provider_name` and `cvss_version`
+
+### CVEExternalIdentifierSource Enum
+
+Identifies the naming authority that assigned an external vulnerability
+identifier.
+
+| Value | Description |
+|-------|-------------|
+| GHSA  | GitHub Security Advisory identifier |
+
+### CVEExternalIdentifier
+
+Tracks external vulnerability identifiers (e.g., GHSA-ID) mapped to a
+CVE by their respective naming authority. External identifiers are
+populated exclusively by fetchers — there is no user-facing CRUD. The
+CVE remains the sole canonical identifier in Sentinel.
+
+| Column     | Type                                   | Constraints             | Description                              |
+|------------|----------------------------------------|-------------------------|------------------------------------------|
+| id         | UUID                                   | PK                      | Internal identifier                      |
+| cve_id     | UUID                                   | FK(cve.id), NOT NULL    | Related CVE                              |
+| source     | ENUM(CVEExternalIdentifierSource)      | NOT NULL                | Naming authority (e.g., GHSA)            |
+| identifier | VARCHAR(100)                           | NOT NULL                | External ID (e.g., `GHSA-xxxx-xxxx-xxxx`) |
+| url        | TEXT                                   | nullable                | Direct link to the advisory page         |
+| created_at | TIMESTAMPTZ                            | NOT NULL, DEFAULT       | Record creation timestamp                |
+| updated_at | TIMESTAMPTZ                            | NOT NULL, DEFAULT       | Record update timestamp                  |
+
+**Unique constraint**: (source, identifier) — each external ID is
+globally unique within its naming system.
+
+**Notes**:
+- A CVE can have multiple external identifiers from different sources
+  (e.g., one GHSA-ID and one RUSTSEC-ID in the future)
+- A CVE can also have multiple identifiers from the same source (rare,
+  but possible when multiple advisories map to one CVE)
+- External identifiers persist regardless of ticket status or existence
+- The `url` column stores the canonical advisory URL for UI convenience
+  (e.g., `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx`)
 
 ### SystemSetting
 

@@ -89,7 +89,8 @@ async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
 
     Called on-demand when Sentinel encounters an unknown CVE-ID during
     ticket creation or CVE association. Writes data to the standard
-    models (CVE, CVESource, CVECVSSAssessment, TicketReference).
+    models (CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier,
+    TicketReference).
 
     If the CVE is not found in the external source (e.g., reserved or
     not yet published), this method should return without error.

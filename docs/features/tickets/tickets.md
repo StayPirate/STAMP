@@ -58,6 +58,9 @@ the following fields. A ticket matches if any field matches.
 - **Package names**: case-insensitive substring match (ILIKE). Matches
   any package associated with the ticket whose name contains the search
   term.
+- **External identifiers** (if the ticket has an associated CVE with
+  external identifiers): prefix-match on the identifier string (e.g.,
+  `GHSA-xxxx` matches `GHSA-xxxx-yyyy-zzzz`). Case-insensitive.
 
 ## CVE Association
 
@@ -1103,6 +1106,15 @@ the canonical definition.
 | `modified_date` | datetime \| null | Date last modified (UTC) |
 | `nvd_status` | string \| null | NVD vulnerability status |
 | `sources` | CVESource[] | Data sources for this CVE |
+| `external_identifiers` | CVEExternalIdentifierResponse[] | External identifiers from other naming authorities |
+
+**CVEExternalIdentifierResponse** — external vulnerability identifier:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | string | Naming authority (e.g., `"ghsa"`). Serialized as lowercase |
+| `identifier` | string | External ID (e.g., `"GHSA-xxxx-xxxx-xxxx"`) |
+| `url` | string \| null | Direct link to the advisory page |
 
 **BugownerMember** — individual member within a group bugowner:
 
@@ -1241,7 +1253,8 @@ Query parameters:
 
 - `search` (string, optional): free-text search across `SNTL-{n}`
   identifier (prefix-match on numeric part), CVE ID (prefix-match),
-  and package names (case-insensitive substring). See
+  package names (case-insensitive substring), and external identifiers
+  such as GHSA-IDs (prefix-match, case-insensitive). See
   [Search](#search) for detailed matching behavior per field.
 - `status` (string, repeatable, optional): filter by ticket status.
   Accepts one or more values from: `new`, `analysis`, `analyzed`,

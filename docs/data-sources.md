@@ -177,8 +177,11 @@ information relevant for Vulnerability Analysts.
   `https://github.com/github/advisory-database.git`
 - **Integration status**: **Planned**. New `sync_ghsa` fetcher. Schedule:
   TBD. CVSS scores are stored as `CVECVSSAssessment` entries with
-  `provider_name = "GitHub"`. CWE identifiers, affected versions, and
-  reference URLs are stored in their respective tables
+  `provider_name = "GitHub"`. The GHSA-ID itself is stored as a
+  `CVEExternalIdentifier` record with `source = GHSA` (see
+  `docs/features/tickets/cve-tracking.md`, "External Identifiers"). CWE
+  identifiers, affected versions, and reference URLs are stored in their
+  respective tables
 - **Documentation**:
   https://docs.github.com/en/code-security/security-advisories/working-with-global-security-advisories-from-the-github-advisory-database
 
@@ -755,7 +758,7 @@ details.
 | `sync_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking |
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
-| `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, CWE, affected versions (multi-ecosystem), references |
+| `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references |
 | `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits, affected kernel versions, references |
 | `sync_osv` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references |
 
@@ -778,3 +781,4 @@ each source is implemented.
 | `CVECWE` | cve_id, cwe_id (many-to-many, unique on pair) | `sync_cves_nvd`, `sync_cves_mitre`, `sync_cvss_redhat`, `sync_ghsa` |
 | `CVEAffectedVersion` | package_name, ecosystem, version_start, version_end, fixed_version | `sync_cves_nvd`, `sync_cves_mitre`, `sync_ghsa`, `sync_kernel_cves`, `sync_osv` |
 | `CVEKernelCommit` | introducing_commit, fixing_commit | `sync_kernel_cves` |
+| `CVEExternalIdentifier` | source, identifier, url | `sync_ghsa` (+ future fetchers) |
