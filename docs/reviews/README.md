@@ -26,6 +26,10 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-18 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| [fetcher-infrastructure](fetcher-infrastructure.md) | 9 | 🟢 | 4 | 4 | 🟢 | 17 | 2026-05-28 |  |
+| | 6:🟠 3:🟡 |  | 1:🟠 3:🟡 | 2:🟠 2:🟡 |  |  |  |  |
+| [fetcher-operations](fetcher-operations.md) | — | — | — | — | — | 0 | — | — |
+|  |  |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
@@ -50,8 +54,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **0** | **1** | **1** | **0** | **5** |  |  |
-|  | 2:🟠 1:🟡 |  | 1:🟡 | 1:🟡 |  |  |  |  |
+| **Total** | **12** | **0** | **5** | **5** | **0** | **22** |  |  |
+|  | 8:🟠 4:🟡 |  | 1:🟠 4:🟡 | 2:🟠 3:🟡 |  |  |  |  |
 
 ### Disabled specs
 
@@ -59,8 +63,6 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - cve-service
 - cve-tracking
 - cvss-scoring
-- fetcher-infrastructure
-- fetcher-operations
 - git-product-release-detection
 - git-track-release-detection
 - ibs-integration

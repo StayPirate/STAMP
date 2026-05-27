@@ -96,12 +96,23 @@
       "cache": null
     },
     "fetcher-infrastructure": {
-      "enabled": false,
+      "enabled": true,
       "abbr": "FEI",
-      "cache": null
+      "cache": {
+        "last_review": "2026-05-28T00:20:39+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 6, "L": 3 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 1, "L": 3 },
+          "SEC": { "H": 0, "M": 2, "L": 2 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 2,
+        "not_reviewed": []
+      }
     },
     "fetcher-operations": {
-      "enabled": false,
+      "enabled": true,
       "abbr": "FEO",
       "cache": null
     },
