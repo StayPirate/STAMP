@@ -194,17 +194,29 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 
 ## Background Task
 
-- **Task name**: `check_ibs_track_releases`
-- **Type**: `BaseFetcher` subclass
-- **Schedule**: every 24 hours at 02:00 UTC (`0 2 * * *`)
-- **Role**: catch-up mechanism for events missed by the real-time
-  `IBSEventConsumer` (see `docs/features/integrations/ibs-rabbitmq-integration.md`)
-- **Scope**: scans all codestreams that have at least one
-  `TicketPackageTrack` record with `status` in
-  (`ANALYSIS`, `AFFECTED`), belonging to active tickets (status in
-  `New`, `Analysis`, `Analyzed` and `deleted_at IS NULL`). Soft-deleted
-  tracks under active tickets are included (see hierarchical exclusion
-  model)
+### Fetcher: `check_ibs_track_releases`
+
+| Property | Value |
+|----------|-------|
+| Fetcher name | `check_ibs_track_releases` |
+| Class name | `CheckIbsTrackReleases` |
+| Schedule | Daily at 02:00 UTC (`0 2 * * *`) |
+| Source | IBS (`build.suse.de`) |
+| Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active tickets (New, Analysis, Analyzed; `deleted_at IS NULL`). Soft-deleted tracks under active tickets are included |
+| Auth | HTTP Basic / API token (internal) |
+| Custom settings | No |
+
+Catch-up mechanism for events missed by the real-time
+`IBSEventConsumer` (see
+`docs/features/integrations/ibs-rabbitmq-integration.md`).
+
+#### Metrics
+
+- `record_created`: a new ticket was created from a detected release
+  (Case C)
+- `record_updated`: a `TicketPackageTrack` status was transitioned to
+  `FIXED` (Case A), or a package was added to a ticket (Case B)
+- `record_failed`: a codestream could not be scanned (IBS API error)
 
 ## Open Items
 

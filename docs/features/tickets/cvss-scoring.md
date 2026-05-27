@@ -123,9 +123,9 @@ directly on the assessment record.
   example, `secure@intel.com` resolves to `"Intel Corporation"`
 - **CVSS versions**: varies by CNA; may include v3.1, v4.0, or both
 - **Name resolution**: during CVE sync, the ingestion service resolves
-  `source` email addresses to display names via the NVD Source API. Source
-  API data is cached in-memory during each sync run (the dataset is small,
-  ~215 organizations, and changes infrequently)
+  `source` email addresses to display names via the NVD Source API. See
+  `docs/features/tickets/cve-tracking.md` (NVD Source API Caching) for
+  the caching strategy
 - **Deduplication with direct sources**: if a direct source (e.g., Red Hat)
   provides an assessment for the same provider and CVSS version, the direct
   source takes priority and overwrites the NVD Secondary data
@@ -293,43 +293,19 @@ See `docs/features/packages/package-model.md` for the full eligibility logic.
 
 ### NVD Sync (Incremental)
 
-NVD supports incremental fetching via the `lastModStartDate` and
-`lastModEndDate` parameters (max 120-day range). A CVE's `lastModified`
-timestamp changes when NVD or a CNA modifies the record, including CVSS
-changes.
+The `sync_cves_nvd` fetcher runs every 6 hours and performs an
+incremental sync of CVEs from the NVD REST API v2. During each sync, it
+extracts all CVSS assessments (Primary and Secondary) from the
+`cvssMetricV*` arrays and creates or updates `CVECVSSAssessment` records
+via `ticket_mutations.create_cvss_assessment()`. CNA display names for
+Secondary assessments are resolved via the NVD Source API. If any CVSS
+assessment changed for a CVE with an active ticket, the recalculation
+cascade is triggered (see Recalculation Cascade below).
 
-**Strategy**:
-
-1. `last_nvd_sync_at` is derived from the `started_at` timestamp of the
-   most recent successful `FetcherRun` for the `sync_cves_nvd` fetcher.
-   If no successful run exists, the fetcher bootstraps with the last 7
-   days (see `docs/features/tickets/cve-tracking.md`, "First Run Strategy")
-2. Every 6 hours, a Celery task fetches CVEs modified since
-   `last_nvd_sync_at`:
-   ```
-   GET /rest/json/cves/2.0?lastModStartDate={last_sync}&lastModEndDate={now}
-   ```
-3. For each returned CVE:
-   - Update CVE metadata (description, references, etc.)
-   - Extract CVSS vector strings from `cvssMetricV31`, `cvssMetricV40`,
-     and any other `cvssMetricV*` arrays. Assessments that provide only
-     a numeric score without a vector string are skipped (not imported)
-   - For Primary assessments (`type: "Primary"`): pass vector to
-     `ticket_mutations.create_cvss_assessment()` with
-     `provider = "NVD"`. Version and score are derived from the vector
-   - For Secondary assessments (`type: "Secondary"`): resolve `source`
-     email to display name via NVD Source API, then pass vector with
-     the resolved name as `provider`
-   - Skip Secondary assessments where a direct source (e.g., Red Hat)
-     already has data for the same `provider_name` and derived
-     `cvss_version`
-4. If any CVSS assessment changed for a CVE with an active ticket →
-   trigger recalculation (see Recalculation Cascade)
-
-**NVD Source API caching**: during each sync run, the service fetches the
-full NVD Source API dataset (`GET /rest/json/source/2.0`) into an
-in-memory dictionary mapping `source_identifier → display_name`. The
-dataset is small (~215 entries) and changes infrequently.
+For the full fetcher definition — including the incremental algorithm,
+NVD Source API caching strategy, first-run behavior, and error handling
+— see `docs/features/tickets/cve-tracking.md` (Fetcher:
+`sync_cves_nvd`).
 
 ### Red Hat Sync
 
@@ -612,12 +588,42 @@ response. The task:
 
 ## Background Tasks
 
-| Task                     | Schedule    | Description                                  |
-|--------------------------|-------------|----------------------------------------------|
-| `sync_cves_nvd`          | Every 6h    | Incremental NVD CVE sync. Extracts all CVSS assessments (Primary + Secondary). Resolves CNA names via NVD Source API. |
-| `sync_cvss_redhat`       | Daily       | Re-fetches Red Hat CVSS for all CVEs with active tickets. |
+The `sync_cves_nvd` fetcher (defined in
+`docs/features/tickets/cve-tracking.md`) also produces CVSS assessments
+during CVE ingestion. See "NVD Sync (Incremental)" above for the
+consumer-oriented summary.
 
-### sync_cvss_redhat — Custom Settings
+### Fetcher: `sync_cvss_redhat`
+
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_cvss_redhat` |
+| Class name | `SyncCvssRedhat` |
+| Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
+| Source | Red Hat Security Data API (`access.redhat.com/hydra/rest/securitydata`) |
+| Scope | All CVEs with active tickets (New, Analysis, Analyzed; `deleted_at IS NULL`) |
+| Auth | None (public API) |
+| Custom settings | Yes (see below) |
+
+#### Algorithm
+
+See "Red Hat Sync" section above for the full algorithm (initial fetch
+and periodic re-fetch strategies).
+
+#### Error Handling
+
+TBD
+
+#### Metrics
+
+- `record_created`: N/A (Red Hat data is always an upsert against
+  existing CVE records)
+- `record_updated`: a Red Hat CVSS assessment was created or updated
+  for a CVE
+- `record_failed`: a CVE's Red Hat CVSS could not be fetched (API
+  error, timeout, malformed response)
+
+#### Custom Settings
 
 This fetcher declares the following custom settings (see
 `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings

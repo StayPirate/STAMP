@@ -722,22 +722,47 @@ Generic Celery task that executes any registered fetcher by name.
 | Schedule | per-fetcher, from `FetcherConfig.schedule_override` or `BaseFetcher.default_schedule` |
 | Idempotency | Only one instance per fetcher can run at a time (Celery `unique` or lock-based) |
 
-### aggregate_fetcher_runs
-
-Periodic task that aggregates old `FetcherRun` records into weekly
-summaries.
+### Fetcher: `aggregate_fetcher_runs`
 
 | Property | Value |
-|---|---|
-| Task name | `aggregate_fetcher_runs` |
-| Schedule | Daily at 03:00 UTC |
-| Retention | Configurable via `retention_days` custom setting (default: 90 days) |
-| Aggregation | Weekly (ISO week, Monday start) |
+|----------|-------|
+| Fetcher name | `aggregate_fetcher_runs` |
+| Class name | `AggregationFetcher` |
+| Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
+| Source | Local (no external source) |
+| Scope | All `FetcherRun` records older than the retention window |
+| Auth | N/A |
+| Custom settings | Yes (see below) |
 
-The aggregation task is itself a fetcher (`AggregationFetcher` inheriting
-`BaseFetcher`) so its own execution is tracked in the dashboard.
+#### Algorithm
 
-**Custom Settings**
+1. Read the `retention_days` custom setting (default: 90) to determine
+   the retention window
+2. Select all `FetcherRun` records older than `retention_days`
+3. Group them by `fetcher_name` and ISO week (Monday start)
+4. Create or update `FetcherRunWeeklyAggregate` records with the computed
+   summaries (see `docs/features/platform/fetcher-infrastructure.md`,
+   "FetcherRunWeeklyAggregate" for the table schema)
+5. Delete the original `FetcherRun` records that were aggregated
+
+Error diagnostic fields (`error_message`, `error_detail`,
+`error_traceback`) are intentionally not preserved in weekly aggregates.
+Only run counts and duration statistics survive aggregation. Operators
+should investigate failures within the retention window before individual
+run records are deleted.
+
+#### Error Handling
+
+Exempt — this fetcher only interacts with the local database.
+
+#### Metrics
+
+- `record_created`: a new `FetcherRunWeeklyAggregate` record was created
+- `record_updated`: an existing `FetcherRunWeeklyAggregate` record was
+  updated with new data from additional runs in the same week
+- `record_failed`: a `FetcherRun` group could not be aggregated
+
+#### Custom Settings
 
 This fetcher declares the following custom settings (see
 `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings

@@ -494,6 +494,24 @@ fetcher infrastructure.
 
 See `docs/features/platform/fetcher-infrastructure.md` for the full specification.
 
+#### Fetcher documentation compliance
+
+When defining or modifying a fetcher in a feature specification, the
+documentation MUST follow the "Fetcher Documentation Requirements"
+section in `docs/features/platform/fetcher-infrastructure.md`:
+
+1. The fetcher's complete definition lives in exactly one spec (single
+   source of truth)
+2. The minimum documentation template is satisfied (properties table,
+   algorithm, error handling, metrics)
+3. The Fetcher Registry in `docs/data-sources.md` is updated
+4. The classification rule is applied correctly (dedicated spec vs.
+   embedded section)
+
+If modifying a fetcher whose definition is currently fragmented across
+multiple specs, consolidate it into its primary spec before proceeding
+with the modification.
+
 ### 15. Specification coherence
 
 After creating or modifying a feature specification in `docs/features/`, or

@@ -244,12 +244,24 @@ not tracked in ticket, or no ticket exists at all) is described in
 
 ## Background Task
 
-- **Task name**: `check_product_releases`
-- **Type**: `BaseFetcher` subclass
-- **Schedule**: TBD (see [Open Items](#open-items))
-- **Scope**: scans all `TicketPackageProduct` records with
-  `released_at IS NULL` belonging to active tickets. Soft-deleted
-  products are included (see hierarchical exclusion model).
+### Fetcher: `check_product_releases`
+
+| Property | Value |
+|----------|-------|
+| Fetcher name | `check_product_releases` |
+| Class name | `CheckProductReleases` |
+| Schedule | TBD |
+| Source | IBS download infrastructure (`download.suse.de`) |
+| Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. Soft-deleted products are included |
+| Auth | HTTP Basic / API token (internal) |
+| Custom settings | No |
+
+#### Metrics
+
+- `record_created`: N/A
+- `record_updated`: a `TicketPackageProduct.released_at` was set
+  (advisory matched)
+- `record_failed`: a product repository could not be fetched or parsed
 
 ## Open Items
 

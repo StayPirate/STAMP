@@ -742,7 +742,7 @@ details.
 |---------|--------|----------|------|-------------|---------------|
 | `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, affected versions (CPE), references |
 | `sync_cves_mitre` | MITRE CVE Services | Every 6 hours | None | None known | CVE records, CISA ADP data (SSVC, KEV, CVSS CISA, CWE, affected versions), references |
-| `sync_cvss_redhat` | Red Hat Security Data | Daily | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references |
+| `sync_cvss_redhat` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references |
 | `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates |
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product |
@@ -751,6 +751,8 @@ details.
 | `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) |
 | `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping |
 | `check_lifecycle_phase_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL |
+| `aggregate_fetcher_runs` | Local (no external source) | Daily at 03:00 UTC | N/A | N/A | Aggregates old FetcherRun records into weekly summaries, deletes originals past retention window |
+| `sync_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking |
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
 | `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, CWE, affected versions (multi-ecosystem), references |

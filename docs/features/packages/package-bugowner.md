@@ -252,11 +252,15 @@ performs periodic maintenance of the bugowner cache. It runs every
 
 ### Fetcher Properties
 
-| Property           | Value                        |
-|--------------------|------------------------------|
-| `name`             | `sync_package_bugowners`     |
-| `description`      | Maintains the package bugowner cache: removes stale entries, updates existing bugowners from IBS, and populates missing entries |
-| `default_schedule` | `0 3 */14 * *` (every 14 days at 03:00 UTC) |
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_package_bugowners` |
+| Class name | `SyncPackageBugowners` |
+| Schedule | Every 14 days at 03:00 UTC (`0 3 */14 * *`) |
+| Source | IBS (`build.suse.de`) |
+| Scope | All `PackageBugowner` records + packages in active tickets missing from the cache |
+| Auth | HTTP Basic / API token (internal) |
+| Custom settings | No |
 
 ### Operation 1: Cleanup
 

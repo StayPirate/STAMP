@@ -177,7 +177,7 @@ Error messages MUST NOT contain:
 
 ### Referencing error handling in fetcher specifications
 
-Feature specifications that define fetchers SHOULD include an "Error
+Feature specifications that define fetchers MUST include an "Error
 Handling" section documenting which exceptions the fetcher catches and
 what sanitized messages it produces. The `@fetcher-compliance-reviewer`
 agent verifies this documentation exists.
@@ -186,6 +186,10 @@ Fetchers that only interact with the local database (e.g.,
 `aggregate_fetcher_runs`, `check_lifecycle_phase_transitions`) are exempt
 from this requirement — their failure modes do not involve external
 service details.
+
+Error handling is one of the mandatory sections in the minimum
+documentation template — see "Fetcher Documentation Requirements" below
+for the full template.
 
 ## Custom Settings Schema
 
@@ -338,6 +342,97 @@ Example:
 > | Setting | Type | Default | Range | Description |
 > |---------|------|---------|-------|-------------|
 > | `my_setting` | int | 10 | 1–100 | Description of the setting |
+
+## Fetcher Documentation Requirements
+
+Every `BaseFetcher` subclass MUST have its complete definition in exactly
+one specification document (single source of truth). Other specs may
+reference it and include brief consumer-oriented summaries (see
+"Cross-reference summaries" below), but MUST NOT specify the fetcher's
+algorithm steps, error handling behavior, or custom settings.
+
+### Classification Rule
+
+The deciding factor for whether a fetcher gets a dedicated spec or lives
+as a section in a feature spec is its **role**:
+
+| Classification | Criterion | Spec treatment |
+|---|---|---|
+| The fetcher IS the feature | The spec would not exist without the fetcher. No distinct UI, API, or data model beyond what the fetcher requires. | Dedicated spec in the relevant domain. Named after what it does, not after the mechanism. |
+| The fetcher supports a feature | The feature has its own identity (data model, API, UI, operations) and the fetcher is how data enters or exits. | Section within the feature spec, following the mandatory minimum template below. |
+
+Test: if you removed the fetcher from the spec, would the spec still have
+something meaningful to say? If yes → embedded. If no → dedicated spec.
+
+Refinement for fetcher-centric specs: if the remaining non-fetcher
+content exists primarily to support the fetcher itself (connection
+details, authentication rationale, attribute mappings) rather than
+serving independent consumers (APIs, UI, other specs), the spec is a
+fetcher-centric spec — classify it as "the fetcher IS the feature."
+
+### Minimum Documentation Template
+
+Every fetcher — whether in a dedicated spec or embedded as a section —
+MUST include at minimum:
+
+1. **Properties table**:
+
+   | Property | Value |
+   |----------|-------|
+   | Fetcher name | `<registry name>` |
+   | Class name | `<PascalCase class>` |
+   | Schedule | `<cron expression>` + human-readable |
+   | Source | `<external service name>` |
+   | Scope | `<what the fetcher processes per run>` |
+   | Auth | `<authentication method>` |
+   | Custom settings | Yes / No (link to Custom Settings section if yes) |
+
+2. **Algorithm** (numbered steps describing what the fetcher does on each
+   execution)
+
+3. **Error handling** (what happens on failure — retry behavior, sanitized
+   messages, partial progress). Exempt: fetchers that only interact with
+   the local database.
+
+4. **Metrics** (what counts as `record_created`, `record_updated`,
+   `record_failed` — one sentence each)
+
+5. **Custom settings table** (if applicable — following the format defined
+   in the Custom Settings Schema section above)
+
+A fetcher whose template contains TBD values is structurally prepared but
+NOT considered compliant. Compliance requires real content in all
+mandatory sections. TBD placeholders indicate that the fetcher's design
+is pending and must be completed before implementation begins.
+
+### Cross-Reference Summaries
+
+Specs that consume data produced by a fetcher defined elsewhere may
+include a brief consumer-oriented summary (3-5 sentences) alongside the
+cross-reference, to provide reading continuity. The summary MUST describe
+*what* the fetcher produces from the consumer's perspective, but MUST NOT
+specify algorithm steps, error handling behavior, or custom settings.
+The cross-referenced spec remains the single source of truth.
+
+Example: `cvss-scoring.md` may summarize that `sync_cves_nvd` creates
+CVSS assessments during each sync run, but must not describe the
+incremental fetch strategy or the NVD Source API caching mechanism.
+
+### Registry Maintenance
+
+When defining a new fetcher, the Fetcher Registry table in
+`docs/data-sources.md` MUST be updated with a row for the new fetcher.
+
+### Domain Placement
+
+Fetchers live in the domain they serve, not in a centralized `fetchers/`
+folder:
+
+- CVE/CVSS fetchers → `tickets/`
+- Product/package fetchers → `packages/`
+- Identity fetchers → `identity/`
+- Platform-internal fetchers → `platform/`
+- Integration-layer fetchers (if any) → `integrations/`
 
 ## Registry
 
@@ -640,24 +735,9 @@ Stores weekly summaries of fetcher runs after the retention window
 
 ### Aggregation Task
 
-A Celery periodic task `aggregate_fetcher_runs` runs daily and:
-
-1. Reads the `retention_days` custom setting (default: 90) to determine
-   the retention window
-2. Selects all `FetcherRun` records older than `retention_days`
-3. Groups them by `fetcher_name` and ISO week
-4. Creates or updates `FetcherRunWeeklyAggregate` records with the computed
-   summaries
-5. Deletes the original `FetcherRun` records that were aggregated
-
-Error diagnostic fields (`error_message`, `error_detail`,
-`error_traceback`) are intentionally not preserved in weekly aggregates.
-Only run counts and duration statistics survive aggregation. Operators
-should investigate failures within the retention window (default: 90
-days) before individual run records are deleted.
-
-This task is itself a fetcher (inherits `BaseFetcher`) so its execution
-is also tracked in the dashboard.
+The aggregation algorithm is implemented by `aggregate_fetcher_runs`,
+defined in `docs/features/platform/fetcher-operations.md` (Fetcher:
+`aggregate_fetcher_runs`).
 
 ## Deregistered Fetcher Lifecycle
 

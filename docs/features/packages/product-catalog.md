@@ -209,17 +209,77 @@ List all products synced from SMELT. Paginated.
 
 ## Background Tasks
 
-- `sync_smelt_products`: periodic task to sync products and their
-  repositories from SMELT `GET /api/v1/basic/products/`. Iterates all
-  pages. Products no longer reported by SMELT are marked
-  `active = false`.
-- `sync_aimaas_lifecycle`: periodic task to sync product lifecycle data
-  (`fcs`, `end_of_gs`, `end_of_ltss`, `end_of_espos`,
-  `end_of_reactive_ltss`) from AIMAAS. Matches to local products via
-  CPE.
-- `sync_aimaas_thresholds`: periodic task to sync CVSS thresholds from
-  AIMAAS `GET /api/entity/cvss-threshold`. When thresholds change,
-  re-evaluates eligibility for active tickets.
+### Fetcher: `sync_smelt_products`
+
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_smelt_products` |
+| Class name | TBD |
+| Schedule | TBD |
+| Source | SMELT (`smelt.suse.de/api`) |
+| Scope | TBD |
+| Auth | TBD (internal) |
+| Custom settings | TBD |
+
+#### Algorithm
+
+TBD
+
+#### Error Handling
+
+TBD
+
+#### Metrics
+
+TBD
+
+### Fetcher: `sync_aimaas_lifecycle`
+
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_aimaas_lifecycle` |
+| Class name | TBD |
+| Schedule | TBD |
+| Source | AIMAAS (`aimaas.suse.de/api`) |
+| Scope | TBD |
+| Auth | TBD (internal) |
+| Custom settings | TBD |
+
+#### Algorithm
+
+TBD
+
+#### Error Handling
+
+TBD
+
+#### Metrics
+
+TBD
+
+### Fetcher: `sync_aimaas_thresholds`
+
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_aimaas_thresholds` |
+| Class name | TBD |
+| Schedule | TBD |
+| Source | AIMAAS (`aimaas.suse.de/api`) |
+| Scope | TBD |
+| Auth | TBD (internal) |
+| Custom settings | TBD |
+
+#### Algorithm
+
+TBD
+
+#### Error Handling
+
+TBD
+
+#### Metrics
+
+TBD
 
 ---
 

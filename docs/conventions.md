@@ -527,3 +527,12 @@ their Cross-references section. Endpoint-specific error tables document only
 errors unique to the endpoint logic; errors handled globally (Pydantic
 validation, authentication, authorization, etc.) are defined in `api-spec.md`
 and must not be repeated per-endpoint.
+
+### Fetcher Documentation
+
+Every `BaseFetcher` subclass MUST have its specification documented
+following the fetcher documentation requirements defined in
+`docs/features/platform/fetcher-infrastructure.md` (section "Fetcher
+Documentation Requirements"). This includes the classification rule
+(dedicated spec vs. embedded section), the minimum documentation
+template, and the Fetcher Registry maintenance obligation.

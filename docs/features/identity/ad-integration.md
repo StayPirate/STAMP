@@ -88,13 +88,17 @@ sync.
 
 ## Fetcher
 
-### `sync_ldap_directory`
+### Fetcher: `sync_ldap_directory`
 
-A `BaseFetcher` subclass registered in the fetcher dashboard.
-
-- **Name**: `sync_ldap_directory`
-- **Description**: Syncs SUSE employee data from Active Directory
-- **Default schedule**: daily at 04:00 UTC
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_ldap_directory` |
+| Class name | `SyncLdapDirectory` |
+| Schedule | Daily at 04:00 UTC (`0 4 * * *`) |
+| Source | SUSE Active Directory (`pan.suse.de`) |
+| Scope | All employee entries under `OU=User accounts,DC=corp,DC=suse,DC=com` |
+| Auth | None (anonymous bind, LDAPS port 636) |
+| Custom settings | Yes (see below) |
 
 **Custom Settings**
 

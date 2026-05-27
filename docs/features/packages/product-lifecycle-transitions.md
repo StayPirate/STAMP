@@ -33,14 +33,20 @@ reflect temporary SMELT data issues and is not a reliable EOL signal.
 
 ## Lifecycle Phase Detection
 
-### Background Task: `check_lifecycle_phase_transitions`
+### Fetcher: `check_lifecycle_phase_transitions`
 
-A `BaseFetcher` subclass that runs daily (recommended schedule: 04:00 UTC,
-after `sync_aimaas_lifecycle` and `check_ibs_track_releases`).
+| Property | Value |
+|----------|-------|
+| Fetcher name | `check_lifecycle_phase_transitions` |
+| Class name | `CheckLifecyclePhaseTransitions` |
+| Schedule | Daily at 04:00 UTC (`0 4 * * *`) |
+| Source | Local (no external source) |
+| Scope | Products in Reactive LTSS or EOL phase with actionable `TicketPackageProduct` records in active tickets |
+| Auth | N/A |
+| Custom settings | No |
 
-**Responsibility**: find products currently in Reactive LTSS or EOL phase
-that still have actionable `TicketPackageProduct` records, and enqueue
-re-evaluation.
+Recommended to run after `sync_aimaas_lifecycle` and
+`check_ibs_track_releases`.
 
 **Algorithm** (idempotent — no state, no cache):
 

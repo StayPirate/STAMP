@@ -357,7 +357,9 @@ does not include reference-related event types.
 
 ## Dependencies
 
-- `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates references
+- `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates
+  references. Contains the full `sync_cves_nvd` fetcher definition
+  (algorithm, NVD Source API caching, metrics)
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` contract for
   `source_reference_url_pattern`
 

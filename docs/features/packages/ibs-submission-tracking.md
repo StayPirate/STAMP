@@ -993,18 +993,42 @@ SR correlation: find SRs correlated to the ticket, collect their
 
 ## Background Tasks
 
-| Task                                         | Type                       | Schedule           | Purpose                                                              |
-|----------------------------------------------|----------------------------|--------------------|----------------------------------------------------------------------|
-| `RequestSyncFetcher`                         | BaseFetcher (periodic)     | Every 24h (02:30 UTC) | Catch-up: discover missed SRs/RRs, reconcile states, detect reopens, verify delivery status |
-| `correlate_submission_request`               | Celery task (on-demand)    | —                  | Call IBS diff API, extract CVE-IDs, create join records              |
-| `discover_submissions_for_ticket_package`    | Celery task (sub-operation)| —                  | Retroactive SR/RR discovery when a package is added to a ticket      |
+### Fetcher: `sync_requests`
 
-`RequestSyncFetcher` follows the `BaseFetcher` contract: automatic
-execution tracking, metric collection, and dashboard visibility.
+| Property | Value |
+|----------|-------|
+| Fetcher name | `sync_requests` |
+| Class name | `RequestSyncFetcher` |
+| Schedule | Daily at 02:30 UTC (`30 2 * * *`) |
+| Source | IBS (`build.suse.de`) |
+| Scope | Active codestreams with `TicketPackageTrack` records in active tickets, plus open `SubmissionRequest`/`ReleaseRequest` records for reconciliation |
+| Auth | HTTP Basic / API token (internal) |
+| Custom settings | Yes (see "sync_requests — Custom Settings" below) |
 
-`correlate_submission_request` and `discover_submissions_for_ticket_package`
-are sub-operation tasks (same category as `create_ticket_from_detection`):
-on-demand, no independent schedule, no dashboard presence.
+#### Algorithm
+
+See "Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)" above for the
+full procedure.
+
+#### Metrics
+
+- `record_created`: a new `SubmissionRequest` or `ReleaseRequest` record
+  was created
+- `record_updated`: an existing SR/RR state was updated, or delivery
+  status was reconciled
+- `record_failed`: an IBS API call failed for a specific codestream or
+  request
+
+### Sub-operation tasks
+
+- `correlate_submission_request`: on-demand Celery task that calls the
+  IBS diff API, extracts CVE-IDs, and creates join records
+- `discover_submissions_for_ticket_package`: sub-operation for
+  retroactive SR/RR discovery when a package is added to a ticket
+
+Both are sub-operation tasks (same category as
+`create_ticket_from_detection`): on-demand, no independent schedule, no
+dashboard presence.
 
 ## Error Handling
 
