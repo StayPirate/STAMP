@@ -38,7 +38,8 @@ service via `asyncio.run()`.
 | Entry point            | Invocation pattern                                          |
 |------------------------|-------------------------------------------------------------|
 | API endpoint           | `await ticket_service.assign_ticket(session, ...)`          |
-| Celery task (CVE sync) | `asyncio.run(ticket_service.create_ticket(session, ...))` |
+| cve_service (async)    | `await ticket_service.create_ticket(session, ...)`          |
+| Celery task (release detection) | `asyncio.run(ticket_service.create_ticket(session, ...))` |
 
 ### Transaction ownership
 
@@ -843,7 +844,7 @@ distinguishes between the two failure modes. The API handler maps
 | Caller | Operations used |
 |--------|----------------|
 | API endpoint handlers (`api/v1/tickets.py`) | All 12 operations + `execute_duplicate_cascade` |
-| CVE ingestion fetcher (`tasks/cve_sync.py`) | `create_ticket` (source=`cve_ingestion`) |
+| CVE service (`services/cve_service.py`) | `create_ticket` (source=`cve_ingestion`) |
 | IBS track release detection (`tasks/check_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
 
 **Note — ticket endpoints that route to `ticket_mutations` directly**:

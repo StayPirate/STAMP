@@ -5,7 +5,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
 
-The data model comprises 31 entities organized into five domains. The
+The data model comprises 37 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -25,6 +25,15 @@ flowchart TB
         Ticket
         TicketAuditEvent
         TicketAccessGrant
+    end
+
+    subgraph cve_enrichment["CVE Enrichment"]
+        CVEAffectedVersion
+        CVECWE
+        CVESSVCAssessment
+        CVEKEVEntry
+        CVEEPSSScore
+        CVECPEMatch
     end
 
     subgraph packages["Package Model"]
@@ -52,6 +61,12 @@ flowchart TB
         ReleaseRequest
     end
 
+    CVE --> CVEAffectedVersion
+    CVE --> CVECWE
+    CVE --> CVESSVCAssessment
+    CVE --> CVEKEVEntry
+    CVE --> CVEEPSSScore
+    CVE --> CVECPEMatch
     CVE -->|"0..1 : 0..1"| Ticket
     Ticket --> TicketAuditEvent
     Ticket --> TicketAccessGrant
@@ -76,12 +91,13 @@ erDiagram
         UUID id PK
         VARCHAR_20 cve_id UK "NOT NULL"
         ENUM severity
-        VARCHAR_50 nvd_status
+        ENUM cve_state "NOT NULL, DEFAULT PUBLISHED"
+        TIMESTAMPTZ date_rejected "nullable"
     }
     CVESource {
         UUID id PK
         UUID cve_id FK "NOT NULL"
-        ENUM source_type "NOT NULL"
+        VARCHAR_100 source_type "NOT NULL"
     }
     CVECVSSAssessment {
         UUID id PK
@@ -95,6 +111,41 @@ erDiagram
         UUID cve_id FK "NOT NULL"
         ENUM source "NOT NULL"
         VARCHAR_100 identifier "NOT NULL"
+    }
+    CVEAffectedVersion {
+        UUID id PK
+        UUID cve_id FK "NOT NULL"
+        VARCHAR_100 source_container "NOT NULL"
+        VARCHAR_255 vendor "nullable"
+        VARCHAR_255 product "nullable"
+    }
+    CVECWE {
+        UUID id PK
+        UUID cve_id FK "NOT NULL"
+        VARCHAR_20 cwe_id "NOT NULL"
+        VARCHAR_100 source "NOT NULL"
+    }
+    CVESSVCAssessment {
+        UUID id PK
+        UUID cve_id FK "UNIQUE, NOT NULL"
+        VARCHAR_20 exploitation "NOT NULL"
+    }
+    CVEKEVEntry {
+        UUID id PK
+        UUID cve_id FK "UNIQUE, NOT NULL"
+        DATE date_added "NOT NULL"
+    }
+    CVEEPSSScore {
+        UUID id PK
+        UUID cve_id FK "UNIQUE, NOT NULL"
+        FLOAT score "NOT NULL"
+        FLOAT percentile "NOT NULL"
+    }
+    CVECPEMatch {
+        UUID id PK
+        UUID cve_id FK "NOT NULL"
+        VARCHAR_255 criteria "NOT NULL"
+        BOOLEAN vulnerable "NOT NULL"
     }
     Ticket {
         UUID id PK
@@ -137,6 +188,12 @@ erDiagram
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
     CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
+    CVE ||--o{ CVEAffectedVersion : "has affected versions"
+    CVE ||--o{ CVECWE : "has weaknesses"
+    CVE ||--o| CVESSVCAssessment : "has SSVC assessment"
+    CVE ||--o| CVEKEVEntry : "is in KEV catalog"
+    CVE ||--o| CVEEPSSScore : "has EPSS score"
+    CVE ||--o{ CVECPEMatch : "has NVD CPE matches"
     CVE |o--o| Ticket : "tracked by"
     Ticket ||--o{ TicketAccessGrant : "has access grants"
     Ticket ||--o{ TicketAuditEvent : "has events"
@@ -388,24 +445,28 @@ Represents a Common Vulnerability and Exposure entry.
 | severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
-| nvd_status     | VARCHAR(50)  |                      | NVD vulnerability status (e.g., `Analyzed`, `Rejected`, `Modified`). Updated during NVD sync. See `docs/features/tickets/cve-tracking.md` for handling rules. |
+| cve_state      | ENUM         | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Uses PostgreSQL ENUM (stable value set defined by the CVE Program). Populated by any discovery fetcher: `sync_cves_mitre` (from `cveMetadata.state`), `sync_cves_nvd` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
+| date_rejected  | TIMESTAMPTZ  | nullable             | From CVE JSON 5.x `cveMetadata.dateRejected`. Set when `cve_state` transitions to `REJECTED`, cleared when it reverts to `PUBLISHED` |
 | created_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp        |
 
 ### CVESource
 
-Tracks the origin of CVE data from different sources.
+Tracks the origin of CVE data from different sources. One record per
+source per CVE. Each `upsert_cve()` call creates or updates the record
+for its `source_type`, setting `fetched_at` to the current timestamp.
+See `docs/features/tickets/cve-service.md`.
 
-| Column      | Type        | Constraints      | Description                        |
-|-------------|-------------|------------------|------------------------------------|
-| id          | UUID        | PK               | Internal identifier                |
-| cve_id      | UUID        | FK(cve.id)       | Related CVE                        |
-| source_type | ENUM        | NOT NULL         | NVD, MITRE, etc.       |
-| source_url  | TEXT        |                  | URL to the source entry            |
-| raw_data    | JSONB       |                  | Original data from the source      |
-| fetched_at  | TIMESTAMPTZ   | NOT NULL         | When the data was fetched          |
-| created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT| Record creation timestamp          |
-| updated_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT| Record update timestamp            |
+| Column      | Type          | Constraints                        | Description                        |
+|-------------|---------------|------------------------------------|------------------------------------|
+| id          | UUID          | PK                                 | Internal identifier                |
+| cve_id      | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                   |
+| source_type | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"NVD"`, `"MITRE"`, `"kernel"`, `"Red Hat"`). VARCHAR + Python Enum (evolving value set — new sources are added as the ingestion pipeline expands) |
+| fetched_at  | TIMESTAMPTZ   | NOT NULL                           | When the data was last fetched     |
+| created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
+| updated_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record update timestamp            |
+
+**Unique constraint**: (cve_id, source_type)
 
 ### CVECVSSAssessment
 
@@ -417,7 +478,7 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 | Column        | Type          | Constraints                            | Description                        |
 |---------------|---------------|----------------------------------------|------------------------------------|
 | id            | UUID          | PK                                     | Internal identifier                |
-| cve_id        | UUID          | FK(cve.id), NOT NULL                   | Related CVE                        |
+| cve_id        | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                        |
 | provider_name | VARCHAR(100) | NOT NULL                               | Human-readable provider name (e.g., `"NVD"`, `"Intel Corporation"`, `"Red Hat"`, `"SUSE"`) |
 | cvss_version  | VARCHAR(10)   | NOT NULL                               | CVSS version (e.g., `"3.1"`, `"4.0"`, `"2.0"`) |
 | score         | DECIMAL(3,1)  | NOT NULL                               | Calculated base score (0.0-10.0)   |
@@ -455,7 +516,7 @@ CVE remains the sole canonical identifier in Sentinel.
 | Column     | Type                                   | Constraints             | Description                              |
 |------------|----------------------------------------|-------------------------|------------------------------------------|
 | id         | UUID                                   | PK                      | Internal identifier                      |
-| cve_id     | UUID                                   | FK(cve.id), NOT NULL    | Related CVE                              |
+| cve_id     | UUID                                   | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                |
 | source     | ENUM(CVEExternalIdentifierSource)      | NOT NULL                | Naming authority (e.g., GHSA)            |
 | identifier | VARCHAR(100)                           | NOT NULL                | External ID (e.g., `GHSA-xxxx-xxxx-xxxx`) |
 | url        | TEXT                                   | nullable                | Direct link to the advisory page         |
@@ -473,6 +534,203 @@ globally unique within its naming system.
 - External identifiers persist regardless of ticket status or existence
 - The `url` column stores the canonical advisory URL for UI convenience
   (e.g., `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx`)
+
+### CVEAffectedVersion
+
+Stores affected product/version information from CVE JSON 5.x
+`affected[]` arrays. Populated by multiple fetchers (both discovery
+and enrichment). When `version_type = "git"`, the `version` field
+contains the introducing commit SHA and `version_end` contains the
+fixing commit SHA — making kernel commit tracking a natural subset of
+the general affected version model. See
+`docs/features/tickets/cve-service.md`.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier |
+| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, NOT NULL | Parent CVE |
+| source_container | VARCHAR(100) | NOT NULL | Provenance: `"cna"`, `"adp:CISA-ADP"`, `"adp:Siemens-SADP"`, etc. |
+| vendor | VARCHAR(255) | nullable | Vendor name (e.g., "Linux", "Siemens") |
+| product | VARCHAR(255) | nullable | Product name (e.g., "Linux", "SCALANCE XC-300") |
+| package_url | TEXT | nullable | PURL identifier (CVE 5.2.0+). Useful for identifying vendored dependencies (npm, PyPI, Go) inside SUSE RPMs |
+| collection_url | TEXT | nullable | Package registry URL (npm, PyPI, etc.). Pre-PURL mechanism, still used by many CNAs |
+| package_name | VARCHAR(255) | nullable | Package name in the registry. Paired with `collection_url` |
+| repo | TEXT | nullable | Source code repository URL |
+| default_status | VARCHAR(20) | nullable | `"affected"` / `"unaffected"` / `"unknown"` |
+| version | VARCHAR(255) | nullable | Single version or range start |
+| version_type | VARCHAR(20) | nullable | `"semver"` / `"git"` / `"custom"` / `"rpm"` / ... |
+| version_end | VARCHAR(255) | nullable | Range end (`lessThan` or `lessThanOrEqual`) |
+| version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
+| status | VARCHAR(20) | nullable | `"affected"` / `"unaffected"` |
+| program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
+| cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Distinct from NVD CPE applicability statements used for package resolution (see `CVECPEMatch`) |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+
+Records are replaced (delete-and-reinsert per `(cve_id,
+source_container)`), never updated in place — only `created_at` is
+included (no `updated_at`), consistent with `ProductRepository`.
+
+**Deduplication**: delete-and-reinsert per `(cve_id, source_container)`.
+Each `upsert_cve()` call deletes all existing rows for the given
+`(cve_id, source_container)` and inserts the complete set from the
+payload. This is a documented exception to the `ON CONFLICT DO UPDATE`
+pattern used by other child tables (`CVECWE`, `CVECVSSAssessment`,
+etc.). Those tables have stable record identity — individual records
+persist and are updated in place. `CVEAffectedVersion` has snapshot
+semantics — the entire set is replaced per source on each sync.
+
+**Safety-net unique constraint** (for data integrity, not used for
+`ON CONFLICT`):
+
+```sql
+UNIQUE (cve_id, source_container, vendor, product,
+        COALESCE(version_type, ''), COALESCE(version, ''),
+        COALESCE(version_end, ''))
+```
+
+### CVECWE
+
+Stores CWE (Common Weakness Enumeration) identifiers from multiple
+providers. Different providers (NVD, CNA, CISA-ADP, Red Hat) frequently
+assign different CWE IDs to the same CVE. Provenance tracking has value
+for VA triage.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier |
+| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, NOT NULL | Parent CVE |
+| cwe_id | VARCHAR(20) | NOT NULL | CWE identifier (e.g., "CWE-79") |
+| source | VARCHAR(100) | NOT NULL | Provider (e.g., "NVD", "cna:Linux", "adp:CISA-ADP", "Red Hat") |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
+
+**Unique constraint**: (cve_id, cwe_id, source)
+
+### CVESSVCAssessment
+
+Stores CISA SSVC (Stakeholder-Specific Vulnerability Categorization)
+decision points. Although CISA is currently the only SSVC provider
+(1:1 with CVE), a dedicated table isolates the domain cleanly.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier |
+| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, UNIQUE, NOT NULL | Parent CVE (one SSVC assessment per CVE) |
+| exploitation | VARCHAR(20) | NOT NULL | `"none"` / `"poc"` / `"active"` |
+| automatable | VARCHAR(10) | NOT NULL | `"no"` / `"yes"` |
+| technical_impact | VARCHAR(20) | NOT NULL | `"partial"` / `"total"` |
+| version | VARCHAR(10) | NOT NULL | SSVC version (e.g., "2.0.3") |
+| assessed_at | TIMESTAMPTZ | nullable | When the assessment was performed |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
+
+### CVEKEVEntry
+
+Stores CISA Known Exploited Vulnerabilities catalog data. Although it
+is a 1:1 relationship with CVE, isolating KEV data keeps the CVE table
+lean and gives the `sync_cisa_kev` fetcher a clean upsert target.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier |
+| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, UNIQUE, NOT NULL | Parent CVE (one KEV entry per CVE) |
+| date_added | DATE | NOT NULL | Date added to KEV catalog |
+| remediation_deadline | DATE | nullable | FCEB remediation deadline (from BOD 22-01) |
+| reference_url | TEXT | nullable | URL to KEV catalog entry |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
+
+### CVEEPSSScore
+
+Stores the latest FIRST EPSS (Exploit Prediction Scoring System) score
+for each CVE. This is a **point-in-time snapshot** (one row per CVE),
+not a time series — the record is overwritten on each daily sync.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier |
+| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, UNIQUE, NOT NULL | Parent CVE (one EPSS entry per CVE) |
+| score | FLOAT | NOT NULL | Probability score (0.0 to 1.0) |
+| percentile | FLOAT | NOT NULL | Percentile rank (0.0 to 1.0) |
+| assessed_at | DATE | NOT NULL | Date of the EPSS assessment |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
+
+**FLOAT vs DECIMAL**: EPSS scores use `FLOAT` instead of the
+`DECIMAL(3,1)` used by `CVECVSSAssessment.score`. CVSS scores are
+used for threshold comparisons that gate eligibility decisions, where
+floating-point imprecision could cause incorrect results (e.g.,
+6.999... vs 7.0). EPSS scores are informational — displayed to VAs
+but not used for automated threshold decisions. Additionally, EPSS
+values have variable precision (e.g., 0.00043, 0.97565) that would
+require a wide DECIMAL scale.
+
+**Lifecycle**: the `sync_epss` fetcher refreshes EPSS data only for
+CVEs with **active tickets** (New, Analysis, Analyzed;
+`deleted_at IS NULL`). When a ticket transitions to Resolved, Ignored,
+or Duplicated, the CVEEPSSScore record is **retained** but no longer
+refreshed — consistent with the CVSS lifecycle pattern
+(`docs/features/tickets/cvss-scoring.md`, Sync Scope). If the ticket
+later regresses to an active status (e.g., `reconcile_ticket_status()`
+moves it back to Analyzed), the fetcher resumes refreshing the record
+on its next run.
+
+**UI display note**: the frontend SHOULD display the EPSS score only
+for active tickets. For resolved or inactive tickets, the score
+reflects the last assessment before the ticket left the active scope
+and may be stale. If the UI chooses to display it for non-active
+tickets, it SHOULD include a staleness indicator (e.g., "Last
+assessed: {date}").
+
+### CVECPEMatch
+
+Stores NVD CPE applicability data in a simplified flat structure.
+NVD `configurations` use a complex boolean tree (AND/OR nodes with
+negate flags and version ranges), but Sentinel flattens this to
+individual `cpeMatch` entries. SUSE backports fixes to older versions,
+making upstream version ranges meaningless for SUSE package
+affectedness — only the CPE identity matters for package resolution.
+
+Each `cpeMatch` entry is extracted from NVD `configurations` and
+stored as a flat row. Package resolution maps the CPE to a SUSE
+source package and calls `package_service.add_package_to_ticket()`.
+The VA then determines affectedness manually per track.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier |
+| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, NOT NULL | Parent CVE |
+| criteria | VARCHAR(255) | NOT NULL | CPE 2.3 match string (e.g., `cpe:2.3:o:linux:linux_kernel:*:*:*:*:*:*:*:*`) |
+| vulnerable | BOOLEAN | NOT NULL | Whether this CPE is marked as vulnerable in the NVD configuration |
+| match_criteria_id | UUID | nullable | NVD's match criteria identifier (references the NVD CPE Dictionary) |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+
+Records are replaced (delete-and-reinsert per `cve_id`), never
+updated in place — only `created_at` is included (no `updated_at`),
+consistent with `CVEAffectedVersion` and `ProductRepository`.
+
+**Deduplication**: delete-and-reinsert per `cve_id`. Each NVD sync
+deletes all existing rows for the given `cve_id` and inserts the
+complete set from the NVD response.
+
+**Safety-net unique constraint**: `UNIQUE (cve_id, criteria, vulnerable)`
+
+**Downstream persistence on CPE removal**: when NVD removes a CPE
+from a CVE's `configurations` (e.g., incorrect CPE corrected by NVD),
+the delete-and-reinsert correctly removes the `CVECPEMatch` row.
+However, `TicketPackage`, `TicketPackageTrack`, and
+`TicketPackageProduct` records created from the removed CPE via
+`add_package_to_ticket()` are **retained**. These records are linked
+to the ticket (not to `CVECPEMatch`) and represent the VA's triage
+work. The VA may remove the package manually if it is no longer
+relevant.
+
+**Diff detection for package resolution**: when the NVD sync processes
+a CVE, it compares the incoming `cpeMatch` set against the stored
+`CVECPEMatch` rows. Package resolution (Phase 2) is triggered only
+for CPEs that are new (not present in the previous sync), avoiding
+redundant SMELT queries for already-processed CPEs. See
+`docs/features/tickets/cve-service.md` (Post-Ingestion Side Effects).
 
 ### SystemSetting
 
@@ -1245,13 +1503,15 @@ TBD — will be defined based on query patterns during implementation.
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
-  `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, and `RoleMapping`
+  `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, `RoleMapping`,
+  `CVEAffectedVersion`, and `CVECPEMatch`
   only have `created_at` because they are immutable write-once records or are
   replaced rather than updated in place; `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for
   write-once records) and has no `updated_at` —
-  `ProductRepository` records are replaced during SMELT sync, never updated
-  in place; `PackageBugownerMember` records are deleted and recreated when
+  `ProductRepository`, `CVEAffectedVersion`, and `CVECPEMatch` records are
+  replaced via delete-and-reinsert during sync, never updated in place;
+  `PackageBugownerMember` records are deleted and recreated when
   group membership changes)
 - ENUM types are defined as PostgreSQL enums
 - All timestamp columns use `TIMESTAMPTZ` (timestamp with time zone), which

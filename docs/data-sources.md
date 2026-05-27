@@ -88,7 +88,7 @@ MITRE a valuable source for early awareness of new vulnerabilities.
   - **CVSS** scores from CISA (stored as provider `CISA-ADP`)
   - **CWE** identifiers from CISA analysis
   - **Affected product** data (CPE, version ranges)
-- **Access**: CVE Services REST API. Public access
+- **Access**: `cvelistV5` GitHub repository (Git clone/pull). Public access
 - **Integration status**: **Active**. Sentinel syncs every 6 hours via the
   `sync_cves_mitre` fetcher, with on-demand single-CVE fetch support.
   The fetcher extracts both the CNA block (CVE core data) and the CISA
@@ -206,9 +206,41 @@ backport verification.
 - **Integration status**: **Planned**. New `sync_kernel_cves` fetcher.
   Schedule: TBD. CVSS scores are stored as `CVECVSSAssessment` entries
   with `provider_name = "Linux Kernel CNA"`. Fix/introduce commit hashes
-  are stored in a dedicated kernel commits table. Affected kernel versions
-  and reference URLs are stored in their respective tables
+  are stored as `CVEAffectedVersion` records with
+  `version_type = "git"` (introducing commit in `version`, fixing commit
+  in `version_end`). `.dyad` files provide structured version pairs per
+  stable branch. Affected kernel versions and reference URLs are stored
+  in their respective tables
 - **Documentation**: https://docs.kernel.org/process/cve.html
+
+#### Repository Structure
+
+```
+vulns.git/cve/
+├── published/YEAR/
+│   ├── CVE-YEAR-ID           # Notes / metadata (may be empty)
+│   ├── CVE-YEAR-ID.sha1      # Git SHA of the fixing commit
+│   ├── CVE-YEAR-ID.json      # Full CVE record in JSON 5.x format
+│   ├── CVE-YEAR-ID.mbox      # Email announcement format
+│   ├── CVE-YEAR-ID.dyad      # Vulnerable:fixed version pairs per stable branch
+│   ├── CVE-YEAR-ID.vulnerable # (optional) Introducing commit SHA override
+│   ├── CVE-YEAR-ID.reference  # (optional) Additional URL references
+│   ├── CVE-YEAR-ID.cvss       # (optional, proposed) CVSS vector string
+│   └── CVE-YEAR-ID.message    # (optional) Custom CVE description override
+├── reserved/YEAR/             # Reserved but unpublished CVE-IDs
+├── rejected/YEAR/             # Rejected CVEs
+└── returned/YEAR/             # Returned (unused) CVE-IDs
+```
+
+#### Volume and Publishing Pattern
+
+The kernel CNA publishes CVEs in **large batches** aligned with stable
+kernel releases, followed by periods of inactivity. Observed 2026 data:
+
+- Peak: 173 CVEs published on a single day (2026-04-25)
+- Typical batch: 60-100 CVEs per release day
+- 2026 year-to-date: ~1,410 published CVEs, ~485 reserved
+- Total in `vulns.git` (all years): ~31,000+ published CVEs
 
 ### OSV (Open Source Vulnerabilities)
 
@@ -744,7 +776,7 @@ details.
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested |
 |---------|--------|----------|------|-------------|---------------|
 | `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, affected versions (CPE), references |
-| `sync_cves_mitre` | MITRE CVE Services | Every 6 hours | None | None known | CVE records, CISA ADP data (SSVC, KEV, CVSS CISA, CWE, affected versions), references |
+| `sync_cves_mitre` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (Git clone/pull) | CVE records, CISA ADP data (SSVC, KEV, CVSS CISA, CWE, affected versions), references |
 | `sync_cvss_redhat` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references |
 | `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates |
@@ -759,26 +791,25 @@ details.
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
 | `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references |
-| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits, affected kernel versions, references |
+| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references |
 | `sync_osv` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references |
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS
 RabbitMQ) is a continuous service, not a `BaseFetcher` subclass. See
 `docs/features/integrations/ibs-rabbitmq-integration.md`.
 
-### New Data Structures
+### CVE Enrichment Data Structures
 
-The planned fetchers require the following new tables, all linked to the
-`CVE` table via a `cve_id` foreign key. These are documented here at a
-high level; full schema details will be added to `docs/data-model.md` when
-each source is implemented.
+The following tables store CVE enrichment data from multiple sources.
+All are linked to the `CVE` table via a `cve_id` foreign key. Full
+schema details are in `docs/data-model.md`.
 
-| Table | Fields | Populated By |
-|-------|--------|--------------|
-| `CVESSVC` | exploitation, automatable, technical_impact, version | `sync_cves_mitre` (ADP block) |
-| `CVEEPSS` | score, percentile | `sync_epss` |
-| `CVEKEV` | date_added, remediation_deadline | `sync_cisa_kev`, `sync_cves_mitre` (ADP block) |
-| `CVECWE` | cve_id, cwe_id (many-to-many, unique on pair) | `sync_cves_nvd`, `sync_cves_mitre`, `sync_cvss_redhat`, `sync_ghsa` |
-| `CVEAffectedVersion` | package_name, ecosystem, version_start, version_end, fixed_version | `sync_cves_nvd`, `sync_cves_mitre`, `sync_ghsa`, `sync_kernel_cves`, `sync_osv` |
-| `CVEKernelCommit` | introducing_commit, fixing_commit | `sync_kernel_cves` |
-| `CVEExternalIdentifier` | source, identifier, url | `sync_ghsa` (+ future fetchers) |
+| Table | Summary | Populated By |
+|-------|---------|--------------|
+| `CVEAffectedVersion` | Affected product/version data from CVE JSON 5.x `affected[]` arrays. Also stores kernel fix/introduce commits (`version_type = "git"`) | `sync_cves_nvd`, `sync_cves_mitre`, `sync_ghsa`, `sync_kernel_cves`, `sync_osv` |
+| `CVECWE` | CWE identifiers with multi-provider tracking | `sync_cves_nvd`, `sync_cves_mitre`, `sync_cvss_redhat`, `sync_ghsa` |
+| `CVESSVCAssessment` | CISA SSVC decision points (1:1 with CVE) | `sync_cves_mitre` (ADP block) |
+| `CVEKEVEntry` | CISA KEV catalog data (1:1 with CVE) | `sync_cisa_kev`, `sync_cves_mitre` (ADP block) |
+| `CVEEPSSScore` | FIRST EPSS score snapshot (1:1 with CVE, overwritten daily) | `sync_epss` |
+| `CVECPEMatch` | NVD CPE applicability data (flattened from NVD `configurations`) | `sync_cves_nvd` |
+| `CVEExternalIdentifier` | External vulnerability identifiers (e.g., GHSA-ID) | `sync_ghsa` (+ future fetchers) |

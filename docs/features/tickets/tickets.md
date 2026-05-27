@@ -1104,7 +1104,8 @@ the canonical definition.
 | `description` | string \| null | Vulnerability description |
 | `published_date` | datetime \| null | Date published (UTC) |
 | `modified_date` | datetime \| null | Date last modified (UTC) |
-| `nvd_status` | string \| null | NVD vulnerability status |
+| `cve_state` | string | CVE record state (`"PUBLISHED"` or `"REJECTED"`) |
+| `date_rejected` | datetime \| null | When the CVE was rejected (UTC). NULL if `cve_state` is `PUBLISHED` |
 | `sources` | CVESource[] | Data sources for this CVE |
 | `external_identifiers` | CVEExternalIdentifierResponse[] | External identifiers from other naming authorities |
 

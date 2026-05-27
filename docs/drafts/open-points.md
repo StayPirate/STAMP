@@ -42,8 +42,17 @@ procedures, and the testing strategy. Changing this after models are
 implemented would require a non-trivial migration to convert existing
 PostgreSQL ENUM columns to VARCHAR.
 
-**Decision needed**: hybrid (stable=PG ENUM, evolving=VARCHAR) vs full
-VARCHAR for uniformity. See conversation for detailed tradeoff analysis.
+**Partial resolution**: the CVE ingestion architecture draft
+(`docs/drafts/cve-ingestion-architecture.md`, OP-7 resolution) confirms
+`CVESourceType` as an evolving enum that will use VARCHAR + Python Enum.
+The growth trajectory is clear: current values are NVD and MITRE, but
+kernel, Red Hat, EPSS, KEV, GHSA, and OSV sources will be added as the
+ingestion pipeline expands. This provides a concrete data point for the
+broader decision.
+
+**Decision still needed**: hybrid (stable=PG ENUM, evolving=VARCHAR) vs
+full VARCHAR for uniformity. See conversation for detailed tradeoff
+analysis.
 
 ---
 
@@ -91,43 +100,15 @@ the proxy.
 
 ---
 
-## 3. Orphan CVE Re-Ticketing Mechanism
+## 3. Orphan CVE Re-Ticketing Mechanism — RESOLVED
 
-**Origin**: spec inconsistency found while reviewing the CVE-Ticket
-cardinality in the ER diagram.
-
-**Context**: `docs/features/tickets/tickets.md` (lines 125-129) states
-that after an Admin dissociates a CVE from a ticket, "a subsequent CVE
-sync will create a new ticket for it". However,
-`docs/features/tickets/cve-tracking.md` (line 229) specifies that the
-sync fetchers (`sync_cves_nvd`, `sync_cves_mitre`) create tickets only
-for **newly ingested** CVEs — i.e., CVEs that do not yet exist in the
-database. For CVEs that already exist, the sync only updates data
-(references, scores, etc.) without checking whether a ticket is
-associated.
-
-This means that after a CVE dissociation, the CVE remains in the
-database without a ticket indefinitely. The only partial safety net is
-IBS Case C (`ibs-track-release-detection.md`, lines 153-176), which
-creates a ticket when a CVE fix is found in an IBS diff — but this is
-reactive and narrow, not a general orphan scan.
-
-**Options**:
-
-- **(A) Extend sync fetchers**: when processing an existing CVE, check
-  whether a ticket exists for it. If not, create one. This is the
-  simplest fix and fulfills the promise in `tickets.md`, but adds a
-  query per existing CVE on every sync run.
-- **(B) Remove the re-ticketing claim**: update `tickets.md` to state
-  that dissociation leaves the CVE without a ticket, and that the Admin
-  is responsible for re-associating it before the next sync. Simpler,
-  but orphan CVEs become a silent operational risk.
-- **(C) Dedicated periodic task**: create a lightweight "orphan CVE
-  scanner" that runs periodically (e.g., daily) and creates tickets for
-  any CVE without one. Decouples the concern from the sync fetchers.
-
-**Decision needed**: which approach to adopt for resolving the
-inconsistency between `tickets.md` and `cve-tracking.md`.
+**Resolution**: resolved by the `cve_service` architecture
+(`docs/features/tickets/cve-service.md`). All CVE data now flows
+through `cve_service.upsert_cve()`, which checks for ticket existence
+on every call. Orphaned CVEs (those without a ticket after dissociation)
+are automatically re-ticketed the next time any fetcher processes them
+(~6 hours). This implements option (A) naturally without a dedicated
+orphan scanner — the check is inherent in the `upsert_cve()` contract.
 
 ---
 

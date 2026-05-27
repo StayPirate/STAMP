@@ -80,6 +80,11 @@
         "not_reviewed": []
       }
     },
+    "cve-service": {
+      "enabled": false,
+      "abbr": "CVES",
+      "cache": null
+    },
     "cve-tracking": {
       "enabled": false,
       "abbr": "CVET",

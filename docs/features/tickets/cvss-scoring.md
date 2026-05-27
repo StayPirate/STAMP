@@ -295,12 +295,14 @@ See `docs/features/packages/package-model.md` for the full eligibility logic.
 
 The `sync_cves_nvd` fetcher runs every 6 hours and performs an
 incremental sync of CVEs from the NVD REST API v2. During each sync, it
-extracts all CVSS assessments (Primary and Secondary) from the
-`cvssMetricV*` arrays and creates or updates `CVECVSSAssessment` records
-via `ticket_mutations.create_cvss_assessment()`. CNA display names for
-Secondary assessments are resolved via the NVD Source API. If any CVSS
-assessment changed for a CVE with an active ticket, the recalculation
-cascade is triggered (see Recalculation Cascade below).
+parses CVSS assessments (Primary and Secondary) from the `cvssMetricV*`
+arrays into a `CVEIngestPayload` and passes them to
+`cve_service.upsert_cve()` (see `docs/features/tickets/cve-service.md`).
+The service distributes CVSS data to `CVECVSSAssessment` records via
+`ticket_mutations.create_cvss_assessment()` in Phase 1. CNA display
+names for Secondary assessments are resolved via the NVD Source API. If
+any CVSS assessment changed for a CVE with an active ticket, the
+recalculation cascade is triggered (see Recalculation Cascade below).
 
 For the full fetcher definition — including the incremental algorithm,
 NVD Source API caching strategy, first-run behavior, and error handling
@@ -315,17 +317,18 @@ only.
 
 **Strategy — initial fetch**:
 
-1. When a new ticket is created (CVE ingested), Sentinel fetches the Red Hat
-   CVSS for that CVE:
+1. When a new ticket is created via `cve_service.upsert_cve()`, the Red
+   Hat fetcher is triggered to fetch CVSS for that CVE:
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
    ```
 2. Extract `cvss3.cvss3_scoring_vector`
-3. Pass the vector to `ticket_mutations.create_cvss_assessment()` with
-   `provider = "Red Hat"`. The service derives `cvss_version` and `score`
-   from the vector automatically
+3. Pass the vector to `cve_service.upsert_cve()` via
+   `CVEIngestPayload.cvss_assessments` with `provider = "Red Hat"`. The
+   service routes it to `ticket_mutations.create_cvss_assessment()`,
+   which derives `cvss_version` and `score` from the vector automatically
 4. If the assessment differs from an existing NVD Secondary with the same
-   provider name → overwrite
+   provider name -> overwrite
 
 **Strategy — periodic re-fetch**:
 
@@ -648,5 +651,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 
 ## Cross-references
 
+- `docs/features/tickets/cve-service.md` — CVE Service Layer
+  (`upsert_cve()`, `CVEIngestPayload`, Phase 1/Phase 2 transaction model)
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
