@@ -96,10 +96,10 @@ async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
     Called on-demand when Sentinel encounters an unknown CVE-ID during
     ticket creation or CVE association. Writes data to the standard
     models (CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier,
-    TicketReference).
+    TicketReference) via cve_service.upsert_cve().
 
-    If the CVE is not found in the external source (e.g., reserved or
-    not yet published), this method should return without error.
+    Raises CVENotInSource if the external source explicitly confirms
+    the CVE does not exist (e.g., HTTP 404, empty response).
     """
     ...
 ```
@@ -113,6 +113,90 @@ on-demand fetch is needed (see `docs/features/tickets/cve-tracking.md`,
 The `fetch_single` method does NOT create a `FetcherRun` record. It is
 a sub-operation invoked as a standalone Celery task, not a full fetcher
 execution. Metric reporting (`record_created`, etc.) is not used.
+
+### `CVENotInSource` Signal
+
+`CVENotInSource` is a dedicated signal class (not an error) provided by
+the fetcher infrastructure module. It indicates that the external source
+explicitly confirmed the CVE does not exist (e.g., HTTP 404, empty
+response). The orchestrator (`fetch_single_cve` task wrapper in
+`cve-tracking.md`) catches this specific exception and records
+`status=missing` via `record_source_status()`.
+
+`CVENotInSource` does NOT inherit from `FetcherError` — it is not a
+failure condition. It is a distinct outcome that maps to the `missing`
+status in `CVESourceFetchStatus`.
+
+### `fetch_single` Signaling Convention
+
+This convention applies to ALL CVE fetchers implementing `fetch_single`:
+
+| Behavior | Meaning | Orchestrator action |
+|----------|---------|---------------------|
+| Returns normally | Data written via `upsert_cve()` | `status = success` (already written by `upsert_cve` via `record_source_status`) |
+| Raises `CVENotInSource` | CVE not present in source | `record_source_status(cve_id, source, "missing")` |
+| Raises other exception | Transient error | Celery retries → then `record_source_status(cve_id, source, "failure")` |
+
+Fetchers MUST NOT catch transient exceptions internally — they must
+propagate to allow Celery retry to function. Fetchers MUST raise
+`CVENotInSource` (not return a sentinel value) when the source explicitly
+indicates the CVE does not exist.
+
+### Retry Policy for `fetch_single`
+
+The Celery task wrapping `fetch_single` (`fetch_single_cve`) uses native
+Celery retry:
+
+- **Max retries**: 3
+- **Backoff**: 5s → 10s → 20s (exponential with cap)
+- **Retryable conditions**: network errors, HTTP 5xx, timeout, HTTP 429
+- **Non-retryable conditions**: `CVENotInSource` (→ `missing`), HTTP 403
+  (→ `failure` immediately), other 4xx (→ `failure`), parsing errors on
+  HTTP 200 (→ `failure`)
+
+After retries are exhausted, the task writes
+`record_source_status(cve_id, source, "failure")`.
+
+### Error Categorization
+
+| Condition | Retry? | Final status |
+|-----------|--------|-------------|
+| Network unreachable, DNS failure, connection refused | Yes (3x) | `failure` |
+| HTTP 5xx (server error) | Yes (3x) | `failure` |
+| Request timeout | Yes (3x) | `failure` |
+| HTTP 429 (rate limit) | Yes (3x) | `failure` |
+| HTTP 404, empty response | No | `missing` |
+| HTTP 403 (forbidden) | No | `failure` |
+| HTTP 400, 401, 405, other 4xx (not 404/403/429) | No | `failure` |
+| HTTP 200 with valid data | — | `success` |
+| HTTP 200 with unparseable data (schema mismatch, missing fields) | No | `failure` |
+
+**Catch-all rule**: any HTTP status code or error condition not explicitly
+listed above is treated as non-retryable → immediate `failure`. This
+prevents wasting retry attempts on permanent errors.
+
+**Parsing errors**: an HTTP 200 response that cannot be parsed (unexpected
+schema, missing required fields, malformed JSON) is a non-retryable
+condition. Retrying would hit the same response from the same source. The
+fetcher MUST NOT catch parsing exceptions internally — it should let them
+propagate, but the orchestrator should classify them as non-retryable
+(immediate `failure`) rather than feeding them into the Celery retry loop.
+
+**HTTP 429 and `Retry-After`**: this design deliberately ignores the
+`Retry-After` header for simplicity. The fixed backoff (5s → 10s → 20s,
+total 35s) naturally clears most rate-limit windows (NVD: 30s window). For
+longer rate-limit windows, all 3 retries may fail — this is an acceptable
+trade-off for v1.
+
+### Isolation Guarantee
+
+When multiple fetchers are invoked in parallel for the same CVE-ID:
+
+- Each fetcher runs as an independent Celery task
+- Failure of one fetcher does NOT cancel, block, or affect other fetchers
+- Each fetcher writes its own `CVESource` record independently
+- The CVE record may end up with partial data (some sources succeeded,
+  others failed)
 
 ## Error Message Sanitization
 

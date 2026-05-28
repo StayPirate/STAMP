@@ -1088,12 +1088,14 @@ the canonical definition.
 | `cve_id` | string | CVE identifier (e.g., `CVE-2024-1234`) |
 | `description` | string \| null | Vulnerability description |
 
-**CVESource** — individual CVE data source:
+**CVESource** — fetch outcome for an individual CVE data source. The
+`sources[]` array includes all attempted sources with their fetch
+outcome. Sources never attempted are omitted from the response.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source` | string | Source identifier (e.g., `nvd`, `mitre`) |
-| `url` | string | Source URL for the CVE |
+| `source` | string | Source identifier (e.g., `nvd`, `mitre`, `kernel`) |
+| `status` | string | Fetch outcome: `"success"`, `"failure"`, `"missing"`, or `"pending"`. See `docs/features/tickets/cve-tracking.md` (Fetch Status Read Path) for the resolution rules combining DB state and Redis pending keys |
 
 **CVEDetail** — expanded CVE representation for detail views:
 

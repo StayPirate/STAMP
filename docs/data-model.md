@@ -97,7 +97,8 @@ erDiagram
     CVESource {
         UUID id PK
         UUID cve_id FK "NOT NULL"
-        VARCHAR_100 source_type "NOT NULL"
+        VARCHAR_100 source "NOT NULL"
+        ENUM status "NOT NULL"
     }
     CVECVSSAssessment {
         UUID id PK
@@ -452,21 +453,34 @@ Represents a Common Vulnerability and Exposure entry.
 
 ### CVESource
 
-Tracks the origin of CVE data from different sources. One record per
-source per CVE. Each `upsert_cve()` call creates or updates the record
-for its `source_type`, setting `fetched_at` to the current timestamp.
+Tracks the fetch outcome for each CVE data source. One record per source
+per CVE. Records are created for all outcomes — successful data ingestion,
+transient failures, and sources that do not have the CVE.
 See `docs/features/tickets/cve-service.md`.
 
 | Column      | Type          | Constraints                        | Description                        |
 |-------------|---------------|------------------------------------|------------------------------------|
 | id          | UUID          | PK                                 | Internal identifier                |
 | cve_id      | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                   |
-| source_type | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"NVD"`, `"MITRE"`, `"kernel"`, `"Red Hat"`). VARCHAR + Python Enum (evolving value set — new sources are added as the ingestion pipeline expands) |
-| fetched_at  | TIMESTAMPTZ   | NOT NULL                           | When the data was last fetched     |
+| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. VARCHAR + Python Enum (evolving value set — new sources are added as the ingestion pipeline expands). Consistent with `CVEExternalIdentifier.source`, `CVECWEAssociation.source`, and `TicketReference.source` |
+| status      | ENUM          | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). Uses PostgreSQL ENUM type `CVESourceFetchStatus`. No default — always written explicitly by the caller |
+| fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record update timestamp            |
 
-**Unique constraint**: (cve_id, source_type)
+**Unique constraint**: (cve_id, source)
+
+### CVESourceFetchStatus Enum
+
+Outcome of a CVE data fetch attempt from an external source. Uses
+PostgreSQL ENUM type (stable, closed value set — adding a new status
+requires a migration).
+
+| Value | Description |
+|-------|-------------|
+| `success` | Fetcher ran and wrote data successfully |
+| `failure` | Fetcher ran, exhausted retries, and could not retrieve data |
+| `missing` | Fetcher ran, source responded, but CVE does not exist in that source |
 
 ### CVECVSSAssessment
 

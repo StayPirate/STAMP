@@ -105,7 +105,8 @@ erDiagram
     CVESource {
         UUID id PK
         UUID cve_id FK
-        VARCHAR source_type
+        VARCHAR source
+        ENUM status
     }
 
     CVECVSSAssessment {
