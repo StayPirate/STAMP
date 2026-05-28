@@ -99,12 +99,13 @@ erDiagram
         UUID id PK
         VARCHAR cve_id UK
         ENUM severity
+        ENUM cve_state
     }
 
     CVESource {
         UUID id PK
         UUID cve_id FK
-        ENUM source_type
+        VARCHAR source_type
     }
 
     CVECVSSAssessment {
@@ -122,11 +123,53 @@ erDiagram
         VARCHAR identifier
     }
 
+    CVEAffectedVersion {
+        UUID id PK
+        UUID cve_id FK
+        VARCHAR source_container
+        VARCHAR vendor "nullable"
+        VARCHAR product "nullable"
+    }
+
+    CVECWE {
+        UUID id PK
+        UUID cve_id FK
+        VARCHAR cwe_id
+        VARCHAR source
+    }
+
+    CVESSVCAssessment {
+        UUID id PK
+        UUID cve_id FK "unique"
+        VARCHAR exploitation
+    }
+
+    CVEKEVEntry {
+        UUID id PK
+        UUID cve_id FK "unique"
+        DATE date_added
+    }
+
+    CVEEPSSScore {
+        UUID id PK
+        UUID cve_id FK "unique"
+        FLOAT score
+        FLOAT percentile
+    }
+
+    CVECPEMatch {
+        UUID id PK
+        UUID cve_id FK
+        VARCHAR criteria
+        BOOLEAN vulnerable
+    }
+
     Ticket {
         UUID id PK
         INTEGER sequence_id UK
         UUID cve_id FK "nullable, unique"
         ENUM status
+        BOOLEAN is_confidential
         UUID assignee_id FK "nullable"
         UUID duplicate_of_id FK "nullable, self-ref"
     }
@@ -138,10 +181,16 @@ erDiagram
         ENUM event_type
     }
 
+    TicketAccessGrant {
+        UUID ticket_id PK_FK
+        UUID user_id PK_FK
+        UUID granted_by_id FK
+    }
+
     TicketReference {
         UUID id PK
         UUID ticket_id FK
-        VARCHAR url
+        TEXT url
         UUID created_by FK "nullable"
     }
 
@@ -154,13 +203,15 @@ erDiagram
     TicketPackageTrack {
         UUID id PK
         UUID ticket_package_id FK
+        ENUM workflow_type
         VARCHAR reference
         ENUM status
+        ENUM delivery_status
     }
 
     TicketPackageProduct {
         UUID id PK
-        UUID tpc_id FK
+        UUID ticket_package_track_id FK
         UUID product_id FK
         BOOLEAN eligible
         BOOLEAN is_eligible_override
@@ -193,7 +244,7 @@ erDiagram
         UUID id PK
         UUID user_id FK
         ENUM role
-        VARCHAR ad_group_cn "nullable"
+        VARCHAR ad_group_cn
         UUID assigned_by FK "nullable"
     }
 
@@ -204,9 +255,40 @@ erDiagram
         UUID created_by FK
     }
 
+    Session {
+        UUID id PK
+        UUID user_id FK
+        BOOLEAN is_active
+    }
+
+    ApiKey {
+        UUID id PK
+        UUID user_id FK
+        VARCHAR key_hash UK
+        VARCHAR prefix
+        VARCHAR name
+        TIMESTAMPTZ expires_at "nullable"
+        TIMESTAMPTZ revoked_at "nullable"
+        UUID revoked_by FK "nullable"
+    }
+
+    IdentityAuditEvent {
+        UUID id PK
+        ENUM event_type
+        UUID user_id FK "nullable"
+        UUID target_user_id FK "nullable"
+    }
+
     SystemSetting {
         VARCHAR key PK
         VARCHAR value
+    }
+
+    SettingAuditEvent {
+        UUID id PK
+        ENUM event_type
+        VARCHAR setting_key
+        UUID user_id FK "nullable"
     }
 
     CodestreamPackageChecksum {
@@ -228,6 +310,30 @@ erDiagram
         VARCHAR userid
     }
 
+    SubmissionRequest {
+        UUID id PK
+        INTEGER request_number UK
+        VARCHAR package_name
+        VARCHAR codestream_name
+        ENUM state
+        INTEGER incident_number "nullable"
+    }
+
+    SubmissionRequestTrack {
+        UUID id PK
+        UUID submission_request_id FK
+        UUID ticket_package_track_id FK
+    }
+
+    ReleaseRequest {
+        UUID id PK
+        INTEGER request_number UK
+        VARCHAR package_name
+        VARCHAR codestream_name
+        ENUM state
+        INTEGER incident_number
+    }
+
     FetcherConfig {
         VARCHAR fetcher_name PK
         BOOLEAN enabled
@@ -235,34 +341,44 @@ erDiagram
 
     FetcherRun {
         UUID id PK
-        VARCHAR fetcher_name
+        VARCHAR fetcher_name FK
         ENUM status
         UUID triggered_by_user_id FK "nullable"
     }
 
     FetcherAuditEvent {
         UUID id PK
-        VARCHAR fetcher_name
+        VARCHAR fetcher_name FK
         ENUM event_type
-        UUID user_id FK
+        UUID user_id FK "nullable"
     }
 
     FetcherRunWeeklyAggregate {
         UUID id PK
-        VARCHAR fetcher_name
+        VARCHAR fetcher_name FK
         DATE week_start
     }
 
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
     CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
+    CVE ||--o{ CVEAffectedVersion : "has affected versions"
+    CVE ||--o{ CVECWE : "has weaknesses"
+    CVE ||--o| CVESSVCAssessment : "has SSVC assessment"
+    CVE ||--o| CVEKEVEntry : "is in KEV catalog"
+    CVE ||--o| CVEEPSSScore : "has EPSS score"
+    CVE ||--o{ CVECPEMatch : "has NVD CPE matches"
     CVE |o--o| Ticket : "tracked by"
 
     Ticket ||--o{ TicketAuditEvent : "has events"
+    Ticket ||--o{ TicketAccessGrant : "has access grants"
     Ticket ||--o{ TicketReference : "has references"
     Ticket ||--o{ TicketPackage : "has packages"
     Ticket }o--o| User : "assigned to"
     Ticket }o--o| Ticket : "duplicate of"
+
+    TicketAccessGrant }o--|| User : "granted to"
+    TicketAccessGrant }o--|| User : "granted by"
 
     TicketPackage ||--o{ TicketPackageTrack : "has tracks"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
@@ -271,27 +387,39 @@ erDiagram
     Product ||--o{ ProductRepository : "has repositories"
 
     User ||--o{ UserRole : "has roles"
+    User ||--o{ Session : "has sessions"
+    User ||--o{ ApiKey : "owns keys"
     User ||--o{ TicketAuditEvent : "performed"
     RoleMapping }o--|| User : "created by"
     TicketReference }o--o| User : "created by"
+    ApiKey }o--o| User : "revoked by"
+    IdentityAuditEvent }o--o| User : "performed by"
+    IdentityAuditEvent }o--o| User : "targets"
+
+    SubmissionRequest ||--o{ SubmissionRequestTrack : "has track links"
+    SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
+    SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
 
     PackageBugowner ||--o{ PackageBugownerMember : "has members"
 
     FetcherRun }o--o| User : "triggered by"
-    FetcherAuditEvent }o--|| User : "performed by"
+    FetcherAuditEvent }o--o| User : "performed by"
+    SettingAuditEvent }o--o| User : "performed by"
 ```
 
 ### Entity Groups
 
 | Group | Tables | Purpose |
 |-------|--------|---------|
-| **CVE Domain** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier | Vulnerability data from external sources |
-| **Ticket Domain** | Ticket, TicketAuditEvent, TicketReference, TicketPackage, TicketPackageTrack, TicketPackageProduct | Security workflow and audit trail |
+| **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier | Vulnerability data from external sources — drives ticket creation and severity |
+| **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore, CVECPEMatch | Supplementary CVE intelligence from secondary sources (CISA, FIRST, NVD CPE) |
+| **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
-| **Identity Domain** | User, UserRole, RoleMapping | Users, roles, and AD group mappings |
+| **Identity Domain** | User, UserRole, RoleMapping, Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
+| **IBS Integration** | SubmissionRequest, SubmissionRequestTrack, ReleaseRequest | IBS submission and release request tracking |
 | **Package Domain** | PackageBugowner, PackageBugownerMember | IBS package maintainer cache |
-| **Fetcher Domain** | FetcherConfig, FetcherRun, FetcherAuditEvent, FetcherRunWeeklyAggregate | Background task monitoring |
-| **Operational** | CodestreamPackageChecksum, SystemSetting | Release detection cache and system config |
+| **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, FetcherRunWeeklyAggregate, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
+| **Operational** | CodestreamPackageChecksum | Release detection MD5 cache |
 
 ---
 
