@@ -38,7 +38,13 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      with `error_message`, `error_detail`, and `error_traceback` populated
      (see "Error Message Sanitization" for the three-tier field
      architecture)
-   - Final status set to `success` or `partial` (if `items_failed > 0`)
+    - Final status set to `success` or `partial` (if `items_failed > 0`)
+   - **Status determination precedence**: if `execute()` raises an exception,
+     the run status is always `failure` regardless of metric counters
+     (`items_failed`, `items_created`, `items_updated` are preserved in the
+     record for diagnostic purposes but do not influence the final status).
+     The `partial` status is assigned only when `execute()` returns normally
+     and `items_failed > 0`
 3. **Metric helpers**: methods that concrete fetchers call within their
    `execute()` to report work done:
    - `self.record_created(count=1)` — increment `items_created`
@@ -265,17 +271,23 @@ The following rules are enforced at **import time** by
 fails to start with a clear error message identifying the fetcher and
 the invalid schema entry.
 
-1. Every entry MUST have `type`, `default`, and `description`
-2. `type` MUST be one of: `int`, `float`, `str`, `bool`
-3. `default` MUST match the declared `type`
-4. `default` MUST respect `min`/`max` bounds if declared
-5. `default` MUST be in `choices` if declared
-6. Schema keys MUST be `snake_case` (lowercase letters, digits, and
+1. The fetcher's `name` MUST be unique across the entire registry. If a
+   concrete fetcher declares a `name` already present in
+   `FETCHER_REGISTRY`, `__init_subclass__` MUST raise an exception at
+   import time, preventing the worker from starting. The error message
+   MUST identify both classes in conflict (the already-registered class
+   and the class attempting registration)
+2. Every entry MUST have `type`, `default`, and `description`
+3. `type` MUST be one of: `int`, `float`, `str`, `bool`
+4. `default` MUST match the declared `type`
+5. `default` MUST respect `min`/`max` bounds if declared
+6. `default` MUST be in `choices` if declared
+7. Schema keys MUST be `snake_case` (lowercase letters, digits, and
    underscores only)
-7. Values are limited to scalars — nested objects, lists, or complex
+8. Values are limited to scalars — nested objects, lists, or complex
    structures are not supported in the JSONB column
-8. `min` and `max` are ignored if `type` is not `int` or `float`
-9. `choices` is ignored if `type` is not `str` or `int`
+9. `min` and `max` are ignored if `type` is not `int` or `float`
+10. `choices` is ignored if `type` is not `str` or `int`
 
 ### Accessing settings at runtime
 
@@ -294,6 +306,22 @@ delay = self.get_setting("throttle_delay_seconds")  # returns DB value or 2.0
 Settings are read from the DB at the start of each `run()` invocation
 (not cached across runs). This means an admin can change a setting and
 the next run picks it up immediately.
+
+#### Runtime validation of stored values
+
+`get_setting()` MUST validate the value read from the DB against the
+declared schema (type, min/max, choices). If validation fails,
+`get_setting()` raises a `FetcherConfigError` exception that is caught
+by `run()` and terminates the run with status `failure`. The error
+message must identify: the fetcher name, the setting key, the invalid
+stored value, the constraint violated, and a suggested corrective action
+(update the setting via the API). No silent fallback to the default is
+performed.
+
+This situation only occurs after a code change (fetcher schema
+modification + redeploy) or direct DB manipulation — both moments when
+operators monitor fetcher health closely, making quick detection and
+correction likely.
 
 ### Schema registration
 
@@ -606,7 +634,7 @@ the dashboard charts.
 | `running` | Execution in progress |
 | `success` | Completed without errors |
 | `failure` | Terminated with an unhandled exception |
-| `partial` | Completed but some items failed (`items_failed > 0`) |
+| `partial` | Completed but some items failed (`items_failed > 0`). Implies `execute()` returned normally (no exception raised) |
 
 ### FetcherRunTriggeredBy Enum
 

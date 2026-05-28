@@ -10,31 +10,19 @@
 
 ### FEI-GAP-001 — No specification for partial status transition logic (Medium)
 
-**Category**: State Transition
-**Status**: OPEN
-
-The spec states in the BaseFetcher Base Class section: 'Final status set to `success` or `partial` (if `items_failed > 0`)'. However, it does not specify what happens when `execute()` completes normally but `items_failed > 0` AND an exception is also raised. If a fetcher calls `self.record_failed(5)` and then raises an exception, should the status be `failure` (exception) or `partial` (items_failed > 0)? The precedence between exception-based failure and metric-based partial is not explicitly stated.
+**Status**: RESOLVED — Added explicit status determination precedence rule in BaseFetcher Base Class section and clarifying note in FetcherRunStatus enum (2026-05-28)
 
 ### FEI-GAP-002 — Race condition window between API concurrency check and task execution (Medium)
 
-**Category**: Concurrency
-**Status**: OPEN
-
-The spec describes two-level concurrency control: 'the trigger endpoint checks for an active FetcherRun synchronously before enqueuing the Celery task' (API level) and a task-level check. Between the API check and the task starting, a scheduled run could begin. The spec recommends 'SELECT ... FOR UPDATE' at the task level but does not address the time gap between the API's synchronous check (which returns 202) and the task's own check. If a scheduled run starts in this window, the task-level check would discard the manual run silently — but the API already returned 202 to the user, creating a false positive acknowledgment.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-28)
 
 ### FEI-GAP-004 — No behavior specified for duplicate fetcher names at registration (Medium)
 
-**Category**: Boundary Condition
-**Status**: OPEN
-
-The spec states 'a metaclass or __init_subclass__ hook that automatically registers each concrete fetcher in a global registry keyed by the fetcher's name property'. The @fetcher-compliance-reviewer checks 'Unique name: the fetcher's name does not conflict with any existing registered fetcher'. However, the spec does not define what happens at runtime if two fetcher classes declare the same `name` — does the second registration overwrite the first, raise an ImportError, or log a warning? This should be enforced at import time with a clear error.
+**Status**: RESOLVED — Added explicit duplicate name enforcement rule at import time (2026-05-28)
 
 ### FEI-GAP-005 — No specification for what happens when FetcherConfig.custom_settings contains invalid values (Medium)
 
-**Category**: Missing Error Path
-**Status**: OPEN
-
-The spec states 'Settings are read from the DB at the start of each run() invocation'. If an admin somehow writes a value to custom_settings that violates the schema (e.g., a string where an int is expected, or a value outside min/max range) — perhaps via direct DB manipulation or a schema change after values were stored — the spec does not specify whether get_setting() should raise, return the invalid value, or fall back to the default. The PATCH endpoint validates, but stale data in the DB is unaddressed.
+**Status**: RESOLVED — Added fail-fast runtime validation for stored settings against schema (2026-05-28)
 
 ### FEI-GAP-008 — fetch_single error handling not specified for non-FetcherError exceptions (Medium)
 
