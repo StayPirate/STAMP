@@ -32,6 +32,10 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
 2. **Run lifecycle management**: a `run()` method (not meant to be
    overridden) that wraps the fetcher's `execute()` method with:
    - Creation of a `FetcherRun` record with status `running`
+   - Reset of all metric counters (`items_created`, `items_updated`,
+     `items_failed`) to zero before each execution. This ensures correct
+     behavior regardless of instance lifecycle (singleton vs. per-run
+     instantiation)
    - Automatic `started_at` timestamp capture
    - Automatic `finished_at` timestamp and `duration_seconds` calculation
    - Exception handling: if `execute()` raises, the run is marked `failure`
@@ -52,7 +56,23 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    - `self.record_failed(count=1)` — increment `items_failed`
 4. **Enabled check**: before executing, `run()` checks `FetcherConfig` for
    the fetcher. If `enabled` is `false`, the run is skipped (no
-   `FetcherRun` record is created, the task returns immediately)
+   `FetcherRun` record is created, the task returns immediately). A
+   DEBUG-level log is emitted before returning:
+   `logger.debug("Fetcher '%s' is disabled — skipping scheduled run", self.name)`
+
+**FetcherRun creation failure**: if the database INSERT for the `FetcherRun`
+record fails (e.g., database connection error), the task MUST:
+
+1. Log a CRITICAL-level message:
+   `CRITICAL: Fetcher '{name}' aborted — failed to create FetcherRun record before execution: {error}`
+2. Re-raise the exception immediately — Celery does NOT retry top-level
+   fetcher tasks
+
+No `FetcherRun` record is produced (since the database is unreachable).
+Visibility of this failure is provided by: application logs (CRITICAL level)
+and the Celery result backend (task marked as FAILED). Recovery happens at
+the next scheduled cycle — no explicit Celery retry is configured for
+top-level fetcher tasks.
 
 ## Abstract Interface
 
@@ -74,7 +94,8 @@ class MyConcreteFetcher(BaseFetcher):
     # Optional: per-fetcher operational parameters configurable at
     # runtime via the admin dashboard. See "Custom Settings Schema"
     # section below for the schema format and validation rules.
-    custom_settings_schema: dict | None = None
+    class Settings(BaseModel):  # optional inner class
+        ...
 
     async def execute(self, session: AsyncSession) -> None:
         """Fetch data from the external source.
@@ -311,49 +332,77 @@ Operational parameters that:
 
 ### Schema declaration
 
-Each `BaseFetcher` subclass MAY declare a `custom_settings_schema` class
-attribute. If not declared (or `None`), the fetcher accepts no custom
-settings and the `custom_settings` JSONB column in `FetcherConfig`
-remains `{}`.
+Each `BaseFetcher` subclass MAY declare an inner class named `Settings`
+that inherits from `pydantic.BaseModel`. If not declared (or set to
+`None`), the fetcher accepts no custom settings and the
+`custom_settings` JSONB column in `FetcherConfig` remains `{}`.
 
 ```python
+from pydantic import BaseModel, Field
+
+
 class SyncCvssRedhat(BaseFetcher):
     name = "sync_cvss_redhat"
     description = "Re-fetches Red Hat CVSS for active tickets"
     default_schedule = "0 3 * * *"
 
-    custom_settings_schema = {
-        "throttle_delay_seconds": {
-            "type": "float",
-            "default": 2.0,
-            "min": 0.1,
-            "max": 30.0,
-            "description": "Delay between consecutive Red Hat API requests.",
-        },
-    }
+    class Settings(BaseModel):
+        throttle_delay_seconds: float = Field(
+            default=2.0,
+            ge=0.1,
+            le=30.0,
+            description="Delay between consecutive Red Hat API requests.",
+        )
 ```
 
-### Schema field properties
+### Supported field types and constraints
 
-Each entry in `custom_settings_schema` is a dictionary with the following
-properties:
+Settings fields are limited to scalar types. Pydantic `Field()`
+constraints express all validation rules declaratively:
 
-| Property | Type | Required | Applies to | Description |
-|----------|------|----------|------------|-------------|
-| `type` | string | Yes | all | One of: `int`, `float`, `str`, `bool` |
-| `default` | any | Yes | all | Default value used when the setting is not explicitly configured |
-| `description` | string | Yes | all | Human-readable description shown in the admin UI |
-| `min` | number | No | `int`, `float` | Minimum allowed value |
-| `max` | number | No | `int`, `float` | Maximum allowed value |
-| `choices` | list | No | `str`, `int` | Allowed values |
-| `warning` | string | No | all | Safety warning. Use for settings where incorrect values could have significant operational impact |
+| Type | Supported constraints |
+|------|----------------------|
+| `int` | `ge`, `le`, `gt`, `lt` |
+| `float` | `ge`, `le`, `gt`, `lt` |
+| `str` | `max_length`, `pattern`, `json_schema_extra={"choices": [...]}` |
+| `bool` | (no additional constraints) |
 
-### Schema validation rules
+Nested objects, lists, and complex structures are not supported — only
+scalar fields are allowed in the `Settings` model. This is enforced at
+import time (see below).
+
+To declare allowed choices for string or integer fields, use
+`json_schema_extra`:
+
+```python
+class Settings(BaseModel):
+    output_format: str = Field(
+        default="json",
+        json_schema_extra={"choices": ["json", "xml", "csv"]},
+        description="Response format preference.",
+    )
+```
+
+To attach a safety warning for dangerous settings, use
+`json_schema_extra`:
+
+```python
+class Settings(BaseModel):
+    max_concurrent_requests: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        json_schema_extra={"warning": "Values above 20 may trigger rate limiting on the external service."},
+        description="Maximum parallel HTTP requests.",
+    )
+```
+
+### Import-time validation
 
 The following rules are enforced at **import time** by
 `BaseFetcher.__init_subclass__`. If any rule is violated, the worker
 fails to start with a clear error message identifying the fetcher and
-the invalid schema entry.
+the invalid field.
 
 1. The fetcher's `name` MUST be unique across the entire registry. If a
    concrete fetcher declares a `name` already present in
@@ -361,17 +410,19 @@ the invalid schema entry.
    import time, preventing the worker from starting. The error message
    MUST identify both classes in conflict (the already-registered class
    and the class attempting registration)
-2. Every entry MUST have `type`, `default`, and `description`
-3. `type` MUST be one of: `int`, `float`, `str`, `bool`
-4. `default` MUST match the declared `type`
-5. `default` MUST respect `min`/`max` bounds if declared
-6. `default` MUST be in `choices` if declared
-7. Schema keys MUST be `snake_case` (lowercase letters, digits, and
+2. If `Settings` is declared, it MUST be a subclass of
+   `pydantic.BaseModel`
+3. All fields in `Settings` MUST have a default value (no required
+   fields) — see "Design decisions" below
+4. All field types MUST be scalar (`int`, `float`, `str`, `bool`).
+   Complex types (lists, dicts, nested models) are rejected
+5. Field names MUST be `snake_case` (lowercase letters, digits, and
    underscores only)
-8. Values are limited to scalars — nested objects, lists, or complex
-   structures are not supported in the JSONB column
-9. `min` and `max` are ignored if `type` is not `int` or `float`
-10. `choices` is ignored if `type` is not `str` or `int`
+
+Pydantic itself enforces type correctness of defaults, constraint
+consistency (e.g., `default` respects `ge`/`le`), and field descriptor
+validity at class definition time — no custom validation is needed for
+these.
 
 ### Accessing settings at runtime
 
@@ -379,8 +430,8 @@ the invalid schema entry.
 with a clear precedence:
 
 1. Value in `FetcherConfig.custom_settings` (DB) — if the key exists
-2. Default from `custom_settings_schema` — if the key is declared
-3. `KeyError` — if the key is not declared in the schema
+2. Default from `Settings` model — if the key is a declared field
+3. `KeyError` — if the key is not declared in `Settings`
 
 ```python
 # Inside execute():
@@ -393,47 +444,62 @@ the next run picks it up immediately.
 
 #### Runtime validation of stored values
 
-`get_setting()` MUST validate the value read from the DB against the
-declared schema (type, min/max, choices). If validation fails,
-`get_setting()` raises a `FetcherConfigError` exception that is caught
-by `run()` and terminates the run with status `failure`. The error
-message must identify: the fetcher name, the setting key, the invalid
-stored value, the constraint violated, and a suggested corrective action
-(update the setting via the API). No silent fallback to the default is
-performed.
+At the start of each `run()`, all stored values from
+`FetcherConfig.custom_settings` are validated by instantiating the
+`Settings` model with the stored values merged over the defaults. If
+Pydantic validation fails, `run()` terminates with status `failure` and
+raises a `FetcherConfigError`. The error message must identify: the
+fetcher name, the invalid field(s), the stored value(s), the constraint
+violated, and a suggested corrective action (update the setting via the
+API). No silent fallback to the default is performed.
 
-This situation only occurs after a code change (fetcher schema
+This situation only occurs after a code change (fetcher Settings model
 modification + redeploy) or direct DB manipulation — both moments when
 operators monitor fetcher health closely, making quick detection and
 correction likely.
 
-### Schema registration
+### Schema registration and API exposure
 
 The `BaseFetcher` registry (populated at import time via
-`__init_subclass__`) collects `custom_settings_schema` from each
-subclass. This registry is used by:
+`__init_subclass__`) collects the `Settings` class from each subclass.
+This registry is used by:
 
-- The API validation layer (PATCH endpoint validates submitted values
-  against the fetcher's schema)
+- The API layer: the GET config endpoint returns
+  `Settings.model_json_schema()` as the `settings_schema` field,
+  providing a standard JSON Schema that the admin UI renders
+  dynamically
+- The API validation layer: the PATCH endpoint instantiates the
+  `Settings` model with the submitted values to validate them
 - The `sentinel fetcher config` CLI command (settings display)
+
+Because Pydantic produces standard JSON Schema, the admin UI can render
+settings forms without custom serialization logic — field types,
+constraints, defaults, descriptions, choices, and warnings are all
+present in the schema output.
 
 ### Design decisions
 
-- **All settings have defaults**: a `required` flag (settings with no
-  default that must be configured before the fetcher can run) is not
-  supported. Every setting must have a `default` value so that fetchers
+- **All settings have defaults**: no required fields are allowed in
+  `Settings`. Every field must have a `default` value so that fetchers
   work out of the box. If a parameter has no reasonable default, it
   likely belongs as an environment variable, not a custom setting.
-- **Orphaned keys are ignored silently**: when a setting is removed from
-  a fetcher's schema in a future version, old values in the JSONB column
-  become orphaned. `get_setting()` only reads declared keys, so orphaned
-  keys are inert. The PATCH endpoint rejects unknown keys, preventing
-  new writes to orphaned settings. No cleanup migration is needed.
+- **Orphaned keys are ignored silently**: when a field is removed from
+  a fetcher's `Settings` model in a future version, old values in the
+  JSONB column become orphaned. Pydantic's `model_validate()` ignores
+  extra fields by default (using `model_config =
+  ConfigDict(extra="ignore")`), so orphaned keys are inert. The PATCH
+  endpoint rejects unknown keys, preventing new writes to orphaned
+  settings. No cleanup migration is needed.
 - **No environment variable override**: there is no mechanism to override
   custom_settings values via environment variables. The purpose of
   custom_settings is to avoid the env-var-requires-restart pattern. If
   deployment-level defaults are needed, an init script can call the
   PATCH API after deployment.
+- **Why Pydantic and not a bespoke DSL**: the project already uses
+  Pydantic extensively (request/response schemas, configuration). Using
+  Pydantic for fetcher settings provides type safety, validation,
+  JSON Schema generation, and IDE support for free — avoiding a custom
+  validator, custom serialization, and custom documentation format.
 
 ### Referencing custom settings in fetcher specifications
 
@@ -452,8 +518,8 @@ Example:
 > `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
 > Schema" for the schema structure and validation rules):
 >
-> | Setting | Type | Default | Range | Description |
-> |---------|------|---------|-------|-------------|
+> | Setting | Type | Default | Constraints | Description |
+> |---------|------|---------|-------------|-------------|
 > | `my_setting` | int | 10 | 1–100 | Description of the setting |
 
 ## Fetcher Documentation Requirements
@@ -657,6 +723,13 @@ When a stale run is detected (by the Celery task, the API trigger
 endpoint, or the CLI), it is resolved by updating the stale `FetcherRun`
 record:
 
+**Operational risk of `timeout_seconds=0`**: disabling stale detection
+means a fetcher that gets stuck will block all future executions
+indefinitely, requiring manual intervention. When `timeout_seconds` is
+set to 0 via the API or CLI, a warning is surfaced to the operator (see
+`docs/features/platform/fetcher-operations.md`, "Update Fetcher Config"
+for the API warning field and CLI warning message).
+
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
   {timeout}s)"` for automatic resolution (Celery/API), or `"Marked as
@@ -731,7 +804,10 @@ the dashboard charts.
 
 Per-fetcher configuration, managed by admins. A record is created
 automatically when a fetcher is first registered (on worker startup) if
-one does not already exist.
+one does not already exist. The auto-creation MUST use an idempotent
+operation (`INSERT ... ON CONFLICT DO NOTHING` on the PK `fetcher_name`)
+to guarantee safety when multiple workers start concurrently (common in
+Kubernetes multi-replica deployments).
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
@@ -740,7 +816,7 @@ one does not already exist.
 | schedule_override | VARCHAR(50) | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
 | timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
 | rate_limit | VARCHAR(20) | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
-| custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `custom_settings_schema` (see "Custom Settings Schema" above). |
+| custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see "Custom Settings Schema" above). |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Last modification timestamp |
 
 **Notes**:
@@ -852,6 +928,18 @@ The aggregation algorithm is implemented by `aggregate_fetcher_runs`,
 defined in `docs/features/platform/fetcher-operations.md` (Fetcher:
 `aggregate_fetcher_runs`).
 
+Before aggregating records of a given week, the task MUST force-resolve
+any `FetcherRun` record with `status='running'` and `started_at` older
+than the retention window. Force-resolution sets:
+
+- `status` → `failure`
+- `error_message` → `"Orphaned run resolved during aggregation (never completed)"`
+- `finished_at` → `started_at`
+
+Only after all orphaned runs in the batch are resolved does the task
+proceed with the normal weekly aggregation. This ensures no record
+remains indefinitely in `running` status.
+
 ## Deregistered Fetcher Lifecycle
 
 When a fetcher class is removed from the codebase (or renamed), its
@@ -868,7 +956,7 @@ on the three dependent tables prevent accidental deletion of the
 - Celery Beat does not schedule it
 - The `GET /api/v1/fetchers` endpoint and `sentinel fetcher list` CLI
   command include the fetcher with `registered: false`. Code-defined
-  metadata (`description`, `default_schedule`, `custom_settings_schema`)
+  metadata (`description`, `default_schedule`, `Settings` model)
   is unavailable and appears as `null`
 - Per-fetcher **read** endpoints (`/runs`, `/timeline`, `GET /config`,
   `/audit-log`) work normally — they validate the fetcher name against

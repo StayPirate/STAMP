@@ -660,8 +660,8 @@ This fetcher declares the following custom settings (see
 `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
 Schema" for the schema structure and validation rules):
 
-| Setting | Type | Default | Range | Description |
-|---------|------|---------|-------|-------------|
+| Setting | Type | Default | Constraints | Description |
+|---------|------|---------|-------------|-------------|
 | `throttle_delay_seconds` | float | 2.0 | 0.1–30.0 | Delay between consecutive Red Hat API requests |
 
 ## Data Model

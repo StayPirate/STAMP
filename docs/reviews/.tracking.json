@@ -99,15 +99,15 @@
       "enabled": true,
       "abbr": "FEI",
       "cache": {
-        "last_review": "2026-05-28T00:20:39+0200",
+        "last_review": "2026-05-28T00:00:00+0000",
         "open": {
-          "GAP": { "H": 0, "M": 2, "L": 3 },
+          "GAP": { "H": 0, "M": 0, "L": 0 },
           "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 1, "L": 3 },
-          "SEC": { "H": 0, "M": 2, "L": 2 },
+          "DES": { "H": 0, "M": 0, "L": 1 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 6,
+        "resolved": 17,
         "not_reviewed": []
       }
     },
