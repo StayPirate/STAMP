@@ -157,9 +157,12 @@ directly on the assessment record.
 - **Input method**: the VA enters a CVSS vector string (which embeds the
   version in its prefix); the backend derives the CVSS version from the
   prefix and calculates the score automatically using the `cvss` library
-- **Editability**: the SUSE assessment can be modified at any time,
-  regardless of ticket status. Changes trigger severity and eligibility
-  recalculation
+- **Editability**: CVSS mutations are subject to
+  `ensure_ticket_operable()` when the CVE has an associated ticket —
+  mutations are rejected with `409 TICKET_NOT_MUTABLE` if the ticket is
+  in Ignored or Duplicated status, or `410 TICKET_DELETED` if
+  soft-deleted. Ticketless CVEs are always mutable. Changes trigger
+  severity and eligibility recalculation
 
 ## CVSS Versions
 
@@ -402,18 +405,19 @@ with an active ticket, Sentinel performs the following recalculation:
 ### Get CVSS Assessments for a CVE
 
 ```
-GET /api/v1/tickets/{ticket_id}/cvss
+GET /api/v1/cves/{cve_id}/cvss
 ```
 
 Public (no authentication required).
 
-**Tickets without CVE**: returns 400 Bad Request with
-`{"code": "TICKET_CVE_NOT_SET", "detail": "This ticket has no associated CVE. CVSS assessments are not available."}`.
-The same 400 response applies to `POST .../cvss/suse` and
-`DELETE .../cvss/suse/{version}` when called on a ticket without a CVE.
+The `{cve_id}` path parameter accepts either the CVE's UUID or the
+CVE-ID string (e.g., `CVE-2025-1234`). See `docs/api-spec.md` (CVE
+Identifier Resolution) for the dual-identifier resolution pattern.
 
-Response: list of all CVSS assessments for the ticket's CVE, grouped by
-version.
+Response: list of all CVSS assessments for the CVE, grouped by version.
+Pagination is intentionally omitted — the number of CVSS assessments per
+CVE is naturally bounded (one per provider-version combination, typically
+fewer than 20 records).
 
 ```json
 {
@@ -454,7 +458,7 @@ decisions).
 ### Set or Update SUSE CVSS Assessment
 
 ```
-POST /api/v1/tickets/{ticket_id}/cvss/suse
+POST /api/v1/cves/{cve_id}/cvss/suse
 ```
 
 Request body:
@@ -481,16 +485,23 @@ the standard `{"data": ...}` envelope.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `TICKET_CVE_NOT_SET` | Ticket has no associated CVE |
-| 404 | `TICKET_NOT_FOUND` | Ticket not found |
+| 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
+| 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
+| 410 | `TICKET_DELETED` | Associated ticket is soft-deleted |
 | 422 | `CVSS_INVALID_VECTOR` | Vector string is malformed or unparseable |
+
+The `409` and `410` errors apply only when the CVE has an associated
+ticket. CVEs without an associated ticket are always mutable. The `410`
+is only reachable by callers with `admin_ticket_ops` capability — all
+other callers receive `404 CVE_NOT_FOUND` from `require_accessible_cve`
+before the service layer is reached.
 
 **Capability**: `manage_cvss`.
 
 ### Delete SUSE CVSS Assessment
 
 ```
-DELETE /api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}
+DELETE /api/v1/cves/{cve_id}/cvss/suse/{cvss_version}
 ```
 
 Removes the SUSE CVSS assessment for the specified version. Triggers
@@ -503,9 +514,16 @@ Response: 204 No Content.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `TICKET_CVE_NOT_SET` | Ticket has no associated CVE |
-| 404 | `TICKET_NOT_FOUND` | Ticket not found |
+| 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
 | 404 | `RESOURCE_NOT_FOUND` | No SUSE assessment exists for the specified version |
+| 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
+| 410 | `TICKET_DELETED` | Associated ticket is soft-deleted |
+
+The `409` and `410` errors apply only when the CVE has an associated
+ticket. CVEs without an associated ticket are always mutable. The `410`
+is only reachable by callers with `admin_ticket_ops` capability — all
+other callers receive `404 CVE_NOT_FOUND` from `require_accessible_cve`
+before the service layer is reached.
 
 **Capability**: `manage_cvss`.
 
@@ -539,15 +557,25 @@ These functions are used in two contexts:
 
 All operations that create, update, or delete `CVECVSSAssessment`
 records MUST go through the `ticket_mutations` module (see
-`docs/features/tickets/ticket-mutations.md`). This module:
+`docs/features/tickets/ticket-mutations.md`). The CVSS mutation
+functions accept a `cve_id` (not a `ticket_id`) and follow this flow:
 
-1. Persists the `CVECVSSAssessment` record change
-2. Calls `cvss.resolve_cvss_score()` to determine the new resolved score
-3. Calls `cvss.calculate_severity()` to derive the new severity
-4. Updates `CVE.severity` if it changed
-5. Re-evaluates product eligibility using the new score
-6. Creates `TicketAuditEvent` records for each change
-7. Calls `reconcile_ticket_status()` to re-evaluate the ticket status
+1. Look up the ticket associated with the CVE (if any)
+2. If a ticket exists:
+   a. Acquire `FOR UPDATE` on the Ticket row
+   b. Call `ensure_ticket_operable(ticket)` — rejects with
+      `409 TICKET_NOT_MUTABLE` if in Ignored or Duplicated status,
+      `410 TICKET_DELETED` if soft-deleted
+3. Persist the `CVECVSSAssessment` record change
+4. Call `cvss.resolve_cvss_score()` to determine the new resolved score
+5. Call `cvss.calculate_severity()` to derive the new severity
+6. Update `CVE.severity` if it changed
+7. If a ticket exists:
+   a. Re-evaluate product eligibility using the new score
+   b. Create `TicketAuditEvent` records for each change
+   c. Call `reconcile_ticket_status()` to re-evaluate the ticket status
+8. If no ticket exists (ticketless CVE): skip audit event and cascade —
+   the mutation is always allowed
 
 All steps execute within the **same database transaction** as the
 triggering change (atomicity guarantee).
@@ -654,4 +682,5 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - `docs/features/tickets/cve-service.md` — CVE Service Layer
   (`upsert_cve()`, `CVEIngestPayload`, Phase 1/Phase 2 transaction model)
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
-  pagination, shared 422 responses)
+  pagination, shared 422 responses), CVE Accessibility Check, CVE Identifier
+  Resolution

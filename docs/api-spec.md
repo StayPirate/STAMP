@@ -67,7 +67,19 @@ This ordering is security-significant: the capability check (step 2)
 fires before the accessibility check (step 3), preventing ticket
 existence probing via differentiated error codes.
 
-For non-ticket endpoints, only steps 1 and 2 apply.
+For CVE endpoints that are capability-protected and operate on a
+specific CVE, the same pattern applies:
+
+1. **Authentication** (`get_current_user`) — returns 401
+2. **Capability** (`require_capability`) — returns 403
+   `AUTH_INSUFFICIENT_PERMISSION`
+3. **CVE accessibility** (`require_accessible_cve`) — returns 404
+   `CVE_NOT_FOUND` for non-existent or inaccessible CVEs
+
+For `GET /cves/{cve_id}/cvss` (Public — no authentication required),
+only step 3 applies.
+
+For non-ticket, non-CVE endpoints, only steps 1 and 2 apply.
 
 #### Conditional Capability Checks
 
@@ -155,7 +167,8 @@ Error codes are grouped by prefix:
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
-| `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED` |
+| `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE` |
+| `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_VERSION_MISMATCH`, `CVSS_DUPLICATE_ASSESSMENT` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
 | `ROLE_MAPPING_*` | Role mapping operations | `ROLE_MAPPING_GROUP_NOT_FOUND`, `ROLE_MAPPING_INVALID_GROUP_CN` |
@@ -362,6 +375,87 @@ See `docs/features/tickets/tickets.md` ([Soft-Delete](docs/features/tickets/tick
 for the full business rules (who may delete/restore, status categories,
 sub-resource behavior, automated verification requirements).
 
+#### CVE Accessibility Check
+
+All endpoints under `/api/v1/cves/{cve_id}/` are subject to a
+centralized accessibility check enforced by a router-level shared
+dependency (`require_accessible_cve`). This dependency is applied via
+`dependencies=[...]` on the `APIRouter`, mirroring the
+`require_accessible_ticket` pattern on the ticket router.
+
+The dependency evaluates conditions in this exact order:
+
+1. **Existence**: resolve the CVE by UUID or CVE-ID string (see CVE
+   Identifier Resolution below). If no CVE matches, return
+   `404 CVE_NOT_FOUND`
+2. **Associated ticket check**: if the CVE has an associated ticket:
+   a. **Confidentiality**: if the ticket is confidential
+      (`is_confidential=TRUE`) and the caller does not satisfy any
+      visibility rule from `docs/features/identity/rbac.md` (Scope and
+      Confidential Ticket Visibility), return `404 CVE_NOT_FOUND` —
+      indistinguishable from a non-existent CVE
+   b. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and
+      the caller does not have the `admin_ticket_ops` capability,
+      return `404 CVE_NOT_FOUND`
+3. **No associated ticket**: if the CVE has no associated ticket, it is
+   freely accessible — CVE data is inherently public
+
+| Status | Code              | Condition                                           |
+|--------|-------------------|-----------------------------------------------------|
+| 404    | `CVE_NOT_FOUND`   | CVE does not exist, or is associated with a confidential ticket and caller is not authorized, or associated ticket is soft-deleted and caller lacks `admin_ticket_ops` |
+
+All denial cases from this dependency return the same
+`404 CVE_NOT_FOUND` response — never `TICKET_NOT_FOUND`, never 410.
+This is intentionally different from `require_accessible_ticket`, which
+returns `410 TICKET_DELETED` for soft-deleted tickets. The rationale:
+
+- **Semantic correctness**: the CVE is not deleted — the ticket is.
+  Returning 410 on a `/cves/` path would misattribute the state to the
+  wrong entity
+- **Information leakage**: returning 410 or a ticket-specific error code
+  on a CVE path would confirm that (a) the CVE has an associated ticket
+  and (b) that ticket has been deleted — exposing ticket lifecycle state
+  through an unrelated resource path
+
+**Post-accessibility service-layer errors**: mutation endpoints under
+`/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE` or
+`410 TICKET_DELETED` from `ensure_ticket_operable()` at the service
+layer. These errors are only reachable by callers with
+`admin_ticket_ops` capability, who bypass the soft-delete check in
+`require_accessible_cve`. Callers without this capability receive
+`404 CVE_NOT_FOUND` from the router-level dependency before reaching
+the service layer. See the per-endpoint error tables in
+`docs/features/tickets/cvss-scoring.md` for details
+
+Unauthenticated callers (`current_user=None`): step 2a always denies
+access when the ticket is confidential — unauthenticated users can never
+satisfy any visibility rule. This is consistent with
+`confidential_ticket_filter()` behavior for unauthenticated requests.
+
+**Relationship to `require_accessible_ticket`**: this dependency applies
+the same confidentiality and soft-delete rules as
+`require_accessible_ticket`, with two differences: (1) all denial cases
+return `404 CVE_NOT_FOUND` instead of differentiating 404/410, and (2)
+CVEs without an associated ticket are freely accessible because CVE data
+is inherently public.
+
+The two dependencies are intentionally kept as separate, self-contained
+implementations — no shared abstraction is introduced. The access rules
+are equivalent by convention, documented with this explicit
+cross-reference.
+
+Unlike the ticket router, no endpoints need to be excluded from this
+check: CVEs have no soft-delete lifecycle, so there are no
+lifecycle-management endpoints requiring different error semantics.
+
+**Location**: `backend/app/core/dependencies.py` (alongside
+`require_accessible_ticket` and `resolve_user_identifier`).
+
+**Note**: the `GET /api/v1/cves` list endpoint lives on the parent
+`/api/v1/cves/` router, NOT on the `/api/v1/cves/{cve_id}/` sub-router.
+It is not covered by this dependency — confidentiality and soft-delete
+filtering are handled inline via `confidential_ticket_filter()`.
+
 #### Manual-Zone Mutability Guard
 
 Tickets in the **manual zone** (status `Ignored` or `Duplicated`) are
@@ -456,6 +550,31 @@ Implementation note: a reusable FastAPI dependency
 (`resolve_user_identifier`) handles the detection and lookup. See
 `docs/conventions.md` (FastAPI Conventions) for the reference
 implementation pattern.
+
+### CVE Identifier Resolution
+
+All parameters that identify a CVE in `/api/v1/cves/` endpoints —
+primarily the `{cve_id}` path parameter — accept either a UUID or a
+CVE-ID string. Resolution is automatic:
+
+- If the value is a valid UUID (RFC 4122 format), lookup is by primary
+  key (`CVE.id`)
+- If the value matches the CVE-ID format (`CVE-\d{4}-\d{4,}`), lookup
+  is by the `CVE.cve_id` column (UNIQUE indexed)
+- Otherwise, return `404 CVE_NOT_FOUND`
+
+The CVE-ID string is the natural identifier used across all security
+tooling (NVD, MITRE, advisories). Requiring UUID-only would force API
+consumers to perform a two-step lookup (search for CVE-ID in ticket
+list, extract UUID, then call the CVE endpoint). The dual resolution
+eliminates this friction.
+
+This follows the dual-identifier resolution pattern established by
+`resolve_user_identifier` (see User Identifier Resolution above).
+
+Implementation note: a reusable `resolve_cve_identifier` function in
+`backend/app/core/dependencies.py`, analogous to
+`resolve_user_identifier`.
 
 ### Mutation Patterns
 

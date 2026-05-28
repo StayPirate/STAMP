@@ -909,11 +909,25 @@ MUST be applied explicitly as defense in depth — protecting against
 future changes to the dashboard query logic that might inadvertently
 bypass the authorization check.
 
-**CVE Details (`GET /api/v1/cves/{id}`)**:
-If the CVE is linked to a confidential ticket that the caller is not
-authorized to access (or is unauthenticated), the ticket reference MUST
-be omitted entirely from the response. The caller sees no indication
-that a ticket exists for this CVE.
+**CVE Detail (`GET /api/v1/cves/{cve_id}/...`)**:
+All endpoints under `/api/v1/cves/{cve_id}/` are subject to the
+`require_accessible_cve` router-level dependency (see `docs/api-spec.md`,
+CVE Accessibility Check). If the CVE is linked to a confidential ticket
+that the caller is not authorized to access, the endpoint returns
+`404 CVE_NOT_FOUND` — indistinguishable from a non-existent CVE. If
+the associated ticket is soft-deleted and the caller lacks
+`admin_ticket_ops`, the same `404 CVE_NOT_FOUND` is returned. CVEs
+without an associated ticket are freely accessible.
+
+**CVE List (`GET /api/v1/cves`)**:
+The list query applies confidentiality filtering via LEFT JOIN to the
+Ticket table using `confidential_ticket_filter()`. CVEs associated with
+confidential tickets are silently excluded for unauthorized callers,
+consistent with the `GET /api/v1/tickets` pattern. CVEs associated with
+soft-deleted tickets are excluded by default; the `include_deleted`
+parameter (requiring `admin_ticket_ops` capability) controls this. CVEs
+without an associated ticket are always included. Pagination counts
+reflect only the CVEs visible to the caller.
 
 #### Shared Utility: `confidential_ticket_filter()`
 
@@ -981,9 +995,11 @@ return OR(
 | Consumer | `ticket_id_col` | Notes |
 |----------|-----------------|-------|
 | `GET /api/v1/tickets` | `Ticket.id` | Ticket list endpoint |
+| `GET /api/v1/cves` | `Ticket.id` (via JOIN from CVE) | CVE list endpoint |
 | `GET /api/v1/packages` | `Ticket.id` (via JOIN) | Cross-ticket package search |
 | `GET /api/v1/my/packages/*` | `Ticket.id` (via JOIN) | Maintainer operations |
 | `require_accessible_ticket` | `Ticket.id` | Single-ticket access guard |
+| `require_accessible_cve` | `Ticket.id` (via JOIN from CVE) | Single-CVE access guard |
 
 **Accepted risk — `duplicate_of_id` and confidential targets**: A
 Duplicated ticket that is non-confidential may have a `duplicate_of_id`
@@ -1061,8 +1077,8 @@ on the context: a compact summary for list views, or a full detail
 object for single-ticket views and mutation responses.
 
 **Enum serialization**: all enum values (`status`, `severity`,
-`workflow_type`, `delivery_status`, and `PackageStatus`) are serialized
-as **lowercase** strings in API responses (e.g., `"new"`, `"critical"`,
+`workflow_type`, `delivery_status`, `PackageStatus`, and `cve_state`)
+are serialized as **lowercase** strings in API responses (e.g., `"new"`, `"critical"`,
 `"affected"`). Request bodies and query parameters also use lowercase.
 The PascalCase forms used elsewhere in this spec (e.g., `New`,
 `Analysis`, `Critical`) refer to the logical values; the wire format is
@@ -1106,8 +1122,8 @@ outcome. Sources never attempted are omitted from the response.
 | `description` | string \| null | Vulnerability description |
 | `published_date` | datetime \| null | Date published (UTC) |
 | `modified_date` | datetime \| null | Date last modified (UTC) |
-| `cve_state` | string | CVE record state (`"PUBLISHED"` or `"REJECTED"`) |
-| `date_rejected` | datetime \| null | When the CVE was rejected (UTC). NULL if `cve_state` is `PUBLISHED` |
+| `cve_state` | string | CVE record state (`"published"` or `"rejected"`) |
+| `date_rejected` | datetime \| null | When the CVE was rejected (UTC). `null` if `cve_state` is `"published"` |
 | `sources` | CVESource[] | Data sources for this CVE |
 | `external_identifiers` | CVEExternalIdentifierResponse[] | External identifiers from other naming authorities |
 

@@ -324,8 +324,14 @@ required capability receives 403 regardless of whether the ticket
 exists — this prevents probing for ticket existence via differentiated
 error codes.
 
-For non-ticket endpoints (user management, settings, fetchers), only
-steps 1 and 2 apply.
+For CVE endpoints that are capability-protected and operate on a
+specific CVE, the same pattern applies with `require_accessible_cve`
+as step 3 — returning `404 CVE_NOT_FOUND` for non-existent or
+inaccessible CVEs (see `docs/api-spec.md`, CVE Accessibility Check).
+For `GET /cves/{cve_id}/cvss` (Public), only step 3 applies.
+
+For non-ticket, non-CVE endpoints (user management, settings,
+fetchers), only steps 1 and 2 apply.
 
 ### Conditional Capability Checks
 
@@ -356,6 +362,7 @@ value to avoid log injection.
 | Endpoint | Parameter | Required Capability |
 |----------|-----------|-------------------|
 | GET /api/v1/tickets | include_deleted | admin_ticket_ops |
+| GET /api/v1/cves | include_deleted | admin_ticket_ops |
 
 #### Hard Conditional Check (403 Rejection)
 
@@ -460,18 +467,14 @@ here with the required authorization level and a link to the owning spec.
 | PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | `manage_references` | [references](../tickets/ticket-references.md#update-reference) |
 | DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | `manage_references` | [references](../tickets/ticket-references.md#delete-reference) |
 
-### CVSS Assessments
-
-| Method | Endpoint | Authorization | Owning Spec |
-|--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
-| POST | `/api/v1/tickets/{ticket_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
-| DELETE | `/api/v1/tickets/{ticket_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
-
 ### CVEs
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
+| GET | `/api/v1/cves` | Public ‡admin_ticket_ops | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
+| GET | `/api/v1/cves/{cve_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
+| POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
+| DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#post-apiv1cvescve_idrefetch) |
 
 ### Ticket Events
