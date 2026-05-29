@@ -208,7 +208,7 @@ API endpoint for admin password reset (used by the admin UI). The full
 endpoint specification (request/response schema, error codes) is defined
 in `docs/features/identity/user-management.md` (Admin API endpoints).
 
-**Authentication**: required. **Permission**: `admin` role.
+**`Capability: manage_users`**
 
 Delegates to `user_service.reset_password()` which handles AD user
 check, password validation, hashing, and session invalidation. See

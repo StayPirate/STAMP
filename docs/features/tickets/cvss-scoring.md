@@ -496,7 +496,7 @@ is only reachable by callers with `admin_ticket_ops` capability — all
 other callers receive `404 CVE_NOT_FOUND` from `require_accessible_cve`
 before the service layer is reached.
 
-**Capability**: `manage_cvss`.
+**`Capability: manage_cvss`**
 
 ### Delete SUSE CVSS Assessment
 
@@ -525,7 +525,7 @@ is only reachable by callers with `admin_ticket_ops` capability — all
 other callers receive `404 CVE_NOT_FOUND` from `require_accessible_cve`
 before the service layer is reached.
 
-**Capability**: `manage_cvss`.
+**`Capability: manage_cvss`**
 
 ## Service Architecture
 

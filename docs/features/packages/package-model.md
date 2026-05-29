@@ -1177,7 +1177,7 @@ The response reports how many records were created vs. skipped (already
 existed). This supports idempotent re-calls — if the package was already
 added, all counts will be zero in the `created` fields.
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1224,7 +1224,7 @@ gate and Analysis gate).
 }
 ```
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1261,7 +1261,7 @@ record only — child records are not modified. Creates a single
 }
 ```
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1329,7 +1329,7 @@ remaining active children (`deleted_at IS NULL`), the parent is also
 soft-deleted automatically. The `cascade` array allows clients to update
 their local tree state without a full refetch.
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1365,7 +1365,7 @@ only — products under it are not modified. Creates a single
 }
 ```
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1435,7 +1435,7 @@ remaining active children (`deleted_at IS NULL`), the parent is also
 soft-deleted automatically. The `cascade` array allows clients to update
 their local tree state without a full refetch.
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1469,7 +1469,7 @@ single `TicketAuditEvent`.
 }
 ```
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1536,7 +1536,7 @@ The response includes the updated track and all its active child
 products with their current eligibility, allowing the client to update
 the UI tree without a separate fetch.
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1614,7 +1614,7 @@ changing an override value, and resetting an override.
 }
 ```
 
-**Capability**: `manage_packages`.
+**`Capability: manage_packages`**
 
 **Error responses**:
 
@@ -1641,7 +1641,7 @@ a standalone endpoint for clients that only need package data.
 
 | Aspect | Design |
 |--------|--------|
-| **Access** | Public (consistent with `GET /api/v1/tickets/{ticket_id}`) |
+| **`Access: Public`** | Consistent with `GET /api/v1/tickets/{ticket_id}` |
 | **Guard** | `require_accessible_ticket` (404/410 for missing/confidential/soft-deleted tickets) |
 | **Pagination** | No — package count per ticket is bounded (typically 1-5, rarely >20) |
 | **Envelope** | `{"data": [...]}` (unpaginated list) |
@@ -1685,7 +1685,7 @@ once per ticket in the results.
 
 | Aspect | Design |
 |--------|--------|
-| **Access** | Public (consistent with `GET /api/v1/tickets`) |
+| **`Access: Public`** | Consistent with `GET /api/v1/tickets` |
 | **Confidentiality** | Packages belonging to confidential tickets are excluded for unauthorized callers (same filter as `GET /api/v1/tickets`). The endpoint handler constructs `confidential_ticket_filter()` and passes it to `search_packages(confidentiality_filter=...)` |
 | **Soft-deleted packages** | Always excluded — soft-deleted `TicketPackage` records (`deleted_at IS NOT NULL`) are never returned |
 | **Soft-deleted tickets** | Controlled by `include_deleted` parameter (requires `admin_ticket_ops` capability), consistent with `GET /api/v1/tickets` |

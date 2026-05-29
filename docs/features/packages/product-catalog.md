@@ -197,7 +197,7 @@ List all products synced from SMELT. Paginated.
 }
 ```
 
-**Permissions**: public endpoint (no authentication required).
+**`Access: Public`**
 
 **Error responses**:
 

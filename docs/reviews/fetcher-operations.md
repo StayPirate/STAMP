@@ -144,10 +144,7 @@ CLI runs of disabled fetchers leave no actor attribution.
 
 ### FEO-API-02 — Authorization declaration format inconsistency (Medium)
 
-**Category**: Convention compliance
-**Status**: OPEN
-
-Uses "Capability: manage_fetchers" and "Permissions: publicly accessible" instead of the standardized format "Access: Public" or "Capability: <name>" from api-spec.md.
+**Status**: RESOLVED — Fixed: standardized all authorization declarations across 12 feature specs to use the prescribed format from api-spec.md (2026-05-29)
 
 ### FEO-API-03 — Non-standard warning field in PATCH response envelope (Low)
 

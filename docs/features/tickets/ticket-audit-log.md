@@ -182,7 +182,9 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 |--------|------|-----------|
 | 404    | `TICKET_NOT_FOUND` | Ticket not found |
 
-**Permissions**: requires authentication. Soft-deleted ticket protection
+**`Access: Authenticated`**
+
+Soft-deleted ticket protection
 is enforced centrally — see `docs/api-spec.md`
 ([Scoped Responses](docs/api-spec.md#scoped-responses)).
 

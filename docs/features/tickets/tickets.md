@@ -149,7 +149,7 @@ A user with `admin_ticket_ops` can remove a CVE from a ticket via
 See [ticket-service.md](ticket-service.md#dissociate_cve) for the full
 service-layer contract (locking, audit events, status evaluation).
 
-**Capability**: `admin_ticket_ops`.
+**`Capability: admin_ticket_ops`**
 
 ## Ticket Creation
 
@@ -201,7 +201,7 @@ via `POST /api/v1/tickets` or through the UI.
 See [ticket-service.md](ticket-service.md#create_ticket) for the full
 service-layer contract (audit events, CVE uniqueness handling).
 
-**Capability**: `create_ticket`.
+**`Capability: create_ticket`**
 
 ### Future: External Sources
 
@@ -1263,7 +1263,7 @@ API performs resolution and format conversion before serialization.
 GET /api/v1/tickets
 ```
 
-- **Access level**: Public
+**`Access: Public`**
 - **Response schema**: `TicketSummary[]` (paginated)
 
 Lists tickets with filtering, search, pagination, and sorting.
@@ -1311,7 +1311,7 @@ Response: paginated `TicketSummary` array in standard
 GET /api/v1/tickets/{ticket_id}
 ```
 
-- **Access level**: Public
+**`Access: Public`**
 - **Response schema**: `TicketDetail`
 
 Returns a single ticket by UUID or `SNTL-{n}`. The `packages` field
@@ -1336,7 +1336,7 @@ Error responses:
 POST /api/v1/tickets
 ```
 
-- **Capability**: `create_ticket`
+**`Capability: create_ticket`**
 - **Response schema**: `TicketDetail` (201 Created)
 
 Creates a ticket manually. The creating user is automatically assigned
@@ -1382,7 +1382,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/associate-cve
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Associates a CVE with a ticket that does not have one. If the CVE is not
@@ -1420,7 +1420,7 @@ Error responses:
 DELETE /api/v1/tickets/{ticket_id}/cve
 ```
 
-- **Capability**: `admin_ticket_ops`
+**`Capability: admin_ticket_ops`**
 - **Response**: 204 No Content
 
 Removes the CVE association from a ticket. The CVE record itself is not
@@ -1441,7 +1441,7 @@ Error responses:
 PATCH /api/v1/tickets/{ticket_id}/severity
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Sets the severity override for a ticket without a CVE.
@@ -1474,7 +1474,7 @@ Error responses:
 PATCH /api/v1/tickets/{ticket_id}/assignee
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Assigns or reassigns a ticket. See
@@ -1521,7 +1521,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/ignore
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Marks a ticket as Ignored. Allowed transitions: New → Ignored,
@@ -1548,7 +1548,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/duplicate
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Marks a ticket as a duplicate of another ticket. The target is resolved
@@ -1587,7 +1587,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/reopen
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Reopens an Ignored ticket. If the calling user holds the
@@ -1618,7 +1618,7 @@ This endpoint is **not** subject to `ensure_ticket_operable`
 POST /api/v1/tickets/{ticket_id}/revert-duplicate
 ```
 
-- **Capability**: `triage_ticket`
+**`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
 Reverts a Duplicated ticket to its previous status. If the user who
@@ -1644,7 +1644,7 @@ Error responses:
 DELETE /api/v1/tickets/{ticket_id}
 ```
 
-- **Capability**: `admin_ticket_ops`
+**`Capability: admin_ticket_ops`**
 - **Response**: 204 No Content
 
 Soft-deletes a ticket by setting `deleted_at`. Creates a `ticket_deleted`
@@ -1662,7 +1662,7 @@ Error responses:
 POST /api/v1/tickets/{ticket_id}/restore
 ```
 
-- **Capability**: `admin_ticket_ops`
+**`Capability: admin_ticket_ops`**
 - **Response schema**: `TicketDetail`
 
 Restores a soft-deleted ticket by clearing `deleted_at`. Creates a
@@ -1683,7 +1683,7 @@ Error responses:
 PATCH /api/v1/tickets/{ticket_id}/confidentiality
 ```
 
-- **Capability**: `manage_confidentiality`
+**`Capability: manage_confidentiality`**
 - **Response schema**: `TicketDetail`
 - **Request body**: `{ "is_confidential": boolean }`
 - **Idempotency**: If the ticket already has the requested value, the
@@ -1715,7 +1715,7 @@ GET /api/v1/tickets/{ticket_id}/access
 
 List all users with explicit access grants for a confidential ticket.
 
-- **Capability**: `manage_confidentiality`
+**`Capability: manage_confidentiality`**
 - **Response** (200 OK, unpaginated):
   ```json
   {
@@ -1755,7 +1755,7 @@ POST /api/v1/tickets/{ticket_id}/access
 
 Grant explicit access to a user on a confidential ticket.
 
-- **Capability**: `manage_confidentiality`
+**`Capability: manage_confidentiality`**
 - **Request body**: `{ "user": str }` (Accepts UUID or username per User
   Identifier Resolution convention; backend resolves via
   `resolve_user_identifier`).
@@ -1788,7 +1788,7 @@ Revoke explicit access from a user on a confidential ticket. The
 `{user}` path parameter is of type `str` and accepts either a UUID or
 username.
 
-- **Capability**: `manage_confidentiality`
+**`Capability: manage_confidentiality`**
 - **Idempotency**: If the grant does not exist, returns 204 No Content
   without creating an audit event.
 - **Response**: 204 No Content.

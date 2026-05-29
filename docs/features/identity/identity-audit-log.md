@@ -125,7 +125,9 @@ entries are always displayed in reverse chronological order).
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
-**Capability**: `manage_users`. For non-admin users, a self-scoped
+**`Capability: manage_users`**
+
+For non-admin users, a self-scoped
 endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
 
 **Response** (200 OK):
@@ -192,7 +194,7 @@ The `actor` and `target_user` filters are not available on this
 endpoint. The target is always the authenticated user; the actor is
 anonymized in the response (see below).
 
-**Permissions**: Authenticated.
+**`Access: Authenticated`**
 
 **Response** (200 OK):
 

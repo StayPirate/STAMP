@@ -203,8 +203,9 @@ Client-controlled sorting is not supported (small dataset).
 }
 ```
 
-**Permissions**: publicly accessible for active tickets (no authentication
-required). Soft-deleted ticket protection is enforced centrally — see
+**`Access: Public`**
+
+Soft-deleted ticket protection is enforced centrally — see
 `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses)).
 
 **Error responses**: No endpoint-specific errors. See `docs/api-spec.md`
@@ -264,7 +265,7 @@ Adds a manual reference to a ticket.
 - `created_by` is set to the authenticated user
 - `tags` is set to `NULL` (manual references do not use tags)
 
-**Capability**: `manage_references`.
+**`Capability: manage_references`**
 
 **Error responses**:
 
@@ -309,7 +310,7 @@ At least one field must be provided.
 **Response** (200 OK): the updated reference object (same format as
 create response).
 
-**Capability**: `manage_references`.
+**`Capability: manage_references`**
 
 **Error responses**:
 
@@ -330,7 +331,7 @@ source (automatic or manual).
 
 **Response** (204 No Content)
 
-**Capability**: `manage_references`.
+**`Capability: manage_references`**
 
 **Error responses**:
 

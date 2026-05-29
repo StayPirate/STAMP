@@ -73,7 +73,7 @@ Response:
 }
 ```
 
-**Capability**: `manage_settings`.
+**`Capability: manage_settings`**
 
 **Error responses**:
 
@@ -116,7 +116,7 @@ instant confirmation. This is a documented deviation from the
 Response: the updated settings object in the standard `{"data": ...}`
 envelope.
 
-**Capability**: `manage_settings`.
+**`Capability: manage_settings`**
 
 ## Data Model
 
@@ -164,7 +164,7 @@ always displayed in reverse chronological order).
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
-**Capability**: `manage_settings`.
+**`Capability: manage_settings`**
 
 **Response** (200 OK):
 

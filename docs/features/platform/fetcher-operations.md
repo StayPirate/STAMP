@@ -102,7 +102,7 @@ not on disconnection).
 - `next_retry_seconds`: seconds until the next reconnection attempt.
   `null` when connected or unreachable.
 
-**Permissions**: publicly accessible (no authentication required).
+**`Access: Public`**
 
 ### List Fetchers
 
@@ -222,7 +222,7 @@ provides the distinction.
   UI fetches it only when opening the configuration panel for a specific
   fetcher (via the GET config endpoint).
 
-**Permissions**: publicly accessible (no authentication required).
+**`Access: Public`**
 
 ### List Fetcher Runs
 
@@ -285,7 +285,7 @@ run first). Follows the project-wide default sorting convention.
   `{"id": "uuid", "username": "admin1", "full_name": "Alice Smith", "active": true}`
   when `triggered_by` is `manual`, otherwise `null`
 
-**Permissions**: publicly accessible (no authentication required).
+**`Access: Public`**
 
 **Error responses**:
 
@@ -311,8 +311,9 @@ Same fields as the list response, plus:
   `manage_fetchers` capability. The field is **absent from the response
   body** for callers without this capability.
 
-**Permissions**: publicly accessible (no authentication required). Users
-with `manage_fetchers` capability see additional fields (`error_detail`,
+**`Access: Public`**
+
+Users with `manage_fetchers` capability see additional fields (`error_detail`,
 `error_traceback`).
 
 **Error responses**:
@@ -403,7 +404,7 @@ unbounded historical aggregate data on a publicly accessible endpoint.
   bands on the chart. If the fetcher is currently disabled, `enabled_at`
   and `enabled_by` are `null`.
 
-**Permissions**: publicly accessible (no authentication required).
+**`Access: Public`**
 
 **Sorting**: results are returned in chronological order (`timestamp`
 ascending). Client-controlled sorting is not supported — the data is
@@ -445,7 +446,7 @@ Enqueues a manual run of the specified fetcher.
 | 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
 | 503 | `CELERY_ENQUEUE_FAILED` | Task broker unavailable — run record marked as failed |
 
-**Capability**: `manage_fetchers`.
+**`Capability: manage_fetchers`**
 
 **Side effects**:
 - Creates a `FetcherAuditEvent` record with `event_type = triggered`
@@ -550,7 +551,7 @@ class is no longer available. The `custom_settings` field contains the
 raw stored values without schema context (descriptions, defaults, and
 ranges are unavailable).
 
-**Capability**: `manage_fetchers`.
+**`Capability: manage_fetchers`**
 
 **Error responses**:
 
@@ -647,7 +648,7 @@ additional `warning` field at the top level of the response body:
 - If `schedule_override` changed: the Celery Beat schedule for this
   fetcher MUST be updated dynamically
 
-**Capability**: `manage_fetchers`.
+**`Capability: manage_fetchers`**
 
 **Error responses**:
 
@@ -725,7 +726,7 @@ entry first). Follows the project-wide default sorting convention.
 }
 ```
 
-**Capability**: `manage_fetchers`.
+**`Capability: manage_fetchers`**
 
 **Error responses**:
 

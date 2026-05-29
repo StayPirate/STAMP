@@ -810,7 +810,7 @@ endpoints with `revoked_at` populated.
 
 Lists API keys across all users.
 
-**Capability**: `manage_users`.
+**`Capability: manage_users`**
 
 **Query parameters**:
 
@@ -855,7 +855,7 @@ Revokes any user's API key. The key record is preserved in the database
 (not deleted) and remains visible in list endpoints with `revoked_at`
 populated.
 
-**Capability**: `manage_users`.
+**`Capability: manage_users`**
 
 **Behavior**:
 
