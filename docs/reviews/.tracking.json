@@ -83,7 +83,18 @@
     "cve-service": {
       "enabled": false,
       "abbr": "CVES",
-      "cache": null
+      "cache": {
+        "last_review": "2026-05-29T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 1, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 0,
+        "not_reviewed": ["GAP", "COH", "SEC", "API"]
+      }
     },
     "cve-tracking": {
       "enabled": false,
@@ -101,13 +112,13 @@
       "cache": {
         "last_review": "2026-05-28T00:00:00+0000",
         "open": {
-          "GAP": { "H": 0, "M": 0, "L": 1 },
+          "GAP": { "H": 0, "M": 0, "L": 0 },
           "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 1 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
           "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 17,
+        "resolved": 19,
         "not_reviewed": []
       }
     },

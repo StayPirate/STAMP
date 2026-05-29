@@ -107,6 +107,22 @@ and the Celery result backend (task marked as FAILED). Recovery happens at
 the next scheduled cycle — no explicit Celery retry is configured for
 top-level fetcher tasks.
 
+**FetcherRun retrieval failure**: when `run_id` is provided (API-trigger
+flow), the task retrieves an existing `FetcherRun` record instead of creating
+one. Two failure modes apply:
+
+1. **Database unreachable during retrieval** — same behavior as creation
+   failure: log a CRITICAL-level message
+   (`CRITICAL: Fetcher '{name}' aborted — failed to retrieve FetcherRun record '{run_id}': {error}`)
+   and re-raise the exception immediately without retry.
+2. **Record not found** (valid UUID but no corresponding row exists) — log an
+   ERROR-level message
+   (`ERROR: Fetcher '{name}' aborted — FetcherRun '{run_id}' not found`)
+   and raise an appropriate exception (e.g., `ValueError`) without retry.
+
+In both cases, visibility is provided by: application logs and the Celery
+result backend (task marked as FAILED). No explicit Celery retry is configured.
+
 ## Abstract Interface
 
 Concrete fetchers MUST implement:

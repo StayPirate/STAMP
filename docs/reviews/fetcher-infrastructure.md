@@ -46,15 +46,7 @@
 
 ### FEI-GAP-018 — FetcherRun retrieval failure undocumented for API-trigger flow (Low)
 
-**Category**: Error handling
-**Status**: OPEN
-
-When `run_id` is provided to `BaseFetcher.run()` (API trigger flow),
-the method retrieves an existing `FetcherRun` record. The spec
-documents only FetcherRun creation failure (lines 70-82). Retrieval
-failure modes are undocumented:
-- DB unreachable during retrieval (same handling as creation failure?)
-- Record not found (deleted between API trigger and task execution)
+**Status**: RESOLVED — Added "FetcherRun retrieval failure" section documenting DB-unreachable and record-not-found cases in fetcher-infrastructure.md (2026-05-29)
 
 ---
 
@@ -80,12 +72,7 @@ _No findings._
 
 ### FEI-DES-004 — fetch_single invoked in parallel across all CVE fetchers without coordination (Low)
 
-**Category**: Complexity
-**Status**: OPEN (partially mitigated)
-
-The 'On-demand Single-Item Fetch' section states the system 'invokes them in parallel when an on-demand fetch is needed.' If multiple fetchers write to the same models (CVE, CVECVSSAssessment, CVESource) concurrently for the same CVE-ID, there's potential for conflicting upserts. The spec doesn't specify how concurrent writes to the same CVE row are handled (e.g., last-write-wins, or serialized via row lock).
-
-**Partial mitigation (2026-05-29)**: `cve-tracking.md` now uses `SET NX` for Redis pending keys, preventing duplicate task enqueue for the same CVE+source pair from concurrent triggers. This eliminates duplicate tasks per-source but does not address cross-source concurrent writes to the same CVE row, which is handled by `SELECT ... FOR UPDATE` in `cve-service.md`.
+**Status**: RESOLVED — Auto-resolved: cross-source write coordination now documented in cve-service.md (SELECT FOR UPDATE) and cve-tracking.md (SET NX), making this fetcher-infrastructure concern fully addressed (2026-05-29)
 
 ### FEI-DES-005 — Enabled check skips silently without any observability (Low)
 
