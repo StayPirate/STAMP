@@ -442,6 +442,7 @@ Represents a Common Vulnerability and Exposure entry.
 |----------------|--------------|----------------------|---------------------------------|
 | id             | UUID         | PK                   | Internal identifier             |
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
+| title          | VARCHAR(256) |                      | Brief summary from the CNA (CVE 5.x `containers.cna.title`). Populated by fetchers that parse CVE JSON 5.x format (`sync_cves_mitre`, `sync_kernel_cves`). Null when the CNA does not provide a title. Max 256 chars per CVE schema specification |
 | description    | TEXT         |                      | Vulnerability description       |
 | severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
