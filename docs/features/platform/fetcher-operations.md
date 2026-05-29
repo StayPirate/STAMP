@@ -209,7 +209,9 @@ provides the distinction.
 - `default_schedule`: the schedule defined in code. `null` for
   deregistered fetchers.
 - `next_run_at`: calculated from the effective schedule and the Celery
-  Beat state. `null` if the fetcher is disabled or deregistered.
+  Beat state. `null` if the fetcher is disabled, deregistered, or the
+  Celery Beat schedule state is unavailable (e.g., Redis flushed, Beat
+  not yet started).
 - `last_run`: the most recent `FetcherRun` record, or `null` if never
   run. Does NOT include `error_traceback` (admin-only, available on the
   detail endpoint).
@@ -336,6 +338,12 @@ individual runs for the last 90 days, weekly aggregates for older data.
 | `from_date` | datetime | 7 days ago | Start of the time range |
 | `to_date` | datetime | now | End of the time range |
 
+**Date range constraint**: the maximum allowed interval between
+`from_date` and `to_date` is **365 days**. If the requested interval
+exceeds this limit, the endpoint returns 400 Bad Request with code
+`DATE_RANGE_TOO_WIDE`. This constraint prevents expensive scans of
+unbounded historical aggregate data on a publicly accessible endpoint.
+
 **Response** (200 OK):
 
 ```json
@@ -405,6 +413,7 @@ time-series and must be in chronological order for chart rendering.
 
 | Status | Code | Condition |
 |---|---|---|
+| 400 | `DATE_RANGE_TOO_WIDE` | Requested interval between `from_date` and `to_date` exceeds 365 days |
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
 ### Trigger Fetcher
@@ -457,6 +466,15 @@ Unavailable with code `CELERY_ENQUEUE_FAILED`. This cleanup is critical
 because the `FetcherRun` record with `status = running` is the
 concurrency mechanism — if not cleaned up, it blocks all future runs of
 this fetcher until stale detection timeout (default 3600s).
+
+**Note on trigger-then-disable race condition**: if an admin triggers a
+fetcher (passing the enabled check in this endpoint) and another admin
+disables the fetcher before the Celery worker picks up the task,
+`BaseFetcher.run()` detects the pre-existing `FetcherRun` record and
+updates it to `status = failure` with
+`error_message = 'Fetcher disabled between trigger and execution'`
+instead of exiting silently. See `fetcher-infrastructure.md`, "Enabled
+check" for the full contract.
 
 **Note on on-demand CVE fetch**: when Sentinel encounters an unknown CVE-ID
 during ticket creation or CVE association, it triggers on-demand
@@ -769,6 +787,16 @@ Generic Celery task that executes any registered fetcher by name.
    summaries (see `docs/features/platform/fetcher-infrastructure.md`,
    "FetcherRunWeeklyAggregate" for the table schema)
 6. Delete the original `FetcherRun` records that were aggregated
+
+**Transactional semantics**: steps 5 and 6 operate with per-group
+transactional granularity. For each (`fetcher_name`, ISO week) group,
+the aggregate creation/update and the deletion of the corresponding
+`FetcherRun` records happen within the same database transaction. If
+the transaction fails for a group, that group is skipped (counted as
+`record_failed`) and execution continues with the remaining groups.
+This guarantees no data loss (runs deleted without aggregate) and no
+duplication (aggregate created but runs not deleted), and makes the
+operation idempotent and safe to re-run.
 
 Error diagnostic fields (`error_message`, `error_detail`,
 `error_traceback`) are intentionally not preserved in weekly aggregates.

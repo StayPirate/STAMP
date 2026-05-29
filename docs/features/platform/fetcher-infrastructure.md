@@ -55,10 +55,17 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    - `self.record_updated(count=1)` — increment `items_updated`
    - `self.record_failed(count=1)` — increment `items_failed`
 4. **Enabled check**: before executing, `run()` checks `FetcherConfig` for
-   the fetcher. If `enabled` is `false`, the run is skipped (no
-   `FetcherRun` record is created, the task returns immediately). A
-   DEBUG-level log is emitted before returning:
-   `logger.debug("Fetcher '%s' is disabled — skipping scheduled run", self.name)`
+   the fetcher. If `enabled` is `false`:
+   - If a pre-existing `FetcherRun` record was passed via `run_id` (manual
+     trigger case), `run()` updates it to `status = failure`,
+     `error_message = 'Fetcher disabled between trigger and execution'`,
+     `finished_at = now()`, `duration_seconds = 0`, then returns. This
+     prevents the record from remaining in `running` status indefinitely
+   - Otherwise (scheduled run, no pre-existing record), the run is
+     skipped — no `FetcherRun` record is created, the task returns
+     immediately
+   In both cases, a DEBUG-level log is emitted:
+   `logger.debug("Fetcher '%s' is disabled — skipping run", self.name)`
 
 **FetcherRun creation failure**: if the database INSERT for the `FetcherRun`
 record fails (e.g., database connection error), the task MUST:

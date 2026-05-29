@@ -14,31 +14,19 @@
 
 ### FEO-GAP-02 — Aggregation fetcher: partial failure semantics (Medium)
 
-**Category**: Transactional integrity
-**Status**: OPEN
-
-The algorithm says group records by fetcher_name and ISO week, create/update aggregate records, then delete original FetcherRun records. If step 5 succeeds for some groups but fails mid-execution, the spec doesn't say whether already-aggregated runs are deleted or whether the operation is transactional per-group.
+**Status**: RESOLVED — Per-group transactional semantics added to aggregation algorithm in fetcher-operations.md (2026-05-29)
 
 ### FEO-GAP-03 — Trigger + PATCH disable race condition (Medium)
 
-**Category**: Concurrency
-**Status**: OPEN
-
-If an admin triggers a run (passes the enabled check) and concurrently another admin disables the fetcher before the Celery task picks up, the task would be skipped per BaseFetcher.run() but the API already returned 202 with a run_id and a FetcherRun record was created that would remain running forever.
+**Status**: RESOLVED — Race condition documented: BaseFetcher.run() now cleans up pre-existing FetcherRun when fetcher disabled between trigger and execution, in fetcher-infrastructure.md and fetcher-operations.md (2026-05-29)
 
 ### FEO-GAP-04 — Aggregation fetcher and concurrent reads (Medium)
 
-**Category**: Concurrency
-**Status**: OPEN
-
-If a fetcher finished 91 days ago and the aggregation task deletes old records while the timeline endpoint is querying them, no locking or snapshot isolation is specified.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-29)
 
 ### FEO-GAP-05 — FetcherAuditEvent retention unspecified (Medium)
 
-**Category**: Data lifecycle
-**Status**: OPEN
-
-The spec defines aggregation for FetcherRun records but says nothing about retention/cleanup of FetcherAuditEvent records. These grow unboundedly. The disabled_periods derivation queries all historical audit events. No archival or pruning strategy is specified.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-29)
 
 ### FEO-GAP-06 — CLI fetcher run: unhandled exception exit code ambiguity (Low)
 
@@ -114,10 +102,7 @@ fetcher-operations.md lists "View error details | manage_fetchers" but rbac.md o
 
 ### FEO-DES-02 — next_run_at calculation from Celery Beat state is fragile (Medium)
 
-**Category**: Resilience
-**Status**: OPEN
-
-If Redis is flushed or Beat hasn't started, next_run_at is unavailable. No fallback behavior defined.
+**Status**: RESOLVED — Beat state unavailability added as explicit null condition for next_run_at in fetcher-operations.md (2026-05-29)
 
 ### FEO-DES-03 — Race between API trigger and scheduled run (Low)
 
@@ -129,17 +114,11 @@ If Redis is flushed or Beat hasn't started, next_run_at is unavailable. No fallb
 
 ### FEO-SEC-01 — Public error messages may leak internal details (Medium)
 
-**Category**: Information disclosure
-**Status**: OPEN
-
-error_message is shown publicly for failed runs. Messages from fetchers interacting with internal services could reveal hostnames, connection strings, or service topology.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-29)
 
 ### FEO-SEC-02 — Timeline from_date has no lower bound (Medium)
 
-**Category**: Denial of service
-**Status**: OPEN
-
-A request with from_date=1970-01-01 forces the server to scan all weekly aggregates. Combined with no auth, this is a DoS vector.
+**Status**: RESOLVED — Max 365-day range constraint and DATE_RANGE_TOO_WIDE error added to timeline endpoint in fetcher-operations.md (2026-05-29)
 
 ### FEO-SEC-03 — fetcher_name path parameter lacks format validation (Low)
 
@@ -161,10 +140,7 @@ CLI runs of disabled fetchers leave no actor attribution.
 
 ### FEO-API-01 — RBAC Endpoint Permission Map anchor mismatches (Medium)
 
-**Category**: Cross-reference integrity
-**Status**: OPEN
-
-Four admin-only endpoints have broken anchor links in rbac.md (trigger, get-config, update-config, audit-log). Links use `-admin-only` suffix that doesn't match actual headings.
+**Status**: RESOLVED — Removed -admin-only suffix from 4 anchor links in rbac.md Endpoint Permission Map (2026-05-29)
 
 ### FEO-API-02 — Authorization declaration format inconsistency (Medium)
 

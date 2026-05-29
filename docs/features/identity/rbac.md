@@ -498,10 +498,10 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public | [fetcher-operations](../platform/fetcher-operations.md#list-fetcher-runs) |
 | GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-detail) |
 | GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-timeline-data) |
-| POST | `/api/v1/fetchers/{fetcher_name}/trigger` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#trigger-fetcher-admin-only) |
-| GET | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-config-admin-only) |
-| PATCH | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#update-fetcher-config-admin-only) |
-| GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-audit-log-admin-only) |
+| POST | `/api/v1/fetchers/{fetcher_name}/trigger` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#trigger-fetcher) |
+| GET | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-config) |
+| PATCH | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#update-fetcher-config) |
+| GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-audit-log) |
 | GET | `/api/v1/ibs-consumer/status` | Public | [fetcher-operations](../platform/fetcher-operations.md#ibs-rabbitmq-consumer-status) |
 
 ### Maintainer Operations
