@@ -28,8 +28,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 1 | 🟢 | 1 | 🟢 | 🟢 | 2 | 2026-05-28 |  |
 | | 1:🟡 |  | 1:🟡 |  |  |  |  |  |
-| [fetcher-operations](fetcher-operations.md) | 6 | 1 | 🟢 | 1 | 1 | 9 | 2026-05-28 | ⚠️ |
-| | 6:🟡 | 1:🟡 |  | 1:🟡 | 1:🟡 |  |  |  |
+| [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
@@ -54,8 +54,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **10** | **1** | **2** | **2** | **1** | **16** |  |  |
-|  | 2:🟠 8:🟡 | 1:🟡 | 2:🟡 | 2:🟡 | 1:🟡 |  |  |  |
+| **Total** | **4** | **🟢** | **2** | **1** | **🟢** | **7** |  |  |
+|  | 2:🟠 2:🟡 |  | 2:🟡 | 1:🟡 |  |  |  |  |
 
 ### Disabled specs
 

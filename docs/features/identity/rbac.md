@@ -35,7 +35,7 @@ Endpoints are protected by a single capability via the
 | `manage_users` | Update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | AD role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, view settings audit log |
-| `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error tracebacks |
+| `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
 | `admin_ticket_ops` | Remove CVE from ticket, soft-delete/restore tickets, view deleted tickets |
 
 > **Design note — capability granularity**: capabilities are intentionally
@@ -169,6 +169,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Enable/disable fetchers | `manage_fetchers` |
 | Modify fetcher config | `manage_fetchers` |
 | View fetcher audit log | `manage_fetchers` |
+| View fetcher error details | `manage_fetchers` |
 | View fetcher error tracebacks | `manage_fetchers` |
 
 > **Assignment target constraint**: the `triage_ticket` capability allows

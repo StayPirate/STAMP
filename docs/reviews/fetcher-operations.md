@@ -37,45 +37,27 @@ Exit code 2 for unhandled exception, but unclear if the FetcherRun record is upd
 
 ### FEO-GAP-07 — Timeline: range spanning the 90-day boundary (Low)
 
-**Category**: Data consistency
-**Status**: OPEN
-
-When from_date is within 90 days and to_date is now, runs in the 85-90 day window AND aggregates for the same week could produce overlapping data points.
+**Status**: RESOLVED — Added query strategy paragraph clarifying retention_days split point and transition week precedence rule (2026-05-29)
 
 ### FEO-GAP-08 — Timeline: from_date after to_date (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-No behavior specified when from_date > to_date.
+**Status**: RESOLVED — Added DATE_RANGE_INVERTED global rule to api-spec.md Date Range Interpretation section; added error to timeline endpoint error table (2026-05-29)
 
 ### FEO-GAP-09 — Disabled periods: no audit events exist (Low)
 
-**Category**: Edge case
-**Status**: OPEN
-
-Doesn't specify response when no audit events of type disabled/enabled exist (new fetcher never disabled).
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-29)
 
 ### FEO-GAP-10 — last_run for deregistered fetcher after aggregation (Low)
 
-**Category**: Data consistency
-**Status**: OPEN
-
-After aggregation deletes old FetcherRun records, a deregistered fetcher whose last run was >90 days ago would show last_run: null, which is misleading.
+**Status**: RESOLVED — Added documentation note to last_run field definition clarifying null behavior after aggregation for deregistered fetchers (2026-05-29)
 
 ### FEO-GAP-11 — rate_limit field inconsistency (Low)
 
-**Category**: API consistency
-**Status**: OPEN
-
-rate_limit is in Get Config response but not in List Fetchers response or CLI list output.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-29)
 
 ### FEO-GAP-12 — IBS consumer disconnected status: no example response (Low)
 
-**Category**: Documentation completeness
-**Status**: OPEN
-
-Only connected, reconnecting, and unreachable have examples. Disconnected field values not shown.
+**Status**: RESOLVED — Added disconnected example response; replaced bullet-point field descriptions with comprehensive per-status matrix table covering all four states (2026-05-29)
 
 ---
 
@@ -83,10 +65,7 @@ Only connected, reconnecting, and unreachable have examples. Disconnected field 
 
 ### FEO-COH-01 — Missing "View error details" in RBAC Permission Matrix (Low)
 
-**Category**: Cross-spec consistency
-**Status**: OPEN
-
-fetcher-operations.md lists "View error details | manage_fetchers" but rbac.md only lists "View error tracebacks" without a separate entry for error details.
+**Status**: RESOLVED — Added "View error details" as separate entry in rbac.md manage_fetchers capability description and Capability Actions table (2026-05-29)
 
 ### FEO-COH-02 — Anchor mismatch in RBAC endpoint permission map links (Low)
 
@@ -122,10 +101,7 @@ fetcher-operations.md lists "View error details | manage_fetchers" but rbac.md o
 
 ### FEO-SEC-03 — fetcher_name path parameter lacks format validation (Low)
 
-**Category**: Input validation
-**Status**: OPEN
-
-No format constraints on fetcher_name path parameter.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-29)
 
 ### FEO-SEC-04 — CLI bypasses enabled check without audit event (Low)
 
@@ -148,7 +124,4 @@ CLI runs of disabled fetchers leave no actor attribution.
 
 ### FEO-API-03 — Non-standard warning field in PATCH response envelope (Low)
 
-**Category**: Response envelope
-**Status**: OPEN
-
-Update Fetcher Config adds a `warning` field alongside `data`, introducing a new pattern not in api-spec.md.
+**Status**: RESOLVED — Removed non-standard warning field from PATCH response envelope; moved advisory info into timeout_seconds field description to maintain envelope consistency (2026-05-29)

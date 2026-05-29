@@ -37,10 +37,28 @@ for the key format and TTL behavior.
     "events_received": 12847,
     "events_relevant": 342,
     "events_processed": 338,
-    "diffs_failed": 4,
+    "processing_failed": 4,
     "last_error": null,
     "reconnect_attempts": 0,
     "next_retry_seconds": null
+  }
+}
+```
+
+**Response when consumer just lost connection** (200 OK):
+
+```json
+{
+  "data": {
+    "status": "disconnected",
+    "status_since": "2026-04-23T16:44:55Z",
+    "events_received": 12847,
+    "events_relevant": 342,
+    "events_processed": 338,
+    "processing_failed": 4,
+    "last_error": "Connection reset by peer",
+    "reconnect_attempts": 0,
+    "next_retry_seconds": 5
   }
 }
 ```
@@ -55,7 +73,7 @@ for the key format and TTL behavior.
     "events_received": 12847,
     "events_relevant": 342,
     "events_processed": 338,
-    "diffs_failed": 4,
+    "processing_failed": 4,
     "last_error": "Connection refused",
     "reconnect_attempts": 7,
     "next_retry_seconds": 245
@@ -77,7 +95,7 @@ not on disconnection).
     "events_received": null,
     "events_relevant": null,
     "events_processed": null,
-    "diffs_failed": null,
+    "processing_failed": null,
     "last_error": null,
     "reconnect_attempts": null,
     "next_retry_seconds": null
@@ -86,21 +104,18 @@ not on disconnection).
 ```
 
 **Fields**:
-- `status`: one of `connected`, `disconnected`, `reconnecting`,
-  `unreachable`
-- `status_since`: ISO 8601 timestamp of when the current status began.
-  `null` when `unreachable`.
-- `events_received`: total `package.commit` events received since the
-  current connection was established. Reset on each new connection.
-- `events_relevant`: events that passed the active codestream filter.
-- `events_processed`: events where the IBS diff completed successfully.
-- `diffs_failed`: events where the IBS diff request failed.
-- `last_error`: last error message (e.g., "Connection refused"). `null`
-  when connected.
-- `reconnect_attempts`: number of reconnection attempts since
-  disconnection. `0` when connected.
-- `next_retry_seconds`: seconds until the next reconnection attempt.
-  `null` when connected or unreachable.
+
+| Field | Description | `connected` | `disconnected` | `reconnecting` | `unreachable` |
+|---|---|---|---|---|---|
+| `status` | Current connection state | `"connected"` | `"disconnected"` | `"reconnecting"` | `"unreachable"` |
+| `status_since` | ISO 8601 timestamp of when the current status began | datetime | datetime | datetime | `null` |
+| `events_received` | Total events received from all subscribed topics since connection was established | integer | integer (retained) | integer (retained) | `null` |
+| `events_relevant` | Events that passed the active codestream/package filter | integer | integer (retained) | integer (retained) | `null` |
+| `events_processed` | Events where processing completed successfully | integer | integer (retained) | integer (retained) | `null` |
+| `processing_failed` | Events where processing failed (diff request error, metadata fetch timeout, etc.) | integer | integer (retained) | integer (retained) | `null` |
+| `last_error` | Last error message (e.g., "Connection refused") | `null` | string (disconnection reason) | string (last retry error) | `null` |
+| `reconnect_attempts` | Number of reconnection attempts since disconnection | `0` | `0` | integer (incrementing) | `null` |
+| `next_retry_seconds` | Seconds until the next reconnection attempt | `null` | integer (initial delay, 5s) | integer (backoff) | `null` |
 
 **`Access: Public`**
 
@@ -214,7 +229,11 @@ provides the distinction.
   not yet started).
 - `last_run`: the most recent `FetcherRun` record, or `null` if never
   run. Does NOT include `error_traceback` (admin-only, available on the
-  detail endpoint).
+  detail endpoint). Note: for deregistered fetchers whose individual
+  `FetcherRun` records have been fully aggregated (all runs older than
+  `retention_days`), this field becomes `null` even though historical
+  weekly aggregate data still exists — it is indistinguishable from a
+  fetcher that was never run.
 - `custom_settings`: included in each fetcher's data (current values
   from DB). For deregistered fetchers, contains the raw stored values
   (schema defaults and descriptions are not available). `settings_schema`
@@ -404,6 +423,16 @@ unbounded historical aggregate data on a publicly accessible endpoint.
   bands on the chart. If the fetcher is currently disabled, `enabled_at`
   and `enabled_by` are `null`.
 
+**Query strategy**: the endpoint uses the current `retention_days`
+value as the split point at query time. For the portion of the
+requested range within `retention_days` of now, it queries
+`FetcherRun` records. For the portion older than `retention_days`, it
+queries `FetcherRunWeeklyAggregate` records. For the **transition
+week** (the ISO week containing the retention boundary), individual
+runs take precedence: if any `FetcherRun` records exist for that week,
+the corresponding `FetcherRunWeeklyAggregate` (if any) is suppressed
+from the response to avoid double-counting.
+
 **`Access: Public`**
 
 **Sorting**: results are returned in chronological order (`timestamp`
@@ -414,6 +443,7 @@ time-series and must be in chronological order for chart rendering.
 
 | Status | Code | Condition |
 |---|---|---|
+| 400 | `DATE_RANGE_INVERTED` | `from_date` is after `to_date` (see `api-spec.md`, Date Range Interpretation) |
 | 400 | `DATE_RANGE_TOO_WIDE` | Requested interval between `from_date` and `to_date` exceeds 365 days |
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
@@ -589,8 +619,8 @@ include the fields to change.
 - `schedule_override`: must be a valid 5-field cron expression, or `null`
   to revert to the default schedule
 - `timeout_seconds`: must be a non-negative integer. 0 disables both
-  the Celery soft time limit and stale run detection. Default: 3600
-  (1 hour)
+  the Celery soft time limit and stale run detection (stuck runs will
+  require manual resolution via the CLI). Default: 3600 (1 hour)
 - `rate_limit`: must match the pattern `"<number>/<unit>"` where unit is
   `s`, `m`, or `h`, or `null` to disable
 
@@ -617,16 +647,6 @@ include the fields to change.
   semantics of the other fields.
 
 **Response** (200 OK): the updated config object (same as GET response).
-
-When `timeout_seconds` is set to 0, the response MUST include an
-additional `warning` field at the top level of the response body:
-
-```json
-{
-  "data": { ... },
-  "warning": "Stale detection disabled — stuck runs will require manual resolution."
-}
-```
 
 **Side effects**:
 - Creates `FetcherAuditEvent` records (one per changed field — see

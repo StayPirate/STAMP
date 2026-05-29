@@ -317,7 +317,7 @@ with a **TTL of 60 seconds**:
   "events_received": 12847,
   "events_relevant": 342,
   "events_processed": 338,
-  "diffs_failed": 4,
+  "processing_failed": 4,
   "last_error": null,
   "reconnect_attempts": 0,
   "next_retry_seconds": null
@@ -329,7 +329,7 @@ with a **TTL of 60 seconds**:
   automatically deleted. The API interprets a missing key as consumer
   status `unreachable`.
 - **Counter reset**: all counters (`events_received`, `events_relevant`,
-  `events_processed`, `diffs_failed`) are reset to zero on each new
+  `events_processed`, `processing_failed`) are reset to zero on each new
   connection. They represent activity since the current connection was
   established, not cumulative totals.
 - **Reconnection state**: when the consumer is in reconnecting state,

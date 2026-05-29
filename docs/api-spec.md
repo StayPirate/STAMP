@@ -250,6 +250,12 @@ When a date range filter (`from_date`, `to_date`) is applied against a
   accepted and converted to UTC before comparison (i.e.,
   `2025-01-15T12:30:00Z`)
 
+**Inverted range validation**: when both `from_date` and `to_date` are
+provided and `from_date` is strictly after `to_date` (after timezone
+normalization), the endpoint returns **400 Bad Request** with error code
+`DATE_RANGE_INVERTED`. This validation applies globally to all endpoints
+that accept date range parameters.
+
 This ensures that "inclusive bounds" means inclusive of the full day when no
 time component is specified. For the full timezone policy, see
 `docs/conventions.md` (Timestamps & Timezones).
