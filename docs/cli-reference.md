@@ -14,5 +14,4 @@ guidelines, and the CLI Output Contract.
 | `sentinel manage-user set-password`| Set or reset password for a local user   | No (interactive) | [user-management](features/identity/user-management.md) |
 | `sentinel manage-user unlock`      | Clear login lockout counter for a user   | Yes        | [user-management](features/identity/user-management.md) |
 | `sentinel fetcher list`            | List all fetchers with current state     | Yes        | [fetcher-operations](features/platform/fetcher-operations.md) |
-| `sentinel fetcher run <name>`      | Execute a fetcher synchronously          | No (by design) | [fetcher-operations](features/platform/fetcher-operations.md) |
 | `sentinel fetcher config <name>`   | Display fetcher configuration            | Yes        | [fetcher-operations](features/platform/fetcher-operations.md) |

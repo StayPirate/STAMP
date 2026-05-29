@@ -712,5 +712,5 @@ other feature:
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [system-settings](features/platform/system-settings.md) | Platform | System settings (default CVSS version) |
 | [fetcher-infrastructure](features/platform/fetcher-infrastructure.md) | Platform | BaseFetcher base class, registry, data model |
-| [fetcher-operations](features/platform/fetcher-operations.md) | Platform | Background task monitoring, API, and CLI |
+| [fetcher-operations](features/platform/fetcher-operations.md) | Platform | Background task monitoring, API, and CLI diagnostics |
 | [maintainer](features/packages/maintainer.md) | Integration | Maintainer-oriented package/ticket views |

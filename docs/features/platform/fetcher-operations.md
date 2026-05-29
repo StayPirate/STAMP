@@ -5,8 +5,8 @@
 Provide centralized monitoring and operational control for all data
 fetchers in Sentinel. All users have visibility into fetcher health and
 performance (no authentication required), while admins have operational
-control (manual trigger, enable/disable, configuration) and CLI access
-for bootstrap and troubleshooting.
+control (manual trigger, enable/disable, configuration) and CLI
+commands for diagnostics and troubleshooting.
 
 This feature depends on the fetcher infrastructure defined in
 `docs/features/platform/fetcher-infrastructure.md`. Read that spec first for the
@@ -452,9 +452,12 @@ Enqueues a manual run of the specified fetcher.
 - Creates a `FetcherAuditEvent` record with `event_type = triggered`
 - Creates a `FetcherRun` record **synchronously** (before enqueuing the
   Celery task) with `status = running` and `triggered_by = manual`. This
-  ensures the `run_id` is available in the API response. The
-  `BaseFetcher.run()` method detects the existing `FetcherRun` record
-  (matched by `run_id`) and updates it rather than creating a new one
+  ensures the `run_id` is available in the API response
+- Passes `run_id` to the Celery task via `run_fetcher.apply_async(kwargs=
+  {"fetcher_name": name, "triggered_by": "manual", "user_id": str(user.id),
+  "run_id": str(run.id)})`. The task forwards it to
+  `fetcher.run(run_id=run_id, ...)`, which updates the existing record
+  instead of creating a new one
 
 **Enqueue failure handling**: after creating the `FetcherRun` record, the
 endpoint calls `apply_async` on the Celery broker. If enqueue succeeds,
@@ -759,7 +762,7 @@ Generic Celery task that executes any registered fetcher by name.
 | Property | Value |
 |---|---|
 | Task name | `run_fetcher` |
-| Parameters | `fetcher_name` (str), `triggered_by` (str), `user_id` (str, optional) |
+| Parameters | `fetcher_name` (str), `triggered_by` (str), `user_id` (str, optional), `run_id` (str, optional) |
 | Schedule | per-fetcher, from `FetcherConfig.schedule_override` or `BaseFetcher.default_schedule` |
 | Idempotency | Only one instance per fetcher can run at a time (database-level `SELECT ... FOR UPDATE` — see `fetcher-infrastructure.md`, Concurrency Control) |
 
@@ -828,12 +831,11 @@ Schema" for the schema structure and validation rules):
 
 ## CLI Commands
 
-The `sentinel fetcher` command group provides operational access to the
-fetcher infrastructure from the command line. It is designed for
-bootstrap, troubleshooting, and environments where the API/UI is not
-yet available. It is NOT a replacement for the API — configuration
-changes (schedule, timeout, rate limit, enable/disable) are done
-exclusively through the API.
+The `sentinel fetcher` command group provides read-only diagnostic
+access to the fetcher infrastructure from the command line. It is
+designed for troubleshooting and quick status checks. All mutations
+(trigger, enable/disable, configuration changes) are done exclusively
+through the API.
 
 ### `sentinel fetcher list`
 
@@ -904,140 +906,6 @@ time.
 **Exit codes**: 0 on success, 2 on system error (database unreachable).
 
 **Output channels**: table to stdout. `"Error: ..."` messages to stderr.
-
-### `sentinel fetcher run <name>`
-
-Executes a fetcher synchronously (in-process, no Celery). Output is
-printed to stdout as the fetcher runs.
-
-```
-sentinel fetcher run sync_ldap_directory
-```
-
-Successful output:
-
-```
-Running fetcher 'sync_ldap_directory'...
-Fetcher 'sync_ldap_directory' completed successfully in 3m 12s.
-  Created: 15
-  Updated: 898
-  Failed:  0
-```
-
-#### Execution model
-
-The command executes the fetcher directly in the CLI process using a
-synchronous database session. It does NOT enqueue a Celery task. This
-makes the command self-contained — it works even when Celery workers
-are not running (e.g., during initial deployment bootstrap).
-
-The command MUST:
-
-1. Validate that `<name>` exists in the `FETCHER_REGISTRY`. If not:
-   - If a `FetcherConfig` record exists in the database for the name
-     (deregistered fetcher), print a specific error to stderr:
-     `"Error: fetcher '<name>' is deregistered (removed from codebase)
-     and cannot be executed."` and exit with code 1
-   - Otherwise (completely unknown name), print an error with the list
-     of available fetcher names and exit with code 1
-2. Perform the concurrency check (see below)
-3. Create a `FetcherRun` record with `status = running` and
-   `triggered_by = manual` **before** calling `execute()`
-4. Call the fetcher's `execute()` method
-5. Update the `FetcherRun` record with final status, metrics, and
-   timestamps
-6. Print the summary to stdout
-
-The `triggered_by_user_id` is set to `NULL` for CLI executions (there
-is no authenticated user context in the CLI).
-
-#### Concurrency check
-
-Before executing, the command checks for an existing `FetcherRun` with
-`status = running` for the requested fetcher.
-
-**If a run is active and NOT stale**:
-
-```
-$ sentinel fetcher run sync_cves_nvd
-Error: fetcher 'sync_cves_nvd' is already running (started 2026-04-27 12:00 UTC, 1m 30s ago).
-```
-
-Exit code 1.
-
-**If a run is active and stale** (elapsed time exceeds the fetcher's
-`timeout_seconds` from `FetcherConfig`, default 3600s). If
-`timeout_seconds = 0`, the run is never considered stale — the command
-treats it as an active run and exits with code 1 (same as the "not
-stale" case above).
-
-```
-$ sentinel fetcher run sync_ldap_directory
-Warning: fetcher 'sync_ldap_directory' has a run marked as 'running'
-since 2026-04-27 04:00 UTC (2h 30m ago), which exceeds the timeout
-(300s). This run appears stale.
-Mark it as failed and proceed? [y/N]: y
-```
-
-On confirmation (`y`): the stale `FetcherRun` is updated to
-`status = failure`, `error_message = "Marked as stale by operator via
-CLI"`, `finished_at = now()`. Then the new run proceeds normally.
-
-On rejection (`N` or Enter): exit with code 1.
-
-If stdin is not a TTY (e.g., running in a script), the stale run
-prompt is skipped and the command exits with code 1 and the warning
-message. The operator must resolve the stale run interactively.
-
-#### Enabled check bypass
-
-Unlike the Celery `run_fetcher` task, the CLI command does NOT check
-the `FetcherConfig.enabled` flag. The CLI is an explicit operator
-action — if someone runs `sentinel fetcher run <name>`, they intend to
-run it regardless of the enabled state. A warning is printed when
-running a disabled fetcher:
-
-```
-Warning: fetcher 'check_ibs_track_releases' is currently disabled.
-Running anyway (CLI bypass).
-```
-
-#### Signal handling
-
-The CLI process MUST register handlers for `SIGINT` (Ctrl+C) and
-`SIGTERM` to ensure the `FetcherRun` record is cleaned up on
-interruption:
-
-1. On signal received: update the `FetcherRun` record to
-   `status = failure`, `error_message = "Interrupted by operator
-   (SIGINT)"` (or `SIGTERM`), `finished_at = now()`,
-   `duration_seconds` calculated from `started_at`
-2. Print a message to stderr: `"\nInterrupted. Run marked as failed."`
-3. Exit with code 130 for `SIGINT` (Unix convention) or 143 for
-   `SIGTERM`
-
-**SIGKILL (kill -9)**: cannot be intercepted. The `FetcherRun` record
-will remain `running` in the database. This is the same situation that
-occurs when a Celery worker is OOM-killed or crashes. The stale run
-detection in `sentinel fetcher list` (showing `stale?`) and the stale
-run resolution in `sentinel fetcher run` (interactive prompt) handle
-this scenario.
-
-#### Exit codes
-
-| Code | Meaning |
-|------|---------|
-| 0    | Fetcher completed successfully (`success` or `partial`) |
-| 1    | User error: unknown or deregistered fetcher name, already running, stale run not confirmed |
-| 2    | System error: database unreachable, unhandled exception in `execute()` |
-| 130  | Interrupted by SIGINT (Ctrl+C) |
-| 143  | Interrupted by SIGTERM |
-
-**Idempotency**: Not idempotent (by design). Each invocation executes
-the fetcher and produces side effects intentionally.
-
-**Output channels**: progress and summary to stdout. `"Warning: ..."`
-and `"Error: ..."` messages to stderr.
 
 ### `sentinel fetcher config <name>`
 

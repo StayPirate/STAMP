@@ -548,31 +548,60 @@ missed (e.g., users created between the POST and the next sync).
 No locking mechanism is needed between role mapping creation and the sync
 process.
 
-## CLI Usage
+## Triggering the LDAP Sync
 
-The LDAP sync can be triggered from the command line using the generic
-fetcher command:
+The LDAP sync is triggered via the API:
 
 ```
-sentinel fetcher run sync_ldap_directory
+POST /api/v1/fetchers/sync_ldap_directory/trigger
 ```
 
-This runs the sync synchronously in the CLI process (no Celery
-required). See `docs/features/platform/fetcher-operations.md` (section "CLI
-Commands") for full details on the `sentinel fetcher` command group.
+This enqueues the sync as a Celery task. The response includes a
+`run_id` that can be polled via
+`GET /api/v1/fetchers/sync_ldap_directory/runs/{run_id}` until
+completion. See `docs/features/platform/fetcher-operations.md` (section
+"Trigger Fetcher") for full details.
 
 ### Post-deployment bootstrap sequence
 
+**Prerequisites**: all services must be running (API server, Celery
+worker, Redis, PostgreSQL). Verify the Celery worker has started
+successfully (check logs for fetcher registry population) before
+proceeding to step 2.
+
 ```
-1. sentinel fetcher run sync_ldap_directory                        # populate User table (~3,200 records)
-2. sentinel manage-user update --username admin1 --add-role admin  # assign Admin role to first admin
+1. sentinel manage-user create --username bootstrap-admin \
+     --email bootstrap@localhost --role admin              # create local admin
+2. Authenticate to API as bootstrap-admin                  # see local-authentication.md
+3. POST /api/v1/fetchers/sync_ldap_directory/trigger       # trigger LDAP sync
+4. Poll GET .../runs/{run_id} until status != running      # wait for completion
+5. sentinel manage-user update --username <ad-user> --add-role admin  # promote real admin
+6. sentinel manage-user deactivate --username bootstrap-admin         # recommended: deactivate bootstrap user
 ```
 
-The `manage-user` command is documented in
-`docs/features/identity/user-management.md`. In this bootstrap context, the
-user already exists (created by the LDAP sync in step 1), and
-`manage-user update` adds the Admin role with `ad_group_cn = '_manual'`
-and `assigned_by = NULL` (CLI action).
+Step 1 creates a local admin account for initial API access. Step 2
+authenticates using local login (see
+`docs/features/identity/local-authentication.md`) to obtain a JWT
+token for subsequent API calls. Step 3 triggers the LDAP sync which
+populates the User table from Active Directory (~3,200 records).
+Step 4 polls the run status until completion. Step 5 promotes an AD
+user to the Admin role (with `ad_group_cn = '_manual'` and
+`assigned_by = NULL`). Step 6 deactivates the bootstrap account to
+prevent username collision with AD users (recommended).
+
+**Failure recovery**:
+
+- If step 3 returns 404 (`FETCHER_NOT_FOUND`): the Celery worker has
+  not finished registering fetchers. Wait and retry.
+- If step 3 returns 503 (`CELERY_ENQUEUE_FAILED`): the Celery worker
+  is unreachable. Fix the worker configuration and retry.
+- If step 4 shows `status = failure`: check `error_detail` in the run
+  response (requires `manage_fetchers` capability, which the
+  bootstrap-admin has), fix the underlying issue (e.g., AD
+  unreachable, `LDAP_URI` misconfigured), and re-trigger.
+
+The `manage-user` commands are documented in
+`docs/features/identity/user-management.md`.
 
 ## API Endpoints
 

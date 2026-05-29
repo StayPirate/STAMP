@@ -586,10 +586,13 @@ here with the required authorization level and a link to the owning spec.
    confidential tickets via `TicketAccessGrant` or bugowner matching —
    unlike unauthenticated users, who see only non-confidential tickets
    with no per-ticket override mechanisms
-9. Admin bootstrap: run `sentinel fetcher run sync_ldap_directory` to
-   populate users from AD, then
-   `sentinel manage-user update --username <username> --add-role admin` to
-   assign the first Admin role. See `docs/features/identity/ad-integration.md`.
+9. Admin bootstrap: create a local admin via
+   `sentinel manage-user create --username bootstrap-admin --email bootstrap@localhost --role admin`,
+   then use the API to trigger the LDAP sync
+   (`POST /api/v1/fetchers/sync_ldap_directory/trigger`), then promote
+   an AD user via
+   `sentinel manage-user update --username <username> --add-role admin`.
+   See `docs/features/identity/ad-integration.md`.
    For bot accounts, see Business Rule 14
 10. **Assignment target constraint**: only users holding the
     `vulnerability_analyst` role can be assigned as ticket owners. The

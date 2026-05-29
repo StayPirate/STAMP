@@ -44,6 +44,18 @@
 
 **Status**: RESOLVED — Spec updated: documented metric counter reset at start of each run() (2026-05-28)
 
+### FEI-GAP-018 — FetcherRun retrieval failure undocumented for API-trigger flow (Low)
+
+**Category**: Error handling
+**Status**: OPEN
+
+When `run_id` is provided to `BaseFetcher.run()` (API trigger flow),
+the method retrieves an existing `FetcherRun` record. The spec
+documents only FetcherRun creation failure (lines 70-82). Retrieval
+failure modes are undocumented:
+- DB unreachable during retrieval (same handling as creation failure?)
+- Record not found (deleted between API trigger and task execution)
+
 ---
 
 ## Coherence
@@ -97,7 +109,7 @@ The 'On-demand Single-Item Fetch' section states the system 'invokes them in par
 
 ### FEI-SEC-004 — timeout_seconds=0 disables stale run detection permanently (Low)
 
-**Status**: RESOLVED — Spec updated: added warning in API/CLI response when timeout_seconds=0 (2026-05-28)
+**Status**: RESOLVED — Spec updated: added warning in API response when timeout_seconds=0 (2026-05-28)
 
 ### FEI-SEC-005 — Custom settings validation lacks string length bounds (Low)
 

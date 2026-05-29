@@ -31,7 +31,7 @@
 ### FEO-GAP-06 — CLI fetcher run: unhandled exception exit code ambiguity (Low)
 
 **Category**: Error handling
-**Status**: OPEN
+**Status**: RESOLVED — Moot: CLI `sentinel fetcher run` command removed from specification (2026-05-29)
 
 Exit code 2 for unhandled exception, but unclear if the FetcherRun record is updated to failure before exiting.
 
@@ -130,7 +130,7 @@ No format constraints on fetcher_name path parameter.
 ### FEO-SEC-04 — CLI bypasses enabled check without audit event (Low)
 
 **Category**: Audit completeness
-**Status**: OPEN
+**Status**: RESOLVED — Moot: CLI `sentinel fetcher run` command removed from specification (2026-05-29)
 
 CLI runs of disabled fetchers leave no actor attribution.
 

@@ -10,7 +10,7 @@ base class, the fetcher registry, Celery integration, concurrency
 control, data model, and data retention.
 
 For the monitoring dashboard (API endpoints, frontend pages, CLI
-commands) that consumes this infrastructure, see
+diagnostics) that consumes this infrastructure, see
 `docs/features/platform/fetcher-operations.md`.
 
 ## Terminology
@@ -31,7 +31,33 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    keyed by the fetcher's `name` property
 2. **Run lifecycle management**: a `run()` method (not meant to be
    overridden) that wraps the fetcher's `execute()` method with:
-   - Creation of a `FetcherRun` record with status `running`
+
+   Signature:
+
+   ```python
+   async def run(
+       self,
+       *,
+       triggered_by: str = "schedule",
+       triggered_by_user_id: UUID | None = None,
+       run_id: UUID | None = None,
+   ) -> None:
+   ```
+
+   `run()` manages its own database sessions internally — callers do
+   not pass a session. Each database operation (record creation,
+   finalization) uses a short-lived session. The connection is not held
+   open during `execute()`.
+
+   - **FetcherRun record acquisition**:
+     - When `run_id` is `None` (scheduled runs): creates a new
+       `FetcherRun` record with `status = running`, `triggered_by` and
+       `triggered_by_user_id` set from the corresponding parameters
+     - When `run_id` is provided (API trigger): retrieves the existing
+       `FetcherRun` record (created synchronously by the API trigger
+       endpoint). The record already has `status = running` and its
+       `triggered_by`/`triggered_by_user_id` fields already set.
+       `run()` continues its lifecycle without creating a new record
    - Reset of all metric counters (`items_created`, `items_updated`,
      `items_failed`) to zero before each execution. This ensures correct
      behavior regardless of instance lifecycle (singleton vs. per-run
@@ -653,8 +679,21 @@ all fetchers:
 ```python
 @celery_app.task(bind=True)
 def run_fetcher(self, fetcher_name: str, triggered_by: str = "schedule",
-                user_id: str | None = None) -> None:
-    """Run a fetcher by name."""
+                user_id: str | None = None,
+                run_id: str | None = None) -> None:
+    """Run a fetcher by name.
+
+    Args:
+        fetcher_name: registry key identifying the fetcher
+        triggered_by: "schedule" (Beat) or "manual" (API)
+        user_id: UUID of the user who triggered (None for scheduled
+                 runs). Passed to run() as triggered_by_user_id after
+                 conversion to UUID.
+        run_id: UUID of a pre-created FetcherRun record (API trigger
+                flow). When provided, run() updates this record instead
+                of creating a new one. When None, run() creates a new
+                record. Passed to run() after conversion to UUID.
+    """
     ...
 ```
 
@@ -729,21 +768,20 @@ default `timeout_seconds` is 3600 (1 hour). If `timeout_seconds` is set
 to 0, stale detection is disabled for that fetcher — the run is never
 considered stale regardless of how long it has been running.
 
-When a stale run is detected (by the Celery task, the API trigger
-endpoint, or the CLI), it is resolved by updating the stale `FetcherRun`
+When a stale run is detected (by the Celery task or the API trigger
+endpoint), it is resolved by updating the stale `FetcherRun`
 record:
 
 **Operational risk of `timeout_seconds=0`**: disabling stale detection
 means a fetcher that gets stuck will block all future executions
 indefinitely, requiring manual intervention. When `timeout_seconds` is
-set to 0 via the API or CLI, a warning is surfaced to the operator (see
+set to 0 via the API, a warning is surfaced to the operator (see
 `docs/features/platform/fetcher-operations.md`, "Update Fetcher Config"
-for the API warning field and CLI warning message).
+for the API warning field).
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
-  {timeout}s)"` for automatic resolution (Celery/API), or `"Marked as
-  stale by operator via CLI"` for CLI resolution
+  {timeout}s)"`
 - `finished_at` → `now()`
 - `duration_seconds` → calculated from `started_at`
 
@@ -755,10 +793,10 @@ logger.warning("Marking stale run %s for '%s' as failure (running since %s, time
 ```
 
 Stale run detection is a recovery mechanism for unclean process
-terminations (OOM-kill, node crash, `kill -9`). It is NOT a substitute
-for proper signal handling — processes that can handle `SIGINT`/`SIGTERM`
-must do so (see `docs/features/platform/fetcher-operations.md`, section "CLI
-Commands", "Signal handling").
+terminations (OOM-kill, node crash, `kill -9`). Celery workers handle
+`SIGTERM` via the Celery runtime's own signal handling — when a worker
+shuts down gracefully, active tasks are revoked and their `FetcherRun`
+records are finalized by the `run()` method's exception handler.
 
 Note: Celery broker unavailability during the trigger endpoint is handled
 synchronously (the FetcherRun record is immediately marked as failure).
@@ -814,7 +852,7 @@ the dashboard charts.
 | Value | Description |
 |---|---|
 | `schedule` | Triggered by Celery Beat schedule |
-| `manual` | Triggered by an admin (via API or CLI) |
+| `manual` | Triggered by an admin (via API) |
 
 ### FetcherConfig
 
@@ -845,8 +883,8 @@ Kubernetes multi-replica deployments).
      (`soft_time_limit`). When a fetcher exceeds this, a
      `SoftTimeLimitExceeded` exception is raised and the run is marked
      `failure`.
-  2. **Stale run detection threshold**: when > 0, used by the Celery task,
-     API trigger endpoint, and CLI to determine whether a `running`
+   2. **Stale run detection threshold**: when > 0, used by the Celery task
+      and API trigger endpoint to determine whether a `running`
      record is stale (see "Stale Run Detection" above).
   When set to 0, both mechanisms are disabled: Celery does not enforce a
   time limit, and stale detection treats the run as indefinitely active.
@@ -980,11 +1018,10 @@ on the three dependent tables prevent accidental deletion of the
 - Per-fetcher **write** endpoints (`POST /trigger`, `PATCH /config`)
   return `409 FETCHER_DEREGISTERED` — the fetcher cannot be triggered
   or configured since the code has been removed
-- The `sentinel fetcher run` CLI command returns an error for
-  deregistered fetchers. `sentinel fetcher config` displays a
-  read-only snapshot of the stored configuration without schema context
+- `sentinel fetcher config` displays a read-only snapshot of the stored
+  configuration without schema context
 - Historical data (runs, aggregates, audit events) remains in the
-  database and is accessible through the API, CLI, and dashboard UI
+  database and is accessible through the API and dashboard UI
 
 ### Aggregation task behavior
 

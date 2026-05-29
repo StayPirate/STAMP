@@ -444,8 +444,7 @@ sequence where partial success is possible. It does NOT apply to:
 
 - Atomic single-operation commands (use simple success/error messages)
 - Commands with internal phases that are not user-visible mutations
-  (e.g., `fetcher run` has concurrency check → execute → record, but
-  the user cares about the fetcher result, not the internal phases)
+  (the user cares about the final result, not the internal phases)
 
 #### Idempotency
 
@@ -458,8 +457,8 @@ Commands MUST be idempotent where practical. Specifically:
 - Commands that require interactive input for security (e.g., password
   prompts) are exempt from idempotency — each invocation inherently
   changes state
-- Commands that execute external work (e.g., `fetcher run`) are exempt —
-  they produce side effects by design
+- Commands that execute external work are exempt — they produce side
+  effects by design
 
 Each command specification MUST explicitly declare its idempotency:
 
@@ -495,7 +494,7 @@ deterministic and mechanically verifiable.
 ### Naming
 
 - Command groups: `noun` with `verb` subcommands for related operations
-  (e.g., `sentinel manage-user create`, `sentinel fetcher run`)
+  (e.g., `sentinel manage-user create`, `sentinel fetcher list`)
 
 ## Git Conventions
 

@@ -6,7 +6,7 @@ Cross-cutting infrastructure and system administration.
 
 ```
 fetcher-infrastructure.md       BaseFetcher base class, registry, execution tracking
-fetcher-operations.md           Monitoring, API, and CLI for fetchers
+fetcher-operations.md           Monitoring, API, and CLI diagnostics for fetchers
 audit-trail-infrastructure.md   BaseAuditLog base class, AuditEventMixin
 system-settings.md              System settings (default CVSS version, etc.)
 ```
