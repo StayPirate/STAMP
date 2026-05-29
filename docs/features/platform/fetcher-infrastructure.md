@@ -707,9 +707,12 @@ The distinction is:
 - **Schedule-triggered attempts**: there is no caller to notify, so the
   task logs the skip and returns without side effects.
 
-The concurrency check SHOULD use a database query with row-level locking
+The concurrency check MUST use a database query with row-level locking
 (`SELECT ... FOR UPDATE`) or an equivalent atomic mechanism to prevent
-race conditions between concurrent task starts.
+race conditions between concurrent task starts. In multi-worker
+deployments, without atomic locking two workers can simultaneously read
+"no active run", both proceed, and execute the same fetcher in parallel
+— violating the single-instance invariant.
 
 ## Stale Run Detection
 

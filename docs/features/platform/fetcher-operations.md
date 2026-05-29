@@ -742,7 +742,7 @@ Generic Celery task that executes any registered fetcher by name.
 | Task name | `run_fetcher` |
 | Parameters | `fetcher_name` (str), `triggered_by` (str), `user_id` (str, optional) |
 | Schedule | per-fetcher, from `FetcherConfig.schedule_override` or `BaseFetcher.default_schedule` |
-| Idempotency | Only one instance per fetcher can run at a time (Celery `unique` or lock-based) |
+| Idempotency | Only one instance per fetcher can run at a time (database-level `SELECT ... FOR UPDATE` — see `fetcher-infrastructure.md`, Concurrency Control) |
 
 ### Fetcher: `aggregate_fetcher_runs`
 
