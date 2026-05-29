@@ -434,6 +434,7 @@ Enqueues a manual run of the specified fetcher.
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be triggered. |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
 | 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
+| 503 | `CELERY_ENQUEUE_FAILED` | Task broker unavailable — run record marked as failed |
 
 **Capability**: `manage_fetchers`.
 
@@ -444,6 +445,18 @@ Enqueues a manual run of the specified fetcher.
   ensures the `run_id` is available in the API response. The
   `BaseFetcher.run()` method detects the existing `FetcherRun` record
   (matched by `run_id`) and updates it rather than creating a new one
+
+**Enqueue failure handling**: after creating the `FetcherRun` record, the
+endpoint calls `apply_async` on the Celery broker. If enqueue succeeds,
+the endpoint returns 202 with the `run_id` (normal path). If enqueue
+fails (any exception from Celery/Redis), the endpoint updates the
+`FetcherRun` record to `status = failure`,
+`error_message = "Celery task enqueue failed: {exception}"`,
+`finished_at = now()`, `duration_seconds = 0`, then returns 503 Service
+Unavailable with code `CELERY_ENQUEUE_FAILED`. This cleanup is critical
+because the `FetcherRun` record with `status = running` is the
+concurrency mechanism — if not cleaned up, it blocks all future runs of
+this fetcher until stale detection timeout (default 3600s).
 
 **Note on on-demand CVE fetch**: when Sentinel encounters an unknown CVE-ID
 during ticket creation or CVE association, it triggers on-demand

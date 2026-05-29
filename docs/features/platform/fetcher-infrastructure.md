@@ -750,6 +750,12 @@ for proper signal handling — processes that can handle `SIGINT`/`SIGTERM`
 must do so (see `docs/features/platform/fetcher-operations.md`, section "CLI
 Commands", "Signal handling").
 
+Note: Celery broker unavailability during the trigger endpoint is handled
+synchronously (the FetcherRun record is immediately marked as failure).
+Stale detection is therefore NOT the recovery mechanism for enqueue
+failures — it covers only cases where the worker process dies after
+having accepted the task (SIGKILL, OOM, network partition).
+
 ## Data Model
 
 ### FetcherRun
