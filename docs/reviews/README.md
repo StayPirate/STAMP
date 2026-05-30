@@ -26,7 +26,7 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-18 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 |  |
+| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -38,7 +38,7 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [package-service](package-service.md) | 3 | 🟢 | 🟢 | 🟢 | 🟢 | 3 | 2026-05-22 | ⚠️ |
 | | 2:🟠 1:🟡 |  |  |  |  |  |  |  |
-| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 1 | 🟢 | 1 | 2026-05-26 |  |
+| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 1 | 🟢 | 1 | 2026-05-26 | ⚠️ |
 | |  |  |  | 1:🟡 |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -46,8 +46,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1 | 2026-05-25 | ⚠️ |
 | |  |  | 1:🟡 |  |  |  |  |  |
-| [ticket-references](ticket-references.md) | — | — | — | — | — | 0 | — |  |
-|  |  |  |  |  |  |  |  |  |
+| [ticket-references](ticket-references.md) | 5 | 🟢 | 6 | 9 | 3 | 23 | 2026-05-30 |  |
+| | 5:🟡 |  | 2:🟠 4:🟡 | 4:🟠 5:🟡 | 3:🟡 |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-26 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-20 | ⚠️ |
@@ -56,8 +56,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **0** | **1** | **1** | **0** | **5** |  |  |
-|  | 2:🟠 1:🟡 |  | 1:🟡 | 1:🟡 |  |  |  |  |
+| **Total** | **8** | **0** | **7** | **10** | **3** | **28** |  |  |
+| | 2:🟠 6:🟡 |  | 2:🟠 5:🟡 | 4:🟠 6:🟡 | 3:🟡 |  |  |  |
 
 ### Disabled specs
 

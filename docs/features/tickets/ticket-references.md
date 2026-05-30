@@ -222,6 +222,30 @@ after CVE upsert and ticket creation for new CVEs). The fetcher calls
 - `upstream_references`: the normalized list of references from the CVE
   data
 
+**URL acceptance gate**: before writing any URL to the database (both
+source reference and upstream references), `upsert_references()` applies a
+lightweight validation gate:
+
+1. Length ≤ 2048 characters
+2. No control characters (U+0000–U+001F, U+007F)
+3. Scheme must be `http` or `https`
+
+URLs failing any criterion are skipped (not inserted or updated), the
+violation is logged at WARNING level with the CVE ID and source for
+operational visibility, and processing continues with the remaining
+references (skip-and-continue strategy).
+
+This gate is defense-in-depth for data arriving from external sources
+(NVD, MITRE, etc.) where no Pydantic schema boundary exists. Manual
+references validated at the API layer by Pydantic `HttpUrl` will never
+reach this gate with invalid data, but the gate remains active for all
+paths as a safety net.
+
+**No URL transformation**: URLs are stored exactly as received from the
+source or user. No percent-encoding, normalization, or transformation is
+applied before storage. The unique constraint `(ticket_id, url)` operates
+on the literal stored value.
+
 The service performs the following steps:
 
 1. **Source reference** (if `source_url` is provided): upsert a
@@ -246,16 +270,6 @@ The service performs the following steps:
    - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
    - `created_by`: `NULL` (automatic)
 
-**URL scheme validation**: `upsert_references()` does **not** validate
-URL schemes for automatic references. Unlike the manual POST endpoint
-(which restricts URLs to `https` and `http`), upstream CVE data may
-contain `ftp://` or other non-HTTP URLs (e.g., vendor advisory
-distribution via FTP). These are stored as-is. The scheme restriction
-on the POST endpoint is a security measure against browser-rendered
-dangerous schemes (`javascript:`, `data:`); automatic references are
-system-ingested data displayed as clickable links, where `ftp://` is
-a legitimate protocol.
-
 **Transaction boundary**: `upsert_references()` runs in a **separate
 transaction** from `cve_service.upsert_cve()`. Although both receive
 the same `AsyncSession`, the fetcher commits the CVE upsert (Phase 1)
@@ -264,6 +278,8 @@ cannot roll back CVE data. Each individual reference upsert is
 independent — if a single reference fails (e.g., a URL from upstream
 data exceeds the 2048-character limit), the service logs the failure
 and continues with the remaining references (skip-and-continue).
+
+**Soft-delete race condition**: `upsert_references()` does not re-check ticket soft-delete state. If a ticket is soft-deleted between Phase 1 commit and the `upsert_references()` call, references are inserted on the soft-deleted ticket. This is harmless — references on soft-deleted tickets are inaccessible via the API and become visible again if the ticket is restored. Adding a re-check would introduce lock contention with no practical benefit given the extremely narrow time window.
 
 There is no stale reference cleanup step. Fetchers only insert and update
 references — they never delete them. If an upstream source removes a
@@ -274,10 +290,24 @@ information at the URL.
 
 ### Upsert Strategy
 
-References are matched by `(ticket_id, url)` — the unique constraint.
-URL comparison is **literal**: no normalization is applied (no case
-folding, no trailing slash removal, no query parameter reordering). URLs
-that differ only in casing or trailing slashes are treated as distinct.
+#### URL Normalization
+
+Before comparison or storage, every URL (automatic and manual) is
+normalized:
+
+1. **Scheme + host lowercased** (per RFC 3986 §3.1 and §3.2.2)
+2. **`http://` normalized to `https://`**
+3. **Trailing slash removed** when the path is empty or consists only
+   of `"/"`
+
+Normalization is applied at insertion time — the stored `url` field
+contains the normalized form, so the uniqueness constraint
+`(ticket_id, url)` automatically prevents near-duplicates.
+
+#### Match Rules
+
+References are matched by `(ticket_id, url)` — the unique constraint,
+evaluated against the normalized URL.
 
 - **New URL**: INSERT a new `TicketReference` with all fields from the
   fetcher data.
@@ -293,6 +323,8 @@ that differ only in casing or trailing slashes are treated as distinct.
   `source = "manual"`, the fetcher skips it entirely — no fields are
   updated. This rule takes precedence over the cross-source
   fill-in-NULL-only rule above.
+
+**Source field stability**: the `source` column is a stable identifier — the upsert strategy's same-source vs. different-source logic depends on its consistency over time. If a fetcher is renamed (its `BaseFetcher.name` attribute changes), an Alembic data migration is required to update the `source` field on existing `TicketReference` records. Without such migration, references from the renamed fetcher would be treated as originating from a "different source", degrading update propagation to fill-NULL-only semantics. See `docs/features/platform/fetcher-infrastructure.md` for the fetcher naming contract.
 
 References are upserted individually within the batch. Each reference is
 attempted as an INSERT. If the unique constraint `(ticket_id, url)` is
@@ -414,7 +446,7 @@ operations directly.
 |----------|--------|----------------|
 | `upsert_references()` | CVE fetchers (`execute`, `fetch_single`) | Batch upsert of automatic references with type classification and source ownership |
 | `create_reference()` | API POST handler | Create a manual reference with `source="manual"`, auto-classify type from URL |
-| `update_reference()` | API PATCH handler | Update a manual reference, enforce immutability of automatic references, re-evaluate type on URL change |
+| `update_reference()` | API PATCH handler | Update a manual reference, enforce immutability of automatic references, preserve type on URL change unless explicitly provided |
 | `delete_reference()` | API DELETE handler | Delete a manual reference, enforce immutability of automatic references |
 | `list_references()` | API GET handler | Query references with optional filters, ordered by type priority |
 
@@ -470,6 +502,8 @@ Returns all references for a ticket (both automatic and manual). This
 endpoint is **not paginated** because the number of references per ticket
 is expected to be small (typically fewer than 30). All references are
 returned in a single response.
+
+**Operational limit**: the design is optimized for ≤ 200 references per ticket. No hard cap is enforced. If production monitoring reveals tickets consistently exceeding this threshold, cursor-based pagination will be introduced as a backwards-compatible addition (the unpaginated response remains the default; pagination activates only when a `cursor` parameter is provided).
 
 **Query parameters**:
 
@@ -607,9 +641,13 @@ Adds a manual reference to a ticket.
 ```
 
 **Validation rules**:
-- `url` must use `https` or `http` scheme (other schemes such as
-  `javascript:`, `data:`, `ftp:` are rejected) and contain a non-empty
-  host component
+- `url` is validated as a Pydantic `HttpUrl` type, which enforces RFC 3986
+  conformance. This guarantees: scheme is `https` or `http` (other schemes
+  such as `javascript:`, `data:`, `ftp:` are rejected), a non-empty host
+  component is present, and control characters (U+0000–U+001F, U+007F)
+  are rejected. After validation, URL normalization is applied (see Upsert
+  Strategy § URL Normalization); the post-normalization scheme is always
+  `https://`. Only `https://` URLs are stored
 - `url` must not exceed 2048 characters
 - `url` must not already exist for this ticket (unique constraint)
 - `title`, if provided, must not exceed 500 characters or be
@@ -631,7 +669,7 @@ Adds a manual reference to a ticket.
 | Status | Code                | Condition                                     |
 |--------|---------------------|-----------------------------------------------|
 | 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket             |
-| 422    | `VALIDATION_ERROR`  | Invalid URL scheme, exceeds length limit, blank title/description, or invalid type value |
+| 422    | `VALIDATION_ERROR`  | URL fails RFC 3986 validation (via `HttpUrl`), exceeds length limit, blank title/description, or invalid type value |
 
 ### Update Reference
 
@@ -649,14 +687,11 @@ A valid reference belonging to a different ticket returns
 `404 RESOURCE_NOT_FOUND`.
 
 When `url` is changed without an explicit `type` in the request body,
-`type` is re-evaluated from the new URL using URL pattern matching (see
-Type Auto-Classification). If the new URL matches a known pattern, the
-corresponding type is applied. If no pattern matches, `type` is set to
-`null`. When `type` is explicitly set to `null` in the request body, the
-type is cleared (set to NULL / uncategorized) regardless of the URL —
-consistent with partial update semantics where `null` means "clear the
-field". To trigger automatic re-classification from URL patterns, the
-user should change `url` and omit `type` from the request.
+the existing `type` value is preserved unchanged. Automatic
+re-classification from URL pattern matching applies only at creation time
+(POST without `type`). To re-classify after a URL change, the client must
+include `type` explicitly in the PATCH body (including `null` to reset to
+uncategorized).
 
 **Request body**:
 
@@ -710,7 +745,7 @@ At least one field must be provided.
 | 404    | `RESOURCE_NOT_FOUND`    | Reference does not exist on this ticket                  |
 | 409    | `RESOURCE_NOT_EDITABLE` | Reference is automatic (`source != "manual"`) — cannot be modified by users |
 | 409    | `RESOURCE_CONFLICT`     | URL already exists for this ticket (if URL was changed)  |
-| 422    | `VALIDATION_ERROR`      | Invalid URL scheme, exceeds length limit, blank title/description, or invalid type value |
+| 422    | `VALIDATION_ERROR`      | URL fails RFC 3986 validation (via `HttpUrl`), exceeds length limit, blank title/description, or invalid type value |
 
 See `docs/api-spec.md` for global and scoped responses.
 
@@ -759,8 +794,15 @@ does not include reference-related event types.
 - References created by a user who is later deactivated remain unchanged;
   the `created_by` user reference displays `active: false` per the User
   References in Responses convention in `docs/api-spec.md`
-- URL scheme is restricted to `https` and `http` to prevent injection of
-  dangerous schemes (`javascript:`, `data:`, etc.)
+- URL scheme is restricted to `https://` after normalization (input
+  `http://` is upgraded; all other schemes are rejected)
+- The URL acceptance gate in `upsert_references()` provides defense-in-depth
+  against injection vectors from compromised upstream sources (NVD, MITRE,
+  etc.) by enforcing scheme, length, and control character validation on all
+  automatic references before database insertion
+- RFC 3986 conformance (enforced by Pydantic `HttpUrl`) rejects URLs
+  containing control characters (U+0000–U+001F, U+007F), eliminating
+  injection vectors from embedded control sequences in URL strings
 - See `docs/features/identity/rbac.md` for the full permission model
 
 ## Boundary with CVEExternalIdentifier

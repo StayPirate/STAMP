@@ -1139,7 +1139,7 @@ manually by users with the `manage_references` capability. See
 |-------------|----------------------------|------------------------------|------------------------------------|
 | id          | UUID                       | PK                           | Internal identifier                |
 | ticket_id   | UUID                       | FK(ticket.id) ON DELETE CASCADE, NOT NULL | Related ticket                     |
-| url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource       |
+| url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource. Stored in normalized form: scheme + host lowercased, `http` upgraded to `https`, empty trailing slash removed (see `docs/features/tickets/ticket-references.md`, Upsert Strategy § URL Normalization) |
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
 | type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
