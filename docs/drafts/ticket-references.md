@@ -46,7 +46,10 @@ Classifies the content that a reference URL points to.
 | `patch`    | Fix artifact: patch, commit, pull request, merge request |
 | `issue`    | Bug tracker entry, issue report                          |
 | `article`  | Blog post, write-up, technical analysis, mailing list post |
-| `other`    | Any reference that does not fit the above categories     |
+
+A `NULL` type means the reference could not be classified by any
+available mechanism (upstream tags, URL pattern matching, or explicit
+user choice). It is functionally equivalent to "uncategorized".
 
 ### TicketReference
 
@@ -57,7 +60,7 @@ Classifies the content that a reference URL points to.
 | url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource       |
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
-| type        | ENUM(ReferenceType)        | NOT NULL, DEFAULT `other`    | Content classification             |
+| type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
 | source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`) or `"manual"` for user-added references |
 | created_by  | UUID                       | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
@@ -84,40 +87,49 @@ priority order.
    reference tags) to a `ReferenceType` value
 3. **URL pattern matching**: the system infers `type` from known URL
    patterns
-4. **Default** (lowest): `other`
+4. **Default** (lowest): `NULL` (uncategorized)
 
 ### CVE Source Tag Mapping
 
-When a CVE fetcher processes references from upstream data (e.g., the NVD
-API v2 `references` array), each reference may carry tags from the
-source. These tags are mapped to `ReferenceType` values but are **not
-stored** on the `TicketReference` record — they are consumed during
-classification only.
+When a CVE fetcher processes references from upstream data, each
+reference may carry tags from the source. NVD API v2 uses Title Case
+strings (e.g., `"Vendor Advisory"`); MITRE CVE JSON 5.x uses kebab-case
+(e.g., `"vendor-advisory"`). Both formats are mapped to `ReferenceType`
+values but are **not stored** on the `TicketReference` record — they are
+consumed during classification only.
 
-| Upstream Tag             | ReferenceType |
-|--------------------------|---------------|
-| `Patch`                  | `patch`       |
-| `Vendor Advisory`        | `advisory`    |
-| `Third Party Advisory`   | `advisory`    |
-| `US Government Resource` | `advisory`    |
-| `VDB Entry`              | `advisory`    |
-| `Issue Tracking`         | `issue`       |
-| `Exploit`                | `article`     |
-| `Mailing List`           | `article`     |
-| `Release Notes`          | `article`     |
-| `Technical Description`  | `article`     |
-| `Mitigation`             | `article`     |
-| `Press/Media Coverage`   | `article`     |
-| All others               | `other`       |
+| NVD Tag                  | MITRE Tag              | ReferenceType |
+|--------------------------|------------------------|---------------|
+| `Patch`                  | `patch`                | `patch`       |
+| `Vendor Advisory`        | `vendor-advisory`      | `advisory`    |
+| `Third Party Advisory`   | `third-party-advisory` | `advisory`    |
+| `US Government Resource` | `government-resource`  | `advisory`    |
+| `VDB Entry`              | `vdb-entry`            | `advisory`    |
+| `Issue Tracking`         | `issue-tracking`       | `issue`       |
+| `Exploit`                | `exploit`              | `article`     |
+| `Mailing List`           | `mailing-list`         | `article`     |
+| `Release Notes`          | `release-notes`        | `article`     |
+| `Technical Description`  | `technical-description`| `article`     |
+| `Mitigation`             | `mitigation`           | `article`     |
+| `Press/Media Coverage`   | `media-coverage`       | `article`     |
+| `Tool Signature`         | `signature`            | `article`     |
+| `Broken Link`            | `broken-link`          | `NULL`        |
+| `Not Applicable`         | `not-applicable`       | `NULL`        |
+| `Permissions Required`   | `permissions-required` | `NULL`        |
+| `URL Repurposed`         | —                      | `NULL`        |
+| `Product`                | `product`              | `NULL`        |
+| —                        | `customer-entitlement` | `NULL`        |
+| —                        | `related`              | `NULL`        |
+| All others / no tags     |                        | `NULL`        |
 
 When a reference has multiple tags, the highest-priority type wins.
-Priority order: `patch` > `advisory` > `issue` > `article` > `other`.
+Priority order: `patch` > `advisory` > `issue` > `article`.
 
 ### URL Pattern Matching
 
-When no upstream tag is available (or tags map to `other`), the system
-attempts to infer the type from the URL. This applies to both automatic
-and manual references.
+When no upstream tag is available (or tags do not map to a known type),
+the system attempts to infer the type from the URL. This applies to
+both automatic and manual references.
 
 | URL Pattern                              | ReferenceType |
 |------------------------------------------|---------------|
@@ -133,13 +145,29 @@ and manual references.
 | `access.redhat.com/security/cve/*`      | `advisory`    |
 | `access.redhat.com/errata/*`            | `advisory`    |
 | `ubuntu.com/security/CVE-*`             | `advisory`    |
+| `www.debian.org/security/*`             | `advisory`    |
+| `security.gentoo.org/*`                 | `advisory`    |
+| `www.oracle.com/security-alerts/*`      | `advisory`    |
+| `security.netapp.com/advisory/*`        | `advisory`    |
+| `www.zerodayinitiative.com/advisories/*`| `advisory`    |
+| `msrc.microsoft.com/*`                  | `advisory`    |
+| `support.apple.com/*`                   | `advisory`    |
+| `www.mozilla.org/*/security/advisories/*`| `advisory`   |
+| `errata.almalinux.org/*`               | `advisory`    |
 | `bugzilla.suse.com/*`                   | `issue`       |
 | `bugzilla.redhat.com/*`                 | `issue`       |
 | `bugs.launchpad.net/*`                  | `issue`       |
+| `savannah.gnu.org/bugs/*`              | `issue`       |
+| `sourceware.org/bugzilla/*`            | `issue`       |
+| `lists.fedoraproject.org/*`            | `article`     |
+| `www.openwall.com/lists/*`             | `article`     |
+| `seclists.org/*`                       | `article`     |
+| `www.exploit-db.com/*`                 | `article`     |
+| `lists.apache.org/*`                   | `article`     |
 
 Patterns are matched case-insensitively against the URL host and path.
-URLs that do not match any pattern retain the type from tag mapping, or
-default to `other`.
+URLs that do not match any pattern remain with `type = NULL`
+(uncategorized).
 
 The pattern list is maintained in code and can be extended without schema
 changes. Adding a new pattern does not retroactively reclassify existing
@@ -212,10 +240,12 @@ The service performs the following steps:
 2. **CVE data references**: for each reference in `upstream_references`,
    upsert a `TicketReference` with:
    - `url`: the reference URL from the CVE data
-   - `title`: `NULL` (not provided by most sources)
+   - `title`: from the reference's `name` field when available (MITRE
+     CVE JSON 5.x and kernel CVE data provide this field; NVD API v2
+     does not). `NULL` when absent
    - `description`: `NULL`
    - `type`: auto-classified from source tags, then URL pattern, then
-     `other` (see Type Auto-Classification)
+     `NULL` (see Type Auto-Classification)
    - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
    - `created_by`: `NULL` (automatic)
 
@@ -243,9 +273,10 @@ that differ only in casing or trailing slashes are treated as distinct.
   `type` if the fetcher provides new values. Since users cannot edit
   automatic references, the fetcher is the sole writer and can safely
   overwrite all fields.
-- **Existing URL, different source**: no modification. The URL is already
-  tracked by another fetcher or was added manually. The first source to
-  insert a URL retains ownership.
+- **Existing URL, different source**: fill in NULL fields only. For each
+  of `type`, `title`, and `description`: if the existing value is NULL
+  and the new source provides a non-NULL value, update the field.
+  Non-NULL values are never overwritten by a different source.
 
 Manual references (`source = "manual"`) are never modified by fetchers.
 
@@ -342,8 +373,10 @@ async def upsert_references(
 - `source_url`: the fetcher's human-readable CVE page URL, pre-built
   from `source_reference_url_pattern` by the caller, or `None` if the
   fetcher does not define a pattern
-- `upstream_references`: normalized list of `{url, tags}` objects
-  extracted from the CVE data by the fetcher
+- `upstream_references`: normalized list of `{url, tags, name}` objects
+  extracted from the CVE data by the fetcher. `name` is the reference
+  title from the upstream data (MITRE CVE JSON 5.x `name` field), or
+  `None` when the source does not provide it (NVD API v2)
 
 The function handles: source reference creation, type classification
 (tag mapping → URL pattern → default), and the upsert strategy (see
@@ -384,7 +417,7 @@ result set.
 | `patch`    | 2             |
 | `issue`    | 3             |
 | `article`  | 4             |
-| `other`    | 5             |
+| `NULL`     | 5 (last)      |
 
 Client-controlled sorting is not supported (small dataset, defined
 grouping order). When a ticket has no references (or all are filtered
@@ -472,7 +505,7 @@ Adds a manual reference to a ticket.
 | url         | string | yes      | URL of the external resource               |
 | title       | string | no       | Human-readable label                       |
 | description | string | no       | Short note explaining relevance            |
-| type        | string | no       | Content type (`advisory`, `patch`, `issue`, `article`, `other`). If omitted, auto-detected from URL pattern; defaults to `other` if no pattern matches |
+| type        | string | no       | Content type (`advisory`, `patch`, `issue`, `article`). If omitted, auto-detected from URL pattern; `null` if no pattern matches |
 
 **Response** (201 Created):
 
@@ -513,7 +546,7 @@ Adds a manual reference to a ticket.
 - `source` is always set to `"manual"`
 - `created_by` is set to the authenticated user
 - `type` is set to the provided value, or auto-detected from URL pattern,
-  or `other`
+  or `null` if no pattern matches
 
 **`Capability: manage_references`**
 
@@ -531,8 +564,9 @@ PATCH /api/v1/tickets/{ticket_id}/references/{reference_id}
 ```
 
 Updates an existing manual reference (see Mutability for the
-automatic/manual distinction). Only the fields included in the request
-body are updated — omitted fields remain unchanged.
+automatic/manual distinction). Follows partial update semantics (see
+`docs/api-spec.md`, Partial Update Semantics). Sending `null` for
+`title` or `description` clears the field.
 
 The `reference_id` lookup is scoped to the `ticket_id` in the URL path.
 A valid reference belonging to a different ticket returns
@@ -542,7 +576,7 @@ When `url` is changed without an explicit `type` in the request body,
 `type` is re-evaluated from the new URL using URL pattern matching (see
 Type Auto-Classification). If the new URL matches a known pattern, the
 corresponding type is applied. If no pattern matches, `type` is set to
-`other`.
+`null`.
 
 **Request body**:
 
@@ -693,62 +727,6 @@ VA's research workflow.
 
 ---
 
-## Open Points
-
-> Resolve these before promoting the draft. Remove this section when all
-> points are resolved.
-
-### OP-1: Clearing optional fields via PATCH
-
-When a user has previously set `title` or `description` on a manual
-reference and wants to remove the value (set it back to NULL), what is
-the mechanism? Options under consideration:
-
-- (a) Sending `"title": null` in the JSON body clears the field
-  (distinguishing `null` from field omission)
-- (b) Sending `"title": ""` clears the field (empty string treated as
-  NULL)
-- (c) No clearing mechanism — once set, the value can only be changed,
-  not removed
-
-Best practice research needed before deciding.
-
-### OP-2: Source ownership in upsert strategy
-
-The upsert strategy (see Upsert Strategy) states: "Existing URL,
-different source: no modification. The first source to insert a URL
-retains ownership." This means if the NVD fetcher inserts a URL first,
-and the MITRE fetcher later encounters the same URL, MITRE's metadata
-(title, type) is discarded. Conversely, if a VA manually adds a URL
-that a fetcher later tries to upsert, the fetcher skips it — the manual
-reference retains ownership.
-
-Questions to resolve:
-
-- Is first-source-wins the correct policy for all cases?
-- Should fetchers be able to enrich an existing reference from another
-  fetcher (e.g., adding a type classification that the first fetcher
-  could not determine)?
-- What if a VA manually adds a URL with a specific title and
-  description, and a fetcher later encounters the same URL — should the
-  manual metadata be preserved (current behavior) or merged?
-
-### OP-3: TicketReference name collision
-
-The name `TicketReference` is used in two unrelated contexts:
-
-1. **This spec**: the `TicketReference` database table storing external
-   links on tickets
-2. **`cve-tracking.md`** (lines 132-138): a response sub-schema in the
-   CVE list API representing a pointer to a ticket (`{id, identifier}`)
-
-The collision is contextual (database entity vs. API sub-schema) and
-unlikely to cause confusion at the code level, but could mislead
-developers reading both specs. Consider renaming the CVE list API
-sub-schema (e.g., `TicketSummary`, `TicketRef`) in `cve-tracking.md`.
-
----
-
 ## Migration Plan
 
 > Remove this section when the draft is promoted to the official
@@ -762,7 +740,7 @@ The following changes are required across the codebase when promoting.
 | Area | Previous | New |
 |------|----------|-----|
 | `tags` column | ARRAY(VARCHAR), stored on TicketReference | Removed — upstream tags consumed during type classification only |
-| `type` column | Not present | ENUM(ReferenceType), NOT NULL, DEFAULT `other` |
+| `type` column | Not present | ENUM(ReferenceType), nullable. `NULL` = uncategorized |
 | `description` column | Not present | VARCHAR(2000), nullable |
 | `url` column type | TEXT | VARCHAR(2048) |
 | `title` column type | TEXT | VARCHAR(500) |
@@ -812,13 +790,14 @@ file.
 ### Step 3: Update data-model.md
 
 1. **Add `ReferenceType` enum** in the Enums section:
-   - Values: `advisory`, `patch`, `issue`, `article`, `other`
+   - Values: `advisory`, `patch`, `issue`, `article`
    - PostgreSQL ENUM type
 
 2. **Update `TicketReference` table** (current lines 1130-1149):
    - Remove `tags` column
    - Add `description` column (VARCHAR(2000), nullable)
-   - Add `type` column (ENUM(ReferenceType), NOT NULL, DEFAULT `other`)
+   - Add `type` column (ENUM(ReferenceType), nullable). `NULL` =
+     uncategorized
    - Change `url` type from TEXT to VARCHAR(2048)
    - Change `title` type from TEXT to VARCHAR(500)
 
@@ -831,20 +810,25 @@ file.
 
 ### Step 4: Update cve-tracking.md
 
-1. **Lines 42-44** (entity overview): mention `type`
+1. **Lines 128-137** (CVE list response schema): **already done** —
+   the `TicketReference` sub-schema (ticket pointer in `CVEListItem`)
+   has been inlined as `object | null` with field descriptions,
+   eliminating the name collision with the `TicketReference` database
+   table (former OP-3)
+2. **Lines 42-44** (entity overview): mention `type`
    auto-classification instead of tags
-2. **Lines 218-223** (ticket creation side effects): remove mention of
+3. **Lines 218-223** (ticket creation side effects): remove mention of
    stale cleanup, reference new upsert-only behavior and type
    classification. Update fetchers to call
    `reference_service.upsert_references()` post-upsert
-3. **Lines 416-421** (NVD fetcher algorithm step h): update to describe
+4. **Lines 416-421** (NVD fetcher algorithm step h): update to describe
    type classification from NVD tags, remove stale cleanup step
-4. **Line 527** (Vulnrichment fetcher): update reference creation
+5. **Line 527** (Vulnrichment fetcher): update reference creation
    description
-5. **Line 670** (Kernel CVE fetcher): update reference creation
+6. **Line 670** (Kernel CVE fetcher): update reference creation
    description
-6. **Lines 933-934** (cross-references): no change (path is the same)
-7. **Terminology**: replace "VAs" with "users with the
+7. **Lines 933-934** (cross-references): no change (path is the same)
+8. **Terminology**: replace "VAs" with "users with the
    `manage_references` capability" in sections describing manual
    reference creation (capability-based language is more accurate since
    `automation_agent` also has this capability)
