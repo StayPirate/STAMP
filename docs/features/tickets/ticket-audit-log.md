@@ -51,6 +51,12 @@ fields populated according to this table:
 | `confidentiality_changed` | Ticket `is_confidential` flag toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
 | `access_grant_added` | User manually granted explicit access to a confidential ticket | Acting user | `NULL` | Target username | `NULL` | `NULL` |
 | `access_grant_removed` | User manually revoked explicit access to a confidential ticket | Acting user | Target username | `NULL` | `NULL` | `NULL` |
+| `reference_added` | Manual reference added to ticket | Acting user | `NULL` | Reference URL | `NULL` | `NULL` |
+| `reference_deleted` | Manual reference deleted from ticket | Acting user | Reference URL | `NULL` | `NULL` | `NULL` |
+| `reference_url_changed` | Manual reference URL changed via PATCH | Acting user | Previous URL | New URL | `NULL` | `NULL` |
+| `reference_type_changed` | Manual reference type changed via PATCH | Acting user | Previous type (e.g., `advisory`) or `NULL` | New type (e.g., `patch`) or `NULL` | `NULL` | `{"url": "..."}` (see detail contract) |
+| `reference_title_changed` | Manual reference title changed via PATCH | Acting user | Previous title or `NULL` | New title or `NULL` | `NULL` | `{"url": "..."}` (see detail contract) |
+| `reference_description_changed` | Manual reference description changed via PATCH | Acting user | Previous description or `NULL` | New description or `NULL` | `NULL` | `{"url": "..."}` (see detail contract) |
 
 **Rules**:
 
@@ -85,6 +91,9 @@ types not listed here MUST set `detail` to `NULL`.
 | `product_released` | `track` (string), `package` (string), `product_id` (UUID string), `advisory_id` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000", "advisory_id": "SUSE-SU-2025:1234-1"}` |
 | `product_eligibility_changed` | `track` (string), `package` (string), `product_id` (UUID string), `reason` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "threshold"}` |
 | `product_excluded` | `track` (string), `package` (string), `product_id` (UUID string), `reason` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "eol"}` |
+| `reference_type_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
+| `reference_title_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
+| `reference_description_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 
 **Notes**:
 
@@ -95,6 +104,11 @@ types not listed here MUST set `detail` to `NULL`.
   `threshold`, `cvss`, or `va_override`.
 - `track_excluded` and `product_excluded`: `reason` values include
   `orphan_cleanup`, `eol`, and other system-initiated reasons.
+- `reference_type_changed`, `reference_title_changed`,
+  `reference_description_changed`: `url` is the post-normalization URL of the
+  reference being modified — used as the locator since a ticket can have
+  multiple references. For `reference_url_changed`, both old and new URLs are
+  carried in `old_value`/`new_value`, so `detail` is NULL.
 - Maximum payload size: 4 KB. The service layer MUST reject any `detail` value
   exceeding this limit.
 - The service layer MUST validate that `detail` contains only keys defined in

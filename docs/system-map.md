@@ -192,7 +192,6 @@ erDiagram
         UUID id PK
         UUID ticket_id FK
         TEXT url
-        UUID created_by FK "nullable"
     }
 
     TicketPackage {
@@ -392,7 +391,6 @@ erDiagram
     User ||--o{ ApiKey : "owns keys"
     User ||--o{ TicketAuditEvent : "performed"
     RoleMapping }o--|| User : "created by"
-    TicketReference }o--o| User : "created by"
     ApiKey }o--o| User : "revoked by"
     IdentityAuditEvent }o--o| User : "performed by"
     IdentityAuditEvent }o--o| User : "targets"

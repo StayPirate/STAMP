@@ -181,7 +181,6 @@ erDiagram
         VARCHAR_2048 url "NOT NULL"
         ENUM type "nullable"
         VARCHAR_100 source "NOT NULL"
-        UUID created_by FK "nullable"
     }
     User {
         UUID id PK
@@ -205,7 +204,6 @@ erDiagram
     TicketAccessGrant }o--|| User : "granted to"
     TicketAccessGrant }o--|| User : "granted by"
     TicketAuditEvent }o--o| User : "performed by"
-    TicketReference }o--o| User : "created by"
 ```
 
 ### Package Model
@@ -1144,7 +1142,6 @@ manually by users with the `manage_references` capability. See
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
 | type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
 | source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`) or `"manual"` for user-added references |
-| created_by  | UUID                       | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -1232,6 +1229,12 @@ system action).
 | confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/tickets.md` (Confidential Tickets). |
 | access_grant_added          | VA manually granted a user explicit access to a confidential ticket. `old_value` is NULL. `new_value` is the target username. `detail` is NULL. |
 | access_grant_removed        | VA manually revoked a user's explicit access to a confidential ticket. `old_value` is the target username. `new_value` is NULL. `detail` is NULL. |
+| reference_added             | Manual reference added to ticket. `user_id` is the acting user. `old_value` is NULL. `new_value` is the reference URL. `detail` is NULL. |
+| reference_deleted           | Manual reference deleted from ticket. `user_id` is the acting user. `old_value` is the reference URL. `new_value` is NULL. `detail` is NULL. |
+| reference_url_changed       | Manual reference URL changed. `user_id` is the acting user. `old_value` is the previous URL. `new_value` is the new URL. `detail` is NULL. |
+| reference_type_changed      | Manual reference type changed. `user_id` is the acting user. `old_value` is the previous type (or NULL). `new_value` is the new type (or NULL). `detail` carries `{"url": "..."}` locator. |
+| reference_title_changed     | Manual reference title changed. `user_id` is the acting user. `old_value` is the previous title (or NULL). `new_value` is the new title (or NULL). `detail` carries `{"url": "..."}` locator. |
+| reference_description_changed | Manual reference description changed. `user_id` is the acting user. `old_value` is the previous description (or NULL). `new_value` is the new description (or NULL). `detail` carries `{"url": "..."}` locator. |
 
 ### TicketAccessGrant
 

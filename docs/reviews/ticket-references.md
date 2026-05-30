@@ -42,10 +42,7 @@
 
 ### TRF-GAP-09 — created_by FK ON DELETE policy not explicitly stated (Low)
 
-**Category**: Data Lifecycle
-**Status**: OPEN
-
-The spec covers deactivated users but relies on api-spec.md's convention that "Users are never physically deleted from the database." The TicketReference schema does not explicitly state the FK's ON DELETE policy. For ticket_id, ON DELETE CASCADE is explicit, but for created_by, the cascade behavior is unspecified. Given users are never deleted, this is a documentation gap rather than a functional one.
+**Status**: RESOLVED — Fixed: created_by column removed from TicketReference model; the FK ON DELETE concern no longer applies. (2026-05-31)
 
 ### TRF-GAP-10 — Concurrent PATCH on same manual reference -- no locking specified (Low)
 
@@ -91,17 +88,11 @@ _No issues found._
 
 ### TRF-DES-02 — CVE association does not trigger immediate reference population (Medium)
 
-**Category**: Architectural fitness
-**Status**: OPEN
-
-When associate-cve is called for a CVE that already has data in the database, references are not populated immediately -- they wait for the periodic sync cycle (every 6 hours). During this window, a VA sees zero automatic references. The data is already in the database; it just hasn't been transformed into TicketReference records for the new ticket yet.
+**Status**: RESOLVED — Accepted risk: the data needed for immediate population lives in fetcher-specific extraction logic; duplicating it in the association flow is not worth the coupling for a rare scenario (CVE in DB without ticket). (2026-05-30)
 
 ### TRF-DES-03 — PATCH with URL change silently overrides user-explicit type classification (Medium)
 
-**Category**: Edge cases and risks
-**Status**: OPEN
-
-When URL changes without explicit type in PATCH body, type is re-evaluated from URL pattern matching. This can override a user's deliberate type choice. The user can work around by including type in the PATCH request.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-31)
 
 ### TRF-DES-04 — No user override path for automatic reference metadata (Low)
 
@@ -137,17 +128,11 @@ The source column is VARCHAR(100) storing fetcher names with no FK or enum const
 
 ### TRF-SEC-01 — Automatic references bypass URL scheme validation (Medium)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-upsert_references() does not validate URL schemes for automatic references. If an upstream CVE source is compromised, javascript: or data: scheme URLs could be ingested and rendered as clickable links in the UI. The spec allows ftp:// but does not define an allowlist.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-05-31)
 
 ### TRF-SEC-02 — No rate limiting on reference creation (Medium)
 
-**Category**: Denial of Service
-**Status**: OPEN
-
-The POST endpoint has no documented rate limiting or per-ticket reference count limit. An authenticated user with manage_references capability could create thousands of manual references on a single ticket, consuming storage and degrading list endpoint performance. The GET endpoint is unpaginated.
+**Status**: RESOLVED — Accepted risk: rate limiting is a cross-cutting infrastructure concern handled by a front-end proxy if needed, not by the application layer. The per-ticket reference count is bounded operationally and monitored. (2026-05-31)
 
 ### TRF-SEC-03 — Unpaginated GET endpoint with no upper bound (Medium)
 
@@ -158,10 +143,7 @@ The GET endpoint returns all references in a single response with no pagination 
 
 ### TRF-SEC-04 — No audit trail for reference mutations (Medium)
 
-**Category**: Missing Audit
-**Status**: OPEN
-
-Reference mutations do not generate TicketAuditEvent records. The ability to add/edit/delete references without audit trail means no accountability. If a VA's account is compromised and used to insert misleading references, there would be no audit record. The created_by field provides creation attribution but not edit/delete history.
+**Status**: RESOLVED — Fixed: audit trail added for all manual reference mutations (reference_added, reference_deleted, reference_url_changed, reference_type_changed, reference_title_changed, reference_description_changed). The created_by field was removed; full accountability is now provided by TicketAuditEvent records. (2026-05-31)
 
 ### TRF-SEC-05 — URL validation does not check for host component validity (Low)
 
@@ -186,10 +168,7 @@ The source column is populated from the fetcher name for automatic references. F
 
 ### TRF-SEC-08 — No ownership check on edit/delete -- any user with capability can modify any manual reference (Low)
 
-**Category**: Authorization
-**Status**: OPEN
-
-Manual references can be freely edited and deleted by any user with manage_references capability. User A can modify User B's references. Documented as intentional design, but could enable a compromised VA account to tamper with another analyst's research notes.
+**Status**: RESOLVED — Accepted risk with mitigation: any user with manage_references can modify any manual reference (intentional design for team collaboration). The new audit trail ensures full accountability — every edit/delete is recorded with actor identity in TicketAuditEvent. (2026-05-31)
 
 ### TRF-SEC-09 — No URL normalization creates bypass potential (Low)
 

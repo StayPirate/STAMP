@@ -59,7 +59,6 @@ user choice). It is functionally equivalent to "uncategorized".
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
 | type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
 | source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`) or `"manual"` for user-added references |
-| created_by  | UUID                       | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -256,7 +255,6 @@ The service performs the following steps:
      for `sync_cves_nvd`, `"MITRE"` for `sync_cves_mitre`)
    - `type`: `advisory` (source pages are always advisories)
    - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
-   - `created_by`: `NULL` (automatic)
 
 2. **CVE data references**: for each reference in `upstream_references`,
    upsert a `TicketReference` with:
@@ -268,7 +266,6 @@ The service performs the following steps:
    - `type`: auto-classified from source tags, then URL pattern, then
      `NULL` (see Type Auto-Classification)
    - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
-   - `created_by`: `NULL` (automatic)
 
 **Transaction boundary**: `upsert_references()` runs in a **separate
 transaction** from `cve_service.upsert_cve()`. Although both receive
@@ -359,11 +356,11 @@ accessible to the VA.
 When the NVD fetcher processes CVE-2026-3317 for the first time, it
 creates the following `TicketReference` records:
 
-| url | title | type | source | created_by |
-|-----|-------|------|--------|------------|
-| `https://nvd.nist.gov/vuln/detail/CVE-2026-3317` | `NVD` | `advisory` | `sync_cves_nvd` | NULL |
-| `https://github.com/example/project/commit/a1b2c3` | NULL | `patch` | `sync_cves_nvd` | NULL |
-| `https://www.example.com/en/security-notice/vuln-2026-001` | NULL | `advisory` | `sync_cves_nvd` | NULL |
+| url | title | type | source |
+|-----|-------|------|--------|
+| `https://nvd.nist.gov/vuln/detail/CVE-2026-3317` | `NVD` | `advisory` | `sync_cves_nvd` |
+| `https://github.com/example/project/commit/a1b2c3` | NULL | `patch` | `sync_cves_nvd` |
+| `https://www.example.com/en/security-notice/vuln-2026-001` | NULL | `advisory` | `sync_cves_nvd` |
 
 If the MITRE fetcher later processes the same CVE and finds the same
 GitHub commit URL, it skips that reference (already exists with
@@ -545,7 +542,6 @@ out), the response returns `{"data": []}`.
       "description": null,
       "type": "advisory",
       "source": "sync_cves_nvd",
-      "created_by": null,
       "created_at": "2026-04-21T10:20:00Z",
       "updated_at": "2026-04-21T10:20:00Z"
     },
@@ -557,7 +553,6 @@ out), the response returns `{"data": []}`.
       "description": null,
       "type": "patch",
       "source": "sync_cves_nvd",
-      "created_by": null,
       "created_at": "2026-04-21T10:20:00Z",
       "updated_at": "2026-04-21T10:20:00Z"
     },
@@ -569,12 +564,6 @@ out), the response returns `{"data": []}`.
       "description": "Upstream confirmed the fix; tracking SUSE-side packaging",
       "type": "issue",
       "source": "manual",
-      "created_by": {
-        "id": "uuid",
-        "username": "jdoe",
-        "full_name": "John Doe",
-        "active": true
-      },
       "created_at": "2026-04-21T14:30:00Z",
       "updated_at": "2026-04-21T14:30:00Z"
     }
@@ -628,12 +617,6 @@ Adds a manual reference to a ticket.
     "description": "Upstream confirmed the fix; tracking SUSE-side packaging",
     "type": "issue",
     "source": "manual",
-    "created_by": {
-      "id": "uuid",
-      "username": "jdoe",
-      "full_name": "John Doe",
-      "active": true
-    },
     "created_at": "2026-04-21T14:30:00Z",
     "updated_at": "2026-04-21T14:30:00Z"
   }
@@ -658,9 +641,10 @@ Adds a manual reference to a ticket.
 
 **Side effects**:
 - `source` is always set to `"manual"`
-- `created_by` is set to the authenticated user
 - `type` is set to the provided value, or auto-detected from URL pattern,
   or `null` if no pattern matches
+- A `reference_added` audit event is created with `new_value` = the
+  normalized URL
 
 **`Capability: manage_references`**
 
@@ -712,6 +696,15 @@ uncategorized).
 
 At least one field must be provided.
 
+**Side effects**:
+- For each field that changes, a corresponding audit event is created:
+  `reference_url_changed`, `reference_type_changed`,
+  `reference_title_changed`, or `reference_description_changed`
+- A PATCH that changes multiple fields generates multiple audit events in
+  the same transaction
+- The `detail` field on type/title/description events carries the
+  post-normalization URL as locator (`{"url": "..."}`)
+
 **Response** (200 OK):
 
 ```json
@@ -724,12 +717,6 @@ At least one field must be provided.
     "description": "Added context after further analysis",
     "type": "patch",
     "source": "manual",
-    "created_by": {
-      "id": "uuid",
-      "username": "jdoe",
-      "full_name": "John Doe",
-      "active": true
-    },
     "created_at": "2026-04-21T14:30:00Z",
     "updated_at": "2026-04-22T09:15:00Z"
   }
@@ -764,6 +751,10 @@ A valid reference belonging to a different ticket returns
 
 **Response** (204 No Content)
 
+**Side effects**:
+- A `reference_deleted` audit event is created with `old_value` = the
+  reference URL
+
 **`Capability: manage_references`**
 
 **Error responses**:
@@ -777,10 +768,19 @@ See `docs/api-spec.md` for global and scoped responses.
 
 ## Ticket Event Logging
 
-Reference mutations (add, edit, delete) do **not** generate
-`TicketAuditEvent` records. References are supplementary external metadata
-and do not constitute ticket state changes. The `TicketAuditEventType` enum
-does not include reference-related event types.
+Manual reference mutations generate `TicketAuditEvent` records. Automatic
+reference operations (fetcher-driven) do NOT generate audit events — they
+are traceable via fetcher execution history.
+
+| Operation | Event types created |
+|-----------|---------------------|
+| Add (POST) | `reference_added` |
+| Update (PATCH) | One event per changed field: `reference_url_changed`, `reference_type_changed`, `reference_title_changed`, `reference_description_changed` |
+| Delete (DELETE) | `reference_deleted` |
+
+All reference audit events set `user_id` to the acting user.
+`comment` is always `NULL`. See `docs/features/tickets/ticket-audit-log.md`
+for the full event type contract and detail JSONB schema.
 
 ## Security
 
@@ -790,10 +790,8 @@ does not include reference-related event types.
 - Edit and delete operations are restricted to manual references
   (see Mutability)
 - All manual references are editable/deletable by any user with the
-  `manage_references` capability, regardless of who created them
-- References created by a user who is later deactivated remain unchanged;
-  the `created_by` user reference displays `active: false` per the User
-  References in Responses convention in `docs/api-spec.md`
+  `manage_references` capability, regardless of who created them. All
+  mutations are recorded in the ticket audit log for accountability
 - URL scheme is restricted to `https://` after normalization (input
   `http://` is upgraded; all other schemes are rejected)
 - The URL acceptance gate in `upsert_references()` provides defense-in-depth
