@@ -169,7 +169,7 @@ Error codes are grouped by prefix:
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE` |
 | `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_VERSION_MISMATCH`, `CVSS_DUPLICATE_ASSESSMENT` |
-| `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE` |
+| `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE`, `RESOURCE_NOT_EDITABLE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
 | `ROLE_MAPPING_*` | Role mapping operations | `ROLE_MAPPING_GROUP_NOT_FOUND`, `ROLE_MAPPING_INVALID_GROUP_CN` |
 | `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING`, `FETCHER_DEREGISTERED`, `FETCHER_DISABLED` |
@@ -635,6 +635,39 @@ to this value" and the field will reliably assume that value (barring
 validation errors), use PATCH. If the client perceives the operation as
 "perform this action" with guards, workflows, or irreversible
 consequences beyond the target field, use POST with an action verb.
+
+### Partial Update Semantics
+
+All PATCH endpoints follow partial update semantics inspired by RFC 7396
+(JSON Merge Patch). The request body includes only the fields the client
+wants to change. Three cases are distinguished:
+
+| Payload state              | Behavior                                        |
+|----------------------------|-------------------------------------------------|
+| Field **omitted**          | Current value is preserved (no change)           |
+| Field present with **value** | Field is updated to the provided value          |
+| Field present with **`null`** | Field is set to NULL in the database            |
+
+Sending `null` is only meaningful for fields that are nullable in the
+data model. Sending `null` for a non-nullable field results in a `422
+VALIDATION_ERROR`.
+
+When all fields in a PATCH request body are optional, the endpoint MUST
+reject an empty body (no fields provided) with `422 VALIDATION_ERROR`
+and the message `"At least one field must be provided."`. This does not
+apply to single-field PATCH endpoints where the field is required.
+
+Individual endpoint specifications document any domain-specific
+semantics that `null` may carry beyond "clear the value" (e.g.,
+resetting a computed value to automatic calculation, reverting to a
+system default). The partial update semantics defined here are the
+baseline; domain-specific meaning is additive.
+
+Implementation note: in Pydantic v2, distinguishing "field omitted" from
+"field explicitly set to `null`" requires a sentinel pattern (e.g., an
+`UNSET` constant as the field default) or inspecting `model_fields_set`
+after parsing. Standard `Optional[X] = None` conflates the two cases and
+MUST NOT be used for PATCH request schemas with nullable fields.
 
 ### Audit Trail Endpoint Naming
 

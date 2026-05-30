@@ -178,7 +178,8 @@ erDiagram
     TicketReference {
         UUID id PK
         UUID ticket_id FK "NOT NULL"
-        TEXT url "NOT NULL"
+        VARCHAR_2048 url "NOT NULL"
+        ENUM type "nullable"
         VARCHAR_100 source "NOT NULL"
         UUID created_by FK "nullable"
     }
@@ -1131,22 +1132,39 @@ Exits from the manual zone (Ignored, Duplicated) use the shared
 
 Stores external links associated with a ticket. References are created
 automatically by CVE fetchers during ingestion and can also be added
-manually by Vulnerability Analysts. See `docs/features/tickets/ticket-references.md` for
-the full specification.
+manually by users with the `manage_references` capability. See
+`docs/features/tickets/ticket-references.md` for the full specification.
 
-| Column     | Type           | Constraints                  | Description                        |
-|------------|----------------|------------------------------|------------------------------------|
-| id         | UUID           | PK                           | Internal identifier                |
-| ticket_id  | UUID           | FK(ticket.id), NOT NULL      | Related ticket                     |
-| url        | TEXT           | NOT NULL                     | URL of the external resource       |
-| title      | TEXT           | nullable                     | Optional human-readable label      |
-| source     | VARCHAR(100)   | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`, `"sync_cves_mitre"`) or `"manual"` for user-added references |
-| tags       | ARRAY(VARCHAR) | nullable                     | Descriptive tags from CVE data (e.g., `"Patch"`, `"Vendor Advisory"`) |
-| created_by | UUID           | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
-| created_at | TIMESTAMPTZ      | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at | TIMESTAMPTZ      | NOT NULL, DEFAULT            | Record update timestamp            |
+| Column      | Type                       | Constraints                  | Description                        |
+|-------------|----------------------------|------------------------------|------------------------------------|
+| id          | UUID                       | PK                           | Internal identifier                |
+| ticket_id   | UUID                       | FK(ticket.id) ON DELETE CASCADE, NOT NULL | Related ticket                     |
+| url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource       |
+| title       | VARCHAR(500)               | nullable                     | Human-readable label               |
+| description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
+| type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
+| source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`) or `"manual"` for user-added references |
+| created_by  | UUID                       | FK(user.id), nullable        | User who added the reference. NULL for automatic references created by fetchers |
+| created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |
 
 **Unique constraint**: (ticket_id, url)
+
+### ReferenceType Enum
+
+Classifies the content that a reference URL points to. Used by the
+`TicketReference.type` column.
+
+| Value      | Description                                              |
+|------------|----------------------------------------------------------|
+| `advisory` | Security advisory (NVD, GHSA, vendor advisory, VDB entry) |
+| `patch`    | Fix artifact: patch, commit, pull request, merge request |
+| `issue`    | Bug tracker entry, issue report                          |
+| `article`  | Blog post, write-up, technical analysis, mailing list post |
+
+A `NULL` type means the reference could not be classified. See
+`docs/features/tickets/ticket-references.md` (Type Auto-Classification)
+for the three-tier classification mechanism.
 
 ### AuditEventMixin
 

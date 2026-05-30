@@ -135,8 +135,10 @@ class MyConcreteFetcher(BaseFetcher):
 
     # Optional: URL pattern for human-readable CVE page.
     # Only applicable to CVE fetchers. When set, a TicketReference
-    # is automatically created with this URL for each processed CVE.
-    # Uses {cve_id} as placeholder (e.g., "CVE-2026-3317").
+    # with type=advisory is automatically created with this URL for
+    # each processed CVE. Uses {cve_id} as placeholder (e.g.,
+    # "CVE-2026-3317"). CVE fetchers MUST call
+    # reference_service.upsert_references() after cve_service.upsert_cve().
     # See docs/features/tickets/ticket-references.md for details.
     source_reference_url_pattern: str | None = None
 

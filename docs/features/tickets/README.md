@@ -11,7 +11,7 @@ ticket-mutations.md     ticket_mutations module contract (CVSS/severity mutation
 cve-tracking.md         CVE ingestion from NVD/MITRE, on-demand fetch
 cvss-scoring.md         Multi-provider CVSS assessments, severity resolution
 ticket-audit-log.md     TicketAuditEvent audit trail, event type contract
-ticket-references.md    External links on tickets (auto + manual fetcher ingestion)
+ticket-references.md    External links on tickets (auto-classified by type, manual with manage_references capability)
 ```
 
 ## Relationships
