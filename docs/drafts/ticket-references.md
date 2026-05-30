@@ -56,7 +56,7 @@ user choice). It is functionally equivalent to "uncategorized".
 | Column      | Type                       | Constraints                  | Description                        |
 |-------------|----------------------------|------------------------------|------------------------------------|
 | id          | UUID                       | PK                           | Internal identifier                |
-| ticket_id   | UUID                       | FK(ticket.id), NOT NULL      | Related ticket                     |
+| ticket_id   | UUID                       | FK(ticket.id) ON DELETE CASCADE, NOT NULL | Related ticket                     |
 | url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource       |
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
@@ -277,8 +277,15 @@ that differ only in casing or trailing slashes are treated as distinct.
   of `type`, `title`, and `description`: if the existing value is NULL
   and the new source provides a non-NULL value, update the field.
   Non-NULL values are never overwritten by a different source.
+- **Existing URL, manual source**: if the existing reference has
+  `source = "manual"`, the fetcher skips it entirely — no fields are
+  updated. This rule takes precedence over the cross-source
+  fill-in-NULL-only rule above.
 
-Manual references (`source = "manual"`) are never modified by fetchers.
+References are upserted individually within the batch. Each reference is
+attempted as an INSERT. If the unique constraint `(ticket_id, url)` is
+violated, the service catches the `IntegrityError`, re-queries the
+existing record, and applies the merge rules above.
 
 ### Example
 
@@ -304,7 +311,7 @@ manual references (`source = "manual"`) on any ticket **regardless of
 ticket status**, including tickets in a final status (Resolved, Ignored).
 References are supplementary metadata — adding, editing, or removing a
 link does not constitute a ticket state change and is not subject to the
-`require_ticket_mutable` guard.
+`ensure_ticket_operable()` guard.
 
 ### Automatic references
 
@@ -337,6 +344,16 @@ not receive new automatic references through fetcher activity.
   created by the periodic sync cycle when the fetcher next processes this
   CVE. This delay is accepted behavior — the VA can add manual
   references in the meantime if needed.
+
+### Ticket soft-delete
+
+When a ticket is soft-deleted, its existing references (both automatic
+and manual) are preserved unchanged in the database. While the ticket is
+soft-deleted, references are not modified — fetchers skip soft-deleted
+tickets (see `docs/features/tickets/cve-service.md`), and the API
+returns `410 TICKET_DELETED` for all sub-resource endpoints via the
+centralized `require_accessible_ticket` dependency. If the ticket is
+later restored, all references become accessible and modifiable again.
 
 ## Service Layer
 
@@ -373,10 +390,20 @@ async def upsert_references(
 - `source_url`: the fetcher's human-readable CVE page URL, pre-built
   from `source_reference_url_pattern` by the caller, or `None` if the
   fetcher does not define a pattern
-- `upstream_references`: normalized list of `{url, tags, name}` objects
-  extracted from the CVE data by the fetcher. `name` is the reference
-  title from the upstream data (MITRE CVE JSON 5.x `name` field), or
-  `None` when the source does not provide it (NVD API v2)
+- `upstream_references`: normalized list of references extracted from the
+  CVE data by the fetcher, typed as:
+
+  ```python
+  class UpstreamReference(TypedDict):
+      url: str                  # Reference URL from the CVE data
+      tags: list[str] | None    # Upstream tags (e.g., ["Patch", "Vendor Advisory"])
+      name: str | None          # Reference title from upstream data
+  ```
+
+  `name` is the reference title from the upstream data (MITRE CVE JSON
+  5.x `name` field), or `None` when the source does not provide it (NVD
+  API v2). `tags` carries the source classification labels consumed
+  during type auto-classification (see CVE Source Tag Mapping)
 
 The function handles: source reference creation, type classification
 (tag mapping → URL pattern → default), and the upsert strategy (see
@@ -533,7 +560,8 @@ Adds a manual reference to a ticket.
 
 **Validation rules**:
 - `url` must use `https` or `http` scheme (other schemes such as
-  `javascript:`, `data:`, `ftp:` are rejected)
+  `javascript:`, `data:`, `ftp:` are rejected) and contain a non-empty
+  host component
 - `url` must not exceed 2048 characters
 - `url` must not already exist for this ticket (unique constraint)
 - `title`, if provided, must not exceed 500 characters or be
@@ -576,7 +604,11 @@ When `url` is changed without an explicit `type` in the request body,
 `type` is re-evaluated from the new URL using URL pattern matching (see
 Type Auto-Classification). If the new URL matches a known pattern, the
 corresponding type is applied. If no pattern matches, `type` is set to
-`null`.
+`null`. When `type` is explicitly set to `null` in the request body, the
+type is cleared (set to NULL / uncategorized) regardless of the URL —
+consistent with partial update semantics where `null` means "clear the
+field". To trigger automatic re-classification from URL patterns, the
+user should change `url` and omit `type` from the request.
 
 **Request body**:
 
