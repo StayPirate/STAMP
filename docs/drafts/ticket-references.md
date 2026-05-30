@@ -142,7 +142,9 @@ URLs that do not match any pattern retain the type from tag mapping, or
 default to `other`.
 
 The pattern list is maintained in code and can be extended without schema
-changes.
+changes. Adding a new pattern does not retroactively reclassify existing
+references — new patterns apply only to references created or updated
+after the change.
 
 ## Fetcher Integration
 
@@ -186,11 +188,20 @@ pattern so that the URL is automatically added as a `TicketReference`.
 
 When a CVE fetcher processes a CVE (new or updated), the following
 reference-related steps are performed **after** the ticket exists (i.e.,
-after CVE upsert and ticket creation for new CVEs):
+after CVE upsert and ticket creation for new CVEs). The fetcher calls
+`reference_service.upsert_references()` (see Service Layer) with:
 
-1. **Source reference** (if `source_reference_url_pattern` is set):
-   upsert a `TicketReference` with:
-   - `url`: pattern with `{cve_id}` replaced (e.g.,
+- `source`: the fetcher name (e.g., `"sync_cves_nvd"`)
+- `source_url`: the source reference URL built from
+  `source_reference_url_pattern` (or `None`)
+- `upstream_references`: the normalized list of references from the CVE
+  data
+
+The service performs the following steps:
+
+1. **Source reference** (if `source_url` is provided): upsert a
+   `TicketReference` with:
+   - `url`: the source URL (e.g.,
      `https://nvd.nist.gov/vuln/detail/CVE-2026-3317`)
    - `title`: short label derived from the source name (e.g., `"NVD"`
      for `sync_cves_nvd`, `"MITRE"` for `sync_cves_mitre`)
@@ -198,8 +209,8 @@ after CVE upsert and ticket creation for new CVEs):
    - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
    - `created_by`: `NULL` (automatic)
 
-2. **CVE data references**: for each reference URL in the CVE data (e.g.,
-   the NVD API v2 `references` array), upsert a `TicketReference` with:
+2. **CVE data references**: for each reference in `upstream_references`,
+   upsert a `TicketReference` with:
    - `url`: the reference URL from the CVE data
    - `title`: `NULL` (not provided by most sources)
    - `description`: `NULL`
@@ -207,6 +218,10 @@ after CVE upsert and ticket creation for new CVEs):
      `other` (see Type Auto-Classification)
    - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
    - `created_by`: `NULL` (automatic)
+
+If a single reference upsert fails (e.g., a URL from upstream data
+exceeds the 2048-character limit), the service logs the failure and
+continues with the remaining references (skip-and-continue).
 
 There is no stale reference cleanup step. Fetchers only insert and update
 references — they never delete them. If an upstream source removes a
@@ -218,6 +233,9 @@ information at the URL.
 ### Upsert Strategy
 
 References are matched by `(ticket_id, url)` — the unique constraint.
+URL comparison is **literal**: no normalization is applied (no case
+folding, no trailing slash removal, no query parameter reordering). URLs
+that differ only in casing or trailing slashes are treated as distinct.
 
 - **New URL**: INSERT a new `TicketReference` with all fields from the
   fetcher data.
@@ -262,7 +280,8 @@ link does not constitute a ticket state change and is not subject to the
 Automatic references (`source != "manual"`) are system-managed. They are
 created and updated exclusively by fetchers. Users **cannot** edit or
 delete automatic references through the API — the PATCH and DELETE
-endpoints reject operations on automatic references with 403 Forbidden.
+endpoints reject operations on automatic references with
+`409 RESOURCE_NOT_EDITABLE`.
 
 This separation ensures:
 
@@ -275,6 +294,61 @@ This separation ensures:
 Fetchers do not process soft-deleted or inactive tickets (see
 `docs/features/tickets/cve-service.md`). A ticket in a final status will
 not receive new automatic references through fetcher activity.
+
+### CVE lifecycle events
+
+- **CVE dissociation**: when a CVE is dissociated from a ticket,
+  automatic references remain unchanged on the ticket. They continue to
+  be useful research links regardless of the CVE association status.
+- **CVE association with an existing CVE**: when a known CVE is
+  associated with a ticket (via `associate-cve` or ticket creation with
+  `cve_id`), references are **not** populated immediately. They are
+  created by the periodic sync cycle when the fetcher next processes this
+  CVE. This delay is accepted behavior — the VA can add manual
+  references in the meantime if needed.
+
+## Service Layer
+
+All reference operations are implemented through `reference_service`
+(`backend/app/services/reference_service.py`). Endpoint handlers and
+fetchers delegate to this service rather than performing database
+operations directly.
+
+| Function | Caller | Responsibility |
+|----------|--------|----------------|
+| `upsert_references()` | CVE fetchers (`execute`, `fetch_single`) | Batch upsert of automatic references with type classification and source ownership |
+| `create_reference()` | API POST handler | Create a manual reference with `source="manual"`, auto-classify type from URL |
+| `update_reference()` | API PATCH handler | Update a manual reference, enforce immutability of automatic references, re-evaluate type on URL change |
+| `delete_reference()` | API DELETE handler | Delete a manual reference, enforce immutability of automatic references |
+| `list_references()` | API GET handler | Query references with optional filters, ordered by type priority |
+
+All functions receive the database session from the caller (never create
+their own) to ensure transactional atomicity with the surrounding
+operation.
+
+### `upsert_references` signature
+
+```python
+async def upsert_references(
+    session: AsyncSession,
+    ticket_id: UUID,
+    source: str,
+    source_url: str | None,
+    upstream_references: list[UpstreamReference],
+) -> None
+```
+
+- `source`: the fetcher name (e.g., `"sync_cves_nvd"`)
+- `source_url`: the fetcher's human-readable CVE page URL, pre-built
+  from `source_reference_url_pattern` by the caller, or `None` if the
+  fetcher does not define a pattern
+- `upstream_references`: normalized list of `{url, tags}` objects
+  extracted from the CVE data by the fetcher
+
+The function handles: source reference creation, type classification
+(tag mapping → URL pattern → default), and the upsert strategy (see
+Upsert Strategy). Type classification logic is implemented internally
+via `_classify_type()`.
 
 ## API Endpoints
 
@@ -296,6 +370,11 @@ returned in a single response.
 | source    | string | —       | Filter by source (e.g., `"sync_cves_nvd"`, `"manual"`)  |
 | type      | string | —       | Filter by type (e.g., `"patch"`, `"advisory"`)           |
 
+The `type` parameter follows the enum filter validation convention in
+`docs/api-spec.md` — invalid values are silently ignored. The `source`
+parameter is a free-form string; non-matching values return an empty
+result set.
+
 **Sorting**: results are ordered by type group priority, then by
 `created_at` ascending within each group. The type group order is:
 
@@ -308,7 +387,8 @@ returned in a single response.
 | `other`    | 5             |
 
 Client-controlled sorting is not supported (small dataset, defined
-grouping order).
+grouping order). When a ticket has no references (or all are filtered
+out), the response returns `{"data": []}`.
 
 **Response** (200 OK):
 
@@ -394,8 +474,29 @@ Adds a manual reference to a ticket.
 | description | string | no       | Short note explaining relevance            |
 | type        | string | no       | Content type (`advisory`, `patch`, `issue`, `article`, `other`). If omitted, auto-detected from URL pattern; defaults to `other` if no pattern matches |
 
-**Response** (201 Created): the created reference object (same format as
-in the list response).
+**Response** (201 Created):
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "ticket_id": "uuid",
+    "url": "https://bugzilla.suse.com/show_bug.cgi?id=12345",
+    "title": "SUSE Bugzilla #12345",
+    "description": "Upstream confirmed the fix; tracking SUSE-side packaging",
+    "type": "issue",
+    "source": "manual",
+    "created_by": {
+      "id": "uuid",
+      "username": "jdoe",
+      "full_name": "John Doe",
+      "active": true
+    },
+    "created_at": "2026-04-21T14:30:00Z",
+    "updated_at": "2026-04-21T14:30:00Z"
+  }
+}
+```
 
 **Validation rules**:
 - `url` must use `https` or `http` scheme (other schemes such as
@@ -429,12 +530,19 @@ in the list response).
 PATCH /api/v1/tickets/{ticket_id}/references/{reference_id}
 ```
 
-Updates an existing **manual** reference. Only references with
-`source = "manual"` can be updated through this endpoint. Automatic
-references are system-managed and cannot be modified by users.
+Updates an existing manual reference (see Mutability for the
+automatic/manual distinction). Only the fields included in the request
+body are updated — omitted fields remain unchanged.
 
-Only the fields included in the request body are updated — omitted fields
-remain unchanged.
+The `reference_id` lookup is scoped to the `ticket_id` in the URL path.
+A valid reference belonging to a different ticket returns
+`404 RESOURCE_NOT_FOUND`.
+
+When `url` is changed without an explicit `type` in the request body,
+`type` is re-evaluated from the new URL using URL pattern matching (see
+Type Auto-Classification). If the new URL matches a known pattern, the
+corresponding type is applied. If no pattern matches, `type` is set to
+`other`.
 
 **Request body**:
 
@@ -455,20 +563,42 @@ remain unchanged.
 
 At least one field must be provided.
 
-**Response** (200 OK): the updated reference object (same format as in
-the list response).
+**Response** (200 OK):
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "ticket_id": "uuid",
+    "url": "https://bugzilla.suse.com/show_bug.cgi?id=12345",
+    "title": "Updated title",
+    "description": "Added context after further analysis",
+    "type": "patch",
+    "source": "manual",
+    "created_by": {
+      "id": "uuid",
+      "username": "jdoe",
+      "full_name": "John Doe",
+      "active": true
+    },
+    "created_at": "2026-04-21T14:30:00Z",
+    "updated_at": "2026-04-22T09:15:00Z"
+  }
+}
+```
 
 **`Capability: manage_references`**
 
 **Error responses**:
 
-| Status | Code                 | Condition                                                |
-|--------|----------------------|----------------------------------------------------------|
-| 403    | `FORBIDDEN`          | Reference is automatic (`source != "manual"`) — cannot be modified by users |
-| 404    | `TICKET_NOT_FOUND`   | Ticket does not exist or is soft-deleted                 |
-| 404    | `RESOURCE_NOT_FOUND` | Reference does not exist on this ticket                  |
-| 409    | `RESOURCE_CONFLICT`  | URL already exists for this ticket (if URL was changed)  |
-| 422    | `VALIDATION_ERROR`   | Invalid URL scheme, exceeds length limit, blank title/description, or invalid type value |
+| Status | Code                    | Condition                                                |
+|--------|-------------------------|----------------------------------------------------------|
+| 404    | `RESOURCE_NOT_FOUND`    | Reference does not exist on this ticket                  |
+| 409    | `RESOURCE_NOT_EDITABLE` | Reference is automatic (`source != "manual"`) — cannot be modified by users |
+| 409    | `RESOURCE_CONFLICT`     | URL already exists for this ticket (if URL was changed)  |
+| 422    | `VALIDATION_ERROR`      | Invalid URL scheme, exceeds length limit, blank title/description, or invalid type value |
+
+See `docs/api-spec.md` for global and scoped responses.
 
 ### Delete Reference
 
@@ -476,9 +606,12 @@ the list response).
 DELETE /api/v1/tickets/{ticket_id}/references/{reference_id}
 ```
 
-Deletes a **manual** reference. Only references with
-`source = "manual"` can be deleted through this endpoint. Automatic
-references are system-managed and cannot be removed by users.
+Deletes a manual reference (see Mutability for the automatic/manual
+distinction).
+
+The `reference_id` lookup is scoped to the `ticket_id` in the URL path.
+A valid reference belonging to a different ticket returns
+`404 RESOURCE_NOT_FOUND`.
 
 **Response** (204 No Content)
 
@@ -486,11 +619,12 @@ references are system-managed and cannot be removed by users.
 
 **Error responses**:
 
-| Status | Code                 | Condition                                        |
-|--------|----------------------|--------------------------------------------------|
-| 403    | `FORBIDDEN`          | Reference is automatic (`source != "manual"`) — cannot be deleted by users |
-| 404    | `TICKET_NOT_FOUND`   | Ticket does not exist or is soft-deleted          |
-| 404    | `RESOURCE_NOT_FOUND` | Reference does not exist on this ticket           |
+| Status | Code                    | Condition                                        |
+|--------|-------------------------|--------------------------------------------------|
+| 404    | `RESOURCE_NOT_FOUND`    | Reference does not exist on this ticket           |
+| 409    | `RESOURCE_NOT_EDITABLE` | Reference is automatic (`source != "manual"`) — cannot be deleted by users |
+
+See `docs/api-spec.md` for global and scoped responses.
 
 ## Ticket Event Logging
 
@@ -505,10 +639,12 @@ does not include reference-related event types.
 - Adding, editing, and deleting references requires the `manage_references`
   capability
 - Edit and delete operations are restricted to manual references
-  (`source = "manual"`); automatic references cannot be modified or
-  removed by users
+  (see Mutability)
 - All manual references are editable/deletable by any user with the
   `manage_references` capability, regardless of who created them
+- References created by a user who is later deactivated remain unchanged;
+  the `created_by` user reference displays `active: false` per the User
+  References in Responses convention in `docs/api-spec.md`
 - URL scheme is restricted to `https` and `http` to prevent injection of
   dangerous schemes (`javascript:`, `data:`, etc.)
 - See `docs/features/identity/rbac.md` for the full permission model
@@ -557,6 +693,62 @@ VA's research workflow.
 
 ---
 
+## Open Points
+
+> Resolve these before promoting the draft. Remove this section when all
+> points are resolved.
+
+### OP-1: Clearing optional fields via PATCH
+
+When a user has previously set `title` or `description` on a manual
+reference and wants to remove the value (set it back to NULL), what is
+the mechanism? Options under consideration:
+
+- (a) Sending `"title": null` in the JSON body clears the field
+  (distinguishing `null` from field omission)
+- (b) Sending `"title": ""` clears the field (empty string treated as
+  NULL)
+- (c) No clearing mechanism — once set, the value can only be changed,
+  not removed
+
+Best practice research needed before deciding.
+
+### OP-2: Source ownership in upsert strategy
+
+The upsert strategy (see Upsert Strategy) states: "Existing URL,
+different source: no modification. The first source to insert a URL
+retains ownership." This means if the NVD fetcher inserts a URL first,
+and the MITRE fetcher later encounters the same URL, MITRE's metadata
+(title, type) is discarded. Conversely, if a VA manually adds a URL
+that a fetcher later tries to upsert, the fetcher skips it — the manual
+reference retains ownership.
+
+Questions to resolve:
+
+- Is first-source-wins the correct policy for all cases?
+- Should fetchers be able to enrich an existing reference from another
+  fetcher (e.g., adding a type classification that the first fetcher
+  could not determine)?
+- What if a VA manually adds a URL with a specific title and
+  description, and a fetcher later encounters the same URL — should the
+  manual metadata be preserved (current behavior) or merged?
+
+### OP-3: TicketReference name collision
+
+The name `TicketReference` is used in two unrelated contexts:
+
+1. **This spec**: the `TicketReference` database table storing external
+   links on tickets
+2. **`cve-tracking.md`** (lines 132-138): a response sub-schema in the
+   CVE list API representing a pointer to a ticket (`{id, identifier}`)
+
+The collision is contextual (database entity vs. API sub-schema) and
+unlikely to cause confusion at the code level, but could mislead
+developers reading both specs. Consider renaming the CVE list API
+sub-schema (e.g., `TicketSummary`, `TicketRef`) in `cve-tracking.md`.
+
+---
+
 ## Migration Plan
 
 > Remove this section when the draft is promoted to the official
@@ -578,8 +770,8 @@ The following changes are required across the codebase when promoting.
 | Edit/Delete scope | Any reference (automatic or manual) | Manual references only; automatic references are immutable by users |
 | Type auto-classification | Not present | Three-tier: CVE tags → URL patterns → default |
 | URL validation | Not specified | Scheme whitelist (https, http), max length |
-| 404 error codes | Single `RESOURCE_NOT_FOUND` for both ticket and reference | Separate `TICKET_NOT_FOUND` and `RESOURCE_NOT_FOUND` |
-| 403 error | Not present | `FORBIDDEN` when attempting to edit/delete automatic references |
+| Immutability error | Not present | `409 RESOURCE_NOT_EDITABLE` when attempting to edit/delete automatic references |
+| Service layer | Not present | `reference_service` centralizes all reference operations |
 
 ### Step 1: Replace the existing specification
 
@@ -643,7 +835,8 @@ file.
    auto-classification instead of tags
 2. **Lines 218-223** (ticket creation side effects): remove mention of
    stale cleanup, reference new upsert-only behavior and type
-   classification
+   classification. Update fetchers to call
+   `reference_service.upsert_references()` post-upsert
 3. **Lines 416-421** (NVD fetcher algorithm step h): update to describe
    type classification from NVD tags, remove stale cleanup step
 4. **Line 527** (Vulnrichment fetcher): update reference creation
@@ -651,6 +844,10 @@ file.
 5. **Line 670** (Kernel CVE fetcher): update reference creation
    description
 6. **Lines 933-934** (cross-references): no change (path is the same)
+7. **Terminology**: replace "VAs" with "users with the
+   `manage_references` capability" in sections describing manual
+   reference creation (capability-based language is more accurate since
+   `automation_agent` also has this capability)
 
 ### Step 5: Update cve-service.md
 
@@ -663,14 +860,22 @@ file.
 
 1. **Lines 137-141** (source_reference_url_pattern comment): add mention
    that the created reference has `type = advisory`
-2. **Lines 1129-1130** (checklist item): no substantive change needed
+2. Add note: "CVE fetchers MUST call
+   `reference_service.upsert_references()` after
+   `cve_service.upsert_cve()`"
+3. **Lines 1129-1130** (checklist item): no substantive change needed
 
 ### Step 7: Update README files
 
 1. **`docs/features/tickets/README.md` line 14**: update description
 2. **`docs/features/README.md` line 63**: update description
 
-### Step 8: Verify cross-reference integrity
+### Step 8: Update api-spec.md
+
+1. **Error Code Categories** (line 172): add `RESOURCE_NOT_EDITABLE` to
+   the `RESOURCE_*` examples list
+
+### Step 9: Verify cross-reference integrity
 
 Files that reference `ticket-references.md` or `TicketReference` but
 need **no changes** (verified):
@@ -685,7 +890,7 @@ need **no changes** (verified):
   endpoint permission map remain unchanged (same 4 endpoints, same
   paths, same access levels)
 
-### Step 9: Post-promotion reviews
+### Step 10: Post-promotion reviews
 
 Run in parallel after all files are updated:
 
