@@ -129,7 +129,7 @@ Concrete fetchers MUST implement:
 
 ```python
 class MyConcreteFetcher(BaseFetcher):
-    name: str = "my_fetcher"             # unique identifier, snake_case
+    name: str = "my_fetcher"             # unique identifier, snake_case, max 100 chars
     description: str = "Human-readable description"
     default_schedule: str = "0 */6 * * *"  # cron expression (every 6h)
 
@@ -156,6 +156,14 @@ class MyConcreteFetcher(BaseFetcher):
         """
         ...
 ```
+
+The `name` attribute MUST NOT exceed **100 characters**. This limit is
+imposed by the `VARCHAR(100)` column type used for `fetcher_name` across
+the `FetcherConfig` (PK), `FetcherRun`, `FetcherRunWeeklyAggregate`,
+and `FetcherAuditEvent` tables. The `name` value also propagates to
+`TicketReference.source` (`VARCHAR(100)`) for automatic references
+created by CVE fetchers — exceeding the limit would cause a database
+constraint violation.
 
 ## On-demand Single-Item Fetch
 

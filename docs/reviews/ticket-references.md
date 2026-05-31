@@ -46,31 +46,19 @@
 
 ### TRF-GAP-10 — Concurrent PATCH on same manual reference -- no locking specified (Low)
 
-**Category**: Temporal/Concurrency
-**Status**: OPEN
-
-Two VAs with manage_references capability both edit the same manual reference simultaneously. Since the spec does not mention pessimistic locking for reference operations, the last write wins. Given references are supplementary metadata (not gate-affecting), this is low severity.
+**Status**: RESOLVED — Accepted risk: last-write-wins on concurrent PATCH accepted for supplementary metadata; audit trail may show stale old_value under concurrent edits, consistent with ticket-audit-log.md documentation that modules without FOR UPDATE may produce stale entries (2026-05-31)
 
 ### TRF-GAP-11 — Empty upstream_references list behavior not explicitly documented (Low)
 
-**Category**: Boundary Conditions
-**Status**: OPEN
-
-When a CVE has no references in its upstream data, upstream_references would be an empty list. The spec does not explicitly state whether upsert_references() handles an empty list gracefully. It should be a no-op for the CVE data references portion.
+**Status**: RESOLVED — Fixed: added explicit documentation of empty upstream_references list boundary condition in Ingestion Flow section (2026-05-31)
 
 ### TRF-GAP-12 — Case-insensitive path matching deviates from RFC 3986 (Low)
 
-**Category**: Configuration/Defaults
-**Status**: OPEN
-
-The spec says case-insensitive matching for both host and path. However, URL paths are case-sensitive per RFC 3986. While this only broadens matching, the deviation is worth acknowledging explicitly.
+**Status**: RESOLVED — Fixed: added explicit acknowledgement of RFC 3986 §3.3 path case-sensitivity deviation with design rationale in URL Pattern Matching section (2026-05-31)
 
 ### TRF-GAP-13 — Manual references on CVE-less tickets then CVE associated -- lifecycle path undocumented (Low)
 
-**Category**: Data Lifecycle
-**Status**: OPEN
-
-Tickets created manually without a CVE can have manual references added. When a CVE is later associated, the fetcher's upsert strategy would correctly skip matching URLs (existing URL, manual source -> skip). This is implicitly handled but not explicitly documented as a lifecycle path.
+**Status**: RESOLVED — Fixed: added explicit CVE-less ticket lifecycle path documentation in CVE lifecycle events section with cross-reference to Upsert Strategy (2026-05-31)
 
 ---
 
@@ -96,31 +84,19 @@ _No issues found._
 
 ### TRF-DES-04 — No user override path for automatic reference metadata (Low)
 
-**Category**: Complexity vs simplicity
-**Status**: OPEN
-
-Automatic references are system-managed and users cannot edit or delete them. If an automatic reference has a misleading auto-classified type, the VA cannot correct it. The only workaround is adding a separate manual reference with a different URL. Acceptable for v1.
+**Status**: RESOLVED — Accepted risk: no user override for automatic reference metadata accepted for v1; type is a presentation-only attribute with no gate impact (2026-05-31)
 
 ### TRF-DES-05 — Unbounded reference count per ticket with no safeguard (Low)
 
-**Category**: Scalability and maintainability
-**Status**: OPEN
-
-No upper bound enforced. High-profile CVEs could accumulate 300-500 references. The unpaginated GET returns all of them. Monitor reference counts in production before adding complexity. Response payload for 500 small objects is ~200KB -- within HTTP limits.
+**Status**: RESOLVED — Accepted risk: unbounded reference count with monitoring-first strategy; ~200KB payload for 500 references within HTTP limits (2026-05-31)
 
 ### TRF-DES-06 — Cross-source fill-in-NULL-only rule may preserve stale type classification (Low)
 
-**Category**: Edge cases and risks
-**Status**: OPEN
-
-If the first source inserts a reference with an incorrect type from URL pattern matching (tier 3), a later source with correct tag-level classification (tier 2) cannot correct it because the cross-source rule prevents overwriting non-NULL values. Uncommon scenario since URL patterns are generally accurate.
+**Status**: RESOLVED — Accepted risk: cross-source fill-in-NULL-only preserving stale type classification accepted; scenario uncommon with URL patterns targeting well-known domains, impact cosmetic only (2026-05-31)
 
 ### TRF-DES-07 — Source column uses free-form strings with no schema validation (Low)
 
-**Category**: Design alternatives
-**Status**: OPEN
-
-The source column is VARCHAR(100) storing fetcher names with no FK or enum constraint. If a fetcher is renamed, existing references retain the old source name with no way to detect the discrepancy. Not worth the migration cost -- the VARCHAR approach is consistent with CVESource.source.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes; source field stability documented at line 324 of spec, VARCHAR rationale documented in data-model.md (2026-05-31)
 
 ---
 
@@ -136,10 +112,7 @@ The source column is VARCHAR(100) storing fetcher names with no FK or enum const
 
 ### TRF-SEC-03 — Unpaginated GET endpoint with no upper bound (Medium)
 
-**Category**: Denial of Service
-**Status**: OPEN
-
-The GET endpoint returns all references in a single response with no pagination or hard cap. Combined with no rate limiting, this could produce arbitrarily large responses.
+**Status**: RESOLVED — Accepted risk: unpaginated endpoint with no hard cap is a calculated risk; reference count expected to stay within operational limits; rate limiting documented as not enforced at api-spec.md level (2026-05-31)
 
 ### TRF-SEC-04 — No audit trail for reference mutations (Medium)
 
@@ -147,24 +120,15 @@ The GET endpoint returns all references in a single response with no pagination 
 
 ### TRF-SEC-05 — URL validation does not check for host component validity (Low)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-The spec validates scheme and requires non-empty host but does not specify validation against private/internal network addresses (SSRF-adjacent risk). While references are not fetched server-side, they are rendered as clickable links. A URL pointing to an internal service could be used for social engineering if a VA clicks it. Low severity because URLs are not fetched by the server.
+**Status**: RESOLVED — Accepted risk: no private/internal network address filtering; URLs never fetched server-side, internal SUSE links are legitimate use case, manual references gated by manage_references capability (2026-05-31)
 
 ### TRF-SEC-06 — No URL content sanitization beyond scheme check (Low)
 
-**Category**: Input Validation (XSS)
-**Status**: OPEN
-
-The spec validates URL scheme but does not mention sanitization of the URL string itself for characters that could cause issues when rendered in HTML attributes. The frontend must treat url as untrusted user input. The spec's Security section doesn't explicitly call out the frontend rendering obligation.
+**Status**: RESOLVED — Accepted risk: frontend rendering security is a cross-cutting concern to be addressed in ui-design-system.md during UI implementation per Guardrail 21 placement rules (2026-05-31)
 
 ### TRF-SEC-07 — source field on automatic references is an unsanitized string (Low)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-The source column is populated from the fetcher name for automatic references. Fetcher names are code-defined, so low risk. However, no validation on the service layer for automatic references -- if a fetcher name exceeds 100 chars, it would cause a database error. Implementation robustness concern more than security vulnerability.
+**Status**: RESOLVED — Addressed in fetcher-infrastructure.md: added explicit MUST constraint on BaseFetcher.name length (max 100 chars) in Abstract Interface section (2026-05-31)
 
 ### TRF-SEC-08 — No ownership check on edit/delete -- any user with capability can modify any manual reference (Low)
 
@@ -172,10 +136,7 @@ The source column is populated from the fetcher name for automatic references. F
 
 ### TRF-SEC-09 — No URL normalization creates bypass potential (Low)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-No normalization applied for URL comparison. The unique constraint (ticket_id, url) can be bypassed to create near-duplicate references. Not directly exploitable but could be used to clutter a ticket.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes — URL Normalization section added to spec prevents the described bypass (2026-05-31)
 
 ---
 
@@ -183,21 +144,12 @@ No normalization applied for URL comparison. The unique constraint (ticket_id, u
 
 ### TRF-API-01 — Unpaginated list endpoint missing meta convention clarification (Low)
 
-**Category**: Response envelope
-**Status**: OPEN
-
-The GET response shows {"data": [...]} without meta, which is correct per api-spec.md for unpaginated endpoints. However, the spec does not explicitly state "no meta object" to distinguish from paginated endpoints. An explicit mention would be clearer for implementers.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable — api-spec.md already explicitly states meta is present only on paginated endpoints; duplicating in feature spec would violate Guardrail 21 (2026-05-31)
 
 ### TRF-API-02 — Sorting documentation could reference sort_by/sort_order convention explicitly (Low)
 
-**Category**: Sorting
-**Status**: OPEN
-
-The spec says "Client-controlled sorting is not supported" which is conformant. However, it could be more explicit by noting that sort_by and sort_order parameters are not accepted, to make it unambiguous for implementers.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable — api-spec.md Sorting convention already defines sort_by/sort_order; repeating parameter names per-endpoint would violate Guardrail 21 (2026-05-31)
 
 ### TRF-API-03 — PATCH endpoint doesn't explicitly state empty-body rejection (Low)
 
-**Category**: Mutation patterns
-**Status**: OPEN
-
-The PATCH endpoint states "At least one field must be provided" but does not explicitly state the 422 VALIDATION_ERROR response for empty body in the error table. The constraint is mentioned but the specific error response is not called out.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable — empty body rejection is a cross-cutting convention in api-spec.md Partial Update Semantics, explicitly referenced by the spec; endpoint error tables list only endpoint-specific errors (2026-05-31)

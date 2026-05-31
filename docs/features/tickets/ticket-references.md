@@ -162,6 +162,14 @@ both automatic and manual references.
 | `lists.apache.org/*`                   | `article`     |
 
 Patterns are matched case-insensitively against the URL host and path.
+Case-insensitive host matching conforms to RFC 3986 §3.2.2.
+Case-insensitive path matching deviates from RFC 3986 §3.3 (which
+defines paths as case-sensitive). This is a deliberate choice: it
+broadens classification matching without narrowing it, and the risk of
+false-positive classification is negligible because the URL patterns
+target well-known domains where path case variants point to the same
+resource.
+
 URLs that do not match any pattern remain with `type = NULL`
 (uncategorized).
 
@@ -265,7 +273,13 @@ The service performs the following steps:
    - `description`: `NULL`
    - `type`: auto-classified from source tags, then URL pattern, then
      `NULL` (see Type Auto-Classification)
-   - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
+       - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
+
+When `upstream_references` is an empty list, step 2 is a no-op — no
+reference records are created or updated from CVE data. Step 1 (source
+reference) executes normally if `source_url` is provided. The caller
+must not skip the `upsert_references()` call when there are no upstream
+references, because source reference creation is independent.
 
 **Transaction boundary**: `upsert_references()` runs in a **separate
 transaction** from `cve_service.upsert_cve()`. Although both receive
@@ -421,6 +435,15 @@ that have changed.
   created by the periodic sync cycle when the fetcher next processes this
   CVE. This delay is accepted behavior — the VA can add manual
   references in the meantime if needed.
+
+When a CVE is associated with a ticket that already has manual references
+(e.g., references added by a VA while the ticket had no CVE), the
+fetcher applies the standard upsert strategy at the next sync cycle.
+URLs already present as manual references are skipped per the "existing
+URL, manual source" match rule — the VA's chosen title, description, and
+type are preserved. Only URLs not yet present on the ticket are added as
+automatic references. See the Upsert Strategy section for the full merge
+rules.
 
 ### Ticket soft-delete
 
