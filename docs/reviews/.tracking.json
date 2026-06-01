@@ -80,6 +80,11 @@
         "not_reviewed": []
       }
     },
+    "cpe-package-mapping": {
+      "enabled": true,
+      "abbr": "CPM",
+      "cache": null
+    },
     "cve-service": {
       "enabled": true,
       "abbr": "CVES",

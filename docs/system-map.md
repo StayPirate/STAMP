@@ -158,13 +158,6 @@ erDiagram
         FLOAT percentile
     }
 
-    CVECPEMatch {
-        UUID id PK
-        UUID cve_id FK
-        VARCHAR criteria
-        BOOLEAN vulnerable
-    }
-
     Ticket {
         UUID id PK
         INTEGER sequence_id UK
@@ -367,7 +360,6 @@ erDiagram
     CVE ||--o| CVESSVCAssessment : "has SSVC assessment"
     CVE ||--o| CVEKEVEntry : "is in KEV catalog"
     CVE ||--o| CVEEPSSScore : "has EPSS score"
-    CVE ||--o{ CVECPEMatch : "has NVD CPE matches"
     CVE |o--o| Ticket : "tracked by"
 
     Ticket ||--o{ TicketAuditEvent : "has events"
@@ -411,7 +403,7 @@ erDiagram
 | Group | Tables | Purpose |
 |-------|--------|---------|
 | **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier | Vulnerability data from external sources — drives ticket creation and severity |
-| **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore, CVECPEMatch | Supplementary CVE intelligence from secondary sources (CISA, FIRST, NVD CPE) |
+| **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore | Supplementary CVE intelligence from secondary sources (CISA, FIRST) |
 | **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
 | **Identity Domain** | User, UserRole, RoleMapping, Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
@@ -605,7 +597,7 @@ visibility but is not a gate condition.
 
 ## Feature Specification Map
 
-How the 30 feature specifications relate to each other. Arrows indicate
+How the 31 feature specifications relate to each other. Arrows indicate
 dependencies (A → B means A depends on or references B). Specs are
 grouped by domain. See individual specs in [features/](features/).
 
@@ -621,6 +613,7 @@ flowchart TD
         CVE["cve-tracking"]
         CVSS["cvss-scoring"]
         REFS["references"]
+        CPE_MAP["cpe-package-mapping"]
     end
 
     subgraph integration["External Integration"]
@@ -649,6 +642,8 @@ flowchart TD
     CVE --> TICKETS
     CVE --> CVSS
     CVE --> REFS
+    CVE --> CPE_MAP
+    CPE_MAP --> PKG
     CVSS --> TICKETS
     CVSS --> PKG
 
@@ -703,6 +698,7 @@ other feature:
 | [cve-tracking](features/tickets/cve-tracking.md) | Ingestion | CVE sync from NVD, MITRE, and other sources |
 | [cvss-scoring](features/tickets/cvss-scoring.md) | Ingestion | Multi-provider CVSS assessment and severity derivation |
 | [references](features/tickets/ticket-references.md) | Ingestion | External links on tickets (auto and manual) |
+| [cpe-package-mapping](features/packages/cpe-package-mapping.md) | Ingestion | CPE-to-package resolution via static mapping file |
 | [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, bugowners |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
 | [package-bugowner](features/packages/package-bugowner.md) | Integration | IBS package maintainer cache |

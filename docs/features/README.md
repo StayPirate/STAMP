@@ -44,6 +44,7 @@ Index of all feature specification domains.
 - [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — SR/RR tracking via RabbitMQ + periodic sync
 - [package-bugowner.md](packages/package-bugowner.md) — IBS bugowner resolution and cache
 - [maintainer.md](packages/maintainer.md) — Maintainer operations (pending fixes, in-progress, completed)
+- [cpe-package-mapping.md](packages/cpe-package-mapping.md) — CPE-to-package resolution via static mapping file
 
 ### Platform
 

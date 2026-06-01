@@ -33,7 +33,6 @@ flowchart TB
         CVESSVCAssessment
         CVEKEVEntry
         CVEEPSSScore
-        CVECPEMatch
     end
 
     subgraph packages["Package Model"]
@@ -66,7 +65,6 @@ flowchart TB
     CVE --> CVESSVCAssessment
     CVE --> CVEKEVEntry
     CVE --> CVEEPSSScore
-    CVE --> CVECPEMatch
     CVE -->|"0..1 : 0..1"| Ticket
     Ticket --> TicketAuditEvent
     Ticket --> TicketAccessGrant
@@ -142,12 +140,6 @@ erDiagram
         FLOAT score "NOT NULL"
         FLOAT percentile "NOT NULL"
     }
-    CVECPEMatch {
-        UUID id PK
-        UUID cve_id FK "NOT NULL"
-        VARCHAR_255 criteria "NOT NULL"
-        BOOLEAN vulnerable "NOT NULL"
-    }
     Ticket {
         UUID id PK
         INTEGER sequence_id UK "auto-increment"
@@ -194,7 +186,6 @@ erDiagram
     CVE ||--o| CVESSVCAssessment : "has SSVC assessment"
     CVE ||--o| CVEKEVEntry : "is in KEV catalog"
     CVE ||--o| CVEEPSSScore : "has EPSS score"
-    CVE ||--o{ CVECPEMatch : "has NVD CPE matches"
     CVE |o--o| Ticket : "tracked by"
     Ticket ||--o{ TicketAccessGrant : "has access grants"
     Ticket ||--o{ TicketAuditEvent : "has events"
@@ -577,7 +568,7 @@ the general affected version model. See
 | version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
 | status | VARCHAR(20) | nullable | `"affected"` / `"unaffected"` |
 | program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
-| cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Distinct from NVD CPE applicability statements used for package resolution (see `CVECPEMatch`) |
+| cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Distinct from NVD CPE applicability statements used for package resolution (see `docs/features/packages/cpe-package-mapping.md`) |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 Records are replaced (delete-and-reinsert per `(cve_id,
@@ -695,56 +686,6 @@ reflects the last assessment before the ticket left the active scope
 and may be stale. If the UI chooses to display it for non-active
 tickets, it SHOULD include a staleness indicator (e.g., "Last
 assessed: {date}").
-
-### CVECPEMatch
-
-Stores NVD CPE applicability data in a simplified flat structure.
-NVD `configurations` use a complex boolean tree (AND/OR nodes with
-negate flags and version ranges), but Sentinel flattens this to
-individual `cpeMatch` entries. SUSE backports fixes to older versions,
-making upstream version ranges meaningless for SUSE package
-affectedness — only the CPE identity matters for package resolution.
-
-Each `cpeMatch` entry is extracted from NVD `configurations` and
-stored as a flat row. Package resolution maps the CPE to a SUSE
-source package and calls `package_service.add_package_to_ticket()`.
-The VA then determines affectedness manually per track.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | UUID | PK | Internal identifier |
-| cve_id | UUID | FK(cve.id) ON DELETE CASCADE, NOT NULL | Parent CVE |
-| criteria | VARCHAR(255) | NOT NULL | CPE 2.3 match string (e.g., `cpe:2.3:o:linux:linux_kernel:*:*:*:*:*:*:*:*`) |
-| vulnerable | BOOLEAN | NOT NULL | Whether this CPE is marked as vulnerable in the NVD configuration |
-| match_criteria_id | UUID | nullable | NVD's match criteria identifier (references the NVD CPE Dictionary) |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
-
-Records are replaced (delete-and-reinsert per `cve_id`), never
-updated in place — only `created_at` is included (no `updated_at`),
-consistent with `CVEAffectedVersion` and `ProductRepository`.
-
-**Deduplication**: delete-and-reinsert per `cve_id`. Each NVD sync
-deletes all existing rows for the given `cve_id` and inserts the
-complete set from the NVD response.
-
-**Safety-net unique constraint**: `UNIQUE (cve_id, criteria, vulnerable)`
-
-**Downstream persistence on CPE removal**: when NVD removes a CPE
-from a CVE's `configurations` (e.g., incorrect CPE corrected by NVD),
-the delete-and-reinsert correctly removes the `CVECPEMatch` row.
-However, `TicketPackage`, `TicketPackageTrack`, and
-`TicketPackageProduct` records created from the removed CPE via
-`add_package_to_ticket()` are **retained**. These records are linked
-to the ticket (not to `CVECPEMatch`) and represent the VA's triage
-work. The VA may remove the package manually if it is no longer
-relevant.
-
-**Diff detection for package resolution**: when the NVD sync processes
-a CVE, it compares the incoming `cpeMatch` set against the stored
-`CVECPEMatch` rows. Package resolution (Phase 2) is triggered only
-for CPEs that are new (not present in the previous sync), avoiding
-redundant SMELT queries for already-processed CPEs. See
-`docs/features/tickets/cve-service.md` (Post-Ingestion Side Effects).
 
 ### SystemSetting
 
@@ -1540,12 +1481,12 @@ TBD — will be defined based on query patterns during implementation.
   `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
   `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, `RoleMapping`,
-  `CVEAffectedVersion`, and `CVECPEMatch`
+  and `CVEAffectedVersion`
   only have `created_at` because they are immutable write-once records or are
   replaced rather than updated in place; `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for
   write-once records) and has no `updated_at` —
-  `ProductRepository`, `CVEAffectedVersion`, and `CVECPEMatch` records are
+  `ProductRepository` and `CVEAffectedVersion` records are
   replaced via delete-and-reinsert during sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
   group membership changes)

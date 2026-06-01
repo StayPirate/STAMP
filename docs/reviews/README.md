@@ -26,7 +26,9 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-18 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [cve-service](cve-service.md) | 15 | 4 | 8 | 10 | 🟢 | 37 | 2026-05-31 |  |
+| cpe-package-mapping | — | — | — | — | — | — | — |  |
+|  |  |  |  |  |  |  |  |  |
+| [cve-service](cve-service.md) | 15 | 4 | 8 | 10 | 🟢 | 37 | 2026-05-31 | ⚠️ |
 | | 1:🔴 7:🟠 7:🟡 | 1:🟠 3:🟡 | 3:🟠 5:🟡 | 4:🟠 6:🟡 |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |

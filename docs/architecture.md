@@ -211,7 +211,8 @@ active source. See the data sources catalog for the full picture.
 2. Workers fetch CVE data from configured sources
 3. New/updated CVEs are stored in PostgreSQL
 4. A Ticket is created automatically for each new CVE
-5. Sentinel attempts to map CPE data to source package names
+5. Sentinel resolves CPE data to SUSE source package names via the
+   static CPE mapping (see `docs/features/packages/cpe-package-mapping.md`)
 6. For mapped packages, SMELT is queried to resolve tracks and products
 7. TicketPackage, TicketPackageTrack, and TicketPackageProduct records are
    created automatically with status ANALYSIS

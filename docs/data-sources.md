@@ -811,5 +811,4 @@ schema details are in `docs/data-model.md`.
 | `CVESSVCAssessment` | CISA SSVC decision points (1:1 with CVE) | `sync_cves_mitre` (ADP block) |
 | `CVEKEVEntry` | CISA KEV catalog data (1:1 with CVE) | `sync_cisa_kev`, `sync_cves_mitre` (ADP block) |
 | `CVEEPSSScore` | FIRST EPSS score snapshot (1:1 with CVE, overwritten daily) | `sync_epss` |
-| `CVECPEMatch` | NVD CPE applicability data (flattened from NVD `configurations`) | `sync_cves_nvd` |
 | `CVEExternalIdentifier` | External vulnerability identifiers (e.g., GHSA-ID) | `sync_ghsa` (+ future fetchers) |

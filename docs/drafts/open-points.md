@@ -256,3 +256,70 @@ strategy (WARNING + optional webhook notification to ops channel), (c)
 whether to also emit a `TicketAuditEvent` for drift corrections (to
 distinguish admin-triggered reconciliation from bug-induced drift in
 the audit trail).
+
+---
+
+## 7. Platform Status Monitoring — System Info Endpoint and Admin Page
+
+**Origin**: CPE-to-Package mapping v2 draft
+(`docs/drafts/cpe-package-mapping-v2.md`) — the static mapping file is
+loaded once at application startup with no runtime observability. An
+administrator has no way to verify the mapping is correctly loaded or
+how many entries it contains.
+
+**Context**: Sentinel currently has no system info or diagnostics
+surface beyond the minimal `/health` liveness endpoint. The fetcher
+dashboard monitors `BaseFetcher` subclasses with execution lifecycle
+(runs, metrics, schedules), but infrastructure components that are not
+fetchers — such as in-memory static data, connection pools, or loaded
+configuration — have no monitoring surface.
+
+The CPE mapping dict (~2,450 entries, ~2,800 package mappings) is the
+first concrete case, but the need is broader: any static data loaded at
+startup, future sync diagnostics (referenced in
+`ibs-product-release-detection.md`), and general platform health
+indicators would benefit from a dedicated monitoring area.
+
+**Proposed approach**: two complementary mechanisms (not mutually
+exclusive):
+
+**(A) Lightweight public endpoint** — `GET /api/v1/system/info`
+
+A public read-only endpoint that reports the status of loaded
+infrastructure components. Initial payload:
+
+```json
+{
+  "data": {
+    "cpe_mapping": {
+      "loaded": true,
+      "entry_count": 2453,
+      "package_count": 2810
+    }
+  }
+}
+```
+
+Follows the IBS consumer status pattern (`GET
+/api/v1/ibs-consumer/status`) — a non-fetcher infrastructure
+component reporting its state via a dedicated endpoint. Useful for
+API consumers, health checks, and automated monitoring.
+
+**(C) Dedicated System Info admin page**
+
+A new page in the admin area (sidebar item under Admin Settings) backed
+by `GET /api/v1/admin/system-info`. Shows platform status information
+with admin-only details (file paths, version info, loaded module
+diagnostics). Room for growth: future sync diagnostics, data freshness
+indicators, dependency health.
+
+Options A and C can coexist: A provides a public API surface for
+monitoring tools and scripts, C provides a richer admin UI with
+additional detail. The public endpoint exposes a subset of the
+information available on the admin page.
+
+**Decision needed**: (a) whether to implement A alone first (minimal
+scope) or A+C together, (b) which additional platform components
+beyond CPE mapping should be included in the initial version, (c)
+capability requirement for the admin page (reuse `manage_settings`
+or a new `view_system_info` capability).
