@@ -83,7 +83,18 @@
     "cpe-package-mapping": {
       "enabled": true,
       "abbr": "CPM",
-      "cache": null
+      "cache": {
+        "last_review": "2026-06-01T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 2, "L": 2 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 1, "L": 4 },
+          "SEC": { "H": 0, "M": 0, "L": 3 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 1,
+        "not_reviewed": []
+      }
     },
     "cve-service": {
       "enabled": true,

@@ -143,16 +143,16 @@ that time.
 
 1. Verify the `cpe:2.3:` prefix. If absent, treat as a parse error
 2. Strip the prefix
-3. Replace escaped colons (`\:`) with a placeholder character (e.g.,
-   `\x00`) to protect them from the field split
-4. Split on `:` (simple split on unescaped colons)
-5. Restore escaped colons: replace the placeholder back to `:` in each
-   field value
-6. Extract fields by index:
+3. Check if the remaining string contains `\:` (escaped colon). If yes,
+   log a warning and skip the CPE entirely (return empty set). Escaped
+   colons in vendor/product fields would produce ambiguous lookup keys
+   that cannot be reliably matched against the mapping
+4. Split on `:` (simple split)
+5. Extract fields by index:
    - Index 0: `part` (e.g., `a` for application)
    - Index 1: `vendor` (e.g., `apache`)
    - Index 2: `product` (e.g., `commons_compress`)
-7. Form the lookup key: `vendor:product` (e.g.,
+6. Form the lookup key: `vendor:product` (e.g.,
    `apache:commons_compress`). The function extracts only `vendor` and
    `product`, discarding all other fields (part, version, update, etc.)
 
@@ -165,27 +165,23 @@ Split:  [a, apache, commons_compress, 1.21, *, *, *, *, *, *, *]
 Key:    apache:commons_compress
 ```
 
-**Example** (escaped colon):
+**Example** (escaped colon — skipped):
 
 ```
-Input:    cpe:2.3:a:foo\:bar:product:*:*:*:*:*:*:*:*
-Strip:    a:foo\:bar:product:*:*:*:*:*:*:*:*
-Replace:  a:foo\x00bar:product:*:*:*:*:*:*:*:*
-Split:    [a, foo\x00bar, product, *, *, *, *, *, *, *, *]
-Restore:  [a, foo:bar, product, *, *, *, *, *, *, *, *]
-Key:      foo:bar:product
+Input:  cpe:2.3:a:foo\:bar:product:*:*:*:*:*:*:*:*
+Strip:  a:foo\:bar:product:*:*:*:*:*:*:*:*
+Result: contains '\:', log warning, return empty set (no lookup)
 ```
 
 **Escaped colons**: the CPE 2.3 specification allows escaped colons
-(`\:`) in field values. In practice, escaped colons in vendor or product
-names are extremely rare in NVD data and absent from the SUSE mapping
-dataset. Nevertheless, the parser MUST handle them correctly using the
-replace-split-restore pattern described above. A simple `str.split(":")`
-without escaped-colon handling would produce silent wrong lookups -- the
-vendor and product fields would be misaligned, the lookup key would not
-match any mapping entry, and the raw-product fallback would return a
-fragment of the original field. Silent wrong lookups are unacceptable in
-a security-critical mapping.
+(`\:`) in field values. Escaped colons in vendor or product names are
+NOT supported in the mapping. If a CPE string contains `\:` (after
+prefix stripping), the parser logs a warning and skips lookups for that
+CPE entirely. This is acceptable because escaped colons are absent from
+the SUSE dataset and extremely rare in NVD data. Attempting to parse
+them would produce ambiguous lookup keys (e.g., `foo:bar:product` is
+indistinguishable from vendor `foo` + product `bar:product`), making
+correct mapping impossible without a more complex key format.
 
 If a CPE string cannot be parsed by this algorithm (fewer
 than 3 fields after splitting), it is treated as a parse error.
