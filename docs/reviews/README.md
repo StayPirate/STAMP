@@ -28,8 +28,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | cpe-package-mapping | — | — | — | — | — | — | — |  |
 |  |  |  |  |  |  |  |  |  |
-| [cve-service](cve-service.md) | 15 | 4 | 8 | 10 | 🟢 | 37 | 2026-05-31 | ⚠️ |
-| | 1:🔴 7:🟠 7:🟡 | 1:🟠 3:🟡 | 3:🟠 5:🟡 | 4:🟠 6:🟡 |  |  |  |  |
+| [cve-service](cve-service.md) | 14 | 4 | 8 | 10 | 🟢 | 36 | 2026-05-31 | ⚠️ |
+| | 7:🟠 7:🟡 | 1:🟠 3:🟡 | 3:🟠 5:🟡 | 4:🟠 6:🟡 |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
@@ -60,8 +60,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **18** | **4** | **9** | **11** | **0** | **42** |  |  |
-| | 1:🔴 9:🟠 8:🟡 | 1:🟠 3:🟡 | 3:🟠 6:🟡 | 4:🟠 7:🟡 |  |  |  |  |
+| **Total** | **17** | **4** | **9** | **11** | **0** | **41** |  |  |
+| | 9:🟠 8:🟡 | 1:🟠 3:🟡 | 3:🟠 6:🟡 | 4:🟠 7:🟡 |  |  |  |  |
 
 ### Disabled specs
 
