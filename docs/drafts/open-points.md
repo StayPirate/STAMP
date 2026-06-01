@@ -323,3 +323,141 @@ scope) or A+C together, (b) which additional platform components
 beyond CPE mapping should be included in the initial version, (c)
 capability requirement for the admin page (reuse `manage_settings`
 or a new `view_system_info` capability).
+
+---
+
+## 8. Simplify Duplicate Handling — Eliminate Chains
+
+**Origin**: architectural simplification review (pre-implementation
+phase).
+
+**Context**: the current duplicate handling design in `tickets.md`
+supports chains of duplicates (A→B→C) with:
+
+- `resolve_canonical_target()` — a chain resolver with 50-hop limit and
+  cycle detection (`DuplicateChainDepthError`,
+  `TICKET_DUPLICATE_CYCLE_DETECTED`)
+- `execute_duplicate_cascade` — best-effort flattening that re-points
+  intermediate tickets when a target is itself marked as duplicate.
+  Requires independent transactions per ticket (separate
+  `db_session_factory`), making it the **only exception** to the "module
+  does not commit" invariant in `ticket-service.md`
+- `duplicate_target_changed` audit event type — created during cascade
+  flattening
+- Cycle detection and resolution procedures (manual admin intervention)
+- API response serialization that resolves the chain before returning
+  `duplicate_of_id`
+
+The specification itself acknowledges: "chains longer than two tickets
+are almost nonexistent."
+
+**Proposed simplification**: require the duplicate target to be a
+non-Duplicated ticket at the time of the operation. If B is already in
+Duplicated status, `mark_as_duplicate(A, B)` is rejected with a
+validation error instructing the caller to use B's target instead.
+
+Under this model:
+
+- `mark_as_duplicate(ticket, target)` — validates `target.status !=
+  Duplicated`, sets `duplicate_of_id = target.id`, transitions to
+  Duplicated status
+- `revert_duplicate(ticket)` — clears `duplicate_of_id`, re-enters gate
+  zone
+- No chain resolution needed — `duplicate_of_id` always points directly
+  to a non-Duplicated ticket
+- No cascade needed — if B is later marked as duplicate of C, tickets
+  pointing to B now have a stale reference. Two options:
+  - **(a) Reject**: block `mark_as_duplicate(B, C)` if any ticket's
+    `duplicate_of_id` points to B. The VA must revert those tickets
+    first. Simplest, most explicit.
+  - **(b) Inline cascade**: re-point the (typically 0-1) tickets
+    pointing to B within the same transaction. No separate session
+    factory needed since the set is trivially small (single UPDATE).
+    Less restrictive than (a) but still eliminates chains.
+
+**What gets removed**:
+
+- `resolve_canonical_target()` function (50-hop resolver, cycle
+  detection)
+- `execute_duplicate_cascade` and its special transaction handling
+- `DuplicateChainDepthError` and `TICKET_DUPLICATE_CYCLE_DETECTED`
+  error codes
+- `duplicate_target_changed` audit event type
+- Cycle resolution documentation
+- API-level chain resolution in response serialization
+
+**What stays**:
+
+- `mark_as_duplicate` operation (with the simpler validation)
+- `revert_duplicate` operation (unchanged)
+- `duplicate_set` audit event type (records the raw operation)
+
+**Decision needed**: (a) whether to adopt option (a) (reject if
+dependents exist) or option (b) (inline re-point in same transaction),
+and (b) whether the edge case of "target becomes Duplicated after the
+operation" needs any handling beyond the stale-reference approach (API
+could detect and show a warning in the UI without breaking correctness).
+
+---
+
+## 9. Remove FetcherRunWeeklyAggregate Table
+
+**Origin**: architectural simplification review (pre-implementation
+phase).
+
+**Context**: the fetcher infrastructure spec
+(`docs/features/platform/fetcher-infrastructure.md`) defines a
+`FetcherRunWeeklyAggregate` table that stores pre-computed weekly
+rollups of fetcher run metrics (total runs, successes, failures, average
+duration, total records created/updated/failed). A scheduled task
+aggregates individual `FetcherRun` records older than 90 days into
+weekly buckets, then deletes the source rows. The aggregates are
+consumed by the fetcher operations dashboard for historical chart
+rendering beyond the 90-day individual-run retention window.
+
+This introduces:
+
+- 1 additional database table (`FetcherRunWeeklyAggregate`)
+- A periodic aggregation task (weekly, processes expired runs)
+- Dual-source query logic in the dashboard API (individual runs for
+  recent data, aggregates for historical data, merged into a single
+  timeseries response)
+- Data retention lifecycle management (90-day threshold, aggregation
+  window alignment, idempotency guards)
+
+**Proposed simplification**: remove `FetcherRunWeeklyAggregate` entirely
+and use a simple 90-day hard-delete retention policy on `FetcherRun`.
+Dashboard charts display only the last 90 days of individual run data.
+
+Rationale:
+
+- The system has not been deployed yet — there is no historical data to
+  preserve
+- 90 days of individual runs (~15 fetchers x 1-4 runs/day x 90 days =
+  ~5,400 rows maximum) is trivially small for PostgreSQL. No performance
+  optimization is needed at this scale
+- If historical trends beyond 90 days become valuable in the future, the
+  aggregation table can be introduced then, with full knowledge of actual
+  usage patterns and chart requirements
+- Eliminating the dual-source query logic simplifies the dashboard API
+  and removes an entire class of edge cases (partial weeks, timezone
+  alignment, fetcher renames)
+
+**What gets removed**:
+
+- `FetcherRunWeeklyAggregate` table definition (from `data-model.md` and
+  `fetcher-infrastructure.md`)
+- Weekly aggregation task specification
+- Dual-source chart query logic in `fetcher-operations.md`
+- Data retention lifecycle (replaced by simple `DELETE WHERE created_at <
+  now() - 90 days`)
+
+**What stays**:
+
+- `FetcherRun` table with all current columns
+- 90-day retention policy (simple periodic DELETE)
+- Dashboard charts using individual run data (last 90 days)
+
+**Decision needed**: whether 90 days of granular history is sufficient
+for operational needs, or whether a longer retention window (e.g., 180
+days) without aggregation would be preferable.
