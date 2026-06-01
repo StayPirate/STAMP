@@ -1009,11 +1009,14 @@ The PascalCase forms used elsewhere in this spec (e.g., `New`,
 `Analysis`, `Critical`) refer to the logical values; the wire format is
 always lowercase.
 
-**Soft-deletion visibility**: package, track, and product entities with
-soft-deletion include a `deleted_at` field (`datetime | null`). This
-field is present only when the request includes `include_deleted=true`
-or `include_deleted=only` and the caller has the `admin_ticket_ops`
-capability. When not applicable, the field is omitted from the response.
+**Soft-deletion visibility**: package, track, and product entities
+include a `deleted_at` field (`datetime | null`) that indicates
+exclusion status. In single-ticket views (`TicketDetail`, `GET
+/api/v1/tickets/{ticket_id}/packages`), all records are returned
+including soft-deleted ones, with `deleted_at` visible on each level.
+In cross-ticket search (`GET /api/v1/packages`), soft-deleted packages
+are always excluded. See `docs/features/packages/package-model.md` for
+full visibility rules.
 
 #### Shared Sub-Schemas
 

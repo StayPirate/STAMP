@@ -358,7 +358,7 @@ value to avoid log injection.
 
 | Endpoint | Parameter | Required Capability |
 |----------|-----------|-------------------|
-| GET /api/v1/cves | include_deleted | admin_ticket_ops |
+| *(none currently defined)* | | |
 
 #### Hard Conditional Check (403 Rejection)
 
