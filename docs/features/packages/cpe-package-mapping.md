@@ -152,7 +152,11 @@ that time.
    - Index 0: `part` (e.g., `a` for application)
    - Index 1: `vendor` (e.g., `apache`)
    - Index 2: `product` (e.g., `commons_compress`)
-6. Form the lookup key: `vendor:product` (e.g.,
+6. Normalize `vendor` and `product` to lowercase (e.g.,
+   `Apache` → `apache`, `Commons_Compress` → `commons_compress`). NVD
+   CPE strings are nominally lowercase, but normalization ensures correct
+   lookups regardless of source casing
+7. Form the lookup key: `vendor:product` (e.g.,
    `apache:commons_compress`). The function extracts only `vendor` and
    `product`, discarding all other fields (part, version, update, etc.)
 
@@ -246,6 +250,22 @@ modules that transitively import `cpe_mapping` to the existence of
 the JSON file, improving test ergonomics (tests that don't exercise
 CPE resolution can import the module freely without requiring the
 data file).
+
+**Operational semantics**: the mapping file is treated as source code —
+committed to the repository, versioned, and reviewed via normal code
+review. It is loaded exactly once per process at first use and remains
+immutable in memory for the entire process lifetime (read-once-per-process).
+Modifications to the mapping require a commit and a new deployment to
+reach production. There is no hot-reload or runtime cache invalidation
+mechanism. After a deployment with an updated mapping, all processes
+(API server, Celery workers, Beat scheduler) start fresh with the new
+version.
+
+**Mapping file key format**: all keys in the JSON mapping file MUST be
+lowercase (`vendor:product`). The lowercase normalization step in the
+parser (step 6) guarantees correct lookups regardless of input casing,
+and the CI pipeline validates that no uppercase characters exist in
+mapping keys.
 
 **Location**: `backend/app/services/cpe_mapping.py`
 
