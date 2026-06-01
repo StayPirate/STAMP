@@ -82,7 +82,7 @@ by the real-time `IBSEventConsumer` during downtime — see
 1. **Identify active codestreams**: query the distinct `reference`
    values from `TicketPackageTrack` records with `status` in
    (`ANALYSIS`, `AFFECTED`), belonging to **active tickets** (ticket
-   status in `New`, `Analysis`, `Analyzed` and `deleted_at IS NULL`).
+    status in `New`, `Analysis`, `Analyzed`).
    Soft-deleted tracks under active tickets are included — release
    detection applies regardless of exclusion status (see hierarchical
    exclusion model in `docs/features/packages/package-model.md`). Only
@@ -202,7 +202,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 | Class name | `CheckIbsTrackReleases` |
 | Schedule | Daily at 02:00 UTC (`0 2 * * *`) |
 | Source | IBS (`build.suse.de`) |
-| Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active tickets (New, Analysis, Analyzed; `deleted_at IS NULL`). Soft-deleted tracks under active tickets are included |
+| Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active tickets (New, Analysis, Analyzed). Soft-deleted tracks under active tickets are included |
 | Auth | HTTP Basic / API token (internal) |
 | Custom settings | No |
 

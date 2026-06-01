@@ -53,15 +53,15 @@ specific ticket, the authorization chain evaluates in this exact order:
    `AUTH_INSUFFICIENT_PERMISSION` if the user lacks the required
    capability. This check does not depend on the specific ticket
 3. **Ticket accessibility** (`require_accessible_ticket`) — returns 404
-   for non-existent or invisible tickets, 410 for soft-deleted tickets
+   for non-existent or invisible tickets
 
 For mutation endpoints, a fourth check occurs at the **service layer**
 (not as an API dependency):
 
-4. **Operability guard** (`ensure_ticket_operable`) — raises 410
-   `TICKET_DELETED` if soft-deleted, 409 `TICKET_NOT_MUTABLE` if the
-   ticket is in Ignored or Duplicated status. This check executes under
-   the `FOR UPDATE` lock and is the authoritative enforcement
+4. **Operability guard** (`ensure_ticket_operable`) — raises 409
+   `TICKET_NOT_MUTABLE` if the ticket is in Ignored or Duplicated
+   status. This check executes under the `FOR UPDATE` lock and is the
+   authoritative enforcement
 
 This ordering is security-significant: the capability check (step 2)
 fires before the accessibility check (step 3), preventing ticket
@@ -84,9 +84,7 @@ For non-ticket, non-CVE endpoints, only steps 1 and 2 apply.
 #### Conditional Capability Checks
 
 Some endpoints are Public or Authenticated but accept optional parameters
-that require a capability. For example, `GET /api/v1/tickets` is Public,
-but the `include_deleted` query parameter requires `admin_ticket_ops`
-capability.
+that require a capability.
 
 Rules:
 
@@ -166,7 +164,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_DELETED`, `TICKET_NOT_DELETED`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE` |
 | `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_VERSION_MISMATCH`, `CVSS_DUPLICATE_ASSESSMENT` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE`, `RESOURCE_NOT_EDITABLE` |
@@ -350,36 +348,10 @@ The dependency evaluates conditions in this exact order:
     `confidential_ticket_filter()` utility (see
     `docs/features/tickets/tickets.md`, Confidentiality Filtering) with
     the single-ticket column reference
-3. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and the
-   caller does not have the `admin_ticket_ops` capability, return
-   `410 TICKET_DELETED`
 
 | Status | Code              | Condition                                            |
 |--------|-------------------|------------------------------------------------------|
 | 404    | `TICKET_NOT_FOUND`| Ticket does not exist, or is confidential and caller is not authorized |
-| 410    | `TICKET_DELETED`  | Ticket is soft-deleted and caller does not have the `admin_ticket_ops` capability |
-
-The evaluation order is security-critical: returning `410` before
-checking confidentiality would confirm the existence of a confidential
-ticket to an unauthorized user.
-
-When a ticket has `deleted_at IS NOT NULL`, callers with the
-`admin_ticket_ops` capability proceed normally while all other callers
-receive 410 Gone. This applies uniformly to read
-and write operations on the ticket and its sub-resources (packages, tracks,
-products, CVSS assessments, references, audit log, submission requests).
-
-**Exceptions** — the following endpoints are excluded from this check
-because they manage the soft-delete lifecycle directly:
-
-- `DELETE /api/v1/tickets/{ticket_id}` (soft-delete): returns 410
-  `TICKET_DELETED` if the ticket is already soft-deleted
-- `POST /api/v1/tickets/{ticket_id}/restore` (restore): returns 409
-  `TICKET_NOT_DELETED` if the ticket is not soft-deleted
-
-See `docs/features/tickets/tickets.md` ([Soft-Delete](docs/features/tickets/tickets.md#soft-delete))
-for the full business rules (who may delete/restore, status categories,
-sub-resource behavior, automated verification requirements).
 
 #### CVE Accessibility Check
 
@@ -400,38 +372,21 @@ The dependency evaluates conditions in this exact order:
       visibility rule from `docs/features/identity/rbac.md` (Scope and
       Confidential Ticket Visibility), return `404 CVE_NOT_FOUND` —
       indistinguishable from a non-existent CVE
-   b. **Soft-delete**: if the ticket has `deleted_at IS NOT NULL` and
-      the caller does not have the `admin_ticket_ops` capability,
-      return `404 CVE_NOT_FOUND`
 3. **No associated ticket**: if the CVE has no associated ticket, it is
    freely accessible — CVE data is inherently public
 
 | Status | Code              | Condition                                           |
 |--------|-------------------|-----------------------------------------------------|
-| 404    | `CVE_NOT_FOUND`   | CVE does not exist, or is associated with a confidential ticket and caller is not authorized, or associated ticket is soft-deleted and caller lacks `admin_ticket_ops` |
+| 404    | `CVE_NOT_FOUND`   | CVE does not exist, or is associated with a confidential ticket and caller is not authorized |
 
 All denial cases from this dependency return the same
-`404 CVE_NOT_FOUND` response — never `TICKET_NOT_FOUND`, never 410.
-This is intentionally different from `require_accessible_ticket`, which
-returns `410 TICKET_DELETED` for soft-deleted tickets. The rationale:
-
-- **Semantic correctness**: the CVE is not deleted — the ticket is.
-  Returning 410 on a `/cves/` path would misattribute the state to the
-  wrong entity
-- **Information leakage**: returning 410 or a ticket-specific error code
-  on a CVE path would confirm that (a) the CVE has an associated ticket
-  and (b) that ticket has been deleted — exposing ticket lifecycle state
-  through an unrelated resource path
+`404 CVE_NOT_FOUND` response — never `TICKET_NOT_FOUND`.
 
 **Post-accessibility service-layer errors**: mutation endpoints under
-`/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE` or
-`410 TICKET_DELETED` from `ensure_ticket_operable()` at the service
-layer. These errors are only reachable by callers with
-`admin_ticket_ops` capability, who bypass the soft-delete check in
-`require_accessible_cve`. Callers without this capability receive
-`404 CVE_NOT_FOUND` from the router-level dependency before reaching
-the service layer. See the per-endpoint error tables in
-`docs/features/tickets/cvss-scoring.md` for details
+`/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE`
+from `ensure_ticket_operable()` at the service layer. See the
+per-endpoint error tables in `docs/features/tickets/cvss-scoring.md`
+for details
 
 Unauthenticated callers (`current_user=None`): step 2a always denies
 access when the ticket is confidential — unauthenticated users can never
@@ -439,11 +394,10 @@ satisfy any visibility rule. This is consistent with
 `confidential_ticket_filter()` behavior for unauthenticated requests.
 
 **Relationship to `require_accessible_ticket`**: this dependency applies
-the same confidentiality and soft-delete rules as
-`require_accessible_ticket`, with two differences: (1) all denial cases
-return `404 CVE_NOT_FOUND` instead of differentiating 404/410, and (2)
-CVEs without an associated ticket are freely accessible because CVE data
-is inherently public.
+the same confidentiality rules as `require_accessible_ticket`, with two
+differences: (1) all denial cases return `404 CVE_NOT_FOUND` instead of
+differentiating error codes, and (2) CVEs without an associated ticket
+are freely accessible because CVE data is inherently public.
 
 The two dependencies are intentionally kept as separate, self-contained
 implementations — no shared abstraction is introduced. The access rules
@@ -451,16 +405,15 @@ are equivalent by convention, documented with this explicit
 cross-reference.
 
 Unlike the ticket router, no endpoints need to be excluded from this
-check: CVEs have no soft-delete lifecycle, so there are no
-lifecycle-management endpoints requiring different error semantics.
+check.
 
 **Location**: `backend/app/core/dependencies.py` (alongside
 `require_accessible_ticket` and `resolve_user_identifier`).
 
 **Note**: the `GET /api/v1/cves` list endpoint lives on the parent
 `/api/v1/cves/` router, NOT on the `/api/v1/cves/{cve_id}/` sub-router.
-It is not covered by this dependency — confidentiality and soft-delete
-filtering are handled inline via `confidential_ticket_filter()`.
+It is not covered by this dependency — confidentiality filtering is
+handled inline via `confidential_ticket_filter()`.
 
 #### Manual-Zone Mutability Guard
 

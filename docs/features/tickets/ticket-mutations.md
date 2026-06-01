@@ -84,7 +84,7 @@ having verified the corresponding capability is a security bug.
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
 | `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
-| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, soft-delete/restore, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern and import `ensure_ticket_operable()` from `ticket_mutations` |
+| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern and import `ensure_ticket_operable()` from `ticket_mutations` |
 
 ## State Machine Zones
 
@@ -224,11 +224,11 @@ section documents ticket-specific refinements only.
 ### Extension to non-module operations
 
 Every operation that modifies the `Ticket` row (any column: `status`,
-`assignee_id`, `cve_id`, `duplicate_of_id`, `is_confidential`,
-`deleted_at`) or that calls `reconcile_ticket_status` MUST acquire
+`assignee_id`, `cve_id`, `duplicate_of_id`, `is_confidential`)
+or that calls `reconcile_ticket_status` MUST acquire
 `FOR UPDATE` on the Ticket row before any modification — not just
 module functions. This prevents non-gate operations (assignment,
-duplicate set/revert, CVE dissociation, soft-delete, restore, ignore)
+duplicate set/revert, CVE dissociation, ignore)
 from racing with gate operations on the same ticket.
 
 ### Single-ticket scope
@@ -273,22 +273,16 @@ functions in `ticket_mutations`, `ticket_service`, and `package_service`
 
 ```python
 def ensure_ticket_operable(ticket: Ticket) -> None:
-    """Reject mutations on soft-deleted or manually-closed tickets.
+    """Reject mutations on manually-closed tickets.
 
     Call after acquiring FOR UPDATE on the ticket row.
-    Raises TicketSoftDeletedError if deleted_at is set.
     Raises TicketNotMutableError if status is Ignored or Duplicated.
-
-    Precedence: when a ticket is both soft-deleted AND in Ignored/Duplicated
-    status, TicketSoftDeletedError wins (soft-delete is checked first).
-    This ordering is intentional and contractual.
     """
 ```
 
 **Behavior**:
 
-1. If `ticket.deleted_at is not None` → raise `TicketSoftDeletedError`
-2. If `ticket.status ∈ {Ignored, Duplicated}` → raise
+1. If `ticket.status ∈ {Ignored, Duplicated}` → raise
    `TicketNotMutableError`
 
 This function performs no database operations. It validates invariants
@@ -298,14 +292,10 @@ function.
 
 **Opt-out cases**:
 
-- `reopen_from_ignored` — must operate on Ignored tickets; retains only
-  the soft-delete guard inline
-- `revert_duplicate` — must operate on Duplicated tickets; retains only
-  the soft-delete guard inline
-- `soft_delete_ticket` (in `ticket_service`) — operates on any status;
-  retains only a soft-delete idempotency check
-- `restore_ticket` (in `ticket_service`) — operates on soft-deleted
-  tickets by definition
+- `reopen_from_ignored` — must operate on Ignored tickets; skips
+  mutability guard
+- `revert_duplicate` — must operate on Duplicated tickets; skips
+  mutability guard
 
 **Consumers**:
 
@@ -376,8 +366,7 @@ an associated ticket.
 2. If a ticket exists:
    a. Acquire `FOR UPDATE` on the Ticket row
    b. Call `ensure_ticket_operable(ticket)` — rejects with
-      `TicketNotMutableError` if in Ignored or Duplicated status,
-      `TicketSoftDeletedError` if soft-deleted
+       `TicketNotMutableError` if in Ignored or Duplicated status
 3. Parse the vector string using the `cvss` library. Determine version from
    prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
    no prefix → 2.0). Compute base score. If parsing fails, raise
@@ -544,9 +533,7 @@ Reopens a ticket from Ignored status.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL` (soft-delete guard
-  only — `ensure_ticket_operable` is NOT called; this function must
-  operate on Ignored tickets)
+- Ticket must exist
 - Ticket must be in `Ignored` status
 
 **Behavior**:
@@ -588,9 +575,7 @@ Reverts a ticket from Duplicated status.
 
 **Preconditions**:
 
-- Ticket must exist and have `deleted_at IS NULL` (soft-delete guard
-  only — `ensure_ticket_operable` is NOT called; this function must
-  operate on Duplicated tickets)
+- Ticket must exist
 - Ticket must be in `Duplicated` status
 
 **Behavior**:
@@ -727,8 +712,8 @@ async def auto_assign_actor(
 ## Related Operations
 
 Non-gate ticket lifecycle operations (assignment, CVE association/
-dissociation, soft-delete/restore, mark-as-duplicate, set-
-confidentiality, access grant management) live in `ticket_service` —
+dissociation, mark-as-duplicate, set-confidentiality, access grant
+management) live in `ticket_service` —
 see [ticket-service.md](ticket-service.md) for the full service contract.
 
 These operations use the same `FOR UPDATE` pattern documented in
@@ -789,7 +774,6 @@ Requirement).
 |-----------|-------------|
 | `TicketNotFoundError` | `FOR UPDATE` returns no row |
 | `TicketNotMutableError` | Ticket is in manual zone (defense in depth — API layer catches first) |
-| `TicketSoftDeletedError` | Ticket has `deleted_at IS NOT NULL` |
 | `DuplicateCycleDetectedError` | Resolver detects a cycle in the chain |
 | `DuplicateChainDepthError` | Resolver exceeds 50-hop limit |
 | `DuplicateCVSSAssessmentError` | Assessment for the same (CVE, provider, version) combination already exists (maps to 409 `CVSS_DUPLICATE_ASSESSMENT`) |

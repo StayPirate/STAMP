@@ -159,9 +159,8 @@ directly on the assessment record.
   prefix and calculates the score automatically using the `cvss` library
 - **Editability**: CVSS mutations are subject to
   `ensure_ticket_operable()` when the CVE has an associated ticket —
-  mutations are rejected with `409 TICKET_NOT_MUTABLE` if the ticket is
-  in Ignored or Duplicated status, or `410 TICKET_DELETED` if
-  soft-deleted. Ticketless CVEs are always mutable. Changes trigger
+   mutations are rejected with `409 TICKET_NOT_MUTABLE` if the ticket is
+   in Ignored or Duplicated status. Ticketless CVEs are always mutable. Changes trigger
   severity and eligibility recalculation
 
 ## CVSS Versions
@@ -336,8 +335,8 @@ only.
 **Strategy — periodic re-fetch**:
 
 1. Once per day, a Celery task iterates over all CVEs with active tickets
-   (status: New, Analysis, Analyzed; `deleted_at IS NULL` — see
-   `docs/data-model.md` for the authoritative definition)
+   (status: New, Analysis, Analyzed — see `docs/data-model.md` for the
+   authoritative definition)
 2. For each CVE, fetch the Red Hat CVSS:
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
@@ -357,8 +356,8 @@ only.
 
 CVSS sync (both NVD incremental and Red Hat re-fetch) is performed only
 for CVEs with **active tickets** — tickets in status `New`, `Analysis`, or
-`Analyzed` with `deleted_at IS NULL` (see `docs/data-model.md` for the
-authoritative definition of active tickets).
+`Analyzed` (see `docs/data-model.md` for the authoritative definition of
+active tickets).
 
 When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, Sentinel
 stops monitoring CVSS updates for that CVE. The existing CVSS data remains
@@ -487,14 +486,10 @@ the standard `{"data": ...}` envelope.
 |--------|------|-----------|
 | 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
 | 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
-| 410 | `TICKET_DELETED` | Associated ticket is soft-deleted |
 | 422 | `CVSS_INVALID_VECTOR` | Vector string is malformed or unparseable |
 
-The `409` and `410` errors apply only when the CVE has an associated
-ticket. CVEs without an associated ticket are always mutable. The `410`
-is only reachable by callers with `admin_ticket_ops` capability — all
-other callers receive `404 CVE_NOT_FOUND` from `require_accessible_cve`
-before the service layer is reached.
+The `409` error applies only when the CVE has an associated ticket. CVEs
+without an associated ticket are always mutable.
 
 **`Capability: manage_cvss`**
 
@@ -517,13 +512,9 @@ Response: 204 No Content.
 | 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
 | 404 | `RESOURCE_NOT_FOUND` | No SUSE assessment exists for the specified version |
 | 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
-| 410 | `TICKET_DELETED` | Associated ticket is soft-deleted |
 
-The `409` and `410` errors apply only when the CVE has an associated
-ticket. CVEs without an associated ticket are always mutable. The `410`
-is only reachable by callers with `admin_ticket_ops` capability — all
-other callers receive `404 CVE_NOT_FOUND` from `require_accessible_cve`
-before the service layer is reached.
+The `409` error applies only when the CVE has an associated ticket. CVEs
+without an associated ticket are always mutable.
 
 **`Capability: manage_cvss`**
 
@@ -564,8 +555,7 @@ functions accept a `cve_id` (not a `ticket_id`) and follow this flow:
 2. If a ticket exists:
    a. Acquire `FOR UPDATE` on the Ticket row
    b. Call `ensure_ticket_operable(ticket)` — rejects with
-      `409 TICKET_NOT_MUTABLE` if in Ignored or Duplicated status,
-      `410 TICKET_DELETED` if soft-deleted
+      `409 TICKET_NOT_MUTABLE` if in Ignored or Duplicated status
 3. Persist the `CVECVSSAssessment` record change
 4. Call `cvss.resolve_cvss_score()` to determine the new resolved score
 5. Call `cvss.calculate_severity()` to derive the new severity
@@ -606,8 +596,7 @@ the cascade must run for all active tickets. This batch operation is
 executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
 
-1. Iterates over all active tickets (New, Analysis, Analyzed;
-   `deleted_at IS NULL`)
+1. Iterates over all active tickets (New, Analysis, Analyzed)
 2. For each ticket, calls the same `ticket_mutations` functions used for
    individual CVSS changes — no separate batch-optimized code path
 3. Each ticket is processed in an **independent database transaction**
@@ -632,7 +621,7 @@ consumer-oriented summary.
 | Class name | `SyncCvssRedhat` |
 | Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
 | Source | Red Hat Security Data API (`access.redhat.com/hydra/rest/securitydata`) |
-| Scope | All CVEs with active tickets (New, Analysis, Analyzed; `deleted_at IS NULL`) |
+| Scope | All CVEs with active tickets (New, Analysis, Analyzed) |
 | Auth | None (public API) |
 | Custom settings | Yes (see below) |
 

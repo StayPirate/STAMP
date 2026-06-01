@@ -1642,7 +1642,7 @@ a standalone endpoint for clients that only need package data.
 | Aspect | Design |
 |--------|--------|
 | **`Access: Public`** | Consistent with `GET /api/v1/tickets/{ticket_id}` |
-| **Guard** | `require_accessible_ticket` (404/410 for missing/confidential/soft-deleted tickets) |
+| **Guard** | `require_accessible_ticket` (404 for missing/confidential tickets) |
 | **Pagination** | No — package count per ticket is bounded (typically 1-5, rarely >20) |
 | **Envelope** | `{"data": [...]}` (unpaginated list) |
 | **Soft-deleted records** | All package/track/product records are returned (including soft-deleted), with `deleted_at` visible on each — identical to `TicketDetail.packages` behavior |
@@ -1666,7 +1666,6 @@ The response body is a `PackageDetail[]` array — the same schema used in
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404 | `TICKET_NOT_FOUND` | Ticket does not exist |
-| 410 | `TICKET_DELETED` | Ticket is soft-deleted and caller is not Admin |
 
 (Global errors from `api-spec.md` apply but are not repeated.)
 
@@ -1688,7 +1687,6 @@ once per ticket in the results.
 | **`Access: Public`** | Consistent with `GET /api/v1/tickets` |
 | **Confidentiality** | Packages belonging to confidential tickets are excluded for unauthorized callers (same filter as `GET /api/v1/tickets`). The endpoint handler constructs `confidential_ticket_filter()` and passes it to `search_packages(confidentiality_filter=...)` |
 | **Soft-deleted packages** | Always excluded — soft-deleted `TicketPackage` records (`deleted_at IS NOT NULL`) are never returned |
-| **Soft-deleted tickets** | Controlled by `include_deleted` parameter (requires `admin_ticket_ops` capability), consistent with `GET /api/v1/tickets` |
 | **Pagination** | Yes — `page` (default 1), `per_page` (default 20, max 100) |
 | **Envelope** | `{"data": [...], "meta": {"total": N, "page": P, "per_page": PP}}` |
 | **Delegation** | Delegates to `package_service.search_packages()` |
@@ -1700,7 +1698,6 @@ once per ticket in the results.
 | `search` | string | Substring match on `package_name` (case-insensitive, equivalent to SQL ILIKE `%term%`). Max 500 chars |
 | `name` | string | Exact match on `package_name`. Max 500 chars |
 | `ticket_status` | string (repeatable) | Ticket statuses to include: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated`. Repeatable — multiple values are specified as separate query parameters (e.g., `?ticket_status=new&ticket_status=analysis`). Invalid values are silently ignored per `api-spec.md` (Enum Filter Validation). If all values are invalid, an empty result set is returned. Default: no filter (all statuses) |
-| `include_deleted` | string | Controls visibility of packages belonging to **soft-deleted tickets**. `true` (include packages from active and deleted tickets), `only` (return only packages from deleted tickets). Any other value (including `false`) is treated as absent. Accepted from any caller, but effective only for users with the `admin_ticket_ops` capability — silently ignored for other callers. Default (absent or unrecognized value): return only packages from active tickets |
 | `sort_by` | string | `package_name` or `created_at` (default: `created_at`). Refers to `TicketPackage.created_at` (the date the package was added to the ticket), not `Ticket.created_at`. Secondary sort: `id` (deterministic pagination when primary key has duplicates) |
 | `sort_order` | string | `asc` or `desc` (default: `desc`) |
 | `page` | integer | Page number (default: 1, min: 1) |
@@ -1729,8 +1726,7 @@ itself is a ticket.
     "id": "uuid",
     "identifier": "SNTL-123",
     "status": "analysis",
-    "severity": "high",
-    "deleted_at": null
+    "severity": "high"
   },
   "track_summary": {
     "total": 5,
@@ -1753,7 +1749,6 @@ itself is a ticket.
 | `identifier` | string | Human-readable identifier (e.g., `SNTL-123`) |
 | `status` | string | Current ticket status |
 | `severity` | string \| null | Ticket severity |
-| `deleted_at` | datetime \| null | Soft-deletion timestamp. Always present in the schema; `null` for active tickets or when the caller is not Admin |
 
 **`track_summary`** (`TrackSummary`) — aggregated track status counts
 for the package within this ticket. Counts only active tracks

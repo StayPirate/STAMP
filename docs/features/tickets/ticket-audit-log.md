@@ -46,8 +46,7 @@ fields populated according to this table:
 | `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | Optional VA note | `NULL` |
 | `product_excluded` | Product directly soft-deleted from ticket | VA user for manual, `NULL` for system (EOL, orphan cleanup) | Product display name | `NULL` | Optional VA note for manual; `NULL` for automatic | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
 | `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note | `NULL` |
-| `ticket_deleted` | Ticket soft-deleted (`admin_ticket_ops`) | Acting user | `NULL` | `NULL` | Optional note | `NULL` |
-| `ticket_restored` | Soft-deleted ticket restored (`admin_ticket_ops`) | Acting user | `NULL` | `NULL` | Optional note | `NULL` |
+
 | `confidentiality_changed` | Ticket `is_confidential` flag toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
 | `access_grant_added` | User manually granted explicit access to a confidential ticket | Acting user | `NULL` | Target username | `NULL` | `NULL` |
 | `access_grant_removed` | User manually revoked explicit access to a confidential ticket | Acting user | Target username | `NULL` | `NULL` | `NULL` |
@@ -198,8 +197,7 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 
 **`Access: Authenticated`**
 
-Soft-deleted ticket protection
-is enforced centrally — see `docs/api-spec.md`
+Confidentiality filtering is enforced centrally — see `docs/api-spec.md`
 ([Scoped Responses](docs/api-spec.md#scoped-responses)).
 
 ## Service Contract

@@ -160,8 +160,8 @@ For each `suse.obs.package.commit` event:
    The monitored codestream set is a `Dict[codestream_name,
    has_non_final_tracks: bool]` built from the distinct
    `codestream_name` values of `TicketPackageTrack` records belonging to
-   active tickets (ticket status in New, Analysis, Analyzed; ticket
-   `deleted_at IS NULL`). The `has_non_final_tracks` flag is `true` if
+   active tickets (ticket status in New, Analysis, Analyzed). The
+    `has_non_final_tracks` flag is `true` if
    the codestream has at least one track in `ANALYSIS` or `AFFECTED`.
    Soft-deleted tracks are included — release detection applies
    regardless of exclusion status (see hierarchical exclusion model in
@@ -375,7 +375,7 @@ for the response schema.
 
 If a maintainer commits a CVE fix to a codestream that has no active
 tickets (no `TicketPackageTrack` records belonging to tickets in New,
-Analysis, or Analyzed status with `deleted_at IS NULL`), the event is
+Analysis, or Analyzed status), the event is
 discarded by the codestream filter. This applies equally to the RabbitMQ
 consumer and the periodic fetcher — neither monitors codestreams without
 active tickets.

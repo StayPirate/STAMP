@@ -171,12 +171,12 @@ endpoints silently ignore privileged parameters when the caller lacks
 the required capability.
 
 **Context**: when an API endpoint silently ignores a parameter (e.g.,
-`include_deleted` on `GET /api/v1/tickets` when the caller lacks
-`admin_ticket_ops`), there is no feedback to the API consumer that the
-parameter was not applied. A misconfigured bot or integration could
-operate on incomplete data without any indication. The only diagnostic
-is a server-side DEBUG log, which the API consumer does not have access
-to.
+`include_excluded` on `GET /api/v1/tickets/{ticket_id}/packages` when
+the caller lacks `manage_packages`), there is no feedback to the API
+consumer that the parameter was not applied. A misconfigured bot or
+integration could operate on incomplete data without any indication. The
+only diagnostic is a server-side DEBUG log, which the API consumer does
+not have access to.
 
 **Proposed approach**: introduce a response header
 `X-Sentinel-Ignored-Params` that lists the names of parameters that were
@@ -184,7 +184,7 @@ present in the request but silently ignored due to insufficient
 capability. Example:
 
 ```
-X-Sentinel-Ignored-Params: include_deleted
+X-Sentinel-Ignored-Params: include_excluded
 ```
 
 This would apply broadly — not just to capability-gated parameters, but

@@ -36,7 +36,7 @@ Endpoints are protected by a single capability via the
 | `manage_role_mappings` | AD role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
-| `admin_ticket_ops` | Remove CVE from ticket, soft-delete/restore tickets, view deleted tickets |
+| `admin_ticket_ops` | Remove CVE from ticket |
 
 > **Design note — capability granularity**: capabilities are intentionally
 > coarse (~11 total). The current three roles are well served by grouped
@@ -151,8 +151,6 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Set ticket confidentiality | `manage_confidentiality` |
 | Manage access grants on confidential tickets | `manage_confidentiality` |
 | Remove CVE from ticket | `admin_ticket_ops` |
-| Soft-delete/restore tickets | `admin_ticket_ops` |
-| View deleted tickets (`include_deleted`) | `admin_ticket_ops` |
 | Update user fields | `manage_users` |
 | Manage user roles | `manage_users` |
 | Reset user password | `manage_users` |
@@ -306,18 +304,16 @@ specific ticket, the authorization chain evaluates in this order:
    not. This check is user-level (does not depend on the specific
    ticket), so it does not leak information about ticket existence.
 3. **Ticket accessibility** (`require_accessible_ticket`) — check that
-   the ticket exists, is visible to the caller (scope + grant +
-   bugowner), and is not soft-deleted (unless caller has
-   `admin_ticket_ops` capability). Returns 404 for invisible tickets,
-   410 for soft-deleted tickets.
+   the ticket exists and is visible to the caller (scope + grant +
+   bugowner). Returns 404 for invisible tickets.
 
 For mutation endpoints, a fourth check occurs at the **service layer**
 (not as an API dependency):
 
 4. **Operability guard** (`ensure_ticket_operable`) — rejects mutations
-   on soft-deleted tickets (410 `TICKET_DELETED`) or tickets in a
-   manual-zone status (409 `TICKET_NOT_MUTABLE`). This check executes
-   under the `FOR UPDATE` lock and is the authoritative enforcement.
+   on tickets in a manual-zone status (409 `TICKET_NOT_MUTABLE`). This
+   check executes under the `FOR UPDATE` lock and is the authoritative
+   enforcement.
 
 This ordering is security-significant: the capability check (step 2)
 fires before the accessibility check (step 3). A user without the
@@ -362,7 +358,6 @@ value to avoid log injection.
 
 | Endpoint | Parameter | Required Capability |
 |----------|-----------|-------------------|
-| GET /api/v1/tickets | include_deleted | admin_ticket_ops |
 | GET /api/v1/cves | include_deleted | admin_ticket_ops |
 
 #### Hard Conditional Check (403 Rejection)
@@ -430,8 +425,6 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/tickets/{ticket_id}/reopen` | `triage_ticket` | [tickets](../tickets/tickets.md#reopen-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/duplicate` | `triage_ticket` | [tickets](../tickets/tickets.md#mark-ticket-as-duplicate) |
 | POST | `/api/v1/tickets/{ticket_id}/revert-duplicate` | `triage_ticket` | [tickets](../tickets/tickets.md#revert-duplicate-status) |
-| DELETE | `/api/v1/tickets/{ticket_id}` | `admin_ticket_ops` | [tickets](../tickets/tickets.md#soft-delete-ticket) |
-| POST | `/api/v1/tickets/{ticket_id}/restore` | `admin_ticket_ops` | [tickets](../tickets/tickets.md#restore-ticket) |
 | PATCH | `/api/v1/tickets/{ticket_id}/confidentiality` | `manage_confidentiality` | [tickets](../tickets/tickets.md#set-confidentiality) |
 | GET | `/api/v1/tickets/{ticket_id}/access` | `manage_confidentiality` | [tickets](../tickets/tickets.md#list-access-grants) |
 | POST | `/api/v1/tickets/{ticket_id}/access` | `manage_confidentiality` | [tickets](../tickets/tickets.md#grant-access) |

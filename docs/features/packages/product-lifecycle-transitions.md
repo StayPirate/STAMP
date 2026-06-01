@@ -53,15 +53,15 @@ Recommended to run after `sync_aimaas_lifecycle` and
 1. Find all products currently in **Reactive LTSS** phase
    (`end_of_ltss < today < end_of_reactive_ltss`)
    - For each: query `TicketPackageProduct` records with `eligible = true`
-     and `is_eligible_override = false` in active tickets (status New,
-     Analysis, or Analyzed; `deleted_at IS NULL`)
+      and `is_eligible_override = false` in active tickets (status New,
+      Analysis, or Analyzed)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
 2. Find all products currently in **EOL** phase (past all applicable
    lifecycle dates)
    - For each: query `TicketPackageProduct` records whose parent
-     `TicketPackageTrack` has status `AFFECTED` or `ANALYSIS` in active
-     tickets (status New, Analysis, or Analyzed; `deleted_at IS NULL`)
+      `TicketPackageTrack` has status `AFFECTED` or `ANALYSIS` in active
+      tickets (status New, Analysis, or Analyzed)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
 3. If no actionable records found for a product, no sub-task is enqueued

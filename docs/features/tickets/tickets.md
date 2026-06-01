@@ -507,20 +507,17 @@ and a Duplicated ticket must be reverted first.
 Steps:
 
 1. Verify the ticket is operable (`ensure_ticket_operable` in the
-   service layer — rejects soft-deleted, Ignored, and Duplicated).
+   service layer — rejects Ignored and Duplicated).
 2. Resolve the requested target to its canonical target using the
    resolver.
-3. If the resolved canonical target has `deleted_at IS NOT NULL`, reject
-   with 404 `TICKET_NOT_FOUND` — the target is invisible to business
-   logic per the soft-delete invariant.
-4. If the canonical target equals the ticket being modified, reject with
+3. If the canonical target equals the ticket being modified, reject with
    400 Bad Request ("a ticket cannot be a duplicate of itself").
-5. Set `duplicate_of_id = canonical_target_id` and
+4. Set `duplicate_of_id = canonical_target_id` and
    `status = Duplicated`.
-6. Cascade: all tickets whose `duplicate_of_id` points to the
+5. Cascade: all tickets whose `duplicate_of_id` points to the
    just-duplicated ticket are updated to point to the canonical target
    (synchronous, best-effort per-item in independent transactions).
-7. If the cascade is interrupted or individual steps fail, the system
+6. If the cascade is interrupted or individual steps fail, the system
    is NOT corrupted — subsequent reads resolve the chain through the
    canonical resolver.
 
@@ -531,12 +528,6 @@ the overhead negligible (1–2 extra DB operations in the worst case).
 See [ticket-service.md](ticket-service.md#mark_as_duplicate) for the
 full service-layer contract (locking, auto-assignment, audit events,
 cascade transaction isolation).
-
-> **Note — soft-deleted source ticket**: attempting to mark a
-> soft-deleted ticket itself as duplicate is already rejected by the
-> shared sub-resource router dependency (410 `TICKET_DELETED`), which
-> fires before endpoint-specific logic runs. No additional guard is
-> needed in the mark-as-duplicate steps above.
 
 #### Cascade as Best-Effort Flattening
 
@@ -607,12 +598,6 @@ includes `duplicate_of_id`. This ensures:
 - The transient state (interrupted cascade) is invisible to API
   consumers.
 
-When the resolver follows the `duplicate_of_id` chain and the canonical
-target has `deleted_at IS NOT NULL`, the resolver still returns the
-`SNTL-{n}` identifier of that soft-deleted ticket. The duplicate link is
-historical data; the duplicated ticket remains in Duplicated status
-regardless of the target's lifecycle state.
-
 The raw value remains accessible through the audit history
 (`duplicate_set` and `duplicate_target_changed` events record what was
 written to the DB).
@@ -670,59 +655,12 @@ This operation modifies the `Ticket` row and calls
 row before any modification (see
 [Concurrency Control](#concurrency-control)).
 
-## Soft-Delete
-
-- Soft-delete is performed by setting `deleted_at` to the current
-  timestamp
-- Only users with the `admin_ticket_ops` capability may soft-delete or
-  restore tickets
-- Soft-deleted tickets (`deleted_at IS NOT NULL`) are invisible to all
-  business logic — no operation (API query, service-layer side effect,
-  or background task) queries, modifies, or produces side effects for
-  soft-deleted tickets unless it explicitly deals with deletion or
-  restoration management
-- All sub-resources of a soft-deleted ticket remain intact but are
-  inaccessible to users without the `admin_ticket_ops` capability. This
-  is enforced centrally by a shared dependency on the ticket sub-resource
-  router — see `docs/api-spec.md`
-  ([Scoped Responses](docs/api-spec.md#scoped-responses)) for the
-  HTTP-level contract (410 `TICKET_DELETED`)
-- Soft-deleting a ticket does NOT alter or invalidate `duplicate_of_id`
-  links from other tickets pointing to it. This is a controlled exception
-  to the general invisibility invariant — the duplicate link is historical
-  data and the duplicated ticket remains in Duplicated status regardless
-  of the target's lifecycle state.
-- A soft-deleted ticket can be restored by clearing `deleted_at`.
-  After restoring, the ticket's status is reconciled with current gate
-  conditions — while the ticket was soft-deleted, gate-relevant data
-  may have changed externally (CVSS scores deleted, product eligibility
-  changed, AIMAAS thresholds updated). If the gates for the ticket's
-  current status are no longer met, the ticket is automatically
-  regressed to the appropriate status. Manual-zone tickets (Ignored or
-  Duplicated) retain their pre-deletion status unchanged
-
-See [ticket-service.md](ticket-service.md#soft_delete_ticket) for the
-full service-layer contract (locking, audit events, status evaluation
-after restore).
-
-**Automated verification**: every service-layer operation that queries
-tickets as part of its logic MUST include a parametrized test verifying
-that soft-deleted tickets are excluded. At minimum:
-
-- Create a ticket in each relevant active status (New, Analysis, Analyzed)
-- Soft-delete it (`deleted_at = now()`)
-- Execute the operation under test
-- Assert the soft-deleted ticket was NOT affected (no TicketAuditEvents
-  created, no status changes, no unassignment, no inclusion in results)
-
 ### Status Categories
 
-- **Active tickets**: status `New`, `Analysis`, or `Analyzed` AND
-  `deleted_at IS NULL`. Actively monitored by background tasks.
+- **Active tickets**: status `New`, `Analysis`, or `Analyzed`. Actively
+  monitored by background tasks.
 - **Inactive tickets**: status `Resolved`, `Ignored`, or `Duplicated`.
   No longer monitored.
-- **Soft-deleted tickets**: `deleted_at IS NOT NULL`. Excluded from
-  everything regardless of status.
 
 ## Terminal Statuses and Mutability
 
@@ -769,7 +707,7 @@ not monitored by background tasks.
 
 ### Mutability Guard
 
-Enforcement of the manual-zone mutability and soft-delete guard is
+Enforcement of the manual-zone mutability guard is
 centralized in the service-layer function `ensure_ticket_operable()`
 (defined in `ticket_mutations`). This function is called by all mutation
 functions in `ticket_mutations`, `ticket_service`, and `package_service`
@@ -777,8 +715,6 @@ after acquiring `FOR UPDATE` on the ticket row.
 
 ```python
 def ensure_ticket_operable(ticket: Ticket) -> None:
-    if ticket.deleted_at is not None:
-        raise TicketSoftDeletedError(ticket.id)
     if ticket.status in (TicketStatus.Ignored, TicketStatus.Duplicated):
         raise TicketNotMutableError(ticket.id)
 ```
@@ -786,8 +722,7 @@ def ensure_ticket_operable(ticket: Ticket) -> None:
 **Scope**:
 - Applied to: all service-layer functions that modify ticket data
 - NOT applied to: read operations, manual-zone exit functions
-  (`reopen_from_ignored`, `revert_duplicate`), `soft_delete_ticket`,
-  and `restore_ticket`
+  (`reopen_from_ignored`, `revert_duplicate`)
 
 **Relationship with `require_accessible_ticket`**: the accessibility
 check is a router-level API dependency (applies to all operations on a
@@ -914,18 +849,14 @@ All endpoints under `/api/v1/cves/{cve_id}/` are subject to the
 `require_accessible_cve` router-level dependency (see `docs/api-spec.md`,
 CVE Accessibility Check). If the CVE is linked to a confidential ticket
 that the caller is not authorized to access, the endpoint returns
-`404 CVE_NOT_FOUND` — indistinguishable from a non-existent CVE. If
-the associated ticket is soft-deleted and the caller lacks
-`admin_ticket_ops`, the same `404 CVE_NOT_FOUND` is returned. CVEs
+`404 CVE_NOT_FOUND` — indistinguishable from a non-existent CVE. CVEs
 without an associated ticket are freely accessible.
 
 **CVE List (`GET /api/v1/cves`)**:
 The list query applies confidentiality filtering via LEFT JOIN to the
 Ticket table using `confidential_ticket_filter()`. CVEs associated with
 confidential tickets are silently excluded for unauthorized callers,
-consistent with the `GET /api/v1/tickets` pattern. CVEs associated with
-soft-deleted tickets are excluded by default; the `include_deleted`
-parameter (requiring `admin_ticket_ops` capability) controls this. CVEs
+consistent with the `GET /api/v1/tickets` pattern. CVEs
 without an associated ticket are always included. Pagination counts
 reflect only the CVEs visible to the caller.
 
@@ -1039,7 +970,7 @@ contract and detail JSONB schema.
 ### Stale Access Grant Cleanup
 
 When a ticket's `is_confidential` flag is set to `FALSE` (embargo
-lifted) or the ticket is soft-deleted, the explicit `TicketAccessGrant`
+lifted), the explicit `TicketAccessGrant`
 records remain in the database inertly.
 
 To prevent infinite database growth, a Celery Beat background task
@@ -1056,12 +987,6 @@ This single condition covers all cases:
 
 - Embargo lifted (ticket made non-confidential) → grants cleaned after
   14 days
-- Soft-deleted non-confidential ticket → `is_confidential` is already
-  `FALSE` → grants cleaned after 14 days
-- Soft-deleted confidential ticket → `is_confidential` is still `TRUE`
-  → grants preserved. If the ticket is later restored, all grants are
-  intact. To clean them, an Admin must first restore the ticket, then a
-  VA removes confidentiality — the cleanup runs 14 days later
 
 ## API Endpoints
 
@@ -1084,11 +1009,11 @@ The PascalCase forms used elsewhere in this spec (e.g., `New`,
 `Analysis`, `Critical`) refer to the logical values; the wire format is
 always lowercase.
 
-**Soft-deletion visibility**: all entities with soft-deletion include a
-`deleted_at` field (`datetime | null`). This field is present only when
-the request includes `include_deleted=true` or `include_deleted=only`
-and the caller has the `admin_ticket_ops` capability. When not
-applicable, the field is omitted from the response.
+**Soft-deletion visibility**: package, track, and product entities with
+soft-deletion include a `deleted_at` field (`datetime | null`). This
+field is present only when the request includes `include_deleted=true`
+or `include_deleted=only` and the caller has the `admin_ticket_ops`
+capability. When not applicable, the field is omitted from the response.
 
 #### Shared Sub-Schemas
 
@@ -1210,7 +1135,6 @@ views without the full package tree.
 | `package_names` | string[] | Flat list of affected package names (e.g., `["curl", "openssl-3"]`) |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
-| `deleted_at` | datetime \| null | Soft-deletion (see above) |
 
 #### TicketDetail
 
@@ -1230,7 +1154,6 @@ TicketSummary with the full package tree and expanded CVE data.
 | `packages` | PackageDetail[] | Full package/track/product tree with bugowner data |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
-| `deleted_at` | datetime \| null | Soft-deletion (see above) |
 
 Note: TicketDetail does not include `package_names` — the same
 information is available from `packages[].package_name`.
@@ -1254,10 +1177,8 @@ API performs resolution and format conversion before serialization.
 | `POST .../duplicate` | `TicketDetail` |
 | `POST .../reopen` | `TicketDetail` |
 | `POST .../revert-duplicate` | `TicketDetail` |
-| `POST .../restore` | `TicketDetail` |
 | `PATCH .../confidentiality` | `TicketDetail` |
 | `DELETE .../cve` | 204 No Content (no body) |
-| `DELETE /api/v1/tickets/{ticket_id}` | 204 No Content (no body) |
 
 ### List Tickets
 
@@ -1291,12 +1212,6 @@ Query parameters:
   least one package whose bugowner matches the value (matches against
   bugowner email, name, or group member email/userid — see
   `docs/features/packages/package-bugowner.md`).
-- `include_deleted` (string, optional): `true` or `only`. Accepted from
-  any caller, but soft-deleted tickets are included only if the caller
-  has the `admin_ticket_ops` capability. For callers without this
-  capability, the parameter is silently ignored. Values: `true` (include active and deleted tickets), `only`
-  (return only deleted tickets). Default (absent or `false`): return only
-  active tickets.
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
@@ -1322,8 +1237,7 @@ in the response is populated via
 `GET /api/v1/tickets/{ticket_id}/packages`. The response includes
 the full package/track/product tree with bugowner information for each
 package (type, name, email, and group members when applicable — see
-`docs/features/packages/package-bugowner.md`). See
-[Soft-Delete](#soft-delete) for soft-deleted ticket visibility rules.
+`docs/features/packages/package-bugowner.md`).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -1640,45 +1554,6 @@ Error responses:
 - 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Duplicated
   status
 
-### Soft-Delete Ticket
-
-```
-DELETE /api/v1/tickets/{ticket_id}
-```
-
-**`Capability: admin_ticket_ops`**
-- **Response**: 204 No Content
-
-Soft-deletes a ticket by setting `deleted_at`. Creates a `ticket_deleted`
-TicketAuditEvent. See [Soft-Delete](#soft-delete) for visibility rules and
-sub-resource behavior.
-
-Error responses:
-
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 410 with code `TICKET_DELETED`: ticket is already soft-deleted
-
-### Restore Ticket
-
-```
-POST /api/v1/tickets/{ticket_id}/restore
-```
-
-**`Capability: admin_ticket_ops`**
-- **Response schema**: `TicketDetail`
-
-Restores a soft-deleted ticket by clearing `deleted_at`. Creates a
-`ticket_restored` TicketAuditEvent. See [Soft-Delete](#soft-delete) for
-soft-delete lifecycle.
-
-Response: `TicketDetail` object in standard `{"data": ...}` envelope
-(200 OK).
-
-Error responses:
-
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_NOT_DELETED`: ticket is not soft-deleted
-
 ### Set Confidentiality
 
 ```
@@ -1822,7 +1697,6 @@ table:
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See [Confidential Tickets](#confidential-tickets) |
-| deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp |
 
 ## Security
 
@@ -1840,7 +1714,6 @@ table:
 - Setting confidentiality, managing access grants: `manage_confidentiality`
   capability
 - Removing a CVE from a ticket: `admin_ticket_ops` capability
-- Soft-deleting and restoring tickets: `admin_ticket_ops` capability
 - See `docs/features/identity/rbac.md` for the full permission model
 
 ## Cross-references

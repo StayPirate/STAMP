@@ -148,8 +148,7 @@ erDiagram
         ENUM severity_override "nullable"
         BOOLEAN is_confidential "NOT NULL, DEFAULT FALSE"
         UUID assignee_id FK "nullable"
-        UUID duplicate_of_id FK "self-ref, nullable"
-        TIMESTAMPTZ deleted_at "nullable"
+         UUID duplicate_of_id FK "self-ref, nullable"
     }
     TicketAccessGrant {
         UUID ticket_id PK,FK "NOT NULL"
@@ -671,8 +670,7 @@ values have variable precision (e.g., 0.00043, 0.97565) that would
 require a wide DECIMAL scale.
 
 **Lifecycle**: the `sync_epss` fetcher refreshes EPSS data only for
-CVEs with **active tickets** (New, Analysis, Analyzed;
-`deleted_at IS NULL`). When a ticket transitions to Resolved, Ignored,
+CVEs with **active tickets** (New, Analysis, Analyzed). When a ticket transitions to Resolved, Ignored,
 or Duplicated, the CVEEPSSScore record is **retained** but no longer
 refreshed — consistent with the CVSS lifecycle pattern
 (`docs/features/tickets/cvss-scoring.md`, Sync Scope). If the ticket
@@ -809,9 +807,7 @@ override model.
 
 **Unique constraint**: (ticket_package_track_id, product_id)
 
-> **Soft-deletion semantics — two levels**: Ticket-level `deleted_at`
-> blocks all mutations on the ticket and its children via
-> `ensure_ticket_operable()`. Package/track/product-level `deleted_at`
+> **Soft-deletion semantics — package level**: Package/track/product-level `deleted_at`
 > does NOT block mutations on those child records — soft-deleted children
 > on operable tickets continue receiving updates (release detection,
 > eligibility recalculation) to stay current with reality. See
@@ -1013,15 +1009,9 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/tickets.md` (Confidential Tickets) |
-| deleted_at        | TIMESTAMPTZ   | nullable                     | Soft-delete timestamp. NULL means active. Set by users with `admin_ticket_ops` capability only |
 
-**Deletion policy**: tickets MUST NOT be hard-deleted from the database.
-Soft-delete is performed by setting `deleted_at` to the current timestamp.
-Only users with the `admin_ticket_ops` capability may soft-delete or
-restore tickets. Soft-deleted tickets are excluded from all default
-queries. All sub-resources of a soft-deleted ticket (references, events,
-packages, tracks, products) remain intact in the database but are
-inaccessible to users without the `admin_ticket_ops` capability.
+
+**Deletion policy**: Tickets MUST NOT be deleted from the database. There is no soft-delete mechanism at the ticket level. Tickets that are no longer relevant are transitioned to Ignored or Duplicated status.
 
 **Status transitions**: see `docs/features/tickets/tickets.md` (Ticket Lifecycle)
 for the full transition diagram, gates, and rules.
@@ -1053,19 +1043,13 @@ Exits from the manual zone (Ignored, Duplicated) use the shared
 `reconcile_ticket_status`.
 
 **Status categories**:
-- **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`
-  **and** with `deleted_at IS NULL`. These are actively monitored: CVSS
+- **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`.
+  These are actively monitored: CVSS
   sync, release detection, and recalculation cascades apply to active
-  tickets. Soft-deleted tickets are never considered active, regardless
-  of their status.
+  tickets.
 - **Inactive tickets**: tickets in status `Resolved`, `Ignored`, or
   `Duplicated`. These are no longer monitored: CVSS sync and
   recalculation cascades skip inactive tickets.
-- **Soft-deleted tickets**: tickets with `deleted_at IS NOT NULL`. These
-  are excluded from all background processing (CVSS sync, release
-  detection, NVD rejection handling, recalculation cascades) regardless
-  of their status. They are also excluded from all default API queries
-  and UI views.
 
 ### TicketReference
 
@@ -1165,8 +1149,6 @@ system action).
 | severity_changed           | CVE severity was recalculated due to a CVSS assessment change or default CVSS version change. `old_value` and `new_value` contain severity labels. `user_id` is always NULL (system event). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `detail` carries `{"track", "package", "product_id", "reason"}` context where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
-| ticket_deleted              | Ticket was soft-deleted by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
-| ticket_restored             | Soft-deleted ticket was restored by an Admin. `user_id` is the Admin who performed the action. `old_value` and `new_value` are NULL. `comment` is an optional admin note. |
 | confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/tickets.md` (Confidential Tickets). |
 | access_grant_added          | VA manually granted a user explicit access to a confidential ticket. `old_value` is NULL. `new_value` is the target username. `detail` is NULL. |
 | access_grant_removed        | VA manually revoked a user's explicit access to a confidential ticket. `old_value` is the target username. `new_value` is NULL. `detail` is NULL. |
@@ -1193,8 +1175,8 @@ specification.
 | granted_by_id | UUID        | FK(user.id) ON DELETE RESTRICT, NOT NULL | The VA who granted the access |
 | granted_at    | TIMESTAMPTZ | NOT NULL, DEFAULT            | When the grant was created           |
 
-*Note: ON DELETE RESTRICT is used because tickets and users are never
-physically deleted in Sentinel (only soft-deleted or deactivated).*
+*Note: ON DELETE RESTRICT is used because tickets are never deleted from
+the database; users are deactivated, not deleted.*
 
 ### IdentityAuditEvent
 

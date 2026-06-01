@@ -244,8 +244,8 @@ repository.
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`) — release
-  detection does NOT apply to non-operable tickets (soft-deleted,
-  Ignored, or Duplicated)
+  detection does NOT apply to non-operable tickets (Ignored or
+  Duplicated)
 - No precondition on track or product `deleted_at` — release detection
   applies to soft-deleted child records (factual observation that keeps
   them current with reality)
@@ -718,8 +718,6 @@ async def search_packages(
     search: str | None = None,
     name: str | None = None,
     ticket_status: list[TicketStatus] | None = None,
-    include_deleted: str | None = None,  # soft-deleted *tickets* visibility
-    caller_is_admin: bool = False,       # for include_deleted enforcement
     sort_by: Literal["package_name", "created_at"] = "created_at",
     sort_order: Literal["asc", "desc"] = "desc",
     page: int = 1,
@@ -731,24 +729,21 @@ async def search_packages(
 
 1. Build base query joining `TicketPackage` -> `Ticket`
 2. Exclude soft-deleted packages: filter `TicketPackage.deleted_at IS NULL`
-3. Apply soft-deleted ticket filter: exclude packages belonging to
-   soft-deleted tickets (`Ticket.deleted_at IS NOT NULL`) unless
-   `include_deleted` is set and caller is Admin
-4. Apply `confidentiality_filter` (pre-built by the endpoint handler
+3. Apply `confidentiality_filter` (pre-built by the endpoint handler
    via `confidential_ticket_filter()` — see
    `docs/features/tickets/tickets.md`, Confidentiality Filtering)
-5. Apply `ticket_status` filter (if provided; invalid values silently
+4. Apply `ticket_status` filter (if provided; invalid values silently
    ignored)
-6. Apply `search` (ILIKE `%term%` substring match on `package_name`) or
+5. Apply `search` (ILIKE `%term%` substring match on `package_name`) or
    `name` (exact match)
-7. Apply sorting (primary: `sort_by`/`sort_order`; secondary: `id` for
+6. Apply sorting (primary: `sort_by`/`sort_order`; secondary: `id` for
    deterministic pagination)
-8. Execute paginated query
-9. Compute `track_summary` via SQL aggregation (`COUNT(*) FILTER (WHERE
+7. Execute paginated query
+8. Compute `track_summary` via SQL aggregation (`COUNT(*) FILTER (WHERE
    status = ...)`) in the same query — NOT as Python post-processing —
    to avoid N+1 query patterns. Counts only tracks with
    `deleted_at IS NULL` (active tracks)
-10. Return paginated `PackageListItem[]`
+9. Return paginated `PackageListItem[]`
 
 **No locking needed** — this is a read-only operation.
 
@@ -843,7 +838,6 @@ external I/O MUST NOT acquire `FOR UPDATE` locks.
 |-----------|-------------|
 | `TicketNotFoundError` | `FOR UPDATE` returns no row |
 | `TicketNotMutableError` | Ticket is in manual zone (defense in depth — API layer catches first) |
-| `TicketSoftDeletedError` | Ticket has `deleted_at IS NOT NULL` |
 | `TrackNotFoundError` | Track ID does not exist |
 | `ProductNotFoundError` | Product ID does not exist |
 | `PackageNotFoundError` | Package ID does not exist |
@@ -856,16 +850,15 @@ different semantics:
 
 ### Ticket-level operability
 
-Non-operable tickets (soft-deleted, Ignored, or Duplicated) MUST NOT
+Non-operable tickets (Ignored or Duplicated) MUST NOT
 receive any package mutations. `ensure_ticket_operable(ticket)` enforces
 this for all mutation functions in this module (including
 `set_product_released_at`). Automated callers (release detection
 fetchers, IBS RabbitMQ consumer) scope their queries to active tickets
 at query time (a stricter subset — excludes Resolved in addition to
 non-operable statuses); the guard fires only in race conditions.
-Required caller behavior: catch `TicketSoftDeletedError` and
-`TicketNotMutableError`, log a WARNING, and continue processing the
-next item.
+Required caller behavior: catch `TicketNotMutableError`, log a
+WARNING, and continue processing the next item.
 
 ### Package/track/product-level soft-deletion
 

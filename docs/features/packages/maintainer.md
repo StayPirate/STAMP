@@ -95,17 +95,15 @@ response, it returns an error state instead. Evaluation order (first match
 wins):
 
 1. Ticket does not exist → 404 `TICKET_NOT_FOUND`
-2. Ticket is soft-deleted → 410 `TICKET_DELETED`
-3. Ticket status is not `Analyzed` → 200 with `error_state` (status-specific)
-4. User is not a bugowner of any package in the ticket → 200 with `error_state`
-5. All checks pass → 200 with normal data
+2. Ticket status is not `Analyzed` → 200 with `error_state` (status-specific)
+3. User is not a bugowner of any package in the ticket → 200 with `error_state`
+4. All checks pass → 200 with normal data
 
 **Error state conditions:**
 
 | Condition | HTTP | Error state type |
 |-----------|------|------------------|
 | Ticket does not exist | 404 | — (standard error response) |
-| Ticket is soft-deleted | 410 | — (standard error response) |
 | Ticket status is `New` or `Analysis` | 200 | `not_analyzed` |
 | Ticket status is `Resolved` | 200 | `resolved` |
 | Ticket status is `Ignored` | 200 | `ignored` |
@@ -263,7 +261,6 @@ specific ticket, filtered to the authenticated user's packages.
 |------|------------|-----------|
 | 200  | — | Ticket exists — response contains either normal data or an error state object |
 | 404  | `TICKET_NOT_FOUND` | Ticket does not exist |
-| 410  | `TICKET_DELETED` | Ticket is soft-deleted (caller lacks `admin_ticket_ops` capability) |
 
 **Response (normal view)**: returned when ticket status is `Analyzed` and
 the user is a bugowner of at least one package. Object with three arrays

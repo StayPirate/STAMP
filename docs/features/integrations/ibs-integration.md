@@ -241,7 +241,7 @@ Full procedure is documented in
 2. IBS API calls use retry logic with exponential backoff
 3. All IBS operations are logged for audit purposes
 4. The `IBSTrackReleaseDetector` only modifies records with status
-   `AFFECTED` or `ANALYSIS`; soft-deleted records are not modified
+   `AFFECTED` or `ANALYSIS`; excluded (soft-deleted) tracks are not modified
 
 ## OBS Public Integration
 

@@ -167,8 +167,8 @@ status — executes the unassignment unconditionally.
 
 **Behavior**:
 
-1. Query all tickets where `assignee_id = user_id`, `deleted_at IS NULL`,
-   and status is active (New, Analysis, or Analyzed — see
+1. Query all tickets where `assignee_id = user_id` and status is active
+   (New, Analysis, or Analyzed — see
    `docs/features/tickets/tickets.md` § Status Categories)
 2. For each matching ticket, set `assignee_id = NULL`
 3. For each matching ticket, create a `TicketAuditEvent` with

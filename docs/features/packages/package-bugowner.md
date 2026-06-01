@@ -272,8 +272,8 @@ any active ticket.
    `TicketPackage` record where:
    - `TicketPackage.package_name` matches, AND
    - `TicketPackage.deleted_at IS NULL` (not soft-deleted), AND
-   - The parent `Ticket` is **active** (status in `New`, `Analysis`,
-     `Analyzed` and `deleted_at IS NULL`)
+    - The parent `Ticket` is **active** (status in `New`, `Analysis`,
+      `Analyzed`)
 3. If no active ticket references the package, delete the
    `PackageBugowner` record and its associated `PackageBugownerMember`
    records

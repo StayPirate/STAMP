@@ -481,7 +481,7 @@ updates:
    - package_name = extract from sourcepackage by stripping the
      codestream suffix (see Package Name Extraction in Data Sources)
 4. Is codestream_name an active codestream from an active ticket
-   (ticket status in New, Analysis, Analyzed; ticket deleted_at IS NULL)?
+   (ticket status in New, Analysis, Analyzed)?
    If no -> skip
 5. Is package_name tracked in at least one ticket for that
    codestream? If no -> skip
@@ -595,8 +595,8 @@ both down).
 Step 1 — Discover missed open SRs and reconcile known ones:
 
   1. Identify active codestreams (distinct codestream_name values from
-     TicketPackageTrack records belonging to active tickets — ticket
-     status in New, Analysis, Analyzed; ticket deleted_at IS NULL).
+      TicketPackageTrack records belonging to active tickets — ticket
+      status in New, Analysis, Analyzed).
      Soft-deleted tracks are included — submission tracking applies
      regardless of exclusion status.
 

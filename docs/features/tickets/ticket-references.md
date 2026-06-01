@@ -290,8 +290,6 @@ independent — if a single reference fails (e.g., a URL from upstream
 data exceeds the 2048-character limit), the service logs the failure
 and continues with the remaining references (skip-and-continue).
 
-**Soft-delete race condition**: `upsert_references()` does not re-check ticket soft-delete state. If a ticket is soft-deleted between Phase 1 commit and the `upsert_references()` call, references are inserted on the soft-deleted ticket. This is harmless — references on soft-deleted tickets are inaccessible via the API and become visible again if the ticket is restored. Adding a re-check would introduce lock contention with no practical benefit given the extremely narrow time window.
-
 There is no stale reference cleanup step. Fetchers only insert and update
 references — they never delete them. If an upstream source removes a
 reference URL, the corresponding `TicketReference` remains in Sentinel.
@@ -407,13 +405,6 @@ This separation ensures:
   without overwriting user edits
 - **Clear ownership**: fetchers own their references, users own theirs
 
-**Soft-deleted tickets**: fetchers SHOULD skip
-`upsert_references()` when the `UpsertResult` contains a soft-deleted
-ticket (`deleted_at IS NOT NULL`). See
-`docs/features/tickets/cve-service.md` for the soft-deleted ticket
-handling policy. References on soft-deleted tickets are preserved
-unchanged (see Ticket soft-delete below).
-
 **Tickets in final status**: fetchers still call
 `upsert_references()` for tickets in final status (Resolved, Ignored,
 Duplicated). `cve_service.upsert_cve()` processes CVE data regardless
@@ -444,16 +435,6 @@ URL, manual source" match rule — the VA's chosen title, description, and
 type are preserved. Only URLs not yet present on the ticket are added as
 automatic references. See the Upsert Strategy section for the full merge
 rules.
-
-### Ticket soft-delete
-
-When a ticket is soft-deleted, its existing references (both automatic
-and manual) are preserved unchanged in the database. While the ticket is
-soft-deleted, references are not modified — fetchers skip soft-deleted
-tickets (see `docs/features/tickets/cve-service.md`), and the API
-returns `410 TICKET_DELETED` for all sub-resource endpoints via the
-centralized `require_accessible_ticket` dependency. If the ticket is
-later restored, all references become accessible and modifiable again.
 
 ## Service Layer
 
