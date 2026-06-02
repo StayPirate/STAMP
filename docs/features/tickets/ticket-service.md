@@ -353,15 +353,15 @@ async def assign_ticket(
 **Preconditions**:
 
 - Ticket must be operable (`ensure_ticket_operable`)
-- Target user must be active and hold the `vulnerability_analyst` role
-  (else `InvalidAssigneeError`)
+- Target user must be active (else `AssigneeInactiveError`) and hold
+  the `vulnerability_analyst` role (else `AssigneeNotVAError`)
 
 **Behavioral steps**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Call `ensure_ticket_operable(ticket)`
-3. Validate target user (active, holds VA role; else
-    `InvalidAssigneeError`)
+3. Validate target user (active — else `AssigneeInactiveError`;
+    holds VA role — else `AssigneeNotVAError`)
 4. **Idempotency check**: if `ticket.assignee_id == assignee_id`, return
     ticket unchanged (no audit event, no status evaluation)
 5. Set `ticket.assignee_id = assignee_id`
@@ -728,28 +728,30 @@ async def list_access_grants(
 
 ## Service Exceptions
 
-| Exception class | Mapped API error code | Raised by |
-|----------------|----------------------|-----------|
-| `TicketNotFoundError` | `TICKET_NOT_FOUND` | All operations (ticket lookup) |
-| `TicketNotMutableError` | `TICKET_NOT_MUTABLE` | `ensure_ticket_operable` (Ignored/Duplicated tickets) |
-| `InvalidTransitionError` | `TICKET_INVALID_TRANSITION` | `ignore_ticket` (Analyzed/Resolved tickets) |
-| `TicketCVEAlreadySetError` | `TICKET_CVE_ALREADY_SET` | `associate_cve` |
-| `TicketCVENotSetError` | `TICKET_CVE_NOT_SET` | `dissociate_cve` |
-| `TicketCVEConflictError` | `TICKET_CVE_CONFLICT` | `create_ticket`, `associate_cve` |
-| `InvalidAssigneeError` | `TICKET_ASSIGNEE_NOT_VA` or `TICKET_ASSIGNEE_INACTIVE` | `assign_ticket` |
-| `SelfDuplicateError` | `TICKET_SELF_DUPLICATE` | `mark_as_duplicate` |
-| `DuplicateChainDepthError` | `TICKET_DUPLICATE_CHAIN_DEPTH` | `mark_as_duplicate` (via `resolve_canonical_target`) |
-| `TicketNotConfidentialError` | `TICKET_NOT_CONFIDENTIAL` | `grant_access`, `revoke_access`, `list_access_grants` |
-| `UserNotFoundError` | `USER_NOT_FOUND` | `grant_access`, `revoke_access` |
-
-All exceptions inherit from a common `TicketServiceError` base class.
+All exceptions in this module inherit from `TicketServiceError`.
 API endpoint handlers catch `TicketServiceError` subclasses and map them
 to the corresponding HTTP status code and error code per `api-spec.md`.
 
-Note: `InvalidAssigneeError` carries a `reason` attribute that
-distinguishes between the two failure modes. The API handler maps
-`reason="not_va"` to `TICKET_ASSIGNEE_NOT_VA` (400) and
-`reason="inactive"` to `TICKET_ASSIGNEE_INACTIVE` (400).
+| Exception | HTTP | Code | Raised when |
+|-----------|------|------|-------------|
+| `TicketNotFoundError` † | 404 | `TICKET_NOT_FOUND` | Ticket ID does not exist |
+| `TicketNotMutableError` † | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (Ignored or Duplicated) |
+| `InvalidTransitionError` † | 409 | `TICKET_INVALID_TRANSITION` | Requested status transition is not allowed |
+| `TicketCVEAlreadySetError` | 400 | `TICKET_CVE_ALREADY_SET` | Ticket already has a CVE associated |
+| `TicketCVENotSetError` | 400 | `TICKET_CVE_NOT_SET` | Ticket has no CVE to dissociate |
+| `TicketCVEConflictError` | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket |
+| `AssigneeNotVAError` | 400 | `TICKET_ASSIGNEE_NOT_VA` | Target user lacks the vulnerability_analyst role |
+| `AssigneeInactiveError` | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive (for assignment) |
+| `InactiveUserError` † | 409 | `USER_INACTIVE` | Target user is inactive (for access grant) |
+| `SelfDuplicateError` | 400 | `TICKET_SELF_DUPLICATE` | Ticket cannot be marked as duplicate of itself |
+| `DuplicateCycleDetectedError` † | 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
+| `DuplicateChainDepthError` † | 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Duplicate chain exceeds maximum allowed depth |
+| `SeverityDerivedError` † | 409 | `TICKET_SEVERITY_DERIVED` | Cannot manually set severity when it is auto-derived |
+| `TicketNotConfidentialError` | 409 | `TICKET_NOT_CONFIDENTIAL` | Operation requires a confidential ticket |
+| `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | Referenced user does not exist |
+
+† Shared exception — inherits from `ServiceError`, not from
+`TicketServiceError`. Handlers must catch it explicitly.
 
 ## Callers
 

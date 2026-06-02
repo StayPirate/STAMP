@@ -771,18 +771,26 @@ Requirement).
 
 ## Service Exceptions
 
-| Exception | Raised when |
-|-----------|-------------|
-| `TicketNotFoundError` | `FOR UPDATE` returns no row |
-| `TicketNotMutableError` | Ticket is in manual zone (defense in depth — API layer catches first) |
-| `DuplicateCycleDetectedError` | Resolver detects a cycle in the chain |
-| `DuplicateChainDepthError` | Resolver exceeds 50-hop limit |
-| `DuplicateCVSSAssessmentError` | Assessment for the same (CVE, provider, version) combination already exists (maps to 409 `CVSS_DUPLICATE_ASSESSMENT`) |
-| `CVSSAssessmentNotFoundError` | `assessment_id` does not match any existing `CVECVSSAssessment` record (maps to 404 `CVSS_ASSESSMENT_NOT_FOUND`) |
-| `InvalidCVSSVectorError` | Vector string is malformed or unparseable by the `cvss` library (maps to 422 `CVSS_INVALID_VECTOR`) |
-| `CVSSVersionMismatchError` | `update_cvss_assessment()` called with a vector of a different CVSS version than the existing assessment — create a new assessment for the target version instead (maps to 409 `CVSS_VERSION_MISMATCH`) |
-| `TicketInvalidTransitionError` | Ticket is not in the required status for the requested operation (e.g., not Ignored for `reopen_from_ignored`, not Duplicated for `revert_duplicate`). Maps to 409 `TICKET_INVALID_TRANSITION` |
-| `SeverityDerivedError` | `set_severity_override()` called on a ticket with `cve_id IS NOT NULL` — severity is derived from CVSS scores and cannot be manually overridden (maps to 409 `TICKET_SEVERITY_DERIVED`) |
+All exceptions in this module inherit from `TicketMutationsError`.
+API endpoint handlers catch `TicketMutationsError` subclasses and map
+them to the corresponding HTTP status code and error code per
+`api-spec.md`.
+
+| Exception | HTTP | Code | Raised when |
+|-----------|------|------|-------------|
+| `TicketNotFoundError` † | 404 | `TICKET_NOT_FOUND` | Ticket ID does not exist |
+| `TicketNotMutableError` † | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (Ignored or Duplicated) |
+| `DuplicateCycleDetectedError` † | 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
+| `DuplicateChainDepthError` † | 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Duplicate chain exceeds maximum allowed depth |
+| `DuplicateCVSSAssessmentError` | 409 | `CVSS_DUPLICATE_ASSESSMENT` | Assessment for this provider+version already exists |
+| `CVSSAssessmentNotFoundError` | 404 | `CVSS_ASSESSMENT_NOT_FOUND` | CVSS assessment ID does not exist |
+| `InvalidCVSSVectorError` | 422 | `CVSS_INVALID_VECTOR` | CVSS vector string is malformed or invalid |
+| `CVSSVersionMismatchError` | 409 | `CVSS_VERSION_MISMATCH` | Vector version does not match the declared version |
+| `InvalidTransitionError` † | 409 | `TICKET_INVALID_TRANSITION` | Requested status transition is not allowed |
+| `SeverityDerivedError` † | 409 | `TICKET_SEVERITY_DERIVED` | Cannot manually set severity when it is auto-derived |
+
+† Shared exception — inherits from `ServiceError`, not from
+`TicketMutationsError`. Handlers must catch it explicitly.
 
 Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
 `PackageNotFoundError`) are defined in `package_service` — see

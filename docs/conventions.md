@@ -535,3 +535,114 @@ following the fetcher documentation requirements defined in
 Documentation Requirements"). This includes the classification rule
 (dedicated spec vs. embedded section), the minimum documentation
 template, and the Fetcher Registry maintenance obligation.
+
+### Service Exception Conventions
+
+Every service module that raises exceptions propagated to API callers
+MUST follow the standard exception documentation pattern established in
+`docs/features/packages/package-service.md`.
+
+#### Base class requirement
+
+All exceptions in a service module inherit from a common
+`<Module>ServiceError` base class (e.g., `TicketServiceError`,
+`UserServiceError`). All module base classes inherit from a common
+`ServiceError` root class. The spec MUST include the declaration:
+
+> All exceptions in this module inherit from `<Module>ServiceError`.
+> API endpoint handlers catch `<Module>ServiceError` subclasses and map
+> them to the corresponding HTTP status code and error code per
+> `api-spec.md`.
+
+#### API-facing exception table format
+
+All modules use a 4-column table for exceptions that reach API handlers:
+
+| Exception | HTTP | Code | Raised when |
+|-----------|------|------|-------------|
+| `ExampleError` | 409 | `DOMAIN_ERROR_CODE` | Brief semantic condition |
+
+#### System-internal exception sub-table
+
+For exceptions that never reach an API handler (CLI-only, fetcher-only,
+or caught internally), a separate sub-table is used:
+
+| Exception | Raised when | Handling |
+|-----------|-------------|----------|
+| `InternalError` | Semantic condition | How callers handle it |
+
+#### "Raised when" column rules
+
+- Describes the **semantic condition** that triggers the exception in
+  one brief sentence
+- Does NOT list function names or code paths (avoids drift when
+  implementations change)
+- The condition should be stable — tied to the exception's meaning,
+  not to implementation details
+
+#### 1:1 mapping rule
+
+Every API-facing exception MUST map to exactly one HTTP status code and
+one error code. If an exception currently maps to multiple codes based
+on an attribute (e.g., `reason`), it MUST be split into separate
+exception classes — one per distinct error code.
+
+#### Domain-specific validation codes
+
+Domain-specific validation exceptions (e.g., `PasswordValidationError`,
+`ApiKeyNameValidationError`) use domain-specific error codes (e.g.,
+`USER_PASSWORD_POLICY_VIOLATION`, `AUTH_API_KEY_NAME_INVALID`) — NOT the
+generic `VALIDATION_ERROR` code. The `errors` array in the response body
+remains exclusive to `VALIDATION_ERROR` responses (Pydantic schema
+validation). Domain validation errors use the standard `code` + `detail`
+envelope format.
+
+#### Mapping authority chain
+
+The three-tier authority relationship for error information is:
+
+1. **`api-spec.md`** — authoritative registry of all valid error codes
+   (prefix, domain, enumeration)
+2. **Service spec** — authoritative source for each exception's HTTP
+   status code and error code mapping
+3. **Endpoint error tables** (in feature specs like `tickets.md`,
+   `user-management.md`) — reference the service spec's exceptions for
+   traceability; not authoritative for the HTTP/code mapping
+
+The HTTP/code mapping for each exception MUST be documented in the
+service module spec itself — not deferred to endpoint-level error tables
+in other specs.
+
+Every error code appearing in a service exception table MUST also be
+registered in the Error Code Categories table in `api-spec.md`.
+
+#### Shared exceptions
+
+Exceptions used by multiple service modules (e.g., `TicketNotFoundError`
+used by `ticket-service`, `ticket-mutations`, and `package-service`) are
+defined once in a common exceptions module and imported by each service.
+Each service spec MUST still list the exception in its own table (the
+reader should not need to consult another spec). Shared exceptions are
+marked with `†` in exception tables.
+
+**Inheritance**: shared exceptions inherit from `ServiceError` directly —
+they are NOT subclasses of any individual module's base class.
+
+**Handler requirements**: API handlers MUST catch each exception class
+individually. Using `except ModuleServiceError` as a catch-all is
+insufficient when the table includes shared exceptions (marked `†`),
+since those do not inherit from the module's base class. A
+`except ServiceError` fallback MAY be added for defense-in-depth but
+MUST log a warning (indicates a missing specific handler).
+
+#### Endpoint error tables (post-standardization)
+
+Endpoint-level error tables in feature specs (e.g., `tickets.md`,
+`user-management.md`) MUST NOT repeat the HTTP status code for service
+exceptions. They reference the exception class name and error code for
+traceability — the authoritative HTTP mapping lives in the service spec.
+
+Endpoint error tables retain their own HTTP status column only for
+errors that do NOT originate from a service exception (e.g.,
+framework-level 401/403 from auth dependencies, 404 from path parameter
+resolution).

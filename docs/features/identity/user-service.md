@@ -804,24 +804,30 @@ duplicate TicketAuditEvents are created.
 
 ## Service Exceptions
 
-The service layer raises the following typed exceptions. Each consumer
-(API handler, CLI command, background task) is responsible for
-translating these into its own response format (HTTP status + error code,
-CLI exit code + stderr message, etc.). See `docs/features/identity/user-management.md`
-for the API-layer mapping.
+All exceptions in this module inherit from `UserServiceError`.
+API endpoint handlers catch `UserServiceError` subclasses and map them
+to the corresponding HTTP status code and error code per `api-spec.md`.
 
-| Exception | Raised when |
-|-----------|-------------|
-| `UserNotFoundError` | User lookup by ID or username finds no match |
-| `UserConflictError` | Duplicate username or email (uniqueness constraint violation) |
-| `UsernameFormatError` | Username does not conform to the format defined in `docs/conventions.md` (Username Format) |
-| `SelfRoleRemovalError` | Authenticated user attempts to remove their own Admin role — raised by `update_roles()`, `sync_role_mapping()`, and `delete_role_mapping_roles()` when the operation would leave the acting user without any Admin role source |
-| `SelfDeactivationError` | Authenticated user attempts to deactivate themselves |
-| `ADUserStatusReadOnlyError` | A human caller (`acting_user_id` is set) attempts to deactivate or reactivate an AD user (`ad_object_guid IS NOT NULL`) — active status is managed exclusively by directory sync |
-| `ADDerivedRoleError` | Attempting to manually remove a role derived from AD group membership |
-| `ADUserFieldReadOnlyError` | Raised in two cases: (1) a human caller (`acting_user_id` is set) attempts to call `update_user()` on an AD user — all identity fields are managed by directory sync; (2) any caller attempts to set AD-specific fields (`manager_id`, `ad_synced_at`) on a local user — these fields are not applicable |
-| `ADUserPasswordError` | Attempting to set or reset password for an AD user |
-| `PasswordValidationError` | Password does not meet length requirements (16–128 characters) |
+| Exception | HTTP | Code | Raised when |
+|-----------|------|------|-------------|
+| `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | User identifier does not resolve to any user |
+| `UserConflictError` | 409 | `USER_ALREADY_EXISTS` | Username or email already in use |
+| `SelfRoleRemovalError` | 409 | `USER_SELF_ROLE_REMOVAL` | Admin attempting to remove their own admin role |
+| `SelfDeactivationError` | 409 | `USER_SELF_DEACTIVATION` | Admin attempting to deactivate themselves |
+| `ADUserStatusReadOnlyError` | 409 | `USER_AD_STATUS_READONLY` | Cannot manually activate/deactivate an AD user |
+| `ADDerivedRoleError` | 409 | `USER_AD_ROLE_PROTECTED` | Cannot manually modify AD-derived roles |
+| `ADUserFieldReadOnlyError` | 409 | `USER_AD_FIELD_READONLY` | Cannot modify AD-synced fields on an AD user |
+| `ADUserPasswordError` | 409 | `USER_AD_PASSWORD_FORBIDDEN` | Cannot set password for an AD user |
+| `PasswordValidationError` | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements |
+
+† Shared exception — inherits from `ServiceError`, not from
+`UserServiceError`. Handlers must catch it explicitly.
+
+### System-internal exceptions
+
+| Exception | Raised when | Handling |
+|-----------|-------------|----------|
+| `UsernameFormatError` | Username does not match format rules | CLI: stderr message + exit 1; LDAP sync: logged as warning, user skipped |
 
 ## Relationship to Other Specifications
 

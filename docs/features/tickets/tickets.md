@@ -423,12 +423,13 @@ history.
 
 **Target constraint**: the assignment target MUST be an **active** user
 holding the `vulnerability_analyst` role. Attempting to assign a ticket
-to a user without this role, or to an inactive user, fails with 400 Bad
-Request. This applies to the explicit assignment endpoint
-(`PATCH .../assignee`). Auto-assignment checks internally whether the
-acting user holds the `vulnerability_analyst` role — if not (e.g., an
-`automation_agent`), auto-assignment is skipped and the ticket remains
-unassigned.
+to a user without this role fails with 400 Bad Request
+(`TICKET_ASSIGNEE_NOT_VA`). Attempting to assign to an inactive user
+fails with 409 Conflict (`TICKET_ASSIGNEE_INACTIVE`). This applies to
+the explicit assignment endpoint (`PATCH .../assignee`).
+Auto-assignment checks internally whether the acting user holds the
+`vulnerability_analyst` role — if not (e.g., an `automation_agent`),
+auto-assignment is skipped and the ticket remains unassigned.
 
 **System-initiated unassignment**: tickets are automatically unassigned
 in three scenarios:
@@ -1452,7 +1453,7 @@ Error responses:
 
 - 400 with code `TICKET_ASSIGNEE_NOT_VA`: target user does not hold the
   Vulnerability Analyst role
-- 400 with code `TICKET_ASSIGNEE_INACTIVE`: target user is inactive
+- 409 with code `TICKET_ASSIGNEE_INACTIVE`: target user is inactive
 - 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 404 with code `USER_NOT_FOUND`: target user not found
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
@@ -1521,6 +1522,8 @@ Error responses:
 - 404 with code `TICKET_NOT_FOUND`: ticket or target ticket not found
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
   status
+- 409 with code `TICKET_DUPLICATE_CYCLE_DETECTED`: duplicate resolution
+  would create a cycle in the chain
 - 409 with code `TICKET_DUPLICATE_CHAIN_DEPTH`: chain depth exceeded
   (indicates data corruption requiring manual intervention)
 

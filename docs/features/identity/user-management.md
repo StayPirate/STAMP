@@ -672,7 +672,7 @@ Add or remove manual roles for a user.
    `(role, '_manual')` pairs
 
 **Validation rules**:
-- Cannot remove roles with `ad_group_cn != '_manual'` — returns HTTP 400
+- Cannot remove roles with `ad_group_cn != '_manual'` — returns HTTP 409
   with code `USER_AD_ROLE_PROTECTED`:
   `"Cannot remove AD-derived role '{role}'. This role is managed by the
   AD group '{ad_group_cn}'."`
@@ -728,8 +728,8 @@ inactive user prepares credentials for reactivation.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `USER_AD_PASSWORD_FORBIDDEN` | Cannot set password for AD user |
-| 400 | `VALIDATION_ERROR` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
+| 409 | `USER_AD_PASSWORD_FORBIDDEN` | Cannot set password for AD user |
+| 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
 | 404 | `USER_NOT_FOUND` | User not found |
 
 **Response** (200):

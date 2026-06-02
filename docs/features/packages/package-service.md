@@ -858,8 +858,8 @@ Caught by endpoint handlers and mapped to HTTP responses:
 
 | Exception | HTTP | Code | Raised when |
 |-----------|------|------|-------------|
-| `TicketNotFoundError` | 404 | `TICKET_NOT_FOUND` | `FOR UPDATE` returns no row |
-| `TicketNotMutableError` | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (defense in depth — API layer catches first) |
+| `TicketNotFoundError` † | 404 | `TICKET_NOT_FOUND` | `FOR UPDATE` returns no row |
+| `TicketNotMutableError` † | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (defense in depth — API layer catches first) |
 | `TrackNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Track ID does not exist |
 | `ProductNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Product ID does not exist |
 | `PackageNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Package ID does not exist |
@@ -869,6 +869,9 @@ Caught by endpoint handlers and mapped to HTTP responses:
 | `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT API unreachable |
 | `PackageNotFoundInSmeltError` | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returns zero tracks |
 | `TrackFixedStatusRestrictedError` | 403 | `AUTH_INSUFFICIENT_PERMISSION` | VA attempts `status=FIXED` without force |
+
+† Shared exception — inherits from `ServiceError`, not from
+`PackageServiceError`. Handlers must catch it explicitly.
 
 ### System-internal exceptions
 

@@ -208,29 +208,21 @@ returns 0 without error.
 
 ## Service Exceptions
 
-The service layer raises the following typed exceptions. Each consumer
-(API handler, CLI command, user_service) is responsible for translating
-these into its own response format.
+All exceptions in this module inherit from `ApiKeyServiceError`.
+API endpoint handlers catch `ApiKeyServiceError` subclasses and map them
+to the corresponding HTTP status code and error code per `api-spec.md`.
 
-| Exception                    | Raised when                                                  |
-|------------------------------|--------------------------------------------------------------|
-| `UserNotFoundError`          | User lookup by ID finds no match (reused from user_service)  |
-| `InactiveUserError`          | Attempting to create a key for an inactive user              |
-| `ApiKeyNotFoundError`        | Key lookup by ID finds no match                              |
-| `ApiKeyNameConflictError`    | Non-revoked key with the same name exists for the user       |
-| `ApiKeyNameValidationError`  | Name is empty or exceeds 128 characters                      |
-| `ApiKeyInvalidExpiryError`   | `expires_at` is in the past                                  |
+| Exception | HTTP | Code | Raised when |
+|-----------|------|------|-------------|
+| `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | Owner user does not exist |
+| `InactiveUserError` † | 409 | `USER_INACTIVE` | Owner user is inactive |
+| `ApiKeyNotFoundError` | 404 | `AUTH_API_KEY_NOT_FOUND` | API key ID does not exist |
+| `ApiKeyNameConflictError` | 409 | `AUTH_API_KEY_NAME_CONFLICT` | Key name already in use for this user |
+| `ApiKeyNameValidationError` | 422 | `AUTH_API_KEY_NAME_INVALID` | Key name does not meet format requirements |
+| `ApiKeyInvalidExpiryError` | 400 | `AUTH_API_KEY_INVALID_EXPIRY` | Expiry date is in the past or exceeds maximum |
 
-### Exception-to-HTTP mapping (API handlers)
-
-| Exception                    | HTTP Status | Error Code                     |
-|------------------------------|-------------|--------------------------------|
-| `UserNotFoundError`          | 404         | `USER_NOT_FOUND`               |
-| `InactiveUserError`          | 403         | `AUTH_USER_INACTIVE`           |
-| `ApiKeyNotFoundError`        | 404         | `AUTH_API_KEY_NOT_FOUND`       |
-| `ApiKeyNameConflictError`    | 409         | `AUTH_API_KEY_NAME_CONFLICT`   |
-| `ApiKeyNameValidationError`  | 422         | `VALIDATION_ERROR`             |
-| `ApiKeyInvalidExpiryError`   | 400         | `AUTH_API_KEY_INVALID_EXPIRY`  |
+† Shared exception — inherits from `ServiceError`, not from
+`ApiKeyServiceError`. Handlers must catch it explicitly.
 
 ## Callers
 
