@@ -26,26 +26,26 @@ fields populated according to this table:
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
-| `status_change` | Ticket status transitions (manual or system-initiated) | VA user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Optional VA note for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) | `NULL` |
-| `assignment` | Ticket assigned or reassigned | VA user for manual, `NULL` for system (e.g., employee deactivation) | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | Optional VA note for manual; system-generated description for automatic (e.g., `"Unassigned from {old}: employee deactivated"`) | `NULL` |
-| `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `SNTL-{n}` identifier of the original ticket | Optional VA note | `NULL` |
-| `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | Optional VA note | `NULL` |
+| `status_change` | Ticket status transitions (manual or system-initiated) | VA user for manual, `NULL` for system (e.g., NVD rejection, CVSS recalculation) | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | `NULL` for manual; system-generated description for automatic (e.g., `"CVE rejected by NVD"`) | `NULL` |
+| `assignment` | Ticket assigned or reassigned | VA user for manual, `NULL` for system (e.g., employee deactivation) | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for manual; system-generated description for automatic (e.g., `"Unassigned from {old}: employee deactivated"`) | `NULL` |
+| `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` |
+| `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
 | `duplicate_target_changed` | Cascade update: the canonical target was itself marked as duplicate, so this ticket's `duplicate_of_id` was re-pointed to the new canonical target. This event may be absent if the cascade was interrupted — this is not an error (the canonical resolver handles resolution at read time) | `NULL` | `SNTL-{n}` identifier of the previous canonical target | `SNTL-{n}` identifier of the new canonical target | `NULL` | `{"triggered_by_ticket": "SNTL-{n}"}` — the identifier of the ticket whose mark-as-duplicate operation triggered this cascade |
 | `package_added` | Package added to ticket (manual or automatic). One event per package — child tracks and products created as part of the addition do not generate separate events (their initial creation is implicit in the package_added event) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"Detected in track SUSE:SLE-15-SP6:Update"`) | `NULL` |
-| `package_excluded` | Package directly soft-deleted (excluded) from ticket. One event per action — child tracks and products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Package name | `NULL` | Optional VA note for manual; `NULL` for automatic | `NULL` for manual; `{"reason": "..."}` for automatic (see detail contract) |
-| `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | Optional VA note | `NULL` |
-| `track_status_changed` | Track status changed (VA action or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | Optional VA note for manual; `NULL` for automatic | `{"track": "...", "package": "..."}` (see detail contract) |
+| `package_excluded` | Package directly soft-deleted (excluded) from ticket. One event per action — child tracks and products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Package name | `NULL` | `NULL` | `NULL` for manual; `{"reason": "..."}` for automatic (see detail contract) |
+| `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | `NULL` | `NULL` |
+| `track_status_changed` | Track status changed (VA action, admin force-FIXED, or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | `NULL` | `{"track": "...", "package": "..."}` (see detail contract) |
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "advisory_id": "..."}` (see detail contract) |
 | `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) | `NULL` |
 | `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | `NULL` |
-| `cve_removed` | CVE association removed from a ticket (`admin_ticket_ops`) | Acting user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | Optional note | `NULL` |
+| `cve_removed` | CVE association removed from a ticket (`admin_ticket_ops`) | Acting user | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | `NULL` | `NULL` |
 | `severity_changed` | CVSS recalculation changes ticket severity (system) or VA sets/clears severity override (manual) | `NULL` for automatic CVSS recalculation, acting user's UUID for manual severity override (`set_severity_override()`) | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` | `NULL` |
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
-| `track_excluded` | Track directly soft-deleted (excluded) from ticket. One event per action — child products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Track name | `NULL` | Optional VA note for manual; `NULL` for automatic | `{"track": "...", "package": "...", "reason": "..."}` (see detail contract) |
-| `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | Optional VA note | `NULL` |
-| `product_excluded` | Product directly soft-deleted from ticket | VA user for manual, `NULL` for system (EOL, orphan cleanup) | Product display name | `NULL` | Optional VA note for manual; `NULL` for automatic | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
-| `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | Optional VA note | `NULL` |
+| `track_excluded` | Track directly soft-deleted (excluded) from ticket. One event per action — child products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Track name | `NULL` | `NULL` | `{"track": "...", "package": "...", "reason": "..."}` (see detail contract) |
+| `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | `NULL` | `NULL` |
+| `product_excluded` | Product directly soft-deleted from ticket | VA user for manual, `NULL` for system (EOL, orphan cleanup) | Product display name | `NULL` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
+| `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | `NULL` | `NULL` |
 
 | `confidentiality_changed` | Ticket `is_confidential` flag toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
 | `access_grant_added` | User manually granted explicit access to a confidential ticket | Acting user | `NULL` | Target username | `NULL` | `NULL` |
@@ -64,10 +64,14 @@ fields populated according to this table:
 - `old_value` and `new_value` store human-readable strings. For enum values,
   store the enum name (e.g., `AFFECTED`, `NOT_AFFECTED`). For user
   references, store the username.
-- `comment` is used exclusively for free-text notes: optional VA notes on user
-  actions, and human-readable descriptions for system actions (e.g., creation
-  source, deactivation reason). It MUST NOT contain structured data intended
-  for programmatic parsing.
+- `comment` is used exclusively for system-generated human-readable
+  descriptions (e.g., creation source, deactivation reason, detection
+  context). It is NOT populated by user input — no API endpoint exposes
+  `comment` as a user-provided field. If VA notes become a desired feature
+  in the future, they should be introduced as a dedicated feature (new
+  parameter across all relevant endpoints, consistent UX, proper spec)
+  rather than an ad-hoc addition to individual endpoints. `comment` MUST
+  NOT contain structured data intended for programmatic parsing.
 - `detail` is used for structured machine-readable context (JSONB). Keys are
   validated per event type — see the detail JSONB Schema Contract below.
   Event types not listed in the contract MUST set `detail` to `NULL`.

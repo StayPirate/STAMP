@@ -136,7 +136,7 @@ A user with `admin_ticket_ops` can remove a CVE from a ticket via
   detection (both track-level and product-level) cannot function —
   there is no CVE-ID to match in IBS diffs or `updateinfo.xml`
   advisories. The VA must manually set these records to a final status
-  (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`) or soft-delete them for the
+  (`NOT_AFFECTED` or `WONT_FIX`) or soft-delete them for the
   ticket to progress toward Resolved. If a CVE is later re-associated
   with the ticket (via `POST .../associate-cve`), automatic release
   detection resumes

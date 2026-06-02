@@ -36,7 +36,7 @@ Endpoints are protected by a single capability via the
 | `manage_role_mappings` | AD role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
-| `admin_ticket_ops` | Remove CVE from ticket |
+| `admin_ticket_ops` | Remove CVE from ticket, force track to FIXED status |
 
 > **Design note — capability granularity**: capabilities are intentionally
 > coarse (~11 total). The current three roles are well served by grouped
@@ -151,6 +151,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Set ticket confidentiality | `manage_confidentiality` |
 | Manage access grants on confidential tickets | `manage_confidentiality` |
 | Remove CVE from ticket | `admin_ticket_ops` |
+| Force track to FIXED status | `admin_ticket_ops` |
 | Update user fields | `manage_users` |
 | Manage user roles | `manage_users` |
 | Reset user password | `manage_users` |
@@ -441,7 +442,7 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-package) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-track) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-track) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | `manage_packages` | [package-model](../packages/package-model.md#change-track-status) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | `manage_packages` †admin_ticket_ops | [package-model](../packages/package-model.md#change-track-status) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-product) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-product) |
 | PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | `manage_packages` | [package-model](../packages/package-model.md#override-product-eligibility) |

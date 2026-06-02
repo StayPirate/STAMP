@@ -134,6 +134,7 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 | `track_id` | `UUID` | Yes | TicketPackageTrack to modify |
 | `status` | `PackageStatus` | Yes | New status value |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `force` | `bool` | No | Admin escape hatch (default `False`) — allows setting `FIXED` when `acting_user_id` is present |
 
 **Preconditions**:
 
@@ -148,29 +149,41 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 3. Call `auto_assign_actor()`
 4. Validate preconditions
 4. If status unchanged → return (no-op, no log, no audit event)
-5. If `acting_user_id` is `None` and current status is final
+5. If `status == FIXED` and `acting_user_id is not None` and `force is
+   False` → raise `TrackFixedStatusRestrictedError` (only system
+   detection or admin force can set FIXED)
+6. If `acting_user_id` is `None` and current status is final
    (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) → reject: log warning
    `"Rejected automatic transition from {current_status} to {new_status}
    on track {track_id}: track is in final status"`, return track
    unchanged (no audit event)
-6. Update `TicketPackageTrack.status`
-7. Create `TicketAuditEvent` (`track_status_changed`)
-8. Call `reconcile_ticket_status()`
-9. Return updated track
+7. Update `TicketPackageTrack.status`
+8. Create `TicketAuditEvent` (`track_status_changed`)
+9. Call `reconcile_ticket_status()`
+10. Return updated track
 
 **TicketAuditEvent**: `track_status_changed`
 
 **Idempotency**: no-op if status is unchanged (step 4).
 
+**FIXED restriction**: `FIXED` is system-managed — only system callers
+(`acting_user_id = None`) or admin callers with `force=True` can set it
+(step 5). The service does NOT query the RBAC system — it trusts the
+caller to have verified the `admin_ticket_ops` capability before passing
+`force=True`. CLI commands MUST verify `admin_ticket_ops` before passing
+`force=True`. Passing `force=True` without capability verification is a
+bug.
+
 **Final-status protection**: system callers (`acting_user_id = None`)
 cannot transition tracks out of final states. If the requested status
 differs from the current final status, the transition is rejected with a
-warning log (step 5). This enforces the invariant from
+warning log (step 6). This enforces the invariant from
 `package-model.md`
 ([Automatic Transitions](package-model.md#automatic-transitions)) that
 final-status records are not eligible as source states for automatic
 transitions. VA callers (`acting_user_id` present) can transition from
-any state — the VA has full override authority.
+any state to any non-FIXED target — the VA has full override authority
+on non-FIXED target transitions.
 
 ---
 
@@ -834,14 +847,36 @@ external I/O MUST NOT acquire `FOR UPDATE` locks.
 
 ## Service Exceptions
 
-| Exception | Raised when |
-|-----------|-------------|
-| `TicketNotFoundError` | `FOR UPDATE` returns no row |
-| `TicketNotMutableError` | Ticket is in manual zone (defense in depth — API layer catches first) |
-| `TrackNotFoundError` | Track ID does not exist |
-| `ProductNotFoundError` | Product ID does not exist |
-| `PackageNotFoundError` | Package ID does not exist |
-| `InvalidDeliveryStatusTransition` | Requested delivery status transition is illegal (e.g., regression from `RELEASED`) |
+All exceptions raised by `package_service` inherit from
+`PackageServiceError`. API endpoint handlers catch
+`PackageServiceError` subclasses and map them to the corresponding HTTP
+status code and error code per `api-spec.md`.
+
+### API-facing exceptions
+
+Caught by endpoint handlers and mapped to HTTP responses:
+
+| Exception | HTTP | Code | Raised when |
+|-----------|------|------|-------------|
+| `TicketNotFoundError` | 404 | `TICKET_NOT_FOUND` | `FOR UPDATE` returns no row |
+| `TicketNotMutableError` | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (defense in depth — API layer catches first) |
+| `TrackNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Track ID does not exist |
+| `ProductNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Product ID does not exist |
+| `PackageNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Package ID does not exist |
+| `PackageAlreadyExcludedError` | 409 | `PACKAGE_ALREADY_EXCLUDED` | Soft-delete on record with `deleted_at IS NOT NULL` |
+| `PackageNotExcludedError` | 422 | `PACKAGE_NOT_EXCLUDED` | Restore on record with `deleted_at IS NULL` |
+| `PackageRestoreBlockedError` | 422 | `PACKAGE_RESTORE_BLOCKED` | Restore precondition not met (no valid child chain) |
+| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT API unreachable |
+| `PackageNotFoundInSmeltError` | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returns zero tracks |
+| `TrackFixedStatusRestrictedError` | 403 | `AUTH_INSUFFICIENT_PERMISSION` | VA attempts `status=FIXED` without force |
+
+### System-internal exceptions
+
+Handled by system callers directly (not mapped to HTTP responses):
+
+| Exception | Raised when | Handling |
+|-----------|-------------|----------|
+| `InvalidDeliveryStatusTransition` | Illegal delivery status transition (e.g., regression from `RELEASED`) | Caller logs warning and continues (`RequestSyncFetcher`) or avoids via pre-check (`IBSEventConsumer`) |
 
 ## Soft-Deleted Records and Mutations
 

@@ -93,13 +93,12 @@ Disalignment risk is mitigated by `package_service` and the
 vulnerable" (`NOT_AFFECTED`). Both mean the code is not currently
 vulnerable, but they carry different history and workload implications.
 
-- The VA can set `FIXED` manually
-- The system sets `FIXED` automatically when track release detection
-  confirms the fix in the codestream (MD5 match — see
-  `docs/features/packages/ibs-track-release-detection.md`)
+- `FIXED` is system-managed — set only by track release detection (MD5
+  match — see `docs/features/packages/ibs-track-release-detection.md`)
+  or via the admin escape hatch (`admin_ticket_ops` capability)
 - The VA can change `FIXED` back to `AFFECTED` if the fix is insufficient
 - No `is_status_override` flag is needed on tracks — the VA has direct
-  control
+  control over non-FIXED target statuses
 
 ### 6. Affectedness and delivery are independent axes
 
@@ -548,7 +547,7 @@ context of the current affectedness — see
 | `NOT_AFFECTED` | `PENDING` | **No** | | Not affected; delivery is the system default — not meaningful |
 | `NOT_AFFECTED` | `IN_PROGRESS` | Yes | Yes | SR in progress for unaffected code — possible confusion |
 | `NOT_AFFECTED` | `RELEASED` | Yes | Yes | Fix released for unaffected code — possible confusion |
-| `FIXED` | `PENDING` | **No** | | Fix confirmed (manually or via track release detection); no SR submitted yet — delivery not meaningful |
+| `FIXED` | `PENDING` | **No** | | Fix confirmed via track release detection; no SR submitted yet — delivery not meaningful |
 | `FIXED` | `IN_PROGRESS` | Yes | | Fix confirmed, SR still in pipeline |
 | `FIXED` | `RELEASED` | Yes | | Fix confirmed and delivered |
 | `WONT_FIX` | `PENDING` | **No** | | Decided not to fix; delivery is the system default — not meaningful |
@@ -649,9 +648,12 @@ These transitions are detected via IBS RabbitMQ events
 
 ### Manual Transitions
 
-The VA can manually change the affectedness status of any track to any
-value without restriction. The VA cannot manually
-change the delivery status — it is system-managed.
+The VA can manually change the affectedness status of any track to
+`ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, or `WONT_FIX`. The VA cannot
+set a track to `FIXED` — this status is system-managed (set only by
+track release detection or via the admin escape hatch with
+`admin_ticket_ops` capability). The VA cannot manually change the
+delivery status — it is system-managed.
 
 ---
 
@@ -1503,7 +1505,11 @@ creation and ticket status re-evaluation via `package_service`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `status` | string | Yes | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`, `WONT_FIX` |
+| `status` | string | Yes | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`†, `WONT_FIX` |
+
+† Setting `status` to `FIXED` requires the `admin_ticket_ops` capability
+(Hard Conditional Check). Users with only `manage_packages` can set any
+other status but not `FIXED`.
 
 **Response** (200 OK):
 
@@ -1538,13 +1544,14 @@ The response includes the updated track and all its active child
 products with their current eligibility, allowing the client to update
 the UI tree without a separate fetch.
 
-**`Capability: manage_packages`**
+**`Capability: manage_packages`** | **`†admin_ticket_ops`** (Hard
+Conditional Check: required only when `status = FIXED`)
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
+| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability, or caller attempts `status = FIXED` without `admin_ticket_ops` |
 | 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or track not found on this ticket |
 | 422 | `VALIDATION_ERROR` | Invalid status value |
