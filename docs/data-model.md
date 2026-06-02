@@ -1023,7 +1023,7 @@ Summary:
   no track records in ANALYSIS, severity set, SUSE CVSS
   provided if CVE present)
 - Analysis -> Ignored (manual)
-- Analyzed -> Resolved (automatic: all packages in final status)
+- Analyzed -> Resolved (automatic: all tracks resolution-complete)
 - Analyzed -> Analysis (automatic: gate conditions no longer met)
 - Resolved -> Analyzed (automatic: resolved gates broken, analyzed gates
   still met)

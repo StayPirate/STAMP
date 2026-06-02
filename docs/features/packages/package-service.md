@@ -907,7 +907,9 @@ A parametrized integration test MUST be implemented to verify that the
 transitions. The test must cover:
 
 - **Forward transitions**: package mutations causing ticket advancement
-  (e.g., setting all tracks to final status triggers Analyzed -> Resolved)
+  (e.g., setting all tracks to final status triggers Analyzed -> Resolved;
+  or an AFFECTED track becoming resolution-complete because all its
+  products become ineligible also triggers Analyzed -> Resolved)
 - **Backward transitions**: package mutations breaking gate conditions
   (e.g., restoring a soft-deleted track with non-final status)
 - **Orphan cascade**: soft-deleting the last product triggers track

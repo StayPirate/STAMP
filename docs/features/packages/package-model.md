@@ -734,8 +734,9 @@ current reality, not the state at the time of deletion.
 Soft-deleted records are excluded from:
 
 - **Default views** — excluded from default ticket responses (requires `include_deleted` parameter)
-- **Ticket resolution gate** — not considered when evaluating whether
-  a ticket can transition to Resolved
+- **Ticket resolution gate** — not considered when evaluating the
+  per-track resolution-complete predicate (see
+  `docs/features/tickets/tickets.md`, "Gate: Analyzed → Resolved")
 - **Anomaly detection** — not flagged in the future Review Queue
 - **Analysis gate** — not considered when evaluating Analysis → Analyzed
 
@@ -1078,9 +1079,10 @@ contract, including:
 
 - **Analysis → Analyzed**: requires at least one package, all tracks
   decided, severity set, SUSE CVSS provided
-- **Analyzed → Resolved**: requires all tracks in final status
-  (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`), all eligible products
-  (`eligible = true`) under `FIXED` tracks with `released_at IS NOT NULL`
+- **Analyzed → Resolved**: requires every non-excluded active track to
+  be resolution-complete — either (a) `NOT_AFFECTED`/`WONT_FIX`, or
+  (b) `FIXED` with all non-excluded eligible products released, or
+  (c) `AFFECTED` with no non-excluded eligible products remaining
 - Reverse transitions when gate conditions are no longer met
 
 ---

@@ -156,8 +156,9 @@ beyond status changes.
 ### Behavior (top-down evaluation)
 
 1. Evaluate gate conditions from highest to lowest:
-   - If all "Resolved" gates AND all "Analyzed" gates are met → status
-     is Resolved
+   - If all "Resolved" gates are met (every non-excluded active track is
+     resolution-complete — see `tickets.md`, "Gate: Analyzed → Resolved")
+     AND all "Analyzed" gates are met → status is Resolved
    - If all "Analyzed" gates are met (but "Resolved" gates are not) →
      status is Analyzed
    - If the "Analysis" gate is met (but "Analyzed" gates are not) →

@@ -269,8 +269,10 @@ authoritative details.
    `ANALYSIS` status; records in a final status are not modified.
    Product-level detection sets `released_at` regardless of affectedness
    status (it is a factual observation, not a status transition).
-5. When all packages in a ticket reach a final status, the ticket can
-   transition to Resolved.
+5. When every active track in a ticket is resolution-complete
+   (`NOT_AFFECTED`/`WONT_FIX`, or `FIXED` with all eligible products
+   released, or `AFFECTED` with no eligible products remaining), the
+   ticket can transition to Resolved.
 
 ## Deployment Portability
 

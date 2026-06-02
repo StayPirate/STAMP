@@ -249,7 +249,7 @@ layer.
 | New        | Created automatically (CVE ingestion or external source). Not yet assigned to any VA. |
 | Analysis   | Assigned to an VA who is actively analyzing — filling in affectedness data. |
 | Analyzed   | All required data has been filled in. Ready for updates to be prepared. |
-| Resolved   | Security updates have been released for all affected packages across all products. |
+| Resolved   | Every active track is resolution-complete: either in a conclusive affectedness status, or fully delivered (`FIXED` + all eligible products released), or factually affected with no eligible products remaining. |
 | Ignored    | The issue does not require action. Can only be set from New or Analysis. See design note below. |
 | Duplicated | Duplicate of another ticket. Links to the original. Reversible. |
 
@@ -332,26 +332,50 @@ from Analyzed to Analysis.
 ### Gate: Analyzed → Resolved
 
 The system automatically transitions a ticket from Analyzed to Resolved
-when ALL of the following conditions are met (only records that are not
-effectively excluded are considered — see
+when **every active `TicketPackageTrack` is resolution-complete** (only
+records that are not effectively excluded are considered — see
 `docs/features/packages/package-model.md`, "Hierarchical Exclusion
-Model"):
+Model"). For each track, only non-excluded products are considered when
+evaluating product-level conditions.
 
-1. Every active `TicketPackageTrack` has a final status:
-   `FIXED`, `NOT_AFFECTED`, or `WONT_FIX`
-2. Every eligible product (`eligible = true`) under a `FIXED` track has
-   `released_at IS NOT NULL` (confirmed receipt of the update)
+A track is **resolution-complete** when any of:
+
+- **(a)** `status` is `NOT_AFFECTED` or `WONT_FIX`, OR
+- **(b)** `status = FIXED` AND every non-excluded eligible product
+  (`eligible = true`) under it has `released_at IS NOT NULL`, OR
+- **(c)** `status = AFFECTED` AND it has no non-excluded eligible
+  products (all non-excluded products have `eligible = false`, or no
+  non-excluded products exist).
+
+A track in `ANALYSIS` is never resolution-complete.
+
+Note: clause (b) uses universal quantification over non-excluded eligible
+products. If a `FIXED` track has no non-excluded eligible products (all
+products are ineligible or excluded), the condition is vacuously satisfied
+and the track is resolution-complete. This is the intended behavior — a
+fix was delivered and no eligible product is pending confirmation.
+
+Clause (c) enables auto-resolution for the legitimate scenario where a
+track is genuinely affected (code vulnerable) but all products under it
+are ineligible — there is nothing to wait for, and the "affected, no
+fix" fact is preserved (the track stays `AFFECTED`). If a product later
+becomes eligible (CVSS recalculation, AIMAAS threshold update, product
+restore), clause (c) ceases to hold and the ticket automatically reverts
+to Analyzed.
 
 This evaluation is performed by the centralized status evaluation
 function after every operation that modifies track statuses, product
-eligibility, or product release confirmation.
+eligibility, or product release confirmation. The Resolved gate is only
+reachable when the Analyzed gate is also met (which requires at least
+one active track), so the predicate never evaluates over an empty set.
 There is no manual "Mark as Resolved" action.
 
-Conversely, if any of these conditions ceases to be met (e.g., CVSS
-recalculation changes product eligibility, or a VA resets a track status
-from a final state to `AFFECTED`), the ticket automatically transitions
-back from Resolved to Analyzed (or to Analysis, if the "Analyzed" gates
-are also no longer met).
+Conversely, if any track ceases to be resolution-complete (e.g., CVSS
+recalculation changes product eligibility, a VA resets a track status
+from a final state to `AFFECTED`, or a product is restored under an
+`AFFECTED` track), the ticket automatically transitions back from
+Resolved to Analyzed (or to Analysis, if the "Analyzed" gates are also
+no longer met).
 
 ### Automatic Status Evaluation
 

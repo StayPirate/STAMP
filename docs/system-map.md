@@ -556,7 +556,7 @@ flowchart TD
     ANALYSIS -->|"✓ all gates met:<br/>≥1 package,<br/>no ANALYSIS statuses,<br/>severity set,<br/>SUSE CVSS (if CVE)"| ANALYZED
     ANALYSIS -->|"manual"| IGNORED
 
-    ANALYZED -->|"✓ all packages<br/>in final status"| RESOLVED
+    ANALYZED -->|"✓ all tracks<br/>resolution-complete"| RESOLVED
     ANALYZED -->|"gate conditions<br/>no longer met"| ANALYSIS
 
     RESOLVED -->|"resolved gates broken,<br/>analyzed gates still met"| ANALYZED
@@ -586,9 +586,10 @@ flowchart TD
 - Severity is set (non-None)
 - If CVE is associated: SUSE CVSS assessment exists
 
-**Resolved gate**: all active `TicketPackageTrack` records are in a final
-status (`FIXED`, `NOT_AFFECTED`, or `WONT_FIX`) and all eligible products
-under `FIXED` tracks have `released_at IS NOT NULL`. Tracks/products are
+**Resolved gate**: every active `TicketPackageTrack` is
+resolution-complete: (a) `NOT_AFFECTED`/`WONT_FIX`, or (b) `FIXED` with
+all non-excluded eligible products having `released_at IS NOT NULL`, or
+(c) `AFFECTED` with no non-excluded eligible products. Tracks/products are
 soft-deleted rather than using a separate `IGNORED` status. Delivery status
 (`PENDING`/`IN_PROGRESS`/`RELEASED`) is tracked independently for workflow
 visibility but is not a gate condition.
