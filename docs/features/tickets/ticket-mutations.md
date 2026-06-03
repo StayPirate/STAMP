@@ -198,6 +198,15 @@ This mechanism complements the bulk unassignment performed by
 catching any tickets that were missed or that entered the gate zone
 after the deactivation event.
 
+**Consequence**: as a result of the Analysis gate
+(`assignee_id IS NOT NULL`) combined with the sanitization above, a
+non-final ticket in `Analysis` or `Analyzed` status always has an
+active assignee — `assignee_id IS NULL` on a non-final ticket implies
+`New` status. This property holds because every code path that clears
+`assignee_id` (bulk unassignment in `deactivate_user`, this
+sanitization step) calls `reconcile_ticket_status()` atomically in the
+same transaction, which immediately regresses the ticket to `New`.
+
 ### `previous_status` parameter
 
 The `previous_status` parameter exists to handle manual-zone exit
