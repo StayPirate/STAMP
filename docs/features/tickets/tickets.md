@@ -1442,9 +1442,10 @@ Request body:
 > another active VA — never unassigned. This enforces explicit handover.
 > System-initiated unassignment may occur as a side effect of user
 > deactivation (see
-> [user-service.md](../identity/user-service.md#deactivate_user)); the
-> promotional-only assignee gate ensures this never causes status
-> regression.
+> [user-service.md](../identity/user-service.md#deactivate_user)); since
+> the Analysis gate requires `assignee_id IS NOT NULL`, unassignment
+> causes the ticket to regress to `New` (see
+> [ticket-mutations.md](ticket-mutations.md#inactive-assignee-sanitization)).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
