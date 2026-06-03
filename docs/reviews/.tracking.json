@@ -16,22 +16,6 @@
         "not_reviewed": []
       }
     },
-    "system-settings": {
-      "enabled": false,
-      "abbr": "ADM",
-      "cache": {
-        "last_review": "2026-05-06T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 3,
-        "not_reviewed": ["GAP", "COH", "DES", "SEC"]
-      }
-    },
     "api-key-service": {
       "enabled": true,
       "abbr": "AKS",
@@ -102,13 +86,13 @@
       "cache": {
         "last_review": "2026-05-31T18:00:32+0200",
         "open": {
-          "GAP": { "H": 0, "M": 7, "L": 7 },
+          "GAP": { "H": 0, "M": 3, "L": 7 },
           "COH": { "H": 0, "M": 1, "L": 3 },
-          "DES": { "H": 0, "M": 3, "L": 5 },
+          "DES": { "H": 0, "M": 3, "L": 4 },
           "SEC": { "H": 0, "M": 4, "L": 6 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 2,
+        "resolved": 7,
         "not_reviewed": []
       }
     },
@@ -258,6 +242,22 @@
         "not_reviewed": []
       }
     },
+    "package-service": {
+      "enabled": true,
+      "abbr": "PKS",
+      "cache": {
+        "last_review": "2026-05-22T15:53:41+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 2, "L": 1 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 26,
+        "not_reviewed": []
+      }
+    },
     "product-catalog": {
       "enabled": false,
       "abbr": "PRC",
@@ -266,6 +266,11 @@
     "product-lifecycle-transitions": {
       "enabled": false,
       "abbr": "PLT",
+      "cache": null
+    },
+    "README": {
+      "enabled": false,
+      "abbr": "REA",
       "cache": null
     },
     "rbac": {
@@ -300,6 +305,22 @@
         "not_reviewed": []
       }
     },
+    "system-settings": {
+      "enabled": false,
+      "abbr": "ADM",
+      "cache": {
+        "last_review": "2026-05-06T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 3,
+        "not_reviewed": ["GAP", "COH", "DES", "SEC"]
+      }
+    },
     "ticket-audit-log": {
       "enabled": true,
       "abbr": "TAL",
@@ -313,22 +334,6 @@
           "API": { "H": 0, "M": 0, "L": 0 }
         },
         "resolved": 15,
-        "not_reviewed": []
-      }
-    },
-    "package-service": {
-      "enabled": true,
-      "abbr": "PKS",
-      "cache": {
-        "last_review": "2026-05-22T15:53:41+0200",
-        "open": {
-          "GAP": { "H": 0, "M": 2, "L": 1 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 26,
         "not_reviewed": []
       }
     },
@@ -348,22 +353,6 @@
         "not_reviewed": []
       }
     },
-    "ticket-service": {
-      "enabled": true,
-      "abbr": "TKS",
-      "cache": {
-        "last_review": "2026-05-26T00:00:00+0000",
-        "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
-        },
-        "resolved": 28,
-        "not_reviewed": []
-      }
-    },
     "ticket-references": {
       "enabled": true,
       "abbr": "TRF",
@@ -377,6 +366,22 @@
           "API": { "H": 0, "M": 0, "L": 0 }
         },
         "resolved": 32,
+        "not_reviewed": []
+      }
+    },
+    "ticket-service": {
+      "enabled": true,
+      "abbr": "TKS",
+      "cache": {
+        "last_review": "2026-05-26T00:00:00+0000",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 28,
         "not_reviewed": []
       }
     },
