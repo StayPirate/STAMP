@@ -444,22 +444,22 @@ third-party tools) are never at a disadvantage compared to UI users.
 
 ### 13. CVSS score resolution
 
-CRITICAL: Every component of the system that needs a CVSS score to make a
-decision (severity calculation, eligibility threshold comparison, sorting,
-notifications, or any future logic) MUST:
+CRITICAL: Every component of the system that needs a CVSS score MUST:
 
 1. Resolve the CVSS version from the system-wide configuration
    (`default_cvss_version` setting) — never hardcode `"3.1"` or `"4.0"`
-2. Select the score following the resolution cascade:
-   - SUSE assessment of the default version → if present, use this score
-   - Highest score among all providers for the default version → if at
-     least one exists, use the highest
-   - No score available → treat as absent (or as 10.0 for threshold
-     comparisons, per the conservative fallback rule)
-3. If no assessment of the default version exists from any provider, do
-   NOT fall back to a different CVSS version
+2. Use the **correct resolution strategy** for the consumer context —
+   two distinct strategies exist and the caller MUST NOT substitute one
+   for the other:
+   - **Severity** (`resolve_severity_score`): 5-step cascade,
+     multi-provider with cross-version fallback. Used for: severity
+     derivation, display, notifications, triage
+   - **Eligibility** (`resolve_eligibility_score`): 2-step cascade,
+     SUSE-only, 10.0 conservative fallback. Used for: product eligibility
+     threshold comparison
 
-See `docs/features/tickets/cvss-scoring.md` for the full specification.
+See `docs/features/tickets/cvss-scoring.md` (Severity Resolution Cascade
+and Eligibility Score Resolution) for the authoritative definitions.
 
 ### 14. Fetcher base class compliance
 

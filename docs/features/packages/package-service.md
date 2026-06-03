@@ -71,7 +71,7 @@ reserved exclusively for system entry points.
 | Module | Relationship |
 |--------|-------------|
 | `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service` |
-| `services/cvss.py` | `package_service` delegates CVSS resolution and eligibility calculation to pure functions in `cvss.py` (for record creation and eligibility evaluation) |
+| `services/cvss.py` | `package_service` delegates eligibility calculation to `resolve_eligibility_score()` in `cvss.py` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) |
 | `core/filters.py` | `search_packages()` receives a `confidentiality_filter` (a SQLAlchemy `ColumnElement`) built by the endpoint handler via `confidential_ticket_filter()`. The service function is unaware of access rules |
 
 ### Module invariant: I/O-then-Lock pattern
@@ -334,15 +334,16 @@ If `eligible` is `None` (reset to automatic):
 4. Validate preconditions
 4. If `is_eligible_override == false`, return (no-op — already automatic)
 5. Set `TicketPackageProduct.is_eligible_override = false`
-6. Recalculate eligibility using standard rules (CVSS score resolution per configured version → compare against product threshold from AIMAAS)
+6. Recalculate eligibility using `cvss.resolve_eligibility_score()` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) → compare against product threshold from AIMAAS
 7. Update `TicketPackageProduct.eligible` to the calculated value
 8. Create `TicketAuditEvent` (`product_eligibility_changed`)
 9. Call `reconcile_ticket_status()`
 10. Return updated product
 
 > **Note**: Eligibility recalculation uses the same resolution logic as
-> `re_evaluate_product_eligibility` (CVSS score resolution per
-> `default_cvss_version` → compare against product threshold). Since this
+> `re_evaluate_product_eligibility` — specifically
+> `cvss.resolve_eligibility_score()` (SUSE assessment of the default
+> version only; fallback to 10.0 if no SUSE assessment exists). Since this
 > requires only single-row database reads (CVE assessments + product
 > threshold), it is acceptable inside the `FOR UPDATE` lock.
 

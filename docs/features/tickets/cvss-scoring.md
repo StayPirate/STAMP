@@ -66,6 +66,9 @@ uses SUSE-defined severity thresholds per version. Until explicit
 thresholds are configured, the standard CVSS thresholds for each version
 apply (see Severity Rating Scale above).
 
+This cascade is implemented by `resolve_severity_score` in
+`services/cvss.py`.
+
 ### Eligibility Score Resolution
 
 Used for: product eligibility threshold comparison (see
@@ -89,6 +92,9 @@ triage (severity cascade) but not authoritative for eligibility decisions.
 The 10.0 fallback ensures that products are never silently excluded before
 SUSE has assessed the vulnerability — blocked resolution is visible and
 correctable; silent omission is not.
+
+This cascade is implemented by `resolve_eligibility_score` in
+`services/cvss.py`.
 
 ## Providers
 
@@ -279,15 +285,8 @@ mandatory). For tickets without a CVE, severity must be set via
 
 Product eligibility for security updates is determined by comparing a CVSS
 score against the product's `cvss_threshold` (from AIMAAS). The score
-selection follows the resolution cascade with a conservative fallback:
-
-1. **SUSE assessment** of the default CVSS version → use this score
-2. **Highest score** among all providers for the default version → use this
-3. **No score available** → treat as **10.0** (worst-case; the product is
-   always eligible)
-
-This ensures that a CVE without any CVSS data is never excluded from a
-product due to threshold rules.
+selection follows the **Eligibility Score Resolution** cascade (see above)
+— no fallback to other providers is applied.
 
 See `docs/features/packages/package-model.md` for the full eligibility logic.
 
@@ -368,11 +367,16 @@ in the database but is no longer refreshed.
 When a CVSS assessment changes (added, modified, or removed) for a CVE
 with an active ticket, Sentinel performs the following recalculation:
 
-1. **Recalculate severity**: apply the resolution cascade to determine the
-   new severity. If severity changed, update the CVE's `severity` field.
-2. **Recalculate product eligibility**: for every
-   `TicketPackageProduct` linked to the ticket, re-evaluate the `eligible`
-   flag using the new score:
+1. **Recalculate severity**: call `resolve_severity_score()` (5-step
+   severity cascade) to determine the new resolved score. Map the result
+   to a severity label via `calculate_severity()`. If severity changed,
+   update the CVE's `severity` field.
+2. **Recalculate product eligibility**: call `resolve_eligibility_score()`
+   (2-step SUSE-only cascade — separate call with different semantics; the
+   eligibility score may differ from the severity score when SUSE has not
+   assessed the default version). For every `TicketPackageProduct` linked
+   to the ticket, re-evaluate the `eligible` flag using the eligibility
+   score:
    - If the new score is **above** a product's threshold (and the product
      was previously below): set `eligible = true`
    - If the new score is **below** a product's threshold (and the product
@@ -450,9 +454,11 @@ fewer than 20 records).
 }
 ```
 
-The `resolved_*` fields reflect the result of the resolution cascade for
-the current default version (which score and provider Sentinel is using for
-decisions).
+The `resolved_*` fields reflect the result of the **severity** resolution
+cascade for the current default version — identifying which score and
+provider Sentinel uses for severity derivation and display. These fields do
+NOT reflect the eligibility resolution (which is SUSE-only; see Eligibility
+Score Resolution).
 
 ### Set or Update SUSE CVSS Assessment
 
@@ -529,11 +535,12 @@ This module contains **read-only, side-effect-free** functions that
 implement the CVSS resolution and scoring algorithms. These functions
 never mutate the database — they receive data and return results.
 
-| Function                | Input                                      | Output                          | Description                                              |
-|-------------------------|--------------------------------------------|---------------------------------|----------------------------------------------------------|
-| `resolve_cvss_score`    | CVE assessments, default CVSS version      | (score, provider) or None       | Implements the 3-step resolution cascade                 |
-| `calculate_severity`    | CVSS score (float)                         | Severity enum                   | Maps score to severity using the rating scale            |
-| `validate_cvss_vector`  | Vector string                              | Parsed metrics + version + calculated score | Parses vector, detects version from prefix, validates format, and computes the base score |
+| Function                    | Input                                      | Output                          | Description                                              |
+|-----------------------------|--------------------------------------------|---------------------------------|----------------------------------------------------------|
+| `resolve_severity_score`    | CVE assessments, default CVSS version      | (score, provider) or None       | Implements the severity resolution cascade (5-step: SUSE default → SUSE other version → highest provider default → highest provider other → absent) |
+| `resolve_eligibility_score` | CVE assessments, default CVSS version      | Decimal (score)                 | Implements the eligibility score resolution (2-step, SUSE-only: SUSE default version → 10.0 fallback). Always returns a value |
+| `calculate_severity`        | CVSS score (float)                         | Severity enum                   | Maps score to severity using the rating scale            |
+| `validate_cvss_vector`      | Vector string                              | Parsed metrics + version + calculated score | Parses vector, detects version from prefix, validates format, and computes the base score |
 
 These functions are used in two contexts:
 
@@ -557,11 +564,16 @@ functions accept a `cve_id` (not a `ticket_id`) and follow this flow:
    b. Call `ensure_ticket_operable(ticket)` — rejects with
       `409 TICKET_NOT_MUTABLE` if in Ignored or Duplicated status
 3. Persist the `CVECVSSAssessment` record change
-4. Call `cvss.resolve_cvss_score()` to determine the new resolved score
-5. Call `cvss.calculate_severity()` to derive the new severity
+4. Call `cvss.resolve_severity_score()` to determine the new resolved score
+   (5-step severity cascade)
+4b. Call `cvss.resolve_eligibility_score()` to determine the eligibility
+    score (2-step SUSE-only cascade; always returns a value)
+5. Call `cvss.calculate_severity()` to derive the new severity from the
+   severity score
 6. Update `CVE.severity` if it changed
 7. If a ticket exists:
-   a. Re-evaluate product eligibility using the new score
+   a. Re-evaluate product eligibility using the eligibility score from
+      step 4b
    b. Create `TicketAuditEvent` records for each change
    c. Call `reconcile_ticket_status()` to re-evaluate the ticket status
 8. If no ticket exists (ticketless CVE): skip audit event and cascade —

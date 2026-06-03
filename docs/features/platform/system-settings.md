@@ -32,10 +32,10 @@ threshold comparison, and any future logic that depends on a CVSS score.
 When the Admin changes the default CVSS version, Sentinel MUST:
 
 1. Recalculate severity for **all CVEs with active tickets** (status: New,
-   Analysis, Analyzed — see `docs/data-model.md`)
-   using the new default version's resolution cascade
-2. Re-evaluate product eligibility for all active tickets using the new
-   default version's score
+   Analysis, Analyzed — see `docs/data-model.md`) using
+   `resolve_severity_score` (5-step severity cascade, multi-provider)
+2. Re-evaluate product eligibility for all active tickets using
+   `resolve_eligibility_score` (2-step SUSE-only cascade)
 3. Apply the same recalculation cascade as a CVSS score change (see
    `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
 4. Create `TicketAuditEvent` records for every severity or eligibility change

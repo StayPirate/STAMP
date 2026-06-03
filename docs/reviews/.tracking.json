@@ -84,15 +84,15 @@
       "enabled": true,
       "abbr": "CVES",
       "cache": {
-        "last_review": "2026-05-31T18:00:32+0200",
+        "last_review": "2026-06-03T17:21:12+0200",
         "open": {
           "GAP": { "H": 0, "M": 0, "L": 7 },
-          "COH": { "H": 0, "M": 1, "L": 3 },
+          "COH": { "H": 0, "M": 0, "L": 3 },
           "DES": { "H": 0, "M": 3, "L": 4 },
           "SEC": { "H": 0, "M": 4, "L": 6 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 10,
+        "resolved": 12,
         "not_reviewed": []
       }
     },
@@ -102,9 +102,20 @@
       "cache": null
     },
     "cvss-scoring": {
-      "enabled": false,
+      "enabled": true,
       "abbr": "CVS",
-      "cache": null
+      "cache": {
+        "last_review": "2026-06-03T17:21:12+0200",
+        "open": {
+          "GAP": { "H": 2, "M": 5, "L": 2 },
+          "COH": { "H": 1, "M": 2, "L": 6 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 1,
+        "not_reviewed": ["DES", "SEC", "API"]
+      }
     },
     "fetcher-infrastructure": {
       "enabled": true,
@@ -246,10 +257,10 @@
       "enabled": true,
       "abbr": "PKS",
       "cache": {
-        "last_review": "2026-05-22T15:53:41+0200",
+        "last_review": "2026-06-03T17:21:12+0200",
         "open": {
           "GAP": { "H": 0, "M": 2, "L": 1 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 1 },
           "DES": { "H": 0, "M": 0, "L": 0 },
           "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }
@@ -341,10 +352,10 @@
       "enabled": true,
       "abbr": "TKM",
       "cache": {
-        "last_review": "2026-05-25T00:00:00+0000",
+        "last_review": "2026-06-03T17:21:12+0200",
         "open": {
           "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 1 },
           "DES": { "H": 0, "M": 0, "L": 1 },
           "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }

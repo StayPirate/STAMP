@@ -28,8 +28,10 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-06-01 |  |
 |  |  |  |  |  |  |  |  |  |
-| [cve-service](cve-service.md) | 7 | 4 | 7 | 10 | 🟢 | 28 | 2026-05-31 | ⚠️ |
-| | 7:🟡 | 1:🟠 3:🟡 | 3:🟠 4:🟡 | 4:🟠 6:🟡 |  |  |  |  |
+| [cve-service](cve-service.md) | 7 | 3 | 7 | 10 | 🟢 | 27 | 2026-06-03 | ⚠️ |
+| | 7:🟡 | 3:🟡 | 3:🟠 4:🟡 | 4:🟠 6:🟡 |  |  |  |  |
+| [cvss-scoring](cvss-scoring.md) | 9 | 9 | — | — | — | 18 | 2026-06-03 |  |
+| | 2:🔴 5:🟠 2:🟡 | 1:🔴 2:🟠 6:🟡 |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
@@ -40,16 +42,16 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-22 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [package-service](package-service.md) | 3 | 🟢 | 🟢 | 🟢 | 🟢 | 3 | 2026-05-22 | ⚠️ |
-| | 2:🟠 1:🟡 |  |  |  |  |  |  |  |
+| [package-service](package-service.md) | 3 | 1 | 🟢 | 🟢 | 🟢 | 4 | 2026-06-03 | ⚠️ |
+| | 2:🟠 1:🟡 | 1:🟡 |  |  |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 1 | 🟢 | 1 | 2026-05-26 | ⚠️ |
 | |  |  |  | 1:🟡 |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1 | 2026-05-25 | ⚠️ |
-| |  |  | 1:🟡 |  |  |  |  |  |
+| [ticket-mutations](ticket-mutations.md) | 🟢 | 1 | 1 | 🟢 | 🟢 | 2 | 2026-06-03 | ⚠️ |
+| |  | 1:🟡 | 1:🟡 |  |  |  |  |  |
 | [ticket-references](ticket-references.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-30 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-26 | ⚠️ |
@@ -60,13 +62,12 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **10** | **4** | **8** | **11** | **0** | **33** |  |  |
-| | 2:🟠 8:🟡 | 1:🟠 3:🟡 | 3:🟠 5:🟡 | 4:🟠 7:🟡 |  |  |  |  |
+| **Total** | **19** | **13** | **8** | **11** | **0** | **52** |  |  |
+| | 2:🔴 7:🟠 10:🟡 | 1:🔴 2:🟠 11:🟡 | 3:🟠 5:🟡 | 4:🟠 7:🟡 |  |  |  |  |
 
 ### Disabled specs
 
 - cve-tracking
-- cvss-scoring
 - git-product-release-detection
 - git-track-release-detection
 - ibs-integration

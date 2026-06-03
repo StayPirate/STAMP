@@ -374,7 +374,12 @@ an associated ticket.
    `InvalidCVSSVectorError`
 4. Create `CVECVSSAssessment` record (with derived version and score)
 5. If a ticket exists:
-   a. Recalculate ticket severity via `cvss.py` resolution cascade
+    a. Recalculate ticket severity via `cvss.resolve_severity_score()`
+       (5-step severity cascade); re-evaluate product eligibility via
+       `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
+       separate call — the eligibility score may differ from the severity
+       score when SUSE has not assessed the default version)
+
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = NULL`, `new_value = "provider vX.Y score"`)
    c. Call `reconcile_ticket_status()`
@@ -423,7 +428,12 @@ Updates an existing `CVECVSSAssessment` record.
    assessment for the target version instead)
 4. Update assessment fields (vector and recomputed score)
 5. If a ticket exists:
-   a. Recalculate ticket severity via `cvss.py` resolution cascade
+    a. Recalculate ticket severity via `cvss.resolve_severity_score()`
+       (5-step severity cascade); re-evaluate product eligibility via
+       `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
+       separate call — the eligibility score may differ from the severity
+       score when SUSE has not assessed the default version)
+
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = "provider vX.Y old_score"`,
       `new_value = "provider vX.Y new_score"`)
@@ -461,7 +471,12 @@ Deletes a `CVECVSSAssessment` record (hard delete).
    b. Call `ensure_ticket_operable(ticket)`
 3. Delete the assessment record
 4. If a ticket exists:
-   a. Recalculate ticket severity via `cvss.py` resolution cascade
+    a. Recalculate ticket severity via `cvss.resolve_severity_score()`
+       (5-step severity cascade); re-evaluate product eligibility via
+       `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
+       separate call — the eligibility score may differ from the severity
+       score when SUSE has not assessed the default version)
+
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = "provider vX.Y score"`, `new_value = NULL`)
    c. Call `reconcile_ticket_status()`

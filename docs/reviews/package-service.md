@@ -1,7 +1,7 @@
 # Review: package-service
 
 **Spec**: `docs/features/packages/package-service.md`
-**Last reviewed**: 2026-05-22
+**Last reviewed**: 2026-06-03
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -96,6 +96,13 @@ When `add_package_records()` creates `TicketPackageProduct` records, it must cal
 ### PKS-COH-06 — track_released audit event user_id conflict between package-service and audit-log (Low)
 
 **Status**: RESOLVED — Moot: track_released event type removed entirely from the system (2026-05-25)
+
+### PKS-COH-07 — Note block in `set_product_eligibility()` reset path references `re_evaluate_product_eligibility` in wrong direction (Low)
+
+**Category**: Incompatible flows
+**Status**: OPEN
+
+Note block in `set_product_eligibility()` reset path references `re_evaluate_product_eligibility` as a comparison point: "uses the same resolution logic as `re_evaluate_product_eligibility`". But `re_evaluate_product_eligibility` is a Celery sub-task that for most reason codes delegates upward to `set_product_eligibility()` itself — the comparison is in the wrong direction of the call graph. The intent (both ultimately use `resolve_eligibility_score`) is correct, but the reference creates a circular and misleading comparison.
 
 ---
 

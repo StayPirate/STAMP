@@ -1,7 +1,7 @@
 # Review: ticket-mutations
 
 **Spec**: `docs/features/tickets/ticket-mutations.md`
-**Last reviewed**: 2026-05-25
+**Last reviewed**: 2026-06-03
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -91,6 +91,13 @@
 ### TKM-COH-03 — Internal ordering discrepancy in revert_duplicate audit events (Low)
 
 **Status**: RESOLVED — Inverted steps 5/6 in revert_duplicate to semantic order (duplicate_removed before status_change) and aligned summary prose (2026-05-25)
+
+### TKM-COH-04 — Per-function behavior steps bundle unconditional `CVE.severity` update inside ticket-conditional branch (Low)
+
+**Category**: Contradictory definitions
+**Status**: OPEN
+
+Per-function behavior steps bundle the unconditional `CVE.severity` update inside the ticket-conditional branch. In `cvss-scoring.md`'s write-path, steps 4, 4b, 5, 6 (resolve severity score, resolve eligibility score, calculate severity, update CVE.severity) are UNCONDITIONAL — they happen even for ticketless CVEs. But in `ticket-mutations.md`, these steps are described inside the "If a ticket exists" conditional block (most visibly in `delete_cvss_assessment` which goes from "delete record" directly to "if ticket exists: recalculate"). A reader of `ticket-mutations.md` alone could conclude that `CVE.severity` is not updated for ticketless CVEs, which contradicts the write-path spec.
 
 ---
 
