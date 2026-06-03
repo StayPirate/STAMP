@@ -893,7 +893,7 @@ process and cannot be removed via the API. See
 |--------------|-------------|------------------------------|----------------------------------|
 | id           | UUID        | PK                           | Internal identifier              |
 | user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
-| role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst, Automation Agent |
+| role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst, Restricted Analyst |
 | ad_group_cn  | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
 | assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
@@ -906,7 +906,7 @@ process and cannot be removed via the API. See
 |-------------------|--------------------------------------------------|
 | Admin             | Platform administration (users, settings, fetchers) |
 | Vulnerability Analyst  | CVE triage and assessment (tickets, packages, CVSS) |
-| Automation Agent  | Automated ticket operations (same as VA except confidentiality management); scope limited to non-confidential tickets |
+| Restricted Analyst | Ticket operations with restricted scope (same capabilities as VA except confidentiality management); scope limited to non-confidential tickets |
 
 The capability-to-role mapping and scope-to-role mapping are static
 definitions in code (not stored in the database). See
@@ -931,7 +931,7 @@ membership. See `docs/features/identity/ad-integration.md`.
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
 | ad_group_cn  | VARCHAR(256) | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
-| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Automation Agent` |
+| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Restricted Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
 

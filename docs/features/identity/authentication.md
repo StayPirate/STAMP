@@ -928,7 +928,7 @@ attributed to the agent's own identity.
 **Setup**:
 
 1. Admin creates a local user: `sentinel manage-user create --username
-   security-scanner --role automation_agent` (or `--role
+   security-scanner --role restricted_analyst` (or `--role
    vulnerability_analyst` if confidential ticket access is needed)
 2. Operator logs in to Sentinel as `security-scanner` (using the
    password set at creation)

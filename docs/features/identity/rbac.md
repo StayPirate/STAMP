@@ -84,15 +84,15 @@ users.
 |---|---|---|
 | `admin` | `manage_users`, `manage_role_mappings`, `manage_settings`, `manage_fetchers`, `admin_ticket_ops` | `all` |
 | `vulnerability_analyst` | `create_ticket`, `triage_ticket`, `manage_packages`, `manage_cvss`, `manage_references`, `manage_confidentiality` | `all` |
-| `automation_agent` | `create_ticket`, `triage_ticket`, `manage_packages`, `manage_cvss`, `manage_references` | `non_confidential` |
+| `restricted_analyst` | `create_ticket`, `triage_ticket`, `manage_packages`, `manage_cvss`, `manage_references` | `non_confidential` |
 
 Design notes:
 
 - `admin` does NOT inherit VA capabilities. A user needing both must hold
   both roles (unchanged from current design)
-- `automation_agent` shares all VA capabilities except
-  `manage_confidentiality` — bots cannot set the confidentiality flag or
-  manage access grants
+- `restricted_analyst` shares all VA capabilities except
+  `manage_confidentiality` — this role cannot set the confidentiality
+  flag or manage access grants
 - A user holding multiple roles receives the **union** of all capabilities
   and the **least restrictive** scope (i.e., if any role has `all`, the
   effective scope is `all`). The admin is responsible for role assignments
@@ -222,16 +222,16 @@ and bugowner emails (from IBS sync). A standard equality operator (`=`)
 is sufficient — no runtime ILIKE or lower() is needed.
 
 This means a user with `manage_confidentiality` capability can grant
-explicit access to a confidential ticket to a bot with
+explicit access to a confidential ticket to a user with
 `non_confidential` scope. The grant overrides the scope restriction for
 that specific ticket only. The grant provides full access (read and
-write) — the bot can perform any operation its capabilities allow on the
-granted ticket. There is no read-only vs read-write distinction in access
+write) — the user can perform any operation their capabilities allow on
+the granted ticket. There is no read-only vs read-write distinction in access
 grants; this is consistent with how grants work for all users.
 
 Note that visibility alone does not imply write access. An authenticated
 user with no roles who receives a `TicketAccessGrant` can see the ticket
-but cannot modify it — they have no capabilities. An `automation_agent`
+but cannot modify it — they have no capabilities. A `restricted_analyst`
 with a grant can both see and modify the ticket because they have
 capabilities like `triage_ticket` and `manage_packages`. The two checks
 are independent:
@@ -588,7 +588,7 @@ here with the required authorization level and a link to the owning spec.
    an AD user via
    `sentinel manage-user update --username <username> --add-role admin`.
    See `docs/features/identity/ad-integration.md`.
-   For bot accounts, see Business Rule 14
+   For restricted analyst accounts, see Business Rule 14
 10. **Assignment target constraint**: only users holding the
     `vulnerability_analyst` role can be assigned as ticket owners. The
     `triage_ticket` capability controls who can *perform* the assignment;
@@ -608,37 +608,39 @@ here with the required authorization level and a link to the owning spec.
 11. **Auto-assignment**: when a user modifies an unassigned ticket, the
     ticket is auto-assigned to the acting user **only if** the acting user
     holds the `vulnerability_analyst` role. If the acting user holds only
-    `automation_agent` (or any other non-VA role), auto-assignment is
-    skipped — the bot performs the operation but the ticket remains
-    unassigned for a human to claim
+    `restricted_analyst` (or any other non-VA role), auto-assignment is
+    skipped — the operation proceeds but the ticket remains unassigned
+    for a vulnerability analyst to claim
 12. **Status transitions with embedded assignment**: the reopen,
     revert-duplicate, and mark-as-duplicate flows embed a reassignment
     step. When a user without the `vulnerability_analyst` role performs
     these operations (they have `triage_ticket` capability to do so), the
     reassignment step is skipped — the ticket retains its current assignee.
-    If the ticket was unassigned, it remains unassigned. Bots can trigger
-    status transitions but never become ticket owners
+    If the ticket was unassigned, it remains unassigned. Non-VA users can
+    trigger status transitions but are never assigned as ticket owners
 13. **Confidential ticket creation**: the `is_confidential` field in
     `POST /api/v1/tickets` requires the `manage_confidentiality` capability
     in addition to `create_ticket`. A user with only `create_ticket` (e.g.,
-    `automation_agent`) can create tickets but cannot set
+    `restricted_analyst`) can create tickets but cannot set
     `is_confidential: true`. If the field is present and the caller lacks
     `manage_confidentiality`, the endpoint returns 403 with error code
-    `AUTH_INSUFFICIENT_PERMISSION`. This prevents bots from creating
-    confidential tickets they cannot subsequently access.
+    `AUTH_INSUFFICIENT_PERMISSION`. This prevents users without
+    `manage_confidentiality` from creating confidential tickets they
+    cannot subsequently access.
     (This is a _hard conditional check_ — see Conditional Capability Checks
     above for the pattern definition.)
-14. **Bot account bootstrap**: bot accounts are local users created via
-    CLI with the `automation_agent` role:
+14. **Restricted analyst account setup**: restricted analyst accounts
+    are local users created via CLI with the `restricted_analyst` role:
 
     ```
-    sentinel manage-user create --username mybot --email mybot@example.com --role automation_agent
+    sentinel manage-user create --username mybot --email mybot@example.com --role restricted_analyst
     ```
 
     The `create` command prompts for a password interactively. After
-    creation, authenticate with the bot credentials to create an API key
-    via `POST /api/v1/api-keys`. Bots should use API keys exclusively for
-    ongoing operations. API key rotation is the admin's responsibility
+    creation, authenticate with the account credentials to create an API
+    key via `POST /api/v1/api-keys`. Non-interactive accounts should use
+    API keys exclusively for ongoing operations. API key rotation is the
+    admin's responsibility
 
 ## Implementation Details
 
@@ -683,7 +685,7 @@ See `docs/data-model.md`. Key tables:
 - **UserRole**: junction table linking users to roles with `ad_group_cn`
   (AD group name or `_manual` for manual assignments)
 - **RoleMapping**: maps AD group names to Sentinel roles
-- **Role** enum: `Admin`, `Vulnerability Analyst`, `Automation Agent`
+- **Role** enum: `Admin`, `Vulnerability Analyst`, `Restricted Analyst`
 
 The capability-to-role mapping and scope-to-role mapping are static
 definitions in code (not stored in the database). No new tables are
@@ -698,7 +700,7 @@ underscores:
 
 - `admin`
 - `vulnerability_analyst`
-- `automation_agent`
+- `restricted_analyst`
 
 This applies to all endpoints that accept or return role values:
 `POST /api/v1/admin/users/{user}/roles`, `GET /api/v1/users/{user}`,
@@ -714,10 +716,10 @@ A user can acquire a role from two independent sources (origins):
   membership during LDAP sync. Managed exclusively by the sync process
   — cannot be removed via UI or API. See `docs/features/identity/ad-integration.md`.
 
-AD groups can be mapped to `automation_agent` via `RoleMapping`. This is
-a valid use case — for example, a team of humans who should perform
-ticket operations but must not access embargoed (confidential) data. The
-admin is responsible for ensuring the mapping is intentional.
+AD groups can be mapped to `restricted_analyst` via `RoleMapping`. This
+is a valid use case — for example, users who should perform ticket
+operations but must not access embargoed (confidential) data. The admin
+is responsible for ensuring the mapping is intentional.
 
 ### Coexistence Rules
 

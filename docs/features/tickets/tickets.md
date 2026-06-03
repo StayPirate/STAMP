@@ -193,7 +193,7 @@ via `POST /api/v1/tickets` or through the UI.
     automatically assigned)
   - `assignee_id`: set to the creating user
 - If the creating user does NOT hold the `vulnerability_analyst` role
-  (e.g., `automation_agent`):
+  (e.g., `restricted_analyst`):
   - `status`: `New` (auto-assignment is skipped — see
     [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
   - `assignee_id`: `NULL`
@@ -428,7 +428,7 @@ to a user without this role fails with 400 Bad Request
 fails with 409 Conflict (`TICKET_ASSIGNEE_INACTIVE`). This applies to
 the explicit assignment endpoint (`PATCH .../assignee`).
 Auto-assignment checks internally whether the acting user holds the
-`vulnerability_analyst` role — if not (e.g., an `automation_agent`),
+`vulnerability_analyst` role — if not (e.g., a `restricted_analyst`),
 auto-assignment is skipped and the ticket remains unassigned.
 
 **System-initiated unassignment**: tickets are automatically unassigned
@@ -459,9 +459,9 @@ operation on a ticket with `assignee_id = NULL`, the ticket is
 automatically assigned to the acting user. A `TicketAuditEvent` with
 `event_type = assignment` is created atomically in the same transaction
 as the modifying operation. If the acting user does not hold the
-`vulnerability_analyst` role (e.g., an `automation_agent`),
-auto-assignment is skipped — the ticket remains unassigned for a human
-to claim.
+`vulnerability_analyst` role (e.g., a `restricted_analyst`),
+auto-assignment is skipped — the ticket remains unassigned for a
+vulnerability analyst to claim.
 
 After the assignment, `reconcile_ticket_status` is called within the same
 transaction. If the ticket was in `New` status and the operation does not
@@ -576,7 +576,7 @@ When reverting a ticket from Duplicated status
 - `duplicate_of_id` is cleared (set to NULL)
 - If the acting user holds the `vulnerability_analyst` role, the ticket
   is reassigned to them. If the acting user does not hold the VA role
-  (e.g., an `automation_agent`), the reassignment step is skipped — the
+  (e.g., a `restricted_analyst`), the reassignment step is skipped — the
   ticket retains its current assignee (or remains unassigned)
 - The ticket re-enters the gate zone; `reconcile_ticket_status`
   determines the correct status based on current gate conditions
@@ -970,7 +970,7 @@ accepted risk because: (a) only the identifier is exposed — no title,
 CVE, severity, or package data leaks; (b) creating the duplicate link
 requires `triage_ticket` capability — users with this capability via
 the `vulnerability_analyst` role already have scope `all`;
-`automation_agent` users have `non_confidential` scope but only reach
+`restricted_analyst` users have `non_confidential` scope but only reach
 this code path for non-confidential source tickets; (c) the reverse
 scenario (target becomes
 confidential after the link is created) is rare and the leak is limited

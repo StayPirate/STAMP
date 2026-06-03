@@ -58,7 +58,7 @@ sentinel manage-user create \
 | `--username`   | Yes      | No         | Unique username for the account             |
 | `--email`      | Yes      | No         | Unique email address                        |
 | `--full-name`  | No       | No         | Display name                                |
-| `--role`       | No       | Yes        | Role to assign: `admin`, `vulnerability_analyst`, `automation_agent` |
+| `--role`       | No       | Yes        | Role to assign: `admin`, `vulnerability_analyst`, `restricted_analyst` |
 
 The password is collected interactively via a hidden prompt (input is not
 echoed to the terminal, like `sudo`). The prompt asks for the password
@@ -145,8 +145,8 @@ sentinel manage-user update \
 | `--username`     | Yes      | No         | Username of the user to update (identifier) |
 | `--email`        | No       | No         | New email address                           |
 | `--full-name`    | No       | No         | New display name                            |
-| `--add-role`     | No       | Yes        | Role to add: `admin`, `vulnerability_analyst`, `automation_agent` |
-| `--remove-role`  | No       | Yes        | Role to remove: `admin`, `vulnerability_analyst`, `automation_agent` |
+| `--add-role`     | No       | Yes        | Role to add: `admin`, `vulnerability_analyst`, `restricted_analyst` |
+| `--remove-role`  | No       | Yes        | Role to remove: `admin`, `vulnerability_analyst`, `restricted_analyst` |
 | `--reactivate`   | No       | No         | Reactivate a previously deactivated user    |
 
 **Behavior**:
@@ -429,7 +429,7 @@ sentinel manage-user list \
 |--------------|----------|------------|------------------------------------------------|
 | `--active`   | No       | No         | Show only active users                         |
 | `--inactive` | No       | No         | Show only inactive users                       |
-| `--role`     | No       | Yes        | Filter by role: `admin`, `vulnerability_analyst`, `automation_agent` |
+| `--role`     | No       | Yes        | Filter by role: `admin`, `vulnerability_analyst`, `restricted_analyst` |
 | `--type`     | No       | No         | Filter by type: `local` or `ad`                |
 
 `--active` and `--inactive` are mutually exclusive. If neither is
@@ -533,7 +533,7 @@ Query parameters:
 - `type` (enum, optional): filter by authentication type. Values:
   `local`, `ad`
 - `active` (boolean, optional): filter by active status
-- `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`, `automation_agent`)
+- `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`, `restricted_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
   least one role, `false` for users with no roles
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,

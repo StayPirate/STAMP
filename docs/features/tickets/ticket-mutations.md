@@ -643,7 +643,7 @@ operation on a ticket with `assignee_id = NULL`, the ticket is
 automatically assigned to the acting user. A `TicketAuditEvent` with
 `event_type = assignment` is created atomically in the same transaction
 as the modifying operation. If the acting user does not hold the
-`vulnerability_analyst` role (e.g., an `automation_agent`),
+`vulnerability_analyst` role (e.g., a `restricted_analyst`),
 auto-assignment is skipped — the ticket remains unassigned.
 
 After the assignment, `reconcile_ticket_status` is called within the

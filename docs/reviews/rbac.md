@@ -32,9 +32,9 @@
 
 **Status**: RESOLVED — Accepted risk: self-removal guard is sufficient; reducing to one admin is an operational choice, not a system defect (2026-05-26)
 
-### RBAC-GAP-07 — automation_agent scope vs ticket creation visibility paradox unaddressed (Medium)
+### RBAC-GAP-07 — restricted_analyst scope vs ticket creation visibility paradox unaddressed (Medium)
 
-**Status**: RESOLVED — Accepted risk: automation_agent role is only assigned to local bot accounts; internal fetchers operate at service layer without roles or scope restrictions (2026-05-26)
+**Status**: RESOLVED — Accepted risk: restricted_analyst role is assigned to accounts with restricted scope; internal fetchers operate at service layer without roles or scope restrictions (2026-05-26)
 
 ### RBAC-GAP-08 — Conditional capability check behavior undocumented for non-query parameters (Low)
 
@@ -112,7 +112,7 @@
 
 **Status**: RESOLVED — Fixed: added email lowercase normalization requirement for IBS bugowner and AD ingestion; added case-insensitive matching guarantee in visibility rules (2026-05-26)
 
-### RBAC-DES-11 — automation_agent scope restriction bypassed by TicketAccessGrant without lifecycle control (Low)
+### RBAC-DES-11 — restricted_analyst scope restriction bypassed by TicketAccessGrant without lifecycle control (Low)
 
 **Status**: RESOLVED — Accepted risk: intentional design; TicketAccessGrant lifecycle is admin responsibility; no auto-expiry needed for current use cases (2026-05-26)
 
