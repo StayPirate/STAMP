@@ -795,13 +795,12 @@ module is a bug.
 
 Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations
-(CVE association, assignment, restore) call
+(CVE association, assignment) call
 `reconcile_ticket_status` due to indirect gate effects: severity
 source changes, promotion evaluation after assignment (evaluating
-whether existing data satisfies gates above `Analysis`), or status
-reconciliation after restore. The per-function documentation in `ticket-service.md`
-specifies exactly which operations call `reconcile_ticket_status` and
-why.
+whether existing data satisfies gates above `Analysis`). The per-function
+documentation in `ticket-service.md` specifies exactly which operations
+call `reconcile_ticket_status` and why.
 
 ## Architectural Test Requirement
 
