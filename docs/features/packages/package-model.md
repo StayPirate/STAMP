@@ -740,7 +740,7 @@ Soft-deleted records are excluded from:
   per-track resolution-complete predicate (see
   `docs/features/tickets/tickets.md`, "Gate: Analyzed → Resolved")
 - **Anomaly detection** — not flagged in the future Review Queue
-- **Analysis gate** — not considered when evaluating Analysis → Analyzed
+- **Analyzed gate** — not considered when evaluating Analysis → Analyzed
 
 ### Restore
 
@@ -1215,8 +1215,8 @@ See [Soft-Deletion](#soft-deletion) for the full behavior.
 
 After the soft-delete, the system reconciles ticket status via
 `package_service`. This is necessary because excluding the package
-changes the set of active records considered by ticket gates (Resolution
-gate and Analysis gate).
+changes the set of active records considered by ticket gates (Resolved
+gate and Analyzed gate).
 
 **Response** (200 OK):
 
@@ -1295,7 +1295,7 @@ system-triggered audit events are created (see
 After the soft-delete (and any orphan cleanup cascade), the system
 reconciles ticket status via `package_service`. This is necessary
 because excluding a track changes the set of active records considered
-by ticket gates (Resolution gate and Analysis gate).
+by ticket gates (Resolved gate and Analyzed gate).
 
 **Response** (200 OK):
 
@@ -1397,7 +1397,7 @@ additional system-triggered audit events are created (see
 After the soft-delete (and any orphan cleanup cascade), the system
 reconciles ticket status via `package_service`. This is necessary
 because excluding a product changes the set of active records considered
-by ticket gates (Resolution gate and Analysis gate).
+by ticket gates (Resolved gate and Analyzed gate).
 
 **Response** (200 OK):
 

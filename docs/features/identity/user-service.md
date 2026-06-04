@@ -169,20 +169,31 @@ status — executes the unassignment unconditionally.
 
 1. Query all tickets where `assignee_id = user_id` and status is active
    (New, Analysis, or Analyzed — see
-   `docs/features/tickets/tickets.md` § Status Categories)
-2. For each matching ticket, set `assignee_id = NULL`
-3. For each matching ticket, create a `TicketAuditEvent` with
-   `event_type = assignment`:
+   `docs/features/tickets/tickets.md` § Status Categories). Note: `New`
+   tickets should never have an assignee under the current invariant
+   (see Architectural Invariant in `tickets.md`). They are included in
+   the query scope as a defensive measure — if an assignment code-path
+   bug produces a `New + assigned` ticket, this function will clear it
+   along with the regular unassignment batch.
+2. For each matching ticket (iterated individually, not as a bulk
+   update): acquire `SELECT ... FOR UPDATE` on the Ticket row before
+   clearing `assignee_id`. This prevents a concurrent `assign_ticket`
+   transaction from committing between the read of the current assignee
+   username and the write of `assignee_id = NULL`, which would produce a
+   stale `old_value` in the `assignment` audit event.
+3. Set `assignee_id = NULL`
+4. Create a `TicketAuditEvent` with `event_type = assignment`:
    - `user_id = NULL` (system action)
    - `old_value` = user's username
    - `new_value` = `NULL`
    - `comment` = `"Unassigned from {username}: {reason}"`
-4. Add each de-assigned ticket to the revisit queue for follow-up
-   reassignment (see future specification)
-5. For each matching ticket, call
-   `ticket_mutations.reconcile_ticket_status()` to re-evaluate gates
-   (the Analysis gate requires `assignee_id IS NOT NULL`, so the ticket
-   regresses accordingly)
+5. Add the ticket to the revisit queue for follow-up reassignment (see
+   future specification)
+
+Unassignment does **not** change ticket status — the ticket remains in
+its current gate-zone status (Analysis or Analyzed) and is visible in
+the unassigned ticket queue (`?assignee=none`). See the Architectural
+Invariant in `tickets.md`.
 
 Tickets in inactive statuses (Resolved, Ignored, Duplicated) are not
 touched — they are closed and do not need an active assignee. Ticket
@@ -580,11 +591,12 @@ in this specific order):
    `docs/features/identity/authentication.md` (Session invalidation) for the
    session service contract.
 3. Set `User.active = false`
-4. Unassign open tickets and reconcile status: call
+4. Unassign open tickets: call
    `_unassign_active_tickets(db, user_id, reason)` where `reason` is the
-   value passed to `deactivate_user()`. This unassigns all active tickets,
-   creates TicketAuditEvents, adds tickets to the revisit queue, and
-   reconciles ticket status — all within the same transaction. See
+   value passed to `deactivate_user()`. This clears `assignee_id` on all
+   active tickets, creates `TicketAuditEvent` records, and adds tickets to
+   the revisit queue — all within the same transaction. Ticket status is
+   not changed (see Architectural Invariant in `tickets.md`). See
    Private Helpers for the full contract.
 
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
@@ -740,10 +752,9 @@ unassigned).
 Operations that conditionally produce side effects (`update_roles`,
 `sync_role_mapping`, `delete_role_mapping_roles`) MUST also execute within
 a single database transaction when removing the `vulnerability_analyst`
-role, ensuring atomicity between role removal, ticket unassignment,
-TicketAuditEvent creation, and status reconciliation. When no VA role is
-being removed, these operations perform a single logical write and
-atomicity is less critical.
+role, ensuring atomicity between role removal, ticket unassignment, and
+TicketAuditEvent creation. When no VA role is being removed, these
+operations perform a single logical write and atomicity is less critical.
 
 Operations without side effects (`create_user`, `update_user`,
 `reactivate_user`) are also transactional but the atomicity requirement is

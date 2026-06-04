@@ -91,11 +91,17 @@ having verified the corresponding capability is a security bug.
 The ticket state machine has two zones that determine which operations
 are valid:
 
-### Gate zone (New, Analysis, Analyzed, Resolved)
+### Gate zone (Analysis, Analyzed, Resolved)
 
 Status is determined automatically by `reconcile_ticket_status` based on
 gate conditions. The `ticket_mutations` module operates exclusively on
 tickets in this zone (with the exception of manual-zone exit functions).
+
+`New` is a pre-state, not part of the gate zone. A ticket in `New` status
+has never been claimed by a VA. The `New → Analysis` transition is an
+explicit one-way event triggered by assignment, not a gate evaluation.
+`reconcile_ticket_status` skips tickets in `New` status entirely — the
+floor of the gate zone is `Analysis`.
 
 ### Manual zone (Ignored, Duplicated)
 
@@ -112,13 +118,15 @@ helper `_reenter_gate_zone()`:
 
 1. Saves the ticket's current status (Ignored or Duplicated) as
    `original_status`
-2. Sets `status = New` (entering the gate zone at the lowest rung)
+2. Sets `status = Analysis` (floor of the gate zone)
 3. Calls `reconcile_ticket_status(previous_status=original_status)`
 
 This produces a single `TicketAuditEvent` with the real transition
-(e.g., `old_value = Ignored, new_value = Analysis`). The intermediate
-`New` state is an internal implementation detail — never visible in the
-audit trail.
+(e.g., `old_value = Ignored, new_value = Analysis`). If the Analyzed
+or Resolved gates are already satisfied, `reconcile_ticket_status`
+promotes the ticket further in the same call and the audit event
+reflects the final target (e.g., `old_value = Ignored,
+new_value = Analyzed`).
 
 Only the two manual-zone exit functions (`reopen_from_ignored`,
 `revert_duplicate`) call this helper. It is never called directly by
@@ -155,27 +163,35 @@ beyond status changes.
 
 ### Behavior (top-down evaluation)
 
-1. Evaluate gate conditions from highest to lowest:
+1. Guard clause: if `ticket.status == New`, return immediately. `New` is
+   a pre-state outside the gate zone — the `New → Analysis` transition is
+   handled explicitly by assignment code paths (`auto_assign_actor` and
+   `assign_ticket`), never by this function. Before returning, if
+   `ticket.assignee_id IS NOT NULL`, emit a warning-level log:
+   `"Ticket {ticket_id} in New status with assignee {assignee_id} —
+   assignment code path bug: assignee was set without transitioning
+   status to Analysis"`.
+2. Evaluate gate conditions from highest to lowest (two active tiers;
+   `Analysis` is the unconditional floor, not a gate-evaluated tier):
    - If all "Resolved" gates are met (every non-excluded active track is
      resolution-complete — see `tickets.md`, "Gate: Analyzed → Resolved")
      AND all "Analyzed" gates are met → status is Resolved
    - If all "Analyzed" gates are met (but "Resolved" gates are not) →
      status is Analyzed
-   - If the "Analysis" gate is met (but "Analyzed" gates are not) →
-     status is Analysis
-   - Otherwise → status is New
-2. If the determined status differs from the current status:
+   - Otherwise → status is Analysis (unconditional floor; this function
+     never produces `New`)
+3. If the determined status differs from the current status:
    - Update `ticket.status`
    - Create `TicketAuditEvent` with `event_type = status_change`
    - `old_value` is taken from `previous_status` if provided; otherwise
      from the ticket's current status field
-3. The function operates within the same database transaction as the
+4. The function operates within the same database transaction as the
    triggering operation (atomicity guarantee)
 
 ### Inactive Assignee Sanitization
 
 After determining the ticket's "natural" status via gate evaluation, if
-the resulting status is non-final (New, Analysis, or Analyzed) and
+the resulting status is non-final (Analysis or Analyzed) and
 `assignee_id` points to an inactive user:
 
 1. Set `assignee_id = NULL`
@@ -184,9 +200,9 @@ the resulting status is non-final (New, Analysis, or Analyzed) and
    `comment = "Unassigned from {username}: employee deactivated"`)
 3. Add the ticket to the revisit queue (to be defined in a future
    specification)
-4. Re-evaluate the gates — since the Analysis gate
-   (`assignee_id IS NOT NULL`) is no longer satisfied, the ticket
-   regresses accordingly (e.g., Analysis → New, Analyzed → New)
+4. Emit a warning-level log: `"Inactive assignee {user_id} detected on
+   ticket {ticket_id} during reconciliation — this should have been
+   handled by _unassign_active_tickets"`
 
 If the resulting status is final (Resolved, Ignored, Duplicated): no
 assignee check is performed — the ticket is closed and does not need an
@@ -196,25 +212,25 @@ This mechanism complements the bulk unassignment performed by
 `deactivate_user` (see
 [user-service.md](../identity/user-service.md#deactivate_user)) by
 catching any tickets that were missed or that entered the gate zone
-after the deactivation event.
+after the deactivation event. Unassignment does not change the ticket's
+status — the ticket remains in its current gate-zone status.
 
-**Consequence**: as a result of the Analysis gate
-(`assignee_id IS NOT NULL`) combined with the sanitization above, a
-non-final ticket in `Analysis` or `Analyzed` status always has an
-active assignee — `assignee_id IS NULL` on a non-final ticket implies
-`New` status. This property holds because every code path that clears
-`assignee_id` (bulk unassignment in `deactivate_user`, this
-sanitization step) calls `reconcile_ticket_status()` atomically in the
-same transaction, which immediately regresses the ticket to `New`.
+> **Invariant**: ticket status reflects work state, not staffing state.
+> A ticket in `Analysis`, `Analyzed`, or `Resolved` status may have
+> `assignee_id = NULL` (an orphaned ticket awaiting reassignment).
+> See the Architectural Invariant in
+> `docs/features/tickets/tickets.md`.
 
 ### `previous_status` parameter
 
 The `previous_status` parameter exists to handle manual-zone exit
-operations correctly. When `_reenter_gate_zone()` sets `status = New`
-before calling `reconcile_ticket_status`, the ticket's current status
-field is `New`. But the real transition for the audit trail is
-`Ignored → Analysis` (not `New → Analysis`). Passing
-`previous_status = Ignored` records the correct semantic transition.
+operations correctly. When `_reenter_gate_zone()` sets `status = Analysis`
+before calling `reconcile_ticket_status`, if the function then promotes
+the ticket further (to `Analyzed` or `Resolved`), the audit event must
+record the real transition origin (e.g., `old_value = Ignored`) rather
+than the intermediate `Analysis` value. Passing
+`previous_status = Ignored` records the correct semantic transition
+(e.g., `Ignored → Analyzed` rather than `Analysis → Analyzed`).
 
 ### Multiple invocations within a transaction
 
@@ -575,11 +591,11 @@ Reopens a ticket from Ignored status.
      step
 4. Call `_reenter_gate_zone()`:
    - Saves `original_status = Ignored`
-   - Sets `status = New`
+   - Sets `status = Analysis` (floor of the gate zone)
    - Calls `reconcile_ticket_status(previous_status=Ignored)`
    - Produces `status_change` event with
-     `old_value = Ignored, new_value = (evaluated target)` — typically
-     Analysis if an assignee is present
+     `old_value = Ignored, new_value = Analysis` (or `Analyzed`/`Resolved`
+     if gate conditions are already satisfied)
 
 **TicketAuditEvent**: `status_change` (via `reconcile_ticket_status`) +
 optionally `assignment` (via `auto_assign_actor`)
@@ -614,11 +630,10 @@ Reverts a ticket from Duplicated status.
 5. Create `TicketAuditEvent` (`duplicate_removed`)
 6. Call `_reenter_gate_zone()`:
    - Saves `original_status = Duplicated`
-   - Sets `status = New`
+   - Sets `status = Analysis` (floor of the gate zone)
    - Calls `reconcile_ticket_status(previous_status=Duplicated)`
-   - Typical outcomes depend on assignee presence:
-     - VA actor (assigned): Analysis, Analyzed, or Resolved based on gates
-     - Non-VA actor (unassigned): New (assignee gate not met)
+   - Outcome: Analysis, Analyzed, or Resolved based on current gate
+     conditions (independent of assignee presence)
 
 Produces two `TicketAuditEvent` records in the same transaction:
 `duplicate_removed` (user action) followed by `status_change` with
@@ -670,11 +685,20 @@ as the modifying operation. If the acting user does not hold the
 `vulnerability_analyst` role (e.g., a `restricted_analyst`),
 auto-assignment is skipped — the ticket remains unassigned.
 
-After the assignment, `reconcile_ticket_status` is called within the
-same transaction. If the ticket was in `New` status and the operation
-does not include an explicit status change (e.g., marking as duplicate
-or ignored), the assignee gate (`assignee_id IS NOT NULL`) promotes
-the ticket to `Analysis` automatically.
+After the assignment, if the ticket was in `New` status,
+`auto_assign_actor()` explicitly sets `status = Analysis` and creates a
+`status_change` audit event (`New → Analysis`, `user_id = NULL`) before
+returning to the caller. The caller then calls `reconcile_ticket_status`,
+which evaluates from `Analysis` upward and may promote to `Analyzed` or
+`Resolved` if gate conditions are already satisfied.
+
+For operations that call `auto_assign_actor` and then immediately set
+an explicit status (e.g., `ignore_ticket` → `Ignored`,
+`mark_as_duplicate` → `Duplicated`): `auto_assign_actor` sets `Analysis`,
+the caller then sets the explicit status. The audit trail records two
+`status_change` events — `New → Analysis` and `Analysis → Ignored` (or
+`Duplicated`). This is correct and intentional: the VA claimed the ticket
+before choosing to act on it explicitly.
 
 This rule is enforced via the shared helper `auto_assign_actor()`
 (see below), which is called by all modules that modify tickets under
@@ -727,10 +751,15 @@ async def auto_assign_actor(
    unchanged, no audit event)
 5. Set `ticket.assignee_id = acting_user_id`
 6. Create `TicketAuditEvent` with `event_type = assignment`
-7. Return True
+7. If `ticket.status == New`: set `ticket.status = Analysis`, create
+   `TicketAuditEvent` with `event_type = status_change`,
+   `user_id = NULL`, `old_value = "New"`, `new_value = "Analysis"`
+8. Return True
 
-> **Caller responsibility**: this function performs assignment only. It
-> does not call `reconcile_ticket_status()`. Callers MUST call
+> **Caller responsibility**: this function performs assignment and, if
+> the ticket is in `New` status, promotes it to `Analysis` and creates a
+> `status_change` audit event (`user_id = NULL`). It does not call
+> `reconcile_ticket_status()`. Callers MUST call
 > `reconcile_ticket_status()` after completing all mutations to ensure
 > inactive assignee sanitization and correct gate evaluation.
 
@@ -744,8 +773,8 @@ see [ticket-service.md](ticket-service.md) for the full service contract.
 These operations use the same `FOR UPDATE` pattern documented in
 [Concurrency Control](#concurrency-control) and create their own
 `TicketAuditEvent` records. Some call `reconcile_ticket_status()` due
-to indirect gate effects (severity source change, assignee gate
-satisfaction, status reconciliation after restore).
+to indirect gate effects (severity source change, promotion evaluation
+after assignment, status reconciliation after restore).
 
 ## Contract
 
@@ -768,8 +797,9 @@ Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations
 (CVE association/removal, assignment, restore) call
 `reconcile_ticket_status` due to indirect gate effects: severity
-source changes, assignee gate satisfaction, or status reconciliation
-after restore. The per-function documentation in `ticket-service.md`
+source changes, promotion evaluation after assignment (evaluating
+whether existing data satisfies gates above `Analysis`), or status
+reconciliation after restore. The per-function documentation in `ticket-service.md`
 specifies exactly which operations call `reconcile_ticket_status` and
 why.
 
@@ -833,7 +863,6 @@ individual endpoints.
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
 | Admin: default CVSS version change | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Re-evaluation triggered by config change |
 | `package_service` | `reconcile_ticket_status()`, `auto_assign_actor()` | Called after every package mutation |
-| `user_service.deactivate_user` | `reconcile_ticket_status()` | Calls reconcile per-ticket after bulk unassignment (indirect caller — does not use mutation functions) |
 
 Package-centric callers (IBS release detection, product lifecycle
 transitions, `add_package_to_ticket`) now call `package_service`

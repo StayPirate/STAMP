@@ -1039,8 +1039,9 @@ Forward and reverse transitions between Analysis, Analyzed, and Resolved
 are handled automatically by the `ticket_mutations` module — see
 `docs/features/tickets/ticket-mutations.md`.
 Exits from the manual zone (Ignored, Duplicated) use the shared
-`_reenter_gate_zone` helper which sets `status = New` and calls
-`reconcile_ticket_status`.
+`_reenter_gate_zone` helper which sets `status = Analysis` (floor of
+the gate zone) and calls `reconcile_ticket_status`, which may promote
+further to `Analyzed` or `Resolved` if gate conditions are satisfied.
 
 **Status categories**:
 - **Active tickets**: tickets in status `New`, `Analysis`, or `Analyzed`.

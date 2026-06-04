@@ -272,9 +272,9 @@ New ──→ Analysis ──────────→ Analyzed ────�
  │         │    ◄────────────    │    ◄────────────
  │         │     automatic       │     automatic
  ├──→ Ignored (from New or Analysis only)
- │         ◄── Ignored → Analysis (VA assigns) or Ignored → New (system reopen)
+ │         ◄── Ignored → Analysis (VA assigns or system reopen)
  │
- └──→ Duplicated (from any gate-zone state, reversible)
+ └──→ Duplicated (from any operable status, reversible)
       (New, Analysis, Analyzed, Resolved → Duplicated)
 ```
 
@@ -282,7 +282,7 @@ New ──→ Analysis ──────────→ Analyzed ────�
 
 | From       | To         | Trigger                                                | Mode               | Who                                    |
 |------------|------------|--------------------------------------------------------|--------------------|----------------------------------------|
-| New        | Analysis   | User assigned, or any modifying operation on unassigned ticket | Manual (implicit)  | `triage_ticket`                        |
+| New        | Analysis   | First assignment of a VA (explicit or implicit via any modifying operation); one-way irreversible | Manual (explicit) or Manual (implicit) | `assign_ticket`, `auto_assign_actor` |
 | New        | Ignored    | User clicks "Ignore" action                            | Manual             | `triage_ticket`                        |
 | New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`)          | Automatic          | System                                 |
 | Analysis   | Analyzed   | All "Analyzed" gate conditions met                     | Automatic          | System                                 |
@@ -388,19 +388,58 @@ valid status. It is the sole authority for gate-zone status.
 
 - If all "Resolved" AND "Analyzed" gates are met → Resolved
 - If all "Analyzed" gates are met → Analyzed
-- If the "Analysis" gate is met → Analysis
-- Otherwise → New
+- Otherwise → Analysis (unconditional floor)
 
-Reverse transitions are not special cases — they emerge naturally
-when gate conditions are no longer met.
+`New` is a pre-state outside the gate zone. `reconcile_ticket_status`
+skips tickets in `New` status entirely (guard clause). The floor of
+the gate zone is `Analysis` — this function never produces `New`.
 
-All automatic transitions create a `TicketAuditEvent` with
-`user_id = NULL` (system action), even when the underlying data
+The `New → Analysis` transition is not a gate evaluation. It is an
+explicit one-way event triggered only by the first assignment action:
+`auto_assign_actor()` (implicit assignment via any modifying operation
+by a VA on an unassigned ticket) or `assign_ticket()` (explicit
+assignment via the PATCH assignee endpoint). Once a ticket leaves
+`New`, it never returns there under normal operation.
+
+Reverse transitions between `Analysis`, `Analyzed`, and `Resolved`
+are not special cases — they emerge naturally when gate conditions are
+no longer met.
+
+All automatic transitions (status promotion and demotion within the
+gate zone, the `New → Analysis` promotion) create a `TicketAuditEvent`
+with `user_id = NULL` (system action), even when the underlying data
 change was initiated by a VA.
 
 See [ticket-mutations.md](ticket-mutations.md) for the full function
 contract, inactive assignee sanitization, concurrency control rules,
 orphan cleanup invariants, and architectural test requirements.
+
+#### Architectural Invariant
+
+> **Ticket status reflects work state, not staffing state.** The status
+> of a ticket represents the progress of the analysis work, never the
+> assignment state. Assignment is an orthogonal staffing concern.
+> Consequently:
+>
+> - A ticket in `Analysis`, `Analyzed`, or `Resolved` status may have
+>   `assignee_id = NULL` (an orphaned ticket awaiting reassignment).
+>   This is a valid and expected state, visible in the unassigned queue
+>   (`?assignee=none`).
+> - `New` is a pre-state: it means the ticket has never been claimed by
+>   a VA. Once a ticket transitions from `New` to `Analysis`, it never
+>   returns to `New` under normal operation.
+> - `reconcile_ticket_status` never pushes a ticket below `Analysis`.
+>   The floor of the gate zone is `Analysis`, not `New`.
+> - When `assignee_id` is `NULL` on a ticket in `Analysis` or later,
+>   the ticket's audit trail MUST contain an `assignment` event
+>   documenting the unassignment. An orphaned ticket without a
+>   corresponding unassignment audit event indicates a bug in the
+>   mutation path that cleared `assignee_id`.
+>
+> Tickets created directly by a VA (`create_ticket()` with a VA actor)
+> start at `Analysis` and bypass `New` entirely — no `New → Analysis`
+> transition occurs and no corresponding `status_change` audit event is
+> expected on these tickets.
 
 #### Concurrency Control
 
@@ -463,16 +502,20 @@ as the modifying operation. If the acting user does not hold the
 auto-assignment is skipped — the ticket remains unassigned for a
 vulnerability analyst to claim.
 
-After the assignment, `reconcile_ticket_status` is called within the same
-transaction. If the ticket was in `New` status and the operation does not
-include an explicit status change (e.g., marking as duplicate or ignored),
-the assignee gate (`assignee_id IS NOT NULL`) promotes the ticket to
-`Analysis` automatically.
+If the ticket is in `New` status, `auto_assign_actor()` immediately
+promotes it to `Analysis` as an explicit side effect of the assignment,
+creating a `status_change` audit event (`New → Analysis`,
+`user_id = NULL`). The caller then calls `reconcile_ticket_status`, which
+evaluates from `Analysis` upward and may promote further if gate
+conditions are already satisfied.
 
-If the operation includes an explicit status change (e.g.,
-`New → Duplicated` or `New → Ignored`), the status follows the explicit
-transition and the assignee is set — the assignee gate does not override
-explicit transitions.
+For operations that call `auto_assign_actor` and then immediately set an
+explicit status (e.g., `ignore_ticket` → `Ignored`, `mark_as_duplicate`
+→ `Duplicated`): `auto_assign_actor` sets `Analysis`, the caller then
+sets the explicit status. The audit trail records two `status_change`
+events — `New → Analysis` and `Analysis → Ignored` (or `Duplicated`).
+This is correct and intentional: the VA claimed the ticket before
+choosing to act on it explicitly.
 
 This rule does not apply to system operations (background tasks,
 automated ingestion) or to users without the `vulnerability_analyst`
@@ -523,7 +566,7 @@ for:
 
 #### Mark-as-Duplicate Operation
 
-A ticket can be marked as duplicate from any **gate-zone** status (New,
+A ticket can be marked as duplicate from any **operable** status (New,
 Analysis, Analyzed, Resolved). Tickets in the manual zone (Ignored or
 Duplicated) are blocked by `ensure_ticket_operable` at the service layer
 (409 `TICKET_NOT_MUTABLE`) — an Ignored ticket must be reopened first,
@@ -704,8 +747,9 @@ Both transitions go through `ticket_mutations.reopen_from_ignored()`:
 1. Acquires `FOR UPDATE` on the ticket
 2. Verifies current status is Ignored
 3. Sets assignee (if applicable)
-4. Re-enters the gate zone; `reconcile_ticket_status` determines the
-   correct status (typically Analysis if an assignee is present)
+4. Re-enters the gate zone at `Analysis` (the unconditional floor);
+   `reconcile_ticket_status` evaluates upward and may promote to
+   `Analyzed` or `Resolved` if gate conditions are already satisfied
 
 See [ticket-mutations.md](ticket-mutations.md#reopen_from_ignored) for
 the full function contract.
@@ -1441,11 +1485,14 @@ Request body:
 > cannot be null. Via the API, a ticket can only be **reassigned** to
 > another active VA — never unassigned. This enforces explicit handover.
 > System-initiated unassignment may occur as a side effect of user
-> deactivation (see
-> [user-service.md](../identity/user-service.md#deactivate_user)); since
-> the Analysis gate requires `assignee_id IS NOT NULL`, unassignment
-> causes the ticket to regress to `New` (see
-> [ticket-mutations.md](ticket-mutations.md#inactive-assignee-sanitization)).
+> deactivation or VA role loss (see
+> [user-service.md](../identity/user-service.md#deactivate_user)); the
+> unassignment clears `assignee_id` but does **not** change the ticket
+> status — the ticket remains in its current gate-zone status and appears
+> in the unassigned ticket queue (`?assignee=none`) awaiting
+> reassignment (see
+> [ticket-mutations.md](ticket-mutations.md#inactive-assignee-sanitization)
+> and the [Architectural Invariant](#architectural-invariant)).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -1540,10 +1587,11 @@ POST /api/v1/tickets/{ticket_id}/reopen
 Reopens an Ignored ticket. If the calling user holds the
 `vulnerability_analyst` role, they become the new assignee; otherwise,
 the ticket retains its current assignee (or remains unassigned). After
-assignment (if applicable), `_reenter_gate_zone()` determines the
-correct gate-zone status (typically Analysis, since an assignee is now
-present). See [Ignored](#ignored) for the full reopen behavior and
-audit trail.
+assignment (if applicable), `_reenter_gate_zone()` re-enters the gate
+zone at the unconditional `Analysis` floor and evaluates upward — the
+result is Analysis, Analyzed, or Resolved based on current gate
+conditions, independent of assignee presence. See [Ignored](#ignored)
+for the full reopen behavior and audit trail.
 
 No request body is required.
 

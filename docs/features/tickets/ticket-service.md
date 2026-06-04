@@ -366,21 +366,30 @@ async def assign_ticket(
     ticket unchanged (no audit event, no status evaluation)
 5. Set `ticket.assignee_id = assignee_id`
 6. Create `TicketAuditEvent` (`assignment`)
-7. Call `reconcile_ticket_status(ticket)` — assignment affects the
-    Analysis gate (New → Analysis promotion when assignee is set)
-8. Return updated Ticket
+7. If `ticket.status == New`: set `ticket.status = Analysis`, create
+    `TicketAuditEvent` (`status_change`, `user_id = NULL`,
+    `old_value = "New"`, `new_value = "Analysis"`) — this is the explicit
+    `New → Analysis` transition (see Architectural Invariant in
+    `tickets.md`); the `status_change` event is created here, not by
+    `reconcile_ticket_status`
+8. Call `reconcile_ticket_status(ticket)` — evaluates further promotion
+    from `Analysis` upward; may produce a second `status_change` event
+    if `Analyzed` or `Resolved` gate conditions are already satisfied
+9. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row.
 
-**reconcile_ticket_status**: YES — assignment satisfies a precondition
-for Analysis status (a ticket in New with an assignee should promote to
-Analysis). While `ticket-mutations.md` classifies assignment as "not
-gate-relevant" in the sense that it does not modify CVSS/severity/
-package data, it has an indirect gate effect: the Analysis gate requires
-`assignee_id IS NOT NULL`.
+**reconcile_ticket_status**: YES — evaluates whether the ticket's
+existing data satisfies gates above `Analysis` (Analyzed or Resolved).
+While `ticket-mutations.md` classifies assignment as "not gate-relevant"
+in the sense that it does not modify CVSS/severity/package data, the
+explicit `New → Analysis` transition in step 7 means the ticket is now
+in the gate zone and `reconcile_ticket_status` can promote it further
+if conditions are met.
 
 **Audit events**: `assignment` (only if assignee actually changes).
-Possibly `status_change` (from evaluate).
+Possibly `status_change` (explicit `New → Analysis` in step 7 and/or
+further promotion from `reconcile_ticket_status`).
 
 **auto_assign_actor**: Not called — this operation performs an explicit
 assignment to a specified user, which supersedes implicit
@@ -815,11 +824,24 @@ behavior of `ticket_service` operations:
    CVE and CVSS data, reach Analyzed. Dissociate CVE with
    `severity_override = NULL` → verify ticket regresses to Analysis
 
-3. **Assignment promotes New → Analysis**: create a ticket in New status.
-   Assign a VA → verify ticket promotes to Analysis
+3. **Assignment promotes New → Analysis explicitly**: create a ticket in
+   New status. Assign a VA → verify ticket promotes to Analysis and a
+   `status_change` event with `old_value = "New"`, `new_value = "Analysis"`,
+   `user_id = NULL` is created (not by `reconcile_ticket_status` but by
+   the explicit step in `assign_ticket` before calling reconcile)
 
 4. **Assignment idempotency**: assign a ticket to user X, then assign
    again to user X → verify no audit event is created on the second call
+
+8. **`New → Analysis` promotion coverage** (parametrized): every code
+   path that sets `assignee_id` on a `New` ticket MUST produce a
+   `status_change` event with `old_value = "New"` and
+   `new_value = "Analysis"`. Paths to cover: `assign_ticket()` (explicit
+   assignment) and `auto_assign_actor()` (triggered via any mutation
+   function on an unassigned ticket, e.g., `set_severity_override`,
+   `set_track_status`, `add_package_to_ticket`). This test guards against
+   future code paths that set `assignee_id` without performing the
+   `New → Analysis` transition.
 
 5. **Mark-as-duplicate cascade with concurrent revert**: mark ticket B as
    duplicate of C (with ticket A pointing to B). Verify cascade updates

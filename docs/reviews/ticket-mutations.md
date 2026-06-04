@@ -58,7 +58,7 @@
 
 ### TKM-GAP-13 — Analysis gate not defined within this document (Low)
 
-**Status**: RESOLVED — Auto-resolved: Analysis gate now defined inline at line 185-186 ('the Analysis gate (assignee_id IS NOT NULL)') with cross-reference to tickets.md for full lifecycle (2026-05-25)
+**Status**: RESOLVED — Auto-resolved (2026-05-25). **Amended (2026-06-04)**: the Analysis gate (`assignee_id IS NOT NULL`) has been removed entirely by the orphaned-ticket-status change. There is no longer a gate to define — the Analysis tier was eliminated and `Analysis` is now the unconditional floor of `reconcile_ticket_status`. Finding remains resolved (trivially — nothing to define).
 
 ### TKM-GAP-14 — Severity becoming None after last CVSS deletion not documented (Low)
 
@@ -121,7 +121,7 @@ Per-function behavior steps bundle the unconditional `CVE.severity` update insid
 
 ### TKM-DES-05 — User deactivation unassigns via direct query bypassing ticket_mutations (Medium)
 
-**Status**: RESOLVED — Spec updated: deactivate_user now calls reconcile_ticket_status() per-ticket after bulk unassignment (2026-05-25)
+**Status**: RESOLVED — Spec updated (2026-05-25). **Amended (2026-06-04)**: the resolution note is outdated. The orphaned-ticket-status change removed the per-ticket `reconcile_ticket_status()` call from `_unassign_active_tickets` — unassignment no longer affects ticket status, so calling reconcile is not required. Finding remains resolved: the decision is intentional, not a bypass. The spec now documents the correct behavior (unassignment without status change, per-ticket `FOR UPDATE` lock, warning log in the sanitization catch-up).
 
 ### TKM-DES-06 — Duplicate chains not flattened at mark-time (Medium)
 

@@ -567,10 +567,8 @@ flowchart TD
     ANALYZED -->|"manual"| DUPLICATED
     RESOLVED -->|"manual"| DUPLICATED
 
-    DUPLICATED -->|"revert:<br/>_reenter_gate_zone"| NEW
-    IGNORED -->|"reopen:<br/>_reenter_gate_zone"| NEW
-
-    NEW -.->|"evaluate promotes"| ANALYSIS
+    DUPLICATED -->|"revert:<br/>_reenter_gate_zone"| ANALYSIS
+    IGNORED -->|"reopen:<br/>_reenter_gate_zone"| ANALYSIS
 
     style NEW fill:#dbeafe,stroke:#2563eb
     style ANALYSIS fill:#fef9c3,stroke:#ca8a04
