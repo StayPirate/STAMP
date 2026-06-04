@@ -13,6 +13,7 @@ documents.
   - [CVE Ingestion](#cve-ingestion)
   - [Package and Release Tracking](#package-and-release-tracking)
   - [Ticket Lifecycle](#ticket-lifecycle)
+  - [Ticket Status Zones](#ticket-status-zones)
 - [Feature Specification Map](#feature-specification-map)
 
 ---
@@ -591,6 +592,90 @@ all non-excluded eligible products having `released_at IS NOT NULL`, or
 soft-deleted rather than using a separate `IGNORED` status. Delivery status
 (`PENDING`/`IN_PROGRESS`/`RELEASED`) is tracked independently for workflow
 visibility but is not a gate condition.
+
+### Ticket Status Zones
+
+The ticket state machine is divided into distinct zones that determine how
+status transitions are governed. See
+[features/tickets/ticket-mutations.md](features/tickets/ticket-mutations.md)
+for the authoritative zone definitions and gate evaluation logic.
+
+```mermaid
+flowchart TD
+    subgraph pre["PRE-STATE"]
+        direction LR
+        NEW["New"]
+        NOTE_PRE["reconcile_ticket_status() skips<br/>this status entirely"]
+    end
+
+    subgraph gate["GATE ZONE — automatic status via reconcile_ticket_status()"]
+        direction TB
+        ANALYSIS["Analysis<br/>(floor)"]
+        ANALYZED["Analyzed"]
+        RESOLVED["Resolved"]
+
+        ANALYSIS -->|"Gate #1 met"| ANALYZED
+        ANALYZED -->|"Gate #1 unmet"| ANALYSIS
+        ANALYZED -->|"Gate #2 met"| RESOLVED
+        RESOLVED -->|"Gate #2 unmet"| ANALYZED
+        RESOLVED -->|"Both gates unmet"| ANALYSIS
+    end
+
+    subgraph manual["NON-GATE ZONE (Manual) — gate mutations blocked"]
+        direction LR
+        IGNORED["Ignored"]
+        DUPLICATED["Duplicated"]
+        NOTE_MANUAL["Gate-relevant mutations → 409<br/>reconcile_ticket_status() never runs"]
+    end
+
+    subgraph gates_ref["Gate Conditions"]
+        direction LR
+        G1["<b>Gate #1 (→ Analyzed)</b><br/>① ≥1 active track<br/>② all tracks decided (not ANALYSIS)<br/>③ severity determined<br/>④ SUSE CVSS v3.1 + v4.0 (CVE only)"]
+        G2["<b>Gate #2 (→ Resolved)</b><br/>Every active track is resolution-complete:<br/>(a) NOT_AFFECTED / WONT_FIX, or<br/>(b) FIXED + all eligible products released, or<br/>(c) AFFECTED + no eligible products"]
+    end
+
+    %% Entry from pre-state to gate zone
+    NEW -->|"first assignment<br/>(irreversible)"| ANALYSIS
+
+    %% Exit to manual zone
+    NEW -->|"ignore / NVD rejection"| IGNORED
+    ANALYSIS -->|"ignore"| IGNORED
+    ANALYSIS -->|"mark duplicate"| DUPLICATED
+    ANALYZED -->|"mark duplicate"| DUPLICATED
+    RESOLVED -->|"mark duplicate"| DUPLICATED
+
+    %% Re-entry from manual zone to gate zone
+    IGNORED -->|"reopen →<br/>_reenter_gate_zone()"| ANALYSIS
+    DUPLICATED -->|"revert →<br/>_reenter_gate_zone()"| ANALYSIS
+
+    %% Styling
+    style pre fill:#dbeafe,stroke:#2563eb
+    style gate fill:#dcfce7,stroke:#16a34a
+    style manual fill:#f3f4f6,stroke:#6b7280
+    style gates_ref fill:#fef9c3,stroke:#ca8a04
+
+    style NEW fill:#bfdbfe,stroke:#2563eb
+    style ANALYSIS fill:#fef08a,stroke:#ca8a04
+    style ANALYZED fill:#86efac,stroke:#16a34a
+    style RESOLVED fill:#6ee7b7,stroke:#059669
+    style IGNORED fill:#e5e7eb,stroke:#6b7280
+    style DUPLICATED fill:#c7d2fe,stroke:#4f46e5
+
+    style NOTE_PRE fill:none,stroke:none
+    style NOTE_MANUAL fill:none,stroke:none
+```
+
+**Zone summary:**
+
+| Zone | Statuses | Governed by | Gate mutations |
+|------|----------|-------------|----------------|
+| Pre-state | `New` | Explicit assignment only | Allowed but do not trigger reconciliation |
+| Gate zone | `Analysis`, `Analyzed`, `Resolved` | `reconcile_ticket_status()` — sole authority | Allowed; each triggers reconciliation |
+| Non-gate zone | `Ignored`, `Duplicated` | Explicit user actions | **Blocked** (`TicketNotMutableError` → 409) |
+
+Re-entry from the non-gate zone always passes through `_reenter_gate_zone()`,
+which sets the floor (`Analysis`) and calls `reconcile_ticket_status()` to
+promote to the correct status in a single transaction.
 
 ---
 
