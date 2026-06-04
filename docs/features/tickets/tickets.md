@@ -113,44 +113,6 @@ An VA can associate a CVE with a ticket that does not yet have one, via
 See [ticket-service.md](ticket-service.md#associate_cve) for the full
 service-layer contract (locking, audit events, status evaluation).
 
-### Dissociating a CVE
-
-Dissociating a CVE from a ticket requires the `admin_ticket_ops`
-capability. Users without this capability cannot remove a CVE from a
-ticket. If a user believes a CVE was associated in error, they should
-request an admin to remove it.
-
-A user with `admin_ticket_ops` can remove a CVE from a ticket via
-`DELETE /api/v1/tickets/{ticket_id}/cve`.
-
-**Effects**:
-
-- `Ticket.cve_id` is set to `NULL`
-- Severity resolution falls back to `severity_override` (see
-  [Severity Resolution](#severity-resolution)). If `severity_override`
-  is also `NULL`, the ticket severity becomes `None` — the ticket may
-  regress to Analysis
-- CVSS sync and release tracking cease applying to the ticket
-- Existing `TicketPackageTrack` and `TicketPackageProduct` records
-  are preserved. However, without an associated CVE, automatic release
-  detection (both track-level and product-level) cannot function —
-  there is no CVE-ID to match in IBS diffs or `updateinfo.xml`
-  advisories. The VA must manually set these records to a final status
-  (`NOT_AFFECTED` or `WONT_FIX`) or soft-delete them for the
-  ticket to progress toward Resolved. If a CVE is later re-associated
-  with the ticket (via `POST .../associate-cve`), automatic release
-  detection resumes
-- The CVE record itself is not deleted — it remains in the database.
-  If no other ticket references this CVE, a subsequent CVE sync will
-  create a new ticket for it — this is intentional to ensure CVEs are
-  not lost. If the Admin intends to re-associate the CVE with a
-  different ticket, this should be done before the next sync cycle
-
-See [ticket-service.md](ticket-service.md#dissociate_cve) for the full
-service-layer contract (locking, audit events, status evaluation).
-
-**`Capability: admin_ticket_ops`**
-
 ## Ticket Creation
 
 ### Automatic: CVE Ingestion
@@ -1250,7 +1212,6 @@ API performs resolution and format conversion before serialization.
 | `POST .../reopen` | `TicketDetail` |
 | `POST .../revert-duplicate` | `TicketDetail` |
 | `PATCH .../confidentiality` | `TicketDetail` |
-| `DELETE .../cve` | 204 No Content (no body) |
 
 ### List Tickets
 
@@ -1399,27 +1360,6 @@ Error responses:
 - 409 with code `TICKET_CVE_CONFLICT`: CVE is already associated with
   another ticket. Response body includes `existing_ticket_id` (UUID) to
   allow the frontend to link to the existing ticket
-- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status
-
-### Remove CVE from Ticket (Admin Only)
-
-```
-DELETE /api/v1/tickets/{ticket_id}/cve
-```
-
-**`Capability: admin_ticket_ops`**
-- **Response**: 204 No Content
-
-Removes the CVE association from a ticket. The CVE record itself is not
-deleted. After removal, severity resolution falls back to
-`severity_override`.
-
-Error responses:
-
-- 400 with code `TICKET_CVE_NOT_SET`: ticket does not have a CVE
-  associated
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
 - 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
   status
 
@@ -1792,7 +1732,6 @@ table:
 - Managing packages: `manage_packages` capability
 - Setting confidentiality, managing access grants: `manage_confidentiality`
   capability
-- Removing a CVE from a ticket: `admin_ticket_ops` capability
 - See `docs/features/identity/rbac.md` for the full permission model
 
 ## Cross-references

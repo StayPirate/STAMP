@@ -127,7 +127,7 @@ For each `TicketAuditEvent` creation, verify:
   function exists in the appropriate module, flag it as **Needs revision**
   and propose adding a new function
 - Note: operations that do NOT modify gate-relevant data (assignment,
-  duplicate set/remove, CVE association/removal, soft-delete, restore)
+  duplicate set/remove, CVE association, soft-delete, restore)
   are NOT required to go through either module — they create
   `TicketAuditEvent` records in their own services
 

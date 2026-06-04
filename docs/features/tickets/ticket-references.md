@@ -417,9 +417,6 @@ that have changed.
 
 ### CVE lifecycle events
 
-- **CVE dissociation**: when a CVE is dissociated from a ticket,
-  automatic references remain unchanged on the ticket. They continue to
-  be useful research links regardless of the CVE association status.
 - **CVE association with an existing CVE**: when a known CVE is
   associated with a ticket (via `associate-cve` or ticket creation with
   `cve_id`), references are **not** populated immediately. They are

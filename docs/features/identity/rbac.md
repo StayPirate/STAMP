@@ -36,7 +36,7 @@ Endpoints are protected by a single capability via the
 | `manage_role_mappings` | AD role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
-| `admin_ticket_ops` | Remove CVE from ticket, force track to FIXED status |
+| `admin_ticket_ops` | Force track to FIXED status |
 
 > **Design note — capability granularity**: capabilities are intentionally
 > coarse (~11 total). The current three roles are well served by grouped
@@ -150,7 +150,6 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Add/edit/delete ticket references | `manage_references` |
 | Set ticket confidentiality | `manage_confidentiality` |
 | Manage access grants on confidential tickets | `manage_confidentiality` |
-| Remove CVE from ticket | `admin_ticket_ops` |
 | Force track to FIXED status | `admin_ticket_ops` |
 | Update user fields | `manage_users` |
 | Manage user roles | `manage_users` |
@@ -419,7 +418,6 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#get-ticket) |
 | POST | `/api/v1/tickets` | `create_ticket` †manage_confidentiality | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | `triage_ticket` | [tickets](../tickets/tickets.md#associate-cve) |
-| DELETE | `/api/v1/tickets/{ticket_id}/cve` | `admin_ticket_ops` | [tickets](../tickets/tickets.md#remove-cve-from-ticket-admin-only) |
 | PATCH | `/api/v1/tickets/{ticket_id}/severity` | `triage_ticket` | [tickets](../tickets/tickets.md#set-severity-override) |
 | PATCH | `/api/v1/tickets/{ticket_id}/assignee` | `triage_ticket` | [tickets](../tickets/tickets.md#assign-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/ignore` | `triage_ticket` | [tickets](../tickets/tickets.md#ignore-ticket) |

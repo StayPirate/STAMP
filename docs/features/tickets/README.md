@@ -20,7 +20,7 @@ ticket-references.md    External links on tickets (auto-classified by type, manu
   status machine, gate conditions, and API endpoints.
 - `ticket-service.md` is the service-layer companion for non-gate
   operations — it defines the `ticket_service` module contract (creation,
-  CVE management, assignment, ignore, mark-as-duplicate,
+  CVE association, assignment, ignore, mark-as-duplicate,
   confidentiality, access grants). Some operations call
   `reconcile_ticket_status` due to indirect gate effects.
 - `ticket-mutations.md` is the service-layer companion for gate-relevant

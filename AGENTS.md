@@ -549,14 +549,14 @@ ticket status gates MUST go through the appropriate centralized module:
 - **CVSS and severity mutations** (`CVECVSSAssessment` records, severity
   override): `ticket_mutations`
   (`backend/app/services/ticket_mutations.py`)
-- **Non-gate ticket lifecycle mutations** (assignment, CVE association/
-  dissociation, mark-as-duplicate, confidentiality):
+- **Non-gate ticket lifecycle mutations** (assignment, CVE association,
+  mark-as-duplicate, confidentiality):
   `ticket_service` (`backend/app/services/ticket_service.py`)
 
 Both `package_service` and `ticket_mutations` call
 `ticket_mutations.reconcile_ticket_status()` after every gate-relevant
 mutation. `ticket_service` also calls it for operations with indirect
-gate effects (CVE association/removal, assignment). Direct
+gate effects (CVE association, assignment). Direct
 modification of gate-relevant records outside the owning module is a
 bug.
 

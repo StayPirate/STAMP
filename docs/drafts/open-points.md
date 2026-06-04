@@ -105,10 +105,11 @@ the proxy.
 **Resolution**: resolved by the `cve_service` architecture
 (`docs/features/tickets/cve-service.md`). All CVE data now flows
 through `cve_service.upsert_cve()`, which checks for ticket existence
-on every call. Orphaned CVEs (those without a ticket after dissociation)
-are automatically re-ticketed the next time any fetcher processes them
-(~6 hours). This implements option (A) naturally without a dedicated
-orphan scanner — the check is inherent in the `upsert_cve()` contract.
+on every call. Orphaned CVEs (those without a ticket due to data
+inconsistencies) are automatically re-ticketed the next time any fetcher
+processes them (~6 hours). This implements option (A) naturally without a
+dedicated orphan scanner — the check is inherent in the `upsert_cve()`
+contract and serves as a data integrity safeguard.
 
 ---
 

@@ -84,7 +84,7 @@ having verified the corresponding capability is a security bug.
 |--------|-------------|
 | `services/cvss.py` | `ticket_mutations` delegates CVSS resolution and severity calculation to pure functions in `cvss.py`. The resolution cascade logic is never reimplemented inside `ticket_mutations` |
 | `services/package_service.py` | Handles all package-centric mutations (track status, delivery status, product eligibility, soft-delete/restore, record creation) and package queries. `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` -> `ticket_mutations` |
-| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association/dissociation, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern and import `ensure_ticket_operable()` from `ticket_mutations` |
+| `services/ticket_service.py` | Handles non-gate operations (assignment, CVE association, mark-as-duplicate, set-confidentiality, access grants). See [ticket-service.md](ticket-service.md) for the full contract. These operations use the same FOR UPDATE pattern and import `ensure_ticket_operable()` from `ticket_mutations` |
 
 ## State Machine Zones
 
@@ -254,7 +254,7 @@ Every operation that modifies the `Ticket` row (any column: `status`,
 or that calls `reconcile_ticket_status` MUST acquire
 `FOR UPDATE` on the Ticket row before any modification — not just
 module functions. This prevents non-gate operations (assignment,
-duplicate set/revert, CVE dissociation, ignore)
+duplicate set/revert, ignore)
 from racing with gate operations on the same ticket.
 
 ### Single-ticket scope
@@ -328,7 +328,7 @@ function.
 | Module | Functions that call `ensure_ticket_operable` |
 |--------|----------------------------------------------|
 | `ticket_mutations` | `create_cvss_assessment`\*, `update_cvss_assessment`\*, `delete_cvss_assessment`\*, `set_severity_override` |
-| `ticket_service` | `associate_cve`, `dissociate_cve`, `assign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_confidentiality`, `grant_access`, `revoke_access` |
+| `ticket_service` | `associate_cve`, `assign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_confidentiality`, `grant_access`, `revoke_access` |
 | `package_service` | `set_track_status`, `set_track_delivery_status`, `set_product_eligibility`, `set_product_released_at`, and other mutation functions |
 
 \* CVSS functions call `ensure_ticket_operable` **conditionally** — only
@@ -765,8 +765,8 @@ async def auto_assign_actor(
 
 ## Related Operations
 
-Non-gate ticket lifecycle operations (assignment, CVE association/
-dissociation, mark-as-duplicate, set-confidentiality, access grant
+Non-gate ticket lifecycle operations (assignment, CVE association,
+mark-as-duplicate, set-confidentiality, access grant
 management) live in `ticket_service` —
 see [ticket-service.md](ticket-service.md) for the full service contract.
 
@@ -795,7 +795,7 @@ module is a bug.
 
 Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations
-(CVE association/removal, assignment, restore) call
+(CVE association, assignment, restore) call
 `reconcile_ticket_status` due to indirect gate effects: severity
 source changes, promotion evaluation after assignment (evaluating
 whether existing data satisfies gates above `Analysis`), or status

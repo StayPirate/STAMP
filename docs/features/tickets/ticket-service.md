@@ -3,7 +3,7 @@
 ## Purpose
 
 Centralize non-gate ticket lifecycle operations — creation, CVE
-management, assignment, manual-zone entries, and confidentiality
+association, assignment, manual-zone entries, and confidentiality
 management — in a single service module
 (`ticket_service`). This ensures that:
 
@@ -263,8 +263,7 @@ fails); (b) gate #4 (SUSE CVSS v3.1 + v4.0 required) to become
 applicable and likely fail. The ticket may regress to Analysis.
 
 **Note on pre-existing CVSS assessments**: If the CVE being associated
-already has `CVECVSSAssessment` records (e.g., from a previous
-association with another ticket, or from a prior NVD sync), these
+already has `CVECVSSAssessment` records (e.g., from a prior NVD sync), these
 assessments are immediately available to the CVSS resolution cascade.
 The `reconcile_ticket_status` call in step 8 uses them to derive
 severity and evaluate eligibility gates without requiring a fresh NVD
@@ -272,69 +271,6 @@ fetch.
 
 **Audit events**: `cve_associated`. Possibly `assignment` (from
 auto-assign). Possibly `status_change` (from evaluate).
-
-### dissociate_cve
-
-Removes the CVE association from a ticket.
-
-```python
-async def dissociate_cve(
-    db: AsyncSession,
-    *,
-    ticket_id: UUID,
-    acting_user_id: UUID | None,
-) -> Ticket:
-```
-
-**Preconditions**:
-
-- Ticket must be operable (`ensure_ticket_operable`)
-- Ticket must have `cve_id IS NOT NULL` (else `TicketCVENotSetError`)
-- Requires `admin_ticket_ops` capability (enforced at API layer)
-
-**Behavioral steps**:
-
-1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `ensure_ticket_operable(ticket)`
-3. Verify `ticket.cve_id IS NOT NULL` (else `TicketCVENotSetError`)
-4. Set `ticket.cve_id = NULL`
-5. Create `TicketAuditEvent` (`cve_removed`)
-6. Call `reconcile_ticket_status(ticket)` — severity falls back to
-    `severity_override`; if that is also NULL, severity = None and
-    gate #3 fails, causing regression
-7. Return updated Ticket
-
-**Note on CVSS assessment preservation**: `CVECVSSAssessment` records
-are NOT deleted on dissociation. They are factual data belonging to the
-CVE entity (linked via `CVECVSSAssessment.cve_id → CVE.id`), not to the
-ticket. After dissociation, these records remain in the database but are
-unreachable through the ticket-centric mutation layer — the
-`ticket_mutations` precondition "parent ticket must exist" naturally
-rejects any operation on assessments whose CVE has no referencing ticket.
-If the CVE is later re-associated with a ticket (same or different),
-the pre-existing assessments are immediately available for the CVSS
-resolution cascade without requiring a fresh NVD fetch.
-
-**Note on auto-assignment**: `auto_assign_actor` is NOT called.
-CVE dissociation requires `admin_ticket_ops` capability, making it an
-administrative correction rather than a triage operation. If the admin
-also holds the VA role and the ticket is unassigned, the admin should
-use the explicit assignment operation instead.
-
-**Note on package records**: Existing `TicketPackageTrack` and
-`TicketPackageProduct` records are preserved. Without an associated CVE,
-automatic release detection ceases to function. The VA must manually
-manage these records or re-associate a CVE. See `tickets.md`
-(Dissociating a CVE) for full behavioral details.
-
-**Locking**: FOR UPDATE on Ticket row.
-
-**reconcile_ticket_status**: YES — removing a CVE changes severity
-resolution. If `severity_override` is NULL, severity becomes None and
-the Analyzed gate #3 fails.
-
-**Audit events**: `cve_removed`. Possibly `status_change` (from
-evaluate).
 
 ### assign_ticket
 
@@ -747,7 +683,6 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `TicketNotMutableError` † | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (Ignored or Duplicated) |
 | `InvalidTransitionError` † | 409 | `TICKET_INVALID_TRANSITION` | Requested status transition is not allowed |
 | `TicketCVEAlreadySetError` | 400 | `TICKET_CVE_ALREADY_SET` | Ticket already has a CVE associated |
-| `TicketCVENotSetError` | 400 | `TICKET_CVE_NOT_SET` | Ticket has no CVE to dissociate |
 | `TicketCVEConflictError` | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket |
 | `AssigneeNotVAError` | 400 | `TICKET_ASSIGNEE_NOT_VA` | Target user lacks the vulnerability_analyst role |
 | `AssigneeInactiveError` | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive (for assignment) |
@@ -766,7 +701,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 
 | Caller | Operations used |
 |--------|----------------|
-| API endpoint handlers (`api/v1/tickets.py`) | All 10 operations + `execute_duplicate_cascade` |
+| API endpoint handlers (`api/v1/tickets.py`) | All 9 operations + `execute_duplicate_cascade` |
 | CVE service (`services/cve_service.py`) | `create_ticket` (source=`cve_ingestion`) |
 | IBS track release detection (`tasks/check_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
 
@@ -800,7 +735,6 @@ ticket_mutations (infrastructure)
 |------------------------|:----------------------:|:----------------------:|:---------------------:|:------------------------:|
 | create_ticket          | —                      | —                      | —                     | —                        |
 | associate_cve          | ✓                      | ✓                      | ✓                     | —                        |
-| dissociate_cve         | ✓                      | ✓                      | —                     | —                        |
 | assign_ticket          | ✓                      | ✓                      | —                     | —                        |
 | ignore_ticket          | ✓                      | —                      | ✓                     | —                        |
 | mark_as_duplicate      | ✓                      | —                      | ✓                     | ✓                        |
@@ -820,20 +754,16 @@ behavior of `ticket_service` operations:
    status to reach Analyzed. Associate a CVE → verify ticket regresses
    to Analysis (gate #3 and #4 fail)
 
-2. **CVE dissociation causes status regression**: create a ticket with
-   CVE and CVSS data, reach Analyzed. Dissociate CVE with
-   `severity_override = NULL` → verify ticket regresses to Analysis
-
-3. **Assignment promotes New → Analysis explicitly**: create a ticket in
+2. **Assignment promotes New → Analysis explicitly**: create a ticket in
    New status. Assign a VA → verify ticket promotes to Analysis and a
    `status_change` event with `old_value = "New"`, `new_value = "Analysis"`,
    `user_id = NULL` is created (not by `reconcile_ticket_status` but by
    the explicit step in `assign_ticket` before calling reconcile)
 
-4. **Assignment idempotency**: assign a ticket to user X, then assign
+3. **Assignment idempotency**: assign a ticket to user X, then assign
    again to user X → verify no audit event is created on the second call
 
-8. **`New → Analysis` promotion coverage** (parametrized): every code
+7. **`New → Analysis` promotion coverage** (parametrized): every code
    path that sets `assignee_id` on a `New` ticket MUST produce a
    `status_change` event with `old_value = "New"` and
    `new_value = "Analysis"`. Paths to cover: `assign_ticket()` (explicit
@@ -843,15 +773,15 @@ behavior of `ticket_service` operations:
    future code paths that set `assignee_id` without performing the
    `New → Analysis` transition.
 
-5. **Mark-as-duplicate cascade with concurrent revert**: mark ticket B as
+4. **Mark-as-duplicate cascade with concurrent revert**: mark ticket B as
    duplicate of C (with ticket A pointing to B). Verify cascade updates
    A to point to C. Then revert A → verify A is no longer Duplicated
 
-6. **CVE uniqueness race condition**: simulate concurrent `create_ticket`
+5. **CVE uniqueness race condition**: simulate concurrent `create_ticket`
    calls for the same CVE → verify one succeeds and the other raises
    `TicketCVEConflictError`
 
-7. **grant_access concurrent requests**: simulate concurrent
+6. **grant_access concurrent requests**: simulate concurrent
    `grant_access` calls for the same user/ticket → verify one creates
    the grant and the other returns idempotent success
 
@@ -867,7 +797,7 @@ behavior of `ticket_service` operations:
   "CVE Resolution Behavior")
 - `docs/features/tickets/cve-tracking.md` — On-demand Single-CVE Fetch
 - `docs/features/identity/rbac.md` — capability definitions
-  (`triage_ticket`, `admin_ticket_ops`, `manage_confidentiality`,
+  (`triage_ticket`, `manage_confidentiality`,
   `create_ticket`)
 - `docs/conventions.md` — Transaction and Locking pattern
 - `docs/api-spec.md` — general API conventions, error code categories
