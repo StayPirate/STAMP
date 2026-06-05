@@ -631,6 +631,7 @@ consumer-oriented summary.
 |----------|-------|
 | Fetcher name | `sync_cvss_redhat` |
 | Class name | `SyncCvssRedhat` |
+| `cve_source_type` | `"redhat"` |
 | Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
 | Source | Red Hat Security Data API (`access.redhat.com/hydra/rest/securitydata`) |
 | Scope | All CVEs with active tickets (New, Analysis, Analyzed) |

@@ -157,6 +157,37 @@ class MyConcreteFetcher(BaseFetcher):
         ...
 ```
 
+**CVE fetcher example** — discovery fetcher (implements `fetch_single`):
+
+```python
+class SyncCvesNvd(BaseFetcher):
+    name = "sync_cves_nvd"                 # registry key (BaseFetcher contract)
+    cve_source_type = "nvd"                # CVESourceType identifier
+    description = "Sync CVEs from NVD REST API v2"
+    default_schedule = "0 */6 * * *"
+    source_reference_url_pattern = "https://nvd.nist.gov/vuln/detail/{cve_id}"
+
+    async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
+        ...
+
+    async def execute(self, session: AsyncSession) -> None:
+        ...
+```
+
+**CVE fetcher example** — enrichment fetcher (no `fetch_single`):
+
+```python
+class SyncCvssRedhat(BaseFetcher):
+    name = "sync_cvss_redhat"              # registry key
+    cve_source_type = "redhat"             # CVESourceType identifier
+    description = "Sync CVSS assessments from Red Hat Security API"
+    default_schedule = "0 3 * * *"
+
+    async def execute(self, session: AsyncSession) -> None:
+        # Uses self.cve_source_type — never a hardcoded string:
+        await upsert_cve(db, cve_id, source=self.cve_source_type, ...)
+```
+
 The `name` attribute MUST NOT exceed **100 characters**. This limit is
 imposed by the `VARCHAR(100)` column type used for `fetcher_name` across
 the `FetcherConfig` (PK), `FetcherRun`, `FetcherRunWeeklyAggregate`,
@@ -214,8 +245,8 @@ This convention applies to ALL CVE fetchers implementing `fetch_single`:
 | Behavior | Meaning | Orchestrator action |
 |----------|---------|---------------------|
 | Returns normally | Data written via `upsert_cve()` | `status = success` (already written by `upsert_cve` via `record_source_status`) |
-| Raises `CVENotInSource` | CVE not present in source | `record_source_status(cve_id, source, "missing")` |
-| Raises other exception | Transient error | Celery retries → then `record_source_status(cve_id, source, "failure")` |
+| Raises `CVENotInSource` | CVE not present in source | `record_source_status(session, cve_id, fetcher_cls.cve_source_type, "missing")` |
+| Raises other exception | Transient error | Celery retries → then `record_source_status(session, cve_id, fetcher_cls.cve_source_type, "failure")` |
 
 Fetchers MUST NOT catch transient exceptions internally — they must
 propagate to allow Celery retry to function. Fetchers MUST raise
@@ -235,7 +266,7 @@ Celery retry:
   HTTP 200 (→ `failure`)
 
 After retries are exhausted, the task writes
-`record_source_status(cve_id, source, "failure")`.
+`record_source_status(session, cve_id, fetcher_cls.cve_source_type, "failure")`.
 
 ### Error Categorization
 
@@ -277,6 +308,129 @@ When multiple fetchers are invoked in parallel for the same CVE-ID:
 - Each fetcher writes its own `CVESource` record independently
 - The CVE record may end up with partial data (some sources succeeded,
   others failed)
+
+## CVE Source Type Identity
+
+### `cve_source_type` class attribute
+
+ALL fetchers that write to `CVESource` — both **discovery fetchers**
+(those implementing `fetch_single()`) and **enrichment fetchers** (those
+calling `upsert_cve()` without `fetch_single()`) — MUST declare a
+`cve_source_type: str` class attribute containing the CVESourceType
+identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`).
+
+This is the value stored in `CVESource.source` and used in Redis pending
+keys (`fetch_pending:{cve_id}:{cve_source_type}`). The attribute is
+**optional** on `BaseFetcher` — non-CVE fetchers (e.g.,
+`sync_smelt_products`, `sync_ldap_directory`, `sync_aimaas_lifecycle`)
+MUST NOT declare it.
+
+The valid values are defined by the `CVESourceType` Python Enum in
+`app/core/enums.py`. See `docs/data-model.md` (CVESource table) for the
+Enum definition and format constraints.
+
+### Data contract stability rule
+
+The `cve_source_type` value is stored persistently in `CVESource.source`
+and used in Redis keys. Changing the value after data has been written
+creates orphaned records:
+
+- Existing `CVESource` records with the old value become invisible to
+  the Fetch Status Read Path (which enumerates active fetchers)
+- The refetch endpoint rejects the old value as unregistered
+- Redis keys with the old value are never cleaned up by application
+  code (TTL handles this, but it is unclean)
+
+**Stability rule**: `cve_source_type` MUST NOT be changed without an
+Alembic data migration that updates existing `CVESource.source` records
+to the new value. This parallels the existing stability clause for
+`TicketReference.source` (`docs/features/tickets/ticket-references.md`:
+"if a fetcher is renamed... an Alembic data migration is required").
+
+If a fetcher is deregistered (removed from the codebase), existing
+`CVESource` records with the old `cve_source_type` value remain in the
+database. Historical source provenance is preserved — old data persists
+and remains queryable via the CVE detail API response, but the source
+is no longer actively polled or dispatchable on-demand.
+
+### Code convention: `self.cve_source_type` usage
+
+CVE fetchers MUST use `self.cve_source_type` as the `source` argument
+to `upsert_cve()` and `record_source_status()`. Hardcoded source strings
+are forbidden:
+
+```python
+# Correct — in any CVE fetcher's execute():
+await upsert_cve(db, cve_id, source=self.cve_source_type, cve_data=payload)
+
+# Correct — in error handling:
+await record_source_status(session, cve_id, self.cve_source_type, "failure")
+
+# WRONG — hardcoded string:
+await upsert_cve(db, cve_id, source="nvd", cve_data=payload)
+```
+
+This convention provides runtime enforcement for enrichment fetchers: if
+a fetcher calls `upsert_cve(source=self.cve_source_type)` without
+declaring `cve_source_type`, the call raises `AttributeError`
+immediately — catching the omission at the first test run.
+
+This rule is enforced by code review and test coverage (not mechanically
+at import time, since `__init_subclass__` cannot statically detect
+`upsert_cve()` calls).
+
+### Registry accessor: `get_fetch_single_fetchers()`
+
+The fetcher infrastructure provides a registry-level accessor function:
+
+```python
+def get_fetch_single_fetchers() -> dict[str, type[BaseFetcher]]:
+    """Return fetchers implementing fetch_single(), keyed by cve_source_type.
+
+    Returns a dict mapping cve_source_type -> fetcher class for all
+    registered fetchers that implement fetch_single(). The result is
+    computed lazily on first access and cached for subsequent calls.
+    """
+```
+
+This function:
+
+- Encapsulates the `fetch_single()` detection logic in one place,
+  avoiding fragile `hasattr(cls, 'fetch_single')` checks at multiple
+  call sites
+- Returns results keyed by `cve_source_type` (not `BaseFetcher.name`),
+  matching the primary use case (Redis key construction, source
+  validation, status enumeration)
+- Is used by: on-demand fetch loop, refetch endpoint validation, fetch
+  status read path
+
+**Detection predicate**: `'fetch_single' in cls.__dict__` checks for a
+concrete implementation on the class itself, not inherited methods. This
+prevents false positives if `BaseFetcher` ever declares `fetch_single`
+as abstract or raising `NotImplementedError`. Consequence: concrete
+subclasses that inherit `fetch_single()` from a parent class without
+overriding it are NOT returned by this accessor and will NOT be
+dispatched for on-demand fetches. If a concrete fetcher needs
+`fetch_single()` behavior, it MUST define or override the method in its
+own class body — inheritance alone is insufficient.
+
+**Caching semantics**: the result is computed lazily on first access
+(not at import time) to ensure all fetcher modules have been imported
+and registered before the cache is populated. In production, Celery
+workers import all task modules during startup, so the first access
+occurs after all registrations are complete. The FastAPI application
+MUST also import all fetcher modules at startup (e.g., via an explicit
+import in `app/main.py` or a startup event) — the refetch endpoint,
+on-demand fetch loop, and fetch status read path all run in the API
+server process and depend on a complete registry.
+
+**Immutability**: the returned dict MUST NOT be mutated by callers. The
+implementation SHOULD return a `types.MappingProxyType` (read-only view)
+to prevent accidental corruption of the cached result.
+
+**Test helper**: a `_clear_fetch_single_cache()` helper MUST be provided
+to invalidate the cached result — for test suites that dynamically
+register mock fetchers.
 
 ## Error Message Sanitization
 
@@ -477,6 +631,36 @@ the invalid field.
    Complex types (lists, dicts, nested models) are rejected
 5. Field names MUST be `snake_case` (lowercase letters, digits, and
    underscores only)
+6. If a fetcher implements `fetch_single()` but does not declare
+   `cve_source_type`, registration fails with a clear error message
+   identifying the fetcher class
+7. If a fetcher declares `cve_source_type`, it MUST be a member of the
+   `CVESourceType` Python Enum (`app/core/enums.py`) — registration
+   fails if not
+8. If two fetchers declare the same `cve_source_type`, registration
+   fails. The error message MUST identify both classes in conflict
+   (consistent with rule 1 for `name` uniqueness). This 1:1 constraint
+   is required because `CVESource` has a unique constraint on
+   `(cve_id, source)` — if two fetchers shared the same
+   `cve_source_type`, their `record_source_status()` calls would
+   overwrite each other's fetch outcome for the same CVE
+
+**Abstract fetcher exemption**: fetcher classes with `abstract = True`
+(which opt out of registration per the existing `__init_subclass__`
+contract) are exempt from rules 6-8. This allows intermediate abstract
+classes (e.g., a hypothetical `BaseCveFetcher(BaseFetcher,
+abstract=True)`) to define `fetch_single()` without declaring
+`cve_source_type`. Concrete subclasses MUST override `fetch_single()` in
+their own class body (not rely on inheritance alone) and declare their
+own `cve_source_type` — both rule 6 and `get_fetch_single_fetchers()`
+use `'fetch_single' in cls.__dict__` as the detection predicate.
+
+**Format constraint**: `CVESourceType` Enum values MUST match
+`[a-z][a-z0-9_]*` and not exceed 100 characters (matching the
+`CVESource.source` VARCHAR(100) column constraint). This is enforced by
+a unit test on the `CVESourceType` Enum definition — not at fetcher
+registration time, since rule 7 already guarantees that any declared
+`cve_source_type` is a valid Enum member.
 
 Pydantic itself enforces type correctness of defaults, constraint
 consistency (e.g., `default` respects `ge`/`le`), and field descriptor

@@ -452,7 +452,7 @@ See `docs/features/tickets/cve-service.md`.
 |-------------|---------------|------------------------------------|------------------------------------|
 | id          | UUID          | PK                                 | Internal identifier                |
 | cve_id      | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                   |
-| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. VARCHAR + Python Enum (evolving value set — new sources are added as the ingestion pipeline expands). Consistent with `CVEExternalIdentifier.source`, `CVECWEAssociation.source`, and `TicketReference.source` |
+| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (PG ENUM, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_cves_nvd"`) or `"manual"` |
 | status      | ENUM          | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). Uses PostgreSQL ENUM type `CVESourceFetchStatus`. No default — always written explicitly by the caller |
 | fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
@@ -471,6 +471,37 @@ requires a migration).
 | `success` | Fetcher ran and wrote data successfully |
 | `failure` | Fetcher ran, exhausted retries, and could not retrieve data |
 | `missing` | Fetcher ran, source responded, but CVE does not exist in that source |
+
+### CVESourceType Python Enum
+
+"CVESourceType" is the formal term for the short lowercase provider
+labels stored in `CVESource.source`. This is a **Python Enum** in
+`app/core/enums.py` — NOT a PostgreSQL ENUM. The database column
+remains `VARCHAR(100)` for migration flexibility (adding a new source
+requires only a code change, not an Alembic migration).
+
+| Value | Description |
+|-------|-------------|
+| `"nvd"` | NIST National Vulnerability Database |
+| `"mitre"` | MITRE CVE Services (cvelistV5 repository) |
+| `"kernel"` | Linux kernel vulnerability tracker (vulns.git) |
+| `"redhat"` | Red Hat Security Data API |
+
+**Format constraint**: values MUST match `[a-z][a-z0-9_]*` and not
+exceed 100 characters (matching the `CVESource.source` VARCHAR(100)
+column constraint). Enforced by a unit test on the Enum definition.
+
+**Adding a new value**: requires two steps:
+1. Add the value to the `CVESourceType` Enum in `app/core/enums.py`
+2. Declare `cve_source_type` on the corresponding fetcher class
+
+See `docs/features/platform/fetcher-infrastructure.md` ("CVE Source Type
+Identity") for the full contract including import-time validation,
+stability rules, and the `get_fetch_single_fetchers()` accessor.
+
+Not to be confused with `BaseFetcher.name` (the fetcher registry key,
+e.g., `"sync_cves_nvd"`), which is a different identifier type stored
+in `TicketReference.source` and `FetcherRun.fetcher_name`.
 
 ### CVECVSSAssessment
 
