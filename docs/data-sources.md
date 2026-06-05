@@ -79,20 +79,21 @@ MITRE a valuable source for early awareness of new vulnerabilities.
   Data is typically less enriched than NVD (no CVSS scores from MITRE
   itself, limited CPE data) but available earlier. Additionally, the CVE
   5.x record format includes an `adp` (Authorized Data Publisher) block
-  in `containers.adp`. When present with `title: "CISA ADP Vulnrichment"`,
-  this block provides CISA enrichment data:
+  in `containers.adp`. Multiple ADP providers may contribute containers.
+  Sentinel extracts common data (affected versions, CVSS) from **all**
+  ADP containers. The CISA ADP container (when present with
+  `title: "CISA ADP Vulnrichment"`) additionally provides:
   - **SSVC** decision points (Exploitation, Automatable, Technical Impact)
     in `metrics[].other.type == "ssvc"`
   - **KEV** status (date added, reference URL) in
     `metrics[].other.type == "kev"`
-  - **CVSS** scores from CISA (stored as provider `CISA-ADP`)
   - **CWE** identifiers from CISA analysis
-  - **Affected product** data (CPE, version ranges)
 - **Access**: `cvelistV5` GitHub repository (Git clone/pull). Public access
 - **Integration status**: **Active**. Sentinel syncs every 6 hours via the
   `sync_cves_mitre` fetcher, with on-demand single-CVE fetch support.
-  The fetcher extracts both the CNA block (CVE core data) and the CISA
-  ADP block (SSVC, KEV, CVSS, CWE, affected versions) when present
+  The fetcher extracts the CNA block (CVE core data), all ADP blocks
+  (affected versions, CVSS), and CISA-specific enrichment (SSVC, KEV,
+  CWE) when present
 - **Documentation**: https://www.cve.org/,
   https://cveawg.mitre.org/api-docs/openapi.json
 
@@ -775,8 +776,8 @@ details.
 
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested |
 |---------|--------|----------|------|-------------|---------------|
-| `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, affected versions (CPE), references |
-| `sync_cves_mitre` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (Git clone/pull) | CVE records, CISA ADP data (SSVC, KEV, CVSS CISA, CWE, affected versions), references |
+| `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references |
+| `sync_cves_mitre` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (Git clone/pull) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references |
 | `sync_cvss_redhat` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references |
 | `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates |
@@ -791,7 +792,7 @@ details.
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
 | `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
 | `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references |
-| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references |
+| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution |
 | `sync_osv` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references |
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS
@@ -806,7 +807,7 @@ schema details are in `docs/data-model.md`.
 
 | Table | Summary | Populated By |
 |-------|---------|--------------|
-| `CVEAffectedVersion` | Affected product/version data from CVE JSON 5.x `affected[]` arrays. Also stores kernel fix/introduce commits (`version_type = "git"`) | `sync_cves_nvd`, `sync_cves_mitre`, `sync_ghsa`, `sync_kernel_cves`, `sync_osv` |
+| `CVEAffectedVersion` | Affected product/version data from CVE JSON 5.x `affected[]` arrays. Also stores kernel fix/introduce commits (`version_type = "git"`). CPE and vendor:product data from these records is used for best-effort package resolution in Phase 2 (see `docs/features/tickets/cve-service.md`) | `sync_cves_mitre`, `sync_ghsa`, `sync_kernel_cves`, `sync_osv` |
 | `CVECWE` | CWE identifiers with multi-provider tracking | `sync_cves_nvd`, `sync_cves_mitre`, `sync_cvss_redhat`, `sync_ghsa` |
 | `CVESSVCAssessment` | CISA SSVC decision points (1:1 with CVE) | `sync_cves_mitre` (ADP block) |
 | `CVEKEVEntry` | CISA KEV catalog data (1:1 with CVE) | `sync_cisa_kev`, `sync_cves_mitre` (ADP block) |

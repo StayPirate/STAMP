@@ -734,7 +734,7 @@ schedule or dashboard presence.
 **Trigger**: `add_package_to_ticket` enqueues this task as its final step,
 after all `TicketPackageTrack` and `TicketPackageProduct` records have
 been created and the bugowner has been resolved. The task runs regardless of
-what triggered the package addition (VA manual action, CPE mapping,
+what triggered the package addition (VA manual action, CVE ingestion,
 release detection Case B/C).
 
 #### Procedure

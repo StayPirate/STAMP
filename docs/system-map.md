@@ -485,7 +485,7 @@ releases are detected. See
 flowchart LR
     subgraph add_pkg["Package Addition"]
         VA_ADD["VA adds package<br/>to ticket"]
-        CPE_MATCH["Auto-add via<br/>CPE match"]
+        CPE_MATCH["Auto-add via<br/>CVE ingestion"]
     end
 
     subgraph resolve["Resolution (on-demand)"]

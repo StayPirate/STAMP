@@ -787,7 +787,7 @@ The **API handler** for `POST /api/v1/tickets/{ticket_id}/packages` is
 responsible for checking whether the `TicketPackage` is soft-deleted
 (`deleted_at IS NOT NULL`) **before** calling the function. If it is,
 the handler returns `409 PACKAGE_ALREADY_EXCLUDED` without invoking the
-function. Internal callers (CPE mapping, release detection) call the
+function. Internal callers (CVE ingestion, release detection) call the
 function directly and benefit from the automatic exclusion via hierarchy.
 
 ### Ticket Events for Soft-Deletion
@@ -916,9 +916,12 @@ records. Existing records (active or soft-deleted) are skipped.
 
 The following scenarios invoke `add_package_to_ticket`:
 
-1. **Automatic (CPE mapping)**: when a CVE is ingested, Sentinel maps
-   the CPE data from the CVE record to source package names. For each
-   mapped package name, `add_package_to_ticket` is called.
+1. **Automatic (CVE ingestion)**: when a CVE is ingested, Sentinel
+   resolves package names from the CVE data (NVD CPE applicability
+   statements, CNA/ADP CPE strings, CNA/ADP vendor:product pairs, or
+   pre-resolved packages). For each resolved package name,
+   `add_package_to_ticket` is called. See
+   `docs/features/tickets/cve-service.md` (Phase 2).
 2. **Manual**: the VA manually adds a package by name via the UI.
    `add_package_to_ticket` is called with the entered name.
 3. **Track release detection (Case B)**: the release detector finds a
@@ -934,7 +937,7 @@ The following scenarios invoke `add_package_to_ticket`:
 5. **Restore from soft-deletion**: restoring a package, track, or
    product clears its `deleted_at` only. New tracks/products that
    appeared on SMELT since the deletion are picked up by subsequent
-   automatic calls to `add_package_to_ticket` (CPE mapping, release
+   automatic calls to `add_package_to_ticket` (CVE ingestion, release
    detection Case B) — no explicit call is needed at restore time.
 
 ### Package Management Constraints
@@ -1008,7 +1011,7 @@ types are defined:
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
 | VA adds package | `package_added` | VA user | `package_name` |
-| Package auto-added (CPE match or Case B) | `package_added` | `NULL` | `package_name`, contextual `comment` |
+| Package auto-added (CVE ingestion or Case B) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
 | VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
@@ -1023,7 +1026,7 @@ types are defined:
 
 - `user_id = NULL` indicates an automatic system action. For
   `package_added`, this distinguishes manual additions (VA user) from
-  automatic ones (CPE match, release detection). The `comment` field
+  automatic ones (CVE ingestion, release detection). The `comment` field
   provides context for automatic additions.
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's

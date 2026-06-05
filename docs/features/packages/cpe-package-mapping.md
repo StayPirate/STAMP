@@ -269,12 +269,78 @@ mapping keys.
 
 **Location**: `backend/app/services/cpe_mapping.py`
 
+### `resolve_vendor_product()`
+
+Converts a free-text vendor/product pair (from CNA/ADP `affected[]`
+arrays) into a set of SUSE source package names. Uses the same mapping
+dict as `resolve_cpe_packages()`, bypassing CPE 2.3 string parsing.
+
+**Signature**:
+
+```python
+def resolve_vendor_product(vendor: str, product: str) -> set[str]:
+```
+
+Note: the function is **synchronous** (no `async`, no database session).
+It can be called from any context without performance concerns.
+
+**Algorithm**:
+
+1. **Normalize vendor**: strip whitespace, lowercase, replace spaces with
+   underscores (e.g., `"Apache Software Foundation"` →
+   `"apache_software_foundation"`)
+2. **Normalize product**: strip whitespace, lowercase, replace spaces
+   with underscores (e.g., `"Commons Compress"` → `"commons_compress"`)
+3. **Form lookup key**: `vendor:product` (e.g.,
+   `"apache_software_foundation:commons_compress"`)
+4. **Lookup**: check the in-memory mapping dict for the key
+5. **Return**: if found, return the set of mapped SUSE package names.
+   If not found, return `{product}` (the normalized product name as
+   fallback)
+
+**Normalization rationale**: CNA/ADP-provided vendor and product strings
+are free-text with no enforced format. CPE 2.3 uses lowercase with
+underscores for multi-word values. The normalization applied here
+matches the CPE convention: `resolve_cpe_packages()` applies the same
+lowercase normalization (step 6 of CPE String Parsing) to the extracted
+vendor:product pair. Both functions produce identical lookup keys for
+equivalent inputs — e.g., a CNA providing `vendor = "Apache"`,
+`product = "commons_compress"` resolves to the same key as a CPE string
+`cpe:2.3:a:apache:commons_compress:*:...`.
+
+**Fallback behavior**: identical to `resolve_cpe_packages()` — when no
+mapping exists, returns the normalized product name as a single-element
+set. The subsequent `add_package_to_ticket()` call validates against
+SMELT. No phantom data is created.
+
+**Match rate expectations**: this is a best-effort mechanism. Many
+CNA-provided vendor/product values use marketing names that differ from
+CPE-normalized identifiers (e.g., `"Google"` / `"Chrome"` vs CPE
+`"google"` / `"chrome"` — matches; but `"The Apache Foundation"` /
+`"HTTP Server"` vs CPE `"apache"` / `"http_server"` — does not match).
+Even a partial match rate provides value by reducing manual VA work.
+
+**Loading**: shares the same lazily-loaded mapping dict as
+`resolve_cpe_packages()`. No additional file reads or initialization.
+
+**Location**: `backend/app/services/cpe_mapping.py` (same module as
+`resolve_cpe_packages()`)
+
 ### Consumers
 
 | Consumer | Where | How |
 |----------|-------|-----|
-| CVE ingestion pipeline (Phase 2) | `cve_service` | For each CPE entry in the NVD ingestion payload (`CVEIngestPayload.cpe_matches`), call `resolve_cpe_packages(cpe_criteria)` and collect all returned package names into a single set. Then call `add_package_to_ticket()` once per unique package name. The set-level deduplication avoids redundant SMELT queries when multiple CPE entries resolve to overlapping packages (e.g., `rust-lang:rust` and `rust-lang:cargo` both mapping to `cargo`) |
-| `fetch_single_cve` (on-demand) | `cve_service` | Same as above, triggered by on-demand CVE fetch |
+| CVE ingestion pipeline — NVD CPE (Phase 2) | `cve_service` | For each CPE entry in the NVD ingestion payload (`CVEIngestPayload.cpe_matches`), call `resolve_cpe_packages(cpe_criteria)` and collect all returned package names into a single set |
+| CVE ingestion pipeline — affected[] CPE (Phase 2) | `cve_service` | For each `AffectedVersionEntry` with a non-null `cpe` field (from `CVEIngestPayload.affected_versions`), call `resolve_cpe_packages(cpe)` and add results to the same package set |
+| CVE ingestion pipeline — affected[] vendor:product (Phase 2) | `cve_service` | For each `AffectedVersionEntry` with non-null `vendor` and `product` (from `CVEIngestPayload.affected_versions`), call `resolve_vendor_product(vendor, product)` and add results to the same package set |
+| CVE ingestion pipeline — resolved_packages (Phase 2) | `cve_service` | Pre-resolved package names from the payload (`CVEIngestPayload.resolved_packages`) are added directly to the package set without mapping resolution |
+| `fetch_single_cve` (on-demand) | `cve_service` | Same as above (all applicable sources from the payload), triggered by on-demand CVE fetch |
+
+All sources contribute to a single `set[str]` of package names.
+`add_package_to_ticket()` is called once per unique package name in the
+set. The set-level deduplication avoids redundant SMELT queries when
+multiple sources resolve to overlapping packages (e.g., NVD CPE and
+CNA vendor:product both resolving to `emacs`).
 
 **Integration notes**:
 
@@ -283,6 +349,12 @@ mapping keys.
   resolved to package names regardless of the `vulnerable` boolean.
   The VA determines affectedness at the track level after packages are
   added to the ticket
+- **Version data is informational only**: version ranges from
+  `CVEAffectedVersion` records are stored and displayed to VAs but
+  are NOT used for package resolution or affectedness determination.
+  SUSE backport practices make upstream version information unreliable
+  for determining whether a specific track is affected. The VA
+  determines affectedness at the track level after packages are added
 - **Mapping changes vs existing CVEs**: when the mapping file is
   updated (new entries added or existing ones modified), tickets that
   were previously processed with the old mapping are **not**
@@ -307,9 +379,10 @@ mapping keys.
 ## Cross-references
 
 - `docs/features/tickets/cve-service.md` -- Post-Ingestion Side
-  Effects (consumer of `resolve_cpe_packages()`)
+  Effects (consumer of `resolve_cpe_packages()` and
+  `resolve_vendor_product()`)
 - `docs/features/tickets/cve-tracking.md` -- Business Rule #5
-  (CPE-based package resolution)
+  (package resolution from CVE data)
 - `docs/features/packages/package-model.md` -- Adding Packages to a
   Ticket (`add_package_to_ticket()`)
 - `docs/features/packages/package-service.md` --

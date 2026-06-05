@@ -567,7 +567,7 @@ the general affected version model. See
 | version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
 | status | VARCHAR(20) | nullable | `"affected"` / `"unaffected"` |
 | program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
-| cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Distinct from NVD CPE applicability statements used for package resolution (see `docs/features/packages/cpe-package-mapping.md`) |
+| cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Used for best-effort package resolution in Phase 2 (see `docs/features/tickets/cve-service.md`), alongside NVD CPE applicability statements passed via `cpe_matches`. Both feed the same `resolve_cpe_packages()` function |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 Records are replaced (delete-and-reinsert per `(cve_id,
@@ -1135,7 +1135,7 @@ system action).
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
 | duplicate_target_changed   | Cascade update: the ticket's `duplicate_of_id` was re-pointed because its previous canonical target was itself marked as duplicate. `old_value` is the previous canonical target identifier (`SNTL-{n}`). `new_value` is the new canonical target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered the cascade. This event may be absent if cascade was interrupted (not an error). |
-| package_added              | Package added to the ticket (manual by VA or automatic via CPE match / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
+| package_added              | Package added to the ticket (manual by VA or automatic via CVE ingestion / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
 | package_excluded           | Package directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the package name. `user_id` is the VA who performed the action, or NULL for system (orphan cleanup). `detail` carries `{"reason"}` for automatic exclusions, NULL for manual. Child records are not modified — they become effectively excluded via the hierarchy. |
 | package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |
 | track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). `detail` carries `{"track", "package"}` context. |
