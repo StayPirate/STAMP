@@ -129,7 +129,7 @@
           "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 19,
+        "resolved": 20,
         "not_reviewed": []
       }
     },
@@ -249,7 +249,7 @@
           "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 24,
+        "resolved": 25,
         "not_reviewed": []
       }
     },
