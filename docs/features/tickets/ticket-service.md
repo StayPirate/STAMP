@@ -250,10 +250,12 @@ async def associate_cve(
 
 **Locking**: FOR UPDATE on Ticket row. Step 4 (CVE Resolution Behavior)
 executes entirely within the locked transaction but involves only local
-database operations: a `SELECT` on the CVE table, possibly an `INSERT`
-of a minimal CVE record, and a Celery task enqueue (Redis LPUSH) for
-asynchronous NVD fetch. No synchronous external HTTP calls occur while
-the lock is held.
+database operations: a `SELECT` on the CVE table and possibly an `INSERT`
+of a minimal CVE record via `ensure_cve_exists()`. No synchronous
+external HTTP calls or Redis/Celery operations occur while the lock is
+held. Task dispatch via `trigger_on_demand_fetch()` is the endpoint
+handler's responsibility and MUST occur after `db.commit()`, outside
+the locked transaction.
 
 **reconcile_ticket_status**: YES — associating a CVE changes the severity
 resolution source. If the ticket was Analyzed without a CVE (using

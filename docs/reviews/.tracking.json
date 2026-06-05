@@ -84,15 +84,15 @@
       "enabled": true,
       "abbr": "CVES",
       "cache": {
-        "last_review": "2026-06-03T17:21:12+0200",
+        "last_review": "2026-06-05T12:00:00+0200",
         "open": {
-          "GAP": { "H": 0, "M": 0, "L": 5 },
+          "GAP": { "H": 0, "M": 0, "L": 3 },
           "COH": { "H": 0, "M": 0, "L": 3 },
-          "DES": { "H": 0, "M": 0, "L": 4 },
-          "SEC": { "H": 0, "M": 4, "L": 6 },
+          "DES": { "H": 0, "M": 0, "L": 3 },
+          "SEC": { "H": 0, "M": 5, "L": 4 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 17,
+        "resolved": 21,
         "not_reviewed": []
       }
     },

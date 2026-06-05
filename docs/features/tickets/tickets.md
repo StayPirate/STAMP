@@ -83,10 +83,14 @@ ticket creation or via explicit association), the following rules apply:
   The response body includes `existing_ticket_id` (UUID) to identify
   the conflicting ticket
 - **On-demand fetch**: if the CVE does not exist in the Sentinel
-  database, a minimal CVE record (only `cve_id` set) is created and an
-  on-demand single-CVE fetch is triggered in the background (see
-  `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch").
-  The operation proceeds immediately with the minimal record.
+  database, a minimal CVE record (only `cve_id` set) is created via
+  `ensure_cve_exists()` (see `docs/features/tickets/cve-service.md`).
+  The operation proceeds immediately with the minimal record. After the
+  transaction commits, the endpoint handler calls
+  `trigger_on_demand_fetch()` to dispatch background fetch tasks. This
+  dispatch occurs unconditionally (regardless of whether the CVE was
+  newly created or already existed), with Redis deduplication preventing
+  redundant work.
 - **Normal**: if the CVE exists and is not associated with any ticket,
   the association proceeds directly
 
