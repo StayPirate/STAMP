@@ -358,9 +358,9 @@ products) have been moved to `package_service` — see
 
 The `cvss` Python library (PyPI: `cvss`, maintained by Red Hat Product
 Security) is used for vector parsing, version detection, and score
-computation. Score and version are never accepted as external inputs —
-they are always derived from the vector string. Providers that supply
-only a numeric score without a vector string are not imported.
+computation. See Key Principle 6 ("Always derived from vector") in
+[cvss-scoring.md](cvss-scoring.md#key-principles) for the system-wide
+ingestion rule that governs how scores and versions are handled.
 
 ### `create_cvss_assessment()`
 

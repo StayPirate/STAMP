@@ -28,6 +28,12 @@ ticket workflow progression.
 5. **Default version awareness**: every component of the system that needs
    a CVSS score for any decision MUST resolve the version from the system
    configuration — never hardcode `3.1` or `4.0`.
+6. **Always derived from vector**: the `vector_string` is the single
+   source of truth for all CVSS assessments. Score, version, and
+   severity are never accepted as independent inputs — they are always
+   parsed and derived locally from the vector string using the `cvss`
+   library. Providers that supply only a numeric score without a valid
+   vector string are not imported.
 
 ## CVSS Score Resolution
 
