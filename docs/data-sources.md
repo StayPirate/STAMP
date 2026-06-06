@@ -774,26 +774,35 @@ with their schedule, authentication requirements, rate limits, and data
 ingested. See `docs/features/platform/fetcher-infrastructure.md` for infrastructure
 details.
 
-| Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested |
-|---------|--------|----------|------|-------------|---------------|
-| `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references |
-| `sync_cves_mitre` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (Git clone/pull) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references |
-| `sync_cvss_redhat` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references |
-| `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) |
-| `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates |
-| `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product |
-| `check_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) |
-| `check_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) |
-| `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) |
-| `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping |
-| `check_lifecycle_phase_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL |
-| `aggregate_fetcher_runs` | Local (no external source) | Daily at 03:00 UTC | N/A | N/A | Aggregates old FetcherRun records into weekly summaries, deletes originals past retention window |
-| `sync_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking |
-| `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references |
-| `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE |
-| `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references |
-| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution |
-| `sync_osv` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references |
+**Spec Status** indicates how completely the fetcher is specified in the
+feature documentation (not its implementation status):
+
+| Status | Meaning |
+|--------|---------|
+| Complete | All required sections present: properties table, algorithm, error handling, metrics |
+| Partial | Fetcher section exists but one or more required sections are missing or stubbed |
+| TBD | No dedicated fetcher section exists, or the entire section is placeholder |
+
+| Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested | Spec | Spec Status |
+|---------|--------|----------|------|-------------|---------------|------|-------------|
+| `sync_cves_nvd` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_cves_nvd) | Complete |
+| `sync_cves_mitre` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (Git clone/pull) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_cves_mitre) | Complete |
+| `sync_cvss_redhat` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references | [cvss-scoring.md](features/tickets/cvss-scoring.md#fetcher-sync_cvss_redhat) | Partial |
+| `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | TBD |
+| `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | TBD |
+| `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | TBD |
+| `check_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-check_ibs_track_releases) | Partial |
+| `check_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-check_product_releases) | Partial |
+| `sync_package_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.rate_limit` | Package bugowner cache maintenance (cleanup, update, repair) | [package-bugowner.md](features/packages/package-bugowner.md#fetcher-properties) | Partial |
+| `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping | [ad-integration.md](features/identity/ad-integration.md#fetcher-sync_ldap_directory) | Partial |
+| `check_lifecycle_phase_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-check_lifecycle_phase_transitions) | Partial |
+| `aggregate_fetcher_runs` | Local (no external source) | Daily at 03:00 UTC | N/A | N/A | Aggregates old FetcherRun records into weekly summaries, deletes originals past retention window | [fetcher-operations.md](features/platform/fetcher-operations.md#fetcher-aggregate_fetcher_runs) | Complete |
+| `sync_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_requests) | Partial |
+| `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references | — | TBD |
+| `sync_epss` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | — | TBD |
+| `sync_ghsa` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references | — | TBD |
+| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Partial |
+| `sync_osv` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references | — | TBD |
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS
 RabbitMQ) is a continuous service, not a `BaseFetcher` subclass. See
