@@ -517,6 +517,7 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 | provider_name | VARCHAR(100) | NOT NULL                               | Human-readable provider name (e.g., `"NVD"`, `"Intel Corporation"`, `"Red Hat"`, `"SUSE"`) |
 | cvss_version  | VARCHAR(10)   | NOT NULL                               | CVSS version (e.g., `"3.1"`, `"4.0"`, `"2.0"`) |
 | score         | DECIMAL(3,1)  | NOT NULL                               | Calculated base score (0.0-10.0)   |
+| severity      | VARCHAR(10)   | NOT NULL                               | Qualitative severity derived from score: `"none"`, `"low"`, `"medium"`, `"high"`, `"critical"` |
 | vector        | VARCHAR(200)  | NOT NULL                               | Full CVSS vector string            |
 | created_at    | TIMESTAMPTZ     | NOT NULL, DEFAULT                      | Record creation timestamp          |
 | updated_at    | TIMESTAMPTZ     | NOT NULL, DEFAULT                      | Record update timestamp            |
@@ -528,6 +529,10 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 - `provider_name` for NVD Secondary (CNA) assessments is resolved from the
   NVD Source API to a human-readable name (e.g., `"Intel Corporation"`)
 - `provider_name` for the SUSE internal assessment is always `"SUSE"`
+- `severity` is always derived from the `score` using the FIRST qualitative
+  rating scale via `cvss.calculate_severity()` — never accepted as external
+  input. The same `cvss` Python library (Red Hat Product Security) used for
+  score computation provides `severities()` for this purpose
 - When a direct source (e.g., Red Hat API) provides data that also exists
   as an NVD Secondary, the direct source takes priority and overwrites the
   NVD Secondary record for the same `provider_name` and `cvss_version`
