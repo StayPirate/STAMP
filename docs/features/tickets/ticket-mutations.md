@@ -782,16 +782,34 @@ Every service-layer operation that modifies data relevant to ticket
 status gates MUST go through the appropriate centralized module:
 
 - **Package/track/product mutations**: `package_service`
-  (`TicketPackageTrack` status, delivery status,
-  `TicketPackageProduct` eligibility, soft-delete/restore, record
+  (`TicketPackageTrack` status, delivery status, standalone
+  `TicketPackageProduct` eligibility overrides, soft-delete/restore, record
   creation)
 - **CVSS and severity mutations**: `ticket_mutations`
   (`CVECVSSAssessment` records, severity override)
-- **Ticket status evaluation**: `ticket_mutations` (called by both
-  modules after any gate-relevant mutation)
+- **Ticket status evaluation**: `ticket_mutations` (called after any
+  gate-relevant mutation)
 
-Direct modification of gate-relevant records outside the owning
-module is a bug.
+Direct modification of gate-relevant records outside the owning module is a bug,
+with one architectural exception:
+
+### Exception: CVSS Recalculation Cascade Eligibility Mutations
+
+The architectural dependency is strictly unidirectional: `package_service` depends
+on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service`
+(to prevent circular dependencies).
+
+Consequently, when a CVSS mutation triggers the Recalculation Cascade, the resulting
+automatic, deterministic product eligibility updates are performed inline directly
+within `ticket_mutations`. These updates are not standalone product mutations but rather
+system-wide consequences of the CVSS score change. The cascade specification in
+`docs/features/tickets/cvss-scoring.md` guarantees that all required side effects —
+the generation of `product_eligibility_changed` audit events and the call to
+`reconcile_ticket_status()` — are executed atomically in the same transaction.
+
+All standalone product eligibility mutations (such as manual overrides by a VA,
+automated resets, and product lifecycle phase transitions) remain the exclusive
+responsibility of `package_service`.
 
 Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations

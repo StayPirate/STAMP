@@ -389,8 +389,9 @@ with an active ticket, Sentinel performs the following recalculation:
      was previously above): set `eligible = false`
    - Products with `is_eligible_override = true` are not modified
    - Products in Reactive LTSS phase remain `eligible = false` regardless
-3. **Ticket status re-evaluation**: eligibility changes in step 2 MUST be
-   applied through the `ticket_mutations` module, which then calls
+   *(Note: because of the strictly unidirectional dependency from `package_service` to `ticket_mutations`, these eligibility updates are executed inline directly within the `ticket_mutations` module during CVSS mutations. See `docs/features/tickets/ticket-mutations.md` for the module boundary contract.)*
+3. **Ticket status re-evaluation**: eligibility changes in step 2 are
+   committed inline within the `ticket_mutations` transaction, which then calls
    `reconcile_ticket_status` to re-evaluate the ticket status (see
    `docs/features/tickets/ticket-mutations.md`).
    The centralized evaluator determines the correct target status.

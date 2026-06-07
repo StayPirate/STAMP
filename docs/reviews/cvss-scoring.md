@@ -1,7 +1,7 @@
 # Review: cvss-scoring
 
 **Spec**: `docs/features/tickets/cvss-scoring.md`
-**Last reviewed**: 2026-06-03
+**Last reviewed**: 2026-06-07
 **Reviewers**: Coherence, Gap Analysis
 
 ---
@@ -10,10 +10,7 @@
 
 ### GAP-CVS-003 — No explicit specification for batch recalculation when SUSE has old-default-version assessment only (High)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-No explicit specification for the batch recalculation scenario where SUSE has assessed the old default version but not the new one. When the default changes from 3.1 → 4.0 and SUSE only has v3.1, `resolve_eligibility_score(default="4.0")` returns 10.0 (conservative fallback), making all products eligible. The spec conflates "SUSE has not assessed the vulnerability" with "SUSE has not assessed this specific default version." The outcome (10.0) is correct per policy, but it is not explicitly documented for this specific scenario.
+**Status**: RESOLVED — Auto-resolved: the spec already covers this scenario — "SUSE has not scored the default version" is listed as an explicit condition in Eligibility Score Resolution (line 90), and the gate requiring both v3.1 and v4.0 for Analysis→Analyzed limits the impact to in-progress Analysis tickets, which is expected behavior (2026-06-07)
 
 ### GAP-CVS-008 — `sync_cvss_redhat` fetcher error handling explicitly marked TBD (High)
 

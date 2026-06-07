@@ -105,15 +105,15 @@
       "enabled": true,
       "abbr": "CVS",
       "cache": {
-        "last_review": "2026-06-03T17:21:12+0200",
+        "last_review": "2026-06-07T13:02:48+0200",
         "open": {
-          "GAP": { "H": 2, "M": 5, "L": 2 },
+          "GAP": { "H": 1, "M": 5, "L": 2 },
           "COH": { "H": 1, "M": 2, "L": 6 },
           "DES": { "H": 0, "M": 0, "L": 0 },
           "SEC": { "H": 0, "M": 0, "L": 0 },
           "API": { "H": 0, "M": 0, "L": 0 }
         },
-        "resolved": 1,
+        "resolved": 2,
         "not_reviewed": ["DES", "SEC", "API"]
       }
     },
