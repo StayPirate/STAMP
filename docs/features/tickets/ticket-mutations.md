@@ -241,6 +241,41 @@ level). The function is idempotent — each call ensures consistent
 state based on the ticket's current data at that point in the
 transaction.
 
+### Post-Regression Hook: Resolved → Active
+
+Callers of `reconcile_ticket_status()` MUST check for backward
+transitions from Resolved to an active status (Analysis or Analyzed).
+When detected, the caller executes the same catch-up mechanisms used by
+ticket reactivation:
+
+1. Call `recalculate_cvss_cascade(ticket_id)` to reconcile CVSS-derived
+   data (severity, product eligibility) with the current default version
+   and any assessment updates that occurred while the ticket was Resolved.
+   Automated CVSS sync scopes to active tickets — Resolved tickets are
+   excluded, so Red Hat and other per-ticket CVSS data may be stale.
+2. Enqueue `fetch_single` for every registered fetcher that exposes the
+   capability. Same mechanism as the un-ignore/un-duplicate hook (see
+   [ticket-service.md](ticket-service.md), "Ticket Reactivation").
+
+**Pattern for callers**:
+
+```python
+old_status = ticket.status
+reconcile_ticket_status(ticket, db)
+new_status = ticket.status
+if old_status == TicketStatus.RESOLVED and new_status in (
+    TicketStatus.NEW, TicketStatus.ANALYSIS, TicketStatus.ANALYZED
+):
+    recalculate_cvss_cascade(db, ticket_id=ticket.id)
+    # enqueue fetch_single for all capable fetchers (async)
+```
+
+**Note on double reconciliation**: `recalculate_cvss_cascade()` itself
+calls `reconcile_ticket_status()` at its end. The second reconciliation
+uses the freshly-recalculated severity and eligibility data, producing
+the correct final state. No infinite loop risk — the status converges
+(the second call either produces no change or a forward transition).
+
 ## Concurrency Control
 
 The generic pessimistic locking pattern and transaction hygiene rules
@@ -552,6 +587,52 @@ resolution cascade and `severity_override` is not applicable.
 **TicketAuditEvent**: `severity_changed`
 
 **Idempotency**: no-op if severity is unchanged.
+
+---
+
+### `recalculate_cvss_cascade()`
+
+Recalculates severity and product eligibility for a ticket based on
+current CVSS assessments and the active default CVSS version. This
+function does NOT create, update, or delete any `CVECVSSAssessment`
+record — it only recalculates derived data.
+
+**Primary caller**: the batch recalculation Celery task triggered by a
+default CVSS version change (see
+`docs/features/platform/system-settings.md`).
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `db` | `AsyncSession` | Yes | Database session |
+| `ticket_id` | `UUID` | Yes | Ticket to recalculate |
+| `acting_user_id` | `UUID \| None` | No | Who triggered the recalculation (typically `None` for system-initiated batch operations) |
+
+**Behavior**:
+
+1. Acquire `FOR UPDATE` on the Ticket row
+2. Call `cvss.resolve_severity_score()` with the current default CVSS
+   version to determine the new resolved score
+3. Map the result to a severity label via `cvss.calculate_severity()`.
+   If severity changed, update `CVE.severity`
+4. Call `cvss.resolve_eligibility_score()` with the current default
+   CVSS version to determine the eligibility score
+5. Re-evaluate `eligible` for each `TicketPackageProduct` linked to the
+   ticket using the eligibility score:
+   - Products with `is_eligible_override = true` are not modified
+   - Products in Reactive LTSS phase remain `eligible = false` regardless
+6. Create `TicketAuditEvent` records for each change:
+   - `severity_changed` if severity changed
+   - `product_eligibility_changed` for each product whose eligibility
+     changed
+7. Call `reconcile_ticket_status()`
+
+**TicketAuditEvent**: `severity_changed` (if severity changed) +
+`product_eligibility_changed` (for each affected product)
+
+**Idempotency**: safe to call multiple times — if nothing has changed
+since the last call, no mutations or audit events are produced.
 
 ---
 
@@ -878,7 +959,9 @@ individual endpoints.
 | CVE API mutation endpoints | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | VA-initiated CVSS operations via `/api/v1/cves/{cve_id}/cvss/...` |
 | CVSS sync fetcher | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Background CVSS ingestion |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
-| Admin: default CVSS version change | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Re-evaluation triggered by config change |
+| Admin: default CVSS version change | `recalculate_cvss_cascade()` | Batch re-evaluation triggered by default CVSS version config change |
+| Ticket reactivation (un-ignore, un-duplicate) | `recalculate_cvss_cascade()` | Called by `ticket_service` when a ticket transitions from Ignored/Duplicated to an active status |
+| Post-regression from Resolved | `recalculate_cvss_cascade()` | Called by the caller of `reconcile_ticket_status()` when a backward transition from Resolved is detected |
 | `package_service` | `reconcile_ticket_status()`, `auto_assign_actor()` | Called after every package mutation |
 
 Package-centric callers (IBS release detection, product lifecycle
@@ -905,7 +988,9 @@ directly — see `docs/features/packages/package-service.md`.
 - `docs/conventions.md` — Transaction and Locking (generic pessimistic
   locking pattern)
 - `docs/features/tickets/ticket-service.md` — non-gate ticket lifecycle
-  operations (imports `reconcile_ticket_status()`,
-  `auto_assign_actor()`, `ensure_ticket_operable()`,
-  `resolve_canonical_target()`)
+  operations, ticket reactivation hooks (imports
+  `reconcile_ticket_status()`, `auto_assign_actor()`,
+  `ensure_ticket_operable()`, `resolve_canonical_target()`)
+- `docs/features/platform/fetcher-infrastructure.md` — `fetch_single`
+  per-ticket catch-up capability contract
 - `docs/api-spec.md` — general API conventions

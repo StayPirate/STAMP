@@ -41,9 +41,9 @@ When the Admin changes the default CVSS version, Sentinel MUST:
 4. Create `TicketAuditEvent` records for every severity or eligibility change
 
 This operation may take time for a large number of active tickets. It
-is executed as a background task (Celery). The task reuses the same
-`ticket_mutations` functions used for individual CVSS changes — each
-ticket is processed in an independent database transaction. See
+is executed as a background task (Celery). The task calls
+`ticket_mutations.recalculate_cvss_cascade()` for each ticket in an
+independent database transaction. See
 `docs/features/tickets/cvss-scoring.md` (Cascade Execution Model) for the
 full batch execution specification.
 

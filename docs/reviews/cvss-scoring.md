@@ -21,31 +21,19 @@
 
 ### GAP-CVS-001 — `resolve_eligibility_score` input contract does not specify pre-filtering of assessments (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-`resolve_eligibility_score` input contract does not specify whether it receives all CVE assessments (from which it internally filters for SUSE) or only pre-filtered SUSE assessments. This matters when SUSE has assessed a non-default version — the behavior differs based on the caller's filtering choice.
+**Status**: RESOLVED — Input contract clarified: both functions receive full unfiltered assessments; filtering is internal (2026-06-08)
 
 ### GAP-CVS-002 — Batch recalculation for default version change has no named entry point in `ticket_mutations` (Medium)
 
-**Category**: Unspecified error paths
-**Status**: OPEN
-
-Batch recalculation task for default version change has no named entry point in `ticket_mutations`. The spec says to call "the same `ticket_mutations` functions", but none of the three documented functions (create/update/delete) match the scenario (no assessment is being changed). A dedicated recalculation entry point must be defined or named.
+**Status**: RESOLVED — Defined `recalculate_cvss_cascade()` in ticket-mutations.md as dedicated entry point for batch recalculation; updated cvss-scoring.md and system-settings.md references (2026-06-08)
 
 ### GAP-CVS-004 — Step numbering 4 and 4b creates ordering ambiguity for `CVE.severity` update (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-Step numbering 4 and 4b creates ordering ambiguity for `CVE.severity` update. Step 6 ("Update CVE.severity") follows steps 4 and 4b, but the spec does not explicitly state that `CVE.severity` uses only the result of step 4 (`resolve_severity_score`) and never step 4b (`resolve_eligibility_score`). In divergence scenarios (SUSE only has non-default version), the two calls return different values.
+**Status**: RESOLVED — Write-path section rewritten as conceptual overview referencing ticket-mutations.md; eliminates step numbering ambiguity (2026-06-08)
 
 ### GAP-CVS-005 — Recalculation Cascade note on Resolved tickets inconsistent with `ensure_ticket_operable()` semantics (Medium)
 
-**Category**: Missing state transitions
-**Status**: OPEN
-
-The Recalculation Cascade note about Resolved tickets is inconsistent with `ensure_ticket_operable()` semantics. The note says re-evaluation on Resolved tickets "can only occur" via VA manual action — but `ensure_ticket_operable()` only blocks Ignored/Duplicated. The spec does not specify what `reconcile_ticket_status()` does when a CVSS change makes a Resolved ticket's eligibility change (could open or close resolution gates).
+**Status**: RESOLVED — Auto-resolved: behavior for Resolved tickets now explicitly specified in both cvss-scoring.md and ticket-mutations.md (reconcile deterministic gate evaluation, backward transitions documented) (2026-06-08)
 
 ### GAP-CVS-006 — Concurrency gap in batch recalculation for concurrent default version changes (Medium)
 
@@ -73,25 +61,15 @@ Batch recalculation scope for soft-deleted products is not explicitly confirmed.
 ## Coherence
 
 ### CVS-COH-06 — Recalculation Cascade step 2 implies direct eligibility writes; must route through `package_service` (High)
-
-**Category**: Incompatible flows
-**Status**: OPEN
-
-Recalculation Cascade step 2 implies direct updates to `TicketPackageProduct.eligible`, but Guardrail 16 and `package-service.md` require all eligibility mutations to go through `package_service.set_product_eligibility()`. Without this routing, eligibility changes during CVSS recalculation would bypass the audit trail (`product_eligibility_changed`) and `reconcile_ticket_status()` call that `package_service` owns for eligibility mutations.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
 ### CVS-COH-04 — Recalculation Cascade audit trail omits `cvss_assessment_changed` event (Medium)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-Recalculation Cascade §Audit trail (step 4) lists only `severity_changed` and `product_eligibility_changed` events, but omits `cvss_assessment_changed` — which `ticket-mutations.md` confirms is always emitted as the primary event by all three CVSS mutation functions.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
 ### CVS-COH-07 — Recalculation Cascade step 3 note overstates restriction as architectural invariant (Medium)
 
-**Category**: Incompatible flows
-**Status**: OPEN
-
-The note says eligibility recalculation on Resolved tickets "can only occur" via VA manual SUSE CVSS changes — but `ensure_ticket_operable()` only blocks Ignored/Duplicated, not Resolved tickets. Any caller of `ticket_mutations` (including future fetchers) could trigger the cascade on Resolved tickets.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
 ### CVS-COH-01 — Eligibility Threshold section contradicts Eligibility Score Resolution (Medium)
 
@@ -99,17 +77,11 @@ The note says eligibility recalculation on Resolved tickets "can only occur" via
 
 ### CVS-COH-02 — Write-path flow uses non-standard step label `4b` instead of renumbered sequence (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-Write-path flow in `cvss-scoring.md` uses non-standard step label `4b` instead of renumbered sequence. The flow uses steps 1,2,3,4,4b,5,6,7,8 — syntactically irregular. Creates ambiguity about whether step 5 depends on step 4 alone or both 4 and 4b. The per-function descriptions in `ticket-mutations.md` don't use this "4b" label.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
 ### CVS-COH-03 — `auto_assign_actor()` call absent from CVSS write-path summary (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-`auto_assign_actor()` call is absent from the CVSS write-path summary in `cvss-scoring.md`. The write-path summary (Service Architecture → `services/ticket_mutations.py`) omits `auto_assign_actor()` between `ensure_ticket_operable()` and "Persist the CVECVSSAssessment record change", while `ticket-mutations.md` §Gate-Relevant Mutation Operations defines this as a standard step in all mutation functions.
+**Status**: RESOLVED — Auto-resolved: write-path section rewritten as conceptual overview; no longer lists implementation steps (2026-06-08)
 
 ### CVS-COH-05 — §When Severity is Recalculated lists a redundant trigger (Low)
 
@@ -134,10 +106,7 @@ Write-path flow in `cvss-scoring.md` uses non-standard step label `4b` instead o
 
 ### CVS-COH-10 — §Cross-references omits `ticket-mutations.md`, `package-model.md`, and `system-settings.md` (Low)
 
-**Category**: Missing cross-references
-**Status**: OPEN
-
-`cvss-scoring.md` §Cross-references omits `ticket-mutations.md`, `package-model.md`, and `system-settings.md` — three documents with significant functional dependencies referenced extensively in the spec body.
+**Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
 ---
 

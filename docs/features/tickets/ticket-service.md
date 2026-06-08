@@ -505,6 +505,61 @@ resolver handles unflattened chains.
 transaction. No multi-ticket locks are held simultaneously (as required
 by `ticket_mutations.md` single-ticket scope rule).
 
+## Ticket Reactivation
+
+When a ticket transitions from an inactive status (Ignored or
+Duplicated) back to an active status, the system executes two catch-up
+mechanisms to reconcile the ticket's state with data that may have
+changed during the inactive period.
+
+This section applies to:
+
+- `reopen_from_ignored()` — Ignored → active (via
+  [ticket-mutations.md](ticket-mutations.md), `_reenter_gate_zone()`)
+- `revert_duplicate()` — Duplicated → active (via
+  [ticket-mutations.md](ticket-mutations.md), `_reenter_gate_zone()`)
+
+### Catch-up mechanisms
+
+After `_reenter_gate_zone()` commits the status transition, the
+endpoint handler executes:
+
+1. **Synchronous — CVSS cascade recalculation**: call
+   `ticket_mutations.recalculate_cvss_cascade(ticket_id)` to reconcile
+   CVSS-derived data (severity, product eligibility) with the current
+   system state. While the ticket was inactive, the default CVSS version
+   may have changed or new `CVECVSSAssessment` records may have been
+   created by other fetchers. `recalculate_cvss_cascade` re-resolves
+   severity and eligibility using the current data and calls
+   `reconcile_ticket_status()` at its end.
+
+2. **Asynchronous — per-ticket external data fetch**: enqueue
+   `fetch_single` for every registered fetcher that exposes the
+   capability, passing the `ticket_id`. This catches up on external data
+   not fetched during the inactive period (e.g., Red Hat CVSS updates —
+   the `sync_cvss_redhat` fetcher scopes to active tickets and skips
+   Ignored/Duplicated ones). See
+   [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+   ("Per-Ticket Catch-Up: `fetch_single` Capability") for the capability
+   contract.
+
+### Convergence behavior
+
+The ticket may transition rapidly as async tasks complete. For example,
+if a release was detected while the ticket was inactive, the IBS
+catch-up may set tracks to FIXED and products to released, causing the
+ticket to reach Resolved shortly after reactivation. This is expected
+behavior — the system converges to the accurate state.
+
+### Cross-references
+
+- [cvss-scoring.md](cvss-scoring.md) — CVSS resolution cascade,
+  recalculation trigger rationale
+- [ticket-mutations.md](ticket-mutations.md) —
+  `recalculate_cvss_cascade()` contract, `_reenter_gate_zone()` helper
+- [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md) —
+  `fetch_single` capability contract
+
 ## Confidentiality Management
 
 ### set_confidentiality

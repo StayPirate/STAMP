@@ -432,6 +432,82 @@ to prevent accidental corruption of the cached result.
 to invalidate the cached result — for test suites that dynamically
 register mock fetchers.
 
+## Per-Ticket Catch-Up: `fetch_single` Capability
+
+Fetchers MAY expose a `fetch_single` sub-operation task that allows
+on-demand data retrieval scoped to a single ticket. This capability
+provides a catch-up mechanism for tickets reactivated after a period of
+inactivity (Ignored, Duplicated, or Resolved → active status). When a
+ticket is reactivated, the system enqueues `fetch_single` for every
+registered fetcher that exposes this capability.
+
+### Classification
+
+`fetch_single` is a **sub-operation task** per the existing sub-operation
+exception (see "Guardrail: Fetcher Base Class Compliance" below):
+
+- Not a `BaseFetcher` subclass — no independent schedule, no dashboard
+  presence, no `FetcherRun` record
+- Triggered on-demand by ticket reactivation hooks, not by Celery Beat
+- Metric reporting (`record_created`, etc.) is not used
+
+### Interface Contract
+
+```python
+@celery_app.task
+def fetch_single_<fetcher_name>(ticket_id: str) -> None:
+    """Catch-up fetch scoped to a single ticket.
+
+    The task extracts relevant identifiers from the ticket context
+    (CVE ID for CVSS fetchers, package names for IBS fetchers, etc.)
+    and fetches current data from the external source.
+    """
+    ...
+```
+
+- **Parameter**: `ticket_id` (UUID as string) — the fetcher extracts
+  the relevant identifiers from the ticket context (CVE ID for CVSS
+  fetchers, package names for IBS fetchers, etc.)
+- **Idempotent**: if the external data is unchanged, the task produces
+  no side effects
+- **Mutation path**: when changed data is found, the task persists it
+  through the normal mutation path (e.g.,
+  `ticket_mutations.create_cvss_assessment()` for CVSS data), which
+  triggers the standard cascade (audit events, reconciliation)
+- **No direct ticket mutations**: the task MUST NOT acquire `FOR UPDATE`
+  locks on the Ticket row or perform ticket-level mutations directly —
+  it delegates to the appropriate service module
+
+### Registration
+
+Fetchers that implement `fetch_single` declare the capability as a class
+attribute or registry entry (implementation detail — to be defined during
+implementation). The system discovers all fetchers that expose this
+capability and enqueues tasks for each when a ticket is reactivated.
+
+### Applicability
+
+Not all fetchers need this capability:
+
+- **Applicable**: fetchers whose scope is filtered by ticket status
+  (e.g., `sync_cvss_redhat` scopes to active tickets — CVEs on
+  Ignored/Duplicated/Resolved tickets are excluded from periodic sync)
+- **Not applicable**: global fetchers that operate independently of
+  ticket status (product catalog sync, AD sync, AIMAAS threshold sync).
+  These fetchers process all relevant data regardless of ticket state —
+  no per-ticket catch-up is needed
+
+### Invocation Points
+
+`fetch_single` is enqueued by:
+
+- `ticket_service`: after un-ignore (`reopen_from_ignored`) and
+  un-duplicate (`revert_duplicate`) operations — see
+  [ticket-service.md](../tickets/ticket-service.md)
+- `ticket_mutations`: after a backward transition from Resolved to an
+  active status detected by callers of `reconcile_ticket_status()` — see
+  [ticket-mutations.md](../tickets/ticket-mutations.md)
+
 ## Error Message Sanitization
 
 The `error_message` field in `FetcherRun` is visible to **all users**

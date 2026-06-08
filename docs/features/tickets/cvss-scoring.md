@@ -248,7 +248,14 @@ Severity is recalculated whenever:
 
 - A CVSS assessment is added, modified, or removed for the CVE
 - The system-wide default CVSS version is changed by an Admin
-- The SUSE assessment is added or modified by an VA
+- The SUSE assessment is added or modified by a VA
+- A ticket is reactivated from Ignored or Duplicated status —
+  `recalculate_cvss_cascade()` is called synchronously during the
+  reactivation, plus `fetch_single` tasks are enqueued for catch-up
+- A ticket regresses from Resolved to an active status —
+  `recalculate_cvss_cascade()` is called synchronously by the caller
+  of `reconcile_ticket_status()` when a backward transition from
+  Resolved is detected
 
 ### Severity Override by CVSS
 
@@ -261,31 +268,15 @@ default version. There is no manual severity selection.
 
 ### SUSE CVSS Required for Ticket Progression (Tickets with CVE)
 
-For tickets with an associated CVE, the ticket CANNOT transition from
-`Analysis` to `Analyzed` (or any subsequent state) unless the VA has
-provided BOTH:
-
-- SUSE CVSS v3.1 assessment (vector string → calculated score)
-- SUSE CVSS v4.0 assessment (vector string → calculated score)
-
-This ensures that:
-
-1. Every ticket with a CVE that progresses beyond Analysis has a
-   SUSE-determined severity
-2. The severity is always calculated (never manually selected)
-3. Both CVSS versions are available for current and future use
+The SUSE CVSS v3.1 and v4.0 assessments are a prerequisite for the
+Analysis → Analyzed gate (see [`tickets.md`](tickets.md), Gate condition
+\#4). This ensures severity and eligibility are computable before the
+ticket progresses.
 
 **Tickets without CVE**: this gate does not apply. Instead, the VA must
 set `severity_override` before the ticket can progress. See
-`docs/features/tickets/tickets.md` (Gate: Analysis → Analyzed) for the full
-gate conditions applicable to all ticket types.
-
-### Severity Required
-
-Severity is always required for the Analysis → Analyzed transition. For
-tickets with a CVE, severity is derived from SUSE CVSS (which is
-mandatory). For tickets without a CVE, severity must be set via
-`severity_override`. A ticket with no severity (`None`) cannot progress.
+[`tickets.md`](tickets.md) (Gate: Analysis → Analyzed) for the full gate
+conditions applicable to all ticket types.
 
 ## Eligibility Threshold
 
@@ -300,20 +291,17 @@ See `docs/features/packages/package-model.md` for the full eligibility logic.
 
 ### NVD Sync (Incremental)
 
-The `sync_cves_nvd` fetcher runs every 6 hours and performs an
-incremental sync of CVEs from the NVD REST API v2. During each sync, it
-parses CVSS assessments (Primary and Secondary) from the `cvssMetricV*`
-arrays into a `CVEIngestPayload` and passes them to
-`cve_service.upsert_cve()` (see `docs/features/tickets/cve-service.md`).
-The service distributes CVSS data to `CVECVSSAssessment` records via
-`ticket_mutations.create_cvss_assessment()` in Phase 1. CNA display
-names for Secondary assessments are resolved via the NVD Source API. If
-any CVSS assessment changed for a CVE with an active ticket, the
-recalculation cascade is triggered (see Recalculation Cascade below).
+The `sync_cves_nvd` fetcher runs every 6 hours and ingests CVSS
+assessments (Primary and Secondary) from the NVD REST API v2. CNA
+display names for Secondary assessments are resolved via the NVD Source
+API. Changes are persisted via `cve_service` (see
+[`cve-service.md`](cve-service.md)). If any CVSS assessment changed for
+a CVE with an active ticket, the recalculation cascade is triggered (see
+Recalculation Cascade below).
 
 For the full fetcher definition — including the incremental algorithm,
 NVD Source API caching strategy, first-run behavior, and error handling
-— see `docs/features/tickets/cve-tracking.md` (Fetcher:
+— see [`cve-tracking.md`](cve-tracking.md) (Fetcher:
 `sync_cves_nvd`).
 
 ### Red Hat Sync
@@ -324,18 +312,26 @@ only.
 
 **Strategy — initial fetch**:
 
-1. When a new ticket is created via `cve_service.upsert_cve()`, the Red
-   Hat fetcher is triggered to fetch CVSS for that CVE:
+1. When a new ticket is created, the Red Hat fetcher is triggered to
+   fetch CVSS for that CVE:
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
    ```
 2. Extract `cvss3.cvss3_scoring_vector`
-3. Pass the vector to `cve_service.upsert_cve()` via
-   `CVEIngestPayload.cvss_assessments` with `provider = "Red Hat"`. The
-   service routes it to `ticket_mutations.create_cvss_assessment()`,
-   which derives `cvss_version` and `score` from the vector automatically
+3. Persist the assessment via `cve_service` (see
+   [`cve-service.md`](cve-service.md)) with `provider = "Red Hat"`.
+   `cvss_version` and `score` are derived from the vector automatically
 4. If the assessment differs from an existing NVD Secondary with the same
-   provider name -> overwrite
+   provider name → overwrite
+
+**Scope gap**: the fetch scope is "CVEs with active tickets (New,
+Analysis, Analyzed)" due to Red Hat API rate limits (per-CVE lookup, no
+bulk/incremental endpoint). CVEs whose tickets are in Ignored,
+Duplicated, or Resolved status do NOT receive Red Hat CVSS updates
+during the inactive period. This gap is mitigated by the
+`fetch_single_redhat` mechanism: when a ticket is reactivated, a
+`fetch_single_redhat` task is enqueued to retrieve the latest Red Hat
+data for that CVE (see Ticket Reactivation: CVSS Catch-Up below).
 
 **Strategy — periodic re-fetch**:
 
@@ -368,6 +364,27 @@ When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, Sentinel
 stops monitoring CVSS updates for that CVE. The existing CVSS data remains
 in the database but is no longer refreshed.
 
+### CVSS Fetcher Data Convention
+
+CVSS fetchers MUST separate data persistence (`CVECVSSAssessment` records)
+from recalculation of derived data (severity, eligibility, ticket status):
+
+1. **Persistence scope**: the ticket-status filter ("active tickets only")
+   applies ONLY to the recalculation cascade, NEVER to the persistence of
+   `CVECVSSAssessment` records — unless the external API's design or rate
+   limits make broader persistence impractical (e.g., per-CVE lookup APIs
+   with no bulk/incremental endpoint).
+2. **Gap documentation**: when a fetcher's fetch scope is narrower than
+   "all CVEs with tickets" due to API constraints, the fetcher's
+   specification MUST document the gap explicitly and the system MUST
+   provide a catch-up mechanism (via `fetch_single`) for tickets
+   reactivated after a period of inactivity.
+3. **Goal**: `CVECVSSAssessment` records are as complete as possible
+   regardless of ticket lifecycle state. Reopened tickets converge to
+   accurate derived data quickly via the synchronous recalculation
+   cascade (immediate best-effort) followed by asynchronous `fetch_single`
+   tasks (data catch-up).
+
 ## Recalculation Cascade
 
 When a CVSS assessment changes (added, modified, or removed) for a CVE
@@ -380,35 +397,24 @@ with an active ticket, Sentinel performs the following recalculation:
 2. **Recalculate product eligibility**: call `resolve_eligibility_score()`
    (2-step SUSE-only cascade — separate call with different semantics; the
    eligibility score may differ from the severity score when SUSE has not
-   assessed the default version). For every `TicketPackageProduct` linked
-   to the ticket, re-evaluate the `eligible` flag using the eligibility
-   score:
-   - If the new score is **above** a product's threshold (and the product
-     was previously below): set `eligible = true`
-   - If the new score is **below** a product's threshold (and the product
-     was previously above): set `eligible = false`
-   - Products with `is_eligible_override = true` are not modified
-   - Products in Reactive LTSS phase remain `eligible = false` regardless
-   *(Note: because of the strictly unidirectional dependency from `package_service` to `ticket_mutations`, these eligibility updates are executed inline directly within the `ticket_mutations` module during CVSS mutations. See `docs/features/tickets/ticket-mutations.md` for the module boundary contract.)*
-3. **Ticket status re-evaluation**: eligibility changes in step 2 are
-   committed inline within the `ticket_mutations` transaction, which then calls
-   `reconcile_ticket_status` to re-evaluate the ticket status (see
-   `docs/features/tickets/ticket-mutations.md`).
-   The centralized evaluator determines the correct target status.
-   **Note**: this re-evaluation can only occur when a VA manually modifies
-   a SUSE CVSS assessment on a Resolved ticket. Automated sync (NVD, Red
-   Hat) and default CVSS version changes only process active tickets
+   assessed the default version). Re-evaluate the `eligible` flag for every
+   `TicketPackageProduct` linked to the ticket, applying the eligibility
+   rules defined in [`package-model.md`](../packages/package-model.md)
+   (Axis 2: Eligibility).
+   *(Note: because of the strictly unidirectional dependency from `package_service` to `ticket_mutations`, these eligibility updates are executed inline directly within the `ticket_mutations` module during CVSS mutations. See [`ticket-mutations.md`](ticket-mutations.md) for the module boundary contract.)*
+3. **Ticket status re-evaluation**: call `reconcile_ticket_status()` to
+   re-evaluate the ticket status based on current gate conditions (see
+   [`ticket-mutations.md`](ticket-mutations.md)).
+   **Note**: for VA-initiated SUSE CVSS changes on a Resolved ticket,
+   this re-evaluation may cause a status regression. Automated sync (NVD,
+   Red Hat) and default CVSS version changes only process active tickets
    (New, Analysis, Analyzed) — Resolved tickets are excluded from those
    scopes.
-4. **Audit trail**: create `TicketAuditEvent` records for each change:
-   - Severity change: `event_type = "severity_changed"`, `old_value` and
-     `new_value` with severity labels
-   - Product eligibility change: `event_type = "product_eligibility_changed"`,
-      `old_value` and `new_value` with eligibility boolean values
-   - Ticket status change (if the ticket status changed as a result
-     of re-evaluation): `event_type = "status_change"`, with `old_value` and
-     `new_value` reflecting the actual transition, `user_id = NULL`
-     (system action)
+4. **Audit trail**: create `TicketAuditEvent` records for each change
+   (severity, product eligibility, ticket status). See
+   [`ticket-mutations.md`](ticket-mutations.md) for the per-operation
+   audit contract and [`ticket-audit-log.md`](ticket-audit-log.md) for
+   event field semantics.
 
 ## API Endpoints
 
@@ -549,6 +555,18 @@ never mutate the database — they receive data and return results.
 | `calculate_severity`        | CVSS score (float)                         | Severity enum                   | Maps score to severity using the rating scale            |
 | `validate_cvss_vector`      | Vector string                              | Parsed metrics + version + calculated score | Parses vector, detects version from prefix, validates format, and computes the base score |
 
+> **Input contract**: both `resolve_severity_score` and
+> `resolve_eligibility_score` receive the **complete, unfiltered** set of
+> all `CVECVSSAssessment` records associated with the CVE (from all
+> providers and all CVSS versions), plus the system's configured default
+> CVSS version. Filtering by provider and/or version is the internal
+> responsibility of each function — never the caller's. Passing a
+> pre-filtered subset is a caller bug, because it may alter fallback
+> behavior (e.g., removing non-SUSE assessments would suppress the
+> severity cascade's provider fallback steps). This design preserves
+> function purity (database-free, side-effect-free) and encapsulates the
+> resolution strategy entirely within each function.
+
 These functions are used in two contexts:
 
 1. **Read path** (API `GET .../cvss`): to compute the `resolved_score`,
@@ -561,36 +579,30 @@ These functions are used in two contexts:
 ### `services/ticket_mutations.py` — CVSS Mutations
 
 All operations that create, update, or delete `CVECVSSAssessment`
-records MUST go through the `ticket_mutations` module (see
-`docs/features/tickets/ticket-mutations.md`). The CVSS mutation
-functions accept a `cve_id` (not a `ticket_id`) and follow this flow:
+records MUST go through the `ticket_mutations` module. When a CVSS
+mutation function is invoked, it conceptually: locks the ticket,
+validates operability, persists the assessment change, resolves derived
+data, emits audit events, and reconciles ticket status — all within a
+single database transaction (atomicity guarantee).
 
-1. Look up the ticket associated with the CVE (if any)
-2. If a ticket exists:
-   a. Acquire `FOR UPDATE` on the Ticket row
-   b. Call `ensure_ticket_operable(ticket)` — rejects with
-      `409 TICKET_NOT_MUTABLE` if in Ignored or Duplicated status
-3. Persist the `CVECVSSAssessment` record change
-4. Call `cvss.resolve_severity_score()` to determine the new resolved score
-   (5-step severity cascade)
-4b. Call `cvss.resolve_eligibility_score()` to determine the eligibility
-    score (2-step SUSE-only cascade; always returns a value)
-5. Call `cvss.calculate_severity()` to derive the new severity from the
-   severity score
-6. Update `CVE.severity` if it changed
-7. If a ticket exists:
-   a. Re-evaluate product eligibility using the eligibility score from
-      step 4b
-   b. Create `TicketAuditEvent` records for each change
-   c. Call `reconcile_ticket_status()` to re-evaluate the ticket status
-8. If no ticket exists (ticketless CVE): skip audit event and cascade —
-   the mutation is always allowed
+Two resolution functions from `services/cvss.py` are invoked during
+the write path, each serving a distinct purpose:
 
-All steps execute within the **same database transaction** as the
-triggering change (atomicity guarantee).
+- **`resolve_severity_score()`** (5-step cascade): determines the
+  resolved CVSS score used to derive `CVE.severity`. This is the
+  exclusive source of truth for `CVE.severity` — `resolve_eligibility_score()`
+  is never used for this purpose.
+- **`resolve_eligibility_score()`** (2-step SUSE-only cascade):
+  determines the score compared against product CVSS thresholds to
+  evaluate `TicketPackageProduct.eligible`. This is the exclusive
+  source of truth for product eligibility — `resolve_severity_score()`
+  is never used for this purpose.
 
 The resolution cascade logic is **never reimplemented** inside
 `ticket_mutations` — it always delegates to `services/cvss.py`.
+
+For per-function implementation details (parameters, pre-conditions,
+step sequences), see `docs/features/tickets/ticket-mutations.md`.
 
 ### `services/settings.py` — System Settings
 
@@ -616,14 +628,50 @@ executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
 
 1. Iterates over all active tickets (New, Analysis, Analyzed)
-2. For each ticket, calls the same `ticket_mutations` functions used for
-   individual CVSS changes — no separate batch-optimized code path
+2. For each ticket, calls
+   `ticket_mutations.recalculate_cvss_cascade()` — a dedicated entry
+   point that recalculates derived data without modifying any
+   `CVECVSSAssessment` record (see
+   `docs/features/tickets/ticket-mutations.md`)
 3. Each ticket is processed in an **independent database transaction**
    (isolation: a failure on one ticket does not roll back others)
 4. On error for a single ticket, the task logs the error with the
    ticket ID and continues with the remaining tickets
 5. On completion, the task reports the total number of tickets processed,
    successes, and failures
+
+## Ticket Reactivation: CVSS Catch-Up
+
+When a ticket transitions from a non-active state (Resolved, Ignored,
+Duplicated) to an active state (New, Analysis, Analyzed), two catch-up
+mechanisms execute to reconcile CVSS-derived data:
+
+1. **Synchronous** (within the reactivation transaction):
+   `recalculate_cvss_cascade()` is called to reconcile derived data
+   (severity, eligibility) with the current `default_cvss_version` and
+   any `CVECVSSAssessment` updates that occurred while the ticket was
+   inactive. This provides immediate best-effort accuracy using
+   whatever assessment data is already persisted.
+
+2. **Asynchronous** (enqueued after commit): `fetch_single` tasks are
+   enqueued for every registered fetcher that exposes the `fetch_single`
+   capability — not limited to CVSS fetchers. This catches up on data
+   that was not fetched during the inactive period (e.g., Red Hat CVSS
+   updates via `fetch_single_redhat`, IBS release detection, submission
+   tracking). Each `fetch_single` task operates independently; if it
+   discovers changed data, the normal mutation path handles the
+   recalculation cascade.
+
+The ticket may transition rapidly as async tasks complete (e.g.,
+re-open → Analysis, then a fetch discovers a release → Resolved). This
+is expected and correct behavior — the system converges to the accurate
+state.
+
+See [`ticket-service.md`](ticket-service.md) for the un-ignore /
+un-duplicate hooks, [`ticket-mutations.md`](ticket-mutations.md) for
+the post-regression hook and `recalculate_cvss_cascade()` contract, and
+[`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md) for
+the `fetch_single` capability contract.
 
 ## Background Tasks
 
@@ -673,6 +721,31 @@ Schema" for the schema structure and validation rules):
 |---------|------|---------|-------------|-------------|
 | `throttle_delay_seconds` | float | 2.0 | 0.1–30.0 | Delay between consecutive Red Hat API requests |
 
+### Sub-operation: `fetch_single_redhat`
+
+> **Note**: to be finalized — this is a template defining the interface
+> and contract. Implementation details will be completed alongside the
+> Red Hat fetcher.
+
+A sub-operation task (not a `BaseFetcher` subclass — per the sub-operation
+exception in
+[`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md)).
+
+- **Parameter**: `cve_id` (string — extracted from the ticket's
+  associated CVE)
+- **Behavior**: queries the Red Hat Security Data API
+  (`GET /hydra/rest/securitydata/cve/{cve_id}.json`) for the specific
+  CVE. If data is found and differs from the stored `CVECVSSAssessment`,
+  persists/updates the assessment via
+  `ticket_mutations.create_cvss_assessment()` or
+  `ticket_mutations.update_cvss_assessment()`, which triggers the normal
+  recalculation cascade.
+- **Idempotent**: if the Red Hat data is unchanged from the stored
+  assessment, no mutation occurs (no-op).
+- **Trigger**: enqueued by the ticket reactivation hook (see Ticket
+  Reactivation: CVSS Catch-Up below), not by Celery Beat.
+- **Metrics**: not tracked independently (sub-operation).
+
 ## Data Model
 
 See `docs/data-model.md` for the full schema. This feature introduces the
@@ -688,8 +761,25 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 
 ## Cross-references
 
+- `docs/features/tickets/tickets.md` — Ticket lifecycle, gate conditions
+  (Analysis → Analyzed, Analyzed → Resolved), centralized status evaluation
+- `docs/features/tickets/ticket-mutations.md` — CVSS mutation functions,
+  `recalculate_cvss_cascade()`, `reconcile_ticket_status()`, per-operation
+  audit contract, module boundary, manual-zone exit operations
+- `docs/features/tickets/ticket-service.md` — Non-gate ticket lifecycle
+  operations, un-ignore / un-duplicate hooks
+- `docs/features/tickets/ticket-audit-log.md` — `TicketAuditEvent` type
+  contract, field semantics
 - `docs/features/tickets/cve-service.md` — CVE Service Layer
   (`upsert_cve()`, `CVEIngestPayload`, Phase 1/Phase 2 transaction model)
+- `docs/features/tickets/cve-tracking.md` — `sync_cves_nvd` fetcher
+  definition (incremental algorithm, NVD Source API caching)
+- `docs/features/packages/package-model.md` — Three Orthogonal Dimensions,
+  Axis 2: Eligibility (rules, override model, Reactive LTSS)
+- `docs/features/platform/system-settings.md` — `default_cvss_version`
+  setting, batch recalculation trigger
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`
+  contract, `fetch_single` capability, sub-operation exception
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses), CVE Accessibility Check, CVE Identifier
   Resolution
