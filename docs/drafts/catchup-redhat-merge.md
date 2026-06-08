@@ -171,8 +171,25 @@ section (lines 509-590) with the following:
 >             return  # no fetch_single, no default catch_up
 >         ticket = await session.get(Ticket, UUID(ticket_id))
 >         if ticket and ticket.cve_id:
->             await self.fetch_single(str(ticket.cve_id), session)
+>             try:
+>                 await self.fetch_single(str(ticket.cve_id), session)
+>             except CVENotInSource:
+>                 pass  # CVE not in this source — nothing to catch up
 > ```
+>
+> **Boundary conditions for the default implementation**:
+>
+> - **Ticket does not exist** (deleted between enqueue and execution):
+>   `session.get()` returns `None`, the `if ticket` guard causes a
+>   silent return. This is expected — the catch-up is a no-op
+> - **Ticket has no CVE** (`cve_id IS NULL`, e.g., manually created
+>   ticket): the `if ticket.cve_id` guard causes a silent return.
+>   There is nothing for a CVE fetcher to catch up on
+> - **Custom `catch_up()` overrides** MUST apply equivalent guards:
+>   check that the ticket exists and that the relevant data is present
+>   (e.g., `TicketPackageTrack` records for IBS track detection) before
+>   proceeding. If the ticket does not exist or has no relevant data,
+>   the method MUST return silently (no exception, no log warning)
 >
 > CVE fetchers only need to implement `fetch_single(cve_id)`:
 >
@@ -260,15 +277,24 @@ section (lines 509-590) with the following:
 >     enumeration). Mutations on each item are delegated to the
 >     appropriate service module, which manages its own transaction
 >     lifecycle. Each item MUST be committed independently so that a
->     failure on item N does not roll back items 1..N-1
+>     failure on item N does not roll back items 1..N-1.
+>     Non-CVE fetchers that mutate data MUST obtain independent
+>     sessions (via `get_async_session()`) for each item's mutation —
+>     the session parameter passed by `run_catch_up` is for read-only
+>     queries only. Writing through the passed session would place all
+>     items in a single transaction, violating the per-item commit
+>     requirement
 > - **Error handling**:
 >   - **Retry policy**: the `run_catch_up` Celery task wrapper applies
 >     the same retry policy as `fetch_single_cve` (3 retries with
 >     exponential backoff). Reserved for infrastructure failure
 >     (external service completely unreachable)
->   - **CVE fetchers** (default `catch_up()`): the `fetch_single`
->     signaling convention applies (`CVENotInSource` → no-op, transient
->     errors → retry)
+>   - **CVE fetchers** (default `catch_up()`): the default
+>     `catch_up()` implementation MUST catch `CVENotInSource` internally
+>     and treat it as a no-op (the CVE is not in this source — nothing
+>     to catch up on). `CVENotInSource` MUST NOT propagate to the
+>     `run_catch_up` wrapper. Transient errors (network, HTTP 5xx)
+>     propagate to the wrapper for retry
 >   - **Non-CVE fetchers** (custom `catch_up()` override): MUST use
 >     per-item error handling — if one item (track, product, package)
 >     fails, continue with the remaining items rather than aborting the
@@ -293,7 +319,15 @@ section (lines 509-590) with the following:
 >   `catch_up()` are factually correct (the external data is real
 >   regardless of ticket status), and `reconcile_ticket_status()`
 >   respects the current ticket status. Duplicate enqueuing (e.g., two
->   rapid reactivations) is also safe because `catch_up()` is idempotent
+>   rapid reactivations) is also safe because `catch_up()` is idempotent.
+>   **Concurrent catch-up and periodic execution**: if a ticket is
+>   reactivated shortly before a periodic `execute()` run, both
+>   `catch_up()` and `execute()` may call `fetch_single()` for the same
+>   CVE concurrently. This is safe — `upsert_cve()` uses `FOR UPDATE`
+>   locks and unique constraints, so the second call is a no-op or an
+>   idempotent update. The duplicated external API call is acceptable
+>   given the low frequency of reactivation events relative to periodic
+>   schedules
 >
 > ### Invocation points
 >
@@ -451,6 +485,15 @@ With the following full section:
 >    single CWE identifier (not a chain). If the field is absent, skip
 >    (no CWE to record). Unique constraint `(cve_id, cwe_id, source)`
 >    prevents duplicates; re-syncs for the same source are upserted.
+>
+>    **Defensive validation**: if the `cwe` value does not match the
+>    expected `CWE-\d+` pattern (e.g., a CWE chain like
+>    `"CWE-200->CWE-284"` or a comma-separated list), log a WARNING
+>    with the raw value and skip CWE extraction for this CVE. Do not
+>    fail the entire fetch — other data types (CVSS, references,
+>    packages) are processed independently. The Red Hat API is not
+>    under Sentinel's control; format assumptions must be validated
+>    defensively.
 >
 > 7. **References**: if the response contains a `references` field
 >    (array of strings), split each element on `\n` to extract
