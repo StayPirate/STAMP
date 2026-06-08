@@ -58,7 +58,7 @@ user choice). It is functionally equivalent to "uncategorized".
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
 | type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
-| source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`) or `"manual"` for user-added references |
+| source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_nvd_cves"`) or `"manual"` for user-added references |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -188,14 +188,14 @@ attribute `source_reference_url_pattern` that defines the URL pattern for
 the fetcher's human-readable CVE page.
 
 ```python
-class SyncCvesNvd(BaseFetcher):
-    name = "sync_cves_nvd"
+class SyncNvdCves(BaseFetcher):
+    name = "sync_nvd_cves"
     description = "Incremental CVE sync from NVD"
     default_schedule = "0 */6 * * *"
     source_reference_url_pattern: str | None = "https://nvd.nist.gov/vuln/detail/{cve_id}"
 
-class SyncCvesMitre(BaseFetcher):
-    name = "sync_cves_mitre"
+class SyncMitreCves(BaseFetcher):
+    name = "sync_mitre_cves"
     description = "Syncs CVEs from MITRE"
     default_schedule = "0 */6 * * *"
     source_reference_url_pattern: str | None = "https://cve.org/CVERecord?id={cve_id}"
@@ -223,7 +223,7 @@ reference-related steps are performed **after** the ticket exists (i.e.,
 after CVE upsert and ticket creation for new CVEs). The fetcher calls
 `reference_service.upsert_references()` (see Service Layer) with:
 
-- `source`: the fetcher name (e.g., `"sync_cves_nvd"`)
+- `source`: the fetcher name (e.g., `"sync_nvd_cves"`)
 - `source_url`: the source reference URL built from
   `source_reference_url_pattern` (or `None`)
 - `upstream_references`: the normalized list of references from the CVE
@@ -260,9 +260,9 @@ The service performs the following steps:
    - `url`: the source URL (e.g.,
      `https://nvd.nist.gov/vuln/detail/CVE-2026-3317`)
    - `title`: short label derived from the source name (e.g., `"NVD"`
-     for `sync_cves_nvd`, `"MITRE"` for `sync_cves_mitre`)
+     for `sync_nvd_cves`, `"MITRE"` for `sync_mitre_cves`)
    - `type`: `advisory` (source pages are always advisories)
-   - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
+   - `source`: fetcher name (e.g., `"sync_nvd_cves"`)
 
 2. **CVE data references**: for each reference in `upstream_references`,
    upsert a `TicketReference` with:
@@ -273,7 +273,7 @@ The service performs the following steps:
    - `description`: `NULL`
    - `type`: auto-classified from source tags, then URL pattern, then
      `NULL` (see Type Auto-Classification)
-       - `source`: fetcher name (e.g., `"sync_cves_nvd"`)
+       - `source`: fetcher name (e.g., `"sync_nvd_cves"`)
 
 When `upstream_references` is an empty list, step 2 is a no-op — no
 reference records are created or updated from CVE data. Step 1 (source
@@ -370,13 +370,13 @@ creates the following `TicketReference` records:
 
 | url | title | type | source |
 |-----|-------|------|--------|
-| `https://nvd.nist.gov/vuln/detail/CVE-2026-3317` | `NVD` | `advisory` | `sync_cves_nvd` |
-| `https://github.com/example/project/commit/a1b2c3` | NULL | `patch` | `sync_cves_nvd` |
-| `https://www.example.com/en/security-notice/vuln-2026-001` | NULL | `advisory` | `sync_cves_nvd` |
+| `https://nvd.nist.gov/vuln/detail/CVE-2026-3317` | `NVD` | `advisory` | `sync_nvd_cves` |
+| `https://github.com/example/project/commit/a1b2c3` | NULL | `patch` | `sync_nvd_cves` |
+| `https://www.example.com/en/security-notice/vuln-2026-001` | NULL | `advisory` | `sync_nvd_cves` |
 
 If the MITRE fetcher later processes the same CVE and finds the same
 GitHub commit URL, it skips that reference (already exists with
-`source = "sync_cves_nvd"`). It adds only references with new URLs.
+`source = "sync_nvd_cves"`). It adds only references with new URLs.
 
 ## Mutability
 
@@ -464,7 +464,7 @@ async def upsert_references(
 ) -> None
 ```
 
-- `source`: the fetcher name (e.g., `"sync_cves_nvd"`)
+- `source`: the fetcher name (e.g., `"sync_nvd_cves"`)
 - `source_url`: the fetcher's human-readable CVE page URL, pre-built
   from `source_reference_url_pattern` by the caller, or `None` if the
   fetcher does not define a pattern
@@ -507,7 +507,7 @@ returned in a single response.
 
 | Parameter | Type   | Default | Description                                              |
 |-----------|--------|---------|----------------------------------------------------------|
-| source    | string | —       | Filter by source (e.g., `"sync_cves_nvd"`, `"manual"`)  |
+| source    | string | —       | Filter by source (e.g., `"sync_nvd_cves"`, `"manual"`)  |
 | type      | string | —       | Filter by type (e.g., `"patch"`, `"advisory"`)           |
 
 The `type` parameter follows the enum filter validation convention in
@@ -542,7 +542,7 @@ out), the response returns `{"data": []}`.
       "title": "NVD",
       "description": null,
       "type": "advisory",
-      "source": "sync_cves_nvd",
+      "source": "sync_nvd_cves",
       "created_at": "2026-04-21T10:20:00Z",
       "updated_at": "2026-04-21T10:20:00Z"
     },
@@ -553,7 +553,7 @@ out), the response returns `{"data": []}`.
       "title": null,
       "description": null,
       "type": "patch",
-      "source": "sync_cves_nvd",
+      "source": "sync_nvd_cves",
       "created_at": "2026-04-21T10:20:00Z",
       "updated_at": "2026-04-21T10:20:00Z"
     },
@@ -830,7 +830,7 @@ VA's research workflow.
 ## Dependencies
 
 - `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates
-  references. Contains the full `sync_cves_nvd` fetcher definition
+  references. Contains the full `sync_nvd_cves` fetcher definition
   (algorithm, NVD Source API caching, metrics)
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`
   contract for `source_reference_url_pattern`

@@ -43,7 +43,7 @@ specification extends.
   (`CodestreamPackageChecksum`) for git, or is the detection mechanism
   fundamentally different?
 - What is the periodic catch-up strategy? (equivalent of the 24h
-  `check_ibs_track_releases` fetcher for IBS)
+  `detect_ibs_track_releases` fetcher for IBS)
 
 ## Cross-references
 

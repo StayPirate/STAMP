@@ -294,7 +294,7 @@ See `docs/features/packages/package-model.md` for the full eligibility logic.
 
 ### NVD Sync (Incremental)
 
-The `sync_cves_nvd` fetcher runs every 6 hours and ingests CVSS
+The `sync_nvd_cves` fetcher runs every 6 hours and ingests CVSS
 assessments (Primary and Secondary) from the NVD REST API v2. CNA
 display names for Secondary assessments are resolved via the NVD Source
 API. Changes are persisted via `cve_service` (see
@@ -305,7 +305,7 @@ Recalculation Chain below).
 For the full fetcher definition — including the incremental algorithm,
 NVD Source API caching strategy, first-run behavior, and error handling
 — see [`cve-tracking.md`](cve-tracking.md) (Fetcher:
-`sync_cves_nvd`).
+`sync_nvd_cves`).
 
 ### Red Hat Sync
 
@@ -361,7 +361,7 @@ data for that CVE (see Ticket Reactivation: CVSS Catch-Up below).
 5. If different → update the assessment via
    `ticket_mutations.update_cvss_assessment()` (triggers recalculation)
 6. `last_redhat_sync_at` is derived from the `started_at` timestamp of
-   the most recent successful `FetcherRun` for the `sync_cvss_redhat`
+   the most recent successful `FetcherRun` for the `sync_redhat_cves`
    fetcher. Used for operational monitoring only (Red Hat sync is not
    incremental)
 
@@ -723,17 +723,17 @@ the `fetch_single` capability contract.
 
 ## Background Tasks
 
-The `sync_cves_nvd` fetcher (defined in
+The `sync_nvd_cves` fetcher (defined in
 `docs/features/tickets/cve-tracking.md`) also produces CVSS assessments
 during CVE ingestion. See "NVD Sync (Incremental)" above for the
 consumer-oriented summary.
 
-### Fetcher: `sync_cvss_redhat`
+### Fetcher: `sync_redhat_cves`
 
 | Property | Value |
 |----------|-------|
-| Fetcher name | `sync_cvss_redhat` |
-| Class name | `SyncCvssRedhat` |
+| Fetcher name | `sync_redhat_cves` |
+| Class name | `SyncRedhatCves` |
 | `cve_source_type` | `"redhat"` |
 | Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
 | Source | Red Hat Security Data API (`access.redhat.com/hydra/rest/securitydata`) |
@@ -826,7 +826,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
   contract, field semantics
 - `docs/features/tickets/cve-service.md` — CVE Service Layer
   (`upsert_cve()`, `CVEIngestPayload`, Phase 1/Phase 2 transaction model)
-- `docs/features/tickets/cve-tracking.md` — `sync_cves_nvd` fetcher
+- `docs/features/tickets/cve-tracking.md` — `sync_nvd_cves` fetcher
   definition (incremental algorithm, NVD Source API caching)
 - `docs/features/packages/package-model.md` — Three Orthogonal Dimensions,
   Axis 2: Eligibility (rules, override model, Reactive LTSS)

@@ -432,9 +432,9 @@ flowchart LR
     end
 
     subgraph celery["Celery Workers"]
-        SYNC_NVD["sync_cves_nvd"]
-        SYNC_MITRE["sync_cves_mitre"]
-        SYNC_RH["sync_cvss_redhat"]
+        SYNC_NVD["sync_nvd_cves"]
+        SYNC_MITRE["sync_mitre_cves"]
+        SYNC_RH["sync_redhat_cves"]
     end
 
     subgraph store["Database Operations"]
@@ -503,7 +503,7 @@ flowchart LR
     subgraph release["Release Detection"]
         direction TB
         RT["Real-time:<br/>IBS RabbitMQ<br/>Consumer"]
-        PERIODIC["Periodic:<br/>check_ibs_track_releases<br/>(daily 02:00 UTC)"]
+        PERIODIC["Periodic:<br/>detect_ibs_track_releases<br/>(daily 02:00 UTC)"]
         MD5["Shared MD5 cache<br/>(CodestreamPackageChecksum)"]
         DIFF["IBS diff analysis<br/>(CVE-ID in changes)"]
         CS_REL["Codestream → FIXED"]

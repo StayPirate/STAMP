@@ -537,7 +537,7 @@ endpoint handler executes:
    `fetch_single` for every registered fetcher that exposes the
    capability, passing the `ticket_id`. This catches up on external data
    not fetched during the inactive period (e.g., Red Hat CVSS updates —
-   the `sync_cvss_redhat` fetcher scopes to active tickets and skips
+   the `sync_redhat_cves` fetcher scopes to active tickets and skips
    Ignored/Duplicated ones). See
    [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
    ("Per-Ticket Catch-Up: `fetch_single` Capability") for the capability
@@ -760,7 +760,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 |--------|----------------|
 | API endpoint handlers (`api/v1/tickets.py`) | All 9 operations + `execute_duplicate_flattening` |
 | CVE service (`services/cve_service.py`) | `create_ticket` (source=`cve_ingestion`) |
-| IBS track release detection (`tasks/check_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
+| IBS track release detection (`tasks/detect_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
 
 **Note — ticket endpoints that route to `ticket_mutations` directly**:
 

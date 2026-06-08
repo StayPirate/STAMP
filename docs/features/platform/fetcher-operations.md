@@ -157,7 +157,7 @@ provides the distinction.
 {
   "data": [
     {
-      "name": "sync_cves_nvd",
+      "name": "sync_nvd_cves",
       "registered": true,
       "description": "Incremental CVE sync from NVD",
       "enabled": true,
@@ -277,7 +277,7 @@ run first). Follows the project-wide default sorting convention.
   "data": [
     {
       "id": "uuid",
-      "fetcher_name": "sync_cves_nvd",
+      "fetcher_name": "sync_nvd_cves",
       "started_at": "2025-04-20T12:00:00Z",
       "finished_at": "2025-04-20T12:03:45Z",
       "duration_seconds": 225.0,
@@ -461,7 +461,7 @@ Enqueues a manual run of the specified fetcher.
 {
   "data": {
     "run_id": "uuid",
-    "message": "Fetcher 'sync_cves_nvd' has been queued for execution"
+    "message": "Fetcher 'sync_nvd_cves' has been queued for execution"
   }
 }
 ```
@@ -532,7 +532,7 @@ fetcher-specific custom settings and the schema that describes them.
 ```json
 {
   "data": {
-    "fetcher_name": "sync_cvss_redhat",
+    "fetcher_name": "sync_redhat_cves",
     "enabled": true,
     "schedule_override": null,
     "default_schedule": "0 3 * * *",
@@ -712,7 +712,7 @@ entry first). Follows the project-wide default sorting convention.
   "data": [
     {
       "id": "uuid",
-      "fetcher_name": "sync_cves_nvd",
+      "fetcher_name": "sync_nvd_cves",
       "event_type": "config_changed",
       "actor": {
         "id": "uuid",
@@ -727,7 +727,7 @@ entry first). Follows the project-wide default sorting convention.
     },
     {
       "id": "uuid",
-      "fetcher_name": "sync_cves_nvd",
+      "fetcher_name": "sync_nvd_cves",
       "event_type": "disabled",
       "actor": {
         "id": "uuid",
@@ -791,7 +791,7 @@ Generic Celery task that executes any registered fetcher by name.
 | Property | Value |
 |----------|-------|
 | Fetcher name | `aggregate_fetcher_runs` |
-| Class name | `AggregationFetcher` |
+| Class name | `AggregateFetcherRuns` |
 | Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
 | Source | Local (no external source) |
 | Scope | All `FetcherRun` records older than the retention window |
@@ -871,10 +871,10 @@ Output (human-readable table to stdout):
 ```
 Name                       Enabled   Last Run              Status                       Settings
 sync_ldap_directory        yes       2026-04-27 04:00 UTC  success (3m 12s)             2 custom
-sync_cves_nvd              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)     —
-sync_products_smelt        yes       2026-04-26 06:00 UTC  success (45s)                —
-check_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —
-sync_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)             —
+sync_nvd_cves              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)     —
+sync_smelt_products        yes       2026-04-26 06:00 UTC  success (45s)                —
+detect_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —
+sync_ibs_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)             —
 aggregate_fetcher_runs     yes       —                     never run                    —
 
 Deregistered (historical data only):
@@ -933,13 +933,13 @@ Displays the full configuration of a fetcher, including custom settings
 with their current values, defaults, and descriptions.
 
 ```
-sentinel fetcher config sync_cvss_redhat
+sentinel fetcher config sync_redhat_cves
 ```
 
 Output (to stdout):
 
 ```
-Fetcher: sync_cvss_redhat
+Fetcher: sync_redhat_cves
 Enabled: yes
 Schedule: 0 3 * * * (default)
 Timeout: 3600s
@@ -968,7 +968,7 @@ Custom settings:
 For a fetcher with no custom settings schema:
 
 ```
-Fetcher: sync_cves_nvd
+Fetcher: sync_nvd_cves
 Enabled: yes
 Schedule: 0 */6 * * * (default)
 Timeout: 3600s

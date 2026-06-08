@@ -128,8 +128,8 @@ result backend (task marked as FAILED). No explicit Celery retry is configured.
 Concrete fetchers MUST implement:
 
 ```python
-class MyConcreteFetcher(BaseFetcher):
-    name: str = "my_fetcher"             # unique identifier, snake_case, max 100 chars
+class SyncExampleData(BaseFetcher):
+    name: str = "sync_example_data"      # unique identifier, snake_case, max 100 chars
     description: str = "Human-readable description"
     default_schedule: str = "0 */6 * * *"  # cron expression (every 6h)
 
@@ -160,8 +160,8 @@ class MyConcreteFetcher(BaseFetcher):
 **CVE fetcher example** — discovery fetcher (implements `fetch_single`):
 
 ```python
-class SyncCvesNvd(BaseFetcher):
-    name = "sync_cves_nvd"                 # registry key (BaseFetcher contract)
+class SyncNvdCves(BaseFetcher):
+    name = "sync_nvd_cves"                 # registry key (BaseFetcher contract)
     cve_source_type = "nvd"                # CVESourceType identifier
     description = "Sync CVEs from NVD REST API v2"
     default_schedule = "0 */6 * * *"
@@ -177,10 +177,10 @@ class SyncCvesNvd(BaseFetcher):
 **CVE fetcher example** — enrichment fetcher (no `fetch_single`):
 
 ```python
-class SyncCvssRedhat(BaseFetcher):
-    name = "sync_cvss_redhat"              # registry key
+class SyncRedhatCves(BaseFetcher):
+    name = "sync_redhat_cves"              # registry key
     cve_source_type = "redhat"             # CVESourceType identifier
-    description = "Sync CVSS assessments from Red Hat Security API"
+    description = "Sync CVE data from Red Hat Security API"
     default_schedule = "0 3 * * *"
 
     async def execute(self, session: AsyncSession) -> None:
@@ -195,6 +195,80 @@ and `FetcherAuditEvent` tables. The `name` value also propagates to
 `TicketReference.source` (`VARCHAR(100)`) for automatic references
 created by CVE fetchers — exceeding the limit would cause a database
 constraint violation.
+
+### Naming Convention
+
+This convention applies exclusively to `BaseFetcher` subclasses — the
+background tasks registered in the fetcher infrastructure and visible in
+the fetcher dashboard. It does NOT apply to sub-operation Celery tasks
+exempt from `BaseFetcher` per Guardrail 14, on-demand service methods,
+non-fetcher Celery tasks, or continuous consumers.
+
+#### Pattern: `<verb>_<source>_<noun>`
+
+All fetcher names follow the pattern `verb_source_noun`, which reads as
+a natural English compound noun: "sync NVD CVEs", "detect IBS releases".
+
+**Verbs** — three operational categories plus maintenance:
+
+| Verb | Meaning | When to use |
+|------|---------|-------------|
+| `sync` | Periodic data pull from an external source | Any fetcher that imports or refreshes data from a remote service |
+| `detect` | Condition or state change verification against an external source | Release detection, event monitoring, or any fetcher that checks whether a specific condition has changed in an external system |
+| `evaluate` | Local computation, no external source | Lifecycle transitions, recalculations, or any fetcher that derives new state from data already in the database |
+| `aggregate` | Local maintenance operation | Data compaction, cleanup |
+
+**Source** — identifies the external system. For local fetchers
+(`evaluate`, `aggregate`), this segment is omitted and the pattern
+reduces to `verb_noun`:
+
+| Source | External system |
+|--------|----------------|
+| `nvd` | NIST NVD |
+| `mitre` | MITRE CVE Services |
+| `redhat` | Red Hat Security Data API |
+| `kernel` | Linux Kernel CNA |
+| `ghsa` | GitHub Advisory Database |
+| `osv` | OSV (osv.dev) |
+| `cisa` | CISA (KEV catalog) |
+| `epss` | FIRST.org EPSS |
+| `smelt` | SMELT |
+| `aimaas` | AIMAAS |
+| `ibs` | IBS (build.suse.de) |
+| `ldap` | SUSE Active Directory (LDAP protocol) |
+
+New sources follow the same rule: use the shortest unambiguous lowercase
+identifier for the external system.
+
+**Noun** — describes what data is being synced, detected, or evaluated.
+Use the most general accurate term:
+
+- `cves` — all CVE-related data the source provides (CVSS, CWE,
+  references, affected versions, etc.). Do NOT narrow the noun to a
+  single data type when the fetcher extracts multiple types from the
+  same API call
+- `advisories` — security advisories from sources whose primary unit
+  is an advisory (not a CVE record). Use when the source publishes
+  advisory objects that Sentinel maps to CVE records
+- `scores` — single-purpose numerical scores (e.g., EPSS)
+- `products` — product catalog records
+- `lifecycle` — product lifecycle dates
+- `thresholds` — CVSS thresholds
+- `kev` — CISA Known Exploited Vulnerabilities catalog entries
+- `track_releases` — codestream-level release detection
+- `product_releases` — product-level release detection
+
+#### Class Name Derivation
+
+The Python class name is derived mechanically from the fetcher name by
+converting `snake_case` to `PascalCase` (e.g., `sync_nvd_cves` →
+`SyncNvdCves`). No suffixes like `Fetcher` or `Sync` are added — the
+class name IS the PascalCase form of the fetcher name, nothing more.
+
+**Acronym casing**: all segments are title-cased regardless of whether
+they are acronyms — `nvd` → `Nvd`, not `NVD`; `ibs` → `Ibs`, not
+`IBS`; `ghsa` → `Ghsa`, not `GHSA`. This keeps the derivation
+mechanical and unambiguous.
 
 ## On-demand Single-Item Fetch
 
@@ -490,7 +564,7 @@ capability and enqueues tasks for each when a ticket is reactivated.
 Not all fetchers need this capability:
 
 - **Applicable**: fetchers whose scope is filtered by ticket status
-  (e.g., `sync_cvss_redhat` scopes to active tickets — CVEs on
+  (e.g., `sync_redhat_cves` scopes to active tickets — CVEs on
   Ignored/Duplicated/Resolved tickets are excluded from periodic sync)
 - **Not applicable**: global fetchers that operate independently of
   ticket status (product catalog sync, AD sync, AIMAAS threshold sync).
@@ -590,7 +664,7 @@ what sanitized messages it produces. The `@fetcher-compliance-reviewer`
 agent verifies this documentation exists.
 
 Fetchers that only interact with the local database (e.g.,
-`aggregate_fetcher_runs`, `check_lifecycle_phase_transitions`) are exempt
+`aggregate_fetcher_runs`, `evaluate_lifecycle_transitions`) are exempt
 from this requirement — their failure modes do not involve external
 service details.
 
@@ -636,9 +710,9 @@ that inherits from `pydantic.BaseModel`. If not declared (or set to
 from pydantic import BaseModel, Field
 
 
-class SyncCvssRedhat(BaseFetcher):
-    name = "sync_cvss_redhat"
-    description = "Re-fetches Red Hat CVSS for active tickets"
+class SyncRedhatCves(BaseFetcher):
+    name = "sync_redhat_cves"
+    description = "Re-fetches Red Hat CVE data for active tickets"
     default_schedule = "0 3 * * *"
 
     class Settings(BaseModel):
@@ -918,7 +992,7 @@ cross-reference, to provide reading continuity. The summary MUST describe
 specify algorithm steps, error handling behavior, or custom settings.
 The cross-referenced spec remains the single source of truth.
 
-Example: `cvss-scoring.md` may summarize that `sync_cves_nvd` creates
+Example: `cvss-scoring.md` may summarize that `sync_nvd_cves` creates
 CVSS assessments during each sync run, but must not describe the
 incremental fetch strategy or the NVD Source API caching mechanism.
 
@@ -1368,7 +1442,7 @@ independent periodic sync) are exempt from `BaseFetcher`. These tasks:
 - Their metrics are not tracked independently
 
 Example: `create_ticket_from_detection` is enqueued by the
-`check_ibs_track_releases` fetcher (Case C) and fetches CVE data from
+`detect_ibs_track_releases` fetcher (Case C) and fetches CVE data from
 NVD and package data from SMELT. It is a standalone Celery task, not a
 `BaseFetcher` subclass, because it is a reaction to a discovery made by
 the parent fetcher, not an independent sync process.

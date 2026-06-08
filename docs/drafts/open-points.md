@@ -138,7 +138,7 @@ any dimension's state.
 present in codestreams where the track is in a final affectedness status
 (`NOT_AFFECTED`, `WONT_FIX`, or already `FIXED`), the IBS consumer
 (`IBSEventConsumer`) and the periodic fetcher
-(`check_ibs_track_releases`) would need to be extended to also scan
+(`detect_ibs_track_releases`) would need to be extended to also scan
 final-status tracks. Currently, both filter their scope to tracks with
 `status in (ANALYSIS, AFFECTED)` because the release detector only
 transitions non-final tracks. The anomaly observer would need the raw

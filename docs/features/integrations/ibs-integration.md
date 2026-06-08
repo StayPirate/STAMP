@@ -107,7 +107,7 @@ GET /request?view=collection&project={project}&states={states}
 ```
 
 Returns an XML `<collection>` of `<request>` elements matching the given
-filters. Used by the `RequestSyncFetcher` to discover open requests and
+filters. Used by the `SyncIbsRequests` to discover open requests and
 reconcile state drift. Supports pagination (`limit`, `offset`) and
 additional filters:
 
@@ -126,7 +126,7 @@ GET /request/{number}
 ```
 
 Returns full details of a single request including current state and
-action list. Used by the `RequestSyncFetcher` to reconcile requests
+action list. Used by the `SyncIbsRequests` to reconcile requests
 that are no longer in `new`/`review` state.
 
 #### Request Diff
@@ -197,10 +197,10 @@ Methods:
 - `search_requests(project: str, **filters) -> list[RequestInfo]`: calls
   `GET /request?view=collection` with the given filters, parses the XML
   response, and returns structured request data. Used by the
-  `RequestSyncFetcher` and `discover_submissions_for_ticket_package`.
+  `SyncIbsRequests` and `discover_submissions_for_ticket_package`.
 - `get_request(number: int) -> RequestInfo`: calls
   `GET /request/{number}`, returns full request details. Used by the
-  `RequestSyncFetcher` to reconcile individual request states.
+  `SyncIbsRequests` to reconcile individual request states.
 
 Configuration is injected via the application settings (`IBS_API_URL`,
 `IBS_USERNAME`, `IBS_PASSWORD`).
@@ -213,7 +213,7 @@ Full procedure is documented in
 
 ### Background Tasks
 
-- `check_ibs_track_releases`: periodic task (every 24 hours at 02:00
+- `detect_ibs_track_releases`: periodic task (every 24 hours at 02:00
   UTC via Celery Beat) that invokes `IBSTrackReleaseDetector.run()`.
   This task is a `BaseFetcher` subclass with `name`, `description`, and
   `default_schedule` attributes. Serves as a catch-up mechanism for
@@ -225,7 +225,7 @@ Full procedure is documented in
   is detected for a CVE with no existing ticket (triggered by either the
   periodic fetcher or the `IBSEventConsumer`). Fetches CVE data from
   NVD, creates the ticket, and resolves packages via SMELT.
-- `sync_requests` (`RequestSyncFetcher`): periodic task (every 24 hours
+- `sync_ibs_requests` (`SyncIbsRequests`): periodic task (every 24 hours
   at 02:30 UTC) that discovers missed submission/release requests and
   reconciles state drift. See `docs/features/packages/ibs-submission-tracking.md`.
 - `correlate_submission_request`: on-demand task that calls the IBS

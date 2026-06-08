@@ -141,7 +141,7 @@ gracefully:
   updates published to it. This is normal for newly launched or niche
   products.
 - **Network errors / timeouts**: skip with ERROR-level log, retry on the
-  next scheduled run of `check_product_releases`.
+  next scheduled run of `detect_ibs_product_releases`.
 
 ## Advisory ↔ Source Package Match
 
@@ -244,12 +244,12 @@ not tracked in ticket, or no ticket exists at all) is described in
 
 ## Background Task
 
-### Fetcher: `check_product_releases`
+### Fetcher: `detect_ibs_product_releases`
 
 | Property | Value |
 |----------|-------|
-| Fetcher name | `check_product_releases` |
-| Class name | `CheckProductReleases` |
+| Fetcher name | `detect_ibs_product_releases` |
+| Class name | `DetectIbsProductReleases` |
 | Schedule | TBD |
 | Source | IBS download infrastructure (`download.suse.de`) |
 | Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. Soft-deleted products are included |

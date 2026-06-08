@@ -680,7 +680,7 @@ async def add_package_to_ticket(
     ticket MUST NOT fail due to a bugowner resolution failure."
   - **Step 8 (submission discovery enqueue)**: if the task enqueue fails
     (e.g., Redis unavailable), log a warning and continue. The periodic
-    `RequestSyncFetcher` (catch-up every 24h at 02:30 UTC) ensures
+    `SyncIbsRequests` (catch-up every 24h at 02:30 UTC) ensures
     eventual consistency.
 
 **Auto-assignment**: applied by `add_package_records()` (the function
@@ -880,7 +880,7 @@ Handled by system callers directly (not mapped to HTTP responses):
 
 | Exception | Raised when | Handling |
 |-----------|-------------|----------|
-| `InvalidDeliveryStatusTransition` | Illegal delivery status transition (e.g., regression from `RELEASED`) | Caller logs warning and continues (`RequestSyncFetcher`) or avoids via pre-check (`IBSEventConsumer`) |
+| `InvalidDeliveryStatusTransition` | Illegal delivery status transition (e.g., regression from `RELEASED`) | Caller logs warning and continues (`SyncIbsRequests`) or avoids via pre-check (`IBSEventConsumer`) |
 
 ## Soft-Deleted Records and Mutations
 

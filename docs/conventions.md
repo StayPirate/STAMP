@@ -143,6 +143,9 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 - **Functions/methods**: `snake_case`
 - **Constants**: `UPPER_SNAKE_CASE`
 - **Private**: prefix with single underscore `_`
+- **Fetchers**: `BaseFetcher` subclass naming follows the
+  `<verb>_<source>_<noun>` convention — see
+  `docs/features/platform/fetcher-infrastructure.md` (Naming Convention)
 
 ### FastAPI Conventions
 

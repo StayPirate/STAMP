@@ -86,7 +86,7 @@ in Sentinel tickets. This is a shared cache — all tickets referencing the
 same package point to the same bugowner record.
 
 Records are created on-demand when a package is first added to a ticket,
-and maintained by the periodic `sync_package_bugowners` fetcher.
+and maintained by the periodic `sync_ibs_bugowners` fetcher.
 Records are removed when the package no longer appears in any active
 ticket.
 
@@ -246,7 +246,7 @@ If any IBS API call fails during bugowner resolution:
 
 ## Maintenance Fetcher
 
-The `sync_package_bugowners` fetcher is a `BaseFetcher` subclass that
+The `sync_ibs_bugowners` fetcher is a `BaseFetcher` subclass that
 performs periodic maintenance of the bugowner cache. It runs every
 14 days and executes three operations in sequence:
 
@@ -254,8 +254,8 @@ performs periodic maintenance of the bugowner cache. It runs every
 
 | Property | Value |
 |----------|-------|
-| Fetcher name | `sync_package_bugowners` |
-| Class name | `SyncPackageBugowners` |
+| Fetcher name | `sync_ibs_bugowners` |
+| Class name | `SyncIbsBugowners` |
 | Schedule | Every 14 days at 03:00 UTC (`0 3 */14 * *`) |
 | Source | IBS (`build.suse.de`) |
 | Scope | All `PackageBugowner` records + packages in active tickets missing from the cache |
@@ -399,7 +399,7 @@ visible to all users (same access level as package data in tickets).
 
 ## Background Tasks
 
-- `sync_package_bugowners`: runs every 14 days at 03:00 UTC. Performs
+- `sync_ibs_bugowners`: runs every 14 days at 03:00 UTC. Performs
   cache maintenance (cleanup, update, repair). Inherits from
   `BaseFetcher`. See [Maintenance Fetcher](#maintenance-fetcher) for
   details.
@@ -410,7 +410,7 @@ visible to all users (same access level as package data in tickets).
   cannot be edited by any user
 - Bugowner information is visible to all users (no role required), as
   it is non-sensitive organizational data
-- The `sync_package_bugowners` fetcher configuration (enable/disable,
+- The `sync_ibs_bugowners` fetcher configuration (enable/disable,
   schedule, rate limit) is admin-only, managed via the fetcher dashboard
   like all other fetchers. See `docs/features/identity/rbac.md`
 

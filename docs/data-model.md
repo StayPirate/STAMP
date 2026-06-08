@@ -431,12 +431,12 @@ Represents a Common Vulnerability and Exposure entry.
 |----------------|--------------|----------------------|---------------------------------|
 | id             | UUID         | PK                   | Internal identifier             |
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
-| title          | VARCHAR(256) |                      | Brief summary from the CNA (CVE 5.x `containers.cna.title`). Populated by fetchers that parse CVE JSON 5.x format (`sync_cves_mitre`, `sync_kernel_cves`). Null when the CNA does not provide a title. Max 256 chars per CVE schema specification |
+| title          | VARCHAR(256) |                      | Brief summary from the CNA (CVE 5.x `containers.cna.title`). Populated by fetchers that parse CVE JSON 5.x format (`sync_mitre_cves`, `sync_kernel_cves`). Null when the CNA does not provide a title. Max 256 chars per CVE schema specification |
 | description    | TEXT         |                      | Vulnerability description       |
 | severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
-| cve_state      | ENUM         | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Uses PostgreSQL ENUM (stable value set defined by the CVE Program). Populated by any discovery fetcher: `sync_cves_mitre` (from `cveMetadata.state`), `sync_cves_nvd` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
+| cve_state      | ENUM         | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Uses PostgreSQL ENUM (stable value set defined by the CVE Program). Populated by any discovery fetcher: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
 | date_rejected  | TIMESTAMPTZ  | nullable             | From CVE JSON 5.x `cveMetadata.dateRejected`. Set when `cve_state` transitions to `REJECTED`, cleared when it reverts to `PUBLISHED` |
 | created_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp        |
@@ -452,7 +452,7 @@ See `docs/features/tickets/cve-service.md`.
 |-------------|---------------|------------------------------------|------------------------------------|
 | id          | UUID          | PK                                 | Internal identifier                |
 | cve_id      | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                   |
-| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (PG ENUM, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_cves_nvd"`) or `"manual"` |
+| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (PG ENUM, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
 | status      | ENUM          | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). Uses PostgreSQL ENUM type `CVESourceFetchStatus`. No default — always written explicitly by the caller |
 | fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
@@ -500,7 +500,7 @@ Identity") for the full contract including import-time validation,
 stability rules, and the `get_fetch_single_fetchers()` accessor.
 
 Not to be confused with `BaseFetcher.name` (the fetcher registry key,
-e.g., `"sync_cves_nvd"`), which is a different identifier type stored
+e.g., `"sync_nvd_cves"`), which is a different identifier type stored
 in `TicketReference.source` and `FetcherRun.fetcher_name`.
 
 ### CVECVSSAssessment
@@ -705,7 +705,7 @@ but not used for automated threshold decisions. Additionally, EPSS
 values have variable precision (e.g., 0.00043, 0.97565) that would
 require a wide DECIMAL scale.
 
-**Lifecycle**: the `sync_epss` fetcher refreshes EPSS data only for
+**Lifecycle**: the `sync_epss_scores` fetcher refreshes EPSS data only for
 CVEs with **active tickets** (New, Analysis, Analyzed). When a ticket transitions to Resolved, Ignored,
 or Duplicated, the CVEEPSSScore record is **retained** but no longer
 refreshed — consistent with the CVSS lifecycle pattern
@@ -1103,7 +1103,7 @@ manually by users with the `manage_references` capability. See
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
 | type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
-| source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_cves_nvd"`) or `"manual"` for user-added references |
+| source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_nvd_cves"`) or `"manual"` for user-added references |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -1305,7 +1305,7 @@ Caches the current IBS bugowner for each source package actively tracked
 in Sentinel tickets. Shared across all tickets — all `TicketPackage`
 records with the same `package_name` reference the same bugowner. Records
 are created on-demand when a package is first added to a ticket, maintained
-by the `sync_package_bugowners` fetcher, and removed when the package no
+by the `sync_ibs_bugowners` fetcher, and removed when the package no
 longer appears in any active ticket. See
 `docs/features/packages/package-bugowner.md` for the full specification.
 

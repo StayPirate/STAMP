@@ -84,7 +84,7 @@ The `delivery_status` is persisted as a column (not computed from SR/RR
 joins) because the ticket resolution gate queries it frequently and
 anomaly detection benefits from having both axes on the same record.
 Disalignment risk is mitigated by `package_service` and the
-`RequestSyncFetcher` reconciliation phase (see
+`SyncIbsRequests` reconciliation phase (see
 [Delivery Reconciliation](#delivery-reconciliation)).
 
 ### 5. FIXED as a distinct affectedness state
@@ -393,7 +393,7 @@ criteria (eligibility).
 | `RELEASED` | Fix delivered to customers | RR accepted |
 
 The delivery status is updated by the system when SR/RR state changes
-are detected (via IBS RabbitMQ events or the `RequestSyncFetcher`
+are detected (via IBS RabbitMQ events or the `SyncIbsRequests`
 catch-up).
 
 The two axes are independent — see
@@ -515,7 +515,7 @@ maintenance process. Product confirmation verifies the end result.
 
 #### Delivery Reconciliation
 
-The `RequestSyncFetcher` (daily at 02:30 UTC) includes a reconciliation
+The `SyncIbsRequests` (daily at 02:30 UTC) includes a reconciliation
 phase after its primary catch-up of missed SR/RR events. For every IBS
 track (`workflow_type = 'ibs'`) in open tickets with
 `delivery_status != RELEASED`, it verifies that the persisted
@@ -643,7 +643,7 @@ requests, so a released RR cannot be revoked or declined.
 
 These transitions are detected via IBS RabbitMQ events
 (`suse.obs.request.create`, `suse.obs.request.state_change`) and the
-`RequestSyncFetcher` catch-up mechanism. See
+`SyncIbsRequests` catch-up mechanism. See
 `docs/features/packages/ibs-submission-tracking.md`.
 
 ### Manual Transitions
@@ -1793,7 +1793,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 `sync_aimaas_thresholds`) are specified in
 `docs/features/packages/product-catalog.md` (Background Tasks).
 
-- `check_ibs_track_releases`: periodic task (every 24 hours at 02:00
+- `detect_ibs_track_releases`: periodic task (every 24 hours at 02:00
   UTC via Celery Beat) that invokes the `IBSTrackReleaseDetector`
   service. Serves as a catch-up mechanism for events missed by the
   real-time `IBSEventConsumer` (see
@@ -1801,7 +1801,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `docs/features/packages/ibs-track-release-detection.md` for the
   full procedure. When a release is detected, sets
   `TicketPackageTrack.status = FIXED`.
-- `check_product_releases`: periodic task that invokes the
+- `detect_ibs_product_releases`: periodic task that invokes the
   `ProductReleaseDetector` (`updateinfo.xml`-based) for
   `TicketPackageProduct` records and sets `released_at`. See
   `docs/features/packages/ibs-product-release-detection.md` for the
@@ -1813,7 +1813,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   sets the originating track to `FIXED`. See
   `docs/features/packages/ibs-track-release-detection.md` (Case C)
   for details.
-- `check_lifecycle_phase_transitions`: periodic task (daily at 04:00
+- `evaluate_lifecycle_transitions`: periodic task (daily at 04:00
   UTC) that detects products currently in Reactive LTSS or EOL phase
   with actionable `TicketPackageProduct` records and enqueues
   re-evaluation. With the new model: Reactive LTSS sets
@@ -1892,7 +1892,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - `docs/features/packages/ibs-product-release-detection.md` — IBS
   product-level release detection
 - `docs/features/packages/ibs-submission-tracking.md` — SR/RR tracking,
-  delivery pipeline, RequestSyncFetcher
+  delivery pipeline, SyncIbsRequests
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — real-time
   IBS event consumption
 - `docs/features/packages/product-lifecycle-transitions.md` — EOL and

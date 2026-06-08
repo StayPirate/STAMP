@@ -577,7 +577,7 @@ non-conclusive transitions (e.g., `declined -> new`). If a declined SR
 or RR is reopened, Sentinel will not detect this via RabbitMQ. The catch-up
 fetcher handles this case (see Pipeline 2).
 
-### Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)
+### Pipeline 2: Periodic Catch-Up (SyncIbsRequests)
 
 A `BaseFetcher` subclass that runs every **24 hours** (02:30 UTC) to
 recover events missed during consumer downtime, reconcile state
@@ -684,7 +684,7 @@ Step 3 — Delivery status reconciliation:
      If set_track_delivery_status() raises InvalidDeliveryStatusTransition
      (possible due to a TOCTOU race with the real-time RabbitMQ consumer
      advancing the delivery status between the query and the mutation),
-     log a warning: "RequestSyncFetcher: transition to delivery status
+     log a warning: "SyncIbsRequests: transition to delivery status
      {status} blocked for track {track_id}" and continue with the next
      track without failing the batch.
 ```
@@ -811,7 +811,7 @@ this function instead of modifying the attribute directly.
 ```
 
 Note: currently all callers are within the submission tracking feature
-(IBSEventConsumer, RequestSyncFetcher,
+(IBSEventConsumer, SyncIbsRequests,
 `discover_submissions_for_ticket_package`). No external module has a
 reason to set `incident_number` directly. The centralized function
 exists to ensure `discover_release_requests_for_incident` is always
@@ -993,21 +993,21 @@ SR correlation: find SRs correlated to the ticket, collect their
 
 ## Background Tasks
 
-### Fetcher: `sync_requests`
+### Fetcher: `sync_ibs_requests`
 
 | Property | Value |
 |----------|-------|
-| Fetcher name | `sync_requests` |
-| Class name | `RequestSyncFetcher` |
+| Fetcher name | `sync_ibs_requests` |
+| Class name | `SyncIbsRequests` |
 | Schedule | Daily at 02:30 UTC (`30 2 * * *`) |
 | Source | IBS (`build.suse.de`) |
 | Scope | Active codestreams with `TicketPackageTrack` records in active tickets, plus open `SubmissionRequest`/`ReleaseRequest` records for reconciliation |
 | Auth | HTTP Basic / API token (internal) |
-| Custom settings | Yes (see "sync_requests — Custom Settings" below) |
+| Custom settings | Yes (see "sync_ibs_requests — Custom Settings" below) |
 
 #### Algorithm
 
-See "Pipeline 2: Periodic Catch-Up (RequestSyncFetcher)" above for the
+See "Pipeline 2: Periodic Catch-Up (SyncIbsRequests)" above for the
 full procedure.
 
 #### Metrics
@@ -1036,7 +1036,7 @@ dashboard presence.
 |--------------------------------------------------------------|----------------------------------------------------------------------------------------------|
 | IBS diff API unreachable / timeout (`correlate_submission_request`) | Celery retry with standard backoff. After max retries, SR remains without correlations — catch-up fetcher will retry on next run. |
 | IBS diff API returns 4xx/5xx                                 | Same as above.                                                                               |
-| IBS REST API unreachable (`RequestSyncFetcher`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
+| IBS REST API unreachable (`SyncIbsRequests`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
 | RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
 | SR/RR references a codestream not tracked in any active ticket  | Silent skip (not relevant to Sentinel).                                                         |
 | IBS diff API returns no CVE-IDs for an SR                    | SR is deleted (silent discard — see Pipeline 1, `correlate_submission_request` step 3).      |
@@ -1045,12 +1045,12 @@ dashboard presence.
 
 | Setting                         | Type                    | Default    | Description                                                  |
 |---------------------------------|-------------------------|------------|--------------------------------------------------------------|
-| `RequestSyncFetcher` schedule   | Cron (BaseFetcher)      | Every 24h  | Overridable via fetcher config API                           |
+| `SyncIbsRequests` schedule   | Cron (BaseFetcher)      | Every 24h  | Overridable via fetcher config API                           |
 | Consumer routing keys           | Static (code)           | `suse.obs.request.create`, `suse.obs.request.state_change` | Added to existing `IBSEventConsumer` bindings |
-| Catch-up lookback window        | Custom setting (`sync_requests`) | 25h | `lookback_hours` — configurable via admin dashboard |
-| Retroactive discovery window    | Custom setting (`sync_requests`) | 14d | `retroactive_discovery_days` — configurable via admin dashboard |
+| Catch-up lookback window        | Custom setting (`sync_ibs_requests`) | 25h | `lookback_hours` — configurable via admin dashboard |
+| Retroactive discovery window    | Custom setting (`sync_ibs_requests`) | 14d | `retroactive_discovery_days` — configurable via admin dashboard |
 
-### sync_requests — Custom Settings
+### sync_ibs_requests — Custom Settings
 
 This fetcher declares the following custom settings (see
 `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings

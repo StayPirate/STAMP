@@ -194,12 +194,12 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 
 ## Background Task
 
-### Fetcher: `check_ibs_track_releases`
+### Fetcher: `detect_ibs_track_releases`
 
 | Property | Value |
 |----------|-------|
-| Fetcher name | `check_ibs_track_releases` |
-| Class name | `CheckIbsTrackReleases` |
+| Fetcher name | `detect_ibs_track_releases` |
+| Class name | `DetectIbsTrackReleases` |
 | Schedule | Daily at 02:00 UTC (`0 2 * * *`) |
 | Source | IBS (`build.suse.de`) |
 | Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active tickets (New, Analysis, Analyzed). Soft-deleted tracks under active tickets are included |

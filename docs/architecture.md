@@ -133,14 +133,14 @@ active source. See the data sources catalog for the full picture.
 - **Real-time event consumer**: Sentinel connects to the IBS RabbitMQ message
   bus (`rabbit.suse.de`) and consumes `suse.obs.package.commit` events for
   near-real-time track-level release detection. The periodic polling
-  fetcher (`check_ibs_track_releases`, every 24 hours at 02:00 UTC)
+  fetcher (`detect_ibs_track_releases`, every 24 hours at 02:00 UTC)
   serves as a catch-up mechanism for events missed during downtime. See
   `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification.
 - **Submission tracking**: the same RabbitMQ consumer also processes
   `suse.obs.request.create` and `suse.obs.request.state_change` events to
   track IBS submission requests (SRs) and release requests (RRs),
   providing VAs visibility into the MU process progression. A periodic
-  fetcher (`RequestSyncFetcher`, 02:30 UTC) handles catch-up. See
+  fetcher (`SyncIbsRequests`, 02:30 UTC) handles catch-up. See
   `docs/features/packages/ibs-submission-tracking.md`.
 - **Package bugowner resolution**: Sentinel queries IBS to resolve the
   bugowner (maintainer) of each source package tracked in tickets. This
@@ -250,7 +250,7 @@ authoritative details.
 
 1. Track-level detection uses two complementary mechanisms:
    the `IBSEventConsumer` (real-time via IBS RabbitMQ) and the periodic
-   `check_ibs_track_releases` fetcher (catch-up every 24 hours at
+   `detect_ibs_track_releases` fetcher (catch-up every 24 hours at
    02:00 UTC). Both share the same MD5 cache to avoid duplicate work.
    See `docs/features/integrations/ibs-rabbitmq-integration.md`.
 2. **Track level**: the consumer or fetcher queries IBS diff endpoints

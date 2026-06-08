@@ -33,12 +33,12 @@ reflect temporary SMELT data issues and is not a reliable EOL signal.
 
 ## Lifecycle Phase Detection
 
-### Fetcher: `check_lifecycle_phase_transitions`
+### Fetcher: `evaluate_lifecycle_transitions`
 
 | Property | Value |
 |----------|-------|
-| Fetcher name | `check_lifecycle_phase_transitions` |
-| Class name | `CheckLifecyclePhaseTransitions` |
+| Fetcher name | `evaluate_lifecycle_transitions` |
+| Class name | `EvaluateLifecycleTransitions` |
 | Schedule | Daily at 04:00 UTC (`0 4 * * *`) |
 | Source | Local (no external source) |
 | Scope | Products in Reactive LTSS or EOL phase with actionable `TicketPackageProduct` records in active tickets |
@@ -46,7 +46,7 @@ reflect temporary SMELT data issues and is not a reliable EOL signal.
 | Custom settings | No |
 
 Recommended to run after `sync_aimaas_lifecycle` and
-`check_ibs_track_releases`.
+`detect_ibs_track_releases`.
 
 **Algorithm** (idempotent — no state, no cache):
 
@@ -176,11 +176,11 @@ Existing behavior unchanged: when a product's threshold changes, enqueue
 
 Existing behavior unchanged: syncs lifecycle dates from AIMAAS. Does NOT
 perform re-evaluation — phase detection is handled by
-`check_lifecycle_phase_transitions`.
+`evaluate_lifecycle_transitions`.
 
 ## Security
 
-- `check_lifecycle_phase_transitions` is a system task, no user
+- `evaluate_lifecycle_transitions` is a system task, no user
   authentication involved
 - `re_evaluate_product_eligibility` is an internal sub-task, not exposed
   via API
