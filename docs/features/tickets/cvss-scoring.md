@@ -252,10 +252,14 @@ Severity is recalculated whenever:
 - A ticket is reactivated from Ignored or Duplicated status —
   `recalculate_cvss_cascade()` is called synchronously during the
   reactivation, plus `fetch_single` tasks are enqueued for catch-up
+- A CVE is associated with a ticket (or a ticket is created with a
+   CVE) — `recalculate_cvss_cascade()` is called synchronously after
+   commit, plus `fetch_single` tasks are enqueued for enrichment
+   catch-up
 - A ticket regresses from Resolved to an active status —
-  `recalculate_cvss_cascade()` is called synchronously by the caller
-  of `reconcile_ticket_status()` when a backward transition from
-  Resolved is detected
+   `recalculate_cvss_cascade()` is called synchronously by the caller
+   of `reconcile_ticket_status()` when a backward transition from
+   Resolved is detected
 
 ### Severity Override by CVSS
 
@@ -312,17 +316,26 @@ only.
 
 **Strategy — initial fetch**:
 
-1. When a new ticket is created, the Red Hat fetcher is triggered to
-   fetch CVSS for that CVE:
+When a ticket is created with a CVE, or a CVE is associated with an
+existing ticket, a `fetch_single_redhat` task is enqueued to retrieve
+the Red Hat CVSS for that CVE (see Sub-operation: `fetch_single_redhat`
+below). The same mechanism is used for catch-up when a ticket is
+reactivated from Ignored/Duplicated or regresses from Resolved. This
+makes `fetch_single_redhat` the single on-demand mechanism for Red Hat
+data retrieval, regardless of the trigger.
+
+The task:
+
+1. Queries the Red Hat API for the ticket's CVE:
    ```
    GET /hydra/rest/securitydata/cve/{CVE-ID}.json
    ```
-2. Extract `cvss3.cvss3_scoring_vector`
-3. Persist the assessment via `cve_service` (see
+2. Extracts `cvss3.cvss3_scoring_vector`
+3. Persists the assessment via `cve_service` (see
    [`cve-service.md`](cve-service.md)) with `provider = "Red Hat"`.
    `cvss_version` and `score` are derived from the vector automatically
 4. If the assessment differs from an existing NVD Secondary with the same
-   provider name → overwrite
+   provider name → overwrites
 
 **Scope gap**: the fetch scope is "CVEs with active tickets (New,
 Analysis, Analyzed)" due to Red Hat API rate limits (per-CVE lookup, no
@@ -731,19 +744,25 @@ A sub-operation task (not a `BaseFetcher` subclass — per the sub-operation
 exception in
 [`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md)).
 
-- **Parameter**: `cve_id` (string — extracted from the ticket's
-  associated CVE)
-- **Behavior**: queries the Red Hat Security Data API
-  (`GET /hydra/rest/securitydata/cve/{cve_id}.json`) for the specific
-  CVE. If data is found and differs from the stored `CVECVSSAssessment`,
-  persists/updates the assessment via
+- **Parameter**: `ticket_id` (UUID as string — matches the unified
+  `fetch_single` interface defined in `fetcher-infrastructure.md`)
+- **Behavior**: the task looks up the ticket to extract the `cve_id`
+  from the ticket's associated CVE, then queries the Red Hat Security
+  Data API (`GET /hydra/rest/securitydata/cve/{CVE-ID}.json`) for that
+  CVE. If data is found and differs from the stored
+  `CVECVSSAssessment`, persists/updates the assessment via
   `ticket_mutations.create_cvss_assessment()` or
   `ticket_mutations.update_cvss_assessment()`, which triggers the normal
   recalculation cascade.
 - **Idempotent**: if the Red Hat data is unchanged from the stored
   assessment, no mutation occurs (no-op).
-- **Trigger**: enqueued by the ticket reactivation hook (see Ticket
-  Reactivation: CVSS Catch-Up below), not by Celery Beat.
+- **Trigger**: enqueued in three scenarios (not by Celery Beat):
+  1. Ticket creation with CVE / CVE association with existing ticket
+     (via `cve_service` endpoint handlers)
+  2. Ticket reactivation from Ignored/Duplicated (via `ticket_service`
+     reactivation hook)
+  3. Ticket regression from Resolved (via `ticket_mutations`
+     post-regression hook)
 - **Metrics**: not tracked independently (sub-operation).
 
 ## Data Model

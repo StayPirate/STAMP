@@ -501,6 +501,12 @@ Not all fetchers need this capability:
 
 `fetch_single` is enqueued by:
 
+- `cve_service` endpoint handlers: after CVE association with a ticket
+  (`associate-cve` endpoint) or ticket creation with a CVE
+  (`create-ticket-with-CVE` endpoint). Called alongside
+  `trigger_on_demand_fetch()` to cover enrichment fetchers not dispatched
+  by discovery-only fetch — see
+  [cve-service.md](../tickets/cve-service.md)
 - `ticket_service`: after un-ignore (`reopen_from_ignored`) and
   un-duplicate (`revert_duplicate`) operations — see
   [ticket-service.md](../tickets/ticket-service.md)
