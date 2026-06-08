@@ -30,8 +30,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1 | 2026-06-05 | ⚠️ |
 | |  | 1:🟡 |  |  |  |  |  |  |
-| [cvss-scoring](cvss-scoring.md) | 1 | 🟢 | — | — | — | 1 | 2026-06-08 | ⚠️ |
-| | 1:🔴 |  |  |  |  |  |  |  |
+| [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | — | — | — | 0 | 2026-06-08 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
@@ -50,8 +50,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-mutations](ticket-mutations.md) | 🟢 | 1 | 1 | 🟢 | 🟢 | 2 | 2026-06-03 | ⚠️ |
-| |  | 1:🟡 | 1:🟡 |  |  |  |  |  |
+| [ticket-mutations](ticket-mutations.md) | 1 | 1 | 1 | 🟢 | 🟢 | 3 | 2026-06-03 | ⚠️ |
+| | 1:🟠 | 1:🟡 | 1:🟡 |  |  |  |  |  |
 | [ticket-references](ticket-references.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-30 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-26 | ⚠️ |
@@ -63,7 +63,7 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | **Total** | **4** | **4** | **1** | **1** | **0** | **10** |  |  |
-| | 1:🔴 2:🟠 1:🟡 | 4:🟡 | 1:🟡 | 1:🟡 |  |  |  |  |
+| | 3:🟠 1:🟡 | 4:🟡 | 1:🟡 | 1:🟡 |  |  |  |  |
 
 ### Disabled specs
 
