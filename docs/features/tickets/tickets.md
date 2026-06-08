@@ -223,7 +223,7 @@ layer.
 in Analyzed status has had all its packages and tracks fully evaluated. If a VA
 later determines the CVE does not require action, the natural workflow is to
 remove (soft-delete) the remaining packages. This triggers the orphan cleanup
-cascade, which calls `reconcile_ticket_status()` — the "at least one package"
+chain, which calls `reconcile_ticket_status()` — the "at least one package"
 gate condition (Analyzed gate #1) fails and the ticket automatically regresses
 to Analysis. At that point the VA can use the existing Analysis → Ignored
 transition. Adding a direct Analyzed → Ignored transition would bypass the
@@ -500,7 +500,7 @@ the helper's signature and behavior.
 
 - **Canonical target**: the non-Duplicated ticket at the end of the
   `duplicate_of_id` resolution chain. This is the technically precise
-  term used throughout the resolver logic, cascade operations, and
+  term used throughout the resolver logic, flattening operations, and
   concurrency sections.
 - **Original ticket**: the user-facing synonym for "canonical target."
   Used in UI copy (e.g., "See the original ticket: SNTL-42"), audit
@@ -527,7 +527,7 @@ for:
 - Audit event recording (`old_value`/`new_value` store the `SNTL-{n}`
   identifier corresponding to the DB value at the time of the event)
 - Database-level queries that need the raw FK (e.g., finding all tickets
-  whose raw `duplicate_of_id` points to a specific ticket, for cascade
+  whose raw `duplicate_of_id` points to a specific ticket, for flattening
   purposes)
 
 #### Mark-as-Duplicate Operation
@@ -548,26 +548,26 @@ Steps:
    400 Bad Request ("a ticket cannot be a duplicate of itself").
 4. Set `duplicate_of_id = canonical_target_id` and
    `status = Duplicated`.
-5. Cascade: all tickets whose `duplicate_of_id` points to the
+5. Flattening: all tickets whose `duplicate_of_id` points to the
    just-duplicated ticket are updated to point to the canonical target
    (synchronous, best-effort per-item in independent transactions).
-6. If the cascade is interrupted or individual steps fail, the system
+6. If the flattening is interrupted or individual steps fail, the system
    is NOT corrupted — subsequent reads resolve the chain through the
    canonical resolver.
 
-The cascade is synchronous (completes before the API response returns)
+The flattening is synchronous (completes before the API response returns)
 because chains longer than two tickets are almost nonexistent, making
 the overhead negligible (1–2 extra DB operations in the worst case).
 
 See [ticket-service.md](ticket-service.md#mark_as_duplicate) for the
 full service-layer contract (locking, auto-assignment, audit events,
-cascade transaction isolation).
+flattening transaction isolation).
 
-#### Cascade as Best-Effort Flattening
+#### Best-Effort Flattening
 
-The cascade is an optimization that reduces hops for future resolutions.
+The flattening is an optimization that reduces hops for future resolutions.
 It is NOT a correctness requirement. The system is correct with or
-without cascade completion because:
+without flattening completion because:
 
 - All reads use the canonical resolver.
 - Duplicated tickets are immutable (API returns 409 on modification
@@ -600,7 +600,7 @@ target — it simply removes the ticket from the duplicate chain.
 
 #### Revert of an Intermediate Ticket
 
-Scenario: `A → B → C` (A points to B, B points to C, cascade was
+Scenario: `A → B → C` (A points to B, B points to C, flattening was
 interrupted so A was not flattened).
 
 If a VA reverts B (removes B from Duplicated status):
@@ -611,7 +611,7 @@ If a VA reverts B (removes B from Duplicated status):
   canonical target now).
 - This is correct: A is a duplicate of B, which is now a live ticket
   again.
-- No cascade or repair needed on A.
+- No flattening or repair needed on A.
 
 #### API Response Behavior
 
@@ -629,7 +629,7 @@ includes `duplicate_of_id`. This ensures:
 - Third-party scripts and integrations can trust that following
   `duplicate_of_id` always leads to a non-Duplicated ticket — no
   client-side chain resolution needed.
-- The transient state (interrupted cascade) is invisible to API
+- The transient state (interrupted flattening) is invisible to API
   consumers.
 
 The raw value remains accessible through the audit history
@@ -680,7 +680,7 @@ current gate conditions) and can be re-evaluated normally.
 `duplicate_of_id` SHOULD reference the canonical non-Duplicated ticket
 after normal write operations complete successfully. A link to a
 Duplicated ticket is a valid transient state (e.g., after an interrupted
-cascade) and MUST be handled gracefully by the canonical resolver.
+flattening) and MUST be handled gracefully by the canonical resolver.
 Correctness MUST NOT depend on immediate flatness of the link. Multiple
 tickets may reference the same canonical target.
 
@@ -1489,8 +1489,8 @@ POST /api/v1/tickets/{ticket_id}/duplicate
 
 Marks a ticket as a duplicate of another ticket. The target is resolved
 following the chain if it is itself Duplicated. Existing tickets pointing
-to this ticket are cascade-updated to the resolved target. See
-[Duplicate Handling](#duplicate-handling) for chain resolution, cascade
+to this ticket are flattening-updated to the resolved target. See
+[Duplicate Handling](#duplicate-handling) for chain resolution, flattening
 updates, and invariants.
 
 Request body:

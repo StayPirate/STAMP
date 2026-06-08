@@ -36,17 +36,17 @@ When the Admin changes the default CVSS version, Sentinel MUST:
    `resolve_severity_score` (5-step severity cascade, multi-provider)
 2. Re-evaluate product eligibility for all active tickets using
    `resolve_eligibility_score` (2-step SUSE-only cascade)
-3. Apply the same recalculation cascade as a CVSS score change (see
-   `docs/features/tickets/cvss-scoring.md`, Recalculation Cascade)
+3. Apply the same recalculation chain as a CVSS score change (see
+   `docs/features/tickets/cvss-scoring.md`, Recalculation Chain)
 4. Create `TicketAuditEvent` records for every severity or eligibility change
 
 This operation may take time for a large number of active tickets. It
 is executed as a background task (Celery). The task calls
-`ticket_mutations.recalculate_cvss_cascade()` for each ticket in an
+`ticket_mutations.recalculate_cvss_chain()` for each ticket in an
 independent database transaction. When the default CVSS version changes,
 the batch recalculation task uses a singleton Redis lock to serialize
 concurrent executions. See `docs/features/tickets/cvss-scoring.md`
-(Cascade Execution Model) for details.
+(Chain Execution Model) for details.
 
 **Warning**: changing the default CVSS version is a significant operation.
 
@@ -101,7 +101,7 @@ active tickets as a background task.
 
 **Note on PATCH with side effects**: this endpoint uses PATCH because
 semantically it is a configuration field update — the setting changes value
-and the response is returned immediately. The recalculation cascade is an
+and the response is returned immediately. The recalculation chain is an
 asynchronous side effect (Celery background task) that does not block the
 response. The client experience is that of a simple field update with
 instant confirmation. This is a documented deviation from the

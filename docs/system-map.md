@@ -446,7 +446,7 @@ flowchart LR
 
     subgraph ticket_ops["Ticket Operations"]
         NEW_TKT["Auto-create Ticket<br/>(status: New)"]
-        CASCADE["Eligibility cascade<br/>(product thresholds)"]
+        ELIG_EVAL["Eligibility cascade<br/>(product thresholds)"]
         EVENT["Create<br/>TicketAuditEvent"]
     end
 
@@ -463,9 +463,9 @@ flowchart LR
 
     CVE_REC -->|new CVE| NEW_TKT
     CVSS_REC --> SEV
-    SEV --> CASCADE
+    SEV --> ELIG_EVAL
     NEW_TKT --> EVENT
-    CASCADE --> EVENT
+    ELIG_EVAL --> EVENT
 
     style sources fill:#f3e8ff,stroke:#7c3aed
     style celery fill:#fce7f3,stroke:#db2777

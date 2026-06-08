@@ -473,7 +473,7 @@ def fetch_single_<fetcher_name>(ticket_id: str) -> None:
 - **Mutation path**: when changed data is found, the task persists it
   through the normal mutation path (e.g.,
   `ticket_mutations.create_cvss_assessment()` for CVSS data), which
-  triggers the standard cascade (audit events, reconciliation)
+  triggers the standard chain (audit events, reconciliation)
 - **No direct ticket mutations**: the task MUST NOT acquire `FOR UPDATE`
   locks on the Ticket row or perform ticket-level mutations directly —
   it delegates to the appropriate service module

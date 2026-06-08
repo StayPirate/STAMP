@@ -34,7 +34,7 @@ _Not yet reviewed._
 
 ### ADMIN-API-01 — PATCH mutation pattern for CVSS version change with massive side effects (High)
 
-**Status**: RESOLVED — Added explicit "Note on PATCH with side effects" paragraph to `docs/features/platform/system-settings.md` justifying the deviation: the endpoint is semantically a configuration field update with instant response, and the recalculation cascade is an asynchronous Celery task that does not block the client. (2026-05-06)
+**Status**: RESOLVED — Added explicit "Note on PATCH with side effects" paragraph to `docs/features/platform/system-settings.md` justifying the deviation: the endpoint is semantically a configuration field update with instant response, and the recalculation chain is an asynchronous Celery task that does not block the client. (2026-05-06)
 
 ### ADMIN-API-02 — Missing 401/403 error responses for authenticated endpoints (Medium)
 

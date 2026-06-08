@@ -69,6 +69,28 @@ Rules:
 - The `source` field in API responses returns `"ad"` or `"local"` (never
   `"ldap"` or `"sso"`)
 
+### Cascade / Chain / Flattening Terminology
+
+These three terms have distinct meanings in the Sentinel codebase and
+documentation. They MUST NOT be used interchangeably:
+
+| Term | Concept | Usage |
+|------|---------|-------|
+| **cascade** | Resolution strategy | Prioritized fallback sequence that tries sources in order until a result is found. Examples: "Severity Resolution Cascade", "package match cascade" |
+| **chain** | Propagation of side effects | Sequence of derived mutations triggered by a primary change. Examples: "Recalculation Chain", "Deactivation chain", "orphan chain" |
+| **flattening** | Linked-list resolution | Resolution and update of pointer chains. Examples: "duplicate flattening", `execute_duplicate_flattening()` |
+
+Rules:
+
+- Do not use "cascade" for propagation/side-effect sequences
+- The term "chain" in this convention refers exclusively to mutation
+  propagation. Pre-existing domain-specific uses of "chain" in other
+  contexts are unrelated and unaffected: "duplicate chain" (the
+  `duplicate_of_id` linked-list data structure), "submission chain"
+  (IBS SR/incident/RR pipeline in `maintainer.md`), "manager chain"
+  (reporting hierarchy in `ad-integration.md`), "certificate chain"
+  (TLS)
+
 ### Timestamps & Timezones
 
 Sentinel follows the **"UTC everywhere, local display"** convention:

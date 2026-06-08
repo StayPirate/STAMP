@@ -115,7 +115,7 @@ Per-function behavior steps bundle the unconditional `CVE.severity` update insid
 
 **Status**: RESOLVED — Cross-agent duplicate of TKM-SEC-05 (2026-05-25)
 
-### TKM-DES-04 — Multiple reconcile_ticket_status calls per transaction during orphan cascades lack deduplication (Low)
+### TKM-DES-04 — Multiple reconcile_ticket_status calls per transaction during orphan chains lack deduplication (Low)
 
 **Status**: RESOLVED — Auto-resolved: finding invalid — this is a deliberate documented design decision prioritizing correctness over performance, explicitly imposed as an implementation constraint (2026-05-25)
 
@@ -125,7 +125,7 @@ Per-function behavior steps bundle the unconditional `CVE.severity` update insid
 
 ### TKM-DES-06 — Duplicate chains not flattened at mark-time (Medium)
 
-**Status**: RESOLVED — Auto-resolved: design intentionally rejects guaranteed flattening — single-ticket-scope rule (ticket-mutations.md §Single-ticket scope) prohibits FOR UPDATE on multiple tickets in one transaction to structurally prevent deadlocks; correctness guaranteed by canonical resolver regardless of chain depth (tickets.md §Cascade as Best-Effort Flattening) (2026-05-25)
+**Status**: RESOLVED — Auto-resolved: design intentionally rejects guaranteed flattening — single-ticket-scope rule (ticket-mutations.md §Single-ticket scope) prohibits FOR UPDATE on multiple tickets in one transaction to structurally prevent deadlocks; correctness guaranteed by canonical resolver regardless of chain depth (tickets.md §Best-Effort Flattening) (2026-05-25)
 
 ### TKM-DES-07 — Race window between deactivate_user and concurrent ticket mutations (Medium)
 
@@ -135,9 +135,9 @@ Per-function behavior steps bundle the unconditional `CVE.severity` update insid
 
 **Status**: RESOLVED — Auto-resolved: by design — readability preferred over micro-optimization; double evaluation cost is microseconds on rare case (inactive assignees); current ordering (evaluate → sanitize → re-evaluate) is more comprehensible (2026-05-25)
 
-### TKM-DES-09 — Multiple reconcile calls in orphan cascades produce multiple audit events (Low)
+### TKM-DES-09 — Multiple reconcile calls in orphan chains produce multiple audit events (Low)
 
-**Status**: RESOLVED — Auto-resolved: package-service.md (lines 788-794) documents single reconcile_ticket_status call after complete orphan cascade; residual incoherence in ticket-mutations.md corrected (2026-05-25)
+**Status**: RESOLVED — Auto-resolved: package-service.md (lines 788-794) documents single reconcile_ticket_status call after complete orphan chain; residual incoherence in ticket-mutations.md corrected (2026-05-25)
 
 ### TKM-DES-10 — force=True reassignment overwrites without notification (Low)
 

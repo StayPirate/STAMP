@@ -18,7 +18,7 @@
 
 ### PKM-GAP-002 — Behavior when soft-deleting the last active track under a package is unspecified at API level (Medium)
 
-**Status**: RESOLVED — Cascade array added to Soft-Delete Track and Soft-Delete Product endpoint responses to signal orphan cleanup to clients (2026-05-21)
+**Status**: RESOLVED — Chain array added to Soft-Delete Track and Soft-Delete Product endpoint responses to signal orphan cleanup to clients (2026-05-21)
 
 ### PKM-GAP-003 — Delivery status transition from RELEASED back to IN_PROGRESS or PENDING unspecified (Medium)
 
@@ -30,7 +30,7 @@
 
 ### PKM-GAP-007 — Soft-deleting a product that is the last active product under a track triggers orphan cleanup but endpoint doesn't document it (Medium)
 
-**Status**: RESOLVED — Cascade response documented by PKM-GAP-002 fix; ticket re-evaluation after soft-delete now explicitly documented in all three exclusion endpoints (2026-05-21)
+**Status**: RESOLVED — Chain response documented by PKM-GAP-002 fix; ticket re-evaluation after soft-delete now explicitly documented in all three exclusion endpoints (2026-05-21)
 
 ### PKM-GAP-004 — WONT_FIX protected state interaction with delivery-triggered FIXED is underspecified for products (Low)
 
@@ -78,7 +78,7 @@
 
 ### PKM-DES-005 — Orphan cleanup after last product soft-deletion not triggered by exclude endpoint (Low)
 
-**Status**: RESOLVED — Audit events for orphan cleanup cascade specified: each cascaded record generates its own system-triggered TicketAuditEvent; total events = 1 + len(cascade) (2026-05-21)
+**Status**: RESOLVED — Audit events for orphan cleanup chain specified: each chained record generates its own system-triggered TicketAuditEvent; total events = 1 + len(chain) (2026-05-21)
 
 ---
 

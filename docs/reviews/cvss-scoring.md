@@ -25,19 +25,19 @@
 
 ### GAP-CVS-002 — Batch recalculation for default version change has no named entry point in `ticket_mutations` (Medium)
 
-**Status**: RESOLVED — Defined `recalculate_cvss_cascade()` in ticket-mutations.md as dedicated entry point for batch recalculation; updated cvss-scoring.md and system-settings.md references (2026-06-08)
+**Status**: RESOLVED — Defined `recalculate_cvss_chain()` in ticket-mutations.md as dedicated entry point for batch recalculation; updated cvss-scoring.md and system-settings.md references (2026-06-08)
 
 ### GAP-CVS-004 — Step numbering 4 and 4b creates ordering ambiguity for `CVE.severity` update (Medium)
 
 **Status**: RESOLVED — Write-path section rewritten as conceptual overview referencing ticket-mutations.md; eliminates step numbering ambiguity (2026-06-08)
 
-### GAP-CVS-005 — Recalculation Cascade note on Resolved tickets inconsistent with `ensure_ticket_operable()` semantics (Medium)
+### GAP-CVS-005 — Recalculation Chain note on Resolved tickets inconsistent with `ensure_ticket_operable()` semantics (Medium)
 
 **Status**: RESOLVED — Auto-resolved: behavior for Resolved tickets now explicitly specified in both cvss-scoring.md and ticket-mutations.md (reconcile deterministic gate evaluation, backward transitions documented) (2026-06-08)
 
 ### GAP-CVS-006 — Concurrency gap in batch recalculation for concurrent default version changes (Medium)
 
-**Status**: RESOLVED — Specified singleton Redis lock with read-after-lock pattern for batch recalculation; added mandatory default_cvss_version parameter to recalculate_cvss_cascade() (2026-06-08)
+**Status**: RESOLVED — Specified singleton Redis lock with read-after-lock pattern for batch recalculation; added mandatory default_cvss_version parameter to recalculate_cvss_chain() (2026-06-08)
 
 ### GAP-CVS-007 — `GET /cves/{cve_id}/cvss` exposes severity cascade resolved fields but no eligibility score (Low)
 
@@ -51,14 +51,14 @@
 
 ## Coherence
 
-### CVS-COH-06 — Recalculation Cascade step 2 implies direct eligibility writes; must route through `package_service` (High)
+### CVS-COH-06 — Recalculation Chain step 2 implies direct eligibility writes; must route through `package_service` (High)
 **Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
-### CVS-COH-04 — Recalculation Cascade audit trail omits `cvss_assessment_changed` event (Medium)
+### CVS-COH-04 — Recalculation Chain audit trail omits `cvss_assessment_changed` event (Medium)
 
 **Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
-### CVS-COH-07 — Recalculation Cascade step 3 note overstates restriction as architectural invariant (Medium)
+### CVS-COH-07 — Recalculation Chain step 3 note overstates restriction as architectural invariant (Medium)
 
 **Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes (2026-06-08)
 
@@ -78,12 +78,10 @@
 
 **Status**: RESOLVED — Removed redundant SUSE-specific trigger; already covered by the general "CVSS assessment added/modified/removed" trigger (2026-06-08)
 
-### CVS-COH-08 — Term "cascade" overloaded across Severity Resolution Cascade and Recalculation Cascade (Low)
+### CVS-COH-08 — Term "cascade" overloaded across Severity Resolution Cascade and Recalculation Chain (Low)
 
 **Category**: Terminology issues
-**Status**: OPEN
-
-"cascade" used for both score resolution strategy (Severity Resolution Cascade) and the recalculation side-effect chain (Recalculation Cascade). The "Eligibility Score Resolution" section correctly avoids the term "cascade" in its title, but the naming is inconsistent across sections and propagates into referencing specs.
+**Status**: RESOLVED — Terminology disambiguated: "cascade" reserved for resolution strategies, "chain" for propagation, "flattening" for duplicate pointer resolution. Convention added to `docs/conventions.md`. ~179 lines renamed across 21 files (2026-06-08)
 
 ### CVS-COH-09 — `product-lifecycle-transitions.md` implies async path where `cvss-scoring.md` describes synchronous path (Low)
 

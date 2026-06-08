@@ -12,13 +12,13 @@
 
 **Status**: RESOLVED — Fixed: added explicit Locking note clarifying that step 4 involves only local DB operations (SELECT, INSERT) and Celery enqueue — no synchronous external HTTP calls inside the lock (2026-05-25)
 
-### TKS-GAP-02 — mark_as_duplicate cascade does not filter soft-deleted tickets (Medium)
+### TKS-GAP-02 — mark_as_duplicate flattening does not filter soft-deleted tickets (Medium)
 
-**Status**: RESOLVED — Spec updated: added deleted_at IS NULL filter to cascade query (2026-05-26)
+**Status**: RESOLVED — Spec updated: added deleted_at IS NULL filter to flattening query (2026-05-26)
 
-### TKS-GAP-03 — mark_as_duplicate cascade fan-in without bound (Medium)
+### TKS-GAP-03 — mark_as_duplicate flattening fan-in without bound (Medium)
 
-**Status**: RESOLVED — Accepted risk: fan-in cascade without bound acknowledged as extremely rare case; adding complexity is counterproductive (2026-05-26)
+**Status**: RESOLVED — Accepted risk: fan-in flattening without bound acknowledged as extremely rare case; adding complexity is counterproductive (2026-05-26)
 
 ### TKS-GAP-04 — set_confidentiality on soft-deleted ticket has no deleted_at guard (Medium)
 
@@ -36,9 +36,9 @@
 
 **Status**: RESOLVED — Auto-resolved: dissociate_cve no longer deletes CVSS assessments or creates deletion audit events; only cve_removed is emitted (2026-05-25)
 
-### TKS-GAP-08 — mark_as_duplicate cascade caller verification step may silently skip tickets reverted between primary commit and cascade (Low)
+### TKS-GAP-08 — mark_as_duplicate flattening caller verification step may silently skip tickets reverted between primary commit and flattening (Low)
 
-**Status**: RESOLVED — Fixed in spec: added informational log for cascade skip on concurrent revert (2026-05-26)
+**Status**: RESOLVED — Fixed in spec: added informational log for flattening skip on concurrent revert (2026-05-26)
 
 ### TKS-GAP-09 — No specification of behavior when create_ticket is called with is_confidential=true but cve_id also provided and CVE already has a ticket (Low)
 
@@ -76,9 +76,9 @@
 
 **Status**: RESOLVED — Auto-resolved: spec now explicitly states FOR UPDATE locking on Ticket row for both grant_access and revoke_access (2026-05-26)
 
-### TKS-DES-03 — mark_as_duplicate cascade transaction pattern pushes orchestration responsibility to API handler (Medium)
+### TKS-DES-03 — mark_as_duplicate flattening transaction pattern pushes orchestration responsibility to API handler (Medium)
 
-**Status**: RESOLVED — Cascade orchestration moved to dedicated service function execute_duplicate_cascade; handler pattern reduced to two service calls (2026-05-26)
+**Status**: RESOLVED — Flattening orchestration moved to dedicated service function execute_duplicate_flattening; handler pattern reduced to two service calls (2026-05-26)
 
 ### TKS-DES-04 — dissociate_cve deletes CVSS assessments inside FOR UPDATE lock without bounding the set (Low)
 
@@ -124,7 +124,7 @@
 
 **Status**: RESOLVED — Accepted risk: rate limiting is an infrastructure concern (reverse proxy/WAF), not application-level (2026-05-26)
 
-### TKS-SEC-08 — mark_as_duplicate cascade runs synchronously with unbounded fan-in — potential DoS vector (Low)
+### TKS-SEC-08 — mark_as_duplicate flattening runs synchronously with unbounded fan-in — potential DoS vector (Low)
 
 **Status**: RESOLVED — Cross-agent duplicate of TKS-GAP-03 (2026-05-25)
 

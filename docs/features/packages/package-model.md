@@ -67,7 +67,7 @@ separate persisted boolean (`eligible`) on `TicketPackageProduct`, with
 its own override mechanism (`is_eligible_override`). The track retains
 its affectedness status regardless of whether any product is eligible.
 CVSS score changes only flip the `eligible` flag — no status changes,
-no rollup cascades.
+no rollup chains.
 
 ### 4. Delivery as a separate dimension
 
@@ -691,7 +691,7 @@ that have `deleted_at IS NULL`, the orphan cleanup invariants (defined in
 `docs/features/packages/package-service.md`, Orphan Cleanup Invariants)
 apply upward: the parent is also soft-deleted. See
 also `docs/features/packages/product-lifecycle-transitions.md` for the
-EOL-triggered cascade.
+EOL-triggered chain.
 
 #### Effectively Excluded
 
@@ -745,7 +745,7 @@ Soft-deleted records are excluded from:
 ### Restore
 
 Restore operates **only on the directly excluded record** — there is no
-cascade to child records. The VA can only restore a record that has its
+propagation to child records. The VA can only restore a record that has its
 own `deleted_at IS NOT NULL`.
 
 When the VA restores a soft-deleted record:
@@ -801,19 +801,19 @@ When a VA soft-deletes a track, 1 event is created (`track_excluded`).
 Products under the track are implicitly excluded via the hierarchy but
 do not produce individual events.
 
-**Upward cascade (orphan cleanup)**: when orphan cleanup cascades upward
+**Upward chain (orphan cleanup)**: when orphan cleanup chains upward
 (e.g., deleting the last product triggers track deletion, which may
 trigger package deletion), each record soft-deleted by orphan cleanup
 generates its **own** `TicketAuditEvent` with the appropriate event type
-(`track_excluded`, `package_excluded`). These cascade audit events use
+(`track_excluded`, `package_excluded`). These orphan cleanup audit events use
 `user_id = NULL` to indicate they are system-triggered (not directly
 requested by the VA). The total number of `TicketAuditEvent` records
-created by a soft-delete operation is `1 + len(cascade)`: one for the
+created by a soft-delete operation is `1 + len(orphan_cleanup)`: one for the
 directly excluded record (with the VA's `user_id`) plus one for each
-ancestor cascaded by orphan cleanup (with `user_id = NULL`). Ticket
-status re-evaluation occurs after each cascade step (up to 3 times
-for a full product -> track -> package cascade — see
-`docs/features/packages/package-service.md`, Cascading Composition).
+ancestor chained by orphan cleanup (with `user_id = NULL`). Ticket
+status re-evaluation occurs after each chain step (up to 3 times
+for a full product → track → package chain — see
+`docs/features/packages/package-service.md`, Chain Composition).
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
@@ -1291,11 +1291,11 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude
 Soft-delete a track from the ticket. Sets `deleted_at` on the track
 record only — products under it are not modified but become effectively
 excluded via the hierarchy. Creates a `TicketAuditEvent` for the excluded
-record. If orphan cleanup cascades to ancestors, additional
+record. If orphan cleanup chains to ancestors, additional
 system-triggered audit events are created (see
 [Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
-After the soft-delete (and any orphan cleanup cascade), the system
+After the soft-delete (and any orphan cleanup chain), the system
 reconciles ticket status via `package_service`. This is necessary
 because excluding a track changes the set of active records considered
 by ticket gates (Resolved gate and Analyzed gate).
@@ -1306,34 +1306,34 @@ by ticket gates (Resolved gate and Analyzed gate).
 {
   "data": {
     "reference": "SUSE:SLE-15-SP6:Update",
-    "cascade": []
+    "orphan_cleanup": []
   }
 }
 ```
 
 When this is the last active track under the parent package, orphan cleanup
-removes the package as well. In that case, `cascade` contains the affected
+removes the package as well. In that case, `orphan_cleanup` contains the affected
 ancestor:
 
 ```json
 {
   "data": {
     "reference": "SUSE:SLE-15-SP6:Update",
-    "cascade": [
+    "orphan_cleanup": [
       {"level": "package", "package_name": "openssl-3"}
     ]
   }
 }
 ```
 
-`cascade` is an array of ancestors that were automatically soft-deleted by
-orphan cleanup. Empty array if no cascade occurred. Maximum 1 element for
+`orphan_cleanup` is an array of ancestors that were automatically soft-deleted by
+orphan cleanup. Empty array if no orphan cleanup occurred. Maximum 1 element for
 track exclusion (the parent package). Each element identifies the level
 (`"package"`) and the identifying field (`package_name`).
 
 **Orphan cleanup behavior**: when exclusion leaves a parent record with no
 remaining active children (`deleted_at IS NULL`), the parent is also
-soft-deleted automatically. The `cascade` array allows clients to update
+soft-deleted automatically. The `orphan_cleanup` array allows clients to update
 their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
@@ -1393,11 +1393,11 @@ POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/product
 ```
 
 Soft-delete a single product from a track. Creates a `TicketAuditEvent`
-for the excluded record. If orphan cleanup cascades to ancestors,
+for the excluded record. If orphan cleanup chains to ancestors,
 additional system-triggered audit events are created (see
 [Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
 
-After the soft-delete (and any orphan cleanup cascade), the system
+After the soft-delete (and any orphan cleanup chain), the system
 reconciles ticket status via `package_service`. This is necessary
 because excluding a product changes the set of active records considered
 by ticket gates (Resolved gate and Analyzed gate).
@@ -1409,7 +1409,7 @@ by ticket gates (Resolved gate and Analyzed gate).
   "data": {
     "product_id": "uuid",
     "product_name": "SLES 15-SP6",
-    "cascade": []
+    "orphan_cleanup": []
   }
 }
 ```
@@ -1422,7 +1422,7 @@ parent track, and/or the last active track under the grandparent package):
   "data": {
     "product_id": "uuid",
     "product_name": "SLES 15-SP6",
-    "cascade": [
+    "orphan_cleanup": [
       {"level": "track", "reference": "SUSE:SLE-15-SP6:Update"},
       {"level": "package", "package_name": "openssl-3"}
     ]
@@ -1430,8 +1430,8 @@ parent track, and/or the last active track under the grandparent package):
 }
 ```
 
-`cascade` is an array of ancestors automatically soft-deleted by orphan
-cleanup, ordered from immediate parent upward. Empty array if no cascade
+`orphan_cleanup` is an array of ancestors automatically soft-deleted by orphan
+cleanup, ordered from immediate parent upward. Empty array if no orphan cleanup
 occurred. Maximum 2 elements for product exclusion (parent track, then
 grandparent package). Each element identifies the level (`"track"` or
 `"package"`) and the identifying field (`reference` for tracks,
@@ -1439,7 +1439,7 @@ grandparent package). Each element identifies the level (`"track"` or
 
 **Orphan cleanup behavior**: when exclusion leaves a parent record with no
 remaining active children (`deleted_at IS NULL`), the parent is also
-soft-deleted automatically. The `cascade` array allows clients to update
+soft-deleted automatically. The `orphan_cleanup` array allows clients to update
 their local tree state without a full refetch.
 
 **`Capability: manage_packages`**

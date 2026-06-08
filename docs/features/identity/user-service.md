@@ -140,7 +140,7 @@ User deletion is not supported. Deactivation is the terminal state of the
 user lifecycle. This is intentional: User records are referenced by
 `TicketAuditEvent` (audit trail), `Ticket` (historical assignments), `ApiKey`
 (revocation records), `Session`, and `UserRole`. Deleting a user would
-orphan these records or require complex cascade/anonymization logic.
+orphan these records or require complex chain/anonymization logic.
 
 If a future requirement arises (e.g., GDPR right-to-erasure), it will be
 addressed as a separate feature with its own specification covering data

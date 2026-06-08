@@ -51,17 +51,17 @@ This matches the `ticket_mutations`, `package_service`, and
 `user_service` pattern — the module applies mutations and creates audit
 events, but the transaction boundary is the caller's decision.
 
-**Exception — cascade operations**: `mark_as_duplicate` has a cascade
-phase that updates other tickets' `duplicate_of_id`. The cascade is
-executed by a dedicated service function `execute_duplicate_cascade`
+**Exception — flattening operations**: `mark_as_duplicate` has a flattening
+phase that updates other tickets' `duplicate_of_id`. The flattening is
+executed by a dedicated service function `execute_duplicate_flattening`
 which accepts a `db_session_factory` and opens/commits independent
 sessions internally. This is the only function in the module that
 commits transactions — it is an explicit, limited exception to the
 "module does not commit" rule, justified by the requirement for
 independent per-ticket transactions (see `tickets.md` and
 `ticket_mutations.md` single-ticket scope rule). The caller invokes
-`execute_duplicate_cascade` after committing the primary transaction.
-See `mark_as_duplicate` and `execute_duplicate_cascade` for details.
+`execute_duplicate_flattening` after committing the primary transaction.
+See `mark_as_duplicate` and `execute_duplicate_flattening` for details.
 
 ### Acting user convention
 
@@ -390,15 +390,15 @@ async def mark_as_duplicate(
 ```
 
 Returns a `MarkAsDuplicateResult` containing the updated ticket and
-a list of ticket IDs requiring cascade updates. The caller passes
-`cascade_ticket_ids` to `execute_duplicate_cascade` after committing
+a list of ticket IDs requiring flattening updates. The caller passes
+`flattening_ticket_ids` to `execute_duplicate_flattening` after committing
 the primary transaction (see below).
 
 ```python
 @dataclass
 class MarkAsDuplicateResult:
     ticket: Ticket
-    cascade_ticket_ids: list[UUID]
+    flattening_ticket_ids: list[UUID]
 ```
 
 This is a service-layer-only dataclass defined in
@@ -434,46 +434,46 @@ database model).
 6. Set `ticket.status = Duplicated`, `ticket.duplicate_of_id = resolved_target`
 7. Create `TicketAuditEvent` (`duplicate_set`)
 8. Query tickets where `duplicate_of_id` = this ticket — return their
-    IDs as `cascade_ticket_ids`
-9. Return `MarkAsDuplicateResult(ticket=ticket, cascade_ticket_ids=...)`
+    IDs as `flattening_ticket_ids`
+9. Return `MarkAsDuplicateResult(ticket=ticket, flattening_ticket_ids=...)`
 
-**Cascade orchestration** — handled by `execute_duplicate_cascade`
+**Flattening orchestration** — handled by `execute_duplicate_flattening`
 (see below). The caller's only responsibility is to invoke
-`execute_duplicate_cascade(db_session_factory, cascade_ticket_ids,
+`execute_duplicate_flattening(db_session_factory, flattening_ticket_ids,
 canonical_target_id, acting_user_id)` after committing the primary
 transaction. The endpoint handler pattern is:
 
 ```python
 result = await mark_as_duplicate(db, ticket_id=..., ...)
 await db.commit()
-await execute_duplicate_cascade(
-    session_factory, result.cascade_ticket_ids, resolved_target, acting_user_id
+await execute_duplicate_flattening(
+    session_factory, result.flattening_ticket_ids, resolved_target, acting_user_id
 )
 return result.ticket
 ```
 
-**Locking**: FOR UPDATE on the source Ticket row only. Cascade
+**Locking**: FOR UPDATE on the source Ticket row only. Flattening
 operations each acquire their own FOR UPDATE in independent transactions
-managed by `execute_duplicate_cascade`.
+managed by `execute_duplicate_flattening`.
 
 **reconcile_ticket_status**: NOT called — this is a direct transition
 into the manual zone (Duplicated).
 
-**Audit events**: `duplicate_set`. Cascade produces
+**Audit events**: `duplicate_set`. Flattening produces
 `duplicate_target_changed` events (in separate transactions managed by
-`execute_duplicate_cascade`).
+`execute_duplicate_flattening`).
 
-### execute_duplicate_cascade
+### execute_duplicate_flattening
 
-Executes the cascade phase of `mark_as_duplicate`: updates
+Executes the flattening phase of `mark_as_duplicate`: updates
 `duplicate_of_id` for all tickets that pointed to the just-duplicated
 ticket.
 
 ```python
-async def execute_duplicate_cascade(
+async def execute_duplicate_flattening(
     db_session_factory: async_sessionmaker[AsyncSession],
     *,
-    cascade_ticket_ids: list[UUID],
+    flattening_ticket_ids: list[UUID],
     canonical_target_id: UUID,
     acting_user_id: UUID | None,
 ) -> None:
@@ -483,10 +483,10 @@ This function opens and commits independent database sessions — it is
 the sole exception to the "module does not commit" invariant (see
 Transaction ownership above).
 
-**Behavioral steps** (for each ticket ID in `cascade_ticket_ids`):
+**Behavioral steps** (for each ticket ID in `flattening_ticket_ids`):
 
 1. Open a new session via `db_session_factory()`
-2. Acquire `FOR UPDATE` on the cascade ticket
+2. Acquire `FOR UPDATE` on the flattening ticket
 3. Verify the ticket is still in Duplicated status and still points to
    the original ticket. If reverted concurrently, the function logs an
    informational message (ticket ID + observed state) and skips to the
@@ -495,13 +495,13 @@ Transaction ownership above).
 5. Create `TicketAuditEvent` (`duplicate_target_changed`)
 6. Commit the session
 
-**Best-effort semantics**: if an individual cascade step fails (e.g.,
+**Best-effort semantics**: if an individual flattening step fails (e.g.,
 database error on one ticket), the function logs the failure and
-continues with the remaining tickets. This matches the "cascade is not
+continues with the remaining tickets. This matches the "flattening is not
 a correctness requirement" invariant from `tickets.md` — the canonical
 resolver handles unflattened chains.
 
-**Locking**: each cascade ticket is locked independently in its own
+**Locking**: each flattening ticket is locked independently in its own
 transaction. No multi-ticket locks are held simultaneously (as required
 by `ticket_mutations.md` single-ticket scope rule).
 
@@ -524,12 +524,12 @@ This section applies to:
 After `_reenter_gate_zone()` commits the status transition, the
 endpoint handler executes:
 
-1. **Synchronous — CVSS cascade recalculation**: call
-   `ticket_mutations.recalculate_cvss_cascade(ticket_id)` to reconcile
+1. **Synchronous — CVSS chain recalculation**: call
+   `ticket_mutations.recalculate_cvss_chain(ticket_id)` to reconcile
    CVSS-derived data (severity, product eligibility) with the current
    system state. While the ticket was inactive, the default CVSS version
    may have changed or new `CVECVSSAssessment` records may have been
-   created by other fetchers. `recalculate_cvss_cascade` re-resolves
+   created by other fetchers. `recalculate_cvss_chain` re-resolves
    severity and eligibility using the current data and calls
    `reconcile_ticket_status()` at its end.
 
@@ -556,7 +556,7 @@ behavior — the system converges to the accurate state.
 - [cvss-scoring.md](cvss-scoring.md) — CVSS resolution cascade,
   recalculation trigger rationale
 - [ticket-mutations.md](ticket-mutations.md) —
-  `recalculate_cvss_cascade()` contract, `_reenter_gate_zone()` helper
+  `recalculate_cvss_chain()` contract, `_reenter_gate_zone()` helper
 - [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md) —
   `fetch_single` capability contract
 
@@ -758,7 +758,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 
 | Caller | Operations used |
 |--------|----------------|
-| API endpoint handlers (`api/v1/tickets.py`) | All 9 operations + `execute_duplicate_cascade` |
+| API endpoint handlers (`api/v1/tickets.py`) | All 9 operations + `execute_duplicate_flattening` |
 | CVE service (`services/cve_service.py`) | `create_ticket` (source=`cve_ingestion`) |
 | IBS track release detection (`tasks/check_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
 
@@ -795,7 +795,7 @@ ticket_mutations (infrastructure)
 | assign_ticket          | ✓                      | ✓                      | —                     | —                        |
 | ignore_ticket          | ✓                      | —                      | ✓                     | —                        |
 | mark_as_duplicate      | ✓                      | —                      | ✓                     | ✓                        |
-| execute_duplicate_cascade | —                   | —                      | —                     | —                        |
+| execute_duplicate_flattening | —                   | —                      | —                     | —                        |
 | set_confidentiality    | ✓                      | —                      | —                     | —                        |
 | grant_access           | ✓                      | —                      | —                     | —                        |
 | revoke_access          | ✓                      | —                      | —                     | —                        |
@@ -830,8 +830,8 @@ behavior of `ticket_service` operations:
    future code paths that set `assignee_id` without performing the
    `New → Analysis` transition.
 
-4. **Mark-as-duplicate cascade with concurrent revert**: mark ticket B as
-   duplicate of C (with ticket A pointing to B). Verify cascade updates
+4. **Mark-as-duplicate flattening with concurrent revert**: mark ticket B as
+   duplicate of C (with ticket A pointing to B). Verify flattening updates
    A to point to C. Then revert A → verify A is no longer Duplicated
 
 5. **CVE uniqueness race condition**: simulate concurrent `create_ticket`

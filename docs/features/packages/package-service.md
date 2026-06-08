@@ -786,7 +786,7 @@ After every track soft-deletion, check whether the parent
 receives its own `deleted_at`. Tracks and products under the package
 are NOT modified.
 
-### Cascading composition
+### Chain composition
 
 The invariants compose naturally. Soft-deleting a product may trigger
 the track orphan rule, which may trigger the package orphan rule:
@@ -802,10 +802,10 @@ soft_delete_ticket_package_product(record, user)
               -> if 0 directly-active tracks:
                   set package.deleted_at (direct)
                   -> TicketAuditEvent (package_excluded, user_id=NULL)
-  -> reconcile_ticket_status()   # once, after entire cascade completes
+  -> reconcile_ticket_status()   # once, after entire chain completes
 ```
 
-> `reconcile_ticket_status()` is called once after the entire cascade
+> `reconcile_ticket_status()` is called once after the entire chain
 > completes — not at each intermediate level. The function is idempotent
 > and queries the current state of all active records, so only the final
 > invocation after all soft-deletions have been applied produces the
@@ -815,7 +815,7 @@ soft_delete_ticket_package_product(record, user)
 Orphan-triggered soft-deletions create `TicketAuditEvent` records with
 `user_id = NULL` (system action), distinguishing them from VA-initiated
 exclusions. Each orphan soft-deletion sets `deleted_at` only on the
-parent — no cascade to children (per the hierarchical exclusion model).
+parent — no chain to children (per the hierarchical exclusion model).
 
 ## Record Creation Logic
 
@@ -951,7 +951,7 @@ transitions. The test must cover:
   products become ineligible also triggers Analyzed -> Resolved)
 - **Backward transitions**: package mutations breaking gate conditions
   (e.g., restoring a soft-deleted track with non-final status)
-- **Orphan cascade**: soft-deleting the last product triggers track
+- **Orphan chain**: soft-deleting the last product triggers track
   deletion, then package deletion, with correct audit events at each
   level
 - **Auto-assignment**: mutations on unassigned tickets trigger assignment

@@ -877,7 +877,7 @@ or with `ad_group_cn = '_manual'` will retain the role.
 4. **Override is additive only**: an admin can add manual roles to a user
    but cannot remove AD-derived roles. This prevents accidental
    revocation of roles that are managed centrally
-5. **Deactivation cascades**: when an employee is deactivated in AD,
+5. **Deactivation chain**: when an employee is deactivated in AD,
    the side effects are handled by `user_service.deactivate_user()` —
    see `docs/features/identity/user-service.md` for the full contract
     (ticket unassignment, API key revocation, TicketAuditEvent creation)

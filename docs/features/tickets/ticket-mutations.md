@@ -235,8 +235,8 @@ than the intermediate `Analysis` value. Passing
 ### Multiple invocations within a transaction
 
 `reconcile_ticket_status` may be called multiple times in a single
-transaction during orphan cascades. However, `package_service` calls
-reconcile once after the entire orphan cascade completes (not at each
+transaction during orphan chains. However, `package_service` calls
+reconcile once after the entire orphan chain completes (not at each
 level). The function is idempotent — each call ensures consistent
 state based on the ticket's current data at that point in the
 transaction.
@@ -248,7 +248,7 @@ transitions from Resolved to an active status (Analysis or Analyzed).
 When detected, the caller executes the same catch-up mechanisms used by
 ticket reactivation:
 
-1. Call `recalculate_cvss_cascade(ticket_id, default_cvss_version)` to
+1. Call `recalculate_cvss_chain(ticket_id, default_cvss_version)` to
    reconcile CVSS-derived data (severity, product eligibility) with the
    current default version and any assessment updates that occurred while
    the ticket was Resolved. The caller reads `default_cvss_version` from
@@ -269,11 +269,11 @@ if old_status == TicketStatus.RESOLVED and new_status in (
     TicketStatus.NEW, TicketStatus.ANALYSIS, TicketStatus.ANALYZED
 ):
     default_cvss_version = await settings_service.get_default_cvss_version(db)
-    recalculate_cvss_cascade(db, ticket_id=ticket.id, default_cvss_version=default_cvss_version)
+    recalculate_cvss_chain(db, ticket_id=ticket.id, default_cvss_version=default_cvss_version)
     # enqueue fetch_single for all capable fetchers (async)
 ```
 
-**Note on double reconciliation**: `recalculate_cvss_cascade()` itself
+**Note on double reconciliation**: `recalculate_cvss_chain()` itself
 calls `reconcile_ticket_status()` at its end. The second reconciliation
 uses the freshly-recalculated severity and eligibility data, producing
 the correct final state. No infinite loop risk — the status converges
@@ -298,7 +298,7 @@ from racing with gate operations on the same ticket.
 ### Single-ticket scope
 
 `ticket_mutations` functions operate on a single ticket per
-transaction. Code that must modify multiple tickets (e.g., the cascade
+transaction. Code that must modify multiple tickets (e.g., the flattening
 update of `duplicate_of_id` when marking a ticket as duplicate) MUST
 NOT acquire `FOR UPDATE` on multiple ticket rows in the same
 transaction — process each ticket in an independent transaction to
@@ -446,7 +446,7 @@ an associated ticket.
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = NULL`, `new_value = "provider vX.Y score"`)
    c. Call `reconcile_ticket_status()`
-6. If no ticket exists (ticketless CVE): skip audit event and cascade —
+6. If no ticket exists (ticketless CVE): skip audit event and chain —
    the CVSS assessment is stored but no side effects are triggered
 7. Return created assessment
 
@@ -501,7 +501,7 @@ Updates an existing `CVECVSSAssessment` record.
       `old_value = "provider vX.Y old_score"`,
       `new_value = "provider vX.Y new_score"`)
    c. Call `reconcile_ticket_status()`
-6. If no ticket exists: skip audit event and cascade
+6. If no ticket exists: skip audit event and chain
 7. Return updated assessment
 
 **TicketAuditEvent**: `cvss_assessment_changed` (only when the CVE has
@@ -543,7 +543,7 @@ Deletes a `CVECVSSAssessment` record (hard delete).
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = "provider vX.Y score"`, `new_value = NULL`)
    c. Call `reconcile_ticket_status()`
-5. If no ticket exists: skip audit event and cascade
+5. If no ticket exists: skip audit event and chain
 
 **TicketAuditEvent**: `cvss_assessment_changed` (only when the CVE has
 an associated ticket)
@@ -593,7 +593,7 @@ resolution cascade and `severity_override` is not applicable.
 
 ---
 
-### `recalculate_cvss_cascade()`
+### `recalculate_cvss_chain()`
 
 Recalculates severity and product eligibility for a ticket based on
 current CVSS assessments and the active default CVSS version. This
@@ -878,16 +878,16 @@ status gates MUST go through the appropriate centralized module:
 Direct modification of gate-relevant records outside the owning module is a bug,
 with one architectural exception:
 
-### Exception: CVSS Recalculation Cascade Eligibility Mutations
+### Exception: CVSS Recalculation Chain Eligibility Mutations
 
 The architectural dependency is strictly unidirectional: `package_service` depends
 on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service`
 (to prevent circular dependencies).
 
-Consequently, when a CVSS mutation triggers the Recalculation Cascade, the resulting
+Consequently, when a CVSS mutation triggers the Recalculation Chain, the resulting
 automatic, deterministic product eligibility updates are performed inline directly
 within `ticket_mutations`. These updates are not standalone product mutations but rather
-system-wide consequences of the CVSS score change. The cascade specification in
+system-wide consequences of the CVSS score change. The chain specification in
 `docs/features/tickets/cvss-scoring.md` guarantees that all required side effects —
 the generation of `product_eligibility_changed` audit events and the call to
 `reconcile_ticket_status()` — are executed atomically in the same transaction.
@@ -963,9 +963,9 @@ individual endpoints.
 | CVE API mutation endpoints | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | VA-initiated CVSS operations via `/api/v1/cves/{cve_id}/cvss/...` |
 | CVSS sync fetcher | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Background CVSS ingestion |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
-| Admin: default CVSS version change | `recalculate_cvss_cascade()` | Batch re-evaluation triggered by default CVSS version config change |
-| Ticket reactivation (un-ignore, un-duplicate) | `recalculate_cvss_cascade()` | Called by `ticket_service` when a ticket transitions from Ignored/Duplicated to an active status |
-| Post-regression from Resolved | `recalculate_cvss_cascade()` | Called by the caller of `reconcile_ticket_status()` when a backward transition from Resolved is detected |
+| Admin: default CVSS version change | `recalculate_cvss_chain()` | Batch re-evaluation triggered by default CVSS version config change |
+| Ticket reactivation (un-ignore, un-duplicate) | `recalculate_cvss_chain()` | Called by `ticket_service` when a ticket transitions from Ignored/Duplicated to an active status |
+| Post-regression from Resolved | `recalculate_cvss_chain()` | Called by the caller of `reconcile_ticket_status()` when a backward transition from Resolved is detected |
 | `package_service` | `reconcile_ticket_status()`, `auto_assign_actor()` | Called after every package mutation |
 
 Package-centric callers (IBS release detection, product lifecycle

@@ -108,9 +108,9 @@ Note block in `set_product_eligibility()` reset path references `re_evaluate_pro
 
 ## Design
 
-### PKS-DES-01 — Orphan cascade calls reconcile_ticket_status() multiple times per operation (Medium)
+### PKS-DES-01 — Orphan chain calls reconcile_ticket_status() multiple times per operation (Medium)
 
-**Status**: RESOLVED — Cascade now calls reconcile_ticket_status() once at the end (2026-05-25)
+**Status**: RESOLVED — Chain now calls reconcile_ticket_status() once at the end (2026-05-25)
 
 ### PKS-DES-02 — No mechanism to batch-set track statuses without repeated lock acquisition (Low)
 

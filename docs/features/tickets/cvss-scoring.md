@@ -99,7 +99,7 @@ The 10.0 fallback ensures that products are never silently excluded before
 SUSE has assessed the vulnerability — blocked resolution is visible and
 correctable; silent omission is not.
 
-This cascade is implemented by `resolve_eligibility_score` in
+This resolution is implemented by `resolve_eligibility_score` in
 `services/cvss.py`.
 
 ## Providers
@@ -249,14 +249,14 @@ Severity is recalculated whenever:
 - A CVSS assessment is added, modified, or removed for the CVE
 - The system-wide default CVSS version is changed by an Admin
 - A ticket is reactivated from Ignored or Duplicated status —
-  `recalculate_cvss_cascade()` is called synchronously during the
+  `recalculate_cvss_chain()` is called synchronously during the
   reactivation, plus `fetch_single` tasks are enqueued for catch-up
 - A CVE is associated with a ticket (or a ticket is created with a
-   CVE) — `recalculate_cvss_cascade()` is called synchronously after
+   CVE) — `recalculate_cvss_chain()` is called synchronously after
    commit, plus `fetch_single` tasks are enqueued for enrichment
    catch-up
 - A ticket regresses from Resolved to an active status —
-   `recalculate_cvss_cascade()` is called synchronously by the caller
+   `recalculate_cvss_chain()` is called synchronously by the caller
    of `reconcile_ticket_status()` when a backward transition from
    Resolved is detected
 
@@ -299,8 +299,8 @@ assessments (Primary and Secondary) from the NVD REST API v2. CNA
 display names for Secondary assessments are resolved via the NVD Source
 API. Changes are persisted via `cve_service` (see
 [`cve-service.md`](cve-service.md)). If any CVSS assessment changed for
-a CVE with an active ticket, the recalculation cascade is triggered (see
-Recalculation Cascade below).
+a CVE with an active ticket, the recalculation chain is triggered (see
+Recalculation Chain below).
 
 For the full fetcher definition — including the incremental algorithm,
 NVD Source API caching strategy, first-run behavior, and error handling
@@ -382,7 +382,7 @@ CVSS fetchers MUST separate data persistence (`CVECVSSAssessment` records)
 from recalculation of derived data (severity, eligibility, ticket status):
 
 1. **Persistence scope**: the ticket-status filter ("active tickets only")
-   applies ONLY to the recalculation cascade, NEVER to the persistence of
+   applies ONLY to the recalculation chain, NEVER to the persistence of
    `CVECVSSAssessment` records — unless the external API's design or rate
    limits make broader persistence impractical (e.g., per-CVE lookup APIs
    with no bulk/incremental endpoint).
@@ -394,10 +394,10 @@ from recalculation of derived data (severity, eligibility, ticket status):
 3. **Goal**: `CVECVSSAssessment` records are as complete as possible
    regardless of ticket lifecycle state. Reopened tickets converge to
    accurate derived data quickly via the synchronous recalculation
-   cascade (immediate best-effort) followed by asynchronous `fetch_single`
+   chain (immediate best-effort) followed by asynchronous `fetch_single`
    tasks (data catch-up).
 
-## Recalculation Cascade
+## Recalculation Chain
 
 When a CVSS assessment changes (added, modified, or removed) for a CVE
 with an active ticket, Sentinel performs the following recalculation:
@@ -523,7 +523,7 @@ Request body:
 
 The backend parses the vector, derives the version and score, and saves the
 assessment. If an existing SUSE assessment for the derived version exists, it
-is updated (upsert). Triggers recalculation cascade.
+is updated (upsert). Triggers recalculation chain.
 
 Response (200 OK): the created or updated assessment object wrapped in
 the standard `{"data": ...}` envelope.
@@ -548,7 +548,7 @@ DELETE /api/v1/cves/{cve_id}/cvss/suse/{cvss_version}
 ```
 
 Removes the SUSE CVSS assessment for the specified version. Triggers
-recalculation cascade. The ticket may no longer meet the progression gate
+recalculation chain. The ticket may no longer meet the progression gate
 requirements.
 
 Response: 204 No Content.
@@ -602,7 +602,7 @@ These functions are used in two contexts:
    `severity.provider`, `severity.label`, and `eligibility.score`
    response fields without any side effects
 2. **Write path** (via `ticket_mutations`): as building blocks for the
-   recalculation cascade — `ticket_mutations` calls these functions to
+   recalculation chain — `ticket_mutations` calls these functions to
    determine the new severity and eligibility, then persists the results
 
 ### `services/ticket_mutations.py` — CVSS Mutations
@@ -642,9 +642,9 @@ dedicated settings service module. `services/cvss.py` does not access
 as a parameter. This keeps `cvss.py` free of database dependencies and
 makes it straightforward to test with any CVSS version.
 
-## Cascade Execution Model
+## Chain Execution Model
 
-The recalculation cascade is a **synchronous service-layer operation**
+The recalculation chain is a **synchronous service-layer operation**
 executed within the same database transaction as the CVSS change that
 triggered it. This guarantees atomicity: if the CVSS change is committed,
 the severity, eligibility, and ticket state adjustments are committed
@@ -652,7 +652,7 @@ together.
 
 **Exception — batch recalculation on default version change**: when the
 Admin changes the default CVSS version (see `docs/features/platform/system-settings.md`),
-the cascade must run for all active tickets. This batch operation is
+the chain must run for all active tickets. This batch operation is
 executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
 
@@ -669,12 +669,12 @@ response. The task:
    occurred while waiting for the lock.
 3. Iterates over all active tickets (New, Analysis, Analyzed)
 4. For each ticket, calls
-   `ticket_mutations.recalculate_cvss_cascade()` — a dedicated entry
+   `ticket_mutations.recalculate_cvss_chain()` — a dedicated entry
    point that recalculates derived data without modifying any
    `CVECVSSAssessment` record (see
    `docs/features/tickets/ticket-mutations.md`). The task passes
    `default_cvss_version` as a mandatory parameter to every
-   `recalculate_cvss_cascade()` call.
+   `recalculate_cvss_chain()` call.
 5. Each ticket is processed in an **independent database transaction**
    (isolation: a failure on one ticket does not roll back others)
 6. On error for a single ticket, the task logs the error with the
@@ -682,7 +682,7 @@ response. The task:
 7. On completion, the task releases the lock and reports the total
    number of tickets processed, successes, and failures
 
-**Idempotency**: `recalculate_cvss_cascade()` is idempotent —
+**Idempotency**: `recalculate_cvss_chain()` is idempotent —
 re-processing tickets already updated produces the same result. If
 multiple default version changes occur in rapid succession, the lock
 serializes the batch tasks and the read-after-lock pattern ensures
@@ -695,7 +695,7 @@ Duplicated) to an active state (New, Analysis, Analyzed), two catch-up
 mechanisms execute to reconcile CVSS-derived data:
 
 1. **Synchronous** (within the reactivation transaction):
-   `recalculate_cvss_cascade()` is called to reconcile derived data
+   `recalculate_cvss_chain()` is called to reconcile derived data
    (severity, eligibility) with the current `default_cvss_version` and
    any `CVECVSSAssessment` updates that occurred while the ticket was
    inactive. This provides immediate best-effort accuracy using
@@ -707,8 +707,8 @@ mechanisms execute to reconcile CVSS-derived data:
    that was not fetched during the inactive period (e.g., Red Hat CVSS
    updates via `fetch_single_redhat`, IBS release detection, submission
    tracking). Each `fetch_single` task operates independently; if it
-   discovers changed data, the normal mutation path handles the
-   recalculation cascade.
+    discovers changed data, the normal mutation path handles the
+    recalculation chain.
 
 The ticket may transition rapidly as async tasks complete (e.g.,
 re-open → Analysis, then a fetch discovers a release → Resolved). This
@@ -717,7 +717,7 @@ state.
 
 See [`ticket-service.md`](ticket-service.md) for the un-ignore /
 un-duplicate hooks, [`ticket-mutations.md`](ticket-mutations.md) for
-the post-regression hook and `recalculate_cvss_cascade()` contract, and
+the post-regression hook and `recalculate_cvss_chain()` contract, and
 [`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md) for
 the `fetch_single` capability contract.
 
@@ -788,7 +788,7 @@ exception in
   `CVECVSSAssessment`, persists/updates the assessment via
   `ticket_mutations.create_cvss_assessment()` or
   `ticket_mutations.update_cvss_assessment()`, which triggers the normal
-  recalculation cascade.
+  recalculation chain.
 - **Idempotent**: if the Red Hat data is unchanged from the stored
   assessment, no mutation occurs (no-op).
 - **Trigger**: enqueued in three scenarios (not by Celery Beat):
@@ -818,7 +818,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - `docs/features/tickets/tickets.md` — Ticket lifecycle, gate conditions
   (Analysis → Analyzed, Analyzed → Resolved), centralized status evaluation
 - `docs/features/tickets/ticket-mutations.md` — CVSS mutation functions,
-  `recalculate_cvss_cascade()`, `reconcile_ticket_status()`, per-operation
+  `recalculate_cvss_chain()`, `reconcile_ticket_status()`, per-operation
   audit contract, module boundary, manual-zone exit operations
 - `docs/features/tickets/ticket-service.md` — Non-gate ticket lifecycle
   operations, un-ignore / un-duplicate hooks

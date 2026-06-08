@@ -338,13 +338,13 @@ supports chains of duplicates (A→B→C) with:
 - `resolve_canonical_target()` — a chain resolver with 50-hop limit and
   cycle detection (`DuplicateChainDepthError`,
   `TICKET_DUPLICATE_CYCLE_DETECTED`)
-- `execute_duplicate_cascade` — best-effort flattening that re-points
+- `execute_duplicate_flattening` — best-effort flattening that re-points
   intermediate tickets when a target is itself marked as duplicate.
   Requires independent transactions per ticket (separate
   `db_session_factory`), making it the **only exception** to the "module
   does not commit" invariant in `ticket-service.md`
-- `duplicate_target_changed` audit event type — created during cascade
-  flattening
+- `duplicate_target_changed` audit event type — created during
+   flattening
 - Cycle detection and resolution procedures (manual admin intervention)
 - API response serialization that resolves the chain before returning
   `duplicate_of_id`
@@ -366,12 +366,12 @@ Under this model:
   zone
 - No chain resolution needed — `duplicate_of_id` always points directly
   to a non-Duplicated ticket
-- No cascade needed — if B is later marked as duplicate of C, tickets
+- No flattening needed — if B is later marked as duplicate of C, tickets
   pointing to B now have a stale reference. Two options:
   - **(a) Reject**: block `mark_as_duplicate(B, C)` if any ticket's
     `duplicate_of_id` points to B. The VA must revert those tickets
     first. Simplest, most explicit.
-  - **(b) Inline cascade**: re-point the (typically 0-1) tickets
+  - **(b) Inline flattening**: re-point the (typically 0-1) tickets
     pointing to B within the same transaction. No separate session
     factory needed since the set is trivially small (single UPDATE).
     Less restrictive than (a) but still eliminates chains.
@@ -380,7 +380,7 @@ Under this model:
 
 - `resolve_canonical_target()` function (50-hop resolver, cycle
   detection)
-- `execute_duplicate_cascade` and its special transaction handling
+- `execute_duplicate_flattening` and its special transaction handling
 - `DuplicateChainDepthError` and `TICKET_DUPLICATE_CYCLE_DETECTED`
   error codes
 - `duplicate_target_changed` audit event type

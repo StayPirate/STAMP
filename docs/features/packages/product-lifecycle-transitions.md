@@ -122,12 +122,12 @@ Existing behavior as specified in `docs/features/packages/package-model.md`.
 assessments or the default CVSS version do NOT use this sub-task.
 CVSS-triggered eligibility recalculation is executed synchronously and
 inline by `ticket_mutations` within the CVSS mutation transaction. See
-[`cvss-scoring.md`](../tickets/cvss-scoring.md) (Recalculation Cascade,
+[`cvss-scoring.md`](../tickets/cvss-scoring.md) (Recalculation Chain,
 step 2) for details. This sub-task handles exclusively
 lifecycle-triggered re-evaluation (`reactive_ltss`, `threshold_change`,
 `eol`).
 
-## Cascading Cleanup
+## Orphan Cleanup
 
 When `re_evaluate_product_eligibility` soft-deletes a `TicketPackageProduct`
 (for EOL), the orphan cleanup invariants defined in
@@ -139,7 +139,7 @@ package has zero remaining tracks with `deleted_at IS NULL`, the package
 itself is soft-deleted. Each step produces a `TicketAuditEvent` (with
 `user_id = NULL`) and calls `reconcile_ticket_status`.
 
-This is an upward cascade only — child records are never modified. Each
+This is an upward chain only — child records are never modified. Each
 soft-deletion sets `deleted_at` on the targeted record; descendants become
 effectively excluded via the hierarchical exclusion model (see
 `docs/features/packages/package-model.md`).
