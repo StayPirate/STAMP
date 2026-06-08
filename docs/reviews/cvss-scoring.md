@@ -12,12 +12,10 @@
 
 **Status**: RESOLVED — Auto-resolved: the spec already covers this scenario — "SUSE has not scored the default version" is listed as an explicit condition in Eligibility Score Resolution (line 90), and the gate requiring both v3.1 and v4.0 for Analysis→Analyzed limits the impact to in-progress Analysis tickets, which is expected behavior (2026-06-07)
 
-### GAP-CVS-008 — `sync_cvss_redhat` fetcher error handling explicitly marked TBD (High)
+### GAP-CVS-008 — `sync_redhat_cves` fetcher error handling explicitly marked TBD (High)
 
 **Category**: Unspecified error paths
-**Status**: OPEN
-
-`sync_cvss_redhat` fetcher error handling is explicitly marked "TBD" in the spec. Multiple failure modes are unspecified: HTTP 404 (CVE not in Red Hat's database — should existing assessment be deleted or preserved?), HTTP 429, HTTP 5xx, network timeouts, and malformed responses.
+**Status**: RESOLVED — Error handling fully specified in `cve-tracking.md` (Fetcher: `sync_redhat_cves`, Error Handling section): HTTP 404 and no-CVSS-fields map to `missing` (existing assessments preserved), HTTP 429/5xx/timeout retry 3x then `failure`, unparseable data is non-retryable `failure`, batch run uses per-CVE error handling with 3-consecutive-failure abort
 
 ### GAP-CVS-001 — `resolve_eligibility_score` input contract does not specify pre-filtering of assessments (Medium)
 

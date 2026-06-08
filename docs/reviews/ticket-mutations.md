@@ -76,6 +76,13 @@
 
 **Status**: RESOLVED — Added clarifying note to Analyzed gate #4 in tickets.md: gate is data completeness requirement independent of default_cvss_version setting (2026-05-25)
 
+### TKM-GAP-18 — Post-regression catch-up delegation is caller-dependent (Medium)
+
+**Category**: Missing error paths
+**Status**: OPEN
+
+The spec delegates regression detection to **callers** of `reconcile_ticket_status()` — each caller must check old vs new status and enqueue catch-up tasks. The spec does not enumerate which callers are responsible for this check. A new caller of `reconcile_ticket_status()` could omit the post-regression hook and silently skip catch-up enqueuing. Consider moving regression detection inside `reconcile_ticket_status()` itself (returning old/new status or emitting a signal) so the hook is automatic. This gap predates the `catch_up()` refactoring and is not introduced by it.
+
 ---
 
 ## Coherence

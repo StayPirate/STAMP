@@ -255,8 +255,9 @@ ticket reactivation:
    the database before invoking the function. Automated CVSS sync scopes
    to active tickets — Resolved tickets are excluded, so Red Hat and
    other per-ticket CVSS data may be stale.
-2. Enqueue `fetch_single` for every registered fetcher that exposes the
-   capability. Same mechanism as the un-ignore/un-duplicate hook (see
+2. Enqueue `catch_up()` for every registered fetcher via
+   `get_catch_up_fetchers()`. Same mechanism as the
+   un-ignore/un-duplicate hook (see
    [ticket-service.md](ticket-service.md), "Ticket Reactivation").
 
 **Pattern for callers**:
@@ -270,7 +271,7 @@ if old_status == TicketStatus.RESOLVED and new_status in (
 ):
     default_cvss_version = await settings_service.get_default_cvss_version(db)
     recalculate_cvss_chain(db, ticket_id=ticket.id, default_cvss_version=default_cvss_version)
-    # enqueue fetch_single for all capable fetchers (async)
+    # enqueue catch_up for all registered fetchers (async, post-commit)
 ```
 
 **Note on double reconciliation**: `recalculate_cvss_chain()` itself

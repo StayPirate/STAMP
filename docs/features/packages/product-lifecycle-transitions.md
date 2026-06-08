@@ -79,6 +79,22 @@ nothing.
 
 **Schedule**: `0 4 * * *` (daily at 04:00 UTC)
 
+#### Catch-Up
+
+`EvaluateLifecycleTransitions` implements `catch_up()` as a custom
+override. See
+[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
+contract.
+
+**Scope**: extracts the ticket's `TicketPackageProduct` records and
+re-evaluates lifecycle phase and eligibility for each product. While
+the ticket was inactive, products may have transitioned between
+lifecycle phases (e.g., entered LTSS or reached end-of-life),
+affecting eligibility thresholds.
+
+**Detailed specification**: to be defined during implementation.
+
 ### Sub-task: `re_evaluate_product_eligibility`
 
 An on-demand Celery task (NOT a `BaseFetcher` — it is a sub-operation

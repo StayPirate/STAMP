@@ -210,6 +210,21 @@ Catch-up mechanism for events missed by the real-time
 `IBSEventConsumer` (see
 `docs/features/integrations/ibs-rabbitmq-integration.md`).
 
+#### Catch-Up
+
+`DetectIbsTrackReleases` implements `catch_up()` as a custom override
+(not the default CVE fetcher implementation). See
+[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
+contract.
+
+**Scope**: extracts the ticket's `TicketPackageTrack` records and
+checks IBS for source changes on each codestream, using the same
+diff-based detection logic as `execute()` but scoped to a single
+ticket.
+
+**Detailed specification**: to be defined during implementation.
+
 #### Metrics
 
 - `record_created`: a new ticket was created from a detected release

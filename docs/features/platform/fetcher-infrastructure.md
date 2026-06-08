@@ -174,7 +174,7 @@ class SyncNvdCves(BaseFetcher):
         ...
 ```
 
-**CVE fetcher example** — enrichment fetcher (no `fetch_single`):
+**CVE fetcher example** — delegates `execute()` to `fetch_single()`:
 
 ```python
 class SyncRedhatCves(BaseFetcher):
@@ -183,9 +183,13 @@ class SyncRedhatCves(BaseFetcher):
     description = "Sync CVE data from Red Hat Security API"
     default_schedule = "0 3 * * *"
 
-    async def execute(self, session: AsyncSession) -> None:
-        # Uses self.cve_source_type — never a hardcoded string:
+    async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
+        # Core per-CVE logic: call Red Hat API, upsert CVSS/CWE/refs
         await upsert_cve(db, cve_id, source=self.cve_source_type, ...)
+
+    async def execute(self, session: AsyncSession) -> None:
+        for cve_id in active_ticket_cve_ids:
+            await self.fetch_single(cve_id, session)
 ```
 
 The `name` attribute MUST NOT exceed **100 characters**. This limit is
@@ -387,10 +391,9 @@ When multiple fetchers are invoked in parallel for the same CVE-ID:
 
 ### `cve_source_type` class attribute
 
-ALL fetchers that write to `CVESource` — both **discovery fetchers**
-(those implementing `fetch_single()`) and **enrichment fetchers** (those
-calling `upsert_cve()` without `fetch_single()`) — MUST declare a
-`cve_source_type: str` class attribute containing the CVESourceType
+ALL CVE fetchers — those that write to `CVESource` via
+`upsert_cve()` — MUST declare a `cve_source_type: str` class
+attribute containing the CVESourceType
 identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`).
 
 This is the value stored in `CVESource.source` and used in Redis pending
@@ -444,8 +447,8 @@ await record_source_status(session, cve_id, self.cve_source_type, "failure")
 await upsert_cve(db, cve_id, source="nvd", cve_data=payload)
 ```
 
-This convention provides runtime enforcement for enrichment fetchers: if
-a fetcher calls `upsert_cve(source=self.cve_source_type)` without
+This convention provides runtime enforcement for CVE fetchers: if a
+fetcher calls `upsert_cve(source=self.cve_source_type)` without
 declaring `cve_source_type`, the call raises `AttributeError`
 immediately — catching the omission at the first test run.
 
@@ -506,87 +509,256 @@ to prevent accidental corruption of the cached result.
 to invalidate the cached result — for test suites that dynamically
 register mock fetchers.
 
-## Per-Ticket Catch-Up: `fetch_single` Capability
+## Per-Ticket Catch-Up: `catch_up()` Method
 
-Fetchers MAY expose a `fetch_single` sub-operation task that allows
-on-demand data retrieval scoped to a single ticket. This capability
-provides a catch-up mechanism for tickets reactivated after a period of
-inactivity (Ignored, Duplicated, or Resolved → active status). When a
-ticket is reactivated, the system enqueues `fetch_single` for every
-registered fetcher that exposes this capability.
+Fetchers whose `execute()` scope is filtered by ticket status (e.g.,
+`sync_redhat_cves` scopes to CVEs with active tickets) skip inactive
+tickets during periodic runs. When a ticket is reactivated (from
+Ignored, Duplicated, or Resolved), the system enqueues per-ticket
+catch-up tasks to recover data missed during the inactive period.
 
-### Classification
-
-`fetch_single` is a **sub-operation task** per the existing sub-operation
-exception (see "Guardrail: Fetcher Base Class Compliance" below):
-
-- Not a `BaseFetcher` subclass — no independent schedule, no dashboard
-  presence, no `FetcherRun` record
-- Triggered on-demand by ticket reactivation hooks, not by Celery Beat
-- Metric reporting (`record_created`, etc.) is not used
-
-### Interface Contract
+The catch-up mechanism is a method on `BaseFetcher`:
 
 ```python
-@celery_app.task
-def fetch_single_<fetcher_name>(ticket_id: str) -> None:
-    """Catch-up fetch scoped to a single ticket.
+async def catch_up(self, ticket_id: str, session: AsyncSession) -> None:
+    """Per-ticket catch-up after reactivation.
 
-    The task extracts relevant identifiers from the ticket context
-    (CVE ID for CVSS fetchers, package names for IBS fetchers, etc.)
-    and fetches current data from the external source.
+    Called when a ticket transitions from an inactive status
+    (Ignored, Duplicated, Resolved) to an active status. The
+    fetcher retrieves data that was missed during the inactive
+    period.
+
+    Optional. Only applicable to fetchers whose execute() scope
+    is filtered by ticket status. Global fetchers (product catalog,
+    AD sync, etc.) do not implement this.
     """
     ...
 ```
 
-- **Parameter**: `ticket_id` (UUID as string) — the fetcher extracts
-  the relevant identifiers from the ticket context (CVE ID for CVSS
-  fetchers, package names for IBS fetchers, etc.)
-- **Idempotent**: if the external data is unchanged, the task produces
-  no side effects
-- **Mutation path**: when changed data is found, the task persists it
-  through the normal mutation path (e.g.,
-  `ticket_mutations.create_cvss_assessment()` for CVSS data), which
-  triggers the standard chain (audit events, reconciliation)
-- **No direct ticket mutations**: the task MUST NOT acquire `FOR UPDATE`
-  locks on the Ticket row or perform ticket-level mutations directly —
-  it delegates to the appropriate service module
+### Default implementation for CVE fetchers
 
-### Registration
+`BaseFetcher` provides a default implementation of `catch_up()` that
+delegates to `fetch_single()`:
 
-Fetchers that implement `fetch_single` declare the capability as a class
-attribute or registry entry (implementation detail — to be defined during
-implementation). The system discovers all fetchers that expose this
-capability and enqueues tasks for each when a ticket is reactivated.
+```python
+class BaseFetcher:
+    async def catch_up(self, ticket_id: str, session: AsyncSession) -> None:
+        """Default: extract cve_id from ticket, call fetch_single().
 
-### Applicability
+        CVE fetchers that implement fetch_single() inherit this
+        default catch_up() automatically. Non-CVE fetchers override
+        with custom logic.
+        """
+        if 'fetch_single' not in type(self).__dict__:
+            return  # no fetch_single, no default catch_up
+        ticket = await session.get(Ticket, UUID(ticket_id))
+        if ticket and ticket.cve_id:
+            try:
+                await self.fetch_single(str(ticket.cve_id), session)
+            except CVENotInSource:
+                pass  # CVE not in this source — nothing to catch up
+```
 
-Not all fetchers need this capability:
+**Boundary conditions for the default implementation**:
 
-- **Applicable**: fetchers whose scope is filtered by ticket status
-  (e.g., `sync_redhat_cves` scopes to active tickets — CVEs on
-  Ignored/Duplicated/Resolved tickets are excluded from periodic sync)
-- **Not applicable**: global fetchers that operate independently of
-  ticket status (product catalog sync, AD sync, AIMAAS threshold sync).
-  These fetchers process all relevant data regardless of ticket state —
-  no per-ticket catch-up is needed
+- **Ticket does not exist** (deleted between enqueue and execution):
+  `session.get()` returns `None`, the `if ticket` guard causes a
+  silent return. This is expected — the catch-up is a no-op
+- **Ticket has no CVE** (`cve_id IS NULL`, e.g., manually created
+  ticket): the `if ticket.cve_id` guard causes a silent return.
+  There is nothing for a CVE fetcher to catch up on
+- **Custom `catch_up()` overrides** MUST apply equivalent guards:
+  check that the ticket exists and that the relevant data is present
+  (e.g., `TicketPackageTrack` records for IBS track detection) before
+  proceeding. If the ticket does not exist or has no relevant data,
+  the method MUST return silently (no exception, no log warning)
 
-### Invocation Points
+CVE fetchers only need to implement `fetch_single(cve_id)`:
 
-`fetch_single` is enqueued by:
+- `execute()` calls `self.fetch_single()` in a loop over active CVEs
+- `catch_up()` is derived automatically from `fetch_single()`
 
-- `cve_service` endpoint handlers: after CVE association with a ticket
-  (`associate-cve` endpoint) or ticket creation with a CVE
-  (`create-ticket-with-CVE` endpoint). Called alongside
-  `trigger_on_demand_fetch()` to cover enrichment fetchers not dispatched
-  by discovery-only fetch — see
-  [cve-service.md](../tickets/cve-service.md)
-- `ticket_service`: after un-ignore (`reopen_from_ignored`) and
-  un-duplicate (`revert_duplicate`) operations — see
-  [ticket-service.md](../tickets/ticket-service.md)
-- `ticket_mutations`: after a backward transition from Resolved to an
-  active status detected by callers of `reconcile_ticket_status()` — see
-  [ticket-mutations.md](../tickets/ticket-mutations.md)
+Non-CVE fetchers override `catch_up()` with custom logic specific to
+their data domain.
+
+### Registry accessor: `get_catch_up_fetchers()`
+
+```python
+def get_catch_up_fetchers() -> dict[str, type[BaseFetcher]]:
+    """Return fetchers implementing catch_up(), keyed by fetcher name.
+
+    A fetcher "implements catch_up" if:
+    - It defines catch_up() in its own __dict__ (explicit override), OR
+    - It defines fetch_single() in its own __dict__ (inherits the
+      default catch_up from BaseFetcher)
+    """
+    ...
+```
+
+The detection predicate combines two checks:
+
+1. `'catch_up' in cls.__dict__` — fetcher explicitly overrides
+   `catch_up()` (non-CVE fetchers like `DetectIbsTrackReleases`)
+2. `'fetch_single' in cls.__dict__` — fetcher implements
+   `fetch_single()`, which means it inherits the default `catch_up()`
+   (CVE fetchers like `SyncRedhatCves`, `SyncNvdCves`)
+
+Fetchers that match neither condition (global fetchers) are excluded.
+
+**Caching semantics**: same as `get_fetch_single_fetchers()` — the
+result is computed lazily on first access, not at import time, to
+ensure all fetcher modules have been registered. The returned dict
+MUST NOT be mutated by callers (return `types.MappingProxyType`).
+A `_clear_catch_up_cache()` test helper MUST be provided.
+
+### Celery task wrapper
+
+A single generic Celery task wraps all `catch_up()` invocations:
+
+```python
+@celery_app.task
+def run_catch_up(fetcher_name: str, ticket_id: str) -> None:
+    """Generic catch-up task — replaces per-fetcher tasks."""
+    fetcher_cls = FETCHER_REGISTRY.get(fetcher_name)
+    if fetcher_cls is None:
+        logger.error("run_catch_up: unknown fetcher %s — skipping", fetcher_name)
+        return  # non-retryable — fetcher was removed between enqueue and execution
+    fetcher = fetcher_cls()
+    async def _run():
+        async with get_async_session() as session:
+            await fetcher.catch_up(ticket_id, session)
+    async_run(_run())
+```
+
+If `fetcher_name` is not found in the registry (e.g., a deployment
+removed the fetcher between enqueue and execution), the task logs an
+error and returns without retry.
+
+### Interface contract
+
+`catch_up()` shares the same sub-operation classification as
+`fetch_single()` (see "On-demand Single-Item Fetch" above): no
+`FetcherRun` record, no metric reporting, not a `BaseFetcher`
+execution. The following additional rules apply:
+
+- **Parameter**: `ticket_id` (UUID as string)
+- **Idempotent**: if external data is unchanged, no side effects
+- **Mutation path**: when changed data is found, persists through the
+  normal mutation path (service modules), which triggers the standard
+  chain (audit events, reconciliation)
+- **No direct ticket mutations**: MUST NOT acquire `FOR UPDATE` locks
+  on the Ticket row — delegates to the appropriate service module
+- **Session management**: the `run_catch_up` Celery task wrapper
+  creates and manages the `AsyncSession`, following the same pattern
+  as `fetch_single_cve`. The session is passed to `catch_up()` as a
+  parameter. Transaction boundaries depend on the implementation:
+  - **Default `catch_up()`** (CVE fetchers): single transaction —
+    reads the ticket, calls `fetch_single()`, commits on return
+  - **Custom `catch_up()` overrides** (non-CVE fetchers): the method
+    receives the session for read-only queries (ticket lookup, item
+    enumeration). Mutations on each item are delegated to the
+    appropriate service module, which manages its own transaction
+    lifecycle. Each item MUST be committed independently so that a
+    failure on item N does not roll back items 1..N-1.
+    Non-CVE fetchers that mutate data MUST obtain independent
+    sessions (via `get_async_session()`) for each item's mutation —
+    the session parameter passed by `run_catch_up` is for read-only
+    queries only. Writing through the passed session would place all
+    items in a single transaction, violating the per-item commit
+    requirement
+- **Error handling**:
+  - **Retry policy**: the `run_catch_up` Celery task wrapper applies
+    the same retry policy as `fetch_single_cve` (3 retries with
+    exponential backoff). Reserved for infrastructure failure
+    (external service completely unreachable)
+  - **CVE fetchers** (default `catch_up()`): the default
+    `catch_up()` implementation MUST catch `CVENotInSource` internally
+    and treat it as a no-op (the CVE is not in this source — nothing
+    to catch up on). `CVENotInSource` MUST NOT propagate to the
+    `run_catch_up` wrapper. Transient errors (network, HTTP 5xx)
+    propagate to the wrapper for retry
+  - **Non-CVE fetchers** (custom `catch_up()` override): MUST use
+    per-item error handling — if one item (track, product, package)
+    fails, continue with the remaining items rather than aborting the
+    entire catch-up. Detailed error categorization is defined in each
+    fetcher's own specification
+  - **Raise/return contract for non-CVE overrides**: custom
+    `catch_up()` overrides MUST catch per-item exceptions internally.
+    The method MUST only propagate an exception when all items have
+    failed, indicating infrastructure failure. Partial failure (some
+    items succeed, some fail) MUST result in a normal return — the
+    failed items are logged per-item and will be recovered by the next
+    periodic `execute()` run
+- **Post-commit enqueue**: `run_catch_up` tasks MUST be enqueued
+  after the caller's transaction commits, consistent with the
+  post-commit enqueue pattern used by `trigger_on_demand_fetch()`.
+  Enqueuing before commit risks catch-up tasks running against
+  uncommitted data
+- **Concurrency safety**: no guard on ticket status is required before
+  executing `catch_up()`. If a ticket is re-deactivated after catch-up
+  tasks are enqueued but before they execute, the tasks run to
+  completion. This is safe by design: mutations produced by
+  `catch_up()` are factually correct (the external data is real
+  regardless of ticket status), and `reconcile_ticket_status()`
+  respects the current ticket status. Duplicate enqueuing (e.g., two
+  rapid reactivations) is also safe because `catch_up()` is idempotent.
+  **Concurrent catch-up and periodic execution**: if a ticket is
+  reactivated shortly before a periodic `execute()` run, both
+  `catch_up()` and `execute()` may call `fetch_single()` for the same
+  CVE concurrently. This is safe — `upsert_cve()` uses `FOR UPDATE`
+  locks and unique constraints, so the second call is a no-op or an
+  idempotent update. The duplicated external API call is acceptable
+  given the low frequency of reactivation events relative to periodic
+  schedules
+
+### Invocation points
+
+`catch_up()` is enqueued exclusively by **ticket reactivation** hooks:
+
+- `ticket_service.reopen_from_ignored()`: after un-ignore
+- `ticket_service.revert_duplicate()`: after un-duplicate
+- `ticket_mutations.reconcile_ticket_status()`: after regression from
+  Resolved to an active status
+
+At each invocation point, the system calls
+`get_catch_up_fetchers()` and enqueues a `run_catch_up` Celery task
+for each registered fetcher.
+
+### Fetcher inventory
+
+#### Fetchers that implement `catch_up()` (scope filtered by ticket status)
+
+| Fetcher | `execute()` scope filter | `catch_up()` type | What catch-up does |
+|---|---|---|---|
+| `sync_redhat_cves` | CVEs with active tickets | **Default** (via `fetch_single`) | Extract `cve_id` → call Red Hat API → upsert CVSS/CWE/refs/packages |
+| `sync_nvd_cves` | All CVEs (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Already has `fetch_single` for on-demand discovery; catch-up is free |
+| `sync_mitre_cves` | All CVEs (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Same as NVD |
+| `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Same as NVD |
+| `detect_ibs_track_releases` | Tracks in active tickets | **Custom override** | Extract ticket's `TicketPackageTrack` records → check IBS for releases on each codestream |
+| `detect_ibs_product_releases` | Products in active tickets | **Custom override** | Extract ticket's `TicketPackageProduct` records → check `updateinfo.xml` for advisories |
+| `sync_ibs_requests` | Codestreams in active tickets | **Custom override** | Extract ticket's codestream names → query IBS Request Search API → correlate SRs/RRs |
+| `evaluate_lifecycle_transitions` | Products in active tickets | **Custom override** | Extract ticket's products → re-evaluate lifecycle phase and eligibility |
+| `sync_ibs_bugowners` | Packages in active tickets | **Custom override** | Extract ticket's package names → refresh bugowner cache for each |
+
+Note: for NVD, MITRE, and kernel CVE fetchers, `execute()` is global
+(not filtered by ticket status), but they still benefit from
+`catch_up()` because their `fetch_single()` method already exists for
+on-demand discovery. The default `catch_up()` gives them ticket
+reactivation support for free.
+
+#### Fetchers that do NOT need `catch_up()` (global scope)
+
+| Fetcher | Why no catch-up needed |
+|---|---|
+| `sync_smelt_products` | Syncs entire product catalog regardless of ticket state |
+| `sync_aimaas_lifecycle` | Syncs all product lifecycle dates |
+| `sync_aimaas_thresholds` | Syncs all CVSS thresholds |
+| `sync_ldap_directory` | Syncs all employee records |
+| `sync_cisa_kev` | Syncs entire KEV catalog |
+| `sync_epss_scores` | Syncs all EPSS scores |
+| `sync_ghsa_advisories` | Syncs all GHSA advisories |
+| `sync_osv_advisories` | Syncs all OSV advisories |
+| `aggregate_fetcher_runs` | Maintenance — no external data, no ticket scope |
 
 ## Error Message Sanitization
 
@@ -800,6 +972,11 @@ the invalid field.
    `(cve_id, source)` — if two fetchers shared the same
    `cve_source_type`, their `record_source_status()` calls would
    overwrite each other's fetch outcome for the same CVE
+9. If a fetcher defines `catch_up()` in its `__dict__`, it must accept
+   the signature `(self, ticket_id: str, session: AsyncSession) -> None`
+10. If a non-CVE fetcher needs catch-up, it MUST define `catch_up()`
+    explicitly in its own class body — the default implementation only
+    works for fetchers that also implement `fetch_single()`
 
 **Abstract fetcher exemption**: fetcher classes with `abstract = True`
 (which opt out of registration per the existing `__init_subclass__`

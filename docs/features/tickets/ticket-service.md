@@ -533,15 +533,14 @@ endpoint handler executes:
    severity and eligibility using the current data and calls
    `reconcile_ticket_status()` at its end.
 
-2. **Asynchronous — per-ticket external data fetch**: enqueue
-   `fetch_single` for every registered fetcher that exposes the
-   capability, passing the `ticket_id`. This catches up on external data
-   not fetched during the inactive period (e.g., Red Hat CVSS updates —
-   the `sync_redhat_cves` fetcher scopes to active tickets and skips
-   Ignored/Duplicated ones). See
+2. **Asynchronous — per-ticket catch-up**: enqueue `catch_up()` for
+   every registered fetcher via `get_catch_up_fetchers()`, passing the
+   `ticket_id`. This catches up on external data not fetched during the
+   inactive period (e.g., Red Hat CVSS updates — the `sync_redhat_cves`
+   fetcher scopes to active tickets and skips Ignored/Duplicated ones).
+   See
    [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
-   ("Per-Ticket Catch-Up: `fetch_single` Capability") for the capability
-   contract.
+   ("Per-Ticket Catch-Up: `catch_up()` Method") for the method contract.
 
 ### Convergence behavior
 

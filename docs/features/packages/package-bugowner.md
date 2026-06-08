@@ -262,6 +262,19 @@ performs periodic maintenance of the bugowner cache. It runs every
 | Auth | HTTP Basic / API token (internal) |
 | Custom settings | No |
 
+#### Catch-Up
+
+`SyncIbsBugowners` implements `catch_up()` as a custom override. See
+[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
+contract.
+
+**Scope**: extracts the ticket's package names and refreshes the
+bugowner cache for each package from IBS. While the ticket was
+inactive, bugowner assignments may have changed.
+
+**Detailed specification**: to be defined during implementation.
+
 ### Operation 1: Cleanup
 
 Remove `PackageBugowner` records for packages that no longer appear in

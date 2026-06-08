@@ -148,8 +148,8 @@ directly on the assessment record.
   (`access.redhat.com/hydra/rest/securitydata/cve/{CVE-ID}.json`)
 - **Type**: independent assessment by Red Hat Product Security
 - **Provider name in Sentinel**: `"Red Hat"`
-- **CVSS versions**: currently v3.1 only (field `cvss3` in the response).
-  v4.0 will be supported when Red Hat adds it
+- **CVSS versions**: v2.0 and v3.1. v4.0 will be supported when Red Hat
+  adds it
 - **Response format**: the `cvss3` object contains `cvss3_base_score`
   (string), `cvss3_scoring_vector` (string), and `status` (`"draft"` or
   `"verified"`). Only the vector string is used — the score is recomputed
@@ -250,11 +250,10 @@ Severity is recalculated whenever:
 - The system-wide default CVSS version is changed by an Admin
 - A ticket is reactivated from Ignored or Duplicated status —
   `recalculate_cvss_chain()` is called synchronously during the
-  reactivation, plus `fetch_single` tasks are enqueued for catch-up
+  reactivation, plus `catch_up()` tasks are enqueued for catch-up
 - A CVE is associated with a ticket (or a ticket is created with a
    CVE) — `recalculate_cvss_chain()` is called synchronously after
-   commit, plus `fetch_single` tasks are enqueued for enrichment
-   catch-up
+   commit
 - A ticket regresses from Resolved to an active status —
    `recalculate_cvss_chain()` is called synchronously by the caller
    of `reconcile_ticket_status()` when a backward transition from
@@ -309,61 +308,30 @@ NVD Source API caching strategy, first-run behavior, and error handling
 
 ### Red Hat Sync
 
-Red Hat's API does NOT support incremental fetching (no `modified_after`
-parameter). The API provides `after`/`before` parameters for creation date
-only.
+Red Hat's API does NOT support incremental fetching (no
+`modified_after` parameter). The `sync_redhat_cves` fetcher runs daily
+(03:00 UTC) and re-fetches Red Hat data for all CVEs with active
+tickets.
 
-**Strategy — initial fetch**:
+Red Hat provides both CVSS v3 and CVSS v2 assessments. Both versions
+are imported as `CVECVSSAssessment` records with
+`provider_name = "Red Hat"`. The fetcher also extracts CWE
+identifiers, references, and source package names from the same API
+response.
 
-When a ticket is created with a CVE, or a CVE is associated with an
-existing ticket, a `fetch_single_redhat` task is enqueued to retrieve
-the Red Hat CVSS for that CVE (see Sub-operation: `fetch_single_redhat`
-below). The same mechanism is used for catch-up when a ticket is
-reactivated from Ignored/Duplicated or regresses from Resolved. This
-makes `fetch_single_redhat` the single on-demand mechanism for Red Hat
-data retrieval, regardless of the trigger.
-
-The task:
-
-1. Queries the Red Hat API for the ticket's CVE:
-   ```
-   GET /hydra/rest/securitydata/cve/{CVE-ID}.json
-   ```
-2. Extracts `cvss3.cvss3_scoring_vector`
-3. Persists the assessment via `cve_service` (see
-   [`cve-service.md`](cve-service.md)) with `provider = "Red Hat"`.
-   `cvss_version` and `score` are derived from the vector automatically
-4. If the assessment differs from an existing NVD Secondary with the same
-   provider name → overwrites
-
-**Scope gap**: the fetch scope is "CVEs with active tickets (New,
-Analysis, Analyzed)" due to Red Hat API rate limits (per-CVE lookup, no
-bulk/incremental endpoint). CVEs whose tickets are in Ignored,
+**Scope gap**: the fetch scope is "CVEs with active tickets" due to
+Red Hat API rate limits. CVEs whose tickets are in Ignored,
 Duplicated, or Resolved status do NOT receive Red Hat CVSS updates
-during the inactive period. This gap is mitigated by the
-`fetch_single_redhat` mechanism: when a ticket is reactivated, a
-`fetch_single_redhat` task is enqueued to retrieve the latest Red Hat
-data for that CVE (see Ticket Reactivation: CVSS Catch-Up below).
+during the inactive period. This gap is mitigated by the `catch_up()`
+mechanism: when a ticket is reactivated, the default `catch_up()`
+calls `fetch_single(cve_id)` to retrieve the latest Red Hat data.
+See [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+("Per-Ticket Catch-Up: `catch_up()` Method").
 
-**Strategy — periodic re-fetch**:
-
-1. Once per day, a Celery task iterates over all CVEs with active tickets
-   (status: New, Analysis, Analyzed — see `docs/data-model.md` for the
-   authoritative definition)
-2. For each CVE, fetch the Red Hat CVSS:
-   ```
-   GET /hydra/rest/securitydata/cve/{CVE-ID}.json
-   ```
-3. A configurable delay (controlled by the `throttle_delay_seconds`
-   custom setting, default: **2 seconds**) is added between requests to
-   avoid overloading the Red Hat API. Speed is not important.
-4. Compare the fetched vector with the stored vector
-5. If different → update the assessment via
-   `ticket_mutations.update_cvss_assessment()` (triggers recalculation)
-6. `last_redhat_sync_at` is derived from the `started_at` timestamp of
-   the most recent successful `FetcherRun` for the `sync_redhat_cves`
-   fetcher. Used for operational monitoring only (Red Hat sync is not
-   incremental)
+For the full fetcher definition — including the complete algorithm,
+CWE/reference extraction, package best-effort addition, error
+handling, and `fetch_single` method — see
+[`cve-tracking.md`](cve-tracking.md) (Fetcher: `sync_redhat_cves`).
 
 ### Sync Scope
 
@@ -701,14 +669,12 @@ mechanisms execute to reconcile CVSS-derived data:
    inactive. This provides immediate best-effort accuracy using
    whatever assessment data is already persisted.
 
-2. **Asynchronous** (enqueued after commit): `fetch_single` tasks are
-   enqueued for every registered fetcher that exposes the `fetch_single`
-   capability — not limited to CVSS fetchers. This catches up on data
-   that was not fetched during the inactive period (e.g., Red Hat CVSS
-   updates via `fetch_single_redhat`, IBS release detection, submission
-   tracking). Each `fetch_single` task operates independently; if it
-    discovers changed data, the normal mutation path handles the
-    recalculation chain.
+2. **Asynchronous** (enqueued after commit): `catch_up()` tasks are
+   enqueued for every registered fetcher via `get_catch_up_fetchers()`
+   — not limited to CVSS fetchers. This catches up on data that was not
+   fetched during the inactive period. Each `catch_up()` task operates
+   independently; if it discovers changed data, the normal mutation path
+   handles the recalculation chain.
 
 The ticket may transition rapidly as async tasks complete (e.g.,
 re-open → Analysis, then a fetch discovers a release → Resolved). This
@@ -719,7 +685,7 @@ See [`ticket-service.md`](ticket-service.md) for the un-ignore /
 un-duplicate hooks, [`ticket-mutations.md`](ticket-mutations.md) for
 the post-regression hook and `recalculate_cvss_chain()` contract, and
 [`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md) for
-the `fetch_single` capability contract.
+the `catch_up()` method contract.
 
 ## Background Tasks
 
@@ -727,78 +693,6 @@ The `sync_nvd_cves` fetcher (defined in
 `docs/features/tickets/cve-tracking.md`) also produces CVSS assessments
 during CVE ingestion. See "NVD Sync (Incremental)" above for the
 consumer-oriented summary.
-
-### Fetcher: `sync_redhat_cves`
-
-| Property | Value |
-|----------|-------|
-| Fetcher name | `sync_redhat_cves` |
-| Class name | `SyncRedhatCves` |
-| `cve_source_type` | `"redhat"` |
-| Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
-| Source | Red Hat Security Data API (`access.redhat.com/hydra/rest/securitydata`) |
-| Scope | All CVEs with active tickets (New, Analysis, Analyzed) |
-| Auth | None (public API) |
-| Custom settings | Yes (see below) |
-
-#### Algorithm
-
-See "Red Hat Sync" section above for the full algorithm (initial fetch
-and periodic re-fetch strategies).
-
-#### Error Handling
-
-TBD
-
-#### Metrics
-
-- `record_created`: N/A (Red Hat data is always an upsert against
-  existing CVE records)
-- `record_updated`: a Red Hat CVSS assessment was created or updated
-  for a CVE
-- `record_failed`: a CVE's Red Hat CVSS could not be fetched (API
-  error, timeout, malformed response)
-
-#### Custom Settings
-
-This fetcher declares the following custom settings (see
-`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
-Schema" for the schema structure and validation rules):
-
-| Setting | Type | Default | Constraints | Description |
-|---------|------|---------|-------------|-------------|
-| `throttle_delay_seconds` | float | 2.0 | 0.1–30.0 | Delay between consecutive Red Hat API requests |
-
-### Sub-operation: `fetch_single_redhat`
-
-> **Note**: to be finalized — this is a template defining the interface
-> and contract. Implementation details will be completed alongside the
-> Red Hat fetcher.
-
-A sub-operation task (not a `BaseFetcher` subclass — per the sub-operation
-exception in
-[`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md)).
-
-- **Parameter**: `ticket_id` (UUID as string — matches the unified
-  `fetch_single` interface defined in `fetcher-infrastructure.md`)
-- **Behavior**: the task looks up the ticket to extract the `cve_id`
-  from the ticket's associated CVE, then queries the Red Hat Security
-  Data API (`GET /hydra/rest/securitydata/cve/{CVE-ID}.json`) for that
-  CVE. If data is found and differs from the stored
-  `CVECVSSAssessment`, persists/updates the assessment via
-  `ticket_mutations.create_cvss_assessment()` or
-  `ticket_mutations.update_cvss_assessment()`, which triggers the normal
-  recalculation chain.
-- **Idempotent**: if the Red Hat data is unchanged from the stored
-  assessment, no mutation occurs (no-op).
-- **Trigger**: enqueued in three scenarios (not by Celery Beat):
-  1. Ticket creation with CVE / CVE association with existing ticket
-     (via `cve_service` endpoint handlers)
-  2. Ticket reactivation from Ignored/Duplicated (via `ticket_service`
-     reactivation hook)
-  3. Ticket regression from Resolved (via `ticket_mutations`
-     post-regression hook)
-- **Metrics**: not tracked independently (sub-operation).
 
 ## Data Model
 

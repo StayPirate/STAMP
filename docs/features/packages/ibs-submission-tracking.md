@@ -1010,6 +1010,20 @@ SR correlation: find SRs correlated to the ticket, collect their
 See "Pipeline 2: Periodic Catch-Up (SyncIbsRequests)" above for the
 full procedure.
 
+#### Catch-Up
+
+`SyncIbsRequests` implements `catch_up()` as a custom override. See
+[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
+contract.
+
+**Scope**: extracts the ticket's codestream names and queries the IBS
+Request Search API to discover and correlate submission requests
+(SRs) and release requests (RRs) that were created or changed while
+the ticket was inactive.
+
+**Detailed specification**: to be defined during implementation.
+
 #### Metrics
 
 - `record_created`: a new `SubmissionRequest` or `ReleaseRequest` record

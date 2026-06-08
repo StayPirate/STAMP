@@ -256,6 +256,20 @@ not tracked in ticket, or no ticket exists at all) is described in
 | Auth | HTTP Basic / API token (internal) |
 | Custom settings | No |
 
+#### Catch-Up
+
+`DetectIbsProductReleases` implements `catch_up()` as a custom
+override. See
+[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
+contract.
+
+**Scope**: extracts the ticket's `TicketPackageProduct` records and
+checks `updateinfo.xml` from each product's update repository for
+advisories referencing the ticket's CVE.
+
+**Detailed specification**: to be defined during implementation.
+
 #### Metrics
 
 - `record_created`: N/A
