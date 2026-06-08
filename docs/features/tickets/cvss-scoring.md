@@ -248,7 +248,6 @@ Severity is recalculated whenever:
 
 - A CVSS assessment is added, modified, or removed for the CVE
 - The system-wide default CVSS version is changed by an Admin
-- The SUSE assessment is added or modified by a VA
 - A ticket is reactivated from Ignored or Duplicated status —
   `recalculate_cvss_cascade()` is called synchronously during the
   reactivation, plus `fetch_single` tasks are enqueued for catch-up
@@ -411,9 +410,10 @@ with an active ticket, Sentinel performs the following recalculation:
    (2-step SUSE-only cascade — separate call with different semantics; the
    eligibility score may differ from the severity score when SUSE has not
    assessed the default version). Re-evaluate the `eligible` flag for every
-   `TicketPackageProduct` linked to the ticket, applying the eligibility
-   rules defined in [`package-model.md`](../packages/package-model.md)
-   (Axis 2: Eligibility).
+   `TicketPackageProduct` linked to the ticket (including soft-deleted
+   products — see [`package-model.md`](../packages/package-model.md) Design
+   Decision 8), applying the eligibility rules defined in
+   [`package-model.md`](../packages/package-model.md) (Axis 2: Eligibility).
    *(Note: because of the strictly unidirectional dependency from `package_service` to `ticket_mutations`, these eligibility updates are executed inline directly within the `ticket_mutations` module during CVSS mutations. See [`ticket-mutations.md`](ticket-mutations.md) for the module boundary contract.)*
 3. **Ticket status re-evaluation**: call `reconcile_ticket_status()` to
    re-evaluate the ticket status based on current gate conditions (see
@@ -473,18 +473,34 @@ fewer than 20 records).
       }
     ],
     "default_cvss_version": "3.1",
-    "resolved_score": 8.1,
-    "resolved_provider": "NVD",
-    "resolved_severity": "High"
+    "severity": {
+      "score": 8.1,
+      "provider": "NVD",
+      "label": "High"
+    },
+    "eligibility": {
+      "score": 8.1,
+      "source": "suse"
+    }
   }
 }
 ```
 
-The `resolved_*` fields reflect the result of the **severity** resolution
-cascade for the current default version — identifying which score and
-provider Sentinel uses for severity derivation and display. These fields do
-NOT reflect the eligibility resolution (which is SUSE-only; see Eligibility
-Score Resolution).
+The `severity` and `eligibility` objects expose the results of the two
+distinct CVSS resolution strategies:
+
+- **`severity`**: result of the Severity Resolution Cascade (5-step,
+  multi-provider). `score` is the resolved CVSS score, `provider` is the
+  provider that supplied it (e.g., `"NVD"`, `"SUSE"`, `"Red Hat"`), and
+  `label` is the severity rating (`"None"`, `"Low"`, `"Medium"`, `"High"`,
+  `"Critical"`). Used for display, triage, and notifications.
+- **`eligibility`**: result of the Eligibility Score Resolution (2-step,
+  SUSE-only). `score` is the CVSS score used for product eligibility
+  threshold comparison. `source` indicates where the score came from:
+  `"suse"` when the score comes from a SUSE assessment for the default
+  version, `"fallback"` when no SUSE assessment exists for the default
+  version (score defaults to 10.0 — conservative worst-case). Used for
+  product eligibility threshold comparison.
 
 ### Set or Update SUSE CVSS Assessment
 
@@ -582,9 +598,9 @@ never mutate the database — they receive data and return results.
 
 These functions are used in two contexts:
 
-1. **Read path** (API `GET .../cvss`): to compute the `resolved_score`,
-   `resolved_provider`, and `resolved_severity` response fields without
-   any side effects
+1. **Read path** (API `GET .../cvss`): to compute the `severity.score`,
+   `severity.provider`, `severity.label`, and `eligibility.score`
+   response fields without any side effects
 2. **Write path** (via `ticket_mutations`): as building blocks for the
    recalculation cascade — `ticket_mutations` calls these functions to
    determine the new severity and eligibility, then persists the results
@@ -640,18 +656,37 @@ the cascade must run for all active tickets. This batch operation is
 executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
 
-1. Iterates over all active tickets (New, Analysis, Analyzed)
-2. For each ticket, calls
+1. Acquires a Redis distributed lock (key:
+   `sentinel:batch_cvss_recalc`) before starting. Lock TTL: 2 hours
+   (safety net for worker crashes; the lock is released explicitly on
+   completion). If the lock is already held, the task retries with
+   exponential backoff and jitter, up to 10 attempts. If still locked
+   after all retries, the task fails with an error log (anomaly: a
+   batch should not take that long).
+2. After acquiring the lock, reads the current `default_cvss_version`
+   from the database. This **read-after-lock** pattern ensures the task
+   always uses the latest version, even if multiple version changes
+   occurred while waiting for the lock.
+3. Iterates over all active tickets (New, Analysis, Analyzed)
+4. For each ticket, calls
    `ticket_mutations.recalculate_cvss_cascade()` — a dedicated entry
    point that recalculates derived data without modifying any
    `CVECVSSAssessment` record (see
-   `docs/features/tickets/ticket-mutations.md`)
-3. Each ticket is processed in an **independent database transaction**
+   `docs/features/tickets/ticket-mutations.md`). The task passes
+   `default_cvss_version` as a mandatory parameter to every
+   `recalculate_cvss_cascade()` call.
+5. Each ticket is processed in an **independent database transaction**
    (isolation: a failure on one ticket does not roll back others)
-4. On error for a single ticket, the task logs the error with the
+6. On error for a single ticket, the task logs the error with the
    ticket ID and continues with the remaining tickets
-5. On completion, the task reports the total number of tickets processed,
-   successes, and failures
+7. On completion, the task releases the lock and reports the total
+   number of tickets processed, successes, and failures
+
+**Idempotency**: `recalculate_cvss_cascade()` is idempotent —
+re-processing tickets already updated produces the same result. If
+multiple default version changes occur in rapid succession, the lock
+serializes the batch tasks and the read-after-lock pattern ensures
+only the latest version is used.
 
 ## Ticket Reactivation: CVSS Catch-Up
 

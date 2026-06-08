@@ -112,10 +112,20 @@ tickets whose parent `TicketPackageTrack` has a non-final status
 Products under tracks with a final status (`NOT_AFFECTED`, `FIXED`,
 `WONT_FIX`) are not modified.
 
-#### Reason: `threshold_change` / `cvss_change`
+#### Reason: `threshold_change`
 
-Existing behavior as specified in `docs/features/packages/package-model.md` and
-`docs/features/tickets/cvss-scoring.md`.
+For all `TicketPackageProduct` records referencing this product in open
+tickets: re-evaluate eligibility based on the new threshold value.
+Existing behavior as specified in `docs/features/packages/package-model.md`.
+
+**Note — CVSS-triggered eligibility recalculation**: changes to CVSS
+assessments or the default CVSS version do NOT use this sub-task.
+CVSS-triggered eligibility recalculation is executed synchronously and
+inline by `ticket_mutations` within the CVSS mutation transaction. See
+[`cvss-scoring.md`](../tickets/cvss-scoring.md) (Recalculation Cascade,
+step 2) for details. This sub-task handles exclusively
+lifecycle-triggered re-evaluation (`reactive_ltss`, `threshold_change`,
+`eol`).
 
 ## Cascading Cleanup
 

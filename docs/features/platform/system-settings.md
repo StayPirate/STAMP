@@ -43,9 +43,10 @@ When the Admin changes the default CVSS version, Sentinel MUST:
 This operation may take time for a large number of active tickets. It
 is executed as a background task (Celery). The task calls
 `ticket_mutations.recalculate_cvss_cascade()` for each ticket in an
-independent database transaction. See
-`docs/features/tickets/cvss-scoring.md` (Cascade Execution Model) for the
-full batch execution specification.
+independent database transaction. When the default CVSS version changes,
+the batch recalculation task uses a singleton Redis lock to serialize
+concurrent executions. See `docs/features/tickets/cvss-scoring.md`
+(Cascade Execution Model) for details.
 
 **Warning**: changing the default CVSS version is a significant operation.
 

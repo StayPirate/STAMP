@@ -37,24 +37,15 @@
 
 ### GAP-CVS-006 — Concurrency gap in batch recalculation for concurrent default version changes (Medium)
 
-**Category**: Temporal/concurrency scenarios
-**Status**: OPEN
-
-Concurrency gap: two concurrent default version changes can cause the batch recalculation task to process some tickets with the old version and others with the new version. The spec does not specify whether the batch reads the default version once at startup or per-ticket, nor what happens if a second version change is triggered mid-execution.
+**Status**: RESOLVED — Specified singleton Redis lock with read-after-lock pattern for batch recalculation; added mandatory default_cvss_version parameter to recalculate_cvss_cascade() (2026-06-08)
 
 ### GAP-CVS-007 — `GET /cves/{cve_id}/cvss` exposes severity cascade resolved fields but no eligibility score (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The `GET /cves/{cve_id}/cvss` API response exposes `resolved_*` fields for the severity cascade but provides no mechanism to observe the eligibility score. A VA cannot directly verify via the API why a product's `eligible` flag changed — they must infer it from checking whether a SUSE assessment for the default version exists.
+**Status**: RESOLVED — Restructured /cvss response with nested severity and eligibility objects; eligibility.source disambiguates SUSE assessment vs 10.0 fallback (2026-06-08)
 
 ### GAP-CVS-009 — Batch recalculation scope for soft-deleted products not explicitly confirmed (Low)
 
-**Category**: Data lifecycle gaps
-**Status**: OPEN
-
-Batch recalculation scope for soft-deleted products is not explicitly confirmed. `package-model.md` Design Decision 8 states soft-deleted records continue to receive eligibility updates, but the batch spec and write-path spec do not state this explicitly.
+**Status**: RESOLVED — Added explicit parenthetical reference to package-model.md DD8 confirming soft-deleted products are included in eligibility recalculation scope (2026-06-08)
 
 ---
 
@@ -85,10 +76,7 @@ Batch recalculation scope for soft-deleted products is not explicitly confirmed.
 
 ### CVS-COH-05 — §When Severity is Recalculated lists a redundant trigger (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-§When Severity is Recalculated lists a redundant trigger. Trigger 3 ("The SUSE assessment is added or modified by a VA") is a strict subset of Trigger 1 ("A CVSS assessment is added, modified, or removed"). Only two independent triggers exist, not three.
+**Status**: RESOLVED — Removed redundant SUSE-specific trigger; already covered by the general "CVSS assessment added/modified/removed" trigger (2026-06-08)
 
 ### CVS-COH-08 — Term "cascade" overloaded across Severity Resolution Cascade and Recalculation Cascade (Low)
 
@@ -99,10 +87,7 @@ Batch recalculation scope for soft-deleted products is not explicitly confirmed.
 
 ### CVS-COH-09 — `product-lifecycle-transitions.md` implies async path where `cvss-scoring.md` describes synchronous path (Low)
 
-**Category**: Terminology issues
-**Status**: OPEN
-
-`product-lifecycle-transitions.md` references `cvss_change` reason for `re_evaluate_product_eligibility` sub-task, implying an enqueued async path. But `cvss-scoring.md` describes CVSS-triggered eligibility updates as synchronous (inline in the CVSS mutation transaction). These describe different mechanisms for the same trigger.
+**Status**: RESOLVED — Removed cvss_change from re_evaluate_product_eligibility reasons; added boundary note clarifying sync path via ticket_mutations (2026-06-08)
 
 ### CVS-COH-10 — §Cross-references omits `ticket-mutations.md`, `package-model.md`, and `system-settings.md` (Low)
 

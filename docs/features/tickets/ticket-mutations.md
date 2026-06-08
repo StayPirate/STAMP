@@ -248,11 +248,13 @@ transitions from Resolved to an active status (Analysis or Analyzed).
 When detected, the caller executes the same catch-up mechanisms used by
 ticket reactivation:
 
-1. Call `recalculate_cvss_cascade(ticket_id)` to reconcile CVSS-derived
-   data (severity, product eligibility) with the current default version
-   and any assessment updates that occurred while the ticket was Resolved.
-   Automated CVSS sync scopes to active tickets — Resolved tickets are
-   excluded, so Red Hat and other per-ticket CVSS data may be stale.
+1. Call `recalculate_cvss_cascade(ticket_id, default_cvss_version)` to
+   reconcile CVSS-derived data (severity, product eligibility) with the
+   current default version and any assessment updates that occurred while
+   the ticket was Resolved. The caller reads `default_cvss_version` from
+   the database before invoking the function. Automated CVSS sync scopes
+   to active tickets — Resolved tickets are excluded, so Red Hat and
+   other per-ticket CVSS data may be stale.
 2. Enqueue `fetch_single` for every registered fetcher that exposes the
    capability. Same mechanism as the un-ignore/un-duplicate hook (see
    [ticket-service.md](ticket-service.md), "Ticket Reactivation").
@@ -266,7 +268,8 @@ new_status = ticket.status
 if old_status == TicketStatus.RESOLVED and new_status in (
     TicketStatus.NEW, TicketStatus.ANALYSIS, TicketStatus.ANALYZED
 ):
-    recalculate_cvss_cascade(db, ticket_id=ticket.id)
+    default_cvss_version = await settings_service.get_default_cvss_version(db)
+    recalculate_cvss_cascade(db, ticket_id=ticket.id, default_cvss_version=default_cvss_version)
     # enqueue fetch_single for all capable fetchers (async)
 ```
 
@@ -607,19 +610,20 @@ default CVSS version change (see
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to recalculate |
+| `default_cvss_version` | `str` | Yes | The CVSS version to use for severity resolution and eligibility evaluation. The caller must provide this explicitly; the function does not read the default version from the database |
 | `acting_user_id` | `UUID \| None` | No | Who triggered the recalculation (typically `None` for system-initiated batch operations) |
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `cvss.resolve_severity_score()` with the current default CVSS
-   version to determine the new resolved score
+2. Call `cvss.resolve_severity_score()` with the provided
+   `default_cvss_version` to determine the new resolved score
 3. Map the result to a severity label via `cvss.calculate_severity()`.
    If severity changed, update `CVE.severity`
-4. Call `cvss.resolve_eligibility_score()` with the current default
-   CVSS version to determine the eligibility score
+4. Call `cvss.resolve_eligibility_score()` with the provided
+   `default_cvss_version` to determine the eligibility score
 5. Re-evaluate `eligible` for each `TicketPackageProduct` linked to the
-   ticket using the eligibility score:
+   ticket (including soft-deleted products — see `package-model.md` Design Decision 8) using the eligibility score:
    - Products with `is_eligible_override = true` are not modified
    - Products in Reactive LTSS phase remain `eligible = false` regardless
 6. Create `TicketAuditEvent` records for each change:
