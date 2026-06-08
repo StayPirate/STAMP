@@ -715,8 +715,10 @@ execution. The following additional rules apply:
 
 `catch_up()` is enqueued exclusively by **ticket reactivation** hooks:
 
-- `ticket_service.reopen_from_ignored()`: after un-ignore
-- `ticket_service.revert_duplicate()`: after un-duplicate
+- `ticket_mutations.reopen_from_ignored()`: after un-ignore (endpoint
+  handler enqueues catch-up post-commit)
+- `ticket_mutations.revert_duplicate()`: after un-duplicate (endpoint
+  handler enqueues catch-up post-commit)
 - `ticket_mutations.reconcile_ticket_status()`: after regression from
   Resolved to an active status
 

@@ -557,7 +557,7 @@ behavior — the system converges to the accurate state.
 - [ticket-mutations.md](ticket-mutations.md) —
   `recalculate_cvss_chain()` contract, `_reenter_gate_zone()` helper
 - [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md) —
-  `fetch_single` capability contract
+  `catch_up()` method contract
 
 ## Confidentiality Management
 

@@ -996,6 +996,6 @@ directly — see `docs/features/packages/package-service.md`.
   operations, ticket reactivation hooks (imports
   `reconcile_ticket_status()`, `auto_assign_actor()`,
   `ensure_ticket_operable()`, `resolve_canonical_target()`)
-- `docs/features/platform/fetcher-infrastructure.md` — `fetch_single`
-  per-ticket catch-up capability contract
+- `docs/features/platform/fetcher-infrastructure.md` — `catch_up()`
+  per-ticket catch-up method contract
 - `docs/api-spec.md` — general API conventions

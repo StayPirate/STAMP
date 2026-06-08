@@ -357,12 +357,12 @@ from recalculation of derived data (severity, eligibility, ticket status):
 2. **Gap documentation**: when a fetcher's fetch scope is narrower than
    "all CVEs with tickets" due to API constraints, the fetcher's
    specification MUST document the gap explicitly and the system MUST
-   provide a catch-up mechanism (via `fetch_single`) for tickets
+   provide a catch-up mechanism (via `catch_up()`) for tickets
    reactivated after a period of inactivity.
 3. **Goal**: `CVECVSSAssessment` records are as complete as possible
    regardless of ticket lifecycle state. Reopened tickets converge to
    accurate derived data quickly via the synchronous recalculation
-   chain (immediate best-effort) followed by asynchronous `fetch_single`
+   chain (immediate best-effort) followed by asynchronous `catch_up()`
    tasks (data catch-up).
 
 ## Recalculation Chain
@@ -727,7 +727,8 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - `docs/features/platform/system-settings.md` — `default_cvss_version`
   setting, batch recalculation trigger
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`
-  contract, `fetch_single` capability, sub-operation exception
+  contract, `catch_up()` method, `fetch_single` capability,
+  sub-operation exception
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses), CVE Accessibility Check, CVE Identifier
   Resolution
