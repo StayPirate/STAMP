@@ -38,7 +38,6 @@ RabbitMQ consumer) call the service via `asyncio.run()`.
 | Entry point               | Invocation pattern                                              |
 |---------------------------|-----------------------------------------------------------------|
 | API endpoint              | `await ticket_mutations.set_severity_override(session, ...)`    |
-| Celery task (CVSS sync)   | `asyncio.run(ticket_mutations.create_cvss_assessment(session, ...))` |
 
 ### Transaction ownership
 
@@ -366,13 +365,13 @@ function.
 
 | Module | Functions that call `ensure_ticket_operable` |
 |--------|----------------------------------------------|
-| `ticket_mutations` | `create_cvss_assessment`\*, `update_cvss_assessment`\*, `delete_cvss_assessment`\*, `set_severity_override` |
+| `ticket_mutations` | `upsert_cvss_assessment`\*, `delete_cvss_assessment`\*, `set_severity_override` |
 | `ticket_service` | `associate_cve`, `assign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_confidentiality`, `grant_access`, `revoke_access` |
 | `package_service` | `set_track_status`, `set_track_delivery_status`, `set_product_eligibility`, `set_product_released_at`, and other mutation functions |
 
 \* CVSS functions call `ensure_ticket_operable` **conditionally** — only
 when the CVE has an associated ticket. Ticketless CVEs skip this check
-(see `create_cvss_assessment()` below).
+(see `upsert_cvss_assessment()` below).
 
 ## Gate-Relevant Mutation Operations
 
@@ -401,11 +400,13 @@ computation. See Key Principle 6 ("Always derived from vector") in
 [cvss-scoring.md](cvss-scoring.md#key-principles) for the system-wide
 ingestion rule that governs how scores and versions are handled.
 
-### `create_cvss_assessment()`
+### `upsert_cvss_assessment()`
 
-Creates a new `CVECVSSAssessment` record for a CVE. The function accepts
-a `cve_id` (not a `ticket_id`) and handles both CVEs with and without
-an associated ticket.
+Creates or updates a `CVECVSSAssessment` record for a CVE. The function
+accepts a `cve_id` (not a `ticket_id`) and handles both CVEs with and
+without an associated ticket. If an assessment for the same
+`(cve_id, provider, version)` already exists, it is updated; otherwise a
+new one is created.
 
 **Parameters**:
 
@@ -413,128 +414,135 @@ an associated ticket.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `cve_id` | `UUID` | Yes | CVE that receives the assessment |
-| `provider` | `str` | Yes | Assessment provider (e.g., `"suse"`, `"nvd"`) |
-| `vector` | `str` | Yes | CVSS vector string (version and score are derived from the vector) |
+| `provider` | `str` | Yes | Assessment provider (e.g., `"SUSE"`, `"NVD"`) |
+| `vector` | `str` | Yes | CVSS vector string (version and score derived from vector) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
 
-- Vector must be parseable — raises `InvalidCVSSVectorError` (HTTP 422
-  Unprocessable Entity, `error_code: "CVSS_INVALID_VECTOR"`)
-- No existing assessment for the same (CVE, provider, version) combination
-  — raises `DuplicateCVSSAssessmentError` (HTTP 409 Conflict,
-  `error_code: "CVSS_DUPLICATE_ASSESSMENT"`)
+- CVE must exist for `cve_id` — the FK constraint on
+  `CVECVSSAssessment.cve_id` requires a valid CVE. API endpoints resolve
+  and validate the CVE path parameter before calling this function;
+  `cve_service.upsert_cve()` creates the CVE before calling this function.
+  The function does not check CVE existence explicitly — an invalid
+  `cve_id` produces an `IntegrityError` from the database.
+- Vector must be parseable — raises `InvalidCVSSVectorError`
+
+**Persistence mechanism**: SQL `INSERT ... ON CONFLICT DO UPDATE` on the
+unique constraint `(cve_id, provider_name, cvss_version)`. This
+guarantees atomicity at the database level — concurrent upserts for the
+same natural key are serialized by PostgreSQL. This is consistent with
+the `ON CONFLICT DO UPDATE` strategy documented in `cve-service.md`
+(Child Table Deduplication) for all child tables with stable unique
+constraints.
+
+**Return type**: `tuple[CVECVSSAssessment, AssessmentUpsertAction]` —
+where `AssessmentUpsertAction` is a three-valued enum:
+
+| Value | Meaning | Metric |
+|-------|---------|--------|
+| `CREATED` | New record inserted | `record_created()` |
+| `UPDATED` | Existing record modified (vector changed) | `record_updated()` |
+| `UNCHANGED` | Existing record identical (no-op) | — (no metric) |
+
+`AssessmentUpsertAction` is a separate type from
+`cve_service.UpsertAction` despite having the same members. The
+semantics differ: `cve_service.UpsertAction.unchanged` means "no global
+CVE fields contributed" (child data may still have been upserted),
+whereas `AssessmentUpsertAction.UNCHANGED` means "the assessment vector
+is identical, no mutation occurred at all." Distinct types prevent
+accidental conflation in code that handles both return values.
 
 **Behavior**:
 
-1. Look up the ticket associated with the CVE (if any)
-2. If a ticket exists:
-   a. Acquire `FOR UPDATE` on the Ticket row
-   b. Call `ensure_ticket_operable(ticket)` — rejects with
-       `TicketNotMutableError` if in Ignored or Duplicated status
-3. Parse the vector string using the `cvss` library. Determine version from
-   prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
-   no prefix → 2.0). Compute base score. If parsing fails, raise
-   `InvalidCVSSVectorError`
-4. Create `CVECVSSAssessment` record (with derived version and score)
+1. Parse the vector string. Derive version and score. If parsing fails,
+   raise `InvalidCVSSVectorError`
+2. `SELECT` existing `CVECVSSAssessment` for `(cve_id, provider,
+   derived_version)`. Capture the existing record (if any) for old-value
+   determination and no-op detection
+3. **No-op short-circuit**: if an existing record was found and
+   `existing.vector == incoming_vector`, return
+   `(existing, UNCHANGED)` immediately — no database write, no lock
+   acquisition, no recalculation chain, no audit event. This prevents
+   unnecessary lock contention and recalculation overhead during bulk
+   fetcher re-syncs where most CVSS data has not changed. Note: the
+   short-circuit bypasses `auto_assign_actor()` because no mutation
+   occurred — this is correct and consistent with the principle that
+   side effects are triggered by state changes, not by intent to change
+4. Look up the ticket associated with the CVE (if any)
 5. If a ticket exists:
-    a. Recalculate ticket severity via `cvss.resolve_severity_score()`
-       (5-step severity cascade); re-evaluate product eligibility via
-       `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
-       separate call — the eligibility score may differ from the severity
-       score when SUSE has not assessed the default version)
+   a. Acquire `FOR UPDATE` on the Ticket row
+   b. Call `ensure_ticket_operable(ticket)` — if the ticket is in a
+      non-mutable status, the function raises `TicketNotMutableError`.
+      No assessment write has occurred at this point, so no rollback of
+      assessment data is needed
+6. Execute `INSERT ... ON CONFLICT DO UPDATE` with the parsed vector
+   and computed score. Determine action:
+   - **No existing record** (step 2 returned nothing): `CREATED`
+   - **Existing record with different vector**: `UPDATED`
+7. If a ticket exists:
+   a. Call `auto_assign_actor(ticket, acting_user_id, db)`
+   b. Recalculate severity via `resolve_severity_score()` and
+      eligibility via `resolve_eligibility_score()`
+   c. Create `TicketAuditEvent` (`cvss_assessment_changed`). The
+      `old_value` is derived from the `SELECT` in step 2: `NULL` if the
+      record was created, `"provider vX.Y old_score"` if updated. The
+      recalculation chain may also produce `severity_changed` and
+      `product_eligibility_changed` audit events when derived values
+      change
+   d. Call `reconcile_ticket_status()`. If this produces a backward
+      transition from Resolved, the function invokes
+      `recalculate_cvss_chain()` and enqueues `catch_up()` per the
+      post-regression hook contract. The post-regression hook is handled
+      internally — callers do not need to check for regression
+8. If no ticket exists (ticketless CVE): skip steps 5 and 7 — the CVSS
+   assessment is stored but no ticket side effects are triggered
+9. Return `(assessment, action)`
 
-   b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
-      `old_value = NULL`, `new_value = "provider vX.Y score"`)
-   c. Call `reconcile_ticket_status()`
-6. If no ticket exists (ticketless CVE): skip audit event and chain —
-   the CVSS assessment is stored but no side effects are triggered
-7. Return created assessment
+**Audit event values**:
+
+| Action | `old_value` | `new_value` |
+|--------|-------------|-------------|
+| `CREATED` | `NULL` | `"provider vX.Y score"` |
+| `UPDATED` | `"provider vX.Y old_score"` | `"provider vX.Y new_score"` |
+| `UNCHANGED` | — (no audit event created) | — |
 
 **TicketAuditEvent**: `cvss_assessment_changed` (only when the CVE has
-an associated ticket)
-
----
-
-### `update_cvss_assessment()`
-
-Updates an existing `CVECVSSAssessment` record.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `assessment_id` | `UUID` | Yes | CVECVSSAssessment to modify |
-| `vector` | `str` | Yes | New CVSS vector string (version and score are re-derived) |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
-
-**Preconditions**:
-
-- Assessment must exist — raises `CVSSAssessmentNotFoundError` (HTTP 404,
-  `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
-- New vector must be parseable — raises `InvalidCVSSVectorError` (HTTP 422
-  Unprocessable Entity, `error_code: "CVSS_INVALID_VECTOR"`)
-- Derived version must match the existing assessment's version — raises
-  `CVSSVersionMismatchError` (HTTP 409 Conflict,
-  `error_code: "CVSS_VERSION_MISMATCH"`)
-
-**Behavior**:
-
-1. Look up the ticket associated with the assessment's CVE (if any)
-2. If a ticket exists:
-   a. Acquire `FOR UPDATE` on the Ticket row
-   b. Call `ensure_ticket_operable(ticket)`
-3. Parse the new vector string using the `cvss` library. Determine version
-   and compute base score. If parsing fails, raise `InvalidCVSSVectorError`.
-   If the derived version differs from the existing assessment's version,
-   raise `CVSSVersionMismatchError` (message suggests creating a new
-   assessment for the target version instead)
-4. Update assessment fields (vector and recomputed score)
-5. If a ticket exists:
-    a. Recalculate ticket severity via `cvss.resolve_severity_score()`
-       (5-step severity cascade); re-evaluate product eligibility via
-       `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
-       separate call — the eligibility score may differ from the severity
-       score when SUSE has not assessed the default version)
-
-   b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
-      `old_value = "provider vX.Y old_score"`,
-      `new_value = "provider vX.Y new_score"`)
-   c. Call `reconcile_ticket_status()`
-6. If no ticket exists: skip audit event and chain
-7. Return updated assessment
-
-**TicketAuditEvent**: `cvss_assessment_changed` (only when the CVE has
-an associated ticket)
+an associated ticket and the action is `CREATED` or `UPDATED`)
 
 ---
 
 ### `delete_cvss_assessment()`
 
-Deletes a `CVECVSSAssessment` record (hard delete).
+Deletes a `CVECVSSAssessment` record (hard delete). The function accepts
+natural key parameters instead of a UUID, eliminating the need for
+callers to resolve the assessment ID.
 
 **Parameters**:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `assessment_id` | `UUID` | Yes | CVECVSSAssessment to delete |
+| `cve_id` | `UUID` | Yes | CVE owning the assessment |
+| `provider` | `str` | Yes | Assessment provider |
+| `cvss_version` | `str` | Yes | CVSS version (`"3.1"`, `"4.0"`, etc.) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
 
-- Assessment must exist — raises `CVSSAssessmentNotFoundError` (HTTP 404,
+- Assessment must exist for `(cve_id, provider, cvss_version)` — raises
+  `CVSSAssessmentNotFoundError` (HTTP 404,
   `error_code: "CVSS_ASSESSMENT_NOT_FOUND"`)
 
 **Behavior**:
 
-1. Look up the ticket associated with the assessment's CVE (if any)
-2. If a ticket exists:
+1. Look up the assessment by `(cve_id, provider, cvss_version)`
+2. Look up the ticket associated with the assessment's CVE (if any)
+3. If a ticket exists:
    a. Acquire `FOR UPDATE` on the Ticket row
    b. Call `ensure_ticket_operable(ticket)`
-3. Delete the assessment record
-4. If a ticket exists:
+4. Delete the assessment record
+5. If a ticket exists:
     a. Recalculate ticket severity via `cvss.resolve_severity_score()`
        (5-step severity cascade); re-evaluate product eligibility via
        `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
@@ -544,7 +552,7 @@ Deletes a `CVECVSSAssessment` record (hard delete).
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = "provider vX.Y score"`, `new_value = NULL`)
    c. Call `reconcile_ticket_status()`
-5. If no ticket exists: skip audit event and chain
+6. If no ticket exists: skip audit event and chain
 
 **TicketAuditEvent**: `cvss_assessment_changed` (only when the CVE has
 an associated ticket)
@@ -939,10 +947,8 @@ them to the corresponding HTTP status code and error code per
 | `TicketNotMutableError` † | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (Ignored or Duplicated) |
 | `DuplicateCycleDetectedError` † | 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
 | `DuplicateChainDepthError` † | 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Duplicate chain exceeds maximum allowed depth |
-| `DuplicateCVSSAssessmentError` | 409 | `CVSS_DUPLICATE_ASSESSMENT` | Assessment for this provider+version already exists |
-| `CVSSAssessmentNotFoundError` | 404 | `CVSS_ASSESSMENT_NOT_FOUND` | CVSS assessment ID does not exist |
+| `CVSSAssessmentNotFoundError` | 404 | `CVSS_ASSESSMENT_NOT_FOUND` | No assessment exists for the given natural key `(cve_id, provider, cvss_version)` |
 | `InvalidCVSSVectorError` | 422 | `CVSS_INVALID_VECTOR` | CVSS vector string is malformed or invalid |
-| `CVSSVersionMismatchError` | 409 | `CVSS_VERSION_MISMATCH` | Vector version does not match the declared version |
 | `InvalidTransitionError` † | 409 | `TICKET_INVALID_TRANSITION` | Requested status transition is not allowed |
 | `SeverityDerivedError` † | 409 | `TICKET_SEVERITY_DERIVED` | Cannot manually set severity when it is auto-derived |
 
@@ -961,8 +967,8 @@ individual endpoints.
 | Caller Category | Operations Used | Context |
 |-----------------|-----------------|---------|
 | Ticket API mutation endpoints | `set_severity_override()`, manual-zone exits | VA-initiated ticket operations |
-| CVE API mutation endpoints | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | VA-initiated CVSS operations via `/api/v1/cves/{cve_id}/cvss/...` |
-| CVSS sync fetcher | `create_cvss_assessment()`, `update_cvss_assessment()`, `delete_cvss_assessment()` | Background CVSS ingestion |
+| CVE API mutation endpoints | `upsert_cvss_assessment()`, `delete_cvss_assessment()` | VA-initiated CVSS operations via `/api/v1/cves/{cve_id}/cvss/...` |
+| CVE fetchers (via `cve_service.upsert_cve()`) | `upsert_cvss_assessment()` | Background CVE ingestion (Phase 1) |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
 | Admin: default CVSS version change | `recalculate_cvss_chain()` | Batch re-evaluation triggered by default CVSS version config change |
 | Ticket reactivation (un-ignore, un-duplicate) | `recalculate_cvss_chain()` | Called by `ticket_service` when a ticket transitions from Ignored/Duplicated to an active status |

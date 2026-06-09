@@ -507,11 +507,14 @@ satisfy the gate. The UI presents only v3.1 and v4.0 as input options to
 VAs.
 
 The backend parses the vector, derives the version and score, and saves the
-assessment. If an existing SUSE assessment for the derived version exists, it
-is updated (upsert). Triggers recalculation chain.
+assessment via `upsert_cvss_assessment()`. If an existing SUSE assessment for
+the derived version exists, it is updated; otherwise a new one is created.
+Triggers recalculation chain (unless the vector is unchanged — no-op
+short-circuit).
 
-Response (200 OK): the created or updated assessment object wrapped in
-the standard `{"data": ...}` envelope.
+Response: **201 Created** when a new assessment is created, **200 OK** when
+an existing one is updated or unchanged. The response body is the assessment
+object wrapped in the standard `{"data": ...}` envelope.
 
 **Error responses**:
 
@@ -523,12 +526,6 @@ the standard `{"data": ...}` envelope.
 
 The `409` error applies only when the CVE has an associated ticket. CVEs
 without an associated ticket are always mutable.
-
-The `CVSS_DUPLICATE_ASSESSMENT` error (defined in `ticket-mutations.md`) is
-never returned by this endpoint. When a SUSE assessment for the derived
-version already exists, the endpoint dispatches to
-`update_cvss_assessment()` instead of `create_cvss_assessment()`,
-implementing upsert semantics transparently.
 
 **`Capability: manage_cvss`**
 
@@ -603,11 +600,13 @@ These functions are used in two contexts:
 ### `services/ticket_mutations.py` — CVSS Mutations
 
 All operations that create, update, or delete `CVECVSSAssessment`
-records MUST go through the `ticket_mutations` module. When a CVSS
-mutation function is invoked, it conceptually: locks the ticket,
-validates operability, persists the assessment change, resolves derived
-data, emits audit events, and reconciles ticket status — all within a
-single database transaction (atomicity guarantee).
+records MUST go through the `ticket_mutations` module. The module
+exposes `upsert_cvss_assessment()` (create-or-update) and
+`delete_cvss_assessment()`. When a CVSS mutation function is invoked,
+it conceptually: locks the ticket, validates operability, persists the
+assessment change, resolves derived data, emits audit events, and
+reconciles ticket status — all within a single database transaction
+(atomicity guarantee).
 
 Two resolution functions from `services/cvss.py` are invoked during
 the write path, each serving a distinct purpose:

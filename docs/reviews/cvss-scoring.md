@@ -11,17 +11,7 @@
 ### CVS-GAP-10 — SUSE CVSS POST endpoint specifies upsert but service function rejects duplicates (Medium)
 
 **Category**: Error and failure paths
-**Status**: OPEN
-
-The spec says at line 493-494 "If an existing SUSE assessment for the derived
-version exists, it is updated (upsert)." However, ticket-mutations.md defines
-`create_cvss_assessment()` with the precondition: "No existing assessment for
-the same (CVE, provider, version) combination — raises
-`DuplicateCVSSAssessmentError` (HTTP 409)". The API endpoint promises upsert
-semantics while the service function rejects duplicates. An implementer would
-need to decide whether the endpoint handler checks for existing records and
-dispatches to `update_cvss_assessment()` instead, or whether the service
-implements upsert internally.
+**Status**: RESOLVED — Eliminated by replacing `create_cvss_assessment()` and `update_cvss_assessment()` with a single `upsert_cvss_assessment()` that handles create-or-update internally via `INSERT ... ON CONFLICT DO UPDATE`. `DuplicateCVSSAssessmentError` removed. See `docs/drafts/upsert-cvss-assessment.md` (2026-06-09)
 
 ### CVS-GAP-11 — CVSS v2.0 inclusion in Severity Resolution Cascade contradicts Key Principle 2 (Medium)
 
@@ -122,7 +112,7 @@ description is incorrect.
 
 ### CVS-COH-13 — POST endpoint error table omits `CVSS_DUPLICATE_ASSESSMENT` from ticket-mutations.md (Low)
 
-**Status**: RESOLVED — Added explicit note to POST endpoint: CVSS_DUPLICATE_ASSESSMENT is never returned; upsert dispatches to update_cvss_assessment() when record exists (2026-06-09)
+**Status**: RESOLVED — Superseded: `CVSS_DUPLICATE_ASSESSMENT` and `DuplicateCVSSAssessmentError` eliminated entirely by the upsert unification. The POST endpoint now calls `upsert_cvss_assessment()` directly; no dispatch note needed (2026-06-09)
 
 ### CVS-COH-14 — GET response example shows score 8.1 for a CVSS:3.1 vector that computes to 9.8 (Low)
 
@@ -175,11 +165,7 @@ description is incorrect.
 ### CVS-DES-02 — API upsert endpoint inconsistent with service layer's separate create/update functions (Medium)
 
 **Category**: Architectural fitness
-**Status**: OPEN
-
-POST /api/v1/cves/{cve_id}/cvss/suse performs upsert but ticket-mutations.md
-defines separate `create_cvss_assessment()` and `update_cvss_assessment()` with
-different preconditions. The spec should document the internal dispatch logic.
+**Status**: RESOLVED — Eliminated by replacing `create_cvss_assessment()` and `update_cvss_assessment()` with a single `upsert_cvss_assessment()`. Service API now matches the domain operation. See `docs/drafts/upsert-cvss-assessment.md` (2026-06-09)
 
 ### CVS-DES-03 — Batch CVSS recalculation has no defined result storage or admin feedback mechanism (Medium)
 

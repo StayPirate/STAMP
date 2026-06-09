@@ -10,7 +10,7 @@
 
 ### TKM-GAP-01 — No exception for duplicate CVSS assessment (Medium)
 
-**Status**: RESOLVED — Added `DuplicateCVSSAssessmentError` to Service Exceptions table and `create_cvss_assessment()` preconditions with 409 Conflict mapping (2026-05-25)
+**Status**: RESOLVED — Originally added `DuplicateCVSSAssessmentError` (2026-05-25). Subsequently eliminated: `create_cvss_assessment()` and `update_cvss_assessment()` replaced by `upsert_cvss_assessment()` which handles duplicates via `INSERT ... ON CONFLICT DO UPDATE`. `DuplicateCVSSAssessmentError` removed (2026-06-09)
 
 ### TKM-GAP-02 — Assessment not found has no defined exception (Medium)
 
@@ -40,13 +40,13 @@
 
 **Status**: RESOLVED — Preconditions in ticket_mutations naturally reject operations on assessments whose CVE has no parent ticket; assessments are preserved for data reuse on re-association (2026-05-25)
 
-### TKM-GAP-09 — Missing exception for create_cvss_assessment when ticket has no CVE (Medium)
+### TKM-GAP-09 — Missing exception for upsert_cvss_assessment when ticket has no CVE (Medium)
 
-**Status**: RESOLVED — Added TicketNoCVEError exception to Service Exceptions table and precondition reference (2026-05-25)
+**Status**: RESOLVED — Added TicketNoCVEError exception to Service Exceptions table and precondition reference (2026-05-25). Function renamed from `create_cvss_assessment()` to `upsert_cvss_assessment()` (2026-06-09)
 
 ### TKM-GAP-10 — update_cvss_assessment None semantics ambiguity (Medium)
 
-**Status**: RESOLVED — Redesigned CVSS functions: removed score/cvss_version inputs, derived from vector via cvss library (2026-05-25)
+**Status**: RESOLVED — Redesigned CVSS functions: removed score/cvss_version inputs, derived from vector via cvss library (2026-05-25). `update_cvss_assessment()` subsequently eliminated — replaced by `upsert_cvss_assessment()` (2026-06-09)
 
 ### TKM-GAP-11 — Missing exception for reopen_from_ignored wrong status (Medium)
 
@@ -104,7 +104,7 @@ The spec delegates regression detection to **callers** of `reconcile_ticket_stat
 **Category**: Contradictory definitions
 **Status**: OPEN
 
-Per-function behavior steps bundle the unconditional `CVE.severity` update inside the ticket-conditional branch. In `cvss-scoring.md`'s write-path, steps 4, 4b, 5, 6 (resolve severity score, resolve eligibility score, calculate severity, update CVE.severity) are UNCONDITIONAL — they happen even for ticketless CVEs. But in `ticket-mutations.md`, these steps are described inside the "If a ticket exists" conditional block (most visibly in `delete_cvss_assessment` which goes from "delete record" directly to "if ticket exists: recalculate"). A reader of `ticket-mutations.md` alone could conclude that `CVE.severity` is not updated for ticketless CVEs, which contradicts the write-path spec.
+Per-function behavior steps bundle the unconditional `CVE.severity` update inside the ticket-conditional branch. In `cvss-scoring.md`'s write-path, steps 4, 4b, 5, 6 (resolve severity score, resolve eligibility score, calculate severity, update CVE.severity) are UNCONDITIONAL — they happen even for ticketless CVEs. But in `ticket-mutations.md`, these steps are described inside the "If a ticket exists" conditional block (most visibly in `delete_cvss_assessment` which goes from "delete record" directly to "if ticket exists: recalculate", and in `upsert_cvss_assessment` step 7 vs step 8). A reader of `ticket-mutations.md` alone could conclude that `CVE.severity` is not updated for ticketless CVEs, which contradicts the write-path spec.
 
 ---
 
