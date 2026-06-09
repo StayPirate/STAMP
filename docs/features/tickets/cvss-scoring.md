@@ -469,9 +469,16 @@ distinct CVSS resolution strategies:
 - **`severity`**: result of the Severity Resolution Cascade (5-step,
   multi-provider). `score` is the resolved CVSS score, `version` is the
   CVSS version of the resolved score (e.g., `"3.1"`, `"4.0"`), `provider`
-  is the provider that supplied it (e.g., `"NVD"`, `"SUSE"`, `"Red Hat"`),
-  and `label` is the severity rating (`"None"`, `"Low"`, `"Medium"`,
-  `"High"`, `"Critical"`). Used for display, triage, and notifications.
+  is the provider that supplied it, and `label` is the severity rating
+  (`"None"`, `"Low"`, `"Medium"`, `"High"`, `"Critical"`). Used for
+  display, triage, and notifications.
+
+  The `severity` object is formally `null` when no CVSS assessments are
+  available (Absent severity cascade step 5).
+
+  The `severity.provider` matches the `provider_name` column of
+  `CVECVSSAssessment` (VARCHAR(100), set open, with examples such as
+  `"NVD"`, `"SUSE"`, `"Red Hat"`, or CNA names like `"Intel Corporation"`).
 - **`eligibility`**: result of the Eligibility Score Resolution (2-step,
   SUSE-only). `score` is the CVSS score used for product eligibility
   threshold comparison. `source` indicates where the score came from:
@@ -479,6 +486,20 @@ distinct CVSS resolution strategies:
   version, `"fallback"` when no SUSE assessment exists for the default
   version (score defaults to 10.0 — conservative worst-case). Used for
   product eligibility threshold comparison.
+
+Example response when no CVSS assessments are available (absent severity):
+
+```json
+{
+  "cve_id": "CVE-2025-12345",
+  "assessments": [],
+  "severity": null,
+  "eligibility": {
+    "score": 10.0,
+    "source": "fallback"
+  }
+}
+```
 
 ### Set or Update SUSE CVSS Assessment
 
@@ -515,6 +536,16 @@ short-circuit).
 Response: **201 Created** when a new assessment is created, **200 OK** when
 an existing one is updated or unchanged. The response body is the assessment
 object wrapped in the standard `{"data": ...}` envelope.
+
+**Note on POST with upsert semantics**: POST is used instead of PATCH or PUT
+because the target resource is not fully identified by the URL — the CVSS
+version (which determines which specific assessment record is created or
+updated) is derived from parsing the vector prefix in the request body, not
+from an explicit path parameter. Additionally, the operation may create a new
+entity rather than update an existing field, making POST semantically
+appropriate per the "Mutation Patterns" convention in `api-spec.md`. The
+differentiated response codes (201 for creation, 200 for update) make the
+upsert behavior explicit to clients.
 
 **Error responses**:
 
@@ -673,8 +704,18 @@ response. The task:
    (isolation: a failure on one ticket does not roll back others)
 6. On error for a single ticket, the task logs the error with the
    ticket ID and continues with the remaining tickets
-7. On completion, the task releases the lock and reports the total
-   number of tickets processed, successes, and failures
+7. On completion, the task releases the lock and logs completion
+   metrics (total tickets processed, successes, failures) to
+   structured application logs (standard Python `logging` module)
+
+**Admin feedback**: when the Admin changes the default CVSS version in
+the UI, the frontend displays a confirmation dialog showing the count of
+active tickets that will be recalculated (derived from data already
+available in the frontend — no dedicated preview endpoint is required).
+After confirmation, the batch task executes asynchronously. Completion
+metrics are available in application logs only — no dedicated result
+storage, audit trail enrichment, or notification mechanism is provided
+for the batch outcome.
 
 **Idempotency**: `recalculate_cvss_chain()` is idempotent —
 re-processing tickets already updated produces the same result. If

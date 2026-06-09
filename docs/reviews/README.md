@@ -3,17 +3,6 @@
 Summary of specification reviews conducted by the 5-reviewer pipeline
 (Gap Analysis, Coherence, Design, Security, API Conventions).
 
-## Legend
-
-| Symbol | Meaning |
-|--------|---------|
-| `—` | Reviewer never executed on this spec |
-| `🟢` | Reviewer executed, zero open findings |
-| `N` | Reviewer executed, N open findings |
-| `⚠️` | Spec modified after last review (stale) |
-
-Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
-
 ## Summary Table
 
 | Spec | GAP | COH | DES | SEC | API | Total | Last Review | Stale |
@@ -30,8 +19,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1 | 2026-06-05 | ⚠️ |
 | |  | 1:🟡 |  |  |  |  |  |  |
-| [cvss-scoring](cvss-scoring.md) | 2 | 1 | 4 | 3 | 1 | 11 | 2026-06-09 |  |
-| | 2:🟡 | 1:🟠 | 1:🟠 3:🟡 | 1:🟠 2:🟡 | 1:🟠 |  |  |  |
+| [cvss-scoring](cvss-scoring.md) | 1 | 🟢 | 3 | 2 | 🟢 | 6 | 2026-06-09 |  |
+| | 1:🟡 |  | 3:🟡 | 2:🟡 |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-28 | ⚠️ |
@@ -62,8 +51,8 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **5** | **4** | **5** | **4** | **1** | **20** |  |  |
-| | 3:🟠 2:🟡 | 1:🟠 3:🟡 | 1:🟠 4:🟡 | 1:🟠 3:🟡 | 1:🟠 |  |  |  |
+| **Total** | **5** | **3** | **4** | **3** | **0** | **15** |  |  |
+| | 3:🟠 2:🟡 | 3:🟡 | 4:🟡 | 3:🟡 |  |  |  |  |
 
 ### Disabled specs
 
@@ -80,3 +69,14 @@ Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low
 - product-catalog
 - product-lifecycle-transitions
 - system-settings
+
+## Legend
+
+| Symbol | Meaning |
+|--------|---------|
+| `—` | Reviewer never executed on this spec |
+| `🟢` | Reviewer executed, zero open findings |
+| `N` | Reviewer executed, N open findings |
+| `⚠️` | Spec modified after last review (stale) |
+
+Severity indicators (sub-row): `🔴` = High, `🟠` = Medium, `🟡` = Low

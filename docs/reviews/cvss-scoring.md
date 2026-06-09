@@ -23,15 +23,7 @@
 
 ### CVS-GAP-12 — Severity and eligibility response objects have unspecified null/absent structure (Low)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The GET /api/v1/cves/{cve_id}/cvss response includes severity and eligibility
-objects but does not define their structure when the resolution produces no
-result. When severity is absent, is the severity object null, or is it
-{score: null, provider: null, label: "none"}? The severity.provider value
-format is also unspecified. The eligibility object always returns a score
-(10.0 fallback), but should eligibility.source be "fallback" in this case?
+**Status**: RESOLVED — Specified response structure for absent severity (severity: null) with example, and formalized contract for severity.provider (2026-06-09)
 
 ### CVS-GAP-14 — SUSE-defined severity thresholds per version referenced but never defined (Low)
 
@@ -95,16 +87,7 @@ marked as such; if current, the mechanism is missing.
 
 ### CVS-COH-11 — `severity_changed` audit event `user_id` definition contradicts between data-model.md and ticket-audit-log.md/ticket-mutations.md (Medium)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-data-model.md TicketAuditEventType table states that `severity_changed` has
-`user_id` that is "always NULL (system event)". However, ticket-audit-log.md
-defines `severity_changed` as: "NULL for automatic CVSS recalculation, acting
-user's UUID for manual severity override (`set_severity_override()`)".
-ticket-mutations.md confirms at line 581: `set_severity_override` creates a
-`TicketAuditEvent` with `user_id = acting_user_id`. The data-model.md
-description is incorrect.
+**Status**: RESOLVED — Corrected definition of user_id for severity_changed in data-model.md (2026-06-09)
 
 ### CVS-COH-12 — DELETE endpoint error table uses `RESOURCE_NOT_FOUND` but ticket-mutations.md defines `CVSS_ASSESSMENT_NOT_FOUND` (Medium)
 
@@ -169,12 +152,7 @@ description is incorrect.
 
 ### CVS-DES-03 — Batch CVSS recalculation has no defined result storage or admin feedback mechanism (Medium)
 
-**Category**: Complexity vs simplicity
-**Status**: OPEN
-
-The batch task "reports the total number of tickets processed, successes, and
-failures" but doesn't define where this report is stored or how it reaches the
-admin.
+**Status**: RESOLVED — Specified admin feedback mechanism: UI confirmation dialog with ticket count + structured application logging for batch results (2026-06-09)
 
 ### CVS-DES-05 — Recalculation Chain description broader than `recalculate_cvss_chain()` specification (Low)
 
@@ -216,12 +194,7 @@ response doesn't indicate staleness.
 
 ### CVS-SEC-01 — Public CVSS endpoint may expose eligibility data during CVE-to-confidential-ticket transition (Medium)
 
-**Category**: Data Exposure
-**Status**: OPEN
-
-GET /api/v1/cves/{cve_id}/cvss is public and returns eligibility score data. A
-CVE transitioning from ticketless to confidential-ticket-linked has a window
-where previously served eligibility data may have been cached.
+**Status**: RESOLVED — Accepted risk: eligibility score is derived from CVSS data already public in the same response; require_accessible_cve gates access once CVE is linked to confidential ticket (2026-06-09)
 
 ### CVS-SEC-02 — No rate limiting on CVSS mutation endpoints that trigger expensive recalculation chains (Medium)
 
@@ -260,12 +233,7 @@ Failed mutation attempts are not logged in the ticket audit trail.
 
 ### CVS-API-01 — POST endpoint uses wrong HTTP method for upsert semantics (Medium)
 
-**Category**: Mutation Patterns
-**Status**: OPEN
-
-POST performs upsert but the resource ambiguity (version derived from vector
-prefix) creates a borderline case. Spec should explicitly justify POST over
-PATCH.
+**Status**: RESOLVED — Added "Note on POST with upsert semantics" justifying method choice per api-spec.md Mutation Patterns (2026-06-09)
 
 ### CVS-API-02 — GET endpoint response uses non-standard data wrapper structure (Medium)
 
