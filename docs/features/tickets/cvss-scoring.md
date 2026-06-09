@@ -13,10 +13,14 @@ ticket workflow progression.
 1. **Multi-provider**: each CVE can have CVSS assessments from multiple
    providers (NVD, CNA vendors, Red Hat, SUSE). Each assessment is stored
    independently.
-2. **Multi-version**: Sentinel supports CVSS v3.1 and v4.0. A single provider
-   may supply assessments for one or both versions. Other versions (e.g.,
-   v2.0) may arrive from external sources and are stored and displayed but
-   not used for decisions.
+2. **Multi-version**: Sentinel supports CVSS v3.1 and v4.0 as its primary
+   decision versions. A single provider may supply assessments for one or
+   both versions. Other versions (e.g., v2.0, v3.0) may arrive from
+   external sources and are stored. All stored versions participate in
+   the Severity Resolution Cascade as fallback (steps 2 and 4) — if they
+   are the only available score, they are used for severity derivation
+   rather than falling back to absent. Only the configured default version
+   (v3.1 or v4.0) is used for the Eligibility Score Resolution.
 3. **Configurable default version**: a system-wide setting determines which
    CVSS version is used for all automated decisions (severity, eligibility,
    notifications). Initially set to `3.1`, changeable by Admin. See
@@ -53,17 +57,18 @@ providers and versions to maximize informational coverage:
    assessment for the configured default CVSS version, use this score.
 2. **SUSE assessment, other version**. If SUSE has published an assessment
    for a non-default version, use it. If multiple non-default versions
-   exist, prefer the most recent version number.
+   exist, prefer the highest by version priority order
+   (`4.0 > 3.1 > 3.0 > 2.0`).
 3. **Highest provider, default version**. If at least one external provider
    has an assessment for the default version, use the highest score among
    them.
 4. **Highest provider, other version**. If at least one external provider
    has an assessment for any non-default version, use the highest score
-   among those. If multiple non-default versions exist, prefer the most
-   recent version number; within the same version, prefer the highest
-   score.
-5. **Absent**. No provider has published any assessment for any supported
-   version. The score is treated as absent (severity = `None`).
+   among those. If multiple non-default versions exist, prefer the
+   highest by version priority order (`4.0 > 3.1 > 3.0 > 2.0`); within
+   the same version, prefer the highest score.
+5. **Absent**. No provider has published any assessment for any version.
+   The score is treated as absent (severity = `None`).
 
 **Cross-version severity mapping**: when the resolved score comes from a
 version other than the default (steps 2 or 4), severity is mapped using
@@ -405,16 +410,19 @@ with an active ticket, Sentinel performs the following recalculation:
 GET /api/v1/cves/{cve_id}/cvss
 ```
 
-Public (no authentication required).
+**Access: Public**
 
 The `{cve_id}` path parameter accepts either the CVE's UUID or the
 CVE-ID string (e.g., `CVE-2025-1234`). See `docs/api-spec.md` (CVE
 Identifier Resolution) for the dual-identifier resolution pattern.
 
-Response: list of all CVSS assessments for the CVE, grouped by version.
-Pagination is intentionally omitted — the number of CVSS assessments per
-CVE is naturally bounded (one per provider-version combination, typically
-fewer than 20 records).
+Response: composite CVSS view for the CVE — the list of raw assessments
+alongside the computed severity and eligibility results, returned as a
+single conceptual resource in the `data` envelope. Pagination is
+intentionally omitted — the number of CVSS assessments per CVE is
+naturally bounded (one per provider-version combination, typically fewer
+than 20 records). Client-controlled sorting is not supported; assessments
+are returned in a fixed order grouped by CVSS version.
 
 ```json
 {
@@ -424,7 +432,7 @@ fewer than 20 records).
         "id": "uuid",
         "provider_name": "NVD",
         "cvss_version": "3.1",
-        "score": 8.1,
+        "score": 9.8,
         "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
         "metrics": {
           "attack_vector": "Network",
@@ -442,12 +450,13 @@ fewer than 20 records).
     ],
     "default_cvss_version": "3.1",
     "severity": {
-      "score": 8.1,
+      "score": 9.8,
+      "version": "3.1",
       "provider": "NVD",
-      "label": "High"
+      "label": "Critical"
     },
     "eligibility": {
-      "score": 8.1,
+      "score": 9.8,
       "source": "suse"
     }
   }
@@ -458,10 +467,11 @@ The `severity` and `eligibility` objects expose the results of the two
 distinct CVSS resolution strategies:
 
 - **`severity`**: result of the Severity Resolution Cascade (5-step,
-  multi-provider). `score` is the resolved CVSS score, `provider` is the
-  provider that supplied it (e.g., `"NVD"`, `"SUSE"`, `"Red Hat"`), and
-  `label` is the severity rating (`"None"`, `"Low"`, `"Medium"`, `"High"`,
-  `"Critical"`). Used for display, triage, and notifications.
+  multi-provider). `score` is the resolved CVSS score, `version` is the
+  CVSS version of the resolved score (e.g., `"3.1"`, `"4.0"`), `provider`
+  is the provider that supplied it (e.g., `"NVD"`, `"SUSE"`, `"Red Hat"`),
+  and `label` is the severity rating (`"None"`, `"Low"`, `"Medium"`,
+  `"High"`, `"Critical"`). Used for display, triage, and notifications.
 - **`eligibility`**: result of the Eligibility Score Resolution (2-step,
   SUSE-only). `score` is the CVSS score used for product eligibility
   threshold comparison. `source` indicates where the score came from:
@@ -484,10 +494,17 @@ Request body:
 }
 ```
 
-- `vector`: valid CVSS vector string. The CVSS version is derived from the
+- `vector`: valid CVSS vector string (maximum 200 characters). The CVSS version is derived from the
   vector prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
   no prefix → 2.0). The base score is computed automatically by the `cvss`
   library.
+
+The API accepts any valid CVSS version for SUSE assessments (including v2.0
+and v3.0 from historical or cross-referenced data). However, the ticket
+progression gate requires SUSE assessments for both v3.1 AND v4.0 (see
+Workflow Gates) — assessments for other versions are stored but do not
+satisfy the gate. The UI presents only v3.1 and v4.0 as input options to
+VAs.
 
 The backend parses the vector, derives the version and score, and saves the
 assessment. If an existing SUSE assessment for the derived version exists, it
@@ -507,6 +524,12 @@ the standard `{"data": ...}` envelope.
 The `409` error applies only when the CVE has an associated ticket. CVEs
 without an associated ticket are always mutable.
 
+The `CVSS_DUPLICATE_ASSESSMENT` error (defined in `ticket-mutations.md`) is
+never returned by this endpoint. When a SUSE assessment for the derived
+version already exists, the endpoint dispatches to
+`update_cvss_assessment()` instead of `create_cvss_assessment()`,
+implementing upsert semantics transparently.
+
 **`Capability: manage_cvss`**
 
 ### Delete SUSE CVSS Assessment
@@ -514,6 +537,10 @@ without an associated ticket are always mutable.
 ```
 DELETE /api/v1/cves/{cve_id}/cvss/suse/{cvss_version}
 ```
+
+The `{cvss_version}` path parameter accepts: `2.0`, `3.0`, `3.1`, `4.0`.
+Unrecognized values are treated as not found (404
+`CVSS_ASSESSMENT_NOT_FOUND`).
 
 Removes the SUSE CVSS assessment for the specified version. Triggers
 recalculation chain. The ticket may no longer meet the progression gate
@@ -526,7 +553,7 @@ Response: 204 No Content.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
-| 404 | `RESOURCE_NOT_FOUND` | No SUSE assessment exists for the specified version |
+| 404 | `CVSS_ASSESSMENT_NOT_FOUND` | No SUSE assessment exists for the specified version |
 | 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
 
 The `409` error applies only when the CVE has an associated ticket. CVEs
@@ -547,7 +574,7 @@ never mutate the database — they receive data and return results.
 
 | Function                    | Input                                      | Output                          | Description                                              |
 |-----------------------------|--------------------------------------------|---------------------------------|----------------------------------------------------------|
-| `resolve_severity_score`    | CVE assessments, default CVSS version      | (score, provider) or None       | Implements the severity resolution cascade (5-step: SUSE default → SUSE other version → highest provider default → highest provider other → absent) |
+| `resolve_severity_score`    | CVE assessments, default CVSS version      | (score, version, provider) or None | Implements the severity resolution cascade (5-step: SUSE default → SUSE other version → highest provider default → highest provider other → absent) |
 | `resolve_eligibility_score` | CVE assessments, default CVSS version      | Decimal (score)                 | Implements the eligibility score resolution (2-step, SUSE-only: SUSE default version → 10.0 fallback). Always returns a value |
 | `calculate_severity`        | CVSS score (float)                         | Severity enum                   | Maps score to severity using the rating scale            |
 | `validate_cvss_vector`      | Vector string                              | Parsed metrics + version + calculated score | Parses vector, detects version from prefix, validates format, and computes the base score |
@@ -567,8 +594,8 @@ never mutate the database — they receive data and return results.
 These functions are used in two contexts:
 
 1. **Read path** (API `GET .../cvss`): to compute the `severity.score`,
-   `severity.provider`, `severity.label`, and `eligibility.score`
-   response fields without any side effects
+   `severity.version`, `severity.provider`, `severity.label`, and
+   `eligibility.score` response fields without any side effects
 2. **Write path** (via `ticket_mutations`): as building blocks for the
    recalculation chain — `ticket_mutations` calls these functions to
    determine the new severity and eligibility, then persists the results

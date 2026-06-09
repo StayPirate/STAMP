@@ -25,31 +25,11 @@ implements upsert internally.
 
 ### CVS-GAP-11 — CVSS v2.0 inclusion in Severity Resolution Cascade contradicts Key Principle 2 (Medium)
 
-**Category**: State machine completeness
-**Status**: OPEN
-
-Key Principle 2 states: "Other versions (e.g., v2.0) may arrive from external
-sources and are stored and displayed but not used for decisions." However, the
-Severity Resolution Cascade step 4 says: "If at least one external provider has
-an assessment for any non-default version, use the highest score among those."
-If the default version is "3.1" and the only external assessment available is a
-CVSS v2.0 score from Red Hat, step 4 would resolve it as the severity score —
-making a v2.0 score the basis for a severity decision. The spec should clarify
-whether steps 2 and 4 restrict "other version" candidates to supported versions
-(v3.1 and v4.0) or include all stored versions including v2.0.
+**Status**: RESOLVED — Key Principle 2 rewritten: all stored CVSS versions (including v2.0, v3.0) participate in the Severity Resolution Cascade as fallback; explicit version priority order (4.0 > 3.1 > 3.0 > 2.0) added to steps 2 and 4; step 5 updated from "any supported version" to "any version" (2026-06-09)
 
 ### CVS-GAP-13 — CVSS v3.0 vectors accepted by endpoint but v3.1 required by gate (Medium)
 
-**Category**: User-facing scenario gaps
-**Status**: OPEN
-
-The spec says the CVSS version is derived from the vector prefix (CVSS:3.0/ →
-3.0). The gate requires both SUSE CVSS v3.1 AND v4.0 assessments. If a VA
-submits a CVSS:3.0 vector, the system would create a v3.0 assessment, but the
-gate still requires v3.1. The VA would not understand why the ticket won't
-progress. The spec does not specify whether v3.0 vectors should be rejected for
-SUSE assessments, v3.0 should be treated as equivalent to v3.1 for gate
-purposes, or the system should provide guidance.
+**Status**: RESOLVED — Clarified: API accepts any valid CVSS version for SUSE assessments; ticket progression gate requires SUSE v3.1 AND v4.0; UI presents only v3.1 and v4.0 to VAs; assessments for other versions are stored but do not satisfy the gate (2026-06-09)
 
 ### CVS-GAP-12 — Severity and eligibility response objects have unspecified null/absent structure (Low)
 
@@ -77,14 +57,7 @@ marked as such; if current, the mechanism is missing.
 
 ### CVS-GAP-15 — Resolved CVSS version not included in severity response object (Low)
 
-**Category**: User-facing scenario gaps
-**Status**: OPEN
-
-The severity response object includes score, provider, and label but not the
-CVSS version of the resolved score. When the resolved score comes from a
-non-default version, severity is mapped using that version's rating scale. An
-API consumer seeing {score: 7.5, label: High} cannot determine whether this was
-scored on v3.1 or v4.0 scale.
+**Status**: RESOLVED — Added version field to severity response object and resolve_severity_score output (score, version, provider); updated response example and field description (2026-06-09)
 
 ### CVS-GAP-03 — No explicit specification for batch recalculation when SUSE has old-default-version assessment only (High)
 
@@ -145,36 +118,15 @@ description is incorrect.
 
 ### CVS-COH-12 — DELETE endpoint error table uses `RESOURCE_NOT_FOUND` but ticket-mutations.md defines `CVSS_ASSESSMENT_NOT_FOUND` (Medium)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-In cvss-scoring.md the DELETE endpoint error table lists 404
-`RESOURCE_NOT_FOUND` for "No SUSE assessment exists for the specified version".
-However, ticket-mutations.md defines `CVSSAssessmentNotFoundError` with error
-code `CVSS_ASSESSMENT_NOT_FOUND` (HTTP 404). Since the DELETE endpoint routes
-through `ticket_mutations.delete_cvss_assessment()`, the error code surfaced
-should be `CVSS_ASSESSMENT_NOT_FOUND`, not the generic `RESOURCE_NOT_FOUND`.
+**Status**: RESOLVED — DELETE endpoint error code changed from RESOURCE_NOT_FOUND to CVSS_ASSESSMENT_NOT_FOUND, aligning with ticket-mutations.md exception table (2026-06-09)
 
 ### CVS-COH-13 — POST endpoint error table omits `CVSS_DUPLICATE_ASSESSMENT` from ticket-mutations.md (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-ticket-mutations.md defines `DuplicateCVSSAssessmentError` with HTTP 409 and
-code `CVSS_DUPLICATE_ASSESSMENT`. The cvss-scoring.md POST endpoint does not
-list this error. Since the POST endpoint uses upsert semantics for SUSE
-assessments, `CVSS_DUPLICATE_ASSESSMENT` may not apply — but the spec should
-explicitly clarify.
+**Status**: RESOLVED — Added explicit note to POST endpoint: CVSS_DUPLICATE_ASSESSMENT is never returned; upsert dispatches to update_cvss_assessment() when record exists (2026-06-09)
 
 ### CVS-COH-14 — GET response example shows score 8.1 for a CVSS:3.1 vector that computes to 9.8 (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-The GET endpoint response example shows a CVSS vector
-CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H with score: 8.1. However, this
-vector actually computes to a base score of 9.8. The severity.label shows
-"High" (which corresponds to 8.1) but should show "Critical" for a 9.8 score.
+**Status**: RESOLVED — Fixed GET response example: score corrected from 8.1 to 9.8 (matching vector CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H), severity label from High to Critical (2026-06-09)
 
 ### CVS-COH-06 — Recalculation Chain step 2 implies direct eligibility writes; must route through `package_service` (High)
 
@@ -287,20 +239,11 @@ where previously served eligibility data may have been cached.
 
 ### CVS-SEC-02 — No rate limiting on CVSS mutation endpoints that trigger expensive recalculation chains (Medium)
 
-**Category**: Denial of Service
-**Status**: OPEN
-
-POST /api/v1/cves/{cve_id}/cvss/suse triggers full recalculation chain on
-every call. A compromised `manage_cvss` account could rapidly submit changes
-for resource exhaustion.
+**Status**: RESOLVED — Accepted risk: rate limiting is a platform-wide concern tracked separately in api-spec.md; not specific to this endpoint (2026-06-09)
 
 ### CVS-SEC-04 — No explicit input length constraint on CVSS vector string in request schema (Low)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-POST endpoint accepts vector string with no schema-level maximum length. DB
-column is VARCHAR(200) but spec should mandate Pydantic schema constraint.
+**Status**: RESOLVED — Added maximum 200 characters constraint to vector input field description, matching VARCHAR(200) DB column (2026-06-09)
 
 ### CVS-SEC-05 — CVSS library error handling and input sanitization not specified (Low)
 
@@ -312,11 +255,7 @@ exceptions or adversarial inputs are handled.
 
 ### CVS-SEC-06 — Unbounded public CVSS GET response relies on implicit natural bound (Low)
 
-**Category**: Resource Consumption
-**Status**: OPEN
-
-GET returns all assessments without pagination. Provider cardinality is
-implicitly bounded but not constrained.
+**Status**: RESOLVED — Accepted risk: natural bound from unique constraint (provider_name, cvss_version) is sufficient; provider cardinality controlled by fetcher configuration (2026-06-09)
 
 ### CVS-SEC-07 — No audit trail for failed CVSS mutation attempts (Low)
 
@@ -344,33 +283,16 @@ PATCH.
 
 ### CVS-API-02 — GET endpoint response uses non-standard data wrapper structure (Medium)
 
-**Category**: Response Envelope
-**Status**: OPEN
-
-GET response has data containing an object with nested keys (assessments,
-default_cvss_version, severity, eligibility) rather than the list directly.
-Mixed resource data with computed metadata.
+**Status**: RESOLVED — Added composite CVSS view justification to GET endpoint response description; data object documented as structured view of all CVSS data for the CVE (2026-06-09)
 
 ### CVS-API-03 — Authorization format inconsistency (Low)
 
-**Category**: Authorization Declaration
-**Status**: OPEN
-
-POST/DELETE use bold+code formatting for capability declaration. GET declares
-access in prose rather than structured format.
+**Status**: RESOLVED — GET endpoint authorization changed from prose to formal Access: Public format per api-spec.md convention (2026-06-09)
 
 ### CVS-API-04 — GET endpoint missing explicit sorting statement (Low)
 
-**Category**: Sorting
-**Status**: OPEN
-
-Unpaginated endpoint does not state whether client-controlled sorting is
-supported or intentionally omitted.
+**Status**: RESOLVED — Added explicit sorting statement: client-controlled sorting not supported; assessments returned in fixed order grouped by CVSS version (2026-06-09)
 
 ### CVS-API-05 — DELETE endpoint path uses cvss_version which may accept ambiguous values (Low)
 
-**Category**: Path Naming
-**Status**: OPEN
-
-cvss_version path parameter lacks documentation of valid values. Behavior for
-unrecognized version string (404 vs 422) is unspecified.
+**Status**: RESOLVED — Documented valid cvss_version path parameter values (2.0, 3.0, 3.1, 4.0); unrecognized values treated as CVSS_ASSESSMENT_NOT_FOUND (2026-06-09)
