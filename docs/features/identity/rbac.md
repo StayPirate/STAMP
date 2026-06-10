@@ -330,49 +330,6 @@ For `GET /cves/{cve_id}/cvss` (Public), only step 3 applies.
 For non-ticket, non-CVE endpoints (user management, settings,
 fetchers), only steps 1 and 2 apply.
 
-### Conditional Capability Checks
-
-Some endpoints apply conditional capability requirements on optional
-parameters or request body fields. Two distinct patterns exist:
-
-#### Soft Conditional Check (Silent Ignore)
-
-Applies to **query parameters** on list/read endpoints. When the caller
-lacks the required capability, the parameter is silently ignored — the
-request succeeds but the parameter has no effect. The endpoint never
-returns 403 for a missing query parameter on a Public or Authenticated
-endpoint; 403 is reserved for capability-protected endpoints where the
-caller cannot access the endpoint itself.
-
-The capability check is performed inline in the handler (not via the
-`require_capability()` dependency) only when the parameter is present.
-
-The server logs the ignored parameter at DEBUG level (caller identity +
-parameter name). The response includes an `X-Ignored-Parameters` header
-listing parameter names that were silently ignored (see Open Points).
-
-When a parameter is silently ignored due to insufficient capability, the
-backend SHOULD emit a DEBUG-level log entry recording the caller identity
-and the ignored parameter name. The log MUST NOT include the parameter
-value to avoid log injection.
-
-| Endpoint | Parameter | Required Capability |
-|----------|-----------|-------------------|
-| *(none currently defined)* | | |
-
-#### Hard Conditional Check (403 Rejection)
-
-Applies to **request body fields** on mutation endpoints. When the caller
-provides a field that requires an additional capability and lacks it, the
-endpoint returns 403 (AUTH_INSUFFICIENT_PERMISSION). The field is NOT
-silently ignored — this is a hard authorization failure.
-
-| Endpoint | Field | Required Capability |
-|----------|-------|-------------------|
-| POST /api/v1/tickets | is_confidential: true | manage_confidentiality |
-
-See Business Rule 13 for the full specification of this check.
-
 ## Endpoint Permission Map
 
 This section is a **derived summary index** of access control rules. The
@@ -414,7 +371,7 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets` | Public ‡admin_ticket_ops | [tickets](../tickets/tickets.md#list-tickets) |
+| GET | `/api/v1/tickets` | Public | [tickets](../tickets/tickets.md#list-tickets) |
 | GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#get-ticket) |
 | POST | `/api/v1/tickets` | `create_ticket` †manage_confidentiality | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | `triage_ticket` | [tickets](../tickets/tickets.md#associate-cve) |
@@ -464,7 +421,7 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/cves` | Public ‡admin_ticket_ops | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
+| GET | `/api/v1/cves` | Public | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
 | GET | `/api/v1/cves/{cve_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
 | POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
@@ -538,8 +495,11 @@ here with the required authorization level and a link to the owning spec.
   [ad-integration](ad-integration.md#ldap-sync-fetcher)); local users are created by admins
   via CLI (see [user-management](user-management.md#cli-commands))
 
-† Hard conditional — returns 403 if caller lacks this capability when the triggering field is provided.
-‡ Soft conditional — parameter silently ignored if caller lacks this capability.
+† Field-level capability — the endpoint has a base access level, but
+  this specific request body field requires an additional capability.
+  If the field is present and the caller lacks the capability, the
+  endpoint returns 403 (AUTH_INSUFFICIENT_PERMISSION). If the field is
+  absent, the capability is not checked.
 
 ## Business Rules
 

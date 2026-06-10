@@ -150,10 +150,7 @@
 
 ### RBAC-SEC-08 — Silent ignore of capability-gated parameters enables privilege confusion (Low)
 
-**Category**: Authorization
-**Status**: OPEN
-
-The "Conditional Capability Checks" section specifies that parameters requiring a capability (e.g., include_deleted) are silently ignored when the caller lacks permission. While this prevents information leakage about endpoint existence, it can lead to privilege confusion where callers believe they received complete results but actually received filtered data. A response header or metadata field indicating ignored parameters would help API consumers detect misconfiguration without leaking authorization model details.
+**Status**: RESOLVED — Auto-resolved: the Soft Conditional Check pattern and its empty parameter table have been removed entirely from the specifications; the only consumer (include_deleted) was eliminated with ticket soft-deletion removal, making the privilege confusion risk purely theoretical and the response header proposal moot (2026-06-10)
 
 ### RBAC-SEC-09 — No maximum roles-per-user limit specified (Low)
 

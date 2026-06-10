@@ -33,8 +33,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [package-service](package-service.md) | 3 | 1 | 🟢 | 🟢 | 🟢 | 4/30 | 2026-06-03 | ⚠️ |
 | | 2:🟠 1:🟡 | 1:🟡 |  |  |  |  |  |  |
-| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 1 | 🟢 | 1/43 | 2026-05-26 | ⚠️ |
-| |  |  |  | 1:🟡 |  |  |  |  |
+| [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/43 | 2026-05-26 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-05-17 | ⚠️ |
@@ -51,8 +51,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **4** | **2** | **1** | **1** | **0** | **8/757** |  |  |
-| | 3:🟠 1:🟡 | 2:🟡 | 1:🟡 | 1:🟡 |  |  |  |  |
+| **Total** | **4** | **2** | **1** | **0** | **0** | **7/757** |  |  |
+| | 3:🟠 1:🟡 | 2:🟡 | 1:🟡 |  |  |  |  |  |
 
 ### Disabled specs
 

@@ -81,26 +81,6 @@ only step 3 applies.
 
 For non-ticket, non-CVE endpoints, only steps 1 and 2 apply.
 
-#### Conditional Capability Checks
-
-Some endpoints are Public or Authenticated but accept optional parameters
-that require a capability.
-
-Rules:
-
-- The capability check is performed inline in the handler (not via the
-  `require_capability()` dependency) only when the parameter is present
-- If the caller lacks the required capability, the parameter is
-  **silently ignored** — the endpoint returns results as if the parameter
-  were not provided
-- The endpoint never returns 403 for a missing query parameter on a
-  Public or Authenticated endpoint; 403 is reserved for
-  capability-protected endpoints
-- When a parameter is silently ignored due to insufficient capability,
-  the backend SHOULD emit a DEBUG-level log entry recording the caller
-  identity and the ignored parameter name. The log MUST NOT include the
-  parameter value to avoid log injection
-
 ### Response Format
 
 All responses use JSON.
