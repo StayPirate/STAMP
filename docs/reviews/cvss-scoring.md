@@ -27,15 +27,7 @@
 
 ### CVS-GAP-14 — SUSE-defined severity thresholds per version referenced but never defined (Low)
 
-**Category**: Configuration and defaults
-**Status**: OPEN
-
-The spec says "Sentinel uses SUSE-defined severity thresholds per version.
-Until explicit thresholds are configured, the standard CVSS thresholds for each
-version apply." This implies a configurable per-version threshold mechanism, but
-no specification defines it: absent from system-settings.md, absent from the
-data model, no API or admin UI described. If this is a future item it should be
-marked as such; if current, the mechanism is missing.
+**Status**: RESOLVED — Removed reference to SUSE-defined severity thresholds and specified standard CVSS scale, adding a note about SUSE's internal scale mapped at the boundary. (2026-06-10)
 
 ### CVS-GAP-15 — Resolved CVSS version not included in severity response object (Low)
 
@@ -156,29 +148,15 @@ marked as such; if current, the mechanism is missing.
 
 ### CVS-DES-05 — Recalculation Chain description broader than `recalculate_cvss_chain()` specification (Low)
 
-**Category**: Architectural fitness
-**Status**: OPEN
-
-The Recalculation Chain says "every TicketPackageProduct" but
-`recalculate_cvss_chain()` correctly specifies exclusions for
-`is_eligible_override=true` and Reactive LTSS.
+**Status**: RESOLVED — Auto-resolved: the Recalculation Chain section functions as a high-level overview operating at an appropriate abstraction level; the authoritative details are correctly defined in `ticket-mutations.md` and the existing cross-reference to `package-model.md` Axis 2 is sufficient. (2026-06-10)
 
 ### CVS-DES-06 — Redis lock crash scenario produces misleading error message and no automatic recovery (Low)
 
-**Category**: Edge cases and risks
-**Status**: OPEN
-
-If worker crashes, the lock persists for 2 hours. The error message "anomaly: a
-batch should not take that long" is misleading. No mechanism for manual force
-recalculation.
+**Status**: RESOLVED — Lock TTL reduced to 1 hour. A periodic heartbeat timestamp is now written to the lock key every 60s, allowing the retry logic to differentiate between an active batch and a stale lock from a crashed worker. (2026-06-10)
 
 ### CVS-DES-07 — Severity and eligibility response objects may be stale on read path for CVEs without active tickets (Low)
 
-**Category**: Edge cases and risks
-**Status**: OPEN
-
-For CVEs with Resolved tickets, assessment data may be months old. The API
-response doesn't indicate staleness.
+**Status**: RESOLVED — Auto-resolved: by design, clients can infer sync staleness from the ticket status (Resolved/Ignored/Duplicated indicate that active CVSS tracking has stopped). The overhead of adding a dedicated indicator or continuing tracking indefinitely is not justified. (2026-06-10)
 
 ### CVS-DES-01 — Ambiguous version tie-breaking in severity cascade allows v2.0 participation despite stated exclusion (High)
 
@@ -206,11 +184,7 @@ response doesn't indicate staleness.
 
 ### CVS-SEC-05 — CVSS library error handling and input sanitization not specified (Low)
 
-**Category**: Input Validation
-**Status**: OPEN
-
-Spec relies on cvss library for parsing but doesn't specify how unexpected
-exceptions or adversarial inputs are handled.
+**Status**: RESOLVED — Auto-resolved: the specifications have been updated to explicitly cover error handling and input validation/sanitization across both the API mutations and the background fetchers (NVD, Red Hat, etc.). (2026-06-10)
 
 ### CVS-SEC-06 — Unbounded public CVSS GET response relies on implicit natural bound (Low)
 
@@ -218,10 +192,7 @@ exceptions or adversarial inputs are handled.
 
 ### CVS-SEC-07 — No audit trail for failed CVSS mutation attempts (Low)
 
-**Category**: Audit Trail
-**Status**: OPEN
-
-Failed mutation attempts are not logged in the ticket audit trail.
+**Status**: RESOLVED — Auto-resolved: by design, the audit trail captures successful state changes only ("Audit events record state changes, not access attempts"). Failed attempts are surfaced to callers via HTTP error responses and captured in application/access logs. (2026-06-10)
 
 ### CVS-SEC-03 — Batch recalculation lock failure may silently leave tickets in stale state (Low)
 

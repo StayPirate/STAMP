@@ -73,9 +73,18 @@ providers and versions to maximize informational coverage:
 **Cross-version severity mapping**: when the resolved score comes from a
 version other than the default (steps 2 or 4), severity is mapped using
 the rating scale thresholds specific to that score's version. Sentinel
-uses SUSE-defined severity thresholds per version. Until explicit
-thresholds are configured, the standard CVSS thresholds for each version
-apply (see Severity Rating Scale above).
+uses the standard CVSS thresholds for each version (see Severity Rating
+Scale above).
+
+**SUSE Internal Severity Scale**: internally, SUSE processes also utilize a
+non-standard rating scale consisting of four tiers: Low, Moderate, Important,
+and Critical. For the purposes of Sentinel's core database representation,
+API endpoints, and calculation logic, the standard CVSS scale (Low, Medium,
+High, Critical) is used exclusively. Where external SUSE metadata (such as
+IBS/OBS patchinfo/updateinfo.xml files) contains the internal scale (e.g.,
+Moderate, Important), these values are treated as informational or mapped
+statically to their standard CVSS counterparts (Moderate → Medium, Important
+→ High) on the boundary, with no impact on core data models or calculations.
 
 This cascade is implemented by `resolve_severity_score` in
 `services/cvss.py`.
@@ -681,13 +690,19 @@ the chain must run for all active tickets. This batch operation is
 executed as an asynchronous Celery task to avoid blocking the API
 response. The task:
 
-1. Acquires a Redis distributed lock (key:
-   `sentinel:batch_cvss_recalc`) before starting. Lock TTL: 2 hours
-   (safety net for worker crashes; the lock is released explicitly on
-   completion). If the lock is already held, the task retries with
-   exponential backoff and jitter, up to 10 attempts. If still locked
-   after all retries, the task fails with an error log (anomaly: a
-   batch should not take that long).
+1. Acquires a Redis distributed lock (key: `sentinel:batch_cvss_recalc`)
+   before starting, storing the current timestamp as the lock's value. 
+   Lock TTL is set to 1 hour as a safety net for worker crashes. 
+   To maintain lock liveness without extending the TTL, the task updates the 
+   lock key with a fresh heartbeat timestamp every 60 seconds within its 
+   ticket-processing loop (using conditional `SET sentinel:batch_cvss_recalc <timestamp> XX`).
+   If the lock is already held, the task retries with exponential backoff 
+   and jitter, up to 10 attempts. If still locked after all retries, the task 
+   reads the lock value and compares it to the current time:
+   - If the timestamp is recent (less than 3 minutes ago), the task fails 
+     and logs: `"Batch recalculation still in progress. Retry will occur at next version change."`
+   - If the timestamp is stale (3 minutes or older), the task fails and 
+     logs: `"Lock likely orphaned from worker crash. TTL will expire in approximately N minutes. No action required."`
 2. After acquiring the lock, reads the current `default_cvss_version`
    from the database. This **read-after-lock** pattern ensures the task
    always uses the latest version, even if multiple version changes
