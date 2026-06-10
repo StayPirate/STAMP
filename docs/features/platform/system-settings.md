@@ -50,6 +50,45 @@ concurrent executions. See `docs/features/tickets/cvss-scoring.md`
 
 **Warning**: changing the default CVSS version is a significant operation.
 
+## Bootstrap
+
+The `default_cvss_version` setting (declared above with Initial value
+`"3.1"`) MUST exist at runtime before any process reads it. The system
+guarantees existence via two complementary mechanisms:
+
+1. **Alembic data migration** (primary — runs before any process starts):
+
+   ```sql
+   INSERT INTO system_settings (key, value)
+   VALUES ('default_cvss_version', '3.1')
+   ON CONFLICT (key) DO NOTHING;
+   ```
+
+2. **FastAPI lifespan event** (defense-in-depth, self-healing):
+
+   ```sql
+   INSERT INTO system_settings (key, value)
+   VALUES ('default_cvss_version', '3.1')
+   ON CONFLICT (key) DO NOTHING;
+   ```
+
+Properties:
+
+- **Idempotent**: if the setting already exists (e.g., Admin changed it
+  to `"4.0"`), the INSERT is a no-op
+- **Self-healing**: if the row is accidentally deleted, the next
+  application restart restores the default
+- **Multi-replica safe**: `ON CONFLICT DO NOTHING` handles concurrent
+  startup of multiple API server instances without race conditions
+- **Process-order independent**: the Alembic migration guarantees the
+  setting exists before any process (API server, Celery worker, RabbitMQ
+  consumer) starts. The FastAPI lifespan seed is redundant but harmless
+
+**Failure behavior invariant**: `get_default_cvss_version()` raises if
+the setting is absent — this indicates a deployment or data integrity
+error, not a recoverable condition. No hardcoded fallback is provided.
+A missing setting means migrations have not been applied correctly.
+
 ## API Endpoints
 
 All endpoints in this section require the `manage_settings` capability.

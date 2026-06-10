@@ -262,16 +262,13 @@ Severity is recalculated whenever:
 
 - A CVSS assessment is added, modified, or removed for the CVE
 - The system-wide default CVSS version is changed by an Admin
-- A ticket is reactivated from Ignored or Duplicated status —
-  `recalculate_cvss_chain()` is called synchronously during the
-  reactivation, plus `catch_up()` tasks are enqueued for catch-up
+- A ticket transitions from an inactive status (Resolved, Ignored,
+  Duplicated) to an active status — `recalculate_cvss_chain()` is
+  called synchronously by `reconcile_ticket_status()` when it detects
+  the transition, plus `catch_up()` tasks are enqueued internally
 - A CVE is associated with a ticket (or a ticket is created with a
-   CVE) — `recalculate_cvss_chain()` is called synchronously after
-   commit
-- A ticket regresses from Resolved to an active status —
-   `recalculate_cvss_chain()` is called synchronously by the caller
-   of `reconcile_ticket_status()` when a backward transition from
-   Resolved is detected
+   CVE) — `recalculate_cvss_chain()` is called synchronously within
+   the transaction (see `ticket-service.md`, `associate_cve()` step 9)
 
 ### Severity Override by CVSS
 
@@ -740,8 +737,8 @@ only the latest version is used.
 
 ## Ticket Reactivation: CVSS Catch-Up
 
-When a ticket transitions from a non-active state (Resolved, Ignored,
-Duplicated) to an active state (New, Analysis, Analyzed), two catch-up
+When a ticket transitions from an inactive status (Resolved, Ignored,
+Duplicated) to an active status (Analysis, Analyzed), two catch-up
 mechanisms execute to reconcile CVSS-derived data:
 
 1. **Synchronous** (within the reactivation transaction):
@@ -751,23 +748,30 @@ mechanisms execute to reconcile CVSS-derived data:
    inactive. This provides immediate best-effort accuracy using
    whatever assessment data is already persisted.
 
-2. **Asynchronous** (enqueued after commit): `catch_up()` tasks are
-   enqueued for every registered fetcher via `get_catch_up_fetchers()`
-   — not limited to CVSS fetchers. This catches up on data that was not
-   fetched during the inactive period. Each `catch_up()` task operates
-   independently; if it discovers changed data, the normal mutation path
-   handles the recalculation chain.
+2. **Asynchronous** (enqueued during `reconcile_ticket_status()`
+   execution, before the caller's commit — safe because `catch_up()` is
+   idempotent by contract and does not read ticket status as a
+   precondition): `catch_up()` tasks are enqueued for every registered
+   fetcher via `get_catch_up_fetchers()` — not limited to CVSS fetchers.
+   This catches up on data that was not fetched during the inactive
+   period. Each `catch_up()` task operates independently; if it discovers
+   changed data, the normal mutation path handles the recalculation
+   chain.
+
+Both mechanisms are handled internally by `reconcile_ticket_status()`
+(step 4) — no caller or endpoint handler action is required.
 
 The ticket may transition rapidly as async tasks complete (e.g.,
 re-open → Analysis, then a fetch discovers a release → Resolved). This
 is expected and correct behavior — the system converges to the accurate
 state.
 
-See [`ticket-service.md`](ticket-service.md) for the un-ignore /
-un-duplicate hooks, [`ticket-mutations.md`](ticket-mutations.md) for
-the post-regression hook and `recalculate_cvss_chain()` contract, and
-[`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md) for
-the `catch_up()` method contract.
+See [`ticket-mutations.md`](ticket-mutations.md) for the
+`reconcile_ticket_status()` step 4 behavior and
+`recalculate_cvss_chain()` contract,
+[`ticket-service.md`](ticket-service.md) for the reactivation context,
+and [`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md)
+for the `catch_up()` method contract.
 
 ## Background Tasks
 

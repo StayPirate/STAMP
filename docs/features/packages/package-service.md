@@ -70,7 +70,7 @@ reserved exclusively for system entry points.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service` |
+| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service`. Post-transition catch-up (CVSS recalculation + fetcher enqueue) is handled internally by `reconcile_ticket_status()` — no caller action needed |
 | `services/cvss.py` | `package_service` delegates eligibility calculation to `resolve_eligibility_score()` in `cvss.py` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) |
 | `core/filters.py` | `search_packages()` receives a `confidentiality_filter` (a SQLAlchemy `ColumnElement`) built by the endpoint handler via `confidential_ticket_filter()`. The service function is unaware of access rules |
 

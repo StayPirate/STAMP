@@ -693,7 +693,14 @@ execution. The following additional rules apply:
   after the caller's transaction commits, consistent with the
   post-commit enqueue pattern used by `trigger_on_demand_fetch()`.
   Enqueuing before commit risks catch-up tasks running against
-  uncommitted data
+  uncommitted data.
+  **Exception**: when enqueued from within `reconcile_ticket_status()`
+  as part of the internalized post-transition catch-up (step 4), the
+  enqueue occurs before the caller's commit. This is safe because:
+  (1) `catch_up()` does not read ticket status as a precondition,
+  (2) `catch_up()` is idempotent by contract, (3) mutations produced
+  by catch-up delegate to service modules that acquire independent
+  locks and respect the ticket's committed state at execution time
 - **Concurrency safety**: no guard on ticket status is required before
   executing `catch_up()`. If a ticket is re-deactivated after catch-up
   tasks are enqueued but before they execute, the tasks run to
@@ -713,18 +720,17 @@ execution. The following additional rules apply:
 
 ### Invocation points
 
-`catch_up()` is enqueued exclusively by **ticket reactivation** hooks:
+`catch_up()` is enqueued exclusively by `reconcile_ticket_status()`
+(step 4) when it detects an inactive-state exit (Resolved, Ignored, or
+Duplicated → active). All inactive → active transitions converge on
+this single invocation point:
 
-- `ticket_mutations.reopen_from_ignored()`: after un-ignore (endpoint
-  handler enqueues catch-up post-commit)
-- `ticket_mutations.revert_duplicate()`: after un-duplicate (endpoint
-  handler enqueues catch-up post-commit)
-- `ticket_mutations.reconcile_ticket_status()`: after regression from
-  Resolved to an active status
+- Gate-driven regression: Resolved → active (automatic)
+- Un-ignore: Ignored → active (via `_reenter_gate_zone()`)
+- Un-duplicate: Duplicated → active (via `_reenter_gate_zone()`)
 
-At each invocation point, the system calls
-`get_catch_up_fetchers()` and enqueues a `run_catch_up` Celery task
-for each registered fetcher.
+At the invocation point, the system calls `get_catch_up_fetchers()` and
+enqueues a `run_catch_up` Celery task for each registered fetcher.
 
 ### Fetcher inventory
 

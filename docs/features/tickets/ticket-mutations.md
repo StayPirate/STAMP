@@ -127,6 +127,11 @@ promotes the ticket further in the same call and the audit event
 reflects the final target (e.g., `old_value = Ignored,
 new_value = Analyzed`).
 
+The post-transition catch-up (CVSS recalculation + fetcher catch-up
+enqueue) is handled internally by `reconcile_ticket_status()` step 4
+when it detects the inactive-state exit — no post-commit action is
+needed by the calling function or endpoint handler.
+
 Only the two manual-zone exit functions (`reopen_from_ignored`,
 `revert_duplicate`) call this helper. It is never called directly by
 external code.
@@ -148,6 +153,11 @@ current reality (gate conditions + data freshness).
 - May null `assignee_id` and create an `assignment` audit event if the
   current assignee is inactive (inactive assignee sanitization)
 - May add ticket to revisit queue after sanitization
+- May call `recalculate_cvss_chain()` when an inactive → active
+  transition is detected (producing `severity_changed` and
+  `product_eligibility_changed` audit events if derived values change)
+- May enqueue `catch_up()` Celery tasks for registered fetchers when an
+  inactive → active transition is detected
 
 Callers must be aware that invoking this function may produce mutations
 beyond status changes.
@@ -184,7 +194,48 @@ beyond status changes.
    - Create `TicketAuditEvent` with `event_type = status_change`
    - `old_value` is taken from `previous_status` if provided; otherwise
      from the ticket's current status field
-4. The function operates within the same database transaction as the
+4. **Post-transition catch-up** (inactive-state exit detection):
+   - Resolve `effective_previous`: use `previous_status` parameter if
+     provided (reactivation cases via `_reenter_gate_zone()`), otherwise
+     capture the ticket's status before gate evaluation as a local
+     variable at the start of the function (regression cases)
+   - Resolve `new_status`: the status determined by step 2 (regardless of
+     whether step 3 produced a change — see note below)
+   - If `effective_previous ∈ {Resolved, Ignored, Duplicated}` AND
+     `new_status ≠ effective_previous`:
+     1. Read `default_cvss_version` from
+        `settings_service.get_default_cvss_version(db)`. If this raises
+        (setting absent), the exception propagates — this indicates a
+        deployment error (migrations not applied). The transaction rolls
+        back and the inactive-state exit is aborted
+     2. If `ticket.cve_id IS NOT NULL`: call
+        `recalculate_cvss_chain(ticket_id, default_cvss_version)`.
+        If `ticket.cve_id IS NULL`: skip (tickets without a CVE derive
+        severity from `severity_override`, not from CVSS assessments —
+        there is nothing to recalculate)
+     3. Enqueue `catch_up()` for every registered fetcher via
+        `get_catch_up_fetchers()` (wrapped in try/except — a transient
+        Redis failure does not roll back the DB transaction; catch-up is
+        deferred to the next periodic fetcher cycle). The enqueue proceeds
+        regardless of whether step 4.2 was skipped
+   - **Note**: step 4 is independent of step 3. In the
+     `_reenter_gate_zone()` case, the caller has already set the status
+     before invoking reconcile; step 3 sees no change but step 4
+     correctly detects the inactive-state exit via `previous_status`.
+     The catch-up enqueue is unconditional after
+     `recalculate_cvss_chain()` returns — it does not re-check ticket
+     status
+   - **Recursion termination**: `recalculate_cvss_chain()` calls
+     `reconcile_ticket_status()` at its step 7. This nested call cannot
+     re-trigger step 4 because `effective_previous` in the inner call is
+     the ticket's current status (already set to Analysis or Analyzed by
+     the outer call), which is never in `{Resolved, Ignored, Duplicated}`.
+     No infinite recursion risk — the status converges (the inner call
+     either produces no change or a forward transition)
+   - **Cost in the common case**: zero. When no inactive → active
+     transition occurs (the overwhelmingly common path), step 4 is a
+     single enum comparison
+5. The function operates within the same database transaction as the
    triggering operation (atomicity guarantee)
 
 ### Inactive Assignee Sanitization
@@ -239,45 +290,6 @@ reconcile once after the entire orphan chain completes (not at each
 level). The function is idempotent — each call ensures consistent
 state based on the ticket's current data at that point in the
 transaction.
-
-### Post-Regression Hook: Resolved → Active
-
-Callers of `reconcile_ticket_status()` MUST check for backward
-transitions from Resolved to an active status (Analysis or Analyzed).
-When detected, the caller executes the same catch-up mechanisms used by
-ticket reactivation:
-
-1. Call `recalculate_cvss_chain(ticket_id, default_cvss_version)` to
-   reconcile CVSS-derived data (severity, product eligibility) with the
-   current default version and any assessment updates that occurred while
-   the ticket was Resolved. The caller reads `default_cvss_version` from
-   the database before invoking the function. Automated CVSS sync scopes
-   to active tickets — Resolved tickets are excluded, so Red Hat and
-   other per-ticket CVSS data may be stale.
-2. Enqueue `catch_up()` for every registered fetcher via
-   `get_catch_up_fetchers()`. Same mechanism as the
-   un-ignore/un-duplicate hook (see
-   [ticket-service.md](ticket-service.md), "Ticket Reactivation").
-
-**Pattern for callers**:
-
-```python
-old_status = ticket.status
-reconcile_ticket_status(ticket, db)
-new_status = ticket.status
-if old_status == TicketStatus.RESOLVED and new_status in (
-    TicketStatus.NEW, TicketStatus.ANALYSIS, TicketStatus.ANALYZED
-):
-    default_cvss_version = await settings_service.get_default_cvss_version(db)
-    recalculate_cvss_chain(db, ticket_id=ticket.id, default_cvss_version=default_cvss_version)
-    # enqueue catch_up for all registered fetchers (async, post-commit)
-```
-
-**Note on double reconciliation**: `recalculate_cvss_chain()` itself
-calls `reconcile_ticket_status()` at its end. The second reconciliation
-uses the freshly-recalculated severity and eligibility data, producing
-the correct final state. No infinite loop risk — the status converges
-(the second call either produces no change or a forward transition).
 
 ## Concurrency Control
 
@@ -490,11 +502,8 @@ accidental conflation in code that handles both return values.
       recalculation chain may also produce `severity_changed` and
       `product_eligibility_changed` audit events when derived values
       change
-   d. Call `reconcile_ticket_status()`. If this produces a backward
-      transition from Resolved, the function invokes
-      `recalculate_cvss_chain()` and enqueues `catch_up()` per the
-      post-regression hook contract. The post-regression hook is handled
-      internally — callers do not need to check for regression
+   d. Call `reconcile_ticket_status()` (post-transition catch-up, if
+      triggered, is handled internally by step 4)
 8. If no ticket exists (ticketless CVE): skip steps 5 and 7 — the CVSS
    assessment is stored but no ticket side effects are triggered
 9. Return `(assessment, action)`
@@ -907,12 +916,13 @@ responsibility of `package_service`.
 
 Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations
-(CVE association, assignment) call
-`reconcile_ticket_status` due to indirect gate effects: severity
-source changes, promotion evaluation after assignment (evaluating
-whether existing data satisfies gates above `Analysis`). The per-function
-documentation in `ticket-service.md` specifies exactly which operations
-call `reconcile_ticket_status` and why.
+call `reconcile_ticket_status` (directly or via
+`recalculate_cvss_chain()`) due to indirect gate effects: CVE
+association calls `recalculate_cvss_chain()` (which calls reconcile
+internally) because it changes the severity source; assignment calls
+`reconcile_ticket_status` directly for promotion evaluation. The
+per-function documentation in `ticket-service.md` specifies exactly
+which operations call `reconcile_ticket_status` and why.
 
 ## Architectural Test Requirement
 
@@ -971,8 +981,9 @@ individual endpoints.
 | CVE fetchers (via `cve_service.upsert_cve()`) | `upsert_cvss_assessment()` | Background CVE ingestion (Phase 1) |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
 | Admin: default CVSS version change | `recalculate_cvss_chain()` | Batch re-evaluation triggered by default CVSS version config change |
-| Ticket reactivation (un-ignore, un-duplicate) | `recalculate_cvss_chain()` | Called by `ticket_service` when a ticket transitions from Ignored/Duplicated to an active status |
-| Post-regression from Resolved | `recalculate_cvss_chain()` | Called by the caller of `reconcile_ticket_status()` when a backward transition from Resolved is detected |
+| CVE association (`ticket_service.associate_cve`) | `recalculate_cvss_chain()` | Recalculates severity and eligibility after CVE is linked to a manual ticket |
+| Ticket reactivation (un-ignore, un-duplicate) | `_reenter_gate_zone()` → `reconcile_ticket_status()` | Catch-up (CVSS recalculation + fetcher enqueue) is handled internally by `reconcile_ticket_status()` step 4 |
+| Post-regression from Resolved | `reconcile_ticket_status()` | Catch-up is handled internally by `reconcile_ticket_status()` step 4 when it detects a backward transition from Resolved |
 | `package_service` | `reconcile_ticket_status()`, `auto_assign_actor()` | Called after every package mutation |
 
 Package-centric callers (IBS release detection, product lifecycle
@@ -1000,8 +1011,9 @@ directly — see `docs/features/packages/package-service.md`.
   locking pattern)
 - `docs/features/tickets/ticket-service.md` — non-gate ticket lifecycle
   operations, ticket reactivation hooks (imports
-  `reconcile_ticket_status()`, `auto_assign_actor()`,
-  `ensure_ticket_operable()`, `resolve_canonical_target()`)
+  `reconcile_ticket_status()`, `recalculate_cvss_chain()`,
+  `auto_assign_actor()`, `ensure_ticket_operable()`,
+  `resolve_canonical_target()`)
 - `docs/features/platform/fetcher-infrastructure.md` — `catch_up()`
   per-ticket catch-up method contract
 - `docs/api-spec.md` — general API conventions

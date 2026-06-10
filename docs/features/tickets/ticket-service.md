@@ -243,36 +243,47 @@ async def associate_cve(
 5. `auto_assign_actor(ticket, acting_user_id)`
 6. Set `ticket.cve_id`
 7. Create `TicketAuditEvent` (`cve_associated`)
-8. Call `reconcile_ticket_status(ticket)` — severity source changes from
-    `severity_override` to CVSS-derived; gate #3 (severity set) and
-    gate #4 (SUSE CVSS provided) may now fail, causing regression
-9. Return updated Ticket
+8. Read `default_cvss_version` from
+   `settings_service.get_default_cvss_version(db)`
+9. Call `recalculate_cvss_chain(ticket_id, default_cvss_version)` —
+    recalculates severity (switching from `severity_override` to
+    CVSS-cascade-derived) and product eligibility using the CVE's
+    existing assessments, then calls `reconcile_ticket_status()`
+    internally. Gate #3 (severity set) and gate #4 (SUSE CVSS provided)
+    may now fail, causing regression to Analysis
+10. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row. Step 4 (CVE Resolution Behavior)
 executes entirely within the locked transaction but involves only local
 database operations: a `SELECT` on the CVE table and possibly an `INSERT`
 of a minimal CVE record via `ensure_cve_exists()`. No synchronous
 external HTTP calls or Redis/Celery operations occur while the lock is
-held. Task dispatch via `trigger_on_demand_fetch()` is the endpoint
-handler's responsibility and MUST occur after `db.commit()`, outside
-the locked transaction.
+held. `recalculate_cvss_chain()` (step 9) re-acquires `FOR UPDATE` on
+the same row within the same transaction (PostgreSQL same-transaction
+re-lock, no-op). Task dispatch via `trigger_on_demand_fetch()` is the
+endpoint handler's responsibility and MUST occur after `db.commit()`,
+outside the locked transaction.
 
-**reconcile_ticket_status**: YES — associating a CVE changes the severity
-resolution source. If the ticket was Analyzed without a CVE (using
-`severity_override`), associating a CVE causes: (a) severity to become
-CVSS-derived, which may be `None` until CVSS data arrives (gate #3
-fails); (b) gate #4 (SUSE CVSS v3.1 + v4.0 required) to become
-applicable and likely fail. The ticket may regress to Analysis.
+**recalculate_cvss_chain**: YES — associating a CVE changes the severity
+resolution source. `recalculate_cvss_chain()` recalculates severity via
+`resolve_severity_score()` (5-step cascade using the CVE's existing
+assessments) and product eligibility via `resolve_eligibility_score()`
+(SUSE-only, 2-step). If the CVE has no assessments (e.g., MITRE-sourced
+CVE with no CVSS data), severity resolves to `None` (gate #3 fails) and
+eligibility remains at the 10.0 conservative fallback — the chain is
+effectively a no-op for eligibility in this case. The final
+`reconcile_ticket_status()` call (chain step 7) evaluates gates and may
+regress the ticket to Analysis.
 
 **Note on pre-existing CVSS assessments**: If the CVE being associated
 already has `CVECVSSAssessment` records (e.g., from a prior NVD sync), these
 assessments are immediately available to the CVSS resolution cascade.
-The `reconcile_ticket_status` call in step 8 uses them to derive
-severity and evaluate eligibility gates without requiring a fresh NVD
-fetch.
+`recalculate_cvss_chain()` uses them to derive severity and recalculate
+product eligibility without requiring a fresh NVD fetch.
 
 **Audit events**: `cve_associated`. Possibly `assignment` (from
-auto-assign). Possibly `status_change` (from evaluate).
+auto-assign). Possibly `severity_changed`, `product_eligibility_changed`
+(from recalculate chain). Possibly `status_change` (from reconcile).
 
 ### assign_ticket
 
@@ -507,40 +518,36 @@ by `ticket_mutations.md` single-ticket scope rule).
 
 ## Ticket Reactivation
 
-When a ticket transitions from an inactive status (Ignored or
+When a ticket transitions from an inactive status (Resolved, Ignored, or
 Duplicated) back to an active status, the system executes two catch-up
 mechanisms to reconcile the ticket's state with data that may have
-changed during the inactive period.
+changed during the inactive period:
 
-This section applies to:
+1. **Synchronous — CVSS chain recalculation**: reconciles CVSS-derived
+   data (severity, product eligibility) with the current
+   `default_cvss_version` and any `CVECVSSAssessment` updates that
+   occurred while the ticket was inactive. Automated CVSS sync scopes to
+   active tickets — inactive tickets are excluded, so per-ticket CVSS
+   data may be stale.
+
+2. **Asynchronous — per-ticket fetcher catch-up**: catches up on
+   external data not fetched during the inactive period (e.g., Red Hat
+   CVSS updates — the `sync_redhat_cves` fetcher scopes to active
+   tickets and skips inactive ones). See
+   [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+   ("Per-Ticket Catch-Up: `catch_up()` Method") for the method contract.
+
+Both mechanisms are handled internally by `reconcile_ticket_status()`
+(step 4) when it detects an inactive-state exit. No post-commit action
+is needed by endpoint handlers or callers. This applies to all three
+inactive → active paths:
 
 - `reopen_from_ignored()` — Ignored → active (via
   [ticket-mutations.md](ticket-mutations.md), `_reenter_gate_zone()`)
 - `revert_duplicate()` — Duplicated → active (via
   [ticket-mutations.md](ticket-mutations.md), `_reenter_gate_zone()`)
-
-### Catch-up mechanisms
-
-After `_reenter_gate_zone()` commits the status transition, the
-endpoint handler executes:
-
-1. **Synchronous — CVSS chain recalculation**: call
-   `ticket_mutations.recalculate_cvss_chain(ticket_id)` to reconcile
-   CVSS-derived data (severity, product eligibility) with the current
-   system state. While the ticket was inactive, the default CVSS version
-   may have changed or new `CVECVSSAssessment` records may have been
-   created by other fetchers. `recalculate_cvss_chain` re-resolves
-   severity and eligibility using the current data and calls
-   `reconcile_ticket_status()` at its end.
-
-2. **Asynchronous — per-ticket catch-up**: enqueue `catch_up()` for
-   every registered fetcher via `get_catch_up_fetchers()`, passing the
-   `ticket_id`. This catches up on external data not fetched during the
-   inactive period (e.g., Red Hat CVSS updates — the `sync_redhat_cves`
-   fetcher scopes to active tickets and skips Ignored/Duplicated ones).
-   See
-   [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
-   ("Per-Ticket Catch-Up: `catch_up()` Method") for the method contract.
+- Gate-driven regression — Resolved → active (automatic, via any
+  mutation that unsatisfies a gate)
 
 ### Convergence behavior
 
@@ -555,7 +562,8 @@ behavior — the system converges to the accurate state.
 - [cvss-scoring.md](cvss-scoring.md) — CVSS resolution cascade,
   recalculation trigger rationale
 - [ticket-mutations.md](ticket-mutations.md) —
-  `recalculate_cvss_chain()` contract, `_reenter_gate_zone()` helper
+  `reconcile_ticket_status()` step 4, `recalculate_cvss_chain()`
+  contract, `_reenter_gate_zone()` helper
 - [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md) —
   `catch_up()` method contract
 
@@ -778,6 +786,7 @@ above for the architectural rationale.
 ```
 ticket_mutations (infrastructure)
     ├── reconcile_ticket_status()
+    ├── recalculate_cvss_chain()
     ├── auto_assign_actor()
     ├── ensure_ticket_operable()
     └── resolve_canonical_target()
@@ -787,18 +796,18 @@ ticket_mutations (infrastructure)
   (non-gate ops)    (package ops)
 ```
 
-| ticket_service function | ensure_ticket_operable | reconcile_ticket_status | auto_assign_actor | resolve_canonical_target |
-|------------------------|:----------------------:|:----------------------:|:---------------------:|:------------------------:|
-| create_ticket          | —                      | —                      | —                     | —                        |
-| associate_cve          | ✓                      | ✓                      | ✓                     | —                        |
-| assign_ticket          | ✓                      | ✓                      | —                     | —                        |
-| ignore_ticket          | ✓                      | —                      | ✓                     | —                        |
-| mark_as_duplicate      | ✓                      | —                      | ✓                     | ✓                        |
-| execute_duplicate_flattening | —                   | —                      | —                     | —                        |
-| set_confidentiality    | ✓                      | —                      | —                     | —                        |
-| grant_access           | ✓                      | —                      | —                     | —                        |
-| revoke_access          | ✓                      | —                      | —                     | —                        |
-| list_access_grants     | —                      | —                      | —                     | —                        |
+| ticket_service function | ensure_ticket_operable | reconcile_ticket_status | recalculate_cvss_chain | auto_assign_actor | resolve_canonical_target |
+|------------------------|:----------------------:|:----------------------:|:---------------------:|:---------------------:|:------------------------:|
+| create_ticket          | —                      | —                      | —                     | —                     | —                        |
+| associate_cve          | ✓                      | (via chain)            | ✓                     | ✓                     | —                        |
+| assign_ticket          | ✓                      | ✓                      | —                     | —                     | —                        |
+| ignore_ticket          | ✓                      | —                      | —                     | ✓                     | —                        |
+| mark_as_duplicate      | ✓                      | —                      | —                     | ✓                     | ✓                        |
+| execute_duplicate_flattening | —                   | —                      | —                     | —                     | —                        |
+| set_confidentiality    | ✓                      | —                      | —                     | —                     | —                        |
+| grant_access           | ✓                      | —                      | —                     | —                     | —                        |
+| revoke_access          | ✓                      | —                      | —                     | —                     | —                        |
+| list_access_grants     | —                      | —                      | —                     | —                     | —                        |
 
 ## Architectural Test Requirement
 
