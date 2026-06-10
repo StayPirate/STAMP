@@ -35,6 +35,8 @@ see `docs/architecture.md` and the relevant feature specifications in
 | OSV | Public | Aggregated vulnerability data | Planned |
 | SMASH | Internal | Security update management (predecessor to Sentinel) | Not planned |
 | PackTrack | Internal | Patch submission tracking for maintainers | Not integrated |
+| embedded-code-wg-data | Internal | Embedded third-party library tracking per SUSE/openSUSE package | Not integrated |
+| Package Server | Internal | Package search, embedded code lookup, build dependencies (REST API) | Not integrated |
 | git.suse.de | Internal | Package sources for next-gen SUSE products | Not integrated |
 | openQA | Internal/Public | Automated OS testing in the release pipeline | Not integrated |
 
@@ -460,6 +462,142 @@ near-real-time reactivity.
 - **Documentation**: https://rabbit.opensuse.org (OBS),
   https://github.com/openSUSE/suse_msg/blob/master/amqp_infra.md,
   OBS event types: https://github.com/openSUSE/open-build-service/tree/master/src/api/app/models/event
+
+### embedded-code-wg-data (Embedded Code Tracking)
+
+The Embedded Code Working Group data repository is a Git-based dataset
+maintained by the SUSE Security team. It contains structured records
+produced by automated scanners that analyze source packages in IBS/OBS to
+determine which third-party libraries are bundled (embedded) within each
+package. This data is critical for security analysis because embedded
+libraries do not receive updates through the system package manager — when
+a CVE affects `libwebp`, packages that bundle their own copy of `libwebp`
+are also affected but will not appear in standard CPE-based or
+SMELT-based package resolution.
+
+Multiple language-specific scanners contribute data:
+
+| Language | Scanner | Method |
+|---|---|---|
+| C/C++ | `idlib` + `osc-prep-source` | Source code analysis of unpacked sources |
+| Go | `dep-scanner` | Go module dependency extraction |
+| JavaScript | `dep-scanner` | Node.js dependency extraction |
+| Ruby | `dep-scanner` | Gemfile/gemspec analysis |
+| Rust | `dep-scanner` | Cargo.lock analysis |
+| Other | spec file parser | `Provides: ?bundled(...)` annotations in RPM spec files |
+
+- **Relevant data**: CSV records mapping each SUSE/openSUSE source package
+  to the third-party libraries it embeds, with version information where
+  detectable. Data format: `PROJECT,PACKAGE,REVISION,PROVIDES_NAME,PROVIDES_VERSION`.
+  Example: `openSUSE:Factory,389-ds,64,byteorder,1.4.3`. Covers all
+  actively maintained codestream projects across SLE, SLFO, and openSUSE
+  distributions. The dataset contains approximately 1.4 million embedding
+  records across ~58,500 packages
+- **Access**: Git repository at
+  `https://gitlab.suse.de/security/embedded-code-wg-data`. Branch:
+  `master`. No authentication required for clone (internal network).
+  Data files are plain CSV with `.txt` extension, organized in
+  subdirectories. The repository is updated regularly by automated
+  scanner pipelines (~1,009 commits since December 2022)
+- **Integration status**: **Not integrated**. The data is currently
+  consumed and exposed via Package Server (see below), which provides a
+  REST API for querying. Direct Git-based consumption is also possible
+  for batch processing. Potential Sentinel use cases:
+  - **Embedded vulnerability propagation**: given a CVE affecting an
+    upstream library (e.g., `curl`, `libpng`, `openssl`), identify all
+    SUSE packages that bundle a vulnerable version of that library
+  - **Package resolution enhancement**: supplement CPE-based and
+    SMELT-based package matching with embedded code data for broader
+    coverage
+- **Documentation**: README in repository
+- **Source code**: https://gitlab.suse.de/security/embedded-code-wg-data
+- **Related tooling**:
+  - `dep-scanner`: https://gitlab.suse.de/security/dep-scanner
+  - `idlib`: https://github.com/wfrisch/idlib
+  - `psc` (CLI client): https://gitlab.suse.de/security/psc
+  - `imtools`: https://gitlab.suse.de/security/imtools
+
+### Package Server
+
+Package Server is an internal REST API service developed by the SUSE
+Security team that aggregates package data from multiple sources into a
+unified searchable index. It is used by Vulnerability Analysts to look up
+packages, discover embedded (bundled) third-party libraries, check build
+dependencies, and filter results by version. The service consolidates data
+that would otherwise require querying IBS, OBS, SMELT, and the
+embedded-code-wg-data repository individually.
+
+The server loads data from all configured sources at startup and refreshes
+periodically (default: every 24 hours). It exposes an OpenAPI 3.1.0
+specification at `/openapi.json` and interactive documentation at `/docs`.
+
+#### Aggregated Sources
+
+| Source Type | Description |
+|---|---|
+| `embedded` | embedded-code-wg-data Git repository (see above) — provides the embedded library mapping |
+| `channels` | `SUSE:Channels` IBS project — channel metadata (`_channel` files) |
+| `smelt` | SMELT `/maintainedpackage/` API — maintained package catalog |
+| `buildfiles` | OBS/IBS `_buildinfo` and `_buildenv` files — build-time dependency data |
+| `project` | Direct IBS/OBS project tracking (e.g., `SUSE:SLE-15-SP6:Update`, `SUSE:SLFO:Main`, `openSUSE:Factory`) |
+
+- **Relevant data**: Unified package index with package names, binary
+  names, embedded third-party library names and versions, build
+  dependencies, and support status. Key capabilities:
+  - Search packages by name (substring, case-insensitive)
+  - Find packages that embed a specific library at specific versions
+  - Query build dependency relationships (which packages require a given
+    package)
+  - Filter by version using comparison operators (`=`, `!=`, `<`, `<=`,
+    `>`, `>=`) with support for combining multiple constraints
+  - Restrict results to trusted sources only
+  - Retrieve full package details including embedded libraries, binaries,
+    support status, and data provenance
+- **Access**: REST API. Live instance at
+  `https://sec-gsonnu.suse.de/package-server`. No authentication required
+  (authentication is supported but disabled on the live instance). Key
+  endpoints:
+  - `GET /package/{query}` — search packages by name
+  - `GET /binary/{query}` — find packages containing matching binaries
+  - `GET /embeds/{query}` — find packages embedding a given library
+    (supports `?version=<=X.Y.Z` filtering)
+  - `GET /search/{query}` — generic search across packages, binaries,
+    and embedded libraries (configurable via `packages`, `binaries`,
+    `embedded` parameters)
+  - `GET /show/{query}` — detailed package information (binaries,
+    embedded libs, support status, sources, build dependencies)
+  - `GET /requires/{query}` — packages with a build dependency on the
+    given package
+  - `GET /support/{query}` — support status (regular, ltss, reactive,
+    unknown)
+  - `GET /stats` — database statistics and last update timestamp
+  - `GET /config` — current server configuration and source list
+  - `GET /openapi.json` — OpenAPI 3.1.0 specification
+- **Scale** (live instance, as observed): ~58,500 packages, ~120,000
+  binaries, ~1.4 million embedded package records, ~3.2 million build
+  dependency relationships across 80+ IBS/OBS projects. Version 2.2.1
+- **Integration status**: **Not integrated**. Potential Sentinel use cases:
+  - **Embedded vulnerability propagation**: when a CVE affects an
+    upstream library, query `/embeds/{lib}?version=<=<vulnerable_version>&trusted_only=true`
+    to find all SUSE packages bundling vulnerable versions. This covers
+    cases invisible to CPE-based and SMELT-based resolution (e.g., a
+    `libcurl` CVE also affects `MozillaFirefox`, `git`, `nodejs20` which
+    bundle their own copies)
+  - **Alternative package name resolution**: when CPE mapping fails,
+    `/package/{name}?trusted_only=true` can serve as a fallback to
+    locate packages across codestreams
+  - **Build dependency blast radius**: `/requires/{pkg}` reveals which
+    packages depend on a vulnerable package at build time, useful for
+    assessing indirect impact
+  - **Version-filtered triage**: the version comparison operators allow
+    precise identification of packages at vulnerable versions without
+    client-side filtering
+- **Documentation**: OpenAPI spec at
+  `https://sec-gsonnu.suse.de/package-server/openapi.json`, interactive
+  docs at `https://sec-gsonnu.suse.de/package-server/docs`
+- **Source code**: https://gitlab.suse.de/security/package-server
+- **See also**: embedded-code-wg-data (above) — primary source for
+  embedded library data
 
 ### git.suse.de (SUSE Source Management)
 
