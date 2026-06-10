@@ -195,18 +195,19 @@ Use Task tool (subagent `explore`). Instruct it to:
 Show only **enabled** specs from `.tracking.json`, sorted alphabetically:
 
 ```
-| Spec             | GAP | COH | DES | SEC | API | Total | Last Review |
+| Spec             | GAP | COH | DES | SEC | API | Open  | Last Review |
 |------------------|-----|-----|-----|-----|-----|-------|-------------|
-| tickets          |   3 |   1 |   1 |   2 | 🟢  |     7 | 2025-01-15  |
+| tickets          |   3 |   1 |   1 |   2 | 🟢  |  7/15 | 2025-01-15  |
 |                  | 1:🔴 2:🟠 | 1:🟡 | 1:🟠 | 1:🔴 1:🟠 |  | 2:🔴 4:🟠 1:🟡 |  |
-| **Total**        |   5 |   1 |   2 |   2 | 🟢  |    10 | —           |
+| **Total**        |   5 |   1 |   2 |   2 | 🟢  | 10/25 | —           |
 ```
 
 Rendering rules (from `cache`):
-- `cache: null` → all cells `—`, Last Review `—`, Total `(never)`
+- `cache: null` → all cells `—`, Last Review `—`, Open `—`
 - Section in `not_reviewed` → cell `—`
 - Section all H/M/L = 0 and NOT in `not_reviewed` → cell `🟢`
 - Section H+M+L > 0 → cell shows total; sub-row shows severity breakdown
+- Open column showing the fraction `open_count/total_findings` where `open_count = sum(H+M+L across all sections)` and `total_findings = open_count + resolved`.
 
 Edge cases:
 - All caches null: `No review data found for enabled specs. You can run reviews to generate findings.`

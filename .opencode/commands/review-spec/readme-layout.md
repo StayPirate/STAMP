@@ -15,7 +15,8 @@ The README has two sections:
 Two-row-per-spec format:
 
 - **Main row**: spec name (as a link to the review file), OPEN finding
-  count per reviewer section (GAP/COH/DES/SEC/API), total open, last
+  count per reviewer section (GAP/COH/DES/SEC/API), the "Open" column showing the
+  fraction `open_count/total_findings` (where total is open plus resolved findings), last
   review date, stale indicator. Use `—` for sections that have never
   been reviewed (`_Not yet reviewed._` in the review file). Use `🟢`
   for sections that have been reviewed but have zero OPEN findings
@@ -25,8 +26,8 @@ Two-row-per-spec format:
   separated by spaces, omitting severities with zero count. Leave cell
   empty if the main row is `—` or `🟢`. Stale sub-row cell is always
   empty.
-- **Total row** at the bottom: sum of OPEN findings across **enabled
-  specs only**, with severity sub-row. Stale cell is empty.
+- **Total row** at the bottom: sum of OPEN findings / sum of total findings across **enabled
+  specs only** (as a `sum_open/sum_total` fraction), with severity sub-row. Stale cell is empty.
 
 ## Disabled section
 
