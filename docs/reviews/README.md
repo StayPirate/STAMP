@@ -39,8 +39,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-mutations](ticket-mutations.md) | 🟢 | 1 | 1 | 🟢 | 🟢 | 2/41 | 2026-06-03 | ⚠️ |
-| |  | 1:🟡 | 1:🟡 |  |  |  |  |  |
+| [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/41 | 2026-06-03 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [ticket-references](ticket-references.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/32 | 2026-05-30 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/28 | 2026-05-26 | ⚠️ |
@@ -51,8 +51,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **2** | **1** | **0** | **0** | **6/757** |  |  |
-| | 2:🟠 1:🟡 | 2:🟡 | 1:🟡 |  |  |  |  |  |
+| **Total** | **3** | **1** | **0** | **0** | **0** | **4/757** |  |  |
+| | 2:🟠 1:🟡 | 1:🟡 |  |  |  |  |  |  |
 
 ### Disabled specs
 

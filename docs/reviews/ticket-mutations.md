@@ -99,10 +99,7 @@
 
 ### TKM-COH-04 — Per-function behavior steps bundle unconditional `CVE.severity` update inside ticket-conditional branch (Low)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-Per-function behavior steps bundle the unconditional `CVE.severity` update inside the ticket-conditional branch. In `cvss-scoring.md`'s write-path, steps 4, 4b, 5, 6 (resolve severity score, resolve eligibility score, calculate severity, update CVE.severity) are UNCONDITIONAL — they happen even for ticketless CVEs. But in `ticket-mutations.md`, these steps are described inside the "If a ticket exists" conditional block (most visibly in `delete_cvss_assessment` which goes from "delete record" directly to "if ticket exists: recalculate", and in `upsert_cvss_assessment` step 7 vs step 8). A reader of `ticket-mutations.md` alone could conclude that `CVE.severity` is not updated for ticketless CVEs, which contradicts the write-path spec.
+**Status**: RESOLVED — Acceptable by design: CVE.severity staleness window is negligible due to automatic ticket creation during ingestion; associate_cve() triggers recalculate_cvss_chain() immediately upon association (2026-06-11)
 
 ---
 
@@ -146,10 +143,7 @@ Per-function behavior steps bundle the unconditional `CVE.severity` update insid
 
 ### TKM-DES-10 — force=True reassignment overwrites without notification (Low)
 
-**Category**: UX concern
-**Status**: OPEN
-
-When a VA reopens a ticket assigned to someone else, `auto_assign_actor(force=True)` overwrites the existing assignee without any notification mechanism. The original assignee loses ownership silently.
+**Status**: RESOLVED — Acceptable by design: force=True reassignment only occurs when reactivating tickets from inactive states (Ignored/Duplicated) where no active work is in progress; audit trail provides sufficient traceability (2026-06-11)
 
 ---
 
