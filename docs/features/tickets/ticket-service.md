@@ -88,7 +88,7 @@ revoking explicit access.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, `ensure_ticket_operable()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
+| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `recalculate_cvss_chain()`, `auto_assign_actor()`, `ensure_ticket_operable()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
 | `services/package_service.py` | No direct dependency. Both modules independently depend on `ticket_mutations` for status evaluation |
 | `services/cvss.py` | No direct dependency. CVSS resolution is triggered indirectly via `reconcile_ticket_status()` |
 
@@ -243,22 +243,22 @@ async def associate_cve(
 5. `auto_assign_actor(ticket, acting_user_id)`
 6. Set `ticket.cve_id`
 7. Create `TicketAuditEvent` (`cve_associated`)
-8. Read `default_cvss_version` from
-   `settings_service.get_default_cvss_version(db)`
-9. Call `recalculate_cvss_chain(ticket_id, default_cvss_version)` —
-    recalculates severity (switching from `severity_override` to
-    CVSS-cascade-derived) and product eligibility using the CVE's
-    existing assessments, then calls `reconcile_ticket_status()`
-    internally. Gate #3 (severity set) and gate #4 (SUSE CVSS provided)
-    may now fail, causing regression to Analysis
-10. Return updated Ticket
+8. Call `recalculate_cvss_chain(ticket_id,
+    acting_user_id=acting_user_id)` — reads `default_cvss_version`
+    internally, recalculates severity (switching from
+    `severity_override` to CVSS-cascade-derived) and product eligibility
+    using the CVE's existing assessments, then calls
+    `reconcile_ticket_status()` internally. Gate #3 (severity set) and
+    gate #4 (SUSE CVSS provided) may now fail, causing regression to
+    Analysis
+9. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row. Step 4 (CVE Resolution Behavior)
 executes entirely within the locked transaction but involves only local
 database operations: a `SELECT` on the CVE table and possibly an `INSERT`
 of a minimal CVE record via `ensure_cve_exists()`. No synchronous
 external HTTP calls or Redis/Celery operations occur while the lock is
-held. `recalculate_cvss_chain()` (step 9) re-acquires `FOR UPDATE` on
+held. `recalculate_cvss_chain()` (step 8) re-acquires `FOR UPDATE` on
 the same row within the same transaction (PostgreSQL same-transaction
 re-lock, no-op). Task dispatch via `trigger_on_demand_fetch()` is the
 endpoint handler's responsibility and MUST occur after `db.commit()`,

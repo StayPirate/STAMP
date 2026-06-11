@@ -203,21 +203,18 @@ beyond status changes.
      whether step 3 produced a change — see note below)
    - If `effective_previous ∈ {Resolved, Ignored, Duplicated}` AND
      `new_status ≠ effective_previous`:
-     1. Read `default_cvss_version` from
-        `settings_service.get_default_cvss_version(db)`. If this raises
-        (setting absent), the exception propagates — this indicates a
-        deployment error (migrations not applied). The transaction rolls
-        back and the inactive-state exit is aborted
-     2. If `ticket.cve_id IS NOT NULL`: call
-        `recalculate_cvss_chain(ticket_id, default_cvss_version)`.
-        If `ticket.cve_id IS NULL`: skip (tickets without a CVE derive
-        severity from `severity_override`, not from CVSS assessments —
-        there is nothing to recalculate)
-     3. Enqueue `catch_up()` for every registered fetcher via
-        `get_catch_up_fetchers()` (wrapped in try/except — a transient
-        Redis failure does not roll back the DB transaction; catch-up is
-        deferred to the next periodic fetcher cycle). The enqueue proceeds
-        regardless of whether step 4.2 was skipped
+      1. If `ticket.cve_id IS NOT NULL`: call
+         `recalculate_cvss_chain(ticket_id)` (reads `default_cvss_version`
+         internally; if the setting is absent, the exception propagates —
+         this indicates a deployment error and the transaction rolls back).
+         If `ticket.cve_id IS NULL`: skip (tickets without a CVE derive
+         severity from `severity_override`, not from CVSS assessments —
+         there is nothing to recalculate)
+      2. Enqueue `catch_up()` for every registered fetcher via
+         `get_catch_up_fetchers()` (wrapped in try/except — a transient
+         Redis failure does not roll back the DB transaction; catch-up is
+         deferred to the next periodic fetcher cycle). The enqueue proceeds
+         regardless of whether step 4.1 was skipped
    - **Note**: step 4 is independent of step 3. In the
      `_reenter_gate_zone()` case, the caller has already set the status
      before invoking reconcile; step 3 sees no change but step 4
@@ -226,12 +223,19 @@ beyond status changes.
      `recalculate_cvss_chain()` returns — it does not re-check ticket
      status
    - **Recursion termination**: `recalculate_cvss_chain()` calls
-     `reconcile_ticket_status()` at its step 7. This nested call cannot
-     re-trigger step 4 because `effective_previous` in the inner call is
-     the ticket's current status (already set to Analysis or Analyzed by
-     the outer call), which is never in `{Resolved, Ignored, Duplicated}`.
-     No infinite recursion risk — the status converges (the inner call
-     either produces no change or a forward transition)
+      `reconcile_ticket_status()` at its step 7. This inner call may
+      re-trigger step 4 at most once: when the outer call set the ticket
+      to Resolved (gates satisfied with pre-inactivity data) and the
+      recalculation invalidates a gate, the inner call regresses the
+      ticket to Analysis with `effective_previous` = Resolved — which is
+      in the trigger set. The second `recalculate_cvss_chain()` call is
+      idempotent (same inputs within the same transaction), producing no
+      mutations. The innermost `reconcile_ticket_status()` sees an active
+      status (Analysis or Analyzed) as `effective_previous`, which is not
+      in the trigger set. Maximum recursion depth: 2 reconcile calls
+      (outer → inner → innermost no-op). No infinite recursion risk —
+      termination is guaranteed by idempotency of
+      `recalculate_cvss_chain()`
    - **Cost in the common case**: zero. When no inactive → active
      transition occurs (the overwhelmingly common path), step 4 is a
      single enum comparison
@@ -334,9 +338,10 @@ appropriate: background tasks log and skip; API endpoints return 404.
 ### `reconcile_ticket_status` does not acquire the lock
 
 The function assumes the caller has already acquired `FOR UPDATE` on the
-ticket. This is always the case because every public function in the
-module acquires the lock as its first operation, and
-`reconcile_ticket_status` is only called from within those functions.
+ticket. This is always the case because every caller — both within
+`ticket_mutations` and in external modules (`package_service`,
+`ticket_service`) — acquires `FOR UPDATE` on the ticket as its first
+operation before calling `reconcile_ticket_status()`.
 
 ## `ensure_ticket_operable()`
 
@@ -494,16 +499,16 @@ accidental conflation in code that handles both return values.
    - **Existing record with different vector**: `UPDATED`
 7. If a ticket exists:
    a. Call `auto_assign_actor(ticket, acting_user_id, db)`
-   b. Recalculate severity via `resolve_severity_score()` and
-      eligibility via `resolve_eligibility_score()`
-   c. Create `TicketAuditEvent` (`cvss_assessment_changed`). The
+   b. Create `TicketAuditEvent` (`cvss_assessment_changed`). The
       `old_value` is derived from the `SELECT` in step 2: `NULL` if the
-      record was created, `"provider vX.Y old_score"` if updated. The
-      recalculation chain may also produce `severity_changed` and
-      `product_eligibility_changed` audit events when derived values
-      change
-   d. Call `reconcile_ticket_status()` (post-transition catch-up, if
-      triggered, is handled internally by step 4)
+      record was created, `"provider vX.Y old_score"` if updated
+   c. Call `recalculate_cvss_chain(ticket_id,
+      acting_user_id=acting_user_id)` — reads `default_cvss_version`
+      internally, recalculates severity and product eligibility, creates
+      derived audit events (`severity_changed`,
+      `product_eligibility_changed`) when values change, and calls
+      `reconcile_ticket_status()` internally (post-transition catch-up,
+      if triggered, is handled by reconcile step 4)
 8. If no ticket exists (ticketless CVE): skip steps 5 and 7 — the CVSS
    assessment is stored but no ticket side effects are triggered
 9. Return `(assessment, action)`
@@ -552,15 +557,14 @@ callers to resolve the assessment ID.
    b. Call `ensure_ticket_operable(ticket)`
 4. Delete the assessment record
 5. If a ticket exists:
-    a. Recalculate ticket severity via `cvss.resolve_severity_score()`
-       (5-step severity cascade); re-evaluate product eligibility via
-       `cvss.resolve_eligibility_score()` (2-step SUSE-only cascade,
-       separate call — the eligibility score may differ from the severity
-       score when SUSE has not assessed the default version)
-
+   a. Call `auto_assign_actor(ticket, acting_user_id, db)`
    b. Create `TicketAuditEvent` (`cvss_assessment_changed`,
       `old_value = "provider vX.Y score"`, `new_value = NULL`)
-   c. Call `reconcile_ticket_status()`
+   c. Call `recalculate_cvss_chain(ticket_id,
+      acting_user_id=acting_user_id)` — reads `default_cvss_version`
+      internally, recalculates severity and product eligibility, creates
+      derived audit events when values change, and calls
+      `reconcile_ticket_status()` internally
 6. If no ticket exists: skip audit event and chain
 
 **TicketAuditEvent**: `cvss_assessment_changed` (only when the CVE has
@@ -593,11 +597,12 @@ Sets or clears the `severity_override` field on a ticket.
 1. Acquire `FOR UPDATE` on the Ticket row
 2. Call `ensure_ticket_operable(ticket)`
 3. Validate preconditions
-3. If severity unchanged, return (no-op)
-4. Update `ticket.severity_override`
-5. Create `TicketAuditEvent` (`severity_changed`, `user_id = acting_user_id`)
-6. Call `reconcile_ticket_status()`
-7. Return updated ticket
+4. If severity unchanged, return (no-op)
+5. Call `auto_assign_actor(ticket, acting_user_id, db)`
+6. Update `ticket.severity_override`
+7. Create `TicketAuditEvent` (`severity_changed`, `user_id = acting_user_id`)
+8. Call `reconcile_ticket_status()`
+9. Return updated ticket
 
 **Gate relevance**: setting `severity_override` affects the ticket's
 resolved severity, which is gate-relevant (Analyzed gate #3 requires
@@ -618,8 +623,10 @@ current CVSS assessments and the active default CVSS version. This
 function does NOT create, update, or delete any `CVECVSSAssessment`
 record — it only recalculates derived data.
 
-**Primary caller**: the batch recalculation Celery task triggered by a
-default CVSS version change (see
+**Callers**: `upsert_cvss_assessment()`, `delete_cvss_assessment()`,
+`associate_cve()` (ticket-service), `reconcile_ticket_status()` step 4
+(post-transition catch-up), and the batch recalculation Celery task
+triggered by a default CVSS version change (see
 `docs/features/platform/system-settings.md`).
 
 **Parameters**:
@@ -628,17 +635,19 @@ default CVSS version change (see
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to recalculate |
-| `default_cvss_version` | `str` | Yes | The CVSS version to use for severity resolution and eligibility evaluation. The caller must provide this explicitly; the function does not read the default version from the database |
+| `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly to ensure all tickets in a batch use the same version (read-after-lock pattern). Other callers should typically omit this parameter |
 | `acting_user_id` | `UUID \| None` | No | Who triggered the recalculation (typically `None` for system-initiated batch operations) |
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `cvss.resolve_severity_score()` with the provided
-   `default_cvss_version` to determine the new resolved score
+2. Resolve `default_cvss_version`: if the parameter is `None`, read
+   from `settings_service.get_default_cvss_version(db)`. Call
+   `cvss.resolve_severity_score()` with the resolved version to
+   determine the new resolved score
 3. Map the result to a severity label via `cvss.calculate_severity()`.
    If severity changed, update `CVE.severity`
-4. Call `cvss.resolve_eligibility_score()` with the provided
+4. Call `cvss.resolve_eligibility_score()` with the resolved
    `default_cvss_version` to determine the eligibility score
 5. Re-evaluate `eligible` for each `TicketPackageProduct` linked to the
    ticket (including soft-deleted products — see `package-model.md` Design Decision 8) using the eligibility score:

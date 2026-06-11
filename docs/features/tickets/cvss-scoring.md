@@ -268,7 +268,7 @@ Severity is recalculated whenever:
   the transition, plus `catch_up()` tasks are enqueued internally
 - A CVE is associated with a ticket (or a ticket is created with a
    CVE) — `recalculate_cvss_chain()` is called synchronously within
-   the transaction (see `ticket-service.md`, `associate_cve()` step 9)
+   the transaction (see `ticket-service.md`, `associate_cve()` step 8)
 
 ### Severity Override by CVSS
 
@@ -710,8 +710,9 @@ response. The task:
    point that recalculates derived data without modifying any
    `CVECVSSAssessment` record (see
    `docs/features/tickets/ticket-mutations.md`). The task passes
-   `default_cvss_version` as a mandatory parameter to every
-   `recalculate_cvss_chain()` call.
+   `default_cvss_version` explicitly to every
+   `recalculate_cvss_chain()` call (overriding the internal read) to
+   ensure all tickets in the batch use the same version.
 5. Each ticket is processed in an **independent database transaction**
    (isolation: a failure on one ticket does not roll back others)
 6. On error for a single ticket, the task logs the error with the
