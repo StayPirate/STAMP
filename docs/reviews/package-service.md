@@ -64,10 +64,7 @@ The `TrackData` type is referenced in the `add_package_records()` parameter tabl
 
 ### PKS-GAP-13 — Eligibility calculation I/O location within lock not specified (Low)
 
-**Category**: Configuration and defaults
-**Status**: OPEN
-
-When `add_package_records()` creates `TicketPackageProduct` records, it must calculate eligibility. This requires resolving the CVSS score and looking up product lifecycle data. The spec says the module "delegates CVSS resolution and eligibility calculation to pure functions in `cvss.py`" but does not specify whether these database reads happen inside the `FOR UPDATE` lock.
+**Status**: RESOLVED — Added note to add_package_records() clarifying eligibility I/O is within Transaction Hygiene Rules (single-row lookups only) (2026-06-11)
 
 ---
 
@@ -99,10 +96,7 @@ When `add_package_records()` creates `TicketPackageProduct` records, it must cal
 
 ### PKS-COH-07 — Note block in `set_product_eligibility()` reset path references `re_evaluate_product_eligibility` in wrong direction (Low)
 
-**Category**: Incompatible flows
-**Status**: OPEN
-
-Note block in `set_product_eligibility()` reset path references `re_evaluate_product_eligibility` as a comparison point: "uses the same resolution logic as `re_evaluate_product_eligibility`". But `re_evaluate_product_eligibility` is a Celery sub-task that for most reason codes delegates upward to `set_product_eligibility()` itself — the comparison is in the wrong direction of the call graph. The intent (both ultimately use `resolve_eligibility_score`) is correct, but the reference creates a circular and misleading comparison.
+**Status**: RESOLVED — Removed circular reference to `re_evaluate_product_eligibility`; note now references `resolve_eligibility_score()` directly (2026-06-11)
 
 ---
 

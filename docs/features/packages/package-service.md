@@ -340,8 +340,7 @@ If `eligible` is `None` (reset to automatic):
 9. Call `reconcile_ticket_status()`
 10. Return updated product
 
-> **Note**: Eligibility recalculation uses the same resolution logic as
-> `re_evaluate_product_eligibility` — specifically
+> **Note**: Eligibility recalculation delegates to
 > `cvss.resolve_eligibility_score()` (SUSE assessment of the default
 > version only; fallback to 10.0 if no SUSE assessment exists). Since this
 > requires only single-row database reads (CVE assessments + product
@@ -390,7 +389,19 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
    - For each product under the track:
      - Create or skip `TicketPackageProduct` (idempotent — skip if
        exists, including soft-deleted records)
-     - Calculate initial eligibility (see Record Creation Logic below)
+      - Calculate initial eligibility (see Record Creation Logic below)
+
+> **Note**: Eligibility calculation inside the `FOR UPDATE` lock is
+> acceptable here. `CVECVSSAssessment` records are loaded once for the
+> entire product batch (same CVE for all products in the ticket —
+> typically fewer than 20 records). The `cvss_threshold` per product is a
+> single-row lookup from the Product table. The `cvss.py` functions
+> (`resolve_eligibility_score`) are pure and do not perform database
+> access on their own. Therefore total I/O volume inside the lock remains
+> within "fast reads (single-row lookups)" permitted by Transaction
+> Hygiene Rules, even when creating dozens of products in a single
+> `add_package_records()` call.
+
 6. Create `TicketAuditEvent` (`package_added`)
 7. Call `reconcile_ticket_status()`
 8. Return created records
