@@ -245,7 +245,7 @@ beyond status changes.
 ### Inactive Assignee Sanitization
 
 After determining the ticket's "natural" status via gate evaluation, if
-the resulting status is non-final (Analysis or Analyzed) and
+the resulting status is active (Analysis or Analyzed) and
 `assignee_id` points to an inactive user:
 
 1. Set `assignee_id = NULL`
@@ -258,8 +258,8 @@ the resulting status is non-final (Analysis or Analyzed) and
    ticket {ticket_id} during reconciliation — this should have been
    handled by _unassign_active_tickets"`
 
-If the resulting status is final (Resolved, Ignored, Duplicated): no
-assignee check is performed — the ticket is closed and does not need an
+If the resulting status is inactive (Resolved, Ignored, Duplicated): no
+assignee check is performed — an inactive ticket does not need an
 active assignee.
 
 This mechanism complements the bulk unassignment performed by
@@ -354,7 +354,7 @@ functions in `ticket_mutations`, `ticket_service`, and `package_service`
 
 ```python
 def ensure_ticket_operable(ticket: Ticket) -> None:
-    """Reject mutations on manually-closed tickets.
+    """Reject mutations on manual-zone inactive tickets.
 
     Call after acquiring FOR UPDATE on the ticket row.
     Raises TicketNotMutableError if status is Ignored or Duplicated.

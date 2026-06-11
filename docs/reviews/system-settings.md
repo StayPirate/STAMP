@@ -42,4 +42,4 @@ _Not yet reviewed._
 
 ### ADMIN-API-03 — Task progress tracking for background recalculation unspecified (Low)
 
-**Status**: RESOLVED — Removed "plus a task status indicator if recalculation is in progress" from the PATCH response description — no progress tracking is needed. The response simply returns the updated settings. The UI confirmation dialog was simplified to warn the admin that all products on open tickets will be re-evaluated. The recalculation happens asynchronously via Celery with no client-side polling. (2026-05-06)
+**Status**: RESOLVED — Removed "plus a task status indicator if recalculation is in progress" from the PATCH response description — no progress tracking is needed. The response simply returns the updated settings. The UI confirmation dialog was simplified to warn the admin that all products on active tickets will be re-evaluated. The recalculation happens asynchronously via Celery with no client-side polling. (2026-05-06)

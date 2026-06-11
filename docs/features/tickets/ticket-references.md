@@ -384,7 +384,8 @@ GitHub commit URL, it skips that reference (already exists with
 
 Users with the `manage_references` capability can add, edit, and delete
 manual references (`source = "manual"`) on any ticket **regardless of
-ticket status**, including tickets in a final status (Resolved, Ignored).
+ticket status**, including tickets in an inactive status (Resolved, Ignored,
+Duplicated).
 References are supplementary metadata — adding, editing, or removing a
 link does not constitute a ticket state change and is not subject to the
 `ensure_ticket_operable()` guard.
@@ -405,12 +406,12 @@ This separation ensures:
   without overwriting user edits
 - **Clear ownership**: fetchers own their references, users own theirs
 
-**Tickets in final status**: fetchers still call
-`upsert_references()` for tickets in final status (Resolved, Ignored,
+**Tickets in inactive statuses**: fetchers still call
+`upsert_references()` for tickets in inactive statuses (Resolved, Ignored,
 Duplicated). `cve_service.upsert_cve()` processes CVE data regardless
 of ticket status, and reference upserts follow the same policy —
 existing references may be updated with new upstream data, and new
-references from upstream are added. However, tickets in final status
+references from upstream are added. However, tickets in inactive statuses
 will not receive new automatic references in practice unless the CVE
 data itself is updated upstream, since the fetcher only processes CVEs
 that have changed.

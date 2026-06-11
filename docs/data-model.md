@@ -715,9 +715,9 @@ moves it back to Analyzed), the fetcher resumes refreshing the record
 on its next run.
 
 **UI display note**: the frontend SHOULD display the EPSS score only
-for active tickets. For resolved or inactive tickets, the score
+for active tickets. For inactive tickets, the score
 reflects the last assessment before the ticket left the active scope
-and may be stale. If the UI chooses to display it for non-active
+and may be stale. If the UI chooses to display it for inactive
 tickets, it SHOULD include a staleness indicator (e.g., "Last
 assessed: {date}").
 

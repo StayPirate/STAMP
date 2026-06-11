@@ -671,7 +671,7 @@ Step 3 — Delivery status reconciliation:
   8. Query all TicketPackageTrack records where:
       - track type is IBS (codestream-based)
       - delivery_status != RELEASED
-      - the parent ticket is in an open state
+      - the parent ticket is in an active status
      Note: tracks with delivery_status = RELEASED are pre-filtered as an
      optimization — they are already in final delivery state and no
      reconciliation can advance them further.

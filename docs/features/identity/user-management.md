@@ -273,14 +273,14 @@ sentinel manage-user deactivate \
 5. Queries the impact of deactivation:
    - Count of active API keys that will be revoked
    - Count of active sessions that will be invalidated
-   - Count of open tickets assigned to the user that will be unassigned
+   - Count of active tickets assigned to the user that will be unassigned
    - Whether this user is the last active user with the Admin role
 6. Displays the impact summary:
    ```
    About to deactivate user '{username}':
      - {n} active API keys will be revoked
      - {n} active sessions will be invalidated
-     - {n} open tickets will be unassigned
+      - {n} active tickets will be unassigned
    ```
    If the user is the last active admin, appends a warning to stderr:
    ```
@@ -867,7 +867,7 @@ When the user is already inactive, the response contains zeroed counts:
 | `already_inactive`     | `bool`        | `true` if the user is already inactive (no-op deactivation) |
 | `api_keys_count`       | `int`         | Active API keys that will be revoked             |
 | `sessions_count`       | `int`         | Active sessions that will be invalidated         |
-| `tickets_count`        | `int`         | Open tickets assigned to this user that will be unassigned |
+| `tickets_count`        | `int`         | Active tickets assigned to this user that will be unassigned |
 
 **Semantics**: this endpoint returns a point-in-time snapshot of the
 user's current state. The response is purely informational — the

@@ -196,7 +196,7 @@ the unassigned ticket queue (`?assignee=none`). See the Architectural
 Invariant in `tickets.md`.
 
 Tickets in inactive statuses (Resolved, Ignored, Duplicated) are not
-touched — they are closed and do not need an active assignee. Ticket
+touched — they no longer need an active assignee. Ticket
 history preserves the previous assignment via the TicketAuditEvent record.
 No attempt is made to reassign to the manager or any other user.
 
@@ -591,7 +591,7 @@ in this specific order):
    `docs/features/identity/authentication.md` (Session invalidation) for the
    session service contract.
 3. Set `User.active = false`
-4. Unassign open tickets: call
+4. Unassign active tickets: call
    `_unassign_active_tickets(db, user_id, reason)` where `reason` is the
    value passed to `deactivate_user()`. This clears `assignee_id` on all
    active tickets, creates `TicketAuditEvent` records, and adds tickets to

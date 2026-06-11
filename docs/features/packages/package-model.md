@@ -517,7 +517,7 @@ maintenance process. Product confirmation verifies the end result.
 
 The `SyncIbsRequests` (daily at 02:30 UTC) includes a reconciliation
 phase after its primary catch-up of missed SR/RR events. For every IBS
-track (`workflow_type = 'ibs'`) in open tickets with
+track (`workflow_type = 'ibs'`) in active tickets with
 `delivery_status != RELEASED`, it verifies that the persisted
 `delivery_status` is consistent with the current state of the SR/RR data
 in IBS. If a disalignment is found, the `delivery_status` is corrected.

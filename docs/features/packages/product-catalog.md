@@ -143,7 +143,7 @@ for the general SMELT description.
      products endpoint)
   3. Update the corresponding local `Product.cvss_threshold`
   4. If a product's threshold changes, re-evaluate eligibility for all
-     open tickets referencing that product
+     active tickets referencing that product
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
 

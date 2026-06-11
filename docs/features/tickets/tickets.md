@@ -449,7 +449,7 @@ in three scenarios:
    [user-service.md](../identity/user-service.md#private-helpers))
 3. **Inactive assignee sanitization**: individual cleanup by
    `reconcile_ticket_status` when it encounters an inactive assignee on
-   a non-final ticket (see
+   an active ticket (see
    [Inactive Assignee Sanitization](ticket-mutations.md#inactive-assignee-sanitization))
 
 Scenarios 1 and 2 are proactive (triggered at the point of mutation).
@@ -696,7 +696,7 @@ row before any modification (see
 - **Inactive tickets**: status `Resolved`, `Ignored`, or `Duplicated`.
   No longer monitored.
 
-## Terminal Statuses and Mutability
+## Inactive Statuses and Mutability
 
 ### Ignored
 

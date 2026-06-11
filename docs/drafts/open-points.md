@@ -196,7 +196,7 @@ a subsequent mutation — the ticket remains silently drifted with no
 mechanism to detect or correct it. Today, no one would notice.
 
 **Proposed approach**: create a daily scheduled task (BaseFetcher
-subclass) that iterates over all tickets in non-final status and calls
+subclass) that iterates over all tickets in active statuses and calls
 `reconcile_ticket_status` on each. For every ticket where
 reconciliation actually changes the status (i.e., a drift was found and
 corrected), the task MUST emit a prominent log entry (WARNING level)

@@ -106,7 +106,7 @@ triggered by parent fetchers, with no independent schedule).
 
 #### Reason: `reactive_ltss`
 
-For all `TicketPackageProduct` records referencing this product in open
+For all `TicketPackageProduct` records referencing this product in active
 tickets with `eligible = true` and `is_eligible_override = false`:
 
 - Call `package_service.set_product_eligibility(record, eligible=false)`
@@ -117,7 +117,7 @@ the query).
 
 #### Reason: `eol`
 
-For all `TicketPackageProduct` records referencing this product in open
+For all `TicketPackageProduct` records referencing this product in active
 tickets whose parent `TicketPackageTrack` has a non-final status
 (`AFFECTED` or `ANALYSIS`):
 
@@ -130,7 +130,7 @@ Products under tracks with a final status (`NOT_AFFECTED`, `FIXED`,
 
 #### Reason: `threshold_change`
 
-For all `TicketPackageProduct` records referencing this product in open
+For all `TicketPackageProduct` records referencing this product in active
 tickets: re-evaluate eligibility based on the new threshold value.
 Existing behavior as specified in `docs/features/packages/package-model.md`.
 

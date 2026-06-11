@@ -91,6 +91,43 @@ Rules:
   (reporting hierarchy in `ad-integration.md`), "certificate chain"
   (TLS)
 
+### Ticket Status Category Terminology
+
+Ticket statuses are grouped into two categories. Use the following
+canonical terms consistently across all documentation and code:
+
+| Category | Statuses | Canonical term |
+|----------|----------|----------------|
+| Active | `New`, `Analysis`, `Analyzed` | **active status** / **active ticket** |
+| Inactive | `Resolved`, `Ignored`, `Duplicated` | **inactive status** / **inactive ticket** |
+
+The authoritative definition of which statuses compose each set is in
+`docs/features/tickets/tickets.md` (Status Categories).
+
+Forbidden alternatives (MUST NOT be used for ticket status categories):
+
+| Forbidden term | Why |
+|----------------|-----|
+| "terminal status" / "terminal state" | Semantically inaccurate — all three inactive statuses admit reverse transitions |
+| "final status" (for tickets) | Reserved for `TicketPackageTrack` statuses `{NOT_AFFECTED, FIXED, WONT_FIX}` per `package-model.md` |
+| "non-final" (for tickets) | Inverse of "final status" — same ambiguity |
+| "non-active" | Non-standard variant; use "inactive" |
+| "open tickets" / "open status" | Conflicts with IBS request states and the "Reopen" transition verb |
+| "closed" / "closure" / "auto-closed" / "manually-closed" | Informal and inconsistent; no ticket status is named "Closed" |
+
+**Disambiguation scope**: this convention applies exclusively to
+**ticket** status categories. The following unrelated uses are NOT
+affected:
+
+- User lifecycle: `User.active` field, "inactive user", "active status"
+  as a boolean attribute (identity domain)
+- Product lifecycle: `Product.active` field (product domain)
+- Assignee state: "inactive assignee" = user whose `active` field is
+  `false` (ticket-mutations domain)
+- IBS request states: "open", "accepted", "declined" (IBS domain)
+- IBS incident lifecycle: "incident closed" (IBS domain)
+- Status transition verbs: "Reopen" (action, not state category)
+
 ### Timestamps & Timezones
 
 Sentinel follows the **"UTC everywhere, local display"** convention:
