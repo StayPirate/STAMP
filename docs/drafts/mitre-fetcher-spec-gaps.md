@@ -26,6 +26,7 @@ across multiple specification files:
 | Configuration env vars | `docs/configuration.md` | Resolved: Change 5 ready (OP-2) |
 | Git library / runtime dependency | `fetcher-infrastructure.md` | Resolved: raw subprocess, git >= 2.25 (OP-7) |
 | Deployment (git worker, volume) | `docs/deployment.md` | Resolved: Change 11 ready (OP-7) |
+| Review gate | `@spec-coherence`, `@docs-placement`, `@spec-gap-analyzer` | Resolved: all findings addressed (OP-13–OP-24) |
 
 ---
 
@@ -343,11 +344,7 @@ subsection), `deployment.md` (git in prerequisites).
 
 ---
 
-## Open Points
-
 ### OP-11 — Cursor Preservation Across Retention Window — RESOLVED
-
-**Status**: RESOLVED
 
 **Decision**: The aggregation task no longer exists. `FetcherRun` records
 are retained indefinitely, eliminating the cursor-loss risk entirely. For
@@ -357,35 +354,324 @@ most recent `FetcherRun` record for as long as the record exists
 
 ---
 
-### OP-13 — Pre-Application Review Gate — OPEN
+### OP-13 — Pre-Application Review Gate — RESOLVED
 
-**Problem**: Changes 1–16 modify 7 specification files simultaneously.
-Applying them without review risks introducing contradictions with
-existing spec content, violating conventions, or missing edge cases
-that the drafting process did not surface.
+**Decision**: All three reviewers executed. Findings documented and
+resolved as OP-14 through OP-24 below.
 
-**Required reviews before applying changes**:
+**Reviewer results**:
 
-- `@spec-coherence-reviewer`: verify that the planned changes do not
-  contradict existing specs (especially `fetcher-infrastructure.md`,
-  `cve-tracking.md`, `cve-service.md`, `data-model.md`)
-- `@docs-placement-reviewer`: verify that the shared vs. fetcher-specific
-  split (Change 1 vs Change 6) places each rule in the correct location
-- `@spec-gap-analyzer`: run on the final `cve-tracking.md` content (after
-  Changes 6, 7, 9, 10, 12, 13, 14 are mentally applied) to identify any
-  remaining functional gaps
+| Reviewer | Verdict | Blocking findings |
+|----------|---------|-------------------|
+| `@spec-coherence-reviewer` | Minor issues | 2 minor (OP-14, OP-15) |
+| `@docs-placement-reviewer` | Minor issues | 1 medium (OP-16) |
+| `@spec-gap-analyzer` | Needs revision | 1 high (OP-17), 5 medium (OP-18–OP-22) |
 
-**Execution**: run reviewers on a per-change basis or on the target
-files after all changes are applied (whichever is more practical).
-Address any "Needs revision" findings before considering the spec
-updates final.
+All findings resolved in OP-14 through OP-24.
+
+---
+
+### OP-14 — `fetch_single()` Queue Routing Mechanism — RESOLVED
+
+**Source**: `@spec-coherence-reviewer` finding B
+
+**Problem**: The draft states `fetch_single()` tasks for git-based
+fetchers are routed to the `git` queue, but neither spec documents
+how `trigger_on_demand_fetch()` makes the routing decision.
+
+**Decision**: Add a `queue` class attribute to `BaseFetcher` with
+default `None` (= default Celery queue). Git-based fetchers override
+it to `"git"`. `trigger_on_demand_fetch()` reads `fetcher_cls.queue`
+when calling `.apply_async(queue=...)`. If `None`, no queue parameter
+is passed and Celery uses default routing.
+
+**Rationale**: simplest mechanism; safe by default (forgetting to set
+it routes to the normal queue, not to an inaccessible one); the
+information is intrinsic to the fetcher (not external configuration).
+
+**Affected changes**: Change 1 (Worker Affinity subsection — add the
+`queue` attribute mechanism), Change 2 (BaseFetcher cross-ref — mention
+the attribute in the abstract interface).
+
+---
+
+### OP-15 — Architecture Statelessness Reconciliation — RESOLVED
+
+**Source**: `@spec-coherence-reviewer` finding A
+
+**Problem**: `architecture.md` states "Application containers are
+stateless. They must not rely on local persistent filesystem state
+for correctness." The git volume introduces local persistent state.
+The draft frames it as a "recoverable cache" (correct), but the
+architecture doc doesn't acknowledge this category.
+
+**Decision**: In Change 8 (architecture.md cross-reference), add one
+sentence to the "Runtime State" section:
+
+> Recoverable caches (e.g., git clone volumes used by CVE fetchers)
+> may use persistent local storage for performance, provided the
+> application remains correct without them — see
+> `docs/features/platform/fetcher-infrastructure.md` (Git-Based
+> Fetchers, Recovery).
+
+**Rationale**: prevents future readers from flagging a perceived
+violation. The system IS stateless for correctness (it re-clones on
+volume loss), but uses persistent storage as a performance cache.
+
+**Affected changes**: Change 8.
+
+---
+
+### OP-16 — Cursor Write Mechanism Discoverability — RESOLVED
+
+**Source**: `@docs-placement-reviewer` finding A
+
+**Problem**: The cursor write mechanism (`self._cursor` → `run()` →
+`FetcherRun.cursor`) is a generic `BaseFetcher` capability documented
+exclusively under "Git-Based Fetchers". A non-git fetcher developer
+would not find it.
+
+**Decision**: Add a brief note in the "BaseFetcher Base Class" section
+(in the `run()` lifecycle list) mentioning that `run()` supports
+cursor persistence via `self._cursor`, with a reference to "Git-Based
+Fetchers — Cursor Persistence" for the full mechanism. The detailed
+documentation stays in the git section (where its primary consumers
+are), but is discoverable from the BaseFetcher contract.
+
+**Affected changes**: Change 2 (new addition to the `run()` lifecycle
+bullet list in BaseFetcher section).
+
+---
+
+### OP-17 — Failed Clone Directory Detection — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 3 (High severity)
+
+**Problem**: If `git clone` fails mid-transfer, a partially-initialized
+directory may remain. The next run sees the directory as existing (→
+"not first run") and attempts `git fetch` against a corrupted/incomplete
+repo. This fails with `GitFetchError` (→ "Do NOT delete clone") creating
+an infinite loop with no automatic recovery.
+
+**Decision**: Change the first-run detection from "clone directory does
+not exist" to "clone directory does not exist **OR is not a valid bare
+git repository**" (detected via `git rev-parse --git-dir` returning
+the directory itself for bare repos, or failing for invalid ones).
+
+If the directory exists but is not a valid git repository:
+1. Delete the directory entirely
+2. Proceed with fresh clone (same as "directory does not exist")
+
+This fits within the existing phase-based error classification:
+`git rev-parse --git-dir` is a read operation that runs before `git
+fetch`. If it fails, it's a corruption signal → delete and re-clone.
+
+**Affected changes**: Change 1 (Bare Clone Pattern — first-run
+detection), Change 6 (algorithm step 1 in `cve-tracking.md`).
+
+---
+
+### OP-18 — Missing `collectionURL` and `packageName` in Mapping Table — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 1 (Medium severity)
+
+**Problem**: The `CVEAffectedVersion` model has `collection_url` and
+`package_name` columns (defined in `data-model.md` and
+`cve-service.md`), but the field path mapping table in Change 9 does
+not include rows for these fields. An implementer following the table
+would never populate them.
+
+**Decision**: Add two rows to the `affected[]` extraction table in
+Change 9:
+
+| AffectedVersionEntry field | JSON path | Notes |
+|---|---|---|
+| `collection_url` | `.collectionURL` | URL of package repository (e.g., npm, PyPI) |
+| `package_name` | `.packageName` | Package name within the collection |
+
+**Affected changes**: Change 9 (mapping table).
+
+---
+
+### OP-19 — Deleted Files in Delta Detection — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 2 (Medium severity)
+
+**Problem**: `git diff --name-only` includes deleted files. When the
+fetcher attempts `git show HEAD:<deleted_path>`, the file doesn't
+exist, producing a `GitFileError` → spurious `record_failed()` calls
+and inflated metrics.
+
+**Decision**: Use `--diff-filter=AMCR` (Added, Modified, Copied,
+Renamed) in the delta detection command to exclude deleted files:
+
+```
+git diff --name-only --diff-filter=AMCR <old_sha>..HEAD
+```
+
+File deletions in cvelistV5 are rare (administrative moves/renames)
+and do not represent CVE data that Sentinel needs to process. A
+deleted CVE file means the CVE was retracted or relocated — the
+REJECTED state handling already covers this case when the file is
+re-published with `cveMetadata.state = "REJECTED"`.
+
+**Affected changes**: Change 1 (Bare Clone Pattern — Delta detection
+step), Change 6 (algorithm step 3 and recovery strategy command).
+
+---
+
+### OP-20 — Multiple CVSS Entries Same Version/Provider — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 4 (Medium severity)
+
+**Problem**: The CVE JSON 5.x schema permits multiple entries in
+`metrics[]`. If a CNA publishes two `cvssV3_1` assessments in the
+same container, both would have the same `(provider_name,
+cvss_version)` → UNIQUE constraint violation on `CVECVSSAssessment`.
+
+**Decision**: If multiple CVSS entries of the same version (e.g., two
+`cvssV3_1` objects) exist in the same `metrics[]` array, use the
+**last** entry in array order. Earlier entries for the same version
+are silently ignored. No WARNING log (this is a known data pattern
+from some CNAs, not an error condition).
+
+**Rationale**: array-last wins is simple, deterministic, and matches
+the intuition that later entries supersede earlier ones. The
+alternative (first wins) is equally arbitrary. Logging would generate
+noise for a benign condition.
+
+**Affected changes**: Change 9 (add deduplication note to CNA/ADP
+CVSS extraction rows).
+
+---
+
+### OP-21 — Missing `providerMetadata.shortName` in ADP — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 5 (Medium severity)
+
+**Problem**: If `providerMetadata.shortName` is absent in an ADP
+entry, the formula `f"adp:{None}"` produces the string `"adp:None"`,
+causing orphaned rows on subsequent syncs.
+
+**Decision**: If `providerMetadata` or `providerMetadata.shortName`
+is absent in an ADP container entry, skip the entire ADP entry. Log
+WARNING with the CVE-ID and `providerMetadata.orgId` (if available)
+for diagnostics. Do not construct an invalid `source_container`.
+
+**Rationale**: `providerMetadata.shortName` is a required field in
+CVE JSON 5.x. Its absence indicates a malformed file that bypassed
+MITRE's schema validation. Skipping is safe — the data may be
+available from other sources or a corrected file in a future delta.
+
+**Affected changes**: Change 9 (add defensive guard note to ADP
+container fields section).
+
+---
+
+### OP-22 — Duplicate Version Entries in `versions[]` — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 6 (Medium severity)
+
+**Problem**: If a CNA accidentally publishes duplicate version entries
+with identical `(vendor, product, version_type, version, version_end)`
+within the same `affected[]` array, the delete-and-reinsert operation
+would attempt to INSERT both, hitting the safety-net unique constraint.
+
+**Decision**: Before INSERT, deduplicate `AffectedVersionEntry`
+records within the same `source_container` by the unique constraint
+key `(vendor, product, version_type, version, version_end)`. If
+duplicates are found, retain the **last** occurrence in array order
+(consistent with OP-20 array-last-wins principle). No WARNING log
+(benign data quality issue from source).
+
+**Affected changes**: Change 9 (add deduplication note to `affected[]`
+extraction section).
+
+---
+
+### OP-23 — Remove `git gc --auto` — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 8 (Low severity, but simplifies
+the spec)
+
+**Problem**: The current spec includes `git gc --auto` as a post-fetch
+step. This is redundant: since git 2.0, `git fetch` executes
+`gc --auto` internally after updating refs. The explicit step adds
+spec complexity and creates an unclassified error phase (gap-8).
+
+**Decision**: Remove `git gc --auto` from all references:
+- Change 1: do not include it in the "Git-Based Fetchers" section
+- Change 6: do not include it in the replacement content for
+  `cve-tracking.md`
+
+The existing line in `cve-tracking.md` (line 630: "Git garbage
+collection: `git gc --auto` as a post-run step.") will be removed
+when Change 6 replaces the "Storage and Recovery" section.
+
+**Rationale**: `git fetch` already triggers `gc --auto`. With
+50-200 new objects per 6-hour cycle, the auto-gc threshold (6700
+loose objects) takes weeks to reach anyway. Removing it simplifies
+the spec and eliminates an unclassified error phase.
+
+---
+
+### OP-24 — Remove `status`/`default_status` from CVEAffectedVersion — RESOLVED
+
+**Source**: `@spec-gap-analyzer` gap 9 (Low severity) + design review
+discussion
+
+**Problem**: The `CVEAffectedVersion` table stores `status` and
+`default_status` fields from CVE JSON 5.x `affected[]` entries.
+These fields describe upstream affectedness claims. However:
+
+1. Sentinel does not use these fields for any business logic
+2. SUSE performs extensive backporting — upstream affectedness is not
+   meaningful for SUSE distributions
+3. The VA decides affectedness at the track level
+   (`TicketPackageTrack.status`), not from upstream data
+4. The only consumer of `CVEAffectedVersion` is the package
+   auto-addition pipeline, which uses `vendor`/`product` for CPE
+   mapping — not `status`
+5. Auto-added packages are shown to the VA directly as packages
+   ready for evaluation — the raw affected version data is not
+   displayed
+
+**Decision**: Remove `status` and `default_status` columns from
+`CVEAffectedVersion`. Remove corresponding fields from
+`AffectedVersionEntry` in `cve-service.md`. Update the mapping table
+in Change 9 to not map these fields.
+
+**Package extraction principle**: extract ALL `vendor`/`product` pairs
+from `affected[]` entries regardless of their status value. No
+filtering by `status == "affected"` — Sentinel does best-effort
+package addition and the VA decides. Even entries with
+`defaultStatus: "unaffected"` are processed (the CPE mapping may or
+may not match a SUSE package; if it does, the VA evaluates).
+
+**Empty `versions[]` handling** (simplified): if an `affected[]`
+entry has no `versions` key or an empty `versions[]` array, create
+one `AffectedVersionEntry` with vendor/product and NULL version
+fields. This ensures the vendor:product pair is available for CPE
+mapping.
+
+**Affected changes**: Change 3 (remove columns from `data-model.md`
+table), Change 4 (update Mermaid diagram), Change 9 (simplify
+mapping table — no status fields, updated empty-versions handling),
+new Change 17 (remove fields from `cve-service.md`
+`AffectedVersionEntry`).
+
+---
+
+## Open Points
+
+None — all open points have been resolved (OP-1 through OP-24).
 
 ---
 
 ## Planned Changes
 
-Changes to apply to spec files once all open points are resolved.
-Applied in the order listed below to maintain coherence.
+All open points are resolved. Changes below are ready to apply to spec
+files. Applied in the order listed below to maintain coherence.
 
 ### Change 1: `fetcher-infrastructure.md` — Add "Git-Based Fetchers" section
 
@@ -414,16 +700,24 @@ operations.
 
 The pattern:
 
-1. **Clone** (first run only): `git clone --bare --single-branch <url>`
+1. **Clone** (first run only — clone directory does not exist OR is not
+   a valid bare git repository): `git clone --bare --single-branch <url>`
    into `$GIT_CLONE_BASE_DIR/<subdirectory>/`. For sources that support
    Git partial clone (protocol v2 with `filter` capability), add
    `--filter=blob:none` to defer blob downloads. For sources that do not
    support filtering (e.g., `git.kernel.org`), use a plain bare clone.
+   **Validity check**: before deciding "first run vs. subsequent run",
+   verify the directory is a valid bare git repository via
+   `git rev-parse --git-dir`. If the directory exists but the check
+   fails (partially-initialized clone from a previous interrupted
+   attempt), delete the directory and proceed with a fresh clone.
 2. **Fetch** (subsequent runs): `git fetch origin` updates refs and
    downloads new objects. This is incremental and typically completes in
    seconds.
-3. **Delta detection**: `git diff --name-only <old_sha>..<new_sha>`
-   returns the exact list of changed files.
+3. **Delta detection**: `git diff --name-only --diff-filter=AMCR
+   <old_sha>..<new_sha>` returns the list of Added, Modified, Copied,
+   and Renamed files. Deleted files are excluded — they do not represent
+   CVE data that needs processing.
 4. **File content access**: `git show <ref>:<path>` reads a single
    file's content from the object store without creating a working tree.
    For blobless clones, this triggers an on-demand blob download for
@@ -515,12 +809,18 @@ volume mounted. This is achieved via a dedicated Celery queue:
 - **Queue name**: `git`
 - **Routing**: git-based fetcher tasks declare
   `queue = "git"` in their task configuration
+- **`queue` class attribute on BaseFetcher**: `BaseFetcher` defines a
+  `queue: str | None = None` class attribute (default = default Celery
+  queue). Git-based fetchers override it to `"git"`. Non-git fetchers
+  that omit it are routed normally — safe by default
 - **Worker configuration**: the worker process with access to the Git
   volume consumes from the `git` queue (in addition to the default
   queue, if desired)
-- **`fetch_single()` routing**: on-demand single-item fetches for
-  git-based fetchers are also routed to the `git` queue, since they
-  require object store access
+- **`fetch_single()` routing**: `trigger_on_demand_fetch()` reads
+  `fetcher_cls.queue` when dispatching via `.apply_async(queue=...)`.
+  If `None`, no queue parameter is passed and Celery uses default
+  routing. This ensures on-demand fetches for git-based fetchers
+  reach the worker with the volume mounted
 
 In single-worker deployments (local dev, simple Docker/Podman), all
 queues are consumed by the same worker process and no explicit routing
@@ -530,9 +830,9 @@ configuration is needed.
 
 These rules apply to ALL git-based fetchers sharing the same volume:
 
-1. **Only the periodic sync modifies the clone**: `git fetch`, `git gc`,
-   and any other write operations are performed exclusively by the
-   periodic sync task. `fetch_single()` MUST NOT run `git fetch` or any
+1. **Only the periodic sync modifies the clone**: `git fetch` and any
+   other write operations are performed exclusively by the periodic
+   sync task. `fetch_single()` MUST NOT run `git fetch` or any
    operation that modifies the object store or refs.
 2. **`fetch_single()` reads from the object store only**: uses
    `git show <ref>:<path>` (via async subprocess) to read committed
@@ -576,10 +876,6 @@ These rules apply to ALL git-based fetchers sharing the same volume:
 1. Log WARNING with the error details
 2. Delete the entire clone directory
 3. Re-clone (same as volume loss recovery)
-
-**Git garbage collection**: `git gc --auto` as a post-fetch step. For
-bare repos, this is lightweight and runs only when git determines it is
-needed.
 
 ### Runtime Dependencies
 
@@ -674,9 +970,32 @@ Also add a note after the existing notes block (line ~1391):
   raises `TypeError` and the run fails without persisting a cursor.
 ```
 
+**Also modify (OP-16)**: the `BaseFetcher Base Class` section (line ~61-77,
+within the `run()` lifecycle list). Add a new bullet after "Final status
+set to `success` or `partial`":
+
+```markdown
+   - **Cursor persistence**: if `execute()` sets `self._cursor` (a dict),
+     `run()` writes it to the `FetcherRun.cursor` column in the same
+     transaction that sets `status` and `finished_at`. If `self._cursor`
+     is None (not set), no cursor is written. See "Git-Based Fetchers —
+     Cursor Persistence" for the full mechanism and query pattern
+```
+
+**Also modify**: the Abstract Interface section (line ~131-158). Add a
+`queue` class attribute to the example:
+
+```python
+class SyncExampleData(BaseFetcher):
+    name: str = "sync_example_data"
+    description: str = "Human-readable description"
+    default_schedule: str = "0 */6 * * *"
+    queue: str | None = None  # Optional: Celery queue name (default = default queue)
+```
+
 ---
 
-### Change 3: `data-model.md` — Add `cursor` column to FetcherRun table
+### Change 3: `data-model.md` — Add `cursor` column to FetcherRun table + remove `status`/`default_status` from CVEAffectedVersion
 
 **Modify**: the FetcherRun table (line ~1352-1368). Add a new row after
 `triggered_by_user_id`:
@@ -685,12 +1004,20 @@ Also add a note after the existing notes block (line ~1391):
 | cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "..."}` for git-based fetchers). Written on successful completion; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 ```
 
+**Modify**: the CVEAffectedVersion table. Remove the `status` and
+`default_status` columns. These fields are not used by any Sentinel
+business logic — upstream affectedness claims are not meaningful for
+SUSE (backporting) and the VA decides affectedness at the track level.
+
 ---
 
-### Change 4: `data-model.md` — Add `cursor` to FetcherRun Mermaid diagram
+### Change 4: `data-model.md` — Update Mermaid diagrams
 
 **Modify**: the FetcherRun entity in the Mermaid ER diagram (line ~325).
 Add `cursor` to the entity fields.
+
+**Modify**: the CVEAffectedVersion entity in the Mermaid ER diagram.
+Remove `status` and `default_status` from the entity fields.
 
 ---
 
@@ -753,9 +1080,9 @@ both `sync_mitre_cves` and `sync_kernel_cves` process the last 2 weeks
 of changes:
 
 1. `git rev-list -1 --before="2 weeks ago" HEAD` → boundary SHA
-2. `git diff --name-only <boundary_sha>..HEAD -- '<file_filter>'`
-   → file list (where `<file_filter>` is `cves/` for MITRE,
-   `cve/published/` for kernel)
+2. `git diff --name-only --diff-filter=AMCR <boundary_sha>..HEAD --
+   '<file_filter>'` → file list (where `<file_filter>` is `cves/` for
+   MITRE, `cve/published/` for kernel)
 3. Process each file via `cve_service.upsert_cve()` (idempotent —
    previously ingested CVEs produce no observable side effects)
 4. Write HEAD as cursor on completion
@@ -781,10 +1108,14 @@ Update to reference the cursor mechanism:
 
 **Algorithm step 1 — clone command (line 506)**
 
-Update to reflect bare clone with "record HEAD only" first-run strategy:
+Update to reflect bare clone with "record HEAD only" first-run strategy
+and directory validity check (OP-17):
 
 ```markdown
-1. **First run** (clone directory does not exist):
+1. **First run** (clone directory does not exist OR is not a valid bare
+   git repository — detected via `git rev-parse --git-dir`):
+   - If the directory exists but is invalid: delete it entirely (handles
+     partially-initialized clones from interrupted previous attempts)
    - `git clone --bare --filter=blob:none --single-branch`
      of `https://github.com/CVEProject/cvelistV5.git` into
      `$GIT_CLONE_BASE_DIR/cvelistV5/`. The `--bare` flag omits the
@@ -865,6 +1196,18 @@ This aligns "CVE Ingestion Flow" with the other Data Flow sections
 ("Package Affectedness Flow" references `package-model.md`, "Release
 Tracking Flow" references `ibs-track-release-detection.md`, etc.).
 
+**Also modify**: "Runtime State" section (line ~319-321). Add one
+sentence after "Persistent state belongs in PostgreSQL, Redis, or
+external services.":
+
+```markdown
+Recoverable caches (e.g., git clone volumes used by CVE fetchers) may
+use persistent local storage for performance, provided the application
+remains correct without them — see
+`docs/features/platform/fetcher-infrastructure.md` (Git-Based Fetchers,
+Recovery).
+```
+
 ---
 
 ### Change 9: `cve-tracking.md` — Add CVE JSON 5.x Field Path Mapping
@@ -904,14 +1247,25 @@ gracefully — legacy CVEs (migrated from format 4.0) often lack `title`,
 | `affected_versions` | `containers.cna.affected[]` | Yes | See affected[] extraction below |
 | (references) | `containers.cna.references[]` | Yes | Each entry has `.url` and optionally `.tags[]`. Passed to `reference_service` |
 
+**CVSS deduplication (OP-20)**: if multiple entries of the same CVSS
+version (e.g., two `cvssV3_1` objects) exist in the same `metrics[]`
+array, use the **last** entry in array order. Earlier entries for the
+same version are silently ignored. This is a known data pattern from
+some CNAs, not an error condition.
+
 ##### ADP container fields (from `containers.adp[]`)
 
 For **each** entry in the `containers.adp[]` array:
 
+**Defensive guard (OP-21)**: if `providerMetadata` or
+`providerMetadata.shortName` is absent in an ADP entry, skip the
+entire entry. Log WARNING with CVE-ID and `providerMetadata.orgId`
+(if available). Do not construct an invalid `source_container`.
+
 | CVEIngestPayload field | JSON path (relative to ADP entry) | Notes |
 |---|---|---|
-| (identification) | `.title` | Used to identify the container and construct `source_container` |
-| `source_container` | `f"adp:{.providerMetadata.shortName}"` | e.g., `"adp:CISA-ADP"`, `"adp:CVE"` |
+| (identification) | `.title` | Used to identify the container (e.g., CISA) |
+| `source_container` | `f"adp:{.providerMetadata.shortName}"` | e.g., `"adp:CISA-ADP"`, `"adp:CVE"`. **Required** — skip entry if absent |
 | `cvss_assessments` | `.metrics[].cvssV3_1.vectorString` / `.cvssV4_0.vectorString` | `provider_name` = `source_container` value |
 | `affected_versions` | `.affected[]` | Same extraction as CNA, with ADP's `source_container` |
 
@@ -942,17 +1296,23 @@ version range:
 |---|---|---|
 | `vendor` | `.vendor` | Normalize: `"n/a"` or `""` → NULL |
 | `product` | `.product` | Normalize: `"n/a"` or `""` → NULL |
-| `default_status` | `.defaultStatus` | Product-level fallback |
 | `version` | `.versions[].version` | Normalize: `"n/a"` or `""` → NULL |
 | `version_type` | `.versions[].versionType` | Open set: `"semver"`, `"git"`, `"custom"`, etc. |
 | `version_end` | `.versions[].lessThan` or `.versions[].lessThanOrEqual` | Use `lessThan` if present, else `lessThanOrEqual` |
 | `version_end_inclusive` | — | `true` if `lessThanOrEqual` was used, `false` if `lessThan` |
-| `status` | `.versions[].status` | `"affected"`, `"unaffected"`, `"unknown"` |
 | `cpe` | `.cpes[]` (first entry) | If present (5.2+ CNA-provided CPE) |
 | `package_url` | `.packageURL` | 5.2 only; optional PURL identifier |
+| `collection_url` | `.collectionURL` | URL of package repository (e.g., npm registry, PyPI) |
+| `package_name` | `.packageName` | Package name within the collection |
 | `repo` | `.repo` | If present (e.g., Git repo URL for kernel) |
 | `program_files` | `.programFiles` | If present |
 | `source_container` | (inherited from parent container) | `"cna"` for CNA, `f"adp:{shortName}"` for ADP |
+
+**Note**: `status` and `defaultStatus` fields from the JSON are NOT
+extracted. Sentinel does not use upstream affectedness claims — the VA
+decides affectedness at the track level. All vendor/product pairs are
+extracted regardless of their upstream status value (best-effort
+package addition principle).
 
 **Sentinel value normalization**: entries in the `affected[]` array
 where both `vendor` and `product` are sentinel values (`"n/a"` or
@@ -971,10 +1331,16 @@ the parser.
 
 **Empty `versions[]` handling**: if an `affected[]` entry has no
 `versions` key or an empty `versions[]` array, create one
-`AffectedVersionEntry` with NULL version fields (`version`,
-`version_end`, `version_type` all NULL), using the product-level
-`defaultStatus` as the entry's `status`. This handles legacy CVEs
-where products are declared affected without version granularity.
+`AffectedVersionEntry` with vendor/product and NULL version fields
+(`version`, `version_end`, `version_type` all NULL). This ensures the
+vendor:product pair is available for CPE mapping regardless of
+version granularity.
+
+**Deduplication (OP-22)**: before INSERT, deduplicate
+`AffectedVersionEntry` records within the same `source_container` by
+the unique constraint key `(vendor, product, version_type, version,
+version_end)`. If duplicates exist, retain the **last** occurrence in
+array order. No WARNING log (benign data quality issue from source).
 
 **CVE-ID cross-validation**: the parser extracts the CVE-ID from the
 filename path (e.g., `cves/2026/0xxx/CVE-2026-0123.json` →
@@ -1254,19 +1620,34 @@ f"adp:{providerMetadata.shortName}"
 
 ---
 
+### Change 17: `cve-service.md` — Remove `status`/`default_status` from AffectedVersionEntry
+
+**Modify**: the `AffectedVersionEntry` definition in `cve-service.md`.
+Remove the `status` and `default_status` fields from the dataclass/schema.
+
+**Rationale**: Sentinel does not use upstream affectedness claims for
+any business logic. The VA decides affectedness at the track level
+(`TicketPackageTrack.status`). SUSE performs extensive backporting,
+making upstream affected/unaffected declarations meaningless for SUSE
+distributions. The only consumer of `CVEAffectedVersion` is the CPE
+mapping pipeline, which uses `vendor`/`product` pairs. The raw affected
+data is not displayed to users — auto-added packages are shown directly.
+
+---
+
 ## Application Order
 
 | # | Change | Target File |
 |---|--------|-------------|
-| 1 | Add "Git-Based Fetchers" section (incl. Runtime Dependencies) | `fetcher-infrastructure.md` |
-| 2 | Add `cursor` column to FetcherRun table + notes | `fetcher-infrastructure.md` |
-| 3 | Add `cursor` column to FetcherRun table | `data-model.md` |
-| 4 | Add `cursor` to FetcherRun Mermaid diagram | `data-model.md` |
+| 1 | Add "Git-Based Fetchers" section (incl. Runtime Dependencies, queue attr, no gc, validity check) | `fetcher-infrastructure.md` |
+| 2 | Add `cursor` column to FetcherRun table + notes + BaseFetcher cross-ref + queue attr in abstract interface | `fetcher-infrastructure.md` |
+| 3 | Add `cursor` column to FetcherRun + remove `status`/`default_status` from CVEAffectedVersion | `data-model.md` |
+| 4 | Update Mermaid diagrams (cursor in FetcherRun, remove status fields from CVEAffectedVersion) | `data-model.md` |
 | 5 | Add "Git-Based Fetchers" env var section | `configuration.md` |
-| 6 | Replace duplicated sections with references + update first-run algorithm | `cve-tracking.md` |
+| 6 | Replace duplicated sections with references + update first-run algorithm (validity check) | `cve-tracking.md` |
 | 7 | Add "Common First Run Behavior" section | `cve-tracking.md` |
-| 8 | Add cross-reference to CVE Ingestion Flow | `architecture.md` |
-| 9 | Add CVE JSON 5.x field path mapping table | `cve-tracking.md` |
+| 8 | Add cross-reference to CVE Ingestion Flow + "recoverable caches" note in Runtime State | `architecture.md` |
+| 9 | Add CVE JSON 5.x field path mapping table (with CVSS dedup, ADP guard, version dedup, no status) | `cve-tracking.md` |
 | 10 | Clarify CISA-ADP identification | `cve-tracking.md` |
 | 11 | Add git dependency, git worker, and volume to deployment guide | `deployment.md` |
 | 12 | Remove git library ambiguity | `cve-tracking.md` |
@@ -1274,6 +1655,7 @@ f"adp:{providerMetadata.shortName}"
 | 14 | Fix `git pull`/`git merge`/rationale references for bare clone consistency | `cve-tracking.md` |
 | 15 | Add implementation location note for git helper | `fetcher-infrastructure.md` |
 | 16 | Fix `source_container` formula (`adp:{title}` → `adp:{shortName}`) | `cve-tracking.md` + `cve-service.md` |
+| 17 | Remove `status`/`default_status` from `AffectedVersionEntry` | `cve-service.md` |
 
 Changes 1-5 are independent and can be applied in any order. Change 6
 depends on Change 1 (references must point to content that exists).
@@ -1284,7 +1666,8 @@ Change 6 (the kernel cross-reference must be updated after the MITRE
 sections it references are replaced). Change 14 is independent
 (addresses a pre-existing inconsistency). Change 15 depends on Change 1
 (appends to the section created by Change 1). Change 16 is independent
-(corrects a pre-existing inconsistency in two files).
+(corrects a pre-existing inconsistency in two files). Change 17 is
+independent (removes unused fields from `cve-service.md`).
 
 ---
 
@@ -1301,9 +1684,9 @@ sections it references are replaced). Change 14 is independent
 
 ## Remaining Work
 
-**Open point OP-13 requires resolution before implementation.** Changes
-1–16 can be applied to spec files now that OP-11 is resolved. OP-13
-(review gate) must pass after changes are applied.
+**All open points are resolved.** Changes 1–17 can be applied to spec
+files. The review gate (OP-13) has passed — all findings have been
+resolved as OP-14 through OP-24.
 
 | OP | Blocking? | Rationale |
 |----|-----------|-----------|
@@ -1311,7 +1694,18 @@ sections it references are replaced). Change 14 is independent
 | OP-10 | ~~Yes~~ Resolved | Time-bounded recovery (2 weeks) — Changes 1 and 6 updated |
 | OP-11 | ~~Yes~~ Resolved | Aggregation removed entirely — `FetcherRun` retained indefinitely, no cursor-loss risk |
 | OP-12 | ~~Yes~~ Resolved | Phase-based error classification — Changes 1 and 15 updated |
-| OP-13 | Yes (post-apply) | Reviewer gate: spec-coherence, docs-placement, spec-gap-analyzer must pass before implementation |
+| OP-13 | ~~Yes~~ Resolved | All three reviewers executed; findings resolved as OP-14–OP-24 |
+| OP-14 | ~~Yes~~ Resolved | `queue` attribute on BaseFetcher for `fetch_single()` routing |
+| OP-15 | ~~Yes~~ Resolved | Architecture "recoverable cache" note |
+| OP-16 | ~~Yes~~ Resolved | Cursor cross-ref in BaseFetcher section |
+| OP-17 | ~~Yes~~ Resolved | Failed clone detection via `git rev-parse --git-dir` |
+| OP-18 | ~~Yes~~ Resolved | `collectionURL`/`packageName` added to mapping table |
+| OP-19 | ~~Yes~~ Resolved | `--diff-filter=AMCR` excludes deleted files |
+| OP-20 | ~~Yes~~ Resolved | Multiple CVSS same version: array-last wins |
+| OP-21 | ~~Yes~~ Resolved | Missing `shortName`: skip ADP entry with WARNING |
+| OP-22 | ~~Yes~~ Resolved | Duplicate versions: deduplicate by unique key, last wins |
+| OP-23 | ~~Yes~~ Resolved | `git gc --auto` removed (redundant since git 2.0) |
+| OP-24 | ~~Yes~~ Resolved | `status`/`default_status` removed from CVEAffectedVersion |
 
 ---
 
@@ -1325,34 +1719,58 @@ After all changes are applied, verify:
 - [ ] `configuration.md` lists all env vars needed by Git-based
       fetchers
 - [ ] `data-model.md` reflects the `cursor` column on `FetcherRun`
+- [ ] `data-model.md` does NOT have `status`/`default_status` on
+      `CVEAffectedVersion`
 - [ ] `fetcher-infrastructure.md` has the "Git-Based Fetchers" section
       (including Runtime Dependencies, Volume Requirements, Worker
       Affinity, Concurrency Rules, Recovery, Error Classification,
       Implementation Location, Cursor Write Mechanism, Empty Delta)
+- [ ] `fetcher-infrastructure.md` BaseFetcher section mentions cursor
+      persistence and the `queue` attribute (OP-14, OP-16)
 - [ ] `cve-tracking.md` references shared sections instead of
       duplicating them
 - [ ] `cve-tracking.md` contains the CVE JSON 5.x field path mapping
-      table with normalization rules, empty-versions handling, and
-      CVE-ID cross-validation
+      table with normalization rules, empty-versions handling,
+      deduplication rules, ADP defensive guard, and CVE-ID
+      cross-validation
+- [ ] `cve-tracking.md` mapping table does NOT include `status` or
+      `default_status` fields
+- [ ] `cve-tracking.md` mapping table includes `collection_url` and
+      `package_name` fields (OP-18)
+- [ ] `cve-tracking.md` has CVSS deduplication rule: array-last wins
+      for same version (OP-20)
+- [ ] `cve-tracking.md` has ADP defensive guard: skip entry if
+      `shortName` absent (OP-21)
+- [ ] `cve-tracking.md` has version deduplication rule: deduplicate by
+      unique key, last wins (OP-22)
 - [ ] `cve-tracking.md` has no "or equivalent library calls" phrasing
       (replaced with explicit subprocess reference)
 - [ ] `cve-tracking.md` has no `git pull` or `git merge` references
       in either fetcher section (bare clones use `git fetch origin`
       only)
+- [ ] `cve-tracking.md` has no `git gc` references (removed per OP-23)
 - [ ] `cve-tracking.md` "Sync mechanism rationale" uses "bare clone +
       fetch" (no "Git clone/pull")
 - [ ] `cve-tracking.md` Properties table Source says "bare clone +
       fetch" (not "Git clone/pull")
+- [ ] `cve-tracking.md` first-run detection includes directory validity
+      check via `git rev-parse --git-dir` (OP-17)
+- [ ] `cve-tracking.md` delta detection uses `--diff-filter=AMCR`
+      (OP-19)
 - [ ] `sync_kernel_cves` cross-reference points directly to
       `fetcher-infrastructure.md` (no double-hop through
       `sync_mitre_cves`)
 - [ ] `source_container` formula is consistently
       `f"adp:{providerMetadata.shortName}"` across `cve-tracking.md`
       and `cve-service.md` (no `f"adp:{title}"` remnants)
+- [ ] `cve-service.md` `AffectedVersionEntry` does NOT have `status`
+      or `default_status` fields (OP-24)
 - [ ] `deployment.md` includes `git` in Software Requirements, "Git
       worker" in Process Architecture, and the Git Worker Volume section
 - [ ] `architecture.md` has a cross-reference from CVE Ingestion Flow
       to `cve-tracking.md`
+- [ ] `architecture.md` "Runtime State" section has "recoverable caches"
+      note (OP-15)
 - [ ] The git subprocess helper location is documented
       (`backend/app/services/git_operations.py`)
 - [ ] Error classification is phase-based (documented in "Error
@@ -1371,9 +1789,6 @@ After all changes are applied, verify:
 - [ ] `docs/data-sources.md` Fetcher Registry entry is still accurate
 - [ ] No additional Python dependency is needed (raw subprocess uses
       stdlib only)
-- [ ] OP-9 through OP-12 are resolved with decisions documented in the
+- [ ] OP-9 through OP-24 are resolved with decisions documented in the
       Resolved Open Points section
-- [ ] OP-13 reviewers executed and findings addressed:
-      - [ ] `@spec-coherence-reviewer` — no contradictions
-      - [ ] `@docs-placement-reviewer` — correct shared/specific split
-      - [ ] `@spec-gap-analyzer` — no high-severity gaps remain
+- [ ] OP-13 reviewers executed and all findings addressed
