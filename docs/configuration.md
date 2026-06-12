@@ -114,6 +114,12 @@ here.
 |---------|------|---------|-------------|------------|
 | `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching | `docs/features/tickets/cve-tracking.md` |
 
+## Git-Based Fetchers
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `GIT_CLONE_BASE_DIR` | string (path) | `/var/lib/sentinel/git` | Base directory for persistent bare clones used by git-based fetchers (`sync_mitre_cves`, `sync_kernel_cves`). Must be backed by persistent storage in containerized deployments | `docs/features/platform/fetcher-infrastructure.md` |
+
 ## Application
 
 | Env Var | Type | Default | Description | Defined in |

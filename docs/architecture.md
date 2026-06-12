@@ -219,6 +219,9 @@ active source. See the data sources catalog for the full picture.
 7. TicketPackage, TicketPackageTrack, and TicketPackageProduct records are
    created automatically with status ANALYSIS
 
+See `docs/features/tickets/cve-tracking.md` for the full CVE ingestion
+specification (fetcher algorithms, error handling, first-run strategy).
+
 ### Manual Ticket Creation
 
 Tickets can also be created manually by Vulnerability Analysts without an
@@ -319,6 +322,12 @@ from Docker/Podman services to Kubernetes Deployments or Jobs.
 Application containers are stateless. They must not rely on local persistent
 filesystem state for correctness. Persistent state belongs in PostgreSQL,
 Redis, or external services.
+
+Recoverable caches (e.g., git clone volumes used by CVE fetchers) may
+use persistent local storage for performance, provided the application
+remains correct without them — see
+`docs/features/platform/fetcher-infrastructure.md` (Git-Based Fetchers,
+Recovery).
 
 Local Docker/Podman environments may run PostgreSQL and Redis as containers.
 Production environments may instead use managed services or separately managed

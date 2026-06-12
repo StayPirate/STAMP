@@ -68,7 +68,12 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      with `error_message`, `error_detail`, and `error_traceback` populated
      (see "Error Message Sanitization" for the three-tier field
      architecture)
-    - Final status set to `success` or `partial` (if `items_failed > 0`)
+         - Final status set to `success` or `partial` (if `items_failed > 0`)
+   - **Cursor persistence**: if `execute()` sets `self._cursor` (a dict),
+     `run()` writes it to the `FetcherRun.cursor` column in the same
+     transaction that sets `status` and `finished_at`. If `self._cursor`
+     is None (not set), no cursor is written. See "Git-Based Fetchers —
+     Cursor Persistence" for the full mechanism and query pattern
    - **Status determination precedence**: if `execute()` raises an exception,
      the run status is always `failure` regardless of metric counters
      (`items_failed`, `items_created`, `items_updated` are preserved in the
@@ -132,6 +137,7 @@ class SyncExampleData(BaseFetcher):
     name: str = "sync_example_data"      # unique identifier, snake_case, max 100 chars
     description: str = "Human-readable description"
     default_schedule: str = "0 */6 * * *"  # cron expression (every 6h)
+    queue: str | None = None  # Optional: Celery queue name (default = default queue)
 
     # Optional: URL pattern for human-readable CVE page.
     # Only applicable to CVE fetchers. When set, a TicketReference
@@ -1104,6 +1110,283 @@ Example:
 > |---------|------|---------|-------------|-------------|
 > | `my_setting` | int | 10 | 1–100 | Description of the setting |
 
+## Git-Based Fetchers
+
+Some fetchers synchronize data from external Git repositories rather
+than HTTP APIs. These fetchers share common infrastructure requirements
+documented in this section. Individual fetcher specs define their own
+algorithm, metrics, and source-specific behavior; this section defines
+only the shared operational pattern.
+
+Current git-based fetchers: `sync_mitre_cves`, `sync_kernel_cves`.
+
+### Bare Clone Pattern
+
+Git-based fetchers use **bare clones without a working tree**. This
+minimizes disk usage (no checkout of hundreds of thousands of files)
+while providing full access to file contents via Git object store
+operations.
+
+The pattern:
+
+1. **Clone** (first run only — clone directory does not exist OR is not
+   a valid bare git repository): `git clone --bare --single-branch <url>`
+   into `$GIT_CLONE_BASE_DIR/<subdirectory>/`. For sources that support
+   Git partial clone (protocol v2 with `filter` capability), add
+   `--filter=blob:none` to defer blob downloads. For sources that do not
+   support filtering (e.g., `git.kernel.org`), use a plain bare clone.
+   **Validity check**: before deciding "first run vs. subsequent run",
+   verify the directory is a valid bare git repository via
+   `git rev-parse --git-dir`. If the directory exists but the check
+   fails (partially-initialized clone from a previous interrupted
+   attempt), delete the directory and proceed with a fresh clone.
+2. **Fetch** (subsequent runs): `git fetch origin` updates refs and
+   downloads new objects. This is incremental and typically completes in
+   seconds.
+3. **Delta detection**: `git diff --name-only --diff-filter=AMCR
+   <old_sha>..<new_sha>` returns the list of Added, Modified, Copied,
+   and Renamed files. Deleted files are excluded — they do not represent
+   CVE data that needs processing.
+4. **File content access**: `git show <ref>:<path>` reads a single
+   file's content from the object store without creating a working tree.
+   For blobless clones, this triggers an on-demand blob download for
+   that specific file only.
+5. **First-run file enumeration**: `git ls-tree -r --name-only HEAD`
+   lists all files in the repository without checkout.
+
+No `git merge`, `git checkout`, or working tree manipulation is
+performed at any point.
+
+### Cursor Persistence
+
+Git-based fetchers persist their checkpoint (the last successfully
+processed commit SHA) in the `FetcherRun.cursor` JSONB column. After
+a successful run, the fetcher writes:
+
+```json
+{"sha": "<40-char hex SHA>"}
+```
+
+The next run reads the cursor from the most recent `FetcherRun` with
+`status IN ('success', 'partial')` for the same `fetcher_name`. If no
+run with a cursor exists (first run), the fetcher applies its own
+first-run strategy (see the individual fetcher spec — e.g., "record
+HEAD only" for CVE fetchers). For recovery scenarios where a stored
+SHA is unreachable, the fetcher applies its time-bounded recovery
+strategy (see Recovery below).
+
+This mechanism is generic — non-git fetchers may use `cursor` for any
+checkpoint data (timestamps, offsets, page tokens). The column is
+nullable; fetchers that derive their cursor from other fields (e.g.,
+NVD uses `started_at`) leave it NULL.
+
+#### Write Mechanism
+
+Inside `execute()`, the fetcher sets `self._cursor` (a dict) with the
+checkpoint data. After `execute()` returns, `run()` reads
+`self._cursor` during finalization and writes it to the `FetcherRun`
+row in the same transaction that sets `status` and `finished_at`.
+If `self._cursor` is None (not set), no cursor is written.
+
+This avoids giving `execute()` direct access to the `FetcherRun` row
+and keeps cursor persistence as a `run()` responsibility — consistent
+with how `run()` already manages metrics (`items_created`,
+`items_updated`, `items_failed`).
+
+#### Empty Delta
+
+If `git fetch` succeeds but the delta contains zero files matching
+the fetcher's filter (no CVE files changed), the run completes with
+`status = success`, zero metrics, and the cursor advances to the new
+HEAD SHA. This is the normal case during low-activity periods.
+
+### Environment Configuration
+
+| Env Var | Type | Default | Description |
+|---------|------|---------|-------------|
+| `GIT_CLONE_BASE_DIR` | string (path) | `/var/lib/sentinel/git` | Base directory for all git-based fetcher clones |
+
+Each fetcher creates a subdirectory named after its repository:
+
+```
+$GIT_CLONE_BASE_DIR/
+├── cvelistV5/      (sync_mitre_cves — bare clone of github.com/CVEProject/cvelistV5)
+└── vulns.git/      (sync_kernel_cves — bare clone of git.kernel.org/.../vulns.git)
+```
+
+The base directory MUST be backed by persistent storage in containerized
+deployments (named volume in Docker/Podman, PersistentVolumeClaim in
+Kubernetes). The storage is treated as a **recoverable cache**, not as a
+source of truth — if lost or corrupted, the fetcher re-clones
+automatically (see Recovery below).
+
+### Volume Requirements
+
+| Property | Value |
+|----------|-------|
+| Persistence | Required across container restarts |
+| Capacity | 1 GB minimum (current usage ~400 MB; provides headroom for growth and transient git operations) |
+| Access mode | ReadWriteOnce (single worker pod) |
+| Filesystem | Any POSIX-compliant filesystem |
+| Backup | Not required (recoverable from upstream repos) |
+
+### Worker Affinity
+
+Git-based fetcher tasks MUST execute on a Celery worker with the Git
+volume mounted. This is achieved via a dedicated Celery queue:
+
+- **Queue name**: `git`
+- **Routing**: git-based fetcher tasks declare
+  `queue = "git"` in their task configuration
+- **`queue` class attribute on BaseFetcher**: `BaseFetcher` defines a
+  `queue: str | None = None` class attribute (default = default Celery
+  queue). Git-based fetchers override it to `"git"`. Non-git fetchers
+  that omit it are routed normally — safe by default
+- **Worker configuration**: the worker process with access to the Git
+  volume consumes from the `git` queue (in addition to the default
+  queue, if desired)
+- **`fetch_single()` routing**: `trigger_on_demand_fetch()` reads
+  `fetcher_cls.queue` when dispatching via `.apply_async(queue=...)`.
+  If `None`, no queue parameter is passed and Celery uses default
+  routing. This ensures on-demand fetches for git-based fetchers
+  reach the worker with the volume mounted
+
+In single-worker deployments (local dev, simple Docker/Podman), all
+queues are consumed by the same worker process and no explicit routing
+configuration is needed.
+
+### Concurrency Rules
+
+These rules apply to ALL git-based fetchers sharing the same volume:
+
+1. **Only the periodic sync modifies the clone**: `git fetch` and any
+   other write operations are performed exclusively by the periodic
+   sync task. `fetch_single()` MUST NOT run `git fetch` or any
+   operation that modifies the object store or refs.
+2. **`fetch_single()` reads from the object store only**: uses
+   `git show <ref>:<path>` (via async subprocess) to read committed
+   objects. The Git object store is append-only with atomic file
+   operations — concurrent reads during a `git fetch` are safe.
+3. **Stale reads are acceptable**: if `fetch_single()` reads HEAD just
+   before `git fetch` updates it, a recently-published CVE might not be
+   found. This is not an error — `trigger_on_demand_fetch()` dispatches
+   all registered fetchers and other sources may succeed.
+4. **No concurrent fetches per repo**: two periodic sync tasks for the
+   same repository MUST NOT run concurrently. The fetcher infrastructure
+   already enforces this via the singleton execution guarantee
+   (BaseFetcher prevents overlapping runs for the same fetcher).
+5. **Cross-fetcher concurrency is safe**: different git-based fetchers
+   operating on distinct subdirectories within `$GIT_CLONE_BASE_DIR`
+   MAY execute concurrently. The singleton constraint — no overlapping
+   runs of the same fetcher — is enforced by `BaseFetcher` (see
+   "BaseFetcher Base Class" above). It applies per-fetcher, not
+   per-volume. A `sync_mitre_cves` run and a `sync_kernel_cves` run
+   can overlap without conflict.
+
+### Recovery
+
+**Volume loss** (directory does not exist):
+
+1. Re-clone the repository (same clone command as first run)
+2. Read the `cursor` from the last `FetcherRun` with
+   `status IN ('success', 'partial')` for this fetcher in the database
+3. Check if the stored SHA exists in the new clone
+   (`git cat-file -t <sha>`)
+4. If reachable: normal delta processing from stored SHA to HEAD
+5. If not reachable (upstream force-push, branch deletion, or SHA
+   garbage-collected): apply the fetcher's time-bounded recovery
+   strategy. Each fetcher defines its own recovery window and file
+   filter (see the individual fetcher spec). The shared infrastructure
+   provides only the detection mechanism (`git cat-file -t`) and the
+   re-clone procedure; the recovery delta policy is fetcher-specific
+
+**Corrupted clone** (git operations fail with corruption errors):
+
+1. Log WARNING with the error details
+2. Delete the entire clone directory
+3. Re-clone (same as volume loss recovery)
+
+### Runtime Dependencies
+
+Git-based fetchers require the `git` binary available in the
+container image of the worker that consumes the `git` queue.
+
+| Dependency | Minimum version | Reason |
+|---|---|---|
+| `git` | 2.25 | First stable release with partial clone (`--filter`) support. Required for blobless clones of cvelistV5 |
+
+The `python:3.12-slim` base image does not include git — it must be
+added explicitly to the container image.
+
+**No Python Git library is used.** All git operations are performed
+via async subprocess invocation of the system `git` binary through a
+shared internal helper. This decision is based on:
+
+- `pygit2` (libgit2 bindings): **eliminated** — libgit2 cannot open
+  repositories with the `extensions.partialclone` extension
+  (libgit2/libgit2#5564, open since Jun 2020; #6880 confirms the
+  error persists in v1.7.2, Sep 2024). Unusable with blobless clones
+- `GitPython`: **eliminated** — 8 security advisories including 5
+  High-severity RCE/command-injection vulnerabilities published
+  April–May 2026 affecting all platforms. Unacceptable for a security
+  platform
+- Raw subprocess: no additional Python dependency, full access to all
+  git features (partial clone, protocol v2), no additional attack
+  surface
+
+The helper provides typed exceptions for phase-based error
+classification (see "Error Classification" below), with hardcoded
+timeouts per operation category:
+
+| Operation | Timeout | Examples |
+|---|---|---|
+| Clone | 20 minutes | Initial bare clone (~300 MB download) |
+| Fetch | 5 minutes | Incremental `git fetch origin` |
+| Read | 30 seconds | `git show`, `git log`, `git ls-tree`, `git rev-parse` |
+
+### Error Classification
+
+Git operation failures are classified by the **phase** in which they
+occur, not by parsing exit codes or stderr messages. This avoids
+fragile dependencies on git's unstable error message format.
+
+```python
+class GitError(Exception): ...
+class GitFetchError(GitError): ...       # Transient — clone is intact
+class GitCorruptionError(GitError): ...  # Delete + re-clone required
+class GitFileError(GitError): ...        # Per-file — continue processing
+```
+
+| Phase | Failure condition | Exception | Fetcher action |
+|-------|-------------------|-----------|----------------|
+| `git clone` / `git fetch` | Any failure (network, auth, timeout) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
+| Read after successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`) | Any failure | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
+| `git show` during delta file processing | Any failure (timeout, missing blob) | `GitFileError` | `record_failed()` for that item. Continue to next file |
+
+**Design rationale**: classification is purely phase-based because a
+successful `git fetch` proves network connectivity. If a subsequent
+read operation fails, the only remaining explanation is local
+corruption. No stderr parsing or exit code mapping is needed.
+
+**No anti-loop logic**: Celery task timeout limits each run's
+duration. Repeated failures (e.g., corruption loop from faulty disk)
+produce visible `failure` records in the fetcher dashboard for
+operator intervention.
+
+### Implementation Location
+
+The shared async subprocess helper for git operations lives at
+`backend/app/services/git_operations.py`. All git-based fetchers
+import from this module — they MUST NOT invoke `subprocess` or
+`asyncio.create_subprocess_exec` for git commands directly.
+
+The module exports:
+- Async functions for each git operation category (clone, fetch, read
+  operations, show)
+- The exception hierarchy (`GitError`, `GitFetchError`,
+  `GitCorruptionError`, `GitFileError`)
+- Timeout constants per operation category
+
 ## Fetcher Documentation Requirements
 
 Every `BaseFetcher` subclass MUST have its complete definition in exactly
@@ -1376,6 +1659,7 @@ the dashboard charts.
 | error_traceback | TEXT | nullable | Full Python traceback (`manage_fetchers` capability required for visibility) |
 | triggered_by | ENUM | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
+| cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written on successful completion; read by the next run to determine the starting point. See "Git-Based Fetchers" for the git-specific usage pattern |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 **Notes**:
@@ -1386,6 +1670,15 @@ the dashboard charts.
   the API.
 - `duration_seconds` is stored (not computed at query time) because it is
   the primary Y-axis value for timeline charts and benefits from indexing.
+- `cursor` is written at the end of a successful or partial run and
+  read at the start of the next run (query: last `FetcherRun` with
+  `status IN ('success', 'partial')` for the same `fetcher_name`,
+  ordered by `started_at DESC`, limit 1). Fetchers that derive their
+  starting point from other columns (e.g., `started_at`) leave
+  `cursor` NULL.
+- The cursor value must be a JSON-serializable dict. `BaseFetcher.run()`
+  validates via `json.dumps()` before writing; a non-serializable value
+  raises `TypeError` and the run fails without persisting a cursor.
 
 ### FetcherRunStatus Enum
 

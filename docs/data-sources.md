@@ -90,7 +90,7 @@ MITRE a valuable source for early awareness of new vulnerabilities.
   - **KEV** status (date added, reference URL) in
     `metrics[].other.type == "kev"`
   - **CWE** identifiers from CISA analysis
-- **Access**: `cvelistV5` GitHub repository (Git clone/pull). Public access
+- **Access**: `cvelistV5` GitHub repository (bare clone + fetch). Public access
 - **Integration status**: **Active**. Sentinel syncs every 6 hours via the
   `sync_mitre_cves` fetcher, with on-demand single-CVE fetch support.
   The fetcher extracts the CNA block (CVE core data), all ADP blocks
@@ -205,7 +205,7 @@ backport verification.
 - **Access**: Git repository at
   `https://git.kernel.org/pub/scm/linux/security/vulns.git/`. Each CVE is
   a JSON file in CVE Record 5.0 format, organized by year. No
-  authentication required. Sync via Git clone/pull
+  authentication required. Sync via bare clone + fetch
 - **Integration status**: **Planned**. New `sync_kernel_cves` fetcher.
   Schedule: TBD. CVSS scores are stored as `CVECVSSAssessment` entries
   with `provider_name = "Linux Kernel CNA"`. Fix/introduce commit hashes
@@ -924,7 +924,7 @@ feature documentation (not its implementation status):
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested | Spec | Spec Status |
 |---------|--------|----------|------|-------------|---------------|------|-------------|
 | `sync_nvd_cves` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_nvd_cves) | Complete |
-| `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (Git clone/pull) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_mitre_cves) | Complete |
+| `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (bare clone + fetch) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_mitre_cves) | Complete |
 | `sync_redhat_cves` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references, best-effort package names | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_redhat_cves) | Complete |
 | `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | TBD |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | TBD |
@@ -938,7 +938,7 @@ feature documentation (not its implementation status):
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references | — | TBD |
 | `sync_epss_scores` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | — | TBD |
 | `sync_ghsa_advisories` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references | — | TBD |
-| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (Git clone/pull) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Partial |
+| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (bare clone + fetch) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Partial |
 | `sync_osv_advisories` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references | — | TBD |
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS

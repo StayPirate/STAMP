@@ -18,6 +18,7 @@ For architectural decisions and portability constraints, see
 | Docker or Podman | Docker 24+ / Podman 4+ | Container runtime |
 | PostgreSQL | 15+ | Primary database |
 | Redis | 7+ | Session cache, Celery broker, rate limiting |
+| Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
 | Node.js | 20+ | Frontend build (development only) |
 | Python | 3.11+ | Backend runtime (development only) |
 
@@ -34,6 +35,8 @@ Sentinel requires outbound access to:
 | SMELT | `smelt.suse.de` | 443 | Product/package data |
 | AIMAAS | `aimaas.suse.de` | 443 | Product lifecycle, CVSS thresholds |
 | NVD | `services.nvd.nist.gov` | 443 | CVE data |
+| GitHub | `github.com` | 443 | MITRE cvelistV5 repository clone/fetch |
+| git.kernel.org | `git.kernel.org` | 443 | Linux kernel vulnerability repo clone/fetch |
 
 ---
 
@@ -273,6 +276,7 @@ Sentinel requires multiple processes running concurrently:
 |---------|------|----------|
 | API server (uvicorn) | HTTP request handling | Yes (multiple replicas) |
 | Celery worker | Background task execution | Yes (multiple workers) |
+| Git worker (Celery) | Background git-based fetcher execution | No (single volume affinity) |
 | Celery Beat | Periodic task scheduling | No (singleton) |
 | IBS RabbitMQ consumer | Real-time event consumption | No (singleton — see spec) |
 
@@ -281,6 +285,26 @@ Sentinel requires multiple processes running concurrently:
 Celery Beat and the IBS RabbitMQ consumer must run as single instances.
 Running multiple replicas causes duplicate task scheduling or duplicate
 event processing.
+
+### Git Worker Volume
+
+The git worker requires a persistent volume mounted at
+`$GIT_CLONE_BASE_DIR` (default: `/var/lib/sentinel/git`). This volume
+stores bare clones of external git repositories used by CVE fetchers.
+
+| Property | Value |
+|----------|-------|
+| Minimum capacity | 1 GB |
+| Access mode | ReadWriteOnce (single worker) |
+| Backup | Not required — recoverable cache (fetchers re-clone if lost) |
+
+Bare clones have no working tree — accidental checkout expansion
+(which could consume ~4 GB for cvelistV5 alone) is structurally
+impossible.
+
+See `docs/features/platform/fetcher-infrastructure.md` (Git-Based
+Fetchers) for volume layout, recovery procedures, and worker affinity
+configuration.
 
 ---
 

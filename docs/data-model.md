@@ -328,6 +328,7 @@ erDiagram
         ENUM status "NOT NULL"
         ENUM triggered_by "NOT NULL"
         UUID triggered_by_user_id FK "nullable"
+        JSONB cursor "nullable"
     }
     FetcherAuditEvent {
         UUID id PK
@@ -590,12 +591,10 @@ the general affected version model. See
 | collection_url | TEXT | nullable | Package registry URL (npm, PyPI, etc.). Pre-PURL mechanism, still used by many CNAs |
 | package_name | VARCHAR(255) | nullable | Package name in the registry. Paired with `collection_url` |
 | repo | TEXT | nullable | Source code repository URL |
-| default_status | VARCHAR(20) | nullable | `"affected"` / `"unaffected"` / `"unknown"` |
 | version | VARCHAR(255) | nullable | Single version or range start |
 | version_type | VARCHAR(20) | nullable | `"semver"` / `"git"` / `"custom"` / `"rpm"` / ... |
 | version_end | VARCHAR(255) | nullable | Range end (`lessThan` or `lessThanOrEqual`) |
 | version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
-| status | VARCHAR(20) | nullable | `"affected"` / `"unaffected"` |
 | program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
 | cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Used for best-effort package resolution in Phase 2 (see `docs/features/tickets/cve-service.md`), alongside NVD CPE applicability statements passed via `cpe_matches`. Both feed the same `resolve_cpe_packages()` function |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
@@ -1360,6 +1359,7 @@ Growth rate is approximately 20,000 rows per year. See
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
 | triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
+| cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "..."}` for git-based fetchers). Written on successful completion; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
 
 **Indexes**: `(fetcher_name, started_at)` composite index — supports
