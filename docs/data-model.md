@@ -5,7 +5,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
 
-The data model comprises 37 entities organized into five domains. The
+The data model comprises 35 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -329,11 +329,6 @@ erDiagram
         ENUM triggered_by "NOT NULL"
         UUID triggered_by_user_id FK "nullable"
     }
-    FetcherRunWeeklyAggregate {
-        UUID id PK
-        VARCHAR_100 fetcher_name FK "NOT NULL"
-        DATE week_start "NOT NULL"
-    }
     FetcherAuditEvent {
         UUID id PK
         VARCHAR_100 fetcher_name FK "NOT NULL"
@@ -361,7 +356,6 @@ erDiagram
 
     FetcherConfig ||--o{ FetcherRun : "has runs"
     FetcherConfig ||--o{ FetcherAuditEvent : "has audit events"
-    FetcherConfig ||--o{ FetcherRunWeeklyAggregate : "has aggregates"
     FetcherRun }o--o| User : "triggered by"
     FetcherAuditEvent }o--o| User : "performed by"
     SettingAuditEvent }o--o| User : "performed by"
@@ -1346,8 +1340,9 @@ represents one member of the IBS group. See
 ### FetcherRun
 
 Records every execution of a fetcher. Primary data source for the fetcher
-dashboard charts. See `docs/features/platform/fetcher-infrastructure.md` for full
-specification.
+dashboard charts. Records are retained indefinitely (no retention policy).
+Growth rate is approximately 20,000 rows per year. See
+`docs/features/platform/fetcher-infrastructure.md` for full specification.
 
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
@@ -1366,6 +1361,9 @@ specification.
 | triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
+
+**Indexes**: `(fetcher_name, started_at)` composite index — supports
+timeline queries at any date range efficiently.
 
 ### FetcherConfig
 
@@ -1400,30 +1398,6 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 
 See `docs/features/platform/fetcher-infrastructure.md` for the event
 type contract with field values and the one-event-per-field rule.
-
-### FetcherRunWeeklyAggregate
-
-Weekly summaries of fetcher runs, created by the `aggregate_fetcher_runs`
-retention task after the 90-day individual retention window.
-
-| Column               | Type        | Constraints              | Description                        |
-|----------------------|-------------|--------------------------|-------------------------------------|
-| id                   | UUID        | PK                       | Internal identifier                |
-| fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier                 |
-| week_start           | DATE        | NOT NULL                 | Monday of the aggregation week     |
-| run_count            | INTEGER     | NOT NULL                 | Total runs in the week             |
-| success_count        | INTEGER     | NOT NULL                 | Runs with status `success`         |
-| failure_count        | INTEGER     | NOT NULL                 | Runs with status `failure`         |
-| partial_count        | INTEGER     | NOT NULL                 | Runs with status `partial`         |
-| avg_duration_seconds | FLOAT       | NOT NULL                 | Average duration across all runs   |
-| min_duration_seconds | FLOAT       | NOT NULL                 | Minimum duration                   |
-| max_duration_seconds | FLOAT       | NOT NULL                 | Maximum duration                   |
-| total_items_created  | INTEGER     | NOT NULL                 | Sum of `items_created`             |
-| total_items_updated  | INTEGER     | NOT NULL                 | Sum of `items_updated`             |
-| total_items_failed   | INTEGER     | NOT NULL                 | Sum of `items_failed`              |
-| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | When this aggregate was created    |
-
-**Unique constraint**: (fetcher_name, week_start)
 
 ### SubmissionRequest
 
@@ -1498,7 +1472,7 @@ TBD — will be defined based on query patterns during implementation.
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
-  `FetcherRunWeeklyAggregate`, `SubmissionRequestTrack`, `RoleMapping`,
+  `SubmissionRequestTrack`, `RoleMapping`,
   and `CVEAffectedVersion`
   only have `created_at` because they are immutable write-once records or are
   replaced rather than updated in place; `TicketAccessGrant` uses

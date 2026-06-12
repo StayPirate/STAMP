@@ -194,8 +194,8 @@ class SyncRedhatCves(BaseFetcher):
 
 The `name` attribute MUST NOT exceed **100 characters**. This limit is
 imposed by the `VARCHAR(100)` column type used for `fetcher_name` across
-the `FetcherConfig` (PK), `FetcherRun`, `FetcherRunWeeklyAggregate`,
-and `FetcherAuditEvent` tables. The `name` value also propagates to
+the `FetcherConfig` (PK), `FetcherRun`, and `FetcherAuditEvent` tables.
+The `name` value also propagates to
 `TicketReference.source` (`VARCHAR(100)`) for automatic references
 created by CVE fetchers — exceeding the limit would cause a database
 constraint violation.
@@ -213,18 +213,17 @@ non-fetcher Celery tasks, or continuous consumers.
 All fetcher names follow the pattern `verb_source_noun`, which reads as
 a natural English compound noun: "sync NVD CVEs", "detect IBS releases".
 
-**Verbs** — three operational categories plus maintenance:
+**Verbs** — three operational categories:
 
 | Verb | Meaning | When to use |
 |------|---------|-------------|
 | `sync` | Periodic data pull from an external source | Any fetcher that imports or refreshes data from a remote service |
 | `detect` | Condition or state change verification against an external source | Release detection, event monitoring, or any fetcher that checks whether a specific condition has changed in an external system |
 | `evaluate` | Local computation, no external source | Lifecycle transitions, recalculations, or any fetcher that derives new state from data already in the database |
-| `aggregate` | Local maintenance operation | Data compaction, cleanup |
 
 **Source** — identifies the external system. For local fetchers
-(`evaluate`, `aggregate`), this segment is omitted and the pattern
-reduces to `verb_noun`:
+(`evaluate`), this segment is omitted and the pattern reduces to
+`verb_noun`:
 
 | Source | External system |
 |--------|----------------|
@@ -766,7 +765,7 @@ reactivation support for free.
 | `sync_epss_scores` | Syncs all EPSS scores |
 | `sync_ghsa_advisories` | Syncs all GHSA advisories |
 | `sync_osv_advisories` | Syncs all OSV advisories |
-| `aggregate_fetcher_runs` | Maintenance — no external data, no ticket scope |
+
 
 ## Error Message Sanitization
 
@@ -844,9 +843,8 @@ what sanitized messages it produces. The `@fetcher-compliance-reviewer`
 agent verifies this documentation exists.
 
 Fetchers that only interact with the local database (e.g.,
-`aggregate_fetcher_runs`, `evaluate_lifecycle_transitions`) are exempt
-from this requirement — their failure modes do not involve external
-service details.
+`evaluate_lifecycle_transitions`) are exempt from this requirement —
+their failure modes do not involve external service details.
 
 Error handling is one of the mandatory sections in the minimum
 documentation template — see "Fetcher Documentation Requirements" below
@@ -1496,64 +1494,28 @@ timestamp and `user_id`. If the same PATCH also changes `enabled` to
 
 ## Data Retention
 
-Individual `FetcherRun` records are retained for a configurable number
-of days (default: **90 days**). After the retention period, runs are
-aggregated into weekly summaries and individual records are deleted. The
-retention period is controlled by the `retention_days` custom setting of
-the `aggregate_fetcher_runs` fetcher (see
-`docs/features/platform/fetcher-operations.md`, "Background Tasks").
+`FetcherRun` records are retained indefinitely. At ~15 fetchers with 1–4
+executions per day, the table grows by approximately 20,000 rows per
+year — negligible for PostgreSQL. No cleanup task or retention policy is
+necessary. Orphaned runs (stuck in `running` status due to unclean
+process termination) are resolved automatically by the existing Stale Run
+Detection mechanism at the next trigger attempt.
 
-### FetcherRunWeeklyAggregate
-
-Stores weekly summaries of fetcher runs after the retention window
-(default: 90 days, configurable via `retention_days` custom setting).
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| id | UUID | PK | Internal identifier |
-| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
-| week_start | DATE | NOT NULL | Monday of the aggregation week |
-| run_count | INTEGER | NOT NULL | Total number of runs in the week |
-| success_count | INTEGER | NOT NULL | Runs with status `success` |
-| failure_count | INTEGER | NOT NULL | Runs with status `failure` |
-| partial_count | INTEGER | NOT NULL | Runs with status `partial` |
-| avg_duration_seconds | FLOAT | NOT NULL | Average duration across all runs |
-| min_duration_seconds | FLOAT | NOT NULL | Minimum duration |
-| max_duration_seconds | FLOAT | NOT NULL | Maximum duration |
-| total_items_created | INTEGER | NOT NULL | Sum of `items_created` across all runs |
-| total_items_updated | INTEGER | NOT NULL | Sum of `items_updated` across all runs |
-| total_items_failed | INTEGER | NOT NULL | Sum of `items_failed` across all runs |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | When this aggregate was created |
-
-**Unique constraint**: (fetcher_name, week_start)
-
-### Aggregation Task
-
-The aggregation algorithm is implemented by `aggregate_fetcher_runs`,
-defined in `docs/features/platform/fetcher-operations.md` (Fetcher:
-`aggregate_fetcher_runs`).
-
-Before aggregating records of a given week, the task MUST force-resolve
-any `FetcherRun` record with `status='running'` and `started_at` older
-than the retention window. Force-resolution sets:
-
-- `status` → `failure`
-- `error_message` → `"Orphaned run resolved during aggregation (never completed)"`
-- `finished_at` → `started_at`
-
-Only after all orphaned runs in the batch are resolved does the task
-proceed with the normal weekly aggregation. This ensures no record
-remains indefinitely in `running` status.
+**Manual purge**: if an operator needs to reduce table size for
+operational reasons (disaster recovery, database refresh), a simple
+time-based DELETE is sufficient:
+`DELETE FROM fetcher_run WHERE started_at < now() - interval 'N days'`.
+No application-level coordination is required.
 
 ## Deregistered Fetcher Lifecycle
 
 When a fetcher class is removed from the codebase (or renamed), its
 entry disappears from the in-memory `FETCHER_REGISTRY` at the next
 worker restart. However, its `FetcherConfig` record and all associated
-`FetcherRun`, `FetcherAuditEvent`, and `FetcherRunWeeklyAggregate`
-records remain in the database. The FK constraints (`ON DELETE RESTRICT`)
-on the three dependent tables prevent accidental deletion of the
-`FetcherConfig` row while dependent records exist.
+`FetcherRun` and `FetcherAuditEvent` records remain in the database.
+The FK constraints (`ON DELETE RESTRICT`) on the two dependent tables
+prevent accidental deletion of the `FetcherConfig` row while dependent
+records exist.
 
 ### Observable effects
 
@@ -1571,24 +1533,8 @@ on the three dependent tables prevent accidental deletion of the
   or configured since the code has been removed
 - `sentinel fetcher config` displays a read-only snapshot of the stored
   configuration without schema context
-- Historical data (runs, aggregates, audit events) remains in the
-  database and is accessible through the API and dashboard UI
-
-### Aggregation task behavior
-
-The `aggregate_fetcher_runs` task selects `FetcherRun` records by age,
-not by registry membership. It continues to aggregate and eventually
-delete old individual run records for deregistered fetchers on the same
-schedule as for active fetchers. Over time, all individual runs are
-replaced by `FetcherRunWeeklyAggregate` records.
-
-**Visibility consequence**: after the retention window (default: 90
-days), individual `FetcherRun` records for a deregistered fetcher are
-deleted and only `FetcherRunWeeklyAggregate` records remain. The
-timeline chart on the dashboard continues to display aggregated data,
-but the run history table shows no entries beyond the retention window.
-Operators should investigate detailed failure information (error
-messages, tracebacks) within the retention period.
+- Historical data (runs, audit events) remains in the database and is
+  accessible through the API and dashboard UI
 
 ### No automatic cleanup
 
@@ -1604,8 +1550,8 @@ deregistered fetchers. This is intentional:
 
 If an operator needs to remove all traces of a deregistered fetcher,
 the cleanup is a manual database operation that must respect FK ordering:
-delete `FetcherRunWeeklyAggregate` records, then `FetcherRun` records,
-then `FetcherAuditEvent` records, and finally the `FetcherConfig` row.
+delete `FetcherRun` records, then `FetcherAuditEvent` records, and
+finally the `FetcherConfig` row.
 
 ## Guardrail: Fetcher Base Class Compliance
 

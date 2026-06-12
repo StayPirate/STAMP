@@ -345,38 +345,15 @@ subsection), `deployment.md` (git in prerequisites).
 
 ## Open Points
 
-### OP-11 — Cursor Preservation Across Retention Window — OPEN
+### OP-11 — Cursor Preservation Across Retention Window — RESOLVED
 
-**Problem**: `FetcherRun` records are deleted after 90 days by
-`aggregate_fetcher_runs`. If a fetcher is disabled for >90 days, all
-its `FetcherRun` records (including the one containing the cursor) are
-deleted. When re-enabled, the cursor query returns nothing, triggering
-first-run behavior ("record HEAD only" for CVE fetchers). All CVEs
-published during the 90+ day gap are silently skipped.
+**Status**: RESOLVED
 
-**Options**:
-
-- **(A) Exempt the last successful run per fetcher from deletion**:
-  the aggregation task preserves the most recent `FetcherRun` with
-  `status = 'success'` and non-NULL `cursor` for each `fetcher_name`,
-  regardless of age. Pro: simple rule, no schema change. Con: adds a
-  condition to the retention query.
-- **(B) Separate persistent cursor storage**: store the "current
-  cursor" in `FetcherConfig` (a dedicated `last_cursor` JSONB column)
-  or a new `FetcherState` table. Updated after each successful run.
-  Not subject to retention. Pro: decouples cursor from run history.
-  Con: duplicates data (cursor exists in both FetcherRun and the
-  persistent store), adds a table or column.
-- **(C) Aggregation preserves cursor in weekly summary**: when
-  aggregating runs into weekly summaries, carry forward the last
-  cursor value into the summary record. Pro: no schema change beyond
-  adding cursor to the summary model. Con: summary records may also
-  be subject to eventual cleanup.
-- **(D) Accept the gap as operational risk**: document that disabling
-  a fetcher for >90 days requires manual re-seeding. Admins are
-  expected to trigger a manual full-sync or manually set a cursor
-  before re-enabling. Pro: no code change. Con: relies on operator
-  awareness, easy to forget.
+**Decision**: The aggregation task no longer exists. `FetcherRun` records
+are retained indefinitely, eliminating the cursor-loss risk entirely. For
+fetchers disabled for extended periods, the cursor is preserved in their
+most recent `FetcherRun` record for as long as the record exists
+(forever). No additional mechanism is needed.
 
 ---
 
@@ -1324,15 +1301,15 @@ sections it references are replaced). Change 14 is independent
 
 ## Remaining Work
 
-**Open points OP-11 and OP-13 require resolution before
-implementation.** Changes 1–16 can be applied to spec files once OP-11
-is resolved. OP-13 (review gate) must pass after changes are applied.
+**Open point OP-13 requires resolution before implementation.** Changes
+1–16 can be applied to spec files now that OP-11 is resolved. OP-13
+(review gate) must pass after changes are applied.
 
 | OP | Blocking? | Rationale |
 |----|-----------|-----------|
 | OP-9 | ~~Yes~~ Resolved | Cursor written on `partial` — Changes 1 and 2 updated |
 | OP-10 | ~~Yes~~ Resolved | Time-bounded recovery (2 weeks) — Changes 1 and 6 updated |
-| OP-11 | Yes | Retention interaction may add a note to Change 2 or modify the aggregation spec |
+| OP-11 | ~~Yes~~ Resolved | Aggregation removed entirely — `FetcherRun` retained indefinitely, no cursor-loss risk |
 | OP-12 | ~~Yes~~ Resolved | Phase-based error classification — Changes 1 and 15 updated |
 | OP-13 | Yes (post-apply) | Reviewer gate: spec-coherence, docs-placement, spec-gap-analyzer must pass before implementation |
 

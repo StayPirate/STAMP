@@ -347,12 +347,6 @@ erDiagram
         UUID user_id FK "nullable"
     }
 
-    FetcherRunWeeklyAggregate {
-        UUID id PK
-        VARCHAR fetcher_name FK
-        DATE week_start
-    }
-
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
     CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
@@ -410,7 +404,7 @@ erDiagram
 | **Identity Domain** | User, UserRole, RoleMapping, Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
 | **IBS Integration** | SubmissionRequest, SubmissionRequestTrack, ReleaseRequest | IBS submission and release request tracking |
 | **Package Domain** | PackageBugowner, PackageBugownerMember | IBS package maintainer cache |
-| **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, FetcherRunWeeklyAggregate, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
+| **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
 | **Operational** | CodestreamPackageChecksum | Release detection MD5 cache |
 
 ---

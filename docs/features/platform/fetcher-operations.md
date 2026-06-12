@@ -11,8 +11,7 @@ commands for diagnostics and troubleshooting.
 This feature depends on the fetcher infrastructure defined in
 `docs/features/platform/fetcher-infrastructure.md`. Read that spec first for the
 `BaseFetcher` contract, data model (`FetcherRun`, `FetcherConfig`,
-`FetcherAuditEvent`, `FetcherRunWeeklyAggregate`), concurrency control,
-and stale run detection.
+`FetcherAuditEvent`), concurrency control, and stale run detection.
 
 ## API Endpoints
 
@@ -229,11 +228,9 @@ provides the distinction.
   not yet started).
 - `last_run`: the most recent `FetcherRun` record, or `null` if never
   run. Does NOT include `error_traceback` (admin-only, available on the
-  detail endpoint). Note: for deregistered fetchers whose individual
-  `FetcherRun` records have been fully aggregated (all runs older than
-  `retention_days`), this field becomes `null` even though historical
-  weekly aggregate data still exists — it is indistinguishable from a
-  fetcher that was never run.
+  detail endpoint). Note: for deregistered fetchers that have no
+  `FetcherRun` records (e.g., a fetcher that was registered but never
+  triggered before being removed), this field is `null`.
 - `custom_settings`: included in each fetcher's data (current values
   from DB). For deregistered fetchers, contains the raw stored values
   (schema defaults and descriptions are not available). `settings_schema`
@@ -347,9 +344,8 @@ Users with `manage_fetchers` capability see additional fields (`error_detail`,
 GET /api/v1/fetchers/{fetcher_name}/timeline
 ```
 
-Returns time-series data optimized for chart rendering. Automatically
-selects the appropriate data source based on the requested time range:
-individual runs for the last 90 days, weekly aggregates for older data.
+Returns time-series data optimized for chart rendering. Each data point
+represents an individual `FetcherRun` record.
 
 **Query parameters**:
 
@@ -359,10 +355,11 @@ individual runs for the last 90 days, weekly aggregates for older data.
 | `to_date` | datetime | now | End of the time range |
 
 **Date range constraint**: the maximum allowed interval between
-`from_date` and `to_date` is **365 days**. If the requested interval
-exceeds this limit, the endpoint returns 400 Bad Request with code
-`DATE_RANGE_TOO_WIDE`. This constraint prevents expensive scans of
-unbounded historical aggregate data on a publicly accessible endpoint.
+`from_date` and `to_date` is **1825 days** (5 years). If the requested
+interval exceeds this limit, the endpoint returns 400 Bad Request with
+code `DATE_RANGE_TOO_WIDE`. This constraint provides defense-in-depth
+against accidentally unbounded responses on a publicly accessible
+endpoint.
 
 **Response** (200 OK):
 
@@ -376,23 +373,15 @@ unbounded historical aggregate data on a publicly accessible endpoint.
         "items_created": 12,
         "items_updated": 45,
         "items_failed": 0,
-        "status": "success",
-        "type": "individual"
+        "status": "success"
       },
       {
-        "timestamp": "2025-03-10T00:00:00Z",
+        "timestamp": "2025-04-19T12:00:00Z",
         "duration_seconds": 210.5,
-        "items_created": 85,
-        "items_updated": 320,
-        "items_failed": 2,
-        "status": null,
-        "type": "weekly_aggregate",
-        "run_count": 28,
-        "success_count": 25,
-        "failure_count": 1,
-        "partial_count": 2,
-        "min_duration_seconds": 180.0,
-        "max_duration_seconds": 350.0
+        "items_created": 8,
+        "items_updated": 32,
+        "items_failed": 0,
+        "status": "success"
       }
     ],
     "disabled_periods": [
@@ -408,30 +397,14 @@ unbounded historical aggregate data on a publicly accessible endpoint.
 ```
 
 **Fields**:
-- `points[].type`: `"individual"` for actual runs (within 90 days),
-  `"weekly_aggregate"` for aggregated data (older than 90 days)
-- `points[].status`: the run status for individual points, `null` for
-  aggregates (use `run_count`, `success_count`, etc. instead)
-- `points[].timestamp`: `started_at` for individual runs, `week_start`
-  for aggregates
-- `points[].duration_seconds`: actual duration for individual runs,
-  `avg_duration_seconds` for aggregates
-- `points[].items_created/updated/failed`: actual counts for individual
-  runs, totals for aggregates
+- `points[].timestamp`: `started_at` of the `FetcherRun`
+- `points[].status`: the run status (`success`, `failure`, `partial`)
+- `points[].duration_seconds`: actual duration of the run
+- `points[].items_created/updated/failed`: actual counts from the run
 - `disabled_periods`: array of time ranges when the fetcher was disabled,
   derived from `FetcherAuditEvent` records. Used to render grey overlay
   bands on the chart. If the fetcher is currently disabled, `enabled_at`
   and `enabled_by` are `null`.
-
-**Query strategy**: the endpoint uses the current `retention_days`
-value as the split point at query time. For the portion of the
-requested range within `retention_days` of now, it queries
-`FetcherRun` records. For the portion older than `retention_days`, it
-queries `FetcherRunWeeklyAggregate` records. For the **transition
-week** (the ISO week containing the retention boundary), individual
-runs take precedence: if any `FetcherRun` records exist for that week,
-the corresponding `FetcherRunWeeklyAggregate` (if any) is suppressed
-from the response to avoid double-counting.
 
 **`Access: Public`**
 
@@ -444,7 +417,7 @@ time-series and must be in chronological order for chart rendering.
 | Status | Code | Condition |
 |---|---|---|
 | 400 | `DATE_RANGE_INVERTED` | `from_date` is after `to_date` (see `api-spec.md`, Date Range Interpretation) |
-| 400 | `DATE_RANGE_TOO_WIDE` | Requested interval between `from_date` and `to_date` exceeds 365 days |
+| 400 | `DATE_RANGE_TOO_WIDE` | Requested interval between `from_date` and `to_date` exceeds 1825 days |
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
 ### Trigger Fetcher
@@ -786,69 +759,6 @@ Generic Celery task that executes any registered fetcher by name.
 | Schedule | per-fetcher, from `FetcherConfig.schedule_override` or `BaseFetcher.default_schedule` |
 | Idempotency | Only one instance per fetcher can run at a time (database-level `SELECT ... FOR UPDATE` — see `fetcher-infrastructure.md`, Concurrency Control) |
 
-### Fetcher: `aggregate_fetcher_runs`
-
-| Property | Value |
-|----------|-------|
-| Fetcher name | `aggregate_fetcher_runs` |
-| Class name | `AggregateFetcherRuns` |
-| Schedule | Daily at 03:00 UTC (`0 3 * * *`) |
-| Source | Local (no external source) |
-| Scope | All `FetcherRun` records older than the retention window |
-| Auth | N/A |
-| Custom settings | Yes (see below) |
-
-#### Algorithm
-
-1. Read the `retention_days` custom setting (default: 90) to determine
-   the retention window
-2. Select all `FetcherRun` records older than `retention_days`
-3. Force-resolve any selected record with `status='running'`: set
-   `status='failure'`, `error_message='Orphaned run resolved during
-   aggregation (never completed)'`, `finished_at=started_at`
-4. Group the records by `fetcher_name` and ISO week (Monday start)
-5. Create or update `FetcherRunWeeklyAggregate` records with the computed
-   summaries (see `docs/features/platform/fetcher-infrastructure.md`,
-   "FetcherRunWeeklyAggregate" for the table schema)
-6. Delete the original `FetcherRun` records that were aggregated
-
-**Transactional semantics**: steps 5 and 6 operate with per-group
-transactional granularity. For each (`fetcher_name`, ISO week) group,
-the aggregate creation/update and the deletion of the corresponding
-`FetcherRun` records happen within the same database transaction. If
-the transaction fails for a group, that group is skipped (counted as
-`record_failed`) and execution continues with the remaining groups.
-This guarantees no data loss (runs deleted without aggregate) and no
-duplication (aggregate created but runs not deleted), and makes the
-operation idempotent and safe to re-run.
-
-Error diagnostic fields (`error_message`, `error_detail`,
-`error_traceback`) are intentionally not preserved in weekly aggregates.
-Only run counts and duration statistics survive aggregation. Operators
-should investigate failures within the retention window before individual
-run records are deleted.
-
-#### Error Handling
-
-Exempt — this fetcher only interacts with the local database.
-
-#### Metrics
-
-- `record_created`: a new `FetcherRunWeeklyAggregate` record was created
-- `record_updated`: an existing `FetcherRunWeeklyAggregate` record was
-  updated with new data from additional runs in the same week
-- `record_failed`: a `FetcherRun` group could not be aggregated
-
-#### Custom Settings
-
-This fetcher declares the following custom settings (see
-`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
-Schema" for the schema structure and validation rules):
-
-| Setting | Type | Default | Range | Description |
-|---------|------|---------|-------|-------------|
-| `retention_days` | int | 90 | 7–365 | Days to retain individual FetcherRun records before aggregation |
-
 ## CLI Commands
 
 The `sentinel fetcher` command group provides read-only diagnostic
@@ -875,7 +785,6 @@ sync_nvd_cves              yes       2026-04-27 12:00 UTC  running (1m 30s elaps
 sync_smelt_products        yes       2026-04-26 06:00 UTC  success (45s)                —
 detect_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —
 sync_ibs_requests              yes       2026-04-27 02:30 UTC  success (2m 15s)             —
-aggregate_fetcher_runs     yes       —                     never run                    —
 
 Deregistered (historical data only):
 Name                       Last Run              Status
@@ -948,21 +857,6 @@ Rate limit: —
 Custom settings:
   throttle_delay_seconds = 5.0  (default: 2.0, range: 0.1–30.0)
     Delay between consecutive Red Hat API requests.
-```
-
-For a fetcher with settings at their defaults (no explicit
-configuration):
-
-```
-Fetcher: aggregate_fetcher_runs
-Enabled: yes
-Schedule: 0 3 * * * (default)
-Timeout: 3600s
-Rate limit: —
-
-Custom settings:
-  retention_days = 90  (default, range: 7–365)
-    Days to retain individual FetcherRun records before aggregation.
 ```
 
 For a fetcher with no custom settings schema:

@@ -374,62 +374,10 @@ could detect and show a warning in the UI without breaking correctness).
 
 ## 9. Remove FetcherRunWeeklyAggregate Table
 
-**Origin**: architectural simplification review (pre-implementation
-phase).
+**Status**: RESOLVED
 
-**Context**: the fetcher infrastructure spec
-(`docs/features/platform/fetcher-infrastructure.md`) defines a
-`FetcherRunWeeklyAggregate` table that stores pre-computed weekly
-rollups of fetcher run metrics (total runs, successes, failures, average
-duration, total records created/updated/failed). A scheduled task
-aggregates individual `FetcherRun` records older than 90 days into
-weekly buckets, then deletes the source rows. The aggregates are
-consumed by the fetcher operations dashboard for historical chart
-rendering beyond the 90-day individual-run retention window.
-
-This introduces:
-
-- 1 additional database table (`FetcherRunWeeklyAggregate`)
-- A periodic aggregation task (weekly, processes expired runs)
-- Dual-source query logic in the dashboard API (individual runs for
-  recent data, aggregates for historical data, merged into a single
-  timeseries response)
-- Data retention lifecycle management (90-day threshold, aggregation
-  window alignment, idempotency guards)
-
-**Proposed simplification**: remove `FetcherRunWeeklyAggregate` entirely
-and use a simple 90-day hard-delete retention policy on `FetcherRun`.
-Dashboard charts display only the last 90 days of individual run data.
-
-Rationale:
-
-- The system has not been deployed yet — there is no historical data to
-  preserve
-- 90 days of individual runs (~15 fetchers x 1-4 runs/day x 90 days =
-  ~5,400 rows maximum) is trivially small for PostgreSQL. No performance
-  optimization is needed at this scale
-- If historical trends beyond 90 days become valuable in the future, the
-  aggregation table can be introduced then, with full knowledge of actual
-  usage patterns and chart requirements
-- Eliminating the dual-source query logic simplifies the dashboard API
-  and removes an entire class of edge cases (partial weeks, timezone
-  alignment, fetcher renames)
-
-**What gets removed**:
-
-- `FetcherRunWeeklyAggregate` table definition (from `data-model.md` and
-  `fetcher-infrastructure.md`)
-- Weekly aggregation task specification
-- Dual-source chart query logic in `fetcher-operations.md`
-- Data retention lifecycle (replaced by simple `DELETE WHERE created_at <
-  now() - 90 days`)
-
-**What stays**:
-
-- `FetcherRun` table with all current columns
-- 90-day retention policy (simple periodic DELETE)
-- Dashboard charts using individual run data (last 90 days)
-
-**Decision needed**: whether 90 days of granular history is sufficient
-for operational needs, or whether a longer retention window (e.g., 180
-days) without aggregation would be preferable.
+**Decision**: Accepted. Removed `FetcherRunWeeklyAggregate` and
+`aggregate_fetcher_runs` entirely. `FetcherRun` records are retained
+indefinitely (~20k rows/year, negligible for PostgreSQL). No cleanup task
+or retention policy is needed. See
+`docs/drafts/remove-fetcher-run-aggregation.md` for rationale.
