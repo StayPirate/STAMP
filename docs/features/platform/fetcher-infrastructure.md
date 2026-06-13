@@ -1200,6 +1200,31 @@ the fetcher's filter (no CVE files changed), the run completes with
 `status = success`, zero metrics, and the cursor advances to the new
 HEAD SHA. This is the normal case during low-activity periods.
 
+### First-Run Detection
+
+A git-based fetcher determines "first run" by the absence of a
+`FetcherRun` record with a cursor — NOT by the presence or absence of
+the clone directory. The clone directory state is a sub-condition of
+the first-run logic:
+
+| Cursor exists? | Clone valid? | Action |
+|---|---|---|
+| No | No (absent or invalid) | If directory exists but is invalid (fails `git rev-parse --git-dir`): delete entirely. Clone repository. Record HEAD without processing |
+| No | Yes | Skip clone (previous attempt succeeded but cursor was not persisted). Record HEAD without processing |
+| Yes | Yes | Subsequent run: fetch + delta detection from cursor |
+| Yes | No (absent or invalid) | Delete invalid directory if present. Re-clone. Then apply cursor reachability check (see Recovery Strategy below) |
+
+"Invalid" means: the directory exists but `git rev-parse --git-dir`
+fails (corrupted pack files, incomplete clone from interrupted
+previous attempt, filesystem corruption, etc.).
+
+The cursor-based approach ensures correctness when the first run
+clones successfully but fails before persisting the cursor. In that
+scenario, a clone-state-based check would incorrectly conclude
+"subsequent run" and attempt delta detection without a stored SHA.
+The cursor-based check correctly identifies this as a first run and
+records HEAD without processing.
+
 ### Environment Configuration
 
 | Env Var | Type | Default | Description |
@@ -1306,6 +1331,52 @@ These rules apply to ALL git-based fetchers sharing the same volume:
 2. Delete the entire clone directory
 3. Re-clone (same as volume loss recovery)
 
+#### Cursor SHA Unreachable
+
+When a git-based fetcher's stored cursor SHA is not reachable in the
+local clone (detected via `git cat-file -t <sha>` returning non-zero),
+it applies a time-bounded recovery reprocessing window. This situation
+occurs when:
+
+- The clone was rebuilt (row 4 of the First-Run Detection table)
+- The upstream repository was force-pushed or rebased (rare for
+  published CVE/advisory repos)
+- Git garbage collection pruned unreachable objects (should not happen
+  for commits reachable from HEAD, but possible with corrupted state)
+
+**Algorithm**:
+
+1. Determine boundary SHA:
+   `git rev-list -1 --before="<recovery_window> ago" HEAD`
+2. Compute delta:
+   `git diff --name-only --diff-filter=AMCR <boundary_sha>..HEAD -- '<recovery_file_filter>'`
+3. Apply the fetcher's normal file filtering and per-item processing
+   logic (MUST be idempotent — previously ingested items produce no
+   observable side effects on re-processing)
+4. Write HEAD as new cursor on completion
+
+Each git-based fetcher declares these parameters in its properties
+table:
+
+| Parameter | Description | Example values |
+|---|---|---|
+| `recovery_window` | Maximum look-back period for reprocessing | `2 weeks` (CVE fetchers) |
+| `recovery_file_filter` | Path filter for the recovery delta command | `cves/` (MITRE), `cve/` (kernel) |
+
+**Window exceeded**: if the actual gap exceeds `recovery_window`
+(boundary SHA is HEAD itself because no commits exist before the
+window), the run completes with `status = partial`, logs a WARNING
+indicating operator intervention is required (manual `fetch_single()`
+for specific items or full re-seed via operational tooling), and
+records HEAD as cursor to prevent infinite retries.
+
+**Normal case after re-clone**: when a clone is rebuilt from the same
+remote (row 4 of First-Run Detection), the cursor SHA is almost always
+reachable because git history is preserved. In this case, normal delta
+detection proceeds — no recovery window is needed. The recovery
+strategy is a fallback for the rare case where the SHA truly does not
+exist in the fresh clone.
+
 ### Runtime Dependencies
 
 Git-based fetchers require the `git` binary available in the
@@ -1386,6 +1457,23 @@ The module exports:
 - The exception hierarchy (`GitError`, `GitFetchError`,
   `GitCorruptionError`, `GitFileError`)
 - Timeout constants per operation category
+
+#### Design Principles
+
+The git operations module is NOT a "service" in the Sentinel
+service-layer sense:
+
+- Contains stateless utility functions (no database interaction, no
+  business logic)
+- Centralizes subprocess error handling and maps git failures to the
+  typed exception hierarchy
+- Is independent of `BaseFetcher` lifecycle — fetchers compose these
+  utilities within their `execute()` method
+- Provides a clean mocking boundary for unit tests (mock one function
+  instead of `subprocess.run`)
+
+Each fetcher retains full control over its execution flow, using the
+utility functions as building blocks.
 
 ## Fetcher Documentation Requirements
 

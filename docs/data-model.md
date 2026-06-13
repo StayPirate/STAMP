@@ -584,7 +584,7 @@ the general affected version model. See
 |--------|------|-------------|-------------|
 | id | UUID | PK | Internal identifier |
 | cve_id | UUID | FK(cve.id) ON DELETE CASCADE, NOT NULL | Parent CVE |
-| source_container | VARCHAR(100) | NOT NULL | Provenance: `"cna"`, `"adp:CISA-ADP"`, `"vulns.git"`, etc. Scope key for delete-and-reinsert — see fetcher contract in `docs/features/tickets/cve-service.md` (Child Table Deduplication) |
+| source_container | VARCHAR(100) | NOT NULL | Provenance: `"cna"`, `"adp:CISA-ADP"`, etc. Scope key for delete-and-reinsert — see fetcher contract in `docs/features/tickets/cve-service.md` (Child Table Deduplication). Both MITRE and kernel fetchers write `"cna"` (same CNA data) |
 | vendor | VARCHAR(255) | nullable | Vendor name (e.g., "Linux", "Siemens") |
 | product | VARCHAR(255) | nullable | Product name (e.g., "Linux", "SCALANCE XC-300") |
 | package_url | TEXT | nullable | PURL identifier (CVE 5.2.0+). Useful for identifying vendored dependencies (npm, PyPI, Go) inside SUSE RPMs |

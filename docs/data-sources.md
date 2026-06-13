@@ -31,7 +31,7 @@ see `docs/architecture.md` and the relevant feature specifications in
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Planned |
 | EPSS | Public | Exploit probability scores | Planned |
 | GHSA | Public | Security advisories, CVSS, CWE | Planned |
-| Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Planned |
+| Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Active |
 | OSV | Public | Aggregated vulnerability data | Planned |
 | SMASH | Internal | Security update management (predecessor to Sentinel) | Not planned |
 | PackTrack | Internal | Patch submission tracking for maintainers | Not integrated |
@@ -201,39 +201,61 @@ backport verification.
 - **Relevant data**: CVE identifiers, CVSS scores (kernel CNA
   assessment), affected kernel version ranges, Git commit hashes for the
   introducing (offending) and fixing commits, reference links to kernel
-  patches
+  patches, affected source files (`programFiles`)
 - **Access**: Git repository at
   `https://git.kernel.org/pub/scm/linux/security/vulns.git/`. Each CVE is
-  a JSON file in CVE Record 5.0 format, organized by year. No
-  authentication required. Sync via bare clone + fetch
-- **Integration status**: **Planned**. New `sync_kernel_cves` fetcher.
-  Schedule: TBD. CVSS scores are stored as `CVECVSSAssessment` entries
-  with `provider_name = "Linux Kernel CNA"`. Fix/introduce commit hashes
-  are stored as `CVEAffectedVersion` records with
-  `version_type = "git"` (introducing commit in `version`, fixing commit
-  in `version_end`). `.dyad` files provide structured version pairs per
-  stable branch. Affected kernel versions and reference URLs are stored
-  in their respective tables
+  a JSON file in CVE Record 5.1.1 format (published) or 5.0 format
+  (rejected), organized by year. No authentication required. Sync via
+  bare clone + fetch (NO `--filter=blob:none` — server does not
+  advertise the `filter` capability)
+- **Integration status**: **Active**. `sync_kernel_cves` fetcher, every
+  3 hours. CVSS scores are stored as `CVECVSSAssessment` entries with
+  `provider_name = "Linux"`. Fix/introduce commit hashes are stored as
+  `CVEAffectedVersion` records with `version_type = "git"` (introducing
+  commit in `version`, fixing commit in `version_end`). Affected kernel
+  versions (semver blocks) and reference URLs are stored in their
+  respective tables. `source_container = "cna"` (same as MITRE —
+  content is identical by construction)
 - **Documentation**: https://docs.kernel.org/process/cve.html
+
+**Access note — Anubis bot protection**: the `git.kernel.org` web
+interface (cgit) is protected by Anubis (proof-of-work anti-bot
+system). Raw file access via HTTP (`/plain/` URLs) is blocked for
+automated tools. Git protocol access (clone, fetch) is unaffected.
+When investigation of repository content is needed, use a local bare
+clone — do NOT attempt HTTP access to individual files.
+
+**Clone command**: `git clone --bare --single-branch https://git.kernel.org/pub/scm/linux/security/vulns.git`
 
 #### Repository Structure
 
 ```
 vulns.git/cve/
 ├── published/YEAR/
-│   ├── CVE-YEAR-ID           # Notes / metadata (may be empty)
-│   ├── CVE-YEAR-ID.sha1      # Git SHA of the fixing commit
-│   ├── CVE-YEAR-ID.json      # Full CVE record in JSON 5.x format
-│   ├── CVE-YEAR-ID.mbox      # Email announcement format
-│   ├── CVE-YEAR-ID.dyad      # Vulnerable:fixed version pairs per stable branch
-│   ├── CVE-YEAR-ID.vulnerable # (optional) Introducing commit SHA override
-│   ├── CVE-YEAR-ID.reference  # (optional) Additional URL references
-│   ├── CVE-YEAR-ID.cvss       # (optional, proposed) CVSS vector string
-│   └── CVE-YEAR-ID.message    # (optional) Custom CVE description override
-├── reserved/YEAR/             # Reserved but unpublished CVE-IDs
-├── rejected/YEAR/             # Rejected CVEs
-└── returned/YEAR/             # Returned (unused) CVE-IDs
+│   ├── CVE-YEAR-ID             # Empty (0 bytes)
+│   ├── CVE-YEAR-ID.json        # ★ Full CVE record (JSON 5.1.1) — PROCESSED by fetcher
+│   ├── CVE-YEAR-ID.sha1        # Fixing commit SHA (redundant with JSON)
+│   ├── CVE-YEAR-ID.mbox        # Email announcement format
+│   ├── CVE-YEAR-ID.dyad        # Vulnerable:fixed version pairs (redundant with JSON affected[])
+│   ├── CVE-YEAR-ID.vulnerable  # (optional) Introducing commit SHA (redundant with JSON)
+│   ├── CVE-YEAR-ID.reference   # (optional) Additional URLs (redundant with JSON references[])
+│   ├── CVE-YEAR-ID.cvss        # (optional) CVSS vector (redundant with JSON metrics[])
+│   └── CVE-YEAR-ID.message     # (optional, 7 files) Description override
+├── rejected/YEAR/
+│   ├── CVE-YEAR-ID             # Empty
+│   ├── CVE-YEAR-ID.json        # ★ CVE record (state field unreliable!) — PROCESSED by fetcher
+│   ├── CVE-YEAR-ID.dyad        # (redundant)
+│   ├── CVE-YEAR-ID.sha1
+│   ├── CVE-YEAR-ID.mbox
+│   └── CVE-YEAR-ID.mbox.rejected  # Rejection announcement
+├── reserved/YEAR/              # Reserved CVE-IDs (no .json files, not processed)
+└── returned/YEAR/              # Returned CVE-IDs (no .json files, not processed)
 ```
+
+The fetcher processes **only `.json` files** from `cve/published/` and
+`cve/rejected/`. All other file types are redundant with JSON content
+and are ignored (see `docs/features/tickets/cve-tracking.md`, Fetcher:
+`sync_kernel_cves` for the full rationale).
 
 #### Volume and Publishing Pattern
 
@@ -242,8 +264,9 @@ kernel releases, followed by periods of inactivity. Observed 2026 data:
 
 - Peak: 173 CVEs published on a single day (2026-04-25)
 - Typical batch: 60-100 CVEs per release day
-- 2026 year-to-date: ~1,410 published CVEs, ~485 reserved
-- Total in `vulns.git` (all years): ~31,000+ published CVEs
+- Total published `.json` files: 12,118
+- Total rejected `.json` files: 292
+- Bare clone size: ~91 MB
 
 ### OSV (Open Source Vulnerabilities)
 
@@ -938,7 +961,7 @@ feature documentation (not its implementation status):
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references | — | TBD |
 | `sync_epss_scores` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | — | TBD |
 | `sync_ghsa_advisories` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references | — | TBD |
-| `sync_kernel_cves` | Linux Kernel CNA | TBD | None | None (bare clone + fetch) | CVSS kernel, fix/introduce commits (as CVEAffectedVersion with version_type=git), .dyad version pairs, affected kernel versions, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Partial |
+| `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution. `source_container = "cna"` | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Complete |
 | `sync_osv_advisories` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references | — | TBD |
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS
