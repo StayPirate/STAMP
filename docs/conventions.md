@@ -598,6 +598,41 @@ Documentation Requirements"). This includes the classification rule
 (dedicated spec vs. embedded section), the minimum documentation
 template, and the Fetcher Registry maintenance obligation.
 
+### Function Specification Granularity
+
+Every function documented in a feature specification MUST include a
+level of detail proportional to its internal complexity. Three levels
+are defined:
+
+**Level 1 — Full numbered steps**: functions with branching, side
+effects (audit events, lock acquisition, state mutations), or business
+logic decisions. Format: Parameters table + Preconditions + Behavior
+(numbered steps with sub-steps for branching) + Audit events +
+Idempotency. This is the standard for service-layer mutation functions.
+
+**Level 2 — Brief numbered steps**: functions with simple branching
+(few distinct paths) but no complex business logic — e.g., utility
+functions with exit-code differentiation, conditional command
+construction, or guard-based early returns. Format: Signature +
+Behavior (few numbered steps) + Raises.
+
+**Level 3 — Signature + semantics**: linear functions with a single
+execution path (subprocess wrappers, direct delegations, trivial
+guards). Format: Signature table (columns: Signature, Returns,
+Timeout, Raises) + Semantics paragraph.
+
+**Decision rule**: if an engineer reading the spec must make a
+**design decision** to implement the function, the detail level is
+insufficient. If the spec repeats information already obvious from the
+signature, the detail level is excessive.
+
+**Supplementary pseudo-code**: when step numbering alone does not
+clearly convey the control flow structure (e.g., deeply nested loops
+with exception handling), supplementary pseudo-code MAY be included
+after the Behavior section as an illustrative aid. The step-numbered
+Behavior remains the authoritative specification; pseudo-code is
+non-normative.
+
 ### Service Exception Conventions
 
 Every service module that raises exceptions propagated to API callers
