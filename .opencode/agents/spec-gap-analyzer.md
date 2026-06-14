@@ -182,6 +182,45 @@ For every configurable value, setting, or threshold referenced:
 - What are the valid ranges or allowed values? What happens with invalid
   configuration?
 
+### 8. Function specification completeness
+
+After completing the above functional checks, load the "Function
+Specification Completeness" section from `docs/conventions.md` (starts at
+the `### Function Specification Completeness` heading). For each
+service-layer function documented in the spec (excluding API endpoint
+handlers, fetcher `execute()` algorithms, event-processing pipelines,
+interface contracts, and CLI commands — per the convention's Scope and
+Exclusions), apply the **Insufficiency test**:
+
+> Could an implementer reading this function's specification be forced to
+> make an autonomous design decision because the spec does not specify the
+> answer?
+
+Specifically check:
+
+- **Q2 (guards)**: are all rejection conditions and their exceptions named?
+- **Q3 (behavior)**: are all execution paths covered, or are there cases
+  where the implementer must guess?
+- **Q5 (re-invocation)**: for functions invocable by Celery tasks or API
+  retry — is it clear whether re-invocation is safe?
+- **Q6 (exceptions)**: for functions that call external services or other
+  complex modules — is it clear what exceptions escape?
+
+**Do NOT flag** omissions that are legitimate under the Derivability rule:
+
+- Q4/Q5 "None" for Category B (pure/stateless) functions — inherent from
+  category
+- Q5 derivable from Q2 guards (e.g., guard rejects on post-mutation state
+  → re-invocation fails on that guard)
+- Q6 derivable from Q3 showing only deterministic operations with no
+  failure paths
+- Answers covered by a module-level default at the top of the section
+
+Only report findings where there is **genuine ambiguity** — where two
+competent implementers could plausibly choose different behaviors.
+Classify these findings under "Function completeness" category with the
+same severity scale as other gaps.
+
 ## What NOT to check
 
 - **Design quality**: whether the architecture, complexity, or approach is
@@ -211,7 +250,7 @@ Provide a structured summary with these sections:
    spec author
 2. **Gaps found**: cases not covered by the spec, organized by category
    (state machine, error paths, boundaries, user scenarios, data lifecycle,
-   temporal, configuration). Each gap must include:
+   temporal, configuration, function completeness). Each gap must include:
    - The category it belongs to
    - An exact quote from the spec identifying the area with the gap
    - A concrete, realistic scenario demonstrating the gap
