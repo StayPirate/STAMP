@@ -606,9 +606,39 @@ are defined:
 
 **Level 1 — Full numbered steps**: functions with branching, side
 effects (audit events, lock acquisition, state mutations), or business
-logic decisions. Format: Parameters table + Preconditions + Behavior
+logic decisions. Format: Parameters + Preconditions + Behavior
 (numbered steps with sub-steps for branching) + Audit events +
-Idempotency. This is the standard for service-layer mutation functions.
+Re-invocation behavior. This is the standard for service-layer mutation
+functions.
+
+**Multi-concern variant (Level 1 only)**: when a Level 1 function
+coordinates multiple independent concerns — where each concern has its
+own internal logic that can be understood in isolation — the Behavior
+section MAY be organized into labeled sub-sections instead of a flat
+numbered sequence. Requirements:
+
+- Each sub-section represents a semantically independent concern (e.g.,
+  "Merge Strategy", "Source Management", "Transaction Boundaries") —
+  not a sequential phase of a single flow
+- Execution order between sub-sections is explicitly stated (either via
+  numbering the sub-sections or via an introductory sentence)
+- Each sub-section internally uses numbered steps
+- The union of all sub-sections covers all execution paths
+- All other Level 1 mandatory sections (Parameters, Preconditions,
+  Audit events, Re-invocation behavior) remain required
+
+**When NOT to use this variant**: if the function follows a single
+linear flow decomposable into sequential phases (validate → lock →
+mutate → audit → reconcile), use the standard flat numbered sequence
+with sub-steps. The multi-concern variant is for functions where
+concerns are orthogonal — a reader looking at concern A should not need
+to read concern B to understand it.
+
+**Litmus test**: if reordering two sub-sections would change the
+function's correctness, they are likely sequential phases (use flat
+format). If they could be reordered or read independently without
+losing coherence, they are independent concerns (multi-concern variant
+is appropriate).
 
 **Level 2 — Brief numbered steps**: functions with simple branching
 (few distinct paths) but no complex business logic — e.g., utility
@@ -621,17 +651,124 @@ execution path (subprocess wrappers, direct delegations, trivial
 guards). Format: Signature table (columns: Signature, Returns,
 Timeout, Raises) + Semantics paragraph.
 
+**Consolidated table**: groups of 2+ functions that share an identical
+structural pattern (e.g., all are linear HTTP client wrappers, all are
+single-statement metric helpers, all are CRUD delegations with the same
+shape). Format: a single table with columns adapted to the group's
+nature (e.g., `Method | Parameters | Returns | Semantics` for client
+wrappers, or `Method | Semantics` for trivial helpers). Use this
+instead of repeating the same Level 3 table N times when the repetition
+adds no information.
+
+**Re-invocation behavior** (the final mandatory section for Level 1):
+declares what happens when the function is called again with the same
+inputs after a successful first invocation. This section is always
+meaningful regardless of whether the function is idempotent:
+
+- Idempotent functions: "No-op — returns success without side effects
+  if the target state is already reached"
+- Non-idempotent functions: "Creates a new record on each invocation.
+  Callers must guard against duplicate calls."
+- Conditionally idempotent: "Idempotent when precondition X holds;
+  raises ConflictError otherwise"
+
+The section answers the question: "is it safe to retry this
+operation?" — critical for Celery tasks with `acks_late=True` and for
+API consumers implementing retry logic.
+
 **Decision rule**: if an engineer reading the spec must make a
 **design decision** to implement the function, the detail level is
 insufficient. If the spec repeats information already obvious from the
 signature, the detail level is excessive.
 
-**Supplementary pseudo-code**: when step numbering alone does not
-clearly convey the control flow structure (e.g., deeply nested loops
-with exception handling), supplementary pseudo-code MAY be included
-after the Behavior section as an illustrative aid. The step-numbered
-Behavior remains the authoritative specification; pseudo-code is
-non-normative.
+**Parameter documentation formats**: Level 1 functions accept either of
+these two equivalent formats for documenting parameters:
+
+- **Parameters table**: Markdown table with columns Name | Type |
+  Description. Preferred when parameters require semantic explanation
+  beyond their type (e.g., `acting_user_id` — "the user performing the
+  action; used as actor in audit events")
+- **Annotated signature**: Python code block with full type annotations.
+  Acceptable when parameter names and types are self-explanatory and no
+  additional semantics need documentation (e.g.,
+  `async def set_track_status(db: AsyncSession, track_id: UUID,
+  new_status: TrackStatus) -> None:`)
+
+If any parameter has non-obvious semantics (controls branching behavior,
+has constraints not captured by the type, or serves as an actor
+identity), the Parameters table is required. When using an annotated
+signature, a brief description line MAY follow the code block for
+parameters needing clarification.
+
+**Supplementary material**: the core format (as defined by the
+function's level) is the authoritative specification. The following
+supplementary sections MAY be added AFTER the core format when they are
+necessary for correct implementation:
+
+- **Pseudo-code**: when step numbering alone does not clearly convey
+  the control flow structure (e.g., deeply nested loops with exception
+  handling). The step-numbered Behavior remains authoritative;
+  pseudo-code is non-normative.
+- **Design rationale**: when the implementation strategy involves
+  non-obvious trade-offs (e.g., lock contention analysis, ordering
+  justification) that an implementer must understand to avoid
+  regressions.
+- **Operational constraints**: when correct implementation depends on
+  runtime behavior not captured by the algorithm (e.g., caching
+  semantics, loading timing, deployment invariants, read-once-per-process
+  requirements).
+
+Supplementary sections must not contradict or duplicate the core
+Behavior steps.
+
+#### Scope and Exclusions
+
+This convention applies to **service-layer functions and private
+helpers** documented in feature specifications. The following categories
+use their own documentation patterns and are NOT subject to the
+three-level classification:
+
+1. **API endpoint handlers**: documented using the endpoint format
+   (Request body/Query parameters + Behavior + Response + Error
+   responses). The granularity convention does not prescribe their
+   format — see `docs/api-spec.md` for endpoint documentation standards.
+
+2. **Fetcher `execute()` algorithms**: documented using the fetcher
+   documentation template (Properties table + Algorithm + Error handling
+   + Metrics) defined in
+   `docs/features/platform/fetcher-infrastructure.md`. The fetcher
+   template takes precedence.
+
+3. **Interface and abstract contracts**: abstract methods, protocol
+   definitions, and hook method contracts that define what implementors
+   must provide. These use the format: Signature + Contract semantics +
+   Signaling convention (if applicable). They are not procedural
+   specifications and do not fit the three-level model.
+
+4. **Event-processing pipelines**: message handlers and long-running
+   consumer pipelines whose "parameters" are message payload fields
+   rather than function arguments. These use numbered pipeline steps
+   without the Parameters table / Preconditions / Re-invocation
+   behavior structure.
+
+5. **CLI command behaviors**: documented using the CLI Output Contract
+   (Parameters + Behavior + Idempotency + Exit codes + Output channels)
+   defined in the CLI Conventions section of this document. The CLI
+   template takes precedence. The "Idempotency" declaration required by
+   the CLI Output Contract satisfies the "Re-invocation behavior"
+   concern — no additional section is needed.
+
+**Precedence rule**: when a more specific documentation template exists
+for a function category (fetcher template, CLI output contract, endpoint
+format), the specific template takes precedence. The granularity
+convention applies to all functions in the same specification that are
+NOT covered by a more specific template.
+
+**Cross-reference overviews**: when a function's authoritative
+specification lives in another document (e.g., a service spec), a
+lighter behavioral overview in the referencing document is acceptable
+and expected. It MUST NOT be elevated to the function's full level —
+that would create contradictory sources of truth.
 
 ### Service Exception Conventions
 
