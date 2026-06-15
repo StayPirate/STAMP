@@ -140,6 +140,7 @@ automatically.
 
 | Attribute | Value | Description |
 |-----------|-------|-------------|
+| `abstract` | `True` | Prevents registration in `FETCHER_REGISTRY` (intermediate class, not a concrete fetcher). Concrete subclasses inherit `abstract = False` from `BaseFetcher` default and are registered normally |
 | `queue` | `"git"` | Celery queue for worker affinity. Ensures tasks execute on the worker with the git volume mounted. Inherited from `BaseFetcher` interface (default `None`), overridden at the `BaseGitFetcher` level |
 
 These configurable attributes are also exposed in each fetcher's
@@ -345,7 +346,7 @@ operations.
 | `_clone_repo(path)` | Clones the repository with configured options (bare, filter, single-branch). Delegates to `git_operations.clone()` |
 | `_fetch_origin(path)` | Runs `git fetch origin`. Delegates to `git_operations.fetch_origin()` |
 | `_get_head_sha(path)` | Returns current HEAD SHA. Delegates to `git_operations.get_head_sha()` |
-| `_get_commit_date(path, ref)` | Returns commit date as ISO 8601 string. Delegates to `git_operations.get_commit_date()` |
+| `_get_commit_date(path, ref)` | Returns commit date as ISO 8601 string in UTC. Delegates to `git_operations.get_commit_date()` |
 | `_is_clone_valid(path)` | Returns bool. Delegates to `git_operations.is_clone_valid()` |
 | `_check_sha_reachable(path, sha)` | Returns bool. Delegates to `git_operations.check_sha_reachable()` |
 | `_compute_delta(path, from_sha, to_sha)` | Returns file list from `git diff` with `delta_path_prefix`. Delegates to `git_operations.diff_names()` |
@@ -568,7 +569,7 @@ Incremental — only new objects are transferred.
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
 | `get_head_sha` | `async def get_head_sha(repo_path: Path) -> str` | 40-char hex SHA | Read (30 sec) | `GitCorruptionError` |
-| `get_commit_date` | `async def get_commit_date(repo_path: Path, ref: str) -> str` | ISO 8601 date string (e.g., `2025-06-01T10:30:00+00:00`) | Read (30 sec) | `GitCorruptionError` |
+| `get_commit_date` | `async def get_commit_date(repo_path: Path, ref: str) -> str` | ISO 8601 date string in UTC (e.g., `2025-06-01T18:00:00+00:00`) | Read (30 sec) | `GitCorruptionError` |
 | `is_clone_valid` | `async def is_clone_valid(repo_path: Path) -> bool` | `bool` | Read (30 sec) | Never (returns `False` on any failure) |
 | `check_sha_reachable` | `async def check_sha_reachable(repo_path: Path, sha: str) -> bool` | `bool` | Read (30 sec) | `GitCorruptionError` (only for unexpected failures; unreachable SHA returns `False`) |
 | `diff_names` | `async def diff_names(repo_path: Path, from_sha: str, to_sha: str, *, path_filter: str \| None = None) -> list[str]` | List of file paths | Read (30 sec) | `GitCorruptionError` |
@@ -579,8 +580,12 @@ Semantics:
 - **`get_head_sha`**: returns the commit SHA that HEAD points to
   (`git rev-parse HEAD`)
 - **`get_commit_date`**: returns the committer date of the specified ref
-  as an ISO 8601 string (`git log -1 --format=%cI <ref>`). Used to
-  store `committed_at` in the cursor for recovery boundary computation
+  as an ISO 8601 string normalized to UTC
+  (`git log -1 --format=%cI <ref>`, then converted to UTC; or
+  equivalently, executed with `TZ=UTC` environment to produce UTC
+  output directly). Follows the project's "UTC everywhere" convention
+  (`docs/conventions.md`, Timestamps & Timezones). Used to store
+  `committed_at` in the cursor for recovery boundary computation
 - **`is_clone_valid`**: returns `True` if `repo_path` is a valid git
   repository (`git rev-parse --git-dir` succeeds). Returns `False` if
   the directory does not exist, is not a git repository, or the check
