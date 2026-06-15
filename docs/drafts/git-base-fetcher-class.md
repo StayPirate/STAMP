@@ -190,17 +190,31 @@ algorithm from `fetcher-infrastructure.md`.
 10. **Per-item processing loop** — for each `path` in the deduplicated
     list:
     a. Read file content via `show_file(repo_path, "HEAD", path)`
-    b. If content is `None` (file not found at HEAD): call
-       `record_failed()`, continue to next item
+    b. If content is `None` (file not found at HEAD — file was added
+       then deleted/renamed between cursor and HEAD): log WARNING
+       ("File {path} in delta but not at HEAD — skipping"), continue
+       to next item. No metric is recorded
     c. Call `process_item(path, content, session)`
     d. If any exception is raised during steps 10a or 10c: log WARNING
        ("Failed to process {path}: {error}"), call `record_failed()`,
        continue to next item
+
+    **Transaction boundaries**: each iteration of the processing loop
+    operates in its own transaction boundary. After `process_item()`
+    returns successfully or raises an exception (caught by step 10d),
+    the session is committed or rolled back respectively before
+    proceeding to the next item. This ensures that a failure in one
+    item does not corrupt the session or affect the processing of
+    subsequent items, and that Phase 2 side effects (enqueued
+    post-commit by `cve_service.upsert_cve()`) are triggered per-item.
+
 11. **Safety check**: if `items_failed > 0` AND
     `items_created + items_updated == 0`, raise `RuntimeError` ("All
     {N} items failed — cursor not advanced for safety"). This prevents
     cursor advance when every item failed (e.g., network drops in
-    blobless clone making every `show_file()` fail)
+    blobless clone making every `show_file()` fail). Note: items
+    skipped in step 10b (file not at HEAD) do not increment any
+    counter and do not contribute to the safety check trigger
 12. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
 
 **Infrastructure errors**: exceptions from clone, fetch, HEAD read, or
@@ -850,6 +864,29 @@ date-based recovery algorithm as the primary mechanism:
 > declare `recovery_path_prefix` as a class attribute. See
 > "BaseGitFetcher Class" below.
 
+**Change 3** — in the "Cursor Persistence" section (around line 1166),
+update the cursor format example:
+
+Replace:
+
+> ```json
+> {"sha": "<40-char hex SHA>"}
+> ```
+
+With:
+
+> ```json
+> {"sha": "<40-char hex SHA>", "committed_at": "<ISO 8601 date>"}
+> ```
+>
+> The next run reads the cursor from the most recent `FetcherRun` with
+> `status IN ('success', 'partial')` for the same `fetcher_name`:
+>
+> - `sha`: the HEAD commit SHA at the end of a successful run
+> - `committed_at`: the committer date of that commit (ISO 8601
+>   format). Used as the recovery boundary when the cursor SHA becomes
+>   unreachable (see "Cursor SHA Unreachable" below)
+
 ### Step 5: Add naming convention
 
 **File**: `docs/conventions.md`
@@ -1193,32 +1230,4 @@ read-category operation completing in milliseconds.
 
 ## Open Items
 
-- [ ] **Show file returns None — failure vs. skip** (gap 2.4): when a
-  file appears in the delta but does not exist at HEAD (added then
-  deleted between cursor and HEAD), step 10b calls `record_failed()`.
-  Decide whether this should be a failure (inflates metrics, may
-  trigger safety check) or a silent skip (log at DEBUG, no metric
-  recorded). Consider: for CVE repos, this can happen when a CVE is
-  published then immediately moved to rejected/
-
-- [ ] **Transaction boundaries in processing loop** (gap 2.3): the
-  spec does not specify whether each `process_item()` call operates in
-  its own transaction/savepoint or whether all items share a single
-  session. If item N causes an unhandled IntegrityError, the session
-  may become unusable for items N+1..M. Decide: per-item savepoints,
-  per-item commits, or single batch transaction with
-  rollback-on-error semantics
-
-- [ ] **Recovery edge case status: `partial` vs. `success`** (C3):
-  when `_compute_recovery_delta()` returns an empty list (no boundary
-  commit found — repository completely rewritten), the run completes
-  with `success` status (zero items, cursor advances). The existing
-  spec prescribes `partial` for the analogous edge case. Decide which
-  status is correct and align. Note: with date-based recovery, this
-  scenario is virtually impossible for CVE repos
-
-- [ ] **Cursor Persistence format update** (C1): the Application Plan
-  must include a step that updates the "Cursor Persistence" section of
-  `fetcher-infrastructure.md` (currently at line 1168) to reflect the
-  new cursor format `{"sha": "...", "committed_at": "..."}`. Without
-  this, the spec would contain two contradictory format definitions
+All items resolved. Draft ready for Application Plan execution.
