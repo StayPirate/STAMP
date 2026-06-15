@@ -183,6 +183,11 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 - **Fetchers**: `BaseFetcher` subclass naming follows the
   `<verb>_<source>_<noun>` convention — see
   `docs/features/platform/fetcher-infrastructure.md` (Naming Convention)
+- **Git-based fetchers (delta-flow)**: inherit from `BaseGitFetcher`
+  (`backend/app/services/base_git_fetcher.py`). Only implement
+  `process_item()`, `_construct_candidate_paths()`, and optionally
+  `filter_delta_files()` / `deduplicate_items()`. Do NOT override
+  `execute()`
 
 ### FastAPI Conventions
 

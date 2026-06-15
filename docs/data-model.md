@@ -1359,7 +1359,7 @@ Growth rate is approximately 20,000 rows per year. See
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
 | triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
-| cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "..."}` for git-based fetchers). Written on successful completion; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
+| cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "...", "committed_at": "..."}` for git-based fetchers). Written on successful completion; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
 
 **Indexes**: `(fetcher_name, started_at)` composite index — supports

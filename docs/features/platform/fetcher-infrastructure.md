@@ -486,15 +486,25 @@ This function:
 - Is used by: on-demand fetch loop, refetch endpoint validation, fetch
   status read path
 
-**Detection predicate**: `'fetch_single' in cls.__dict__` checks for a
-concrete implementation on the class itself, not inherited methods. This
-prevents false positives if `BaseFetcher` ever declares `fetch_single`
-as abstract or raising `NotImplementedError`. Consequence: concrete
-subclasses that inherit `fetch_single()` from a parent class without
-overriding it are NOT returned by this accessor and will NOT be
-dispatched for on-demand fetches. If a concrete fetcher needs
-`fetch_single()` behavior, it MUST define or override the method in its
-own class body — inheritance alone is insufficient.
+**Detection predicate**: the predicate walks the class's MRO (Method
+Resolution Order), checking for `fetch_single` in each class's
+`__dict__`, excluding `BaseFetcher` and `object`:
+
+```python
+any(
+    'fetch_single' in klass.__dict__
+    for klass in cls.__mro__
+    if klass is not BaseFetcher and klass is not object
+)
+```
+
+This detects `fetch_single()` defined on the class itself OR on any
+intermediate class (e.g., `BaseGitFetcher`). `BaseFetcher` is
+excluded to prevent false positives if it ever declares
+`fetch_single` as abstract or raising `NotImplementedError`.
+Consequence: concrete subclasses that inherit `fetch_single()` from
+an intermediate class (like `BaseGitFetcher`) ARE correctly returned
+by this accessor and WILL be dispatched for on-demand fetches.
 
 **Caching semantics**: the result is computed lazily on first access
 (not at import time) to ensure all fetcher modules have been imported
@@ -554,8 +564,12 @@ class BaseFetcher:
         default catch_up() automatically. Non-CVE fetchers override
         with custom logic.
         """
-        if 'fetch_single' not in type(self).__dict__:
-            return  # no fetch_single, no default catch_up
+        if not any(
+            'fetch_single' in klass.__dict__
+            for klass in type(self).__mro__
+            if klass is not BaseFetcher and klass is not object
+        ):
+            return  # no fetch_single in hierarchy, no default catch_up
         ticket = await session.get(Ticket, UUID(ticket_id))
         if ticket and ticket.cve_id:
             try:
@@ -604,9 +618,12 @@ The detection predicate combines two checks:
 
 1. `'catch_up' in cls.__dict__` — fetcher explicitly overrides
    `catch_up()` (non-CVE fetchers like `DetectIbsTrackReleases`)
-2. `'fetch_single' in cls.__dict__` — fetcher implements
-   `fetch_single()`, which means it inherits the default `catch_up()`
-   (CVE fetchers like `SyncRedhatCves`, `SyncNvdCves`)
+2. MRO-based `fetch_single` detection (same predicate as
+   `get_fetch_single_fetchers()`) — fetcher implements
+   `fetch_single()` at any level in its hierarchy (excluding
+   `BaseFetcher`), which means it inherits the default `catch_up()`
+   (CVE fetchers like `SyncRedhatCves`, `SyncNvdCves`,
+   `SyncMitreCves`, `SyncKernelCves`)
 
 Fetchers that match neither condition (global fetchers) are excluded.
 
@@ -993,12 +1010,14 @@ the invalid field.
 **Abstract fetcher exemption**: fetcher classes with `abstract = True`
 (which opt out of registration per the existing `__init_subclass__`
 contract) are exempt from rules 6-8. This allows intermediate abstract
-classes (e.g., a hypothetical `BaseCveFetcher(BaseFetcher,
-abstract=True)`) to define `fetch_single()` without declaring
-`cve_source_type`. Concrete subclasses MUST override `fetch_single()` in
-their own class body (not rely on inheritance alone) and declare their
-own `cve_source_type` — both rule 6 and `get_fetch_single_fetchers()`
-use `'fetch_single' in cls.__dict__` as the detection predicate.
+classes (e.g., `BaseGitFetcher(BaseFetcher, abstract=True)`) to define
+`fetch_single()` without declaring `cve_source_type`. Concrete
+subclasses of such intermediate classes inherit `fetch_single()` via
+the MRO and are correctly detected by the MRO-based predicate in
+`get_fetch_single_fetchers()` — they do NOT need to override
+`fetch_single()` in their own class body. They MUST still declare
+their own `cve_source_type` (rule 6 applies to all registered
+fetchers with `fetch_single()` capability).
 
 **Format constraint**: `CVESourceType` Enum values MUST match
 `[a-z][a-z0-9_]*` and not exceed 100 characters (matching the
@@ -1164,16 +1183,22 @@ processed commit SHA) in the `FetcherRun.cursor` JSONB column. After
 a successful run, the fetcher writes:
 
 ```json
-{"sha": "<40-char hex SHA>"}
+{"sha": "<40-char hex SHA>", "committed_at": "<ISO 8601 date>"}
 ```
 
 The next run reads the cursor from the most recent `FetcherRun` with
-`status IN ('success', 'partial')` for the same `fetcher_name`. If no
-run with a cursor exists (first run), the fetcher applies its own
+`status IN ('success', 'partial')` for the same `fetcher_name`:
+
+- `sha`: the HEAD commit SHA at the end of a successful run
+- `committed_at`: the committer date of that commit (ISO 8601
+  format). Used as the recovery boundary when the cursor SHA becomes
+  unreachable (see "Cursor SHA Unreachable" below)
+
+If no run with a cursor exists (first run), the fetcher applies its own
 first-run strategy (see the individual fetcher spec — e.g., "record
 HEAD only" for CVE fetchers). For recovery scenarios where a stored
-SHA is unreachable, the fetcher applies its time-bounded recovery
-strategy (see Recovery below).
+SHA is unreachable, the fetcher applies the date-based recovery
+strategy (see "Cursor SHA Unreachable" below).
 
 This mechanism is generic — non-git fetchers may use `cursor` for any
 checkpoint data (timestamps, offsets, page tokens). The column is
@@ -1225,6 +1250,10 @@ scenario, a clone-state-based check would incorrectly conclude
 The cursor-based check correctly identifies this as a first run and
 records HEAD without processing.
 
+For `BaseGitFetcher` subclasses, this decision matrix is implemented
+by `BaseGitFetcher.execute()` — concrete fetchers do not reimplement
+it. See "BaseGitFetcher Class" below.
+
 ### Environment Configuration
 
 | Env Var | Type | Default | Description |
@@ -1261,12 +1290,15 @@ Git-based fetcher tasks MUST execute on a Celery worker with the Git
 volume mounted. This is achieved via a dedicated Celery queue:
 
 - **Queue name**: `git`
-- **Routing**: git-based fetcher tasks declare
-  `queue = "git"` in their task configuration
+- **Routing**: `BaseGitFetcher` sets `queue = "git"` as a fixed class
+  attribute — all concrete subclasses inherit this value automatically.
+  Fetchers that inherit from `BaseFetcher` directly and need git queue
+  affinity set it in their own class body
 - **`queue` class attribute on BaseFetcher**: `BaseFetcher` defines a
   `queue: str | None = None` class attribute (default = default Celery
-  queue). Git-based fetchers override it to `"git"`. Non-git fetchers
-  that omit it are routed normally — safe by default
+  queue). `BaseGitFetcher` overrides it to `"git"` for the entire
+  git-fetcher hierarchy. Non-git fetchers that omit it are routed
+  normally — safe by default
 - **Worker configuration**: the worker process with access to the Git
   volume consumes from the `git` queue (in addition to the default
   queue, if desired)
@@ -1319,11 +1351,10 @@ These rules apply to ALL git-based fetchers sharing the same volume:
    (`git cat-file -t <sha>`)
 4. If reachable: normal delta processing from stored SHA to HEAD
 5. If not reachable (upstream force-push, branch deletion, or SHA
-   garbage-collected): apply the fetcher's time-bounded recovery
-   strategy. Each fetcher defines its own recovery window and file
-   filter (see the individual fetcher spec). The shared infrastructure
-   provides only the detection mechanism (`git cat-file -t`) and the
-   re-clone procedure; the recovery delta policy is fetcher-specific
+   garbage-collected): apply the date-based recovery strategy (see
+   "Cursor SHA Unreachable" below). For `BaseGitFetcher` subclasses
+   this is handled automatically by `execute()` — only
+   `recovery_path_prefix` varies per fetcher
 
 **Corrupted clone** (git operations fail with corruption errors):
 
@@ -1335,47 +1366,58 @@ These rules apply to ALL git-based fetchers sharing the same volume:
 
 When a git-based fetcher's stored cursor SHA is not reachable in the
 local clone (detected via `git cat-file -t <sha>` returning non-zero),
-it applies a time-bounded recovery reprocessing window. This situation
-occurs when:
+it applies a date-based recovery strategy using the `committed_at`
+field stored in the cursor. This situation occurs when:
 
 - The clone was rebuilt (row 4 of the First-Run Detection table)
 - The upstream repository was force-pushed or rebased (rare for
   published CVE/advisory repos)
-- Git garbage collection pruned unreachable objects (should not happen
-  for commits reachable from HEAD, but possible with corrupted state)
+- Git garbage collection pruned unreachable objects (should not
+  happen for commits reachable from HEAD, but possible with
+  corrupted state)
 
 **Algorithm**:
 
-1. Determine boundary SHA:
-   `git rev-list -1 --before="<recovery_window> ago" HEAD`
-2. Compute delta:
-   `git diff --name-only --diff-filter=AMCR <boundary_sha>..HEAD -- '<recovery_file_filter>'`
-3. Apply the fetcher's normal file filtering and per-item processing
+1. Compute `before_date` as `cursor_committed_at` minus 1 day (the
+   1-day margin ensures no items are missed around the boundary —
+   reprocessing is idempotent)
+2. Determine boundary SHA:
+   `git rev-list -1 --before="<before_date>" HEAD`
+3. If no commit exists before `before_date` (empty output — the
+   repository history does not extend that far back): log WARNING
+   ("Recovery boundary not found — treating as first-run"), return
+   empty delta. Cursor advances to HEAD
+4. Compute delta:
+   `git diff --name-only --diff-filter=AMCR <boundary_sha>..HEAD
+   -- '<recovery_path_prefix>'`
+5. Apply the fetcher's normal file filtering and per-item processing
    logic (MUST be idempotent — previously ingested items produce no
    observable side effects on re-processing)
-4. Write HEAD as new cursor on completion
+6. Write HEAD as new cursor on completion
 
-Each git-based fetcher declares these parameters in its properties
+Each git-based fetcher declares this parameter in its properties
 table:
 
 | Parameter | Description | Example values |
 |---|---|---|
-| `recovery_window` | Maximum look-back period for reprocessing | `2 weeks` (CVE fetchers) |
-| `recovery_file_filter` | Path filter for the recovery delta command | `cves/` (MITRE), `cve/` (kernel) |
+| `recovery_path_prefix` | Path filter for the recovery delta command | `cves/` (MITRE), `cve/` (kernel) |
 
-**Window exceeded**: if the actual gap exceeds `recovery_window`
-(boundary SHA is HEAD itself because no commits exist before the
-window), the run completes with `status = partial`, logs a WARNING
-indicating operator intervention is required (manual `fetch_single()`
-for specific items or full re-seed via operational tooling), and
-records HEAD as cursor to prevent infinite retries.
+**Advantages over a fixed window**: the date-based approach always
+covers the exact gap regardless of how long the fetcher was offline.
+Reprocessing overlap is always ~1 day (idempotent, negligible cost).
+No configurable `recovery_window` parameter is needed.
 
-**Normal case after re-clone**: when a clone is rebuilt from the same
-remote (row 4 of First-Run Detection), the cursor SHA is almost always
-reachable because git history is preserved. In this case, normal delta
-detection proceeds — no recovery window is needed. The recovery
-strategy is a fallback for the rare case where the SHA truly does not
-exist in the fresh clone.
+**Normal case after re-clone**: when a clone is rebuilt from the
+same remote (row 4 of First-Run Detection), the cursor SHA is
+almost always reachable because git history is preserved. In this
+case, normal delta detection proceeds — no recovery is needed. The
+recovery strategy is a fallback for the rare case where the SHA
+truly does not exist in the fresh clone.
+
+For `BaseGitFetcher` subclasses, this recovery algorithm is
+implemented by `BaseGitFetcher.execute()` — concrete fetchers only
+declare `recovery_path_prefix` as a class attribute. See
+"BaseGitFetcher Class" below.
 
 ### Runtime Dependencies
 
@@ -1467,13 +1509,567 @@ service-layer sense:
   business logic)
 - Centralizes subprocess error handling and maps git failures to the
   typed exception hierarchy
-- Is independent of `BaseFetcher` lifecycle — fetchers compose these
-  utilities within their `execute()` method
+- Is consumed by `BaseGitFetcher` methods, which delegate subprocess
+  execution to this module. Can also be used independently by code that
+  needs git operations without the `BaseGitFetcher` lifecycle (e.g.,
+  fetchers inheriting from `BaseFetcher` directly)
 - Provides a clean mocking boundary for unit tests (mock one function
   instead of `subprocess.run`)
 
-Each fetcher retains full control over its execution flow, using the
-utility functions as building blocks.
+Fetchers that inherit from `BaseGitFetcher` delegate execution flow
+to the template method — they implement only processing hooks.
+Fetchers that inherit from `BaseFetcher` directly retain full control
+over their execution flow, using the utility functions as building
+blocks.
+
+#### Responsibility Separation
+
+The utility module is **policy-free** — it executes git commands with
+the parameters it receives. It does not apply domain-specific defaults.
+
+- **Domain defaults** (bare=True, filter=blob:none, single-branch=True)
+  live on `BaseGitFetcher` class attributes
+- **`BaseGitFetcher` methods** read `self.*` attributes and pass them as
+  explicit parameters to `git_operations` functions
+- **Concrete subclasses** override class attributes to change behavior
+  (e.g., kernel sets `clone_filter = None`)
+
+This separation ensures `git_operations.py` remains general-purpose and
+independently usable.
+
+#### Function Catalog
+
+The following table defines the complete public interface of
+`git_operations.py`. These are the functions that `BaseGitFetcher`
+delegates to and that any `BaseFetcher`-direct subclass may also call.
+
+##### Clone Operations
+
+| Function | Signature | Returns | Timeout | Raises |
+|----------|-----------|---------|---------|--------|
+| `clone` | `async def clone(url: str, dest: Path, *, bare: bool = False, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (20 min) | `GitFetchError` |
+
+**Behavior**:
+
+1. Build the base command: `["git", "clone", url, str(dest)]`
+2. If `bare` is `True`: append `--bare`
+3. If `filter_spec` is not `None`: append `--filter=<filter_spec>`
+4. If `single_branch` is `True`: append `--single-branch`
+5. Execute the command via `asyncio.create_subprocess_exec` with the
+   clone timeout (20 minutes)
+6. If the process exits with non-zero code: raise `GitFetchError` with
+   stderr content
+
+##### Fetch Operations
+
+| Function | Signature | Returns | Timeout | Raises |
+|----------|-----------|---------|---------|--------|
+| `fetch_origin` | `async def fetch_origin(repo_path: Path) -> None` | `None` | Fetch (5 min) | `GitFetchError` |
+
+Semantics: runs `git fetch origin` in the specified repository.
+Incremental — only new objects are transferred.
+
+##### Read Operations
+
+| Function | Signature | Returns | Timeout | Raises |
+|----------|-----------|---------|---------|--------|
+| `get_head_sha` | `async def get_head_sha(repo_path: Path) -> str` | 40-char hex SHA | Read (30 sec) | `GitCorruptionError` |
+| `get_commit_date` | `async def get_commit_date(repo_path: Path, ref: str) -> str` | ISO 8601 date string in UTC (e.g., `2025-06-01T18:00:00+00:00`) | Read (30 sec) | `GitCorruptionError` |
+| `is_clone_valid` | `async def is_clone_valid(repo_path: Path) -> bool` | `bool` | Read (30 sec) | Never (returns `False` on any failure) |
+| `check_sha_reachable` | `async def check_sha_reachable(repo_path: Path, sha: str) -> bool` | `bool` | Read (30 sec) | `GitCorruptionError` (only for unexpected failures; unreachable SHA returns `False`) |
+| `diff_names` | `async def diff_names(repo_path: Path, from_sha: str, to_sha: str, *, path_filter: str \| None = None) -> list[str]` | List of file paths | Read (30 sec) | `GitCorruptionError` |
+| `rev_list_before` | `async def rev_list_before(repo_path: Path, before_date: str) -> str \| None` | 40-char hex SHA or `None` | Read (30 sec) | `GitCorruptionError` |
+
+Semantics:
+
+- **`get_head_sha`**: returns the commit SHA that HEAD points to
+  (`git rev-parse HEAD`)
+- **`get_commit_date`**: returns the committer date of the specified ref
+  as an ISO 8601 string normalized to UTC
+  (`git log -1 --format=%cI <ref>`, then converted to UTC; or
+  equivalently, executed with `TZ=UTC` environment to produce UTC
+  output directly). Follows the project's "UTC everywhere" convention
+  (`docs/conventions.md`, Timestamps & Timezones). Used to store
+  `committed_at` in the cursor for recovery boundary computation
+- **`is_clone_valid`**: returns `True` if `repo_path` is a valid git
+  repository (`git rev-parse --git-dir` succeeds). Returns `False` if
+  the directory does not exist, is not a git repository, or the check
+  fails for any reason. NEVER raises — used as a guard condition
+- **`check_sha_reachable`**: determines whether a given SHA exists in
+  the local object store as a valid git object
+  (`git cat-file -t <sha>`).
+
+  **Behavior**:
+
+  1. Execute `git cat-file -t <sha>` in the repository
+  2. If exit code is 0: return `True` (object exists and is valid)
+  3. If exit code is 1 and stderr indicates "not a valid object name" or
+     similar: return `False` (SHA not reachable — expected condition)
+  4. If exit code indicates a different failure (I/O error, repository
+     corruption): raise `GitCorruptionError`
+
+- **`diff_names`**: returns the list of added, modified, copied, and
+  renamed files between two commits
+  (`git diff --name-only --diff-filter=AMCR <from>..<to>`). If
+  `path_filter` is set, appends `-- '<path_filter>'` to restrict
+  results. Deleted files are excluded
+- **`rev_list_before`**: returns the most recent commit SHA on HEAD
+  before the specified date
+  (`git rev-list -1 --before="<before_date>" HEAD`). Returns `None` if
+  no commit exists before the specified date (empty output from git).
+  Used for recovery boundary detection
+
+##### Show Operations
+
+| Function | Signature | Returns | Timeout | Raises |
+|----------|-----------|---------|---------|--------|
+| `show_file` | `async def show_file(repo_path: Path, ref: str, file_path: str) -> bytes \| None` | File content as `bytes`, or `None` if path does not exist | Read (30 sec) | `GitFileError` (for errors other than "path not found") |
+
+**Behavior**:
+
+1. Execute `git show <ref>:<file_path>` in the repository
+2. If exit code is 0: return stdout as `bytes` (file content)
+3. If exit code is 128 and stderr contains "does not exist in" or
+   "path not found": return `None` (file does not exist at this ref —
+   expected condition, not an error)
+4. If exit code indicates a different failure (network error in blobless
+   clone, corrupt object, timeout): raise `GitFileError` with stderr
+   content
+
+In blobless clones, step 1 triggers an on-demand blob download from the
+remote — requires network access. If the remote is unreachable, step 4
+fires.
+
+##### Filesystem Operations
+
+| Function | Signature | Returns | Timeout | Raises |
+|----------|-----------|---------|---------|--------|
+| `delete_clone` | `async def delete_clone(path: Path) -> None` | `None` | N/A | `OSError` (filesystem errors) |
+
+Semantics: recursively deletes the directory at `path` if it exists.
+No-op if the path does not exist. This is NOT a git operation — it is
+included in the module for co-location with clone lifecycle management.
+
+#### Bare and Blobless Compatibility
+
+All git operations in the function catalog are compatible with both
+plain bare clones and blobless bare clones (`--filter=blob:none`):
+
+- **Local-only operations** (`get_head_sha`, `get_commit_date`,
+  `is_clone_valid`, `check_sha_reachable`, `diff_names`,
+  `rev_list_before`): access only commit and tree objects, which are
+  always present locally in both plain and blobless clones. No network
+  access required
+- **On-demand operations** (`show_file`): access blob content. In
+  blobless clones, this triggers an on-demand blob download from the
+  remote for the specific file requested. This is the intended access
+  pattern — blobs are fetched individually rather than bulk-downloaded
+  during clone or fetch
+- **`check_sha_reachable` on commit SHAs**: `BaseGitFetcher` uses this
+  exclusively on commit SHAs (the cursor). Commit objects are always
+  present locally, even in blobless clones. The function would also
+  work on tree SHAs (present locally) but NOT reliably on blob SHAs
+  (may be absent in blobless clones)
+
+No special handling is needed per clone type — the git binary
+transparently handles both modes. The only operational difference is
+that `show_file` requires network access in blobless clones (and may
+raise `GitFileError` if the remote is unreachable at that moment).
+
+### BaseGitFetcher Class
+
+Template Method intermediate class for fetchers that follow the standard
+delta-based git flow (clone → fetch → SHA reachability → delta detection
+→ per-item processing → cursor advance). Eliminates duplicated state
+machine code by providing a single `execute()` implementation that
+delegates per-item processing to concrete subclasses via hook methods.
+
+**Class hierarchy**:
+
+```
+BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry)
+  └── BaseGitFetcher (git-specific: clone, fetch, delta, recovery, SHA ops)
+        ├── SyncMitreCves (per-item: cvelistV5 JSON, CNA+ADP containers)
+        └── SyncKernelCves (per-item: vulns.git JSON, kernel-specific mapping)
+```
+
+**File location**: `backend/app/services/base_git_fetcher.py`
+
+#### Class Attributes
+
+Concrete subclasses declare the configurable attributes as class-level
+values. The fixed attributes are set by `BaseGitFetcher` and inherited
+automatically.
+
+**Configurable (declared by subclasses)**:
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `repo_url` | `str` | (required) | Git remote URL |
+| `clone_dir_name` | `str` | (required) | Directory name under `$GIT_CLONE_BASE_DIR` |
+| `clone_bare` | `bool` | `True` | Whether to use `--bare` |
+| `clone_filter` | `str \| None` | `"blob:none"` | Value for `--filter=`. `None` = no filter (plain bare clone) |
+| `clone_single_branch` | `bool` | `True` | Whether to use `--single-branch` |
+| `recovery_path_prefix` | `str` | (required) | Path prefix for recovery delta (`-- '<prefix>'`) |
+| `delta_path_prefix` | `str` | (required) | Path prefix for normal delta detection |
+
+**Fixed (set by `BaseGitFetcher`, not overridable)**:
+
+| Attribute | Value | Description |
+|-----------|-------|-------------|
+| `abstract` | `True` | Prevents registration in `FETCHER_REGISTRY` (intermediate class, not a concrete fetcher). Concrete subclasses do not set `abstract` in their own class body; `__init_subclass__` checks `cls.__dict__.get('abstract', False)` and proceeds with registration when the attribute is absent from the subclass's own namespace |
+| `queue` | `"git"` | Celery queue for worker affinity. Ensures tasks execute on the worker with the git volume mounted. Inherited from `BaseFetcher` interface (default `None`), overridden at the `BaseGitFetcher` level |
+
+These configurable attributes are also exposed in each fetcher's
+properties table in its specification document. The fixed `queue`
+attribute is inherited automatically and does not appear in
+per-fetcher properties tables.
+
+#### Template Method: `execute()`
+
+The `execute()` method implements the full git-based fetcher state
+machine. Concrete subclasses MUST NOT override `execute()` (they
+implement hooks instead).
+
+Implements the First-Run Detection truth table and Recovery Strategy
+algorithm from the sections above.
+
+**Behavior**:
+
+1. Resolve repository path from `$GIT_CLONE_BASE_DIR / clone_dir_name`
+2. Read last cursor from the previous successful `FetcherRun.cursor`
+   (via `BaseFetcher`). Extract `cursor_sha` and `cursor_committed_at`
+   from the stored dict. If no prior successful run exists, both are
+   `None`
+3. **First-run branch** — if `cursor_sha` is `None`:
+   a. If clone is NOT valid at `repo_path`: delete directory if it
+      exists, then clone repository with configured options
+   b. If clone IS valid: skip clone (reuse existing)
+   c. Read HEAD SHA from the repository
+   d. Read HEAD commit date via `get_commit_date(repo_path, "HEAD")`
+   e. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
+   f. Return — first-run complete, no items processed
+4. **Subsequent-run branch** — `cursor_sha` exists:
+   a. If clone is NOT valid: log WARNING ("Clone invalid but cursor
+      exists — rebuilding"), delete directory if exists, clone repository
+   b. If clone IS valid: fetch origin (incremental update)
+5. Read HEAD SHA from the repository
+6. Read HEAD commit date via `get_commit_date(repo_path, "HEAD")`
+7. **SHA reachability check**:
+   a. If `cursor_sha` is NOT reachable in the local object store: log
+      WARNING ("Cursor SHA unreachable — applying recovery"), compute
+      recovery delta via
+      `_compute_recovery_delta(repo_path, head_sha, cursor_committed_at)`
+   b. If `cursor_sha` IS reachable: compute normal delta via
+      `diff_names(repo_path, cursor_sha, head_sha)` with
+      `delta_path_prefix` as path filter
+8. Apply `filter_delta_files()` hook on the file list
+9. Apply `deduplicate_items()` hook on the filtered list
+10. **Per-item processing loop** — for each `path` in the deduplicated
+    list:
+    a. Read file content via `show_file(repo_path, "HEAD", path)`
+    b. If content is `None` (file not found at HEAD — file was added
+       then deleted/renamed between cursor and HEAD): log WARNING
+       ("File {path} in delta but not at HEAD — skipping"), continue
+       to next item. No metric is recorded
+    c. Call `process_item(path, content, session)`
+    d. If any exception is raised during steps 10a or 10c: log WARNING
+       ("Failed to process {path}: {error}"), call `record_failed()`,
+       continue to next item
+
+    **Transaction boundaries**: each iteration of the processing loop
+    operates in its own transaction boundary. After `process_item()`
+    returns successfully or raises an exception (caught by step 10d),
+    the session is committed or rolled back respectively before
+    proceeding to the next item. This ensures that a failure in one
+    item does not corrupt the session or affect the processing of
+    subsequent items, and that Phase 2 side effects (enqueued
+    post-commit by `cve_service.upsert_cve()`) are triggered per-item.
+
+11. **Safety check**: if `items_failed > 0` AND
+    `items_created + items_updated == 0`, raise `RuntimeError` ("All
+    {N} items failed — cursor not advanced for safety"). This prevents
+    cursor advance when every item failed (e.g., network drops in
+    blobless clone making every `show_file()` fail). Note: items
+    skipped in step 10b (file not at HEAD) do not increment any
+    counter and do not contribute to the safety check trigger
+12. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
+
+**Infrastructure errors**: exceptions from clone, fetch, HEAD read, or
+delta computation propagate naturally — `BaseFetcher.run()` catches them
+and records a failed run without advancing the cursor. The template
+method does NOT catch infrastructure-level exceptions. On the next
+scheduled run, the First-Run Detection truth table re-evaluates the
+clone state and applies appropriate recovery.
+
+**Error Handling Strategy**:
+
+Infrastructure failures and their outcomes:
+
+| Infrastructure failure | Exception | BaseFetcher behavior |
+|------------------------|-----------|---------------------|
+| Clone fails (network) | `GitFetchError` | `status = failure`, cursor not advanced |
+| Fetch fails (network) | `GitFetchError` | `status = failure`, cursor not advanced |
+| HEAD unreadable (corruption) | `GitCorruptionError` | `status = failure`, cursor not advanced |
+| Delta computation fails | `GitCorruptionError` | `status = failure`, cursor not advanced |
+
+On the next scheduled run, the First-Run Detection truth table
+re-evaluates the clone state and applies the appropriate recovery
+(row "Cursor exists + Clone invalid" → re-clone).
+
+The **safety check** (step 11) prevents a dangerous edge case: if all
+items fail (e.g., network drops after fetch in a blobless clone, making
+every `show_file()` fail), the cursor must NOT advance — otherwise those
+items are permanently lost. The `RuntimeError` causes `BaseFetcher.run()`
+to record `status = failure` and preserve the previous cursor, so the
+next run retries the same delta.
+
+**Status Determination**:
+
+`BaseGitFetcher` relies entirely on `BaseFetcher`'s existing status
+mechanism — no additional logic is needed:
+
+| Scenario | Status | Cursor advances? |
+|----------|--------|-----------------|
+| First run (no processing) | `success` | Yes (step 3e) |
+| Empty delta (HEAD unchanged) | `success` | Yes (step 12) |
+| All items succeed | `success` | Yes (step 12) |
+| Some items fail, some succeed | `partial` | Yes (step 12) |
+| All items fail (safety check) | `failure` | No (step 11) |
+| Infrastructure error | `failure` | No (propagates) |
+
+#### Hook Methods (Override Points)
+
+These are the extension points for concrete subclasses:
+
+**Hooks for `execute()`**:
+
+| Method | Required? | Default | Purpose |
+|--------|-----------|---------|---------|
+| `process_item(path, content, session)` | **Yes** (abstract) | — | Process a single file from the delta. Calls `self.record_created()` or `self.record_updated()` on success |
+| `filter_delta_files(file_list)` | No | Return all | Filter raw delta output to relevant files (e.g., only `.json` in specific dirs) |
+| `deduplicate_items(file_list)` | No | No-op | Deduplicate items before processing (e.g., same CVE-ID in both `published/` and `rejected/`) |
+
+**Hooks for `fetch_single()`**:
+
+| Method | Required? | Default | Purpose |
+|--------|-----------|---------|---------|
+| `_construct_candidate_paths(item_id)` | **Yes** (abstract) | — | Return ordered list of candidate file paths for local clone lookup |
+
+##### `process_item(path: str, content: bytes, session: AsyncSession) -> None`
+
+The core extension point. Receives:
+- `path`: relative path within the repository (e.g., `cve/published/2024/CVE-2024-50055.json`)
+- `content`: raw file content as bytes (from `git show`)
+- `session`: the database session for the current execution (same
+  `AsyncSession` instance passed to `execute()` by `BaseFetcher.run()`)
+
+The hook is responsible for:
+1. Parsing the content and applying business logic (upsert, etc.)
+2. Calling `self.record_created()` or `self.record_updated()` to report
+   the outcome (same pattern as non-git `BaseFetcher` subclasses)
+3. Returning `None` if the item was skipped (already up-to-date) —
+   no metric is recorded, which is the correct behavior
+
+Raises any exception on failure → caught by `execute()`, logged,
+`record_failed()` called.
+
+**Phase 2 side effects**: hooks that call `cve_service.upsert_cve()`
+trigger Phase 2 processing (package resolution, notifications)
+automatically via Celery task enqueue after the Phase 1 transaction
+commits. No post-processing batch hook is needed — Phase 2 is per-item
+and self-contained.
+
+##### `filter_delta_files(file_list: list[str]) -> list[str]`
+
+Optional override. Receives the file list from `git diff` (after
+applying `delta_path_prefix` path restriction at the git level).
+Returns only the files that should be processed.
+
+The two-level filtering design:
+- **`delta_path_prefix`** (class attribute): coarse path-prefix
+  filtering at the git subprocess level (`-- '<prefix>'`). Reduces the
+  diff output before it reaches Python
+- **`filter_delta_files()`** (hook): fine-grained filtering in Python
+  (e.g., regex matching, extension checks, directory logic)
+
+Example (kernel): keep only `.json` files matching
+`cve/{published,rejected}/YEAR/CVE-YEAR-ID.json`.
+
+##### `deduplicate_items(file_list: list[str]) -> list[str]`
+
+Optional override. Receives the filtered file list. Returns a
+deduplicated list resolving conflicts (e.g., if same CVE appears in
+both `published/` and `rejected/`, keep only the `rejected/` entry).
+
+Default implementation returns the list unchanged.
+
+#### Default `fetch_single()` Implementation
+
+`BaseGitFetcher` provides a default `fetch_single()` implementation
+that concrete subclasses inherit automatically (no override needed).
+
+**Behavior**:
+
+1. Resolve repository path from `$GIT_CLONE_BASE_DIR / clone_dir_name`
+2. Check if clone is valid at `repo_path`. If NOT valid: raise
+   `RuntimeError` ("Clone not available at {repo_path} for single-item
+   lookup")
+3. Call `_construct_candidate_paths(item_id)` to obtain an ordered list
+   of candidate file paths
+4. For each `path` in the candidate list:
+   a. Read file content via `show_file(repo_path, "HEAD", path)`
+   b. If content is not `None` (file found): call
+      `process_item(path, content, session)`, then return
+5. If no candidate path produced content: raise
+   `CVENotInSource(item_id)`
+
+**Audit events**: none created directly. Side effects (DB mutations,
+audit events) are delegated entirely to `process_item()` — the
+concrete subclass's hook determines what is recorded.
+
+**Re-invocation**: calling `fetch_single()` with the same `item_id`
+multiple times is safe. Idempotency depends on the concrete
+`process_item()` implementation — both current subclasses
+(`SyncMitreCves`, `SyncKernelCves`) delegate to `cve_service.upsert_cve()`
+which is idempotent (no-op if data unchanged, update if changed).
+
+**Exceptions**:
+
+- `RuntimeError` — clone not available (step 2)
+- `CVENotInSource` — item not found in any candidate path (step 5)
+- Exceptions from `process_item()` propagate uncaught to the caller
+
+The two exception types serve different purposes for the caller
+(`trigger_on_demand_fetch()`):
+
+- **`RuntimeError`** — "source not queryable right now" (clone missing,
+  corrupt, or not yet created by the first periodic run). The dispatch
+  system logs a WARNING and tries the next fetcher. The clone will be
+  available after the next scheduled sync.
+- **`CVENotInSource`** — "item does not exist in this source"
+  (authoritative negative). The dispatch system logs INFO and tries the
+  next fetcher.
+
+##### `_construct_candidate_paths(item_id: str) -> list[str]`
+
+Abstract method. Returns an ordered list of candidate file paths where
+the item might exist in the repository. The default `fetch_single()`
+tries each path in order via `git show` until one succeeds.
+
+The ordering is significant: the first match wins. If the same item
+could exist in multiple locations (e.g., `published/` vs. `rejected/`),
+place the most likely or authoritative path first.
+
+```python
+# Kernel example:
+def _construct_candidate_paths(self, cve_id: str) -> list[str]:
+    year = cve_id.split("-")[1]  # CVE-YYYY-NNNNN → YYYY
+    return [
+        f"cve/published/{year}/{cve_id}.json",
+        f"cve/rejected/{year}/{cve_id}.json",
+    ]
+```
+
+#### Inherited Utility Methods
+
+These methods are available to concrete subclasses (e.g., for use in
+`fetch_single()`). They are NOT hook methods — subclasses call them
+but do not override them.
+
+All methods in this table propagate exceptions from the corresponding
+`git_operations` function they delegate to. No method creates audit
+events or mutates database state — they are pure infrastructure
+operations.
+
+| Method | Purpose |
+|--------|---------|
+| `_get_last_cursor_sha()` | Reads the `"sha"` field from the previous `FetcherRun.cursor` (via `BaseFetcher`). Returns `None` if no prior successful run exists |
+| `_get_last_cursor_committed_at()` | Reads the `"committed_at"` field from the previous `FetcherRun.cursor` (via `BaseFetcher`). Returns `None` if no prior successful run exists or if the field is absent |
+| `_repo_path()` | Returns `Path($GIT_CLONE_BASE_DIR / clone_dir_name)` |
+| `_clone_repo(path)` | Clones the repository with configured options (bare, filter, single-branch). Delegates to `git_operations.clone()` |
+| `_fetch_origin(path)` | Runs `git fetch origin`. Delegates to `git_operations.fetch_origin()` |
+| `_get_head_sha(path)` | Returns current HEAD SHA. Delegates to `git_operations.get_head_sha()` |
+| `_get_commit_date(path, ref)` | Returns commit date as ISO 8601 string in UTC. Delegates to `git_operations.get_commit_date()` |
+| `_is_clone_valid(path)` | Returns bool. Delegates to `git_operations.is_clone_valid()` |
+| `_check_sha_reachable(path, sha)` | Returns bool. Delegates to `git_operations.check_sha_reachable()` |
+| `_compute_delta(path, from_sha, to_sha)` | Returns file list from `git diff` with `delta_path_prefix`. Delegates to `git_operations.diff_names()` |
+| `_compute_recovery_delta(repo_path, head_sha, cursor_committed_at)` | Applies recovery using stored commit date minus 1 day + `recovery_path_prefix`. See detailed behavior below |
+| `_show_file(path, ref, file_path)` | Returns file content or None. Delegates to `git_operations.show_file()` |
+| `_delete_if_exists(path)` | Deletes directory if it exists. Delegates to `git_operations.delete_clone()` |
+
+##### `_compute_recovery_delta()`
+
+Computes the file delta using the stored cursor commit date when the
+cursor SHA is unreachable (force-push, history rewrite, or clone
+rebuild).
+
+`async def _compute_recovery_delta(repo_path: Path, head_sha: str, cursor_committed_at: str) -> list[str]`
+
+**Behavior**:
+
+1. Compute `before_date` as `cursor_committed_at` minus 1 day (the
+   1-day margin ensures no items are missed around the boundary —
+   reprocessing is idempotent)
+2. Call `rev_list_before(repo_path, before_date)` to find the boundary
+   SHA — the most recent commit before `before_date`
+3. If `rev_list_before` returns `None` (no commit exists before
+   `before_date` — the repository history does not extend that far
+   back):
+   a. Log WARNING: "Recovery boundary not found — repository may have
+      been completely rewritten. Treating as first-run. Cursor reset to
+      HEAD. Use fetch_single() to recover specific items if needed."
+   b. Return empty list
+4. Call `diff_names(repo_path, boundary_sha, head_sha)` with
+   `recovery_path_prefix` as path filter
+5. Return the file list
+
+**Edge case rationale (step 3)**: this scenario requires that ALL
+commits reachable from HEAD have dates more recent than the stored
+`cursor_committed_at - 1 day`. For repositories like cvelistV5
+(history since 2022) or vulns.git (history since 2024), this is
+virtually impossible — it would require complete repository recreation
+with new commit dates. The first-run treatment (cursor advances to
+HEAD, zero items processed) is the correct response: the fetcher
+restarts cleanly and `fetch_single()` is available for manual recovery
+of specific items.
+
+**Exceptions**: propagates `GitCorruptionError` from `rev_list_before()`
+(step 2) and `diff_names()` (step 4).
+
+#### Registry Detection Predicate Update
+
+The existing `get_fetch_single_fetchers()` and
+`get_catch_up_fetchers()` registry accessors use an MRO-based detection
+predicate that walks the class hierarchy to find `fetch_single` defined
+on any intermediate class (e.g., `BaseGitFetcher`) while still excluding
+`BaseFetcher` itself. Since `BaseGitFetcher` subclasses inherit
+`fetch_single()` without overriding it, this ensures they are correctly
+detected and dispatched for on-demand fetches.
+
+#### When NOT to Use `BaseGitFetcher`
+
+`BaseGitFetcher` is NOT a requirement for all fetchers that interact
+with git repositories. It is the correct choice only for fetchers that
+follow the standard delta-based flow (clone → fetch → SHA reachability
+→ delta detection → per-item processing → cursor advance).
+
+A future git-based fetcher MUST inherit from `BaseFetcher` directly
+(using `git_operations.py` as a utility module) when:
+
+- It requires multi-branch tracking (the template assumes
+  single-branch, single HEAD)
+- It uses sparse checkout or non-standard clone strategies not
+  expressible via the class attributes
+- Its delta detection is not commit-range based (e.g., full tree scan,
+  tag-based comparison)
+- It needs non-linear traversal (e.g., walking merge commits
+  individually)
+- Its processing flow has steps between delta detection and per-item
+  processing that cannot be expressed as a filter hook
+
+In these cases, `BaseFetcher` + `git_operations.py` provides the same
+subprocess utilities without imposing a fixed execution order.
 
 ## Fetcher Documentation Requirements
 
