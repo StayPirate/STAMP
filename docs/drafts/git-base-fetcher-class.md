@@ -140,7 +140,7 @@ automatically.
 
 | Attribute | Value | Description |
 |-----------|-------|-------------|
-| `abstract` | `True` | Prevents registration in `FETCHER_REGISTRY` (intermediate class, not a concrete fetcher). Concrete subclasses inherit `abstract = False` from `BaseFetcher` default and are registered normally |
+| `abstract` | `True` | Prevents registration in `FETCHER_REGISTRY` (intermediate class, not a concrete fetcher). Concrete subclasses do not set `abstract` in their own class body; `__init_subclass__` checks `cls.__dict__.get('abstract', False)` and proceeds with registration when the attribute is absent from the subclass's own namespace |
 | `queue` | `"git"` | Celery queue for worker affinity. Ensures tasks execute on the worker with the git volume mounted. Inherited from `BaseFetcher` interface (default `None`), overridden at the `BaseGitFetcher` level |
 
 These configurable attributes are also exposed in each fetcher's
@@ -764,11 +764,25 @@ This expands the currently vague "Async functions for each git
 operation category" description into a concrete, implementable
 interface specification.
 
-### Step 3: Update "Implementation Location" and "Design Principles"
+**Note on "Bare Clone Pattern" section** (lines 1123-1158): this
+section remains as a high-level narrative introduction to the git-based
+fetcher pattern. It is NOT updated or removed — it serves as a
+conceptual overview for readers before they encounter the formal
+Function Catalog and `BaseGitFetcher` class specification. The one
+difference is that it mentions `git ls-tree -r --name-only HEAD`
+(first-run file enumeration) which is not in the Function Catalog
+because `BaseGitFetcher` does not enumerate files on first-run (it
+records HEAD only). This is acceptable — the "Bare Clone Pattern"
+documents the general capabilities available to git-based fetchers,
+while the Function Catalog documents the specific functions that
+`git_operations.py` exposes. A future non-`BaseGitFetcher` fetcher
+could use `ls-tree` via a direct `git_operations` call if needed.
+
+### Step 3: Update "Implementation Location", "Design Principles", and "Worker Affinity"
 
 **File**: `docs/features/platform/fetcher-infrastructure.md`
 
-**Changes** (lines 1461-1476):
+**Changes** (lines 1461-1476, "Implementation Location" / "Design Principles"):
 
 Replace:
 
@@ -794,6 +808,29 @@ With:
 > Fetchers that inherit from `BaseFetcher` directly retain full control
 > over their execution flow, using the utility functions as building
 > blocks.
+
+**Changes** (lines 1264-1268, "Worker Affinity" section):
+
+Replace:
+
+> - **Routing**: git-based fetcher tasks declare
+>   `queue = "git"` in their task configuration
+> - **`queue` class attribute on BaseFetcher**: `BaseFetcher` defines a
+>   `queue: str | None = None` class attribute (default = default Celery
+>   queue). Git-based fetchers override it to `"git"`. Non-git fetchers
+>   that omit it are routed normally — safe by default
+
+With:
+
+> - **Routing**: `BaseGitFetcher` sets `queue = "git"` as a fixed class
+>   attribute — all concrete subclasses inherit this value automatically.
+>   Fetchers that inherit from `BaseFetcher` directly and need git queue
+>   affinity set it in their own class body
+> - **`queue` class attribute on BaseFetcher**: `BaseFetcher` defines a
+>   `queue: str | None = None` class attribute (default = default Celery
+>   queue). `BaseGitFetcher` overrides it to `"git"` for the entire
+>   git-fetcher hierarchy. Non-git fetchers that omit it are routed
+>   normally — safe by default
 
 ### Step 4: Update First-Run Detection and replace Recovery algorithm
 
@@ -892,6 +929,24 @@ With:
 >   format). Used as the recovery boundary when the cursor SHA becomes
 >   unreachable (see "Cursor SHA Unreachable" below)
 
+**Change 4** — in the "Recovery" section, "Volume loss" list item 5
+(lines 1321-1326), replace:
+
+> 5. If not reachable (upstream force-push, branch deletion, or SHA
+>    garbage-collected): apply the fetcher's time-bounded recovery
+>    strategy. Each fetcher defines its own recovery window and file
+>    filter (see the individual fetcher spec). The shared infrastructure
+>    provides only the detection mechanism (`git cat-file -t`) and the
+>    re-clone procedure; the recovery delta policy is fetcher-specific
+
+With:
+
+> 5. If not reachable (upstream force-push, branch deletion, or SHA
+>    garbage-collected): apply the date-based recovery strategy (see
+>    "Cursor SHA Unreachable" below). For `BaseGitFetcher` subclasses
+>    this is handled automatically by `execute()` — only
+>    `recovery_path_prefix` varies per fetcher
+
 ### Step 5: Add naming convention
 
 **File**: `docs/conventions.md`
@@ -911,23 +966,27 @@ a new bullet:
 **File**: `docs/features/platform/fetcher-infrastructure.md`
 
 **Change 1** — in `get_fetch_single_fetchers()` (around line 489),
-replace the detection predicate description:
+replace the **entire** `**Detection predicate**:` paragraph (from the
+bold label through "inheritance alone is insufficient."):
 
 Replace:
 
-> `'fetch_single' in cls.__dict__` checks for a concrete
-> implementation on the class itself, not inherited methods. This
-> prevents false positives if `BaseFetcher` ever declares
+> **Detection predicate**: `'fetch_single' in cls.__dict__` checks for
+> a concrete implementation on the class itself, not inherited methods.
+> This prevents false positives if `BaseFetcher` ever declares
 > `fetch_single` as abstract or raising `NotImplementedError`.
 > Consequence: concrete subclasses that inherit `fetch_single()` from
 > a parent class without overriding it are NOT returned by this
-> accessor and will NOT be dispatched for on-demand fetches.
+> accessor and will NOT be dispatched for on-demand fetches. If a
+> concrete fetcher needs `fetch_single()` behavior, it MUST define or
+> override the method in its own class body — inheritance alone is
+> insufficient.
 
 With:
 
-> The detection predicate walks the class's MRO (Method Resolution
-> Order), checking for `fetch_single` in each class's `__dict__`,
-> excluding `BaseFetcher` and `object`:
+> **Detection predicate**: the predicate walks the class's MRO (Method
+> Resolution Order), checking for `fetch_single` in each class's
+> `__dict__`, excluding `BaseFetcher` and `object`:
 >
 > ```python
 > any(
@@ -946,13 +1005,15 @@ With:
 > by this accessor and WILL be dispatched for on-demand fetches.
 
 **Change 2** — in `get_catch_up_fetchers()` (around line 607),
-replace the `fetch_single` detection check with the same MRO-based
-predicate. Update the description:
+replace the `fetch_single` detection check (item 2 of the numbered
+list, including the parenthetical examples on line 609) with the same
+MRO-based predicate. Update the description:
 
 Replace:
 
 > `'fetch_single' in cls.__dict__` — fetcher implements
 > `fetch_single()`, which means it inherits the default `catch_up()`
+> (CVE fetchers like `SyncRedhatCves`, `SyncNvdCves`)
 
 With:
 
@@ -960,6 +1021,8 @@ With:
 > `get_fetch_single_fetchers()`) — fetcher implements
 > `fetch_single()` at any level in its hierarchy (excluding
 > `BaseFetcher`), which means it inherits the default `catch_up()`
+> (CVE fetchers like `SyncRedhatCves`, `SyncNvdCves`,
+> `SyncMitreCves`, `SyncKernelCves`)
 
 **Change 3** — in the default `catch_up()` implementation (around
 line 557), update the guard:
@@ -982,14 +1045,48 @@ With:
 >     return  # no fetch_single in hierarchy, no default catch_up
 > ```
 
+**Change 4** — in the "Abstract fetcher exemption" paragraph (around
+line 993), replace the **entire** paragraph (from the bold label
+through "as the detection predicate."):
+
+Replace:
+
+> **Abstract fetcher exemption**: fetcher classes with `abstract = True`
+> (which opt out of registration per the existing `__init_subclass__`
+> contract) are exempt from rules 6-8. This allows intermediate abstract
+> classes (e.g., a hypothetical `BaseCveFetcher(BaseFetcher,
+> abstract=True)`) to define `fetch_single()` without declaring
+> `cve_source_type`. Concrete subclasses MUST override `fetch_single()` in
+> their own class body (not rely on inheritance alone) and declare their
+> own `cve_source_type` — both rule 6 and `get_fetch_single_fetchers()`
+> use `'fetch_single' in cls.__dict__` as the detection predicate.
+
+With:
+
+> **Abstract fetcher exemption**: fetcher classes with `abstract = True`
+> (which opt out of registration per the existing `__init_subclass__`
+> contract) are exempt from rules 6-8. This allows intermediate abstract
+> classes (e.g., `BaseGitFetcher(BaseFetcher, abstract=True)`) to define
+> `fetch_single()` without declaring `cve_source_type`. Concrete
+> subclasses of such intermediate classes inherit `fetch_single()` via
+> the MRO and are correctly detected by the MRO-based predicate in
+> `get_fetch_single_fetchers()` — they do NOT need to override
+> `fetch_single()` in their own class body. They MUST still declare
+> their own `cve_source_type` (rule 6 applies to all registered
+> fetchers with `fetch_single()` capability).
+
 ### Step 7: Simplify MITRE fetcher specification
 
 **File**: `docs/features/tickets/cve-tracking.md`
 
-**Change 1** — extend properties table (after line 527) with
-`BaseGitFetcher` attributes, and rename existing recovery-related rows
-to match the new attribute names
-(`Recovery file filter` → `recovery_path_prefix`):
+**Change 1** — replace the properties table rows for recovery and add
+`BaseGitFetcher` attributes. Specifically:
+
+- **Remove** `| Recovery window | 2 weeks |` (parameter eliminated by
+  date-based recovery)
+- **Remove** `| Recovery file filter | \`cves/\` |` (superseded by
+  `recovery_path_prefix` below)
+- **Add** the following rows:
 
 ```markdown
 | Inherits | `BaseGitFetcher` |
@@ -1021,20 +1118,49 @@ delta detection, state persistence) with:
    upsert_cve, upsert_references)
 3. **Phase 2 side effects** — current step 7 text preserved unchanged
 
+**Change 4** — update the "Storage and Recovery" section (lines
+772-794). Replace:
+
+> **Recovery strategy**: both `sync_mitre_cves` and `sync_kernel_cves`
+> follow the shared "Recovery Strategy (Cursor SHA Unreachable)"
+> convention in `docs/features/platform/fetcher-infrastructure.md`
+> (Git-Based Fetchers section).
+>
+> Fetcher-specific parameters:
+>
+> | Fetcher | `recovery_window` | `recovery_file_filter` |
+> |---|---|---|
+> | `sync_mitre_cves` | 2 weeks | `cves/` |
+> | `sync_kernel_cves` | 2 weeks | `cve/` |
+
+With:
+
+> **Recovery strategy**: both `sync_mitre_cves` and `sync_kernel_cves`
+> inherit recovery handling from `BaseGitFetcher.execute()` — see
+> `docs/features/platform/fetcher-infrastructure.md` (BaseGitFetcher
+> Class, "Cursor SHA Unreachable"). The date-based recovery algorithm
+> uses the `committed_at` field stored in the cursor; only
+> `recovery_path_prefix` varies per fetcher (declared in the
+> properties table above).
+
 **Preserved sections** (no changes): CVE JSON 5.x Field Path Mapping,
-`fetch_single()` Implementation, Git Concurrency Rules, Storage and
-Recovery, Error Handling. These sections document behavior specific to
-this fetcher's hooks or already reference the shared infrastructure.
+`fetch_single()` Implementation, Git Concurrency Rules, Error Handling.
+These sections document behavior specific to this fetcher's hooks or
+already reference the shared infrastructure.
 
 ### Step 8: Simplify kernel fetcher specification
 
 **File**: `docs/features/tickets/cve-tracking.md`
 
-**Change 1** — extend properties table (after line 827) with
-`BaseGitFetcher` attributes, remove the existing `| Queue | "git" |`
-row (now inherited from `BaseGitFetcher`), and rename existing
-recovery-related rows to match the new attribute names
-(`Recovery file filter` → `recovery_path_prefix`):
+**Change 1** — replace the properties table rows for recovery, remove
+the queue row, and add `BaseGitFetcher` attributes. Specifically:
+
+- **Remove** `| Queue | "git" |` (now inherited from `BaseGitFetcher`)
+- **Remove** `| Recovery window | 2 weeks |` (parameter eliminated by
+  date-based recovery)
+- **Remove** `| Recovery file filter | \`cve/\` |` (superseded by
+  `recovery_path_prefix` below)
+- **Add** the following rows:
 
 ```markdown
 | Inherits | `BaseGitFetcher` |
