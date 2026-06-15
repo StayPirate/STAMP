@@ -385,7 +385,36 @@ cursor advances to HEAD.
 ### `fetch_single()` Integration
 
 `BaseGitFetcher` provides a default `fetch_single()` implementation
-that concrete subclasses can use or override.
+that concrete subclasses inherit automatically (no override needed).
+
+#### Registry Detection Predicate Update
+
+The existing `get_fetch_single_fetchers()` and
+`get_catch_up_fetchers()` registry accessors use `'fetch_single' in
+cls.__dict__` as the detection predicate — which only finds methods
+defined directly on the class, not inherited ones. Since
+`BaseGitFetcher` subclasses inherit `fetch_single()` without
+overriding it, the predicate must be updated to walk the MRO (Method
+Resolution Order):
+
+```python
+any(
+    'fetch_single' in klass.__dict__
+    for klass in cls.__mro__
+    if klass is not BaseFetcher and klass is not object
+)
+```
+
+This detects `fetch_single()` defined on any intermediate class
+(e.g., `BaseGitFetcher`) while still excluding `BaseFetcher` itself
+(which may declare an abstract stub in the future). The same update
+applies to the `catch_up()` detection logic in
+`get_catch_up_fetchers()` and the guard in `BaseFetcher.catch_up()`
+(`if 'fetch_single' not in type(self).__dict__`).
+
+**No false positives**: fetchers that inherit directly from
+`BaseFetcher` without `fetch_single()` anywhere in their MRO
+(excluding `BaseFetcher` and `object`) are correctly excluded.
 
 **Behavior**:
 
@@ -747,7 +776,7 @@ With:
 > over their execution flow, using the utility functions as building
 > blocks.
 
-### Step 4: Annotate First-Run Detection and Recovery sections
+### Step 4: Update First-Run Detection and replace Recovery algorithm
 
 **File**: `docs/features/platform/fetcher-infrastructure.md`
 
@@ -758,15 +787,68 @@ line 1226), add:
 > by `BaseGitFetcher.execute()` — concrete fetchers do not reimplement
 > it. See "BaseGitFetcher Class" below.
 
-**Change 2** — at the end of "Cursor SHA Unreachable" algorithm
-(after line 1371), add:
+**Change 2** — **replace** the "Cursor SHA Unreachable" subsection
+(lines 1334-1377) in its entirety. The new content describes the
+date-based recovery algorithm as the primary mechanism:
 
+> #### Cursor SHA Unreachable
+>
+> When a git-based fetcher's stored cursor SHA is not reachable in the
+> local clone (detected via `git cat-file -t <sha>` returning
+> non-zero), it applies a date-based recovery strategy using the
+> `committed_at` field stored in the cursor. This situation occurs
+> when:
+>
+> - The clone was rebuilt (row 4 of the First-Run Detection table)
+> - The upstream repository was force-pushed or rebased (rare for
+>   published CVE/advisory repos)
+> - Git garbage collection pruned unreachable objects (should not
+>   happen for commits reachable from HEAD, but possible with
+>   corrupted state)
+>
+> **Algorithm**:
+>
+> 1. Compute `before_date` as `cursor_committed_at` minus 1 day (the
+>    1-day margin ensures no items are missed around the boundary —
+>    reprocessing is idempotent)
+> 2. Determine boundary SHA:
+>    `git rev-list -1 --before="<before_date>" HEAD`
+> 3. If no commit exists before `before_date` (empty output — the
+>    repository history does not extend that far back): log WARNING
+>    ("Recovery boundary not found — treating as first-run"), return
+>    empty delta. Cursor advances to HEAD
+> 4. Compute delta:
+>    `git diff --name-only --diff-filter=AMCR <boundary_sha>..HEAD
+>    -- '<recovery_path_prefix>'`
+> 5. Apply the fetcher's normal file filtering and per-item processing
+>    logic (MUST be idempotent — previously ingested items produce no
+>    observable side effects on re-processing)
+> 6. Write HEAD as new cursor on completion
+>
+> Each git-based fetcher declares this parameter in its properties
+> table:
+>
+> | Parameter | Description | Example values |
+> |---|---|---|
+> | `recovery_path_prefix` | Path filter for the recovery delta
+>   command | `cves/` (MITRE), `cve/` (kernel) |
+>
+> **Advantages over a fixed window**: the date-based approach always
+> covers the exact gap regardless of how long the fetcher was offline.
+> Reprocessing overlap is always ~1 day (idempotent, negligible cost).
+> No configurable `recovery_window` parameter is needed.
+>
+> **Normal case after re-clone**: when a clone is rebuilt from the
+> same remote (row 4 of First-Run Detection), the cursor SHA is
+> almost always reachable because git history is preserved. In this
+> case, normal delta detection proceeds — no recovery is needed. The
+> recovery strategy is a fallback for the rare case where the SHA
+> truly does not exist in the fresh clone.
+>
 > For `BaseGitFetcher` subclasses, this recovery algorithm is
 > implemented by `BaseGitFetcher.execute()` — concrete fetchers only
-> declare `recovery_path_prefix` as a class attribute. The recovery
-> boundary is derived from the `committed_at` field stored in the
-> cursor (minus 1 day margin), replacing the fixed `recovery_window`
-> parameter. See "BaseGitFetcher Class" below.
+> declare `recovery_path_prefix` as a class attribute. See
+> "BaseGitFetcher Class" below.
 
 ### Step 5: Add naming convention
 
@@ -782,7 +864,83 @@ a new bullet:
   `deduplicate_items()`. Do NOT override `execute()`
 ```
 
-### Step 6: Simplify MITRE fetcher specification
+### Step 6: Update registry detection predicates
+
+**File**: `docs/features/platform/fetcher-infrastructure.md`
+
+**Change 1** — in `get_fetch_single_fetchers()` (around line 489),
+replace the detection predicate description:
+
+Replace:
+
+> `'fetch_single' in cls.__dict__` checks for a concrete
+> implementation on the class itself, not inherited methods. This
+> prevents false positives if `BaseFetcher` ever declares
+> `fetch_single` as abstract or raising `NotImplementedError`.
+> Consequence: concrete subclasses that inherit `fetch_single()` from
+> a parent class without overriding it are NOT returned by this
+> accessor and will NOT be dispatched for on-demand fetches.
+
+With:
+
+> The detection predicate walks the class's MRO (Method Resolution
+> Order), checking for `fetch_single` in each class's `__dict__`,
+> excluding `BaseFetcher` and `object`:
+>
+> ```python
+> any(
+>     'fetch_single' in klass.__dict__
+>     for klass in cls.__mro__
+>     if klass is not BaseFetcher and klass is not object
+> )
+> ```
+>
+> This detects `fetch_single()` defined on the class itself OR on any
+> intermediate class (e.g., `BaseGitFetcher`). `BaseFetcher` is
+> excluded to prevent false positives if it ever declares
+> `fetch_single` as abstract or raising `NotImplementedError`.
+> Consequence: concrete subclasses that inherit `fetch_single()` from
+> an intermediate class (like `BaseGitFetcher`) ARE correctly returned
+> by this accessor and WILL be dispatched for on-demand fetches.
+
+**Change 2** — in `get_catch_up_fetchers()` (around line 607),
+replace the `fetch_single` detection check with the same MRO-based
+predicate. Update the description:
+
+Replace:
+
+> `'fetch_single' in cls.__dict__` — fetcher implements
+> `fetch_single()`, which means it inherits the default `catch_up()`
+
+With:
+
+> MRO-based `fetch_single` detection (same predicate as
+> `get_fetch_single_fetchers()`) — fetcher implements
+> `fetch_single()` at any level in its hierarchy (excluding
+> `BaseFetcher`), which means it inherits the default `catch_up()`
+
+**Change 3** — in the default `catch_up()` implementation (around
+line 557), update the guard:
+
+Replace:
+
+> ```python
+> if 'fetch_single' not in type(self).__dict__:
+>     return  # no fetch_single, no default catch_up
+> ```
+
+With:
+
+> ```python
+> if not any(
+>     'fetch_single' in klass.__dict__
+>     for klass in type(self).__mro__
+>     if klass is not BaseFetcher and klass is not object
+> ):
+>     return  # no fetch_single in hierarchy, no default catch_up
+> ```
+
+### Step 7: Simplify MITRE fetcher specification
 
 **File**: `docs/features/tickets/cve-tracking.md`
 
@@ -826,7 +984,7 @@ delta detection, state persistence) with:
 Recovery, Error Handling. These sections document behavior specific to
 this fetcher's hooks or already reference the shared infrastructure.
 
-### Step 7: Simplify kernel fetcher specification
+### Step 8: Simplify kernel fetcher specification
 
 **File**: `docs/features/tickets/cve-tracking.md`
 
@@ -849,7 +1007,7 @@ recovery-related rows to match the new attribute names
 
 **Change 2** — replace algorithm steps 1-3 and step 8 (clone, fetch,
 delta detection, store cursor) with the same reference paragraph as
-Step 6:
+Step 7:
 
 > Clone management, fetch, SHA reachability check, delta detection,
 > recovery strategy, and cursor persistence are handled by
@@ -873,7 +1031,7 @@ Step 6:
 Rejection Handling, Key Differences from MITRE, `fetch_single()`
 Implementation, field mapping tables.
 
-### Step 8: Verify with reviewers
+### Step 9: Verify with reviewers
 
 Invoke the following reviewers to verify the applied changes are
 correct and coherent:
@@ -895,7 +1053,7 @@ correct and coherent:
    new class specification has no functional gaps (missing edge cases,
    undefined behavior, ambiguous contracts)
 
-### Step 9: Delete this draft
+### Step 10: Delete this draft
 
 Remove `docs/drafts/git-base-fetcher-class.md` from the repository.
 The draft's content has been fully incorporated into the approved
@@ -1035,8 +1193,32 @@ read-category operation completing in milliseconds.
 
 ## Open Items
 
-- [ ] Execute reviewers on this draft to validate the design before
-  applying the Application Plan: `@spec-gap-analyzer` (check for
-  functional gaps in the BaseGitFetcher design) and
-  `@spec-coherence-reviewer` (verify the draft does not contradict
-  existing content in `fetcher-infrastructure.md`)
+- [ ] **Show file returns None — failure vs. skip** (gap 2.4): when a
+  file appears in the delta but does not exist at HEAD (added then
+  deleted between cursor and HEAD), step 10b calls `record_failed()`.
+  Decide whether this should be a failure (inflates metrics, may
+  trigger safety check) or a silent skip (log at DEBUG, no metric
+  recorded). Consider: for CVE repos, this can happen when a CVE is
+  published then immediately moved to rejected/
+
+- [ ] **Transaction boundaries in processing loop** (gap 2.3): the
+  spec does not specify whether each `process_item()` call operates in
+  its own transaction/savepoint or whether all items share a single
+  session. If item N causes an unhandled IntegrityError, the session
+  may become unusable for items N+1..M. Decide: per-item savepoints,
+  per-item commits, or single batch transaction with
+  rollback-on-error semantics
+
+- [ ] **Recovery edge case status: `partial` vs. `success`** (C3):
+  when `_compute_recovery_delta()` returns an empty list (no boundary
+  commit found — repository completely rewritten), the run completes
+  with `success` status (zero items, cursor advances). The existing
+  spec prescribes `partial` for the analogous edge case. Decide which
+  status is correct and align. Note: with date-based recovery, this
+  scenario is virtually impossible for CVE repos
+
+- [ ] **Cursor Persistence format update** (C1): the Application Plan
+  must include a step that updates the "Cursor Persistence" section of
+  `fetcher-infrastructure.md` (currently at line 1168) to reflect the
+  new cursor format `{"sha": "...", "committed_at": "..."}`. Without
+  this, the spec would contain two contradictory format definitions
