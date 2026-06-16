@@ -68,7 +68,7 @@ the MITRE and Red Hat fetcher sections in the same document.
 | OP-D | Extract CVSS v2 from NVD? | Yes — store with version `"2.0"` | **Yes** — Session 1 |
 | OP-E | Extract CVSS v4.0 from NVD? | Yes — extract from `cvssMetricV40` | **Yes** — Session 1 |
 | OP-F | Confirm `source_reference_url_pattern`? | Yes — `"https://nvd.nist.gov/vuln/detail/{cve_id}"` | **Yes** — Session 4 |
-| OP-G | Extract `cve.cveTags` (specifically `disputed`)? | TBD | **No** — ignore. See rationale below |
+| OP-G | Extract `cve.cveTags` (specifically `disputed`)? | No — informational metadata, no operational impact | **No** — ignore. See rationale below |
 | OP-H | Extract CISA KEV fields embedded in CVE response? | Defer to `sync_cisa_kev` | **Defer** — `sync_mitre_cves` already populates `kev_data` from CISA-ADP container |
 | OP-I | Handle `NVD-CWE-Other` and `NVD-CWE-noinfo`? | Skip — these are placeholders, not real CWEs | **Skip** — Session 1 |
 | OP-J | `title` field — NVD has no dedicated title. Behavior? | Leave NULL — NVD does not provide titles | **NULL** — Session 1 |
@@ -124,6 +124,15 @@ if the decision is reversed in the future.
 |---|---|
 | `Received`, `AwaitingAnalysis`, `UndergoingAnalysis`, `Analyzed`, `Modified`, `Deferred` | `PUBLISHED` |
 | `Rejected` | `REJECTED` |
+| Any other value | `PUBLISHED` |
+
+**Unknown `vulnStatus` handling**: if the NVD API returns a
+`vulnStatus` value not listed above (e.g., a future NVD analysis
+state), map it to `PUBLISHED` and log WARNING with CVE-ID and the
+unrecognized value. Rationale: all current non-REJECTED NVD states
+represent analysis workflow stages that do not affect Sentinel's
+operational behavior — a new analysis state would follow the same
+pattern.
 
 ##### Table 2: CVSS metrics (from `.metrics`)
 
@@ -157,9 +166,12 @@ NVD provides up to four metric arrays: `cvssMetricV2[]`,
    `(source, type)` within a metric array, use the **last** entry in
    array order
 
-**NVD Source API resolution failure**: if the Source API cache does not
-contain a mapping for a Secondary entry's `source` email, use the raw
-email address as `provider_name` (fallback). Do NOT skip the entry.
+**NVD Source API resolution failure**: if the Source API cache is
+unavailable (degraded mode) or does not contain a mapping for a
+specific Secondary entry's `source` email, use the raw email address
+as `provider_name` (fallback). Do NOT skip the entry. See "NVD Source
+API Failure Handling" (Session 3, Section 4) for the complete degraded
+mode specification and orphan row implications.
 
 **Ignored metric fields**: `baseScore`, `baseSeverity`, `version` from
 `cvssData` (all derived locally from vector). `exploitabilityScore`,
@@ -186,7 +198,8 @@ email address as `provider_name` (fallback). Do NOT skip the entry.
 4. `source` resolution:
    - `type == "Primary"` → `source = "NVD"`
    - `type == "Secondary"` → resolve email to display name via Source
-     API (fallback: raw email)
+      API (fallback: raw email — see "NVD Source API Failure Handling"
+      for degraded mode and orphan row implications)
 5. **Deduplication**: same `(cwe_id, source)` across entries → DB UPSERT
    handles (last write wins)
 
@@ -231,18 +244,11 @@ References are NOT part of `CVEIngestPayload`. After
 | `type` | derived from `.references[].tags[]` | Via CVE Source Tag Mapping (see `ticket-references.md`) |
 | `source` | `"sync_nvd_cves"` | Constant: fetcher name |
 
-**Tag → ReferenceType mapping** (from `ticket-references.md`):
-
-| NVD Tag | ReferenceType |
-|---|---|
-| `Patch` | `patch` |
-| `Vendor Advisory`, `Third Party Advisory`, `US Government Resource`, `VDB Entry` | `advisory` |
-| `Issue Tracking` | `issue` |
-| `Exploit`, `Mailing List`, `Release Notes`, `Technical Description`, `Mitigation`, `Press/Media Coverage`, `Tool Signature` | `article` |
-| `Broken Link`, `Not Applicable`, `Permissions Required`, `URL Repurposed`, `Product`, no tags | `NULL` |
-
-Multiple tags on same reference: highest-priority type wins
-(`patch` > `advisory` > `issue` > `article`).
+**Tag → type mapping**: derived from `.references[].tags[]` via the
+CVE Source Tag Mapping defined in
+[`ticket-references.md`](ticket-references.md#cve-source-tag-mapping)
+(NVD column). When multiple tags are present on the same reference,
+the highest-priority type wins per the priority rule in that section.
 
 ##### Table 6: Explicitly ignored fields
 
@@ -328,8 +334,11 @@ effects) remain unchanged.
         &resultsPerPage={results_per_page}
       ```
    c. Parse response envelope:
-      - `total_results` = response `.totalResults`
       - `vulnerabilities` = response `.vulnerabilities[]`
+      - On the **first page only**: `total_results` = response
+        `.totalResults` (used as the fixed exit threshold for the
+        entire pagination loop — see `totalResults` stability note
+        below)
    d. **Empty response short-circuit**: if `total_results == 0` on the
       first page, terminate the run successfully with
       `records_created = 0`, `records_updated = 0`, `records_failed = 0`.
@@ -345,6 +354,15 @@ effects) remain unchanged.
       Limiting" below). If retries exhausted, raise exception
       immediately — run aborts with `status = failure`, cursor does not
       advance (see Session 3, "Page Failure Handling")
+
+**`totalResults` stability**: the `totalResults` value is read from
+the **first page only** and used as the fixed exit threshold for the
+entire pagination loop. Subsequent pages may report a different
+`totalResults` (NVD dataset changes during pagination); these values
+are ignored. This prevents infinite loops in an expanding dataset and
+ensures a bounded run duration. CVEs modified after the first page
+request are captured by the next scheduled run (within the 15-minute
+overlap buffer).
 
 5. Phase 2 side effects (unchanged): package resolution from all
    available sources, critical CVE notification (CVSS >= 9.0)
@@ -546,17 +564,31 @@ pagination loop. If this call fails:
   `"secalert@redhat.com"` instead of `"Red Hat"`)
 - This is the same fallback already specified in Session 1 ("if Source
   API cache does not contain a mapping, use the raw email address")
-- On the next run where the Source API is available, the UPSERT
-  overwrites with the resolved display name
+- On the next run where the Source API is available, **new** entries
+  are stored with the resolved display name. Previously-stored
+  degraded-mode entries with the raw email address are NOT overwritten
+  (different UPSERT key) — see orphan row caveat below
 
 **Failure conditions triggering degraded mode**: HTTP 5xx, HTTP 429,
-connection timeout, DNS resolution failure. A single attempt is made
-(no retry for the Source API — it is non-critical).
+HTTP 403, other 4xx, connection timeout, DNS resolution failure. A
+single attempt is made (no retry for the Source API — it is
+non-critical).
 
 **Rationale**: provider name resolution is cosmetic. The critical data
 (vector string, score, version) is independent of the Source API.
 Blocking CVE ingestion because a display-name lookup fails is
 disproportionate.
+
+**Orphan row caveat**: the UPSERT conflict key is
+`(cve_id, provider_name, cvss_version)`. If a degraded-mode run stores
+`provider_name = "secalert@redhat.com"` and a subsequent normal run
+stores `provider_name = "Red Hat"`, these produce **different keys** —
+the degraded-mode row persists as an orphan. Impact: cosmetic only (the
+severity resolution cascade picks the highest score regardless of
+provider name duplication; the direct-source fetcher independently
+writes the canonical row). No cleanup mechanism is provided. Orphan
+rows are harmless but accumulate until a future data-quality sweep
+removes them.
 
 ##### 5. Secondary CVSS Skip Logic — Removed
 
@@ -647,18 +679,29 @@ normally (extract all available data, upsert via `cve_service`). The
 rejection handling is the responsibility of `cve_service.upsert_cve()`,
 not of the fetcher.
 
+**Post-upsert reference creation**: after `upsert_cve()` returns an
+`UpsertResult`, call `reference_service.upsert_references()` with:
+- The NVD source reference URL
+  (`https://nvd.nist.gov/vuln/detail/{cve_id}`, title `"NVD"`,
+  type `advisory`, source `"sync_nvd_cves"`)
+- All upstream references from the CVE response (`.references[]`),
+  classified via the CVE Source Tag Mapping in
+  [`ticket-references.md`](ticket-references.md#cve-source-tag-mapping)
+
+This is identical to the `execute()` path (Session 1, Table 5).
+Without this step, on-demand fetches would not create NVD references.
+
 **Rate limiting**: not applicable. `fetch_single()` performs a single
 HTTP request (plus optionally one Source API call). No
 `request_delay_seconds` sleep. HTTP 429 is handled by the Celery retry
 policy (5s → 10s → 20s).
 
-**Signaling convention** (standard for all CVE fetchers):
-
-| Behavior | Meaning | Orchestrator action |
-|----------|---------|---------------------|
-| Returns normally | Data written via `upsert_cve()` | `status = success` (already written by `upsert_cve` via `record_source_status`) |
-| Raises `CVENotInSource` | CVE not present in NVD | `record_source_status(session, cve_id, self.cve_source_type, "missing")` |
-| Raises other exception | Transient error | Celery retries → then `record_source_status(session, cve_id, self.cve_source_type, "failure")` |
+**Signaling convention**: follows the standard `fetch_single` signaling
+convention defined in
+[`fetcher-infrastructure.md`](../platform/fetcher-infrastructure.md#fetch_single-signaling-convention).
+Returns normally on success (data written via `upsert_cve()` +
+`reference_service`), raises `CVENotInSource` when `totalResults == 0`,
+propagates other exceptions for Celery retry.
 
 ##### 2. Error Handling — `fetch_single()` (on-demand)
 
@@ -687,6 +730,7 @@ cause `failure`.
 |-----------|--------|
 | HTTP 429 (after 3 retries on page) | Raise `FetcherError` — run aborts, `status = failure` |
 | HTTP 5xx | Raise `FetcherError` — run aborts |
+| HTTP 403 or other 4xx (not 429) | Raise `FetcherError` — run aborts (non-retryable infrastructure issue) |
 | Network timeout / connection refused | Raise `FetcherError` — run aborts |
 | Unparseable page response (malformed JSON envelope) | Raise `FetcherError` — run aborts |
 
@@ -694,7 +738,7 @@ cause `failure`.
 
 | Condition | Action | Metric |
 |-----------|--------|--------|
-| CVE processed successfully (all or partial data extracted) | Upsert via `cve_service` | `record_created` (new) or `record_updated` (existing) |
+| CVE processed successfully (all or partial data extracted) | Upsert via `cve_service` | `record_created` if `UpsertResult.action == "created"`, `record_updated` if `action == "updated"`. If `action == "unchanged"` (UPSERT no-op), no metric is recorded for that CVE |
 | CVE structurally non-processable (`.id` absent, entry-level malformed JSON) | Log ERROR, skip CVE | `record_failed()` |
 
 **Partial extraction model** (within a processable CVE):
@@ -722,6 +766,7 @@ sanitized `FetcherError` messages for page-level abort conditions:
 |---|---|
 | Connection error | `"Failed to connect to NVD API"` |
 | HTTP 5xx | `"NVD API returned HTTP {status_code}"` |
+| HTTP 403 or other client error | `"NVD API returned HTTP {status_code}"` |
 | HTTP 429 (retries exhausted) | `"NVD API rate limit exceeded — retries exhausted"` |
 | Request timeout | `"NVD API request timed out"` |
 | Unparseable page response | `"NVD API returned unparseable response"` |
@@ -758,6 +803,8 @@ class SyncNvdCves(BaseFetcher):
         GET /rest/json/cves/2.0?cveId={cve_id}
 
         Calls Source API to resolve secondary provider display names.
+        Upserts CVE data via cve_service, then creates/updates references
+        via reference_service.
         Raises CVENotInSource if totalResults == 0.
         Rejected CVEs are processed normally (extraction + upsert).
         """
@@ -808,11 +855,37 @@ Each item specifies the exact file, location, and content to write.
 the line before `### Fetcher: sync_mitre_cves`) with the complete new
 specification assembled from sessions 1-4.
 
-**New content**:
+**New content structure** (assembled from session outputs, in this exact
+order):
 
-```
-[PENDING — assembled from session outputs]
-```
+1. **Properties Table** — Session 4, §6 (Updated Properties Table)
+2. **Class Structure** — Session 4, §5 (pseudo-code with docstrings)
+3. **Custom Settings** — Session 2 (settings table + operational notes)
+4. **Algorithm** — Session 2 (Revised Algorithm Steps 1–5)
+   - NVD Date Format (sub-section from Session 2)
+   - Rate Limiting (sub-section from Session 2)
+5. **Field Mapping** — Session 1 (Tables 1–7 in order: Global CVE
+   fields, CVSS metrics, CWE/weaknesses, CPE configurations,
+   References, Explicitly ignored fields, CVSS deduplication rules)
+6. **NVD Source API Caching** — existing text (lines 470–477), retained
+   as-is
+7. **First Run and >120-day Gap Handling** — Session 3, §1
+8. **Overlap Buffer** — Session 3, §2
+9. **Cursor Mechanism** — Session 3, §7
+10. **`fetch_single(cve_id)`** — Session 4, §1 (API call, Source API
+    resolution, response parsing, CVENotInSource conditions, post-upsert
+    reference creation, signaling convention)
+11. **Error Handling** — combined from Session 4, §2–§4:
+    - `fetch_single()` error table (Session 4, §2)
+    - `execute()` page-level failures (Session 4, §3)
+    - Per-CVE handling + Partial extraction model (Session 4, §3)
+    - Sanitized error messages (Session 4, §4)
+12. **NVD Source API Failure Handling (Degraded Mode)** — Session 3, §4
+    (including orphan row caveat)
+13. **Secondary CVSS Skip Logic — Removed** — Session 3, §5 (rationale
+    for removal; explains deviation from current spec step 3e)
+14. **Data Preservation on Rejection** — Session 3, §6
+    (cross-reference to existing shared section)
 
 ### Step 1b: Update "Common First Run Behavior" in `cve-tracking.md`
 
@@ -827,6 +900,42 @@ section (line 387-388) to match the cursor-only strategy.
   (now - 7 days) as a bootstrap window, then proceeds incrementally`
 - **After**: `sync_nvd_cves: records the current timestamp as cursor
   (via started_at) without fetching any data`
+
+### Step 1c: Add "Common CVE Fetcher Metrics" section to `cve-tracking.md`
+
+**File**: `docs/features/tickets/cve-tracking.md`
+
+**Action**: Add a new section after "Common First Run Behavior"
+(line ~403) and before `### Fetcher: sync_nvd_cves`:
+
+```markdown
+### Common CVE Fetcher Metrics
+
+Unless otherwise specified per-fetcher, CVE fetchers use these metric
+definitions:
+
+- `record_created`: a new CVE record was inserted (first time seen from
+  this source)
+- `record_updated`: an existing CVE record was updated (metadata, CVSS
+  assessments, CWE, references, or other enrichment data changed). If
+  `upsert_cve()` produces no changes (all upserts are no-ops), no
+  metric is recorded for that CVE
+- `record_failed`: a CVE could not be processed (structural parse
+  error, unrecognized field values, or database constraint violation)
+
+Individual fetcher sections below document only deviations from these
+definitions.
+```
+
+Additionally, remove the per-fetcher `#### Metrics` sections that are
+now redundant (they add no information beyond the common section):
+
+- `sync_nvd_cves`: omit `#### Metrics` when assembling the new section
+  (no deviation from common)
+- `sync_mitre_cves` (lines 779-784): delete
+- `sync_kernel_cves` (lines 1097-1102): delete
+- `sync_redhat_cves`: **KEEP** (documents deviations: `record_created`
+  = N/A, detailed `record_updated` semantics)
 
 ### Step 2: Update Fetcher Registry in `data-sources.md`
 
@@ -870,6 +979,103 @@ NVD fields map to existing `CVEIngestPayload` fields:
 No new environment variables are introduced — `request_delay_seconds`
 and `results_per_page` are custom settings (stored in
 `FetcherConfig.custom_settings` JSONB, managed via admin dashboard).
+
+### Step 4b: Fix pre-existing inaccuracies in `cvss-scoring.md` (versions and sync scope)
+
+**File**: `docs/features/tickets/cvss-scoring.md`
+
+**Action 1** (T3 — NVD Primary section, lines 136-138): Replace:
+
+- **Before**:
+  ```
+  - **CVSS versions**: currently v3.1; v4.0 expected in the future
+  - **Fetch mechanism**: extracted from `cvssMetricV31` and `cvssMetricV40`
+    arrays in the NVD CVE API response
+  ```
+- **After**:
+  ```
+  - **CVSS versions**: v2.0, v3.0, v3.1, and v4.0 (all metric arrays
+    present in the NVD API response are extracted)
+  - **Fetch mechanism**: extracted from `cvssMetricV2`, `cvssMetricV30`,
+    `cvssMetricV31`, and `cvssMetricV40` arrays in the NVD CVE API
+    response
+  ```
+
+**Action 2** (C3 — Sync Scope section, lines 349-356): Replace:
+
+- **Before**:
+  ```
+  CVSS sync (both NVD incremental and Red Hat re-fetch) is performed only
+  for CVEs with **active tickets** — tickets in status `New`, `Analysis`, or
+  `Analyzed` (see `docs/data-model.md` for the authoritative definition of
+  active tickets).
+
+  When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, Sentinel
+  stops monitoring CVSS updates for that CVE. The existing CVSS data remains
+  in the database but is no longer refreshed.
+  ```
+- **After**:
+  ```
+  CVSS sync scope varies by fetcher:
+
+  - **NVD** (`sync_nvd_cves`): global scope — fetches all CVEs modified
+    in the time window, regardless of ticket status. Persistence is
+    unrestricted (consistent with the Data Convention below)
+  - **Red Hat** (`sync_redhat_cves`): scoped to CVEs with **active
+    tickets** — tickets in status `New`, `Analysis`, or `Analyzed` (see
+    `docs/data-model.md` for the authoritative definition of active
+    tickets). This restriction exists because the Red Hat API requires
+    per-CVE lookups (no bulk/incremental endpoint)
+
+  When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`,
+  Red Hat CVSS sync stops monitoring that CVE. NVD data continues to be
+  persisted regardless of ticket status (time-window-based fetching is
+  independent of ticket lifecycle). In both cases, existing CVSS data
+  remains in the database. If the ticket is later reopened, the
+  recalculation chain re-derives severity and eligibility from the
+  current `CVECVSSAssessment` records (which may have been updated by
+  NVD in the interim).
+  ```
+
+### Step 4c: Fix pre-existing inaccuracy in `cvss-scoring.md` (deduplication model)
+
+**File**: `docs/features/tickets/cvss-scoring.md`
+
+**Action** (lines 155-157 — "CNA (via NVD Secondary)" section): Replace:
+
+- **Before**:
+  ```
+  - **Deduplication with direct sources**: if a direct source (e.g., Red Hat)
+    provides an assessment for the same provider and CVSS version, the direct
+    source takes priority and overwrites the NVD Secondary data
+  ```
+- **After**:
+  ```
+  - **Convergence with direct sources**: both NVD Secondary and direct-source
+    fetchers (e.g., Red Hat) write to the same UPSERT conflict key
+    `(cve_id, provider_name, cvss_version)` — last-writer-wins. Since direct
+    sources run on independent schedules, data converges to the direct-source
+    value within one fetcher cycle. Temporary oscillation (NVD overwriting a
+    fresher direct-source score between cycles) is transient and harmless —
+    CVSS scores rarely change after publication
+  ```
+
+**Rationale**: Session 3, §5 removed the cross-fetcher skip logic that
+previously guaranteed direct-source priority. The new model is
+"last-writer-wins via UPSERT" with convergence within one cycle. The old
+phrasing ("takes priority and overwrites") implied an explicit priority
+mechanism that no longer exists.
+
+### Step 4d: Note on `sync_osv_advisories` Metrics section
+
+**File**: `docs/features/tickets/cve-tracking.md`
+
+**Action**: No change. The `sync_osv_advisories` `#### Metrics` section
+(line 1124, currently "TBD") is intentionally left as-is. It is a
+placeholder for a fetcher that has not been fully specified yet. When
+`sync_osv_advisories` is specified, its Metrics section will either be
+removed (if it follows the common pattern) or kept (if it documents
+deviations), per the same rule applied to other fetchers in Step 1c.
 
 ### Step 5: Run reviewers and address findings
 
