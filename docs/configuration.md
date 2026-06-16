@@ -112,7 +112,7 @@ here.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching | `docs/features/tickets/cve-tracking.md` |
+| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay_seconds` custom setting from 6.0s to ~0.6s via the admin dashboard | `docs/features/tickets/cve-tracking.md` |
 
 ## Git-Based Fetchers
 

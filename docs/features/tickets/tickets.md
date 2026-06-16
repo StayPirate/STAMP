@@ -1252,8 +1252,8 @@ Query parameters:
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
-  Valid values: `created_at`, `updated_at`, `severity`, `status`,
-  `identifier` (sorts by numeric `sequence_id`).
+  Valid values: `created_at`, `updated_at`, `severity` (semantic ordering),
+  `status`, `identifier` (sorts by numeric `sequence_id`).
 - `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
 
 Response: paginated `TicketSummary` array in standard

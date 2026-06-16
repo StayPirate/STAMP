@@ -126,7 +126,7 @@ Returns pending fixes for the authenticated user.
 | package    | string  | —       | Filter by package name              |
 | page       | integer | 1       | Page number                         |
 | per_page   | integer | 20      | Items per page                      |
-| sort_by    | string  | severity| Sort field: severity, waiting       |
+| sort_by    | string  | severity| Sort field: severity (semantic ordering), waiting |
 | sort_order | string  | desc    | Sort direction: asc, desc           |
 
 **Response**: paginated list of pending fix items using the standard

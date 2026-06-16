@@ -432,7 +432,7 @@ new one is created.
 | `db` | `AsyncSession` | Yes | Database session |
 | `cve_id` | `UUID` | Yes | CVE that receives the assessment |
 | `provider` | `str` | Yes | Assessment provider (e.g., `"SUSE"`, `"NVD"`) |
-| `vector` | `str` | Yes | CVSS vector string (version and score derived from vector) |
+| `vector_string` | `str` | Yes | CVSS vector string (version, score, and severity derived from it) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -472,13 +472,13 @@ accidental conflation in code that handles both return values.
 
 **Behavior**:
 
-1. Parse the vector string. Derive version and score. If parsing fails,
-   raise `InvalidCVSSVectorError`
+1. Parse the vector string with the `cvss` library. Derive version,
+   score, and severity. If parsing fails, raise `InvalidCVSSVectorError`
 2. `SELECT` existing `CVECVSSAssessment` for `(cve_id, provider,
    derived_version)`. Capture the existing record (if any) for old-value
    determination and no-op detection
 3. **No-op short-circuit**: if an existing record was found and
-   `existing.vector == incoming_vector`, return
+   `existing.vector_string == incoming_vector_string`, return
    `(existing, UNCHANGED)` immediately — no database write, no lock
    acquisition, no recalculation chain, no audit event. This prevents
    unnecessary lock contention and recalculation overhead during bulk
@@ -493,8 +493,8 @@ accidental conflation in code that handles both return values.
       non-mutable status, the function raises `TicketNotMutableError`.
       No assessment write has occurred at this point, so no rollback of
       assessment data is needed
-6. Execute `INSERT ... ON CONFLICT DO UPDATE` with the parsed vector
-   and computed score. Determine action:
+6. Execute `INSERT ... ON CONFLICT DO UPDATE` with the parsed
+   vector_string, computed score, and derived severity. Determine action:
    - **No existing record** (step 2 returned nothing): `CREATED`
    - **Existing record with different vector**: `UPDATED`
 7. If a ticket exists:

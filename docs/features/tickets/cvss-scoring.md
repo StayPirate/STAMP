@@ -38,6 +38,13 @@ ticket workflow progression.
    parsed and derived locally from the vector string using the `cvss`
    library. Providers that supply only a numeric score without a valid
    vector string are not imported.
+   **Two-level severity derivation**: severity at the per-assessment level
+   (`CVECVSSAssessment.severity`) is derived using the library's
+   version-specific FIRST scale (v2: Low/Medium/High; v3/v4:
+   None/Low/Medium/High/Critical). Severity at the ticket level
+   (`CVE.severity`) is derived from the resolved score via
+   `calculate_severity()` using the unified v3/v4 scale regardless of
+   source version. See "Severity Rating Scale" below.
 
 ## CVSS Score Resolution
 
@@ -133,9 +140,11 @@ directly on the assessment record.
 - **Identified by**: `source` field with value `nvd@nist.gov`,
   `type: "Primary"` in the API response
 - **Provider name in Sentinel**: `"NVD"`
-- **CVSS versions**: currently v3.1; v4.0 expected in the future
-- **Fetch mechanism**: extracted from `cvssMetricV31` and `cvssMetricV40`
-  arrays in the NVD CVE API response
+- **CVSS versions**: v2.0, v3.0, v3.1, and v4.0 (all metric arrays
+  present in the NVD API response are extracted)
+- **Fetch mechanism**: extracted from `cvssMetricV2`, `cvssMetricV30`,
+  `cvssMetricV31`, and `cvssMetricV40` arrays in the NVD CVE API
+  response
 
 #### CNA (via NVD Secondary)
 
@@ -152,9 +161,13 @@ directly on the assessment record.
   `source` email addresses to display names via the NVD Source API. See
   `docs/features/tickets/cve-tracking.md` (NVD Source API Caching) for
   the caching strategy
-- **Deduplication with direct sources**: if a direct source (e.g., Red Hat)
-  provides an assessment for the same provider and CVSS version, the direct
-  source takes priority and overwrites the NVD Secondary data
+- **Convergence with direct sources**: both NVD Secondary and direct-source
+  fetchers (e.g., Red Hat) write to the same UPSERT conflict key
+  `(cve_id, provider_name, cvss_version)` — last-writer-wins. Since direct
+  sources run on independent schedules, data converges to the direct-source
+  value within one fetcher cycle. Temporary oscillation (NVD overwriting a
+  fresher direct-source score between cycles) is transient and harmless —
+  CVSS scores rarely change after publication
 
 #### Red Hat
 
@@ -162,15 +175,16 @@ directly on the assessment record.
   (`access.redhat.com/hydra/rest/securitydata/cve/{CVE-ID}.json`)
 - **Type**: independent assessment by Red Hat Product Security
 - **Provider name in Sentinel**: `"Red Hat"`
-- **CVSS versions**: v2.0 and v3.1. v4.0 will be supported when Red Hat
-  adds it
+- **CVSS versions**: v2.0 and v3.x (version derived from vector string
+  prefix). v4.0 will be supported when Red Hat adds it
 - **Response format**: the `cvss3` object contains `cvss3_base_score`
   (string), `cvss3_scoring_vector` (string), and `status` (`"draft"` or
   `"verified"`). Only the vector string is used — the score is recomputed
   locally by the `cvss` library for consistency
 - **Deduplication**: if Red Hat also appears as a CNA Secondary in NVD
-  (same provider name `"Red Hat"`), the direct fetch from the Red Hat API
-  takes priority and overwrites the NVD Secondary record
+  (same provider name `"Red Hat"`), both write to the same UPSERT conflict
+  key — last-writer-wins. Since Red Hat runs daily (after NVD's 6h cycle),
+  the Red Hat value typically persists
 
 ### Internal Provider
 
@@ -346,14 +360,25 @@ handling, and `fetch_single` method — see
 
 ### Sync Scope
 
-CVSS sync (both NVD incremental and Red Hat re-fetch) is performed only
-for CVEs with **active tickets** — tickets in status `New`, `Analysis`, or
-`Analyzed` (see `docs/data-model.md` for the authoritative definition of
-active tickets).
+CVSS sync scope varies by fetcher:
 
-When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`, Sentinel
-stops monitoring CVSS updates for that CVE. The existing CVSS data remains
-in the database but is no longer refreshed.
+- **NVD** (`sync_nvd_cves`): global scope — fetches all CVEs modified
+  in the time window, regardless of ticket status. Persistence is
+  unrestricted (consistent with the Data Convention below)
+- **Red Hat** (`sync_redhat_cves`): scoped to CVEs with **active
+  tickets** — tickets in status `New`, `Analysis`, or `Analyzed` (see
+  `docs/data-model.md` for the authoritative definition of active
+  tickets). This restriction exists because the Red Hat API requires
+  per-CVE lookups (no bulk/incremental endpoint)
+
+When a ticket transitions to `Resolved`, `Ignored`, or `Duplicated`,
+Red Hat CVSS sync stops monitoring that CVE. NVD data continues to be
+persisted regardless of ticket status (time-window-based fetching is
+independent of ticket lifecycle). In both cases, existing CVSS data
+remains in the database. If the ticket is later reopened, the
+recalculation chain re-derives severity and eligibility from the
+current `CVECVSSAssessment` records (which may have been updated by
+NVD in the interim).
 
 ### CVSS Fetcher Data Convention
 
@@ -439,7 +464,7 @@ are returned in a fixed order grouped by CVSS version.
         "provider_name": "NVD",
         "cvss_version": "3.1",
         "score": 9.8,
-        "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
         "metrics": {
           "attack_vector": "Network",
           "attack_complexity": "Low",
@@ -517,11 +542,11 @@ Request body:
 
 ```json
 {
-  "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+  "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 }
 ```
 
-- `vector`: valid CVSS vector string (maximum 200 characters). The CVSS version is derived from the
+- `vector_string`: valid CVSS vector string (maximum 200 characters). The CVSS version is derived from the
   vector prefix (`CVSS:4.0/` → 4.0, `CVSS:3.1/` → 3.1, `CVSS:3.0/` → 3.0,
   no prefix → 2.0). The base score is computed automatically by the `cvss`
   library.

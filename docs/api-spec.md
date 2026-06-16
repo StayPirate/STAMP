@@ -255,6 +255,21 @@ Endpoints that intentionally do not support client-controlled sorting must
 state so with justification (e.g., "fixed chronological order for timeline
 display").
 
+#### Semantic Sort Fields
+
+When `sort_by` references a field with domain-defined ordinal semantics
+(not alphabetical), the sort uses the semantic rank:
+
+| Field | Ascending order (semantic rank) |
+|-------|--------------------------------|
+| `severity` | None (0) < Low (1) < Medium (2) < High (3) < Critical (4) |
+
+NULL values sort last regardless of sort direction.
+
+Endpoints that support sorting by semantic fields MUST note this in
+their query parameter specification: "semantic ordering (see General
+Conventions)".
+
 ### Request Tracing
 
 Every API response includes an `X-Request-ID` header containing a UUID that
