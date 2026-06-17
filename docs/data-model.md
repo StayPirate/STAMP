@@ -346,7 +346,7 @@ erDiagram
     SettingAuditEvent {
         UUID id PK
         ENUM event_type "NOT NULL"
-        VARCHAR_100 setting_key "NOT NULL"
+        VARCHAR_100 setting_key FK "NOT NULL"
         TEXT old_value "nullable"
         TEXT new_value "NOT NULL"
         UUID user_id FK "nullable"
@@ -359,6 +359,7 @@ erDiagram
     FetcherConfig ||--o{ FetcherAuditEvent : "has audit events"
     FetcherRun }o--o| User : "triggered by"
     FetcherAuditEvent }o--o| User : "performed by"
+    SystemSetting ||--o{ SettingAuditEvent : "has audit events"
     SettingAuditEvent }o--o| User : "performed by"
 ```
 
@@ -1262,7 +1263,7 @@ Audit trail for system setting modifications. Inherits `id`,
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See SettingAuditEventType enum below |
-| setting_key | VARCHAR(100) | NOT NULL | Which setting was changed |
+| setting_key | VARCHAR(100) | FK(system_setting.key) ON DELETE RESTRICT, NOT NULL | Which setting was changed |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who changed the setting. Nullable at DB level; service validates presence |
 | old_value | TEXT | nullable | Previous value |
 | new_value | TEXT | NOT NULL | New value |

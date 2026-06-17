@@ -388,6 +388,9 @@ erDiagram
 
     PackageBugowner ||--o{ PackageBugownerMember : "has members"
 
+    FetcherConfig ||--o{ FetcherRun : "has runs"
+    FetcherConfig ||--o{ FetcherAuditEvent : "has audit events"
+    SystemSetting ||--o{ SettingAuditEvent : "has audit events"
     FetcherRun }o--o| User : "triggered by"
     FetcherAuditEvent }o--o| User : "performed by"
     SettingAuditEvent }o--o| User : "performed by"
