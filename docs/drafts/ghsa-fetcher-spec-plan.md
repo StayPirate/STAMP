@@ -205,6 +205,12 @@ Confirmed from GitHub API documentation (2026-06-18):
 - No maximum time window limit (unlike NVD's 120-day restriction)
 - Cursor-based pagination via `before`/`after` params from Link header
 - `cve_id` parameter supports direct lookup for `fetch_single()`
+- Pagination terminates when the response's `Link` header does not
+  contain a `rel="next"` link (or when the `Link` header is absent
+  entirely — which includes single-page responses). This is the
+  standard GitHub REST API pagination contract, confirmed by official
+  docs ("Once the link header no longer includes a link to the next
+  page, all of the results are returned")
 
 ---
 
@@ -767,6 +773,38 @@ Add `"ghsa"` row to the enum table:
 This is required before implementation — `BaseFetcher` registration
 validates that `cve_source_type` is a member of the enum.
 
+### 10. `configuration.md` — GitHub token env var
+
+**File**: `docs/configuration.md`
+**Location**: "External APIs" section (alongside `NVD_API_KEY`)
+
+Add `GITHUB_TOKEN` entry:
+
+```
+| `GITHUB_TOKEN` | string | `""` (empty) | GitHub personal access token for GHSA advisory sync. Without token: 60 req/hour (insufficient for production). With token: 5,000 req/hour | `docs/features/tickets/cve-tracking.md` |
+```
+
+The fetcher MUST refuse to execute if `GITHUB_TOKEN` is empty or unset
+(raise `FetcherError` with a clear diagnostic: "GITHUB_TOKEN not
+configured"). Unauthenticated operation (60 req/hour) is unusable for
+production and would silently degrade to rate-limit errors.
+
+### 11. `cve-tracking.md` — Qualify `cve_state` blanket statement
+
+**File**: `docs/features/tickets/cve-tracking.md`
+**Location**: line ~304
+
+Current text states: "All discovery fetchers include `cve_state` in
+their `CVEIngestPayload`."
+
+This becomes incorrect with GHSA, which passes `cve_state = None`
+because it is not authoritative for CVE lifecycle state (OP-6). Qualify
+to: "All discovery fetchers except `sync_ghsa_advisories` include
+`cve_state` in their `CVEIngestPayload`. GHSA passes `None` because it
+is not authoritative for CVE lifecycle state — withdrawal of a GHSA
+advisory does not imply CVE rejection (see OP-6 rationale in the fetcher
+section)."
+
 ---
 
 ## Application Plan (Step-by-Step)
@@ -857,12 +895,17 @@ spec.
    `data-sources.md:162-189` (REST API, not GraphQL)
 9. Apply correction 9: add `"ghsa"` to `CVESourceType` enum in
    `data-model.md:479-485`
-10. Add entries 10 and 11 to `docs/drafts/open-points.md`
-11. Verify all cross-references are consistent
-12. Invoke `@spec-gap-analyzer` on the new fetcher section
-13. Invoke `@spec-coherence-reviewer` for cross-spec consistency
-14. Invoke `@fetcher-compliance-reviewer`
-15. Invoke `@docs-reviewer`
+10. Apply correction 10: add `GITHUB_TOKEN` to `configuration.md`
+    ("External APIs" section)
+11. Apply correction 11: qualify `cve_state` blanket statement in
+    `cve-tracking.md:~304`
+12. Add open-points entries (ecosystem column + ecosystem prefix
+    mapping) to `docs/drafts/open-points.md`
+13. Verify all cross-references are consistent
+14. Invoke `@spec-gap-analyzer` on the new fetcher section
+15. Invoke `@spec-coherence-reviewer` for cross-spec consistency
+16. Invoke `@fetcher-compliance-reviewer`
+17. Invoke `@docs-reviewer`
 
 ---
 
@@ -1181,6 +1224,15 @@ Class attribute: `source_reference_url_pattern = None`. References are
 created manually via `reference_service.upsert_references()` in both
 `execute()` and `fetch_single()` because the URL uses GHSA-ID (not
 CVE-ID) and cannot be derived from a static pattern.
+
+#### `fetch_single()` reference creation scope
+
+`fetch_single()` creates the full set of references (source reference
+from `html_url` + upstream references from `references[]` array), same
+as `execute()`. Rationale: `fetch_single()` is used for catch-up on
+reactivated tickets — partial reference creation would leave stale
+reference sets. The cost is negligible (one advisory = one source ref +
+a handful of upstream refs).
 
 ---
 
