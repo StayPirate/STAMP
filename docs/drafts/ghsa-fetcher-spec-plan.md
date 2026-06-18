@@ -70,6 +70,8 @@ not merely an enrichment fetcher.
 - Cursor: derived (NVD-style) from `FetcherRun.started_at` - 15min
   overlap buffer
 - No API time window limit (unlike NVD's 120-day restriction)
+- `source_reference_url_pattern`: `None` (URL uses GHSA-ID, not CVE-ID;
+  references created manually via `reference_service`)
 
 ---
 
@@ -734,6 +736,37 @@ and kernel as self-healing sources. Add GHSA:
 
 > "For GHSA: the next GHSA sync (~3 hours)."
 
+### 8. `data-sources.md` — GHSA Source Description
+
+**File**: `docs/data-sources.md`
+**Location**: lines 162-189 (GHSA source description paragraph)
+
+The section currently says "GraphQL API at
+`https://api.github.com/graphql`", "Supports incremental sync via the
+`updatedSince` parameter", and "Rate limit: 5,000 points/hour". Per
+OP-1 decision (REST API), update to:
+
+- Access: **REST API** at `https://api.github.com/advisories`
+- Incremental sync: via `modified` parameter (ISO 8601 date range)
+- Rate limit: 5,000 **requests**/hour with token (60/hour without)
+
+Also update the Fetcher Registry row (line 963) rate limit column from
+"5,000 points/hour" to "5,000 req/hour with token".
+
+### 9. `data-model.md` — CVESourceType Enum
+
+**File**: `docs/data-model.md`
+**Location**: lines 479-485 (CVESourceType enum table)
+
+Add `"ghsa"` row to the enum table:
+
+```
+| `ghsa` | GitHub Advisory Database (GitHub CNA) |
+```
+
+This is required before implementation — `BaseFetcher` registration
+validates that `cve_source_type` is a member of the enum.
+
 ---
 
 ## Application Plan (Step-by-Step)
@@ -820,11 +853,16 @@ spec.
    `sync_ghsa_advisories` from CPE and vendor:product rows
 7. Apply correction 7: add GHSA to crash recovery self-healing list
    (`cve-service.md:400-404`)
-8. Verify all cross-references are consistent
-9. Invoke `@spec-gap-analyzer` on the new fetcher section
-10. Invoke `@spec-coherence-reviewer` for cross-spec consistency
-11. Invoke `@fetcher-compliance-reviewer`
-12. Invoke `@docs-reviewer`
+8. Apply correction 8: update GHSA source description in
+   `data-sources.md:162-189` (REST API, not GraphQL)
+9. Apply correction 9: add `"ghsa"` to `CVESourceType` enum in
+   `data-model.md:479-485`
+10. Add entries 10 and 11 to `docs/drafts/open-points.md`
+11. Verify all cross-references are consistent
+12. Invoke `@spec-gap-analyzer` on the new fetcher section
+13. Invoke `@spec-coherence-reviewer` for cross-spec consistency
+14. Invoke `@fetcher-compliance-reviewer`
+15. Invoke `@docs-reviewer`
 
 ---
 
@@ -855,7 +893,7 @@ Completed: 2026-06-18
 | CVEIngestPayload field | JSON path | Required | Notes |
 |---|---|---|---|
 | `cve_id` | `.cve_id` | Yes | Passed as parameter to `upsert_cve()`, not a payload field. Advisories with `cve_id = null` are skipped (OP-3) |
-| `title` | `.summary` | No | Advisory summary (short title), max 1024 chars |
+| `title` | `.summary` | No | Advisory summary. GHSA allows up to 1024 chars but `CVEIngestPayload.title` has `max_length=256`; truncate to 256 chars if longer |
 | `description` | `.description` | No | Advisory long description (Markdown), max 65535 chars |
 | `published_date` | `.published_at` | No | ISO 8601 datetime |
 | `modified_date` | `.updated_at` | No | ISO 8601 datetime |
@@ -877,6 +915,9 @@ One advisory produces **0, 1, or 2** `CVSSAssessmentEntry` records (v3 and
 v4 are independent). Each is gated on its `vector_string` being non-null
 and non-empty (a `score` of 0.0 with a null vector — observed in real
 responses — is NOT a valid assessment).
+
+Unrecognized vector prefix (e.g., malformed string without `CVSS:X.Y/`
+prefix) → log WARNING, skip that CVSS entry. Do not fail the advisory.
 
 ### Field Mapping — CWE Classifications
 
@@ -1004,6 +1045,16 @@ combination (GitHub pre-splits complex ranges into separate entries).
 | Non-semver version strings (e.g., `2.0-beta9`) | Stored as opaque strings | No validation against semver format |
 | Unrecognized format | Log WARNING, create record with NULL version fields | Defensive fallback — never fail the advisory |
 
+**Known limitation — lower bound inclusivity**: the `>` (strict
+greater-than) operator's exclusivity semantics are lost at storage.
+`CVEAffectedVersion` has no `version_start_inclusive` field — only
+`version_end_inclusive` exists for the upper bound. For `> 1.0, < 2.0`,
+the stored `version = "1.0"` is indistinguishable from `>= 1.0, < 2.0`.
+This is a data model limitation shared with MITRE/NVD (CVE JSON 5.x has
+no `greaterThan` vs `greaterThanOrEqual` distinction — the lower bound is
+always implicitly inclusive). The practical impact for VA triage is
+negligible.
+
 #### Real-world examples (from API verification, 2026-06-18)
 
 - `>= 2.13.0, < 2.15.0` — standard two-constraint range
@@ -1063,6 +1114,73 @@ maintenance burden? Revisit when: (a) GHSA hit rate is measured
 post-implementation and found insufficient for system-level packages, or
 (b) `sync_osv_advisories` is specified (both fetchers benefit from the
 same transforms).
+
+### Reviewer Findings — Decisions (2026-06-18)
+
+Decisions taken after running `@spec-gap-analyzer`,
+`@spec-coherence-reviewer`, and `@fetcher-compliance-reviewer` on the
+draft.
+
+#### Multiple advisories per CVE-ID
+
+Empirical verification (700+ advisories across multiple time periods and
+known multi-ecosystem CVEs like Log4Shell and HTTP/2 rapid reset):
+**zero cases** of multiple GHSA advisories for the same CVE-ID.
+GitHub's model consolidates all affected packages into a single advisory
+with multiple `vulnerabilities[]` entries.
+
+**Decision**: treat as 0-or-1. `fetch_single` and `execute()` process
+the first advisory returned. If the API unexpectedly returns >1 advisory
+for the same CVE-ID, process only the first and log a WARNING. No merge
+logic needed.
+
+#### Empty `vulnerabilities[]` array
+
+If an advisory has `vulnerabilities` as null or empty array:
+
+- Pass `affected_versions = None` in the payload (not empty list)
+- Pass `resolved_packages = None` in the payload
+- Process CVSS, CWE, external identifiers, and references normally
+
+Rationale: `None` means "no data from this field" — `upsert_cve()` does
+not touch existing records. An empty list would trigger delete-and-reinsert
+with zero records, wiping previously ingested data. The empty-array
+scenario was not observed in practice (0 out of 700+ advisories with
+CVE-ID) but the defensive handling prevents data loss if it occurs
+transiently.
+
+#### Page-level error handling (`execute()`)
+
+**Decision**: abort on first page-level failure (same approach as
+`sync_nvd_cves`). Any HTTP error (4xx, 5xx) or timeout during pagination
+aborts the run immediately with `FetcherError` and `status = failure`.
+No retry logic.
+
+Rationale: the 15-minute overlap buffer ensures missed advisories are
+captured by the next scheduled run (3 hours). For HTTP 429 specifically,
+quota exhaustion cannot be resolved by retry — the next run will have a
+fresh quota window. GitHub's API is stable; any failure indicates a real
+problem that won't resolve within the same run.
+
+#### `fetch_single` withdrawal handling
+
+**Decision**: server-side filtering. The `fetch_single` query includes
+`is_withdrawn=false` (same as `execute()`):
+
+```
+GET /advisories?cve_id=CVE-YYYY-NNNNN&type=reviewed&is_withdrawn=false
+```
+
+If the response is empty (no active advisory for that CVE-ID) →
+raise `CVENotInSource`. Consistent with `execute()` behavior and
+simpler than client-side filtering.
+
+#### `source_reference_url_pattern`
+
+Class attribute: `source_reference_url_pattern = None`. References are
+created manually via `reference_service.upsert_references()` in both
+`execute()` and `fetch_single()` because the URL uses GHSA-ID (not
+CVE-ID) and cannot be derived from a static pattern.
 
 ---
 
