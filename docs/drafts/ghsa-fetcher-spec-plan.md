@@ -12,7 +12,7 @@ Requirements).
 |------|-------|
 | Draft created | 2026-06-17 |
 | Open points resolved (OP-1 → OP-9) | 2026-06-18 |
-| Field mapping and data model (Session 2) | Not started |
+| Field mapping and data model (Session 2) | 2026-06-18 |
 | Spec written (Session 3) | Not started |
 | Integration and corrections (Session 4) | Not started |
 
@@ -55,8 +55,8 @@ not merely an enrichment fetcher.
 - CWE source: `"GitHub"` (follows provider_name convention)
 - Auth: GitHub personal access token (free)
 - Rate limits: 5,000 requests/hour with token (REST API)
-- Data ingested: CVSS (v3.1 + v4.0), GHSA-ID, CWE, affected versions,
-  references
+- Data ingested: CVSS (v3.x + v4.0, version derived from vector prefix),
+  GHSA-ID, CWE, affected versions, references
 - Discovery fetcher: YES — GitHub is a CNA, can be first to publish a
   CVE. Must create tickets via `upsert_cve()`
 - `fetch_single()`: YES — required for all CVE fetchers
@@ -298,12 +298,12 @@ source_container | repo | program_files | cpe
 
 | GHSA field | CVEAffectedVersion field | Notes |
 |---|---|---|
-| (constant) | `source_container` | `"ghsa"` |
+| (constant) | `source_container` | `"ghsa"` — new provenance value (free-form VARCHAR(100), not an enum). Uses `"ghsa"` instead of `"cna"` because the data does not come from a cvelistV5 CNA container; it comes from GitHub's proprietary advisory format. Provides correct scoping for delete-and-reinsert per `(cve_id, source_container)` |
 | `package.name` | `product` | Package name as product |
 | `package.name` | `package_name` | Same value, for registry lookup |
 | (absent) | `vendor` | NULL — GHSA has no vendor concept |
 | `vulnerable_version_range` | `version` + `version_end` + `version_end_inclusive` | See parsing rules below |
-| (derived from ecosystem) | `version_type` | See ecosystem mapping table below |
+| (derived from ecosystem) | `version_type` | ~~See ecosystem mapping table below~~ **Superseded by Session 2**: set to NULL for all entries |
 | `source_code_location` | `repo` | Advisory-level field (not per-vulnerability) |
 | (absent) | `cpe` | NULL — GHSA does not provide CPE |
 | (absent) | `collection_url` | NULL — dropped (fragile ecosystem→URL mapping, low value) |
@@ -311,6 +311,11 @@ source_container | repo | program_files | cpe
 | (absent) | `program_files` | NULL |
 
 #### Ecosystem → version_type mapping
+
+**Superseded by Session 2**: the ecosystem → version_type derivation was
+dropped in favor of NULL for all entries. See Session 2 "Note on
+`version_type`" for rationale. The table below is preserved for
+historical context only.
 
 | GHSA ecosystem | `version_type` |
 |---|---|
@@ -841,6 +846,226 @@ Resolved decisions are recorded here as sessions progress.
 
 ---
 
+## Session 2: Field Mapping and Data Model
+
+Completed: 2026-06-18
+
+### Field Mapping — Global CVE Fields
+
+| CVEIngestPayload field | JSON path | Required | Notes |
+|---|---|---|---|
+| `cve_id` | `.cve_id` | Yes | Passed as parameter to `upsert_cve()`, not a payload field. Advisories with `cve_id = null` are skipped (OP-3) |
+| `title` | `.summary` | No | Advisory summary (short title), max 1024 chars |
+| `description` | `.description` | No | Advisory long description (Markdown), max 65535 chars |
+| `published_date` | `.published_at` | No | ISO 8601 datetime |
+| `modified_date` | `.updated_at` | No | ISO 8601 datetime |
+| `cve_state` | — | — | **NULL** — GHSA is not authoritative for CVE state (OP-6) |
+| `date_rejected` | — | — | **NULL** — not provided by GHSA |
+
+### Field Mapping — CVSS Assessments
+
+| CVSSAssessmentEntry field | JSON path | Notes |
+|---|---|---|
+| `provider_name` | (constant) | `"GitHub"` |
+| `cvss_version` | derived from vector prefix | `"CVSS:3.0/..."` → `"3.0"`, `"CVSS:3.1/..."` → `"3.1"`, `"CVSS:4.0/..."` → `"4.0"` |
+| `vector_string` | `.cvss_severities.cvss_v3.vector_string` | CVSS v3.x vector. Gate: non-null and non-empty |
+| `score` | derived from vector | Computed locally (same principle as NVD/Red Hat) |
+| `vector_string` (v4) | `.cvss_severities.cvss_v4.vector_string` | CVSS v4.0 vector. Gate: non-null and non-empty |
+| `score` (v4) | derived from vector | Computed locally |
+
+One advisory produces **0, 1, or 2** `CVSSAssessmentEntry` records (v3 and
+v4 are independent). Each is gated on its `vector_string` being non-null
+and non-empty (a `score` of 0.0 with a null vector — observed in real
+responses — is NOT a valid assessment).
+
+### Field Mapping — CWE Classifications
+
+| CWEEntry field | JSON path | Notes |
+|---|---|---|
+| `cwe_id` | `.cwes[].cwe_id` | Validate `^CWE-[1-9][0-9]*$`; skip entries that do not match |
+| `source` | (constant) | `"GitHub"` |
+
+### Field Mapping — External Identifiers
+
+| ExternalIdentifierEntry field | JSON path | Notes |
+|---|---|---|
+| `source` | (constant) | `"GHSA"` (enum value in `CVEExternalIdentifierSource`) |
+| `identifier` | `.ghsa_id` | e.g., `GHSA-xxxx-xxxx-xxxx` |
+| `url` | `.html_url` | e.g., `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx` |
+
+### Field Mapping — Affected Versions
+
+| AffectedVersionEntry field | JSON path (relative to `vulnerabilities[]` entry) | Notes |
+|---|---|---|
+| `source_container` | (constant) | `"ghsa"` — provenance value (free-form VARCHAR(100), not an enum). Provides correct scoping for delete-and-reinsert per `(cve_id, source_container)` |
+| `vendor` | — | **NULL** — GHSA has no vendor concept |
+| `product` | `.package.name` | Ecosystem package name |
+| `package_name` | `.package.name` | Same value as `product` |
+| `version` | parsed from `.vulnerable_version_range` | Lower bound if present; see version range parsing rules |
+| `version_type` | — | **NULL** — ecosystem-based derivation intentionally omitted (see note below) |
+| `version_end` | parsed from `.vulnerable_version_range` | Upper bound |
+| `version_end_inclusive` | parsed from `.vulnerable_version_range` | `true` if `<=`, `false` if `<` |
+| `repo` | advisory-level `.source_code_location` | Same value for all entries in one advisory. NULL if absent |
+| `package_url` | — | **NULL** (dropped per OP-4) |
+| `collection_url` | — | **NULL** (dropped per OP-4) |
+| `cpe` | — | **NULL** — GHSA does not provide CPE |
+| `program_files` | — | **NULL** |
+
+**Note on `version_type`**: GHSA provides `.package.ecosystem` (e.g.,
+"npm", "go", "maven") which could theoretically be mapped to a
+`version_type` value (e.g., "semver", "maven", "custom"). This
+derivation was intentionally omitted because: (1) the field is
+informational only — no operational logic depends on it; (2) maintaining
+a 13-value mapping table adds complexity disproportionate to the benefit;
+(3) the mapping is imprecise for some ecosystems (e.g., pip uses PEP 440,
+not strict semver). If future consumers (UI display, version comparison
+logic, or the planned `sync_osv_advisories` fetcher) demonstrate need,
+the ecosystem → version_type mapping can be introduced without breaking
+changes (nullable field, additive change).
+
+**Note on display vs. resolution separation**: the values from
+`.vulnerabilities[].package.name` feed **two independent destinations**:
+
+1. **`affected_versions[].product` / `.package_name`** — persisted in
+   `CVEAffectedVersion` for **display** (the VA sees "lodash >= 4.0,
+   < 4.17.21"). These do NOT trigger Phase 2 package resolution because
+   `vendor` is NULL (Source 4 requires both vendor AND product) and `cpe`
+   is NULL (Source 3 does not activate).
+
+2. **`resolved_packages`** — passed to Phase 2 for **best-effort SMELT
+   resolution**. This is the only active resolution path for GHSA data.
+
+There is no duplication risk: Phase 2 uses a `set()` internally and
+`add_package_to_ticket()` has a `TicketPackage` existence check that
+prevents duplicate additions across sync cycles.
+
+### Field Mapping — Resolved Packages (Phase 2)
+
+| CVEIngestPayload field | Source | Notes |
+|---|---|---|
+| `resolved_packages` | `.vulnerabilities[].package.name` | Deduplicated, null/empty/whitespace discarded (OP-9) |
+
+### Field Mapping — References (post-upsert)
+
+| TicketReference field | Source | Notes |
+|---|---|---|
+| `url` (source ref) | `.html_url` | Source reference. `title = "GitHub Advisory"`, `type = advisory`, `source = "sync_ghsa_advisories"` |
+| `url` (upstream refs) | `.references[]` | Each URL string. `title = None`, `type` from URL pattern matching, `source = "sync_ghsa_advisories"` |
+
+### Explicitly Ignored Fields
+
+| Field | Reason |
+|---|---|
+| `.severity` | GitHub's proprietary severity label. Sentinel derives severity from CVSS vectors via the Severity Resolution Cascade |
+| `.cvss_severities.cvss_v3.score` / `.cvss_severities.cvss_v4.score` | Derived locally from vector string (Key Principle 6: scores recomputed from vectors) |
+| `.cvss` (top-level) | Legacy/deprecated field not in official schema. `.cvss_severities` used instead |
+| `.epss` | Non-authoritative source (mirrors FIRST.org). Dedicated `sync_epss_scores` fetcher planned from canonical source. 1:1 overwrite semantics would cause stale data |
+| `.vulnerabilities[].vulnerable_functions` | Low triage value for SUSE workflows — package-level granularity sufficient (OP-4) |
+| `.vulnerabilities[].first_patched_version` | Implicitly captured in parsed version range upper bound (OP-4) |
+| `.identifiers[]` | Redundant — enum limited to `CVE` + `GHSA` only (confirmed from docs + real API). Both extracted from dedicated top-level fields `.cve_id` and `.ghsa_id` |
+| `.withdrawn_at` | Excluded at API level via `is_withdrawn=false` filter. Not used for `cve_state` (OP-6) |
+| `.credits[]` | Discoverer/reporter credits — informational, no operational use in Sentinel |
+| `.repository_advisory_url` | API-internal URL to repo advisory. `.html_url` is the user-facing link |
+| `.github_reviewed_at` | GitHub internal review timestamp — no operational use |
+| `.nvd_published_at` | NVD publication date as seen by GitHub — redundant with `sync_nvd_cves` which is authoritative |
+| `.url` | API endpoint URL — not the user-facing link. `.html_url` used for source reference |
+| `.type` | Always `"reviewed"` (filtered at API level via `type=reviewed` parameter) |
+| `cve_state` | **Not populated** — GHSA is not authoritative for CVE lifecycle state (OP-6) |
+| `date_rejected` | **Not populated** — GHSA does not signal CVE rejection (OP-6) |
+| `ssvc_assessment` | **Not populated** — GHSA does not provide SSVC assessments |
+| `kev_data` | **Not populated** — GHSA does not provide KEV catalog data |
+| `epss_score` | **Not populated** — dedicated `sync_epss_scores` fetcher from FIRST.org is the canonical source |
+| `cpe_matches` | **Not populated** — GHSA does not provide NVD-style CPE applicability statements |
+
+### Version Range Parsing Rules
+
+GHSA `vulnerable_version_range` uses a comma-separated constraint syntax.
+Each `vulnerabilities[]` entry represents a single package+range
+combination (GitHub pre-splits complex ranges into separate entries).
+
+#### Base patterns
+
+| Range format | `version` | `version_end` | `version_end_inclusive` |
+|---|---|---|---|
+| `< 1.2.3` | NULL | `1.2.3` | `false` |
+| `<= 1.2.3` | NULL | `1.2.3` | `true` |
+| `>= 1.0, < 2.0` | `1.0` | `2.0` | `false` |
+| `>= 1.0, <= 2.0` | `1.0` | `2.0` | `true` |
+| `= 1.5.0` | `1.5.0` | `1.5.0` | `true` |
+| `> 1.0, < 2.0` | `1.0` | `2.0` | `false` |
+
+#### Edge cases
+
+| Condition | Handling | Result |
+|---|---|---|
+| `vulnerable_version_range` is NULL or empty | Create record with NULL version fields | Preserves package association (defensive fallback) |
+| No upper bound (e.g., `>= 1.0`) | Lower bound only | `version = "1.0"`, `version_end = NULL`, `version_end_inclusive = NULL` |
+| Variable whitespace (e.g., `>=1.0,<2.0`) | Trim after split on `,` | Treated same as `>= 1.0, < 2.0` |
+| Non-semver version strings (e.g., `2.0-beta9`) | Stored as opaque strings | No validation against semver format |
+| Unrecognized format | Log WARNING, create record with NULL version fields | Defensive fallback — never fail the advisory |
+
+#### Real-world examples (from API verification, 2026-06-18)
+
+- `>= 2.13.0, < 2.15.0` — standard two-constraint range
+- `<= 1.2.1.2-jre17` — upper-only inclusive with classifier
+- `= 6.3.2.1` — exact version match
+- `>= 2.0-beta9, < 2.3.1` — pre-release lower bound
+- `< 0.21.16` — upper-only exclusive (most common single-constraint)
+- `>= 0.23.0, < 0.23.1` — narrow patch range
+
+### Open Points Entries (for `docs/drafts/open-points.md`)
+
+The following entries must be added to `docs/drafts/open-points.md` when
+Session 4 (integration) is executed:
+
+#### Entry 10: Ecosystem Column on CVEAffectedVersion
+
+**Origin**: GHSA fetcher spec (OP-8), Session 1 (2026-06-18)
+
+**Context**: GHSA provides `.package.ecosystem` (e.g., "npm", "pip",
+"go") per affected version entry. This value is currently lost after
+processing — no field preserves it. An explicit `ecosystem VARCHAR(50)`
+nullable column on `CVEAffectedVersion` would preserve the ecosystem
+identifier for display ("npm: lodash"), filtering, and cross-source
+correlation (OSV uses the same concept).
+
+**Proposed approach**: add `ecosystem VARCHAR(50)` nullable column to
+`CVEAffectedVersion`. Only GHSA and future OSV fetchers would populate
+it. No breaking change (nullable, additive migration).
+
+**Decision needed**: is the display/filtering value sufficient to justify
+a column populated by only 2 of 6+ fetchers? Revisit when: (a)
+`sync_osv_advisories` is specified (both fetchers benefit), or (b) UI
+feedback shows VAs need ecosystem context for triage decisions.
+
+#### Entry 11: Ecosystem Prefix Mapping for Package Resolution
+
+**Origin**: GHSA fetcher spec (OP-9 follow-up), Session 2 (2026-06-18)
+
+**Context**: GHSA `resolved_packages` passes ecosystem package names
+(e.g., "lodash", "requests", "github.com/openfga/openfga") to Phase 2
+for best-effort SMELT resolution. Hit rate is ecosystem-dependent — high
+for system-level C libraries that share names with RPM source packages
+(e.g., "curl", "openssl", "zlib"), low for language-specific packages
+with different naming conventions (e.g., pip `requests` → RPM
+`python-requests`, npm `lodash` → no RPM equivalent).
+
+A prefix mapping table could transform package names before SMELT
+resolution (e.g., `pip:requests` → `python-requests`, `npm:node-forge` →
+`nodejs-node-forge`).
+
+**Proposed approach**: ecosystem-aware prefix/transform rules applied to
+`resolved_packages` before passing to `add_package_to_ticket()`. Rules
+would be a simple dict in the fetcher or a shared module.
+
+**Decision needed**: is the additional hit rate worth the mapping
+maintenance burden? Revisit when: (a) GHSA hit rate is measured
+post-implementation and found insufficient for system-level packages, or
+(b) `sync_osv_advisories` is specified (both fetchers benefit from the
+same transforms).
+
+---
+
 ## Completeness Checklist
 
 Per Fetcher Documentation Requirements
@@ -857,17 +1082,17 @@ Per Fetcher Documentation Requirements
 - [ ] `fetch_single()` behavior documented
 - [ ] `fetch_single()` signaling convention referenced
 - [ ] Class structure skeleton
-- [ ] Field mapping table (API response → CVEIngestPayload)
-- [ ] Explicitly ignored fields table
+- [x] Field mapping table (API response → CVEIngestPayload)
+- [x] Explicitly ignored fields table
 - [ ] First-run behavior documented
-- [ ] Source reference URL strategy documented
+- [x] Source reference URL strategy documented
 - [ ] Catch-up classification correct in `fetcher-infrastructure.md`
 - [ ] Fetcher Registry updated in `data-sources.md`
 - [ ] Common First Run Behavior updated in `cve-tracking.md`
 - [ ] CVE Rejection Handling updated (if applicable)
 - [ ] Cross-references section includes `docs/api-spec.md`
-- [ ] External identifier extraction documented
-- [ ] Phase 2 side effects documented (package resolution)
-- [ ] `resolved_packages` extraction documented (OP-9)
+- [x] External identifier extraction documented
+- [x] Phase 2 side effects documented (package resolution)
+- [x] `resolved_packages` extraction documented (OP-9)
 - [ ] Phase 2 sources table correction applied (`cve-service.md`)
 - [ ] Crash recovery self-healing list updated (`cve-service.md`)
