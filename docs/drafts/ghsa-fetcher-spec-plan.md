@@ -11,10 +11,10 @@ Requirements).
 | Item | State |
 |------|-------|
 | Draft created | 2026-06-17 |
-| Open points resolved | 2026-06-18 |
-| Spec written | Not started |
-| Fetcher Registry updated | Not started |
-| fetcher-infrastructure.md corrections | Not started |
+| Open points resolved (OP-1 → OP-9) | 2026-06-18 |
+| Field mapping and data model (Session 2) | Not started |
+| Spec written (Session 3) | Not started |
+| Integration and corrections (Session 4) | Not started |
 
 ## Context
 
@@ -556,6 +556,74 @@ proposal for future consideration:
 
 ---
 
+### OP-9: Package Resolution Strategy
+
+**Decision required**: how should the GHSA fetcher contribute to
+automatic package resolution (Phase 2)?
+
+**Analysis**:
+
+The Phase 2 package resolution algorithm (`cve-service.md:362-388`)
+uses four sources from `CVEIngestPayload`:
+
+1. `resolved_packages` → direct (no resolution function)
+2. `cpe_matches` → `resolve_cpe_packages()`
+3. `affected_versions[].cpe` → `resolve_cpe_packages()`
+4. `affected_versions[].vendor` + `.product` → `resolve_vendor_product()`
+
+Per OP-4, GHSA's `AffectedVersionEntry` records have:
+
+- `cpe` = NULL (GHSA does not provide CPE strings)
+- `vendor` = NULL (GHSA has no vendor concept)
+- `product` = `package.name` (ecosystem package name)
+
+Therefore sources 3 and 4 produce no results for GHSA — `if av.cpe`
+and `if av.vendor and av.product` both fail. The `AffectedVersionEntry`
+records are purely informational (display for VAs).
+
+**Options**:
+
+A. **No package resolution** — GHSA is informational only (CVSS, CWE,
+   affected versions for display). Package resolution comes from NVD
+   (CPE) and MITRE (vendor:product). Simplest, but misses opportunities
+   for system-level packages.
+
+B. **Populate `resolved_packages`** — extract `package.name` from each
+   `vulnerabilities[]` entry, deduplicate, and pass as
+   `resolved_packages`. Phase 2 tries each name against SMELT via
+   `add_package_to_ticket()`. Names that don't match (most ecosystem
+   packages) → `PackageNotFoundInSmeltError` → WARNING log → no harm.
+   Names that match (system-level: `curl`, `openssl`, `git`, `vim`,
+   `zlib`, `sqlite3`, `nginx`) → package added to ticket automatically.
+
+**Precedent**: `sync_redhat_cves` uses the same pattern
+(`cve-tracking.md:1879-1899`) — Red Hat `package_state[].package_name`
+values are passed as `resolved_packages` with best-effort SMELT
+validation. The spec explicitly states: *"if SMELT does not recognize
+the name, no records are created (best-effort)"*.
+
+**Retry concern debunked**: the retry only happens when the advisory is
+re-processed (i.e., its `updated_at` changes and it re-enters the
+incremental sync window). An advisory that is not modified does NOT
+appear in subsequent syncs. The cost is one SMELT query per package
+name per advisory processing — not "every 3 hours forever."
+
+**Decision**: **Option B (populate `resolved_packages`).** Extraction
+rules:
+
+1. For each entry in `vulnerabilities[]`, extract `package.name`
+2. Discard values that are null, empty, or whitespace-only
+3. Deduplicate (multiple entries may reference the same package with
+   different version ranges)
+4. Pass unique names as `CVEIngestPayload.resolved_packages`
+
+Phase 2 side effects: best-effort package addition via SMELT. Hit rate
+is ecosystem-dependent — high for system-level packages (C libraries,
+common tools), low for language-specific registries (npm, pip, maven).
+The VA always reviews the package list.
+
+---
+
 ## Correction Plan (existing docs)
 
 The following changes to existing documents are needed alongside the
@@ -628,6 +696,39 @@ Per OP-6 decision: withdrawn advisories are skipped via
 `is_withdrawn=false`. The fetcher does NOT detect CVE rejection and
 should NOT be added to the rejection detection list. No change needed.
 
+### 6. `cve-service.md` — Phase 2 Sources Table
+
+**File**: `docs/features/tickets/cve-service.md`
+**Location**: lines 355-360 (Package resolution sources table)
+
+The table currently lists `sync_ghsa_advisories` in the "CNA/ADP CPE
+from affected[]" and "CNA/ADP vendor:product" rows. Per OP-4 and OP-9
+decisions, GHSA does not populate `.cpe` or `.vendor` — it uses
+`resolved_packages` instead. Additionally, `sync_redhat_cves` is
+missing from the "Pre-resolved packages" row (pre-existing bug — the
+Red Hat fetcher populates `resolved_packages` per
+`cve-tracking.md:1879-1899` but is not listed).
+
+Changes:
+
+- Row 1 (Pre-resolved packages): change "Populated by" from
+  `sync_kernel_cves` to
+  `sync_kernel_cves`, `sync_redhat_cves`, `sync_ghsa_advisories`
+- Row 3 (CNA/ADP CPE from affected[]): remove `sync_ghsa_advisories`
+  from "Populated by"
+- Row 4 (CNA/ADP vendor:product): remove `sync_ghsa_advisories` from
+  "Populated by"
+
+### 7. `cve-service.md` — Crash Recovery Self-Healing List
+
+**File**: `docs/features/tickets/cve-service.md`
+**Location**: lines 400-404
+
+The crash recovery paragraph lists NVD (~6 hours), MITRE (~6 hours),
+and kernel as self-healing sources. Add GHSA:
+
+> "For GHSA: the next GHSA sync (~3 hours)."
+
 ---
 
 ## Application Plan (Step-by-Step)
@@ -649,20 +750,32 @@ spec.
 6. ~~Resolve OP-6 (withdrawn advisories handling)~~ ✓
 7. ~~Resolve OP-7 (source reference URL strategy)~~ ✓ html_url + refs
 8. ~~Resolve OP-8 (ecosystem column)~~ ✓ Deferred
-9. ~~Record all decisions in the Decisions Log~~ ✓
+9. ~~Resolve OP-9 (package resolution strategy)~~ ✓ resolved_packages
+10. ~~Record all decisions in the Decisions Log~~ ✓
 
 ### Session 2: Field Mapping and Data Model
 
 **Goal**: define the complete data extraction specification.
 
 1. Define complete field mapping table (API response field →
-   CVEIngestPayload field) — same format as NVD/MITRE/Red Hat specs
+   CVEIngestPayload field) — same format as NVD/MITRE/Red Hat specs.
+   Must include:
+   - `affected_versions` mapping (OP-4: informational/display records)
+   - `resolved_packages` mapping (OP-9: `vulnerabilities[].package.name`
+     deduplicated, for best-effort SMELT resolution)
 2. Define explicitly ignored fields table — same format as Red Hat
    spec (field + reason)
 3. Finalize ecosystem → version_type mapping table
 4. Document version range parsing algorithm with edge cases
 5. Add entry to `docs/drafts/open-points.md` for the deferred
    ecosystem column proposal (OP-8)
+6. Add entry to `docs/drafts/open-points.md` for the ecosystem prefix
+   mapping proposal: for sources that provide ecosystem identifiers
+   (GHSA, future OSV), a prefix mapping table could transform package
+   names before SMELT resolution (e.g., pip:`requests` →
+   `python-requests`, npm:`lodash` → `nodejs-lodash`). Condition for
+   revisiting: when GHSA hit rate is measured and found insufficient,
+   or when `sync_osv_advisories` is specified (both would benefit)
 
 ### Session 3: Write Fetcher Spec (Core Sections)
 
@@ -680,6 +793,10 @@ spec.
 7. Write metrics definition (`record_created`, `record_updated`,
    `record_failed`)
 8. Write custom settings section (if applicable)
+9. Write Phase 2 side effects section — document package resolution
+   via `resolved_packages` (OP-9): extraction from
+   `vulnerabilities[].package.name`, best-effort SMELT validation,
+   expected hit rate per ecosystem category
 
 ### Session 4: Integration, Cross-References, and Review
 
@@ -692,11 +809,17 @@ spec.
 4. Apply correction 4: add to Common First Run Behavior
 5. ~~Apply correction 5: CVE Rejection Handling~~ — no change needed
    (per OP-6: fetcher does not detect rejection)
-6. Verify all cross-references are consistent
-7. Invoke `@spec-gap-analyzer` on the new fetcher section
-8. Invoke `@spec-coherence-reviewer` for cross-spec consistency
-9. Invoke `@fetcher-compliance-reviewer`
-10. Invoke `@docs-reviewer`
+6. Apply correction 6: fix Phase 2 sources table
+   (`cve-service.md:355-360`) — add `sync_redhat_cves` and
+   `sync_ghsa_advisories` to "Pre-resolved packages" row, remove
+   `sync_ghsa_advisories` from CPE and vendor:product rows
+7. Apply correction 7: add GHSA to crash recovery self-healing list
+   (`cve-service.md:400-404`)
+8. Verify all cross-references are consistent
+9. Invoke `@spec-gap-analyzer` on the new fetcher section
+10. Invoke `@spec-coherence-reviewer` for cross-spec consistency
+11. Invoke `@fetcher-compliance-reviewer`
+12. Invoke `@docs-reviewer`
 
 ---
 
@@ -714,6 +837,7 @@ Resolved decisions are recorded here as sessions progress.
 | OP-6 | Withdrawn advisories | `is_withdrawn=false` filter; data preserved; no `cve_state` modification; self-healing for un-withdrawn | 2026-06-18 | 1 |
 | OP-7 | Source reference URL | `html_url` as source reference + `references[]` as upstream references (type via URL pattern matching) | 2026-06-18 | 1 |
 | OP-8 | Ecosystem column | Deferred — add to `open-points.md` for future consideration | 2026-06-18 | 1 |
+| OP-9 | Package resolution strategy | Populate `resolved_packages` from `vulnerabilities[].package.name` (deduplicated). Best-effort SMELT resolution, same pattern as Red Hat | 2026-06-18 | 1 |
 
 ---
 
@@ -744,3 +868,6 @@ Per Fetcher Documentation Requirements
 - [ ] Cross-references section includes `docs/api-spec.md`
 - [ ] External identifier extraction documented
 - [ ] Phase 2 side effects documented (package resolution)
+- [ ] `resolved_packages` extraction documented (OP-9)
+- [ ] Phase 2 sources table correction applied (`cve-service.md`)
+- [ ] Crash recovery self-healing list updated (`cve-service.md`)
