@@ -482,6 +482,7 @@ requires only a code change, not an Alembic migration).
 | `"mitre"` | MITRE CVE Services (cvelistV5 repository) |
 | `"kernel"` | Linux kernel vulnerability tracker (vulns.git) |
 | `"redhat"` | Red Hat Security Data API |
+| `"ghsa"` | GitHub Advisory Database (GitHub CNA) |
 
 **Format constraint**: values MUST match `[a-z][a-z0-9_]*` and not
 exceed 100 characters (matching the `CVESource.source` VARCHAR(100)

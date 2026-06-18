@@ -13,8 +13,8 @@ Requirements).
 | Draft created | 2026-06-17 |
 | Open points resolved (OP-1 → OP-9) | 2026-06-18 |
 | Field mapping and data model (Session 2) | 2026-06-18 |
-| Spec written (Session 3) | Not started |
-| Integration and corrections (Session 4) | Not started |
+| Spec written (Session 3) | 2026-06-18 |
+| Integration and corrections (Session 4) | 2026-06-18 |
 
 ## Context
 
@@ -1241,20 +1241,20 @@ a handful of upstream refs).
 Per Fetcher Documentation Requirements
 (`fetcher-infrastructure.md:2074-2163`):
 
-- [ ] Properties table (all fields filled, no TBD)
-- [ ] `cve_source_type` declared
-- [ ] Algorithm (numbered steps, complete execution flow)
-- [ ] Error handling (periodic + on-demand, retry behavior, sanitized
+- [x] Properties table (all fields filled, no TBD)
+- [x] `cve_source_type` declared
+- [x] Algorithm (numbered steps, complete execution flow)
+- [x] Error handling (periodic + on-demand, retry behavior, sanitized
       messages)
-- [ ] Metrics (`record_created`, `record_updated`, `record_failed`
+- [x] Metrics (`record_created`, `record_updated`, `record_failed`
       definitions)
-- [ ] Custom settings table (if applicable)
-- [ ] `fetch_single()` behavior documented
-- [ ] `fetch_single()` signaling convention referenced
-- [ ] Class structure skeleton
+- [x] Custom settings table (if applicable) — N/A (no custom settings)
+- [x] `fetch_single()` behavior documented
+- [x] `fetch_single()` signaling convention referenced
+- [x] Class structure skeleton
 - [x] Field mapping table (API response → CVEIngestPayload)
 - [x] Explicitly ignored fields table
-- [ ] First-run behavior documented
+- [x] First-run behavior documented
 - [x] Source reference URL strategy documented
 - [ ] Catch-up classification correct in `fetcher-infrastructure.md`
 - [ ] Fetcher Registry updated in `data-sources.md`

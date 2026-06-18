@@ -381,3 +381,53 @@ could detect and show a warning in the UI without breaking correctness).
 indefinitely (~20k rows/year, negligible for PostgreSQL). No cleanup task
 or retention policy is needed. See
 `docs/drafts/remove-fetcher-run-aggregation.md` for rationale.
+
+---
+
+## 10. Ecosystem Column on CVEAffectedVersion
+
+**Origin**: GHSA fetcher spec (OP-8), Session 1 (2026-06-18)
+
+**Context**: GHSA provides `.package.ecosystem` (e.g., "npm", "pip",
+"go") per affected version entry. This value is currently lost after
+processing — no field preserves it. An explicit `ecosystem VARCHAR(50)`
+nullable column on `CVEAffectedVersion` would preserve the ecosystem
+identifier for display ("npm: lodash"), filtering, and cross-source
+correlation (OSV uses the same concept).
+
+**Proposed approach**: add `ecosystem VARCHAR(50)` nullable column to
+`CVEAffectedVersion`. Only GHSA and future OSV fetchers would populate
+it. No breaking change (nullable, additive migration).
+
+**Decision needed**: is the display/filtering value sufficient to justify
+a column populated by only 2 of 6+ fetchers? Revisit when: (a)
+`sync_osv_advisories` is specified (both fetchers benefit), or (b) UI
+feedback shows VAs need ecosystem context for triage decisions.
+
+---
+
+## 11. Ecosystem Prefix Mapping for Package Resolution
+
+**Origin**: GHSA fetcher spec (OP-9 follow-up), Session 2 (2026-06-18)
+
+**Context**: GHSA `resolved_packages` passes ecosystem package names
+(e.g., "lodash", "requests", "github.com/openfga/openfga") to Phase 2
+for best-effort SMELT resolution. Hit rate is ecosystem-dependent — high
+for system-level C libraries that share names with RPM source packages
+(e.g., "curl", "openssl", "zlib"), low for language-specific packages
+with different naming conventions (e.g., pip `requests` → RPM
+`python-requests`, npm `lodash` → no RPM equivalent).
+
+A prefix mapping table could transform package names before SMELT
+resolution (e.g., `pip:requests` → `python-requests`, `npm:node-forge` →
+`nodejs-node-forge`).
+
+**Proposed approach**: ecosystem-aware prefix/transform rules applied to
+`resolved_packages` before passing to `add_package_to_ticket()`. Rules
+would be a simple dict in the fetcher or a shared module.
+
+**Decision needed**: is the additional hit rate worth the mapping
+maintenance burden? Revisit when: (a) GHSA hit rate is measured
+post-implementation and found insufficient for system-level packages, or
+(b) `sync_osv_advisories` is specified (both fetchers benefit from the
+same transforms).

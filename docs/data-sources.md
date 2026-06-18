@@ -169,22 +169,24 @@ NuGet, etc.). While these ecosystems differ from RPM, SUSE packages
 frequently wrap upstream packages from these ecosystems, making the version
 information relevant for Vulnerability Analysts.
 
-- **Relevant data**: CVSS scores (GitHub's own assessment), CWE
-  identifiers, affected packages with precise version ranges across
-  multiple ecosystems, reference links. Supports filtering by CVE ID via
-  the `identifier` parameter in the GraphQL API
-- **Access**: GraphQL API at `https://api.github.com/graphql`. Requires a
+- **Relevant data**: CVSS scores (GitHub's own assessment, v3.x and
+  v4.0), CWE identifiers, affected packages with precise version ranges
+  across multiple ecosystems, reference links, GHSA-IDs (stored as
+  `CVEExternalIdentifier`). GitHub is a CNA — may publish CVEs before
+  other sources
+- **Access**: REST API at `https://api.github.com/advisories`. Requires a
   GitHub personal access token (free). Supports incremental sync via the
-  `updatedSince` parameter. Rate limit: 5,000 points/hour. The advisory
-  database is also available as a Git repository at
-  `https://github.com/github/advisory-database.git`
-- **Integration status**: **Planned**. New `sync_ghsa_advisories` fetcher. Schedule:
-  TBD. CVSS scores are stored as `CVECVSSAssessment` entries with
-  `provider_name = "GitHub"`. The GHSA-ID itself is stored as a
-  `CVEExternalIdentifier` record with `source = GHSA` (see
-  `docs/features/tickets/cve-tracking.md`, "External Identifiers"). CWE
-  identifiers, affected versions, and reference URLs are stored in their
-  respective tables
+  `modified` parameter (ISO 8601 date range syntax). Rate limit: 5,000
+  requests/hour with token (60/hour without — insufficient for
+  production). The advisory database is also available as a Git repository
+  at `https://github.com/github/advisory-database.git` (not used by
+  Sentinel — REST API chosen for `fetch_single(cve_id)` support)
+- **Integration status**: **Planned**. `sync_ghsa_advisories` fetcher.
+  Schedule: every 3 hours (`0 */3 * * *`). Discovery fetcher (can create
+  tickets). CVSS scores stored as `CVECVSSAssessment` entries with
+  `provider_name = "GitHub"`. GHSA-ID stored as `CVEExternalIdentifier`
+  with `source = GHSA`. CWE identifiers, affected versions, resolved
+  packages, and reference URLs stored in their respective tables
 - **Documentation**:
   https://docs.github.com/en/code-security/security-advisories/working-with-global-security-advisories-from-the-github-advisory-database
 
@@ -960,7 +962,7 @@ feature documentation (not its implementation status):
 | `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
 | `sync_cisa_kev` | CISA KEV | TBD | None | None (single JSON file) | KEV records (exploit flag, dateAdded, deadline), references | — | TBD |
 | `sync_epss_scores` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | — | TBD |
-| `sync_ghsa_advisories` | GitHub Advisory DB | TBD | GitHub token (free) | 5,000 points/hour | CVSS GitHub, GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem), references | — | TBD |
+| `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), resolved packages (best-effort SMELT), references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_ghsa_advisories) | Complete |
 | `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution. `source_container = "cna"` | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Complete |
 | `sync_osv_advisories` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references | — | TBD |
 

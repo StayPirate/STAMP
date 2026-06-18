@@ -764,6 +764,7 @@ enqueues a `run_catch_up` Celery task for each registered fetcher.
 | `sync_nvd_cves` | All CVEs (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Already has `fetch_single` for on-demand discovery; catch-up is free |
 | `sync_mitre_cves` | All CVEs (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Same as NVD |
 | `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Same as NVD |
+| `sync_ghsa_advisories` | All advisories (global) — but has `fetch_single` | **Default** (via `fetch_single`) | Same as NVD |
 | `detect_ibs_track_releases` | Tracks in active tickets | **Custom override** | Extract ticket's `TicketPackageTrack` records → check IBS for releases on each codestream |
 | `detect_ibs_product_releases` | Products in active tickets | **Custom override** | Extract ticket's `TicketPackageProduct` records → check `updateinfo.xml` for advisories |
 | `sync_ibs_requests` | Codestreams in active tickets | **Custom override** | Extract ticket's codestream names → query IBS Request Search API → correlate SRs/RRs |
@@ -786,7 +787,7 @@ reactivation support for free.
 | `sync_ldap_directory` | Syncs all employee records |
 | `sync_cisa_kev` | Syncs entire KEV catalog |
 | `sync_epss_scores` | Syncs all EPSS scores |
-| `sync_ghsa_advisories` | Syncs all GHSA advisories |
+
 | `sync_osv_advisories` | Syncs all OSV advisories |
 
 
