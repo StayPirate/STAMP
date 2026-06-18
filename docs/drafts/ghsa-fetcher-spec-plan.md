@@ -11,7 +11,7 @@ Requirements).
 | Item | State |
 |------|-------|
 | Draft created | 2026-06-17 |
-| Open points resolved | Pending |
+| Open points resolved | 2026-06-18 |
 | Spec written | Not started |
 | Fetcher Registry updated | Not started |
 | fetcher-infrastructure.md corrections | Not started |
@@ -60,11 +60,16 @@ not merely an enrichment fetcher.
 - Discovery fetcher: YES — GitHub is a CNA, can be first to publish a
   CVE. Must create tickets via `upsert_cve()`
 - `fetch_single()`: YES — required for all CVE fetchers
-- Catch-up: YES — default catch_up via `fetch_single()` (same as
-  NVD/MITRE/Kernel)
+- Catch-up: YES — default catch_up via `fetch_single()` (same as NVD)
 - `CVEAffectedVersion` populated: Yes (multi-ecosystem)
 - `CVECWE` populated: Yes
 - `CVEExternalIdentifier` populated: Yes (primary purpose)
+- Schedule: every 3 hours (`0 */3 * * *`)
+- API: REST (`GET /advisories`), `modified` parameter supports ISO 8601
+  timestamps with timezone (`>=YYYY-MM-DDTHH:MM:SSZ`)
+- Cursor: derived (NVD-style) from `FetcherRun.started_at` - 15min
+  overlap buffer
+- No API time window limit (unlike NVD's 120-day restriction)
 
 ---
 
@@ -106,7 +111,7 @@ Technical details:
 - Auth header: `Authorization: Bearer <GITHUB_TOKEN>`
 - Accept header: `Accept: application/vnd.github+json`
 - API version header: `X-GitHub-Api-Version: 2022-11-28`
-- Incremental: `?type=reviewed&modified=>={last_sync_iso}&sort=updated&direction=asc&per_page=100`
+- Incremental: `?type=reviewed&is_withdrawn=false&modified=>={last_sync_iso}&sort=updated&direction=asc&per_page=100`
 - fetch_single: `?cve_id=CVE-YYYY-NNNNN&type=reviewed` (returns
   matching advisory)
 - Pagination: cursor-based (`before`/`after` params from Link header)
@@ -183,7 +188,21 @@ Key factors:
 4. Forward-only ingestion + incremental `modified` filter keeps
    per-run volume well within rate limits
 
-**Decision**: [PENDING]
+**Decision**: **REST API (Option A)**.
+
+Cursor strategy: derived (NVD-style). Use `started_at` of the most
+recent `FetcherRun` with `status IN ('success', 'partial')` for
+`sync_ghsa_advisories`, minus a 15-minute overlap buffer.
+
+Query: `?type=reviewed&is_withdrawn=false&modified=>={window_start_iso}&sort=updated&direction=asc&per_page=100`
+
+Confirmed from GitHub API documentation (2026-06-18):
+
+- The `modified` parameter supports full ISO 8601 timestamps with
+  timezone (e.g., `>=2026-06-17T10:30:00Z`), not just dates
+- No maximum time window limit (unlike NVD's 120-day restriction)
+- Cursor-based pagination via `before`/`after` params from Link header
+- `cve_id` parameter supports direct lookup for `fetch_single()`
 
 ---
 
@@ -212,7 +231,8 @@ Rationale:
   data, GitHub's own CVSS assessment, CWE classifications
 - The REST API defaults to `type=reviewed` when no type is specified
 
-**Decision**: [PENDING]
+**Decision**: **Ingest only `type=reviewed` advisories.** Unreviewed
+are redundant with NVD; malware are not CVEs.
 
 ---
 
@@ -234,17 +254,12 @@ A. **Skip advisories without CVE-ID** — only process advisories where
    advisory's `updated_at` changes), the next incremental sync picks
    it up automatically.
 
-B. **Track and re-check** — maintain a lightweight list of GHSA-IDs
-   without CVE-IDs and periodically re-check. Adds complexity with
-   minimal value (the regular sync already handles this naturally
-   when the advisory is updated).
-
-**Proposed resolution**: Option A (skip). The advisory will naturally
-be ingested on a future sync cycle when its CVE-ID is assigned (the
-`updated_at` timestamp changes, triggering the incremental sync
-filter).
-
-**Decision**: [PENDING]
+**Decision**: **Option A (skip).** Silent skip — no log, no metric.
+The advisory is not processable without a CVE-ID and will be picked
+up naturally on a future sync cycle when the CVE-ID is assigned
+(`updated_at` changes, triggering the incremental filter). The REST
+API has no server-side filter for "has CVE-ID", so filtering is
+client-side.
 
 ---
 
@@ -279,7 +294,7 @@ version | version_type | version_end | version_end_inclusive |
 source_container | repo | program_files | cpe
 ```
 
-**Proposed mapping**:
+**Proposed mapping** (simplified — fragile/low-value fields dropped):
 
 | GHSA field | CVEAffectedVersion field | Notes |
 |---|---|---|
@@ -289,30 +304,19 @@ source_container | repo | program_files | cpe
 | (absent) | `vendor` | NULL — GHSA has no vendor concept |
 | `vulnerable_version_range` | `version` + `version_end` + `version_end_inclusive` | See parsing rules below |
 | (derived from ecosystem) | `version_type` | See ecosystem mapping table below |
-| (derived from ecosystem) | `collection_url` | Registry URL — see ecosystem mapping table below |
-| (derived) | `package_url` | Construct PURL from ecosystem + name (if feasible) |
-| `vulnerable_functions` | (see sub-question) | Disposition TBD |
-| (absent) | `cpe` | NULL — GHSA does not provide CPE |
 | `source_code_location` | `repo` | Advisory-level field (not per-vulnerability) |
-| (absent) | `program_files` | NULL unless repurposed for vulnerable_functions |
+| (absent) | `cpe` | NULL — GHSA does not provide CPE |
+| (absent) | `collection_url` | NULL — dropped (fragile ecosystem→URL mapping, low value) |
+| (absent) | `package_url` | NULL — dropped (PURL construction has edge cases per ecosystem, not used operationally) |
+| (absent) | `program_files` | NULL |
 
-#### Ecosystem mapping table
+#### Ecosystem → version_type mapping
 
-| GHSA ecosystem | `collection_url` | `version_type` | PURL type |
-|---|---|---|---|
-| `npm` | `https://www.npmjs.com/` | `semver` | `pkg:npm/` |
-| `pip` | `https://pypi.org/` | `semver` | `pkg:pypi/` |
-| `go` | `https://pkg.go.dev/` | `semver` | `pkg:golang/` |
-| `maven` | `https://repo.maven.apache.org/maven2` | `maven` | `pkg:maven/` |
-| `rubygems` | `https://rubygems.org/` | `semver` | `pkg:gem/` |
-| `rust` | `https://crates.io/` | `semver` | `pkg:cargo/` |
-| `nuget` | `https://www.nuget.org/` | `semver` | `pkg:nuget/` |
-| `composer` | `https://packagist.org/` | `semver` | `pkg:composer/` |
-| `erlang` | `https://hex.pm/` | `semver` | `pkg:hex/` |
-| `pub` | `https://pub.dev/` | `semver` | `pkg:pub/` |
-| `swift` | N/A | `semver` | `pkg:swift/` |
-| `actions` | `https://github.com/marketplace?type=actions` | `custom` | `pkg:githubactions/` |
-| `other` | NULL | `custom` | NULL |
+| GHSA ecosystem | `version_type` |
+|---|---|
+| `npm`, `pip`, `go`, `rubygems`, `rust`, `nuget`, `composer`, `erlang`, `pub`, `swift` | `semver` |
+| `maven` | `maven` |
+| `actions`, `other` | `custom` |
 
 #### Version range parsing rules
 
@@ -333,46 +337,28 @@ patterns:
 
 **Sub-question A**: if `vulnerable_version_range` is NULL or empty,
 create one `AffectedVersionEntry` with package info and NULL version
-fields (consistent with MITRE "empty versions[] handling").
+fields (defensive fallback — preserves the package association even
+when version details are unavailable). Consistent with MITRE "empty
+versions[] handling".
 
 **Sub-question B**: `vulnerable_functions` disposition.
 
-Options:
-
-1. Store in `program_files` JSONB as-is (array of strings). The field
-   is display-only and already stores heterogeneous data (kernel uses
-   it for affected source files). The UI tooltip/label can adapt based
-   on source context
-2. Drop `vulnerable_functions` entirely (low value for SUSE triage —
-   the package-level granularity is sufficient)
-3. New column `vulnerable_functions` on `CVEAffectedVersion` (adds
-   complexity for marginal value)
-
-**Proposed**: Option 2 (drop). The field has low value for SUSE triage
-workflows. If needed later, it can be added without breaking changes.
+**Decision**: Drop. Low value for SUSE triage — the package-level
+granularity is sufficient. If needed later, it can be added without
+breaking changes.
 
 **Sub-question C**: `first_patched_version` disposition.
 
-The REST API provides `first_patched_version` (string) per
-vulnerability entry. This is useful information (tells the VA exactly
-which version fixes the issue). However, `CVEAffectedVersion` has no
-dedicated field for this.
+**Decision**: No new field. The value is already implicitly captured
+in the parsed range — if the range is `>= X, < Y`, then `Y` is the
+patched version. If the range is `< Y` only, `version_end = Y`. The
+rare `<=` edge case does not warrant a new column.
 
-Options:
-
-1. Ignore (information is available via the GHSA URL reference)
-2. Use as `version_end` when the range is open-ended (e.g.,
-   `< first_patched_version`)
-3. New column on `CVEAffectedVersion` (adds complexity)
-
-**Proposed**: already implicitly captured — if the range is
-`>= X, < Y`, then `Y` is the patched version. If the range is
-`< Y` only, `version_end = Y`. The `first_patched_version` field
-is redundant with the parsed range end in most cases. When the range
-has `<=` semantics (rare), the patched version is the next version
-after `version_end` — this edge case does not warrant a new column.
-
-**Decision**: [PENDING]
+**Decision**: **Simplified mapping as above.** Dropped fields:
+`package_url` (PURL construction has fragile per-ecosystem edge
+cases, not used operationally), `collection_url` (hardcoded mapping
+to maintain, ecosystem name is sufficient context),
+`vulnerable_functions` (low triage value). No new fields added.
 
 ---
 
@@ -388,22 +374,22 @@ after `version_end` — this edge case does not warrant a new column.
 - Freshness need: as a discovery fetcher (CNA), faster discovery is
   better for VA triage
 - Cost per run: depends on number of modified advisories per cycle.
-  At 6h intervals, estimate ~50-200 modified advisories per window =
-  1-2 API pages (100/page). Well within rate limits
+  At 3h intervals, estimate ~25-100 modified advisories per window =
+  1 API page (100/page). Well within rate limits
 - Other discovery fetchers: NVD every 6h, MITRE every 6h, Kernel
   every 3h
 
-**Proposed**: Every 6 hours (`0 */6 * * *`) — consistent with
-NVD/MITRE.
+**Decision**: **Every 3 hours (`0 */3 * * *`)** — consistent with
+Kernel fetcher.
 
-Rationale: 6h provides 4 sync windows/day. Each sync fetches only
-advisories modified since last run. At typical volumes (~100-200
-updates per window), each sync requires 1-2 API pages. Well within
-rate limits. Worst-case discovery delay is 6 hours (acceptable given
-other sources also sync at 6h intervals, and on-demand `fetch_single`
-provides immediate access for specific CVEs).
-
-**Decision**: [PENDING]
+Rationale: 3h provides 8 sync windows/day with a maximum discovery
+delay of 3 hours. Each sync fetches only advisories modified since
+last run. At typical volumes (~25-100 updates per 3h window), each
+sync requires a single API page. Well within rate limits. The higher
+frequency is justified because GitHub is a CNA (can be the first
+source to publish a CVE) and the per-run cost is trivially low.
+On-demand `fetch_single()` provides immediate access for specific
+CVEs regardless of schedule.
 
 ---
 
@@ -447,7 +433,26 @@ The REST API response includes:
    CVE is truly rejected, the MITRE/NVD fetchers will update
    `cve_state` through their own channels
 
-**Decision**: [PENDING]
+#### Withdrawn → un-withdrawn scenario
+
+If an advisory is withdrawn and later un-withdrawn:
+
+1. T1: advisory fetched → data ingested
+2. T2: advisory withdrawn → `is_withdrawn=false` filter excludes it;
+   data preserved in Sentinel
+3. T3: advisory un-withdrawn → `updated_at` changes,
+   `withdrawn_at` returns to NULL
+4. Next sync: advisory passes both filters (`modified>=cursor` and
+   `is_withdrawn=false`), fetcher processes it with current content.
+   `upsert_cve()` merges any changes made during the withdrawn period.
+
+The mechanism is self-healing: modifications made while withdrawn are
+captured at un-withdrawal time because the REST API returns current
+state, not deltas.
+
+**Decision**: **Confirmed as proposed.** No `cve_state` modification.
+`is_withdrawn=false` at API level. Data preserved. Self-healing for
+un-withdrawn advisories.
 
 ---
 
@@ -474,10 +479,27 @@ from the API response's `html_url` field with
 `title = "GitHub Advisory"`, `type = advisory`,
 `source = "sync_ghsa_advisories"`.
 
-This is consistent with the fetcher's general reference handling
-(all references come from the API response, not from patterns).
+Additionally, the fetcher passes the `references[]` array from the
+API response as upstream references to
+`reference_service.upsert_references()`:
 
-**Decision**: [PENDING]
+- `url`: each URL string from `references[]`
+- `tags`: `None` (GHSA does not provide classification tags)
+- `name`: `None` (GHSA does not provide reference names)
+
+Type classification relies on URL pattern matching (e.g.,
+`github.com/*/commit/*` → `patch`, `nvd.nist.gov/vuln/detail/*` →
+`advisory`). Unmatched URLs get `type = NULL` (uncategorized).
+
+Deduplication is handled by `reference_service` via the
+`(ticket_id, url)` unique constraint with URL normalization. If
+NVD/MITRE already added the same URL, the "different source" merge
+rule applies (fill NULL fields only, never overwrite).
+
+**Decision**: **Option B (html_url) + upstream references from
+`references[]` array.** No static pattern. Source reference from
+`html_url`. Additional references from the response array with type
+from URL pattern matching.
 
 ---
 
@@ -487,9 +509,10 @@ This is consistent with the fetcher's general reference handling
 `CVEAffectedVersion`.
 
 **Current state**: GHSA provides `package.ecosystem` (e.g., "npm",
-"pip", "go"). Currently this would map indirectly to `collection_url`
-via a hardcoded mapping. But the ecosystem identifier itself has
-independent value for:
+"pip", "go"). Per OP-4 decision, `collection_url` and `package_url`
+were dropped — only `version_type` is derived from ecosystem. Without
+a dedicated `ecosystem` column, the ecosystem name itself is lost
+after mapping. The identifier has independent value for:
 
 - UI display (show "npm: lodash >= 4.0.0" rather than a registry URL)
 - Filtering (find all CVEs affecting npm packages)
@@ -518,7 +541,18 @@ independent value for:
 **Trade-off**: adds a column populated by only 2 of 6+ fetchers. Is
 the display and filtering value sufficient to justify the addition?
 
-**Decision**: [PENDING]
+**Decision**: **Deferred.** The value is recognized but premature
+without evidence of real usage demand. When writing the final fetcher
+spec, add an entry to `docs/drafts/open-points.md` describing this
+proposal for future consideration:
+
+- Proposal: add `ecosystem VARCHAR(50)` nullable column to
+  `CVEAffectedVersion`
+- Motivation: display ("npm: lodash"), filtering, cross-source
+  correlation (OSV uses the same concept)
+- Condition for revisiting: when `sync_osv_advisories` is specified
+  (both fetchers would benefit), or when UI feedback shows VAs need
+  ecosystem context for triage decisions
 
 ---
 
@@ -557,7 +591,7 @@ CWE, or reference changes that occurred while the ticket was inactive.
 
 Update the `sync_ghsa_advisories` row with:
 
-- Schedule: value from OP-5 resolution
+- Schedule: `0 */3 * * *` (every 3 hours)
 - Spec link:
   `[cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_ghsa_advisories)`
 - Spec Status: `Complete`
@@ -590,10 +624,9 @@ Add `sync_ghsa_advisories` entry:
 **File**: `docs/features/tickets/cve-tracking.md`
 **Location**: lines 299-303
 
-Whether to add `sync_ghsa_advisories` to the list of fetchers that
-can detect rejection depends on OP-6 resolution. If withdrawn
-advisories are skipped (proposed), the fetcher does NOT detect
-rejection and should NOT be listed here.
+Per OP-6 decision: withdrawn advisories are skipped via
+`is_withdrawn=false`. The fetcher does NOT detect CVE rejection and
+should NOT be added to the rejection detection list. No change needed.
 
 ---
 
@@ -608,28 +641,28 @@ and completable independently.
 **Goal**: make all architectural decisions needed before writing the
 spec.
 
-1. Resolve OP-1 (API choice) — evaluate trade-offs, pick REST/GraphQL/Git
-2. Resolve OP-2 (scope — reviewed only)
-3. Resolve OP-3 (advisories without CVE-ID)
-4. Resolve OP-5 (schedule frequency)
-5. Resolve OP-6 (withdrawn advisories handling)
-6. Resolve OP-7 (source reference URL strategy)
-7. Record all decisions in the Decisions Log below
+1. ~~Resolve OP-1 (API choice)~~ ✓ REST API
+2. ~~Resolve OP-2 (scope — reviewed only)~~ ✓
+3. ~~Resolve OP-3 (advisories without CVE-ID)~~ ✓ Silent skip
+4. ~~Resolve OP-4 (affected version mapping)~~ ✓ Simplified
+5. ~~Resolve OP-5 (schedule frequency)~~ ✓ Every 3h
+6. ~~Resolve OP-6 (withdrawn advisories handling)~~ ✓
+7. ~~Resolve OP-7 (source reference URL strategy)~~ ✓ html_url + refs
+8. ~~Resolve OP-8 (ecosystem column)~~ ✓ Deferred
+9. ~~Record all decisions in the Decisions Log~~ ✓
 
 ### Session 2: Field Mapping and Data Model
 
 **Goal**: define the complete data extraction specification.
 
-1. Resolve OP-4 (affected version mapping + sub-questions)
-2. Resolve OP-8 (ecosystem column proposal)
-3. Define complete field mapping table (API response field →
+1. Define complete field mapping table (API response field →
    CVEIngestPayload field) — same format as NVD/MITRE/Red Hat specs
-4. Define explicitly ignored fields table — same format as Red Hat
+2. Define explicitly ignored fields table — same format as Red Hat
    spec (field + reason)
-5. Finalize ecosystem → collection_url mapping table
-6. Document version range parsing algorithm with edge cases
-7. If OP-8 is accepted: draft the `data-model.md` update for the
-   new column
+3. Finalize ecosystem → version_type mapping table
+4. Document version range parsing algorithm with edge cases
+5. Add entry to `docs/drafts/open-points.md` for the deferred
+   ecosystem column proposal (OP-8)
 
 ### Session 3: Write Fetcher Spec (Core Sections)
 
@@ -657,7 +690,8 @@ spec.
 2. Apply correction 2: update Fetcher Registry (`data-sources.md`)
 3. Insert fetcher section into `cve-tracking.md`
 4. Apply correction 4: add to Common First Run Behavior
-5. Apply correction 5: CVE Rejection Handling (if applicable)
+5. ~~Apply correction 5: CVE Rejection Handling~~ — no change needed
+   (per OP-6: fetcher does not detect rejection)
 6. Verify all cross-references are consistent
 7. Invoke `@spec-gap-analyzer` on the new fetcher section
 8. Invoke `@spec-coherence-reviewer` for cross-spec consistency
@@ -672,7 +706,14 @@ Resolved decisions are recorded here as sessions progress.
 
 | # | Decision | Resolution | Date | Session |
 |---|----------|------------|------|---------|
-| — | — | — | — | — |
+| OP-1 | API choice | REST API (`GET /advisories`) + derived cursor (NVD-style, 15min overlap) | 2026-06-18 | 1 |
+| OP-2 | Advisory scope | `type=reviewed` only | 2026-06-18 | 1 |
+| OP-3 | Advisories without CVE-ID | Silent skip (no log, no metric); auto-recovered on CVE-ID assignment | 2026-06-18 | 1 |
+| OP-4 | Affected version mapping | Simplified: drop `package_url`, `collection_url`, `vulnerable_functions`. NULL range → record with NULL versions | 2026-06-18 | 1 |
+| OP-5 | Schedule | Every 3 hours (`0 */3 * * *`) | 2026-06-18 | 1 |
+| OP-6 | Withdrawn advisories | `is_withdrawn=false` filter; data preserved; no `cve_state` modification; self-healing for un-withdrawn | 2026-06-18 | 1 |
+| OP-7 | Source reference URL | `html_url` as source reference + `references[]` as upstream references (type via URL pattern matching) | 2026-06-18 | 1 |
+| OP-8 | Ecosystem column | Deferred — add to `open-points.md` for future consideration | 2026-06-18 | 1 |
 
 ---
 
