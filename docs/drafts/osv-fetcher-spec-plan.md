@@ -4,10 +4,10 @@ Working document for the `sync_osv_advisories` fetcher specification.
 Tracks research findings, architectural decisions, and the step-by-step
 plan to produce a complete spec in `docs/features/tickets/cve-tracking.md`.
 
-**Status**: In progress — multi-session work  
+**Status**: All decisions resolved — ready for application  
 **Created**: 2026-06-19  
 **Last updated**: 2026-06-19  
-**Open points remaining**: 5 (OP-OSV-1 through OP-OSV-5)
+**Open points remaining**: 0 (all resolved in session 3)
 
 ---
 
@@ -30,9 +30,42 @@ Error Handling: TBD
 Metrics: TBD
 ```
 
-References in `docs/data-sources.md` (line 967) and
-`docs/features/platform/fetcher-infrastructure.md` (source prefix `osv`)
-are also placeholders.
+### References in Other Documents (verified line numbers)
+
+| Document | Line(s) | Content | Status |
+|----------|---------|---------|--------|
+| `fetcher-infrastructure.md` | 236 | Source prefix `osv` in registry | OK |
+| `fetcher-infrastructure.md` | 826 | Opt-out group (KEV/EPSS/OSV) | **INCORRECT** — must be removed (see 3.7) |
+| `fetcher-infrastructure.md` | 828-836 | Note grouping OSV with KEV/EPSS | **INCORRECT** — must be corrected |
+| `fetcher-infrastructure.md` | 1207 | Class hierarchy: `SyncOsvAdvisories (planned)` | OK |
+| `cve-tracking.md` | 1241 | Incidental mention "OSV.dev/Google" | OK (no change) |
+| `cve-tracking.md` | 2273-2295 | TBD stub | Replace with full spec |
+| `cve-service.md` | 359-360 | Phase 2 sources `[Planned]` | Update |
+| `cve-service.md` | 1213 | Callers table — only `upsert_cve()` | Add `record_source_status() (failure path)` |
+| `data-sources.md` | 35 | Summary table: "Planned" | See Step 8 (summary table alignment) |
+| `data-sources.md` | 273-294 | OSV section description | Update with design details |
+| `data-sources.md` | 967 | Fetcher Registry row — all TBD | Complete all fields, `Spec Status: Complete` |
+| `data-sources.md` | 981 | CVE Enrichment structures | OK (already lists OSV) |
+
+### Post-Refactoring Context (commit 8fea018)
+
+Since sessions 1-2, a major refactoring introduced `BaseCVEFetcher` as
+an intermediate abstract class between `BaseFetcher` and all CVE
+fetchers. Key impacts on this draft:
+
+- All CVE fetchers now MUST inherit from `BaseCVEFetcher` (not
+  `BaseFetcher` directly)
+- `fetch_single()` is an abstract method on `BaseCVEFetcher` —
+  structurally enforced, not optional
+- `catch_up()` has a default implementation on `BaseCVEFetcher` that
+  calls `fetch_single()`
+- `participates_in_catch_up` class attribute controls opt-out (default
+  `True`)
+- `cve_source_type` is an abstract class attribute with import-time
+  uniqueness validation
+- `source_reference_url_pattern` is a class attribute on `BaseCVEFetcher`
+- The spec erroneously classified OSV in the KEV/EPSS opt-out group —
+  this contradicts the draft's design and must be corrected
 
 ---
 
@@ -136,9 +169,12 @@ from distribution advisories.
 
 | Phase | Source | Data extracted |
 |-------|--------|---------------|
-| 1. CVE record | `GET /v1/vulns/{cve_id}` | GIT fix/introduce commits, CVSS, typed references, `aliases` list, `related` list |
-| 2. Alias records | `GET /v1/vulns/{alias_id}` for each | Affected versions (ecosystem, name, PURL, ranges), CVSS from additional providers, references, package names |
+| 1. CVE record | `GET /v1/vulns/{cve_id}` | GIT fix/introduce commits, typed references, `aliases` list, `related` list |
+| 2. Alias records | `GET /v1/vulns/{alias_id}` for each | Affected versions (ecosystem, name, PURL, ranges), references, package names |
 | 3. Related records | `GET /v1/vulns/{related_id}` for each | References (advisory URLs), package names for SMELT resolution |
+
+Note: `severity` fields are present in Phase 1 and Phase 2 responses
+but deliberately ignored (see decision 3.8).
 
 ### 3.3 No Filtering — Let Dedup Handle Overlap
 
@@ -147,7 +183,6 @@ If data overlaps with other fetchers (e.g., GHSA record already
 ingested by `sync_ghsa_advisories`), the upsert/dedup mechanisms
 handle it:
 
-- `CVECVSSAssessment`: UNIQUE on `(cve_id, provider_name, cvss_version)` — no-op if exists
 - `CVEAffectedVersion`: delete-and-reinsert per `(cve_id, source_container)` — OSV writes its own set
 - `TicketReference`: UNIQUE on `(ticket_id, url)` — no-op if exists
 - `CVEExternalIdentifier`: UNIQUE on `(source, identifier)` with ON CONFLICT DO NOTHING
@@ -228,6 +263,92 @@ Canonical values come from OSV Schema (OSSF standard):
 `PyPI`, `npm`, `Go`, `crates.io`, `Maven`, `NuGet`, `Packagist`, `RubyGems`,
 `Pub`, `Hex`, `GitHub Actions`, `SwiftURL`, `SUSE`, `Debian`, `Ubuntu`, etc.
 
+### 3.7 Inheritance and catch_up Participation
+
+**Decision**: inherit from `BaseCVEFetcher`. Participate in catch_up
+(default behavior, `participates_in_catch_up = True`).
+
+**BaseCVEFetcher inheritance** (structurally required — not optional):
+
+- `cve_source_type = "osv"` (class attribute, import-time validated)
+- `fetch_single(cve_id, session)` (abstract method, must implement)
+- Inherits default `catch_up()` (extracts `cve_id` from ticket → calls
+  `fetch_single()` → catches `CVENotInSource` as no-op)
+- `source_reference_url_pattern = "https://osv.dev/vulnerability/{cve_id}"`
+- Import-time validation: `cve_source_type` uniqueness + Enum membership
+
+**catch_up rationale**: OSV uses the same execution model as Red Hat:
+
+| Execution mode | Scope | Trigger |
+|---|---|---|
+| `execute()` (scheduled) | Only CVEs with active tickets | Cron schedule |
+| `fetch_single()` (on-demand) | Any CVE | Ticket creation, CVE association, refetch |
+| `catch_up()` (reactivation) | Specific CVE of reactivated ticket | `reconcile_ticket_status()` on inactive-state exit |
+
+The `execute()` scope is limited to active tickets. CVEs whose tickets
+are in inactive status (Ignored, Duplicated, Resolved) do NOT receive
+OSV enrichment during the inactive period. This creates a **scope gap**
+identical to Red Hat's (documented at `cve-tracking.md:2434-2440`).
+
+The default `catch_up()` (inherited from `BaseCVEFetcher`) fills this
+gap: when a ticket is reactivated, `catch_up()` calls
+`fetch_single(cve_id)` for immediate recovery without waiting for the
+next periodic run.
+
+**Why NOT opt-out (unlike KEV/EPSS)**: KEV and EPSS opt out because
+their `execute()` syncs the **entire catalog** regardless of ticket
+status — there is no gap to recover. OSV does NOT sync the entire
+catalog; it queries per-CVE for active tickets only.
+
+**Correction required**: `fetcher-infrastructure.md:826` erroneously
+groups OSV with KEV/EPSS. Must be removed from the opt-out table and
+the explanatory note (lines 828-836) must be updated to mention only
+KEV and EPSS.
+
+### 3.8 CVSS Scores: Do Not Extract
+
+**Decision**: do NOT extract CVSS scores from OSV responses. The
+`severity` field is added to the "Explicitly Ignored Fields" table.
+
+**Rationale** (verified against live API data):
+
+1. The OSV schema's `severity` field provides only `{type, score}` —
+   there is NO attribution/provider field. It is impossible to
+   determine reliably who produced the score without hardcoding a
+   mapping.
+
+2. The CVSS data from OSV adds zero value beyond what dedicated
+   fetchers already provide:
+   - CVE records (`/v1/vulns/CVE-*`): NVD-converted score →
+     already ingested by `sync_nvd_cves` with explicit attribution
+   - GHSA alias records: GitHub score → already ingested by
+     `sync_ghsa_advisories` with `provider_name = "GitHub"`
+   - PYSEC alias records: typically the same NVD score
+   - GO alias records: **no `severity` field at all** (verified)
+   - RUSTSEC alias records: rare, low value for SUSE packages
+
+3. Extracting CVSS would require either:
+   - A hardcoded `id_prefix → provider_name` mapping (maintenance
+     burden, fragile if OSV changes internal aggregation)
+   - A generic `"OSV"` provider name (creates duplicates with
+     existing NVD/GitHub records under different keys)
+
+4. The value of OSV for Sentinel is in **affected versions**,
+   **references**, and **package names** — not CVSS scores.
+
+**Impact on spec**: no `CVECVSSAssessment` records are created by this
+fetcher. The `CVEIngestPayload.cvss_assessments` field is always empty.
+This simplifies the algorithm (no CVSS parsing, no provider derivation)
+and eliminates OP-OSV-4 entirely.
+
+**Spec placement**: the full rationale above MUST be transcribed into
+the "Explicitly Ignored Fields" table of the `sync_osv_advisories`
+section in `cve-tracking.md`. The table entry for `severity` must be
+self-contained — a future reader must understand the decision without
+consulting this draft. Include: (1) what the OSV schema lacks, (2) what
+was verified against live data, (3) why existing fetchers already cover
+the data, (4) what would go wrong if we extracted anyway.
+
 ---
 
 ## 4. Data Model Changes Required
@@ -252,41 +373,69 @@ Add: `PYSEC`, `RUSTSEC`
 ### 4.3 New CVESourceType Value
 
 Add `"osv"` to the `CVESourceType` evolving enum for `CVESource`
-tracking.
+tracking. This value is declared as `cve_source_type = "osv"` on the
+`SyncOsvAdvisories` class and validated at import time by
+`BaseCVEFetcher.__init_subclass__` (uniqueness + Enum membership).
 
 ### 4.4 Source Prefix Registry
 
 In `fetcher-infrastructure.md`, the `osv` source prefix is already
-registered (line 241: `| osv | OSV (osv.dev) |`). No change needed.
+registered (line 236: `| osv | OSV (osv.dev) |`). No change needed.
 
 ---
 
 ## 5. Specification Sections to Write
 
 Checklist of every section required by the Fetcher Documentation
-Requirements (per `fetcher-infrastructure.md`):
+Requirements (per `fetcher-infrastructure.md`). The properties table
+must follow the extended format used by all `BaseCVEFetcher` subclasses
+(see `sync_redhat_cves` at `cve-tracking.md:2297-2310` as template).
 
-- [ ] **Properties table** (complete — all fields filled, including:
-  `cve_source_type = "osv"`, `fetch_single() = Yes`,
-  `source_reference_url_pattern = https://osv.dev/vulnerability/{cve_id}`)
-- [ ] **Class structure** (Python class skeleton with attributes)
-- [ ] **Algorithm** (3-phase numbered steps)
+- [ ] **Properties table** (extended BaseCVEFetcher format):
+  - Standard: `Fetcher name`, `Class name`, `Schedule`, `Source`,
+    `Scope`, `Auth`, `Custom settings`
+  - BaseCVEFetcher: `cve_source_type = "osv"`,
+    `fetch_single() = Yes — OSV REST API single CVE query`,
+    `source_reference_url_pattern = "https://osv.dev/vulnerability/{cve_id}"`
+- [ ] **Class structure** (inherits `BaseCVEFetcher`, includes
+  `cve_source_type`, `source_reference_url_pattern`, `fetch_single()`
+  signature, `execute()` signature, `catch_up` inherited comment)
+- [ ] **Algorithm** (3-phase numbered steps for both `execute()` loop
+  and per-CVE `fetch_single()` core logic)
 - [ ] **Field mapping — CVE record** (GIT ranges → CVEAffectedVersion)
 - [ ] **Field mapping — alias records** (ecosystem data → CVEAffectedVersion)
 - [ ] **Field mapping — related records** (references + package names)
 - [ ] **CVEExternalIdentifier policy** (whitelist table + guard logic)
-- [ ] **`fetch_single()` design** (on-demand single-CVE fetch)
-- [ ] **First run behavior** (forward-only strategy)
+- [ ] **`fetch_single(cve_id)` design** (signaling convention:
+  normal return = success, `CVENotInSource` if HTTP 404 or empty,
+  other exceptions propagate for Celery retry)
+- [ ] **Scope gap + catch_up** (same pattern as Red Hat
+  `cve-tracking.md:2434-2440` — inherited default, participates)
+- [ ] **First run behavior** (stateless — no first-run distinction,
+  same as Red Hat)
 - [ ] **Cursor mechanism** (stateless — no cursor)
-- [ ] **Error handling — `fetch_single()`** (table: condition/retry/status)
-- [ ] **Error handling — `execute()`** (per-CVE + consecutive failure abort)
-- [ ] **Sanitized error messages** (table)
-- [ ] **Metrics** (record_created/updated/failed definitions)
-- [ ] **Custom settings** (throttle_delay_seconds)
-- [ ] **Explicitly ignored fields** (table with reasons)
-- [ ] **Phase 2 side effects** (resolved_packages)
+- [ ] **Error handling — `fetch_single()`** (follows standard signaling
+  convention per `fetcher-infrastructure.md:323-409`)
+- [ ] **Error handling — `execute()`** (per-CVE isolation +
+  consecutive failure abort threshold)
+- [ ] **Sanitized error messages** (table per
+  `fetcher-infrastructure.md:839-920`)
+- [ ] **Metrics** (`record_created`/`record_updated`/`record_failed`
+  definitions)
+- [ ] **Custom settings** (`throttle_delay_seconds`: default=0.2,
+  ge=0.05, le=10.0)
+- [ ] **Explicitly ignored fields** (table — includes `severity` per
+  decision 3.8. **Important**: the rationale for skipping CVSS must be
+  self-contained in this table so it survives independently of the
+  draft. The entry must explain: (1) OSV schema provides no provider
+  attribution in `severity`, (2) live API verification confirmed GO
+  records have no severity at all, (3) all useful CVSS data already
+  ingested by dedicated fetchers with explicit provenance, (4) extracting
+  would require fragile `id_prefix → provider` mapping or create
+  duplicate rows under a generic name. See section 3.8 for the full
+  reasoning to transcribe.)
+- [ ] **Phase 2 side effects** (`resolved_packages` → SMELT resolution)
 - [x] **OSV reference type mapping** (resolved — see OP-OSV-6)
-- [ ] **Scope gap / catch_up** (enrichment scope + default catch_up)
 
 ---
 
@@ -294,11 +443,12 @@ Requirements (per `fetcher-infrastructure.md`):
 
 Step-by-step plan for applying the specification across project
 documents. Each step is a self-contained unit of work suitable for
-a single session.
+a single session. Line numbers verified against current file state
+(post-commit 8fea018).
 
 ### Step 1: Data Model Update
 
-**File**: `docs/data-model.md`
+**File**: `docs/data-model.md` (1502 lines)
 
 Changes:
 1. Add `ecosystem VARCHAR(50) nullable` to `CVEAffectedVersion` table
@@ -308,77 +458,70 @@ Changes:
 5. Update safety-net unique constraint comment (ecosystem NOT included —
    same package in different ecosystems from different sources is valid)
 
-### Step 2: Fetcher Infrastructure Update
+### Step 2: Fetcher Infrastructure Correction
 
-**File**: `docs/features/platform/fetcher-infrastructure.md`
+**File**: `docs/features/platform/fetcher-infrastructure.md` (2875 lines)
 
 Changes:
-1. Verify `osv` source prefix in registry table (already registered)
-2. Add `sync_osv_advisories` to fetcher descriptions table
-3. Add `"osv"` to `cve_source_type` registry (CVE Source Type Identity
-   section)
+
+| Line(s) | Action |
+|---------|--------|
+| 236 | Verify `osv` source prefix — already present, OK |
+| 797-803 | Add `sync_osv_advisories` to the list of fetchers using default `catch_up()` inherited from BaseCVEFetcher |
+| **826** | **Remove** `sync_osv_advisories` row from the opt-out table |
+| **828-836** | **Rewrite** the explanatory note to mention only `sync_cisa_kev` and `sync_epss_scores` (remove all OSV references) |
+| 1207 | Already present in hierarchy — no change |
+
+Additional (if not already present):
+- Add `"osv"` to `cve_source_type` registry in the CVE Source Type
+  Identity section (lines 421-489) if not already listed in the
+  `CVESourceType` Enum values table
 
 ### Step 3: OSV Fetcher Full Specification
 
-**File**: `docs/features/tickets/cve-tracking.md`
+**File**: `docs/features/tickets/cve-tracking.md` (2914 lines)
 
-Replace the TBD stub (lines 2273-2295) with the complete fetcher
-specification. This is the largest single piece of work. Subsections:
+Replace TBD stub (lines 2273-2295) with complete fetcher specification.
+Template: `sync_redhat_cves` (lines 2297-2550). Subsections:
 
-1. Properties table (including `cve_source_type = "osv"`,
-   `fetch_single() = Yes`,
-   `source_reference_url_pattern = https://osv.dev/vulnerability/{cve_id}`)
-2. Class structure
-3. Algorithm (3-phase)
-4. Field mapping (3 tables: CVE record, alias records, related records)
-5. External identifier policy (whitelist + guard)
-6. Explicitly ignored fields
-7. `fetch_single()` design
-8. First run behavior (same as Red Hat — no first-run distinction)
-9. Error handling (fetch_single + execute)
-10. Metrics
-11. Custom settings
-12. Phase 2 side effects
-13. OSV reference type mapping (resolved — see OP-OSV-6)
+1. Properties table (extended BaseCVEFetcher format)
+2. Class structure (inherits `BaseCVEFetcher`)
+3. Algorithm (3-phase per-CVE, called from both `execute()` loop and
+   `fetch_single()`)
+4. Field mapping — CVE record (GIT ranges, references)
+5. Field mapping — alias records (ecosystem affected versions,
+   references, package names)
+6. Field mapping — related records (references, package names)
+7. External identifier policy (whitelist + runtime guard)
+8. Explicitly ignored fields (includes `severity` — see decision 3.8)
+9. `fetch_single(cve_id)` design (signaling convention)
+10. Scope gap + catch_up (inherited from BaseCVEFetcher, participates)
+11. Error handling (`fetch_single` + `execute`)
+12. Metrics
+13. Custom settings (`throttle_delay_seconds`: 0.2, ge=0.05, le=10.0)
+14. Phase 2 side effects (`resolved_packages`)
+15. OSV reference type mapping
 
 ### Step 4: CVE Service Update
 
-**File**: `docs/features/tickets/cve-service.md`
+**File**: `docs/features/tickets/cve-service.md` (1238 lines)
 
-Changes:
-1. Add `sync_osv_advisories` to Phase 2 package resolution sources
-   table (Source 3: CNA/ADP CPE, Source 4: vendor:product — both
-   potentially populated by OSV alias records)
-2. Add `sync_osv_advisories` to callers table for `upsert_cve()`
-3. Update crash recovery section (add OSV sync cycle timing)
-4. **Update `resolved_packages` field definition** — align with actual
-   usage:
-   - Field comment: change `# Pre-resolved SUSE package names` →
-     `# Package names for best-effort SMELT resolution`
-   - Design notes (line 1117-1122): update to acknowledge two usage
-     patterns:
-     - **Exact match**: fetchers that know the precise SUSE package name
-       (e.g., `sync_kernel_cves` → `"kernel-source"`)
-     - **Best-effort**: enrichment fetchers that pass upstream/ecosystem
-       package names with varying SMELT hit rates (e.g.,
-       `sync_redhat_cves`, `sync_ghsa_advisories`, `sync_osv_advisories`)
-   - Add reference to the "Expected hit rate by ecosystem category"
-     table in `cve-tracking.md` (lines 2264-2268)
-   - Add `sync_osv_advisories` to the `resolved_packages` populated-by
-     column in the package resolution sources table
+| Line(s) | Action |
+|---------|--------|
+| 357 | Add `sync_osv_advisories` to `resolved_packages` populated-by column in Phase 2 sources table |
+| 359-360 | Verify OSV `[Planned]` annotation in CNA/ADP CPE and vendor:product rows |
+| **1213** | Change from `upsert_cve()` to `upsert_cve(), record_source_status() (failure path)` — consistent with Red Hat/GHSA pattern |
+| ~1117-1122 | Update `resolved_packages` field definition: acknowledge both "exact match" and "best-effort" usage patterns |
 
 ### Step 5: Data Sources Registry Update
 
-**File**: `docs/data-sources.md`
+**File**: `docs/data-sources.md` (986 lines)
 
-Changes:
-1. Update OSV section (line 273): change integration status from
-   "Planned" to "Specified", update description with actual data flow
-2. Update Fetcher Registry table (line 967): fill in Schedule, Auth,
-   Rate Limits, Data Ingested, Spec link, change Spec Status to
-   "Complete"
-3. Update CVE Enrichment Data Structures table: confirm
-   `sync_osv_advisories` in `CVEAffectedVersion` populated-by list
+| Line(s) | Action |
+|---------|--------|
+| 273-294 | Update OSV section description with actual design details (3-phase, no auth, no rate limits) |
+| 289 | Change "Schedule: TBD" to actual cron (per OP-OSV-1 decision) |
+| **967** | Complete Fetcher Registry row: schedule, auth, rate limits, data ingested, spec link `[cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_osv_advisories)`, `Spec Status: Complete` |
 
 ### Step 6: GHSA Fetcher Ecosystem Normalization
 
@@ -403,99 +546,96 @@ Changes to `sync_ghsa_advisories` section:
    (ecosystem column) is now in place; OP-11 remains deferred until
    hit rate is measured
 
+### Step 8: Summary Table Alignment
+
+**File**: `docs/data-sources.md` (lines 25-41)
+
+The "Integration status" column is inconsistent: GHSA has a complete
+spec (`Spec Status: Complete` in the Fetcher Registry at line 965) but
+is marked "Planned" in the summary table. No fetcher has code
+implementation yet — the project is entirely in specification phase.
+
+**Alignment rule**: use `Specified` for sources with a complete fetcher
+spec (ready for implementation); keep `Planned` for those with
+incomplete or TBD specs.
+
+| Line | Source | Current | Fetcher Registry Status | Correct value |
+|------|--------|---------|------------------------|---------------|
+| 31 | CISA KEV | Planned | TBD | Planned (unchanged) |
+| 32 | EPSS | Planned | TBD | Planned (unchanged) |
+| **33** | **GHSA** | **Planned** | **Complete** | **Specified** |
+| 34 | Linux Kernel CVE | Active | Complete | **Specified** |
+| **35** | **OSV** | **Planned** | TBD → Complete | **Specified** (after Step 3) |
+
+Note: NVD, MITRE, IBS, SMELT, AIMAAS, AD are currently "Active" with
+complete or partial specs. These should also become "Specified" for
+consistency (none have implementation), but this is a broader
+normalization. Minimum viable fix: correct GHSA (33) and Kernel (34),
+then set OSV (35) after Step 3 is applied.
+
+### Step 9: Update This Draft
+
+After all application steps, update this document:
+- Mark resolved open points
+- Update session log
+- Change status to "Complete — ready for application" or archive
+
 ---
 
-## 7. Open Points for Future Sessions
+## 7. Open Points — ALL RESOLVED
 
-### OP-OSV-1: Schedule Selection
+### OP-OSV-1: Schedule Selection — RESOLVED
 
-**Context**: the fetcher is stateless (re-fetches all active CVEs each
-run). With ~5000 active tickets and ~10-15 API calls per CVE (1 CVE +
-aliases + related), a run involves ~50,000-75,000 API calls.
+**Decision**: `0 5 * * *` (daily at 05:00 UTC)
 
-**Options**:
-- Daily at a specific time (like Red Hat at 03:00 UTC)
-- Every 12 hours
-- Every 6 hours (potentially too aggressive given volume)
+**Rationale**: slot completely free (02:00-04:00 occupied by IBS/Red
+Hat/LDAP chain). Results available for VAs when they start working in
+the morning (~07:00 CET). Run duration ~4.2h at 0.2s throttle fits
+comfortably in the 24h period.
 
-**Factors**: OSV has no rate limits, but run duration matters. At 200ms
-throttle, ~75,000 calls ≈ 4 hours. Daily seems appropriate.
+### OP-OSV-2: Throttle Default Value — RESOLVED
 
-**Decision needed**: exact cron expression.
+**Decision**: `throttle_delay_seconds` = `0.2` (default), range
+`ge=0.05, le=10.0`.
 
-### OP-OSV-2: Throttle Default Value
+**Rationale**: OSV has no rate limits (confirmed in docs + FAQ). At
+0.2s (~5 req/sec), a full run of ~75,000 calls takes ~4.2h — well
+within the 24h daily window. The wide range allows:
+- 0.05s (20 req/sec) for emergency catch-up
+- 10.0s for self-throttling if OSV introduces rate limits in future
 
-**Context**: Red Hat uses 2.0s (conservative, undocumented rate limits).
-OSV has no rate limits at all (confirmed in docs + FAQ).
+### OP-OSV-3: `source_container` Value — RESOLVED
 
-**Options**:
-- 0.2s (aggressive but respectful — ~5 req/sec)
-- 0.5s (moderate — ~2 req/sec)
-- 1.0s (conservative)
+**Decision**: single value `"osv"` for all `CVEAffectedVersion` records
+written by this fetcher (Phase 1 GIT ranges + Phase 2 ecosystem
+versions from alias records).
 
-**Decision needed**: default value and constraint range.
+**Rationale**: one delete-and-reinsert per `(cve_id, "osv")` replaces
+the entire OSV set cleanly each run. Same strategy as Red Hat
+(`source_container = "redhat"`). Provenance is traceable via the
+`ecosystem` column. Phase 3 (related records) does NOT produce
+`CVEAffectedVersion` — only `TicketReference` + `resolved_packages`.
 
-### OP-OSV-3: `source_container` Value for OSV Records
+### OP-OSV-4: CVSS Provider Name — RESOLVED (Skip Entirely)
 
-**Context**: `CVEAffectedVersion` uses `source_container` for
-delete-and-reinsert scoping. OSV writes data from multiple sub-sources
-(the CVE record itself, GHSA alias records, PYSEC records, etc.).
+**Decision**: do NOT extract CVSS scores from OSV. See architectural
+decision 3.8 for full rationale.
 
-**Options**:
-- (a) Single value `"osv"` for everything OSV writes (simplest — one
-  delete-and-reinsert per CVE covers all OSV data)
-- (b) Per-alias-source values like `"osv:ghsa"`, `"osv:pysec"`,
-  `"osv:go"` (preserves provenance per ecosystem, but complicates
-  delete-and-reinsert)
+**Summary**: the OSV schema's `severity` field provides no provider
+attribution. All CVSS data available from OSV is already covered by
+dedicated fetchers (NVD, GHSA) with explicit attribution. The `severity`
+field is documented in the "Explicitly Ignored Fields" table.
 
-**Recommendation**: option (a) — single `"osv"` value. The OSV fetcher
-replaces its entire set on each run (same as Red Hat replaces all Red
-Hat data). Provenance is implicit in the `ecosystem` field.
+### OP-OSV-5: Maximum Aliases/Related — RESOLVED
 
-**Decision needed**: confirm (a) or choose (b).
+**Decision**: no limit — fetch all aliases and related records without
+cap.
 
-### OP-OSV-4: CVSS Provider Name for OSV Records
-
-**Context**: `CVECVSSAssessment.provider_name` identifies who produced
-the CVSS score. When OSV returns a CVSS vector in the CVE record's
-`severity[]`, it's typically the NVD-converted score.
-
-**Options**:
-- (a) `"OSV"` (generic — marks it as coming from OSV regardless of
-  origin)
-- (b) `"NVD"` (accurate for CVE records — it IS the NVD score). But
-  then it's indistinguishable from `sync_nvd_cves` output, and the
-  unique constraint `(cve_id, provider_name, cvss_version)` makes it
-  a no-op
-- (c) Per-alias-source: when from a GO record use `"Go"`, from PYSEC
-  use the ecosystem-specific provider name
-
-**Recommendation**: option (b) for CVE record CVSS (it IS NVD data —
-no-op is correct). For alias records, use the source database name as
-provider (e.g., GHSA record → `"GitHub"`, which is already the same as
-`sync_ghsa_advisories` → also a no-op). The dedup handles overlap
-naturally.
-
-**Decision needed**: confirm approach.
-
-### OP-OSV-5: Maximum Aliases/Related to Follow Per CVE
-
-**Context**: extreme cases exist (CVE-2023-44487 HTTP/2 Rapid Reset:
-17 aliases + ~80 related = 97 additional calls). Most CVEs have 0-3
-aliases and 5-15 related.
-
-**Options**:
-- (a) No limit — fetch everything (simplest, consistent with "no
-  filtering" philosophy)
-- (b) Configurable cap (custom setting, e.g., `max_related_records: 50`)
-- (c) Hard cap on `related` only (aliases are high-value, related is
-  lower-value reference-only)
-
-**Recommendation**: option (a) for now. The extreme cases are rare and
-the total run volume is still manageable. If run duration proves
-excessive in practice, add a configurable cap later.
-
-**Decision needed**: confirm (a) or set a cap.
+**Rationale**: extreme cases (e.g., CVE-2023-44487: 97 extra calls)
+add ~20s per CVE. With <1% of CVEs being extreme, the total impact on
+run duration is negligible (~200s). The simplicity of "no filtering"
+(decision 3.3) is preserved. A configurable cap can be added later if
+run duration proves excessive in practice.
 
 ### OP-OSV-6: OSV Reference Type Mapping — RESOLVED
 
@@ -530,19 +670,19 @@ URLs as `patch`) or remain NULL.
 Documents that need to be consulted during spec writing:
 
 - `docs/features/tickets/cve-tracking.md` — host document for the
-  fetcher spec (sync_redhat_cves as pattern)
-- `docs/features/tickets/cve-service.md` — upsert_cve() contract,
-  Phase 2 package resolution sources
-- `docs/features/platform/fetcher-infrastructure.md` — BaseFetcher
-  contract, fetch_single, catch_up, custom settings, error message
-  sanitization
+  fetcher spec (`sync_redhat_cves` at lines 2297-2550 as template)
+- `docs/features/tickets/cve-service.md` — `upsert_cve()` contract,
+  Phase 2 package resolution sources, callers table
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseCVEFetcher`
+  class (lines 1176-1369), `fetch_single` contract (lines 277-419),
+  `catch_up` contract (lines 542-836), custom settings (lines 922-1174),
+  error message sanitization (lines 839-920)
 - `docs/data-model.md` — CVEAffectedVersion, CVEExternalIdentifier,
   CVECVSSAssessment schemas
-- `docs/data-sources.md` — Fetcher Registry table
+- `docs/data-sources.md` — Fetcher Registry table (line 967), summary
+  table (line 35)
 - `docs/features/tickets/ticket-references.md` — reference type
-  classification
-- `docs/features/tickets/cvss-scoring.md` — CVSS provider_name
-  conventions
+  classification, `source_reference_url_pattern` integration
 - `docs/drafts/open-points.md` — OP-10 (ecosystem column), OP-11
   (prefix mapping)
 
@@ -582,3 +722,38 @@ Documents that need to be consulted during spec writing:
   `cve-service.md` to align with best-effort usage pattern (drift from
   original "Pre-resolved SUSE package names" comment)
 - Remaining open points: OP-OSV-1 through OP-OSV-5
+
+### Session 3 (2026-06-19)
+
+- Analyzed impact of commit 8fea018 (BaseCVEFetcher intermediate class
+  introduction) on this draft
+- **Added architectural decision 3.7** (inheritance + catch_up):
+  - OSV inherits from `BaseCVEFetcher` (structurally required)
+  - OSV participates in catch_up (same pattern as Red Hat — scope gap
+    exists because `execute()` only covers active tickets)
+  - `participates_in_catch_up = True` (default, NOT opt-out)
+- **Identified spec incoherence**: `fetcher-infrastructure.md:826`
+  erroneously groups OSV with KEV/EPSS in the catch-up opt-out table.
+  The rationale ("syncs entire catalog on every run") does not apply to
+  OSV's design (per-CVE polling of active tickets only). Added
+  correction to Step 2.
+- Updated all line number references to post-refactoring state
+- Updated section 5 (checklist) to reflect BaseCVEFetcher requirements
+- Rewrote section 6 (application plan) with:
+  - Correct line numbers for all files
+  - New Step 2 actions (remove OSV from opt-out, add to participants)
+  - Updated Step 4 (add `record_source_status()` to callers table)
+  - New Step 8 (summary table alignment for GHSA, Kernel, OSV)
+- Updated section 8 (cross-references) with precise line ranges for
+  BaseCVEFetcher, fetch_single, and catch_up sections
+- **Resolved all remaining open points (OP-OSV-1 through OP-OSV-5)**:
+  - OP-OSV-1: schedule = `0 5 * * *` (daily 05:00 UTC)
+  - OP-OSV-2: throttle = 0.2s default, range ge=0.05, le=10.0
+  - OP-OSV-3: source_container = `"osv"` (single value, Phase 1+2)
+  - OP-OSV-4: **skip CVSS entirely** — no extraction, no provider
+    derivation needed (added decision 3.8 with full rationale based
+    on live API data verification: OSV `severity` has no attribution
+    field, GO records have no severity at all, all useful CVSS data
+    already comes from dedicated fetchers with explicit attribution)
+  - OP-OSV-5: no limit on aliases/related (fetch all)
+- All open points resolved — draft ready for application
