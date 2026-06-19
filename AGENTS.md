@@ -467,13 +467,18 @@ CRITICAL: Every background task that fetches data from an external source
 (CVE sync, CVSS sync, product sync, release detection, or any future data
 ingestion) MUST:
 
-1. Inherit from `BaseFetcher` (`backend/app/services/base_fetcher.py`)
+1. Inherit from `BaseFetcher` (`backend/app/services/base_fetcher.py`).
+   CVE fetchers (those that ingest or enrich CVE-related data from
+   external sources) MUST inherit from `BaseCVEFetcher`
+   (`backend/app/services/base_cve_fetcher.py`), which provides the
+   `cve_source_type`, `fetch_single()`, and default `catch_up()`
+   contracts
 2. Define `name`, `description`, and `default_schedule` class attributes
 3. Implement the `execute()` method with proper metric reporting via
    `self.record_created()`, `self.record_updated()`, and
    `self.record_failed()`
-4. NOT bypass `BaseFetcher` with a raw `@celery_app.task` decorator for
-   fetching logic
+4. NOT bypass `BaseFetcher` (or `BaseCVEFetcher` for CVE fetchers) with
+   a raw `@celery_app.task` decorator for fetching logic
 
 **Exception — sub-operation tasks**: background tasks that fetch from
 external sources as a sub-operation of an existing fetcher are exempt.

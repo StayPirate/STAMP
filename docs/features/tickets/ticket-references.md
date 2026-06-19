@@ -182,19 +182,19 @@ after the change.
 
 ### source_reference_url_pattern
 
-CVE fetchers that inherit from `BaseFetcher` (see
+CVE fetchers that inherit from `BaseCVEFetcher` (see
 `docs/features/platform/fetcher-infrastructure.md`) have an optional class
 attribute `source_reference_url_pattern` that defines the URL pattern for
 the fetcher's human-readable CVE page.
 
 ```python
-class SyncNvdCves(BaseFetcher):
+class SyncNvdCves(BaseCVEFetcher):
     name = "sync_nvd_cves"
     description = "Incremental CVE sync from NVD"
     default_schedule = "0 */6 * * *"
     source_reference_url_pattern: str | None = "https://nvd.nist.gov/vuln/detail/{cve_id}"
 
-class SyncMitreCves(BaseFetcher):
+class SyncMitreCves(BaseGitFetcher):  # inherits BaseCVEFetcher via BaseGitFetcher
     name = "sync_mitre_cves"
     description = "Syncs CVEs from MITRE"
     default_schedule = "0 */6 * * *"
@@ -833,7 +833,7 @@ VA's research workflow.
 - `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates
   references. Contains the full `sync_nvd_cves` fetcher definition
   (algorithm, NVD Source API caching, metrics)
-- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseCVEFetcher`
   contract for `source_reference_url_pattern`
 - `docs/features/tickets/cve-service.md` — `UpsertResult` usage for
   post-upsert reference creation

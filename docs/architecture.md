@@ -96,7 +96,10 @@ coordination across multiple maintained distribution versions.
 - **Fetcher infrastructure**: all background tasks that fetch data from
   external sources inherit from `BaseFetcher`
   (`app/services/base_fetcher.py`), which provides automatic execution
-  tracking, metric collection, and registry. The fetcher registry feeds
+  tracking, metric collection, and registry. CVE fetchers additionally
+  inherit from `BaseCVEFetcher` (`app/services/base_cve_fetcher.py`),
+  which provides the `cve_source_type`, `fetch_single()`, and default
+  `catch_up()` contracts. The fetcher registry feeds
   a dashboard that shows execution history, performance charts, and
    operational controls. See `docs/features/platform/fetcher-infrastructure.md`
    for the base class contract and `docs/features/platform/fetcher-operations.md`

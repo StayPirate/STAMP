@@ -1,10 +1,10 @@
 ---
 description: >
   Reviews fetcher implementations to ensure they correctly inherit from
-  BaseFetcher, report metrics, and are properly represented in the
-  dashboard. Use this agent when creating or modifying fetchers in
-  backend/app/tasks/ or backend/app/services/. Read-only: does not modify
-  files.
+  BaseFetcher (or BaseCVEFetcher for CVE fetchers), report metrics, and
+  are properly represented in the dashboard. Use this agent when creating
+  or modifying fetchers in backend/app/tasks/ or backend/app/services/.
+  Read-only: does not modify files.
 mode: subagent
 permission:
   edit: deny
@@ -15,15 +15,18 @@ permission:
 ## Role
 
 You review fetcher implementations to ensure they follow the `BaseFetcher`
-pattern and are correctly integrated with the fetcher operations
-infrastructure. You do NOT write or modify code.
+(and `BaseCVEFetcher` for CVE fetchers) pattern and are correctly
+integrated with the fetcher operations infrastructure. You do NOT write
+or modify code.
 
 ## Before reviewing
 
 1. Read `docs/features/platform/fetcher-infrastructure.md` to understand the
-   BaseFetcher contract, data model, and compliance requirements
-2. Read `backend/app/services/base_fetcher.py` to understand the current
-   base class implementation
+   BaseFetcher and BaseCVEFetcher contracts, data model, and compliance
+   requirements
+2. Read `backend/app/services/base_fetcher.py` and
+   `backend/app/services/base_cve_fetcher.py` to understand the current
+   base class implementations
 3. Read all fetcher files in `backend/app/services/` and
    `backend/app/tasks/`
 4. Read `docs/conventions.md` for naming and style conventions
@@ -35,9 +38,18 @@ infrastructure. You do NOT write or modify code.
 ### Base class inheritance
 
 - Does the fetcher class inherit from `BaseFetcher`?
-- If it does NOT inherit from `BaseFetcher`, is there a raw Celery task
-  (`@celery_app.task`) that performs fetching or sync logic? This is a
-  violation — all external data fetching MUST go through `BaseFetcher`.
+- **CVE fetcher check**: if the fetcher declares `cve_source_type` or
+  implements `fetch_single()`, does it inherit from `BaseCVEFetcher`
+  (not just `BaseFetcher`)? A fetcher that declares `cve_source_type`
+  but does NOT inherit from `BaseCVEFetcher` is a "Needs revision" issue.
+- **Inverse check**: if a fetcher inherits from `BaseCVEFetcher` but
+  does NOT declare `cve_source_type`, flag as "Needs revision" (this
+  would be caught by `__init_subclass__` at import time, but the
+  reviewer should catch it at the spec level).
+- If it does NOT inherit from `BaseFetcher` (or `BaseCVEFetcher`), is
+  there a raw Celery task (`@celery_app.task`) that performs fetching or
+  sync logic? This is a violation — all external data fetching MUST go
+  through `BaseFetcher` (or `BaseCVEFetcher` for CVE fetchers).
 - If there is a compelling reason to bypass `BaseFetcher`, flag it as
   "Needs revision" and explain the situation so the user can make a
   decision.

@@ -349,8 +349,9 @@ Red Hat API rate limits. CVEs whose tickets are in Ignored,
 Duplicated, or Resolved status do NOT receive Red Hat CVSS updates
 during the inactive period. This gap is mitigated by the `catch_up()`
 mechanism: when a ticket is reactivated, the default `catch_up()`
-calls `fetch_single(cve_id)` to retrieve the latest Red Hat data.
-See [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
+(inherited from `BaseCVEFetcher`) calls `fetch_single(cve_id)` to
+retrieve the latest Red Hat data. See
+[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
 ("Per-Ticket Catch-Up: `catch_up()` Method").
 
 For the full fetcher definition — including the complete algorithm,
@@ -838,8 +839,8 @@ See `docs/data-model.md` for the full schema. This feature introduces the
   Axis 2: Eligibility (rules, override model, Reactive LTSS)
 - `docs/features/platform/system-settings.md` — `default_cvss_version`
   setting, batch recalculation trigger
-- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`
-  contract, `catch_up()` method, `fetch_single` capability,
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` /
+  `BaseCVEFetcher` contract, `catch_up()` method, `fetch_single` capability,
   sub-operation exception
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses), CVE Accessibility Check, CVE Identifier
