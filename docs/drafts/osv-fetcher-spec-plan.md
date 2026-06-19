@@ -7,7 +7,7 @@ plan to produce a complete spec in `docs/features/tickets/cve-tracking.md`.
 **Status**: All decisions resolved — ready for application  
 **Created**: 2026-06-19  
 **Last updated**: 2026-06-19  
-**Open points remaining**: 0 (all resolved in session 3)
+**Open points remaining**: 0 (all resolved in sessions 3-5)
 
 ---
 
@@ -37,13 +37,13 @@ Metrics: TBD
 | `fetcher-infrastructure.md` | 236 | Source prefix `osv` in registry | OK |
 | `fetcher-infrastructure.md` | 826 | Opt-out group (KEV/EPSS/OSV) | **INCORRECT** — must be removed (see 3.7) |
 | `fetcher-infrastructure.md` | 828-836 | Note grouping OSV with KEV/EPSS | **INCORRECT** — must be corrected |
-| `fetcher-infrastructure.md` | 1207 | Class hierarchy: `SyncOsvAdvisories (planned)` | OK |
+| `fetcher-infrastructure.md` | 1207 | Class hierarchy: `SyncOsvAdvisories (planned)` | **INCORRECT** — says "discovery + enrichment" but role is enrichment only (decision 3.1). Correct to "API-based CVE enrichment" |
 | `cve-tracking.md` | 1241 | Incidental mention "OSV.dev/Google" | OK (no change) |
 | `cve-tracking.md` | 2273-2295 | TBD stub | Replace with full spec |
 | `cve-service.md` | 359-360 | Phase 2 sources `[Planned]` | Update |
 | `cve-service.md` | 1213 | Callers table — only `upsert_cve()` | Add `record_source_status() (failure path)` |
 | `data-sources.md` | 35 | Summary table: "Planned" | See Step 8 (summary table alignment) |
-| `data-sources.md` | 273-294 | OSV section description | Update with design details |
+| `data-sources.md` | 273-294 | OSV section description | Update with design details; **remove** CVSS references (per decision 3.8) |
 | `data-sources.md` | 967 | Fetcher Registry row — all TBD | Complete all fields, `Spec Status: Complete` |
 | `data-sources.md` | 981 | CVE Enrichment structures | OK (already lists OSV) |
 
@@ -185,7 +185,7 @@ handle it:
 
 - `CVEAffectedVersion`: delete-and-reinsert per `(cve_id, source_container)` — OSV writes its own set
 - `TicketReference`: UNIQUE on `(ticket_id, url)` — no-op if exists
-- `CVEExternalIdentifier`: UNIQUE on `(source, identifier)` with ON CONFLICT DO NOTHING
+- `CVEExternalIdentifier`: UNIQUE on `(source, identifier)` with ON CONFLICT DO UPDATE (per `cve-service.md` contract — last writer wins, updates `cve_id`, `url`, `updated_at`)
 
 This eliminates filtering logic complexity with no correctness cost.
 
@@ -234,7 +234,7 @@ deviations from 1:1 policy:
 # Before creating CVEExternalIdentifier for an alias record:
 cves_in_alias = [a for a in alias_record.get("aliases", []) if a.startswith("CVE-")]
 if len(cves_in_alias) == 1:
-    # Safe — create CVEExternalIdentifier with ON CONFLICT DO NOTHING
+    # Safe — include in CVEIngestPayload.external_identifiers (upsert_cve handles ON CONFLICT DO UPDATE)
 ```
 
 If a PYSEC or RUSTSEC record ever maps to multiple CVEs, this guard
@@ -243,10 +243,12 @@ silently excludes it. Zero risk for automated fix detection.
 #### Overlap with `sync_ghsa_advisories`
 
 Both fetchers may attempt to create the same GHSA external identifier.
-The `ON CONFLICT (source, identifier) DO NOTHING` strategy ensures:
-- First writer wins (typically `sync_ghsa_advisories` due to 3h schedule)
-- OSV fetcher's attempt is a silent no-op
-- No duplicate records, no overwrites
+The `ON CONFLICT (source, identifier) DO UPDATE` strategy (per
+`cve-service.md`) ensures:
+- Last writer wins — updates `cve_id`, `url`, `updated_at`
+- If a GHSA is reassociated with a different CVE, the record is
+  corrected by whichever fetcher runs next
+- No duplicate records
 
 ### 3.6 Ecosystem Column on CVEAffectedVersion
 
@@ -349,6 +351,144 @@ consulting this draft. Include: (1) what the OSV schema lacks, (2) what
 was verified against live data, (3) why existing fetchers already cover
 the data, (4) what would go wrong if we extracted anyway.
 
+### 3.9 Transaction Boundaries and Multi-Phase Atomicity
+
+**Decision**: all HTTP requests (Phase 1, 2, and 3) complete and their
+results accumulate in memory before calling `upsert_cve()`. The database
+transaction (and any row-level lock on the CVE) is acquired only during
+the final write.
+
+**Rationale**:
+
+1. **Data regression prevention**: the `source_container = "osv"`
+   strategy uses delete-and-reinsert. If `upsert_cve()` were called
+   with partial data (e.g., Phase 1 succeeded but Phase 2 failed
+   midway), the DELETE would remove all previously-ingested ecosystem
+   data and the INSERT would write only the incomplete set — a net data
+   loss compared to the previous run.
+
+2. **I/O-then-Lock compliance** (per `conventions.md`): holding a
+   `FOR UPDATE` lock while performing N+M HTTP requests to an external
+   service (potentially 20+ seconds for extreme CVEs) would block all
+   concurrent mutations on the same CVE for the duration.
+
+**Consequence**: if Phase 1 returns an HTTP error (5xx, network
+failure), the CVE is marked `record_failed` and `upsert_cve()` is
+never called — previous data remains intact. If Phase 1 returns HTTP
+404, `CVENotInSource` is raised (clean skip, no metric, no upsert).
+If individual alias/related records fail during Phase 2/3, the
+successfully-fetched data is kept and `upsert_cve()` is called with
+the partial (but valid) result (see decision 3.10).
+
+**Boundary "no extractable data"**: if Phase 1 returns HTTP 200 but
+the record contains no extractable data (no `affected`, `references`,
+`aliases`, or `related`), the fetcher treats the CVE as
+`CVENotInSource` — clean skip, no metric, no upsert, previous data
+intact. A record that is only `{"id": "CVE-..."}` is an NVD-imported
+placeholder with zero enrichment value. Consistent with the Red Hat
+fetcher pattern (`cve-tracking.md:2583`: "HTTP 200 with no extractable
+data → Raise `CVENotInSource`").
+
+### 3.10 Per-Alias Failure Isolation
+
+**Decision**: individual alias or related records that return HTTP
+errors are skipped. The remaining successfully-fetched data is kept.
+
+**Behavior**:
+
+- A single alias/related returning HTTP 500/timeout → log WARNING,
+  skip that record, continue to the next
+- Data from all successful alias/related fetches is accumulated
+  normally alongside Phase 1 data
+- The CVE counts as `record_updated` (enrichment is partial but valid)
+- Failed alias/related records do NOT increment the abort threshold
+  counter (see decision 3.11)
+- No retry logic for individual sub-requests — the next daily run
+  retries naturally (stateless fetcher)
+
+**Rationale**: a transient HTTP 500 on one PYSEC alias should not
+block the update of GIT ranges and 4 other successfully-fetched
+aliases. The proportionality principle applies: Phase 1 data alone is
+already valuable enrichment.
+
+**Metric strategy**: `record_updated()` is called every time
+`upsert_cve()` executes successfully, regardless of whether the data
+changed compared to the previous run. The metric means "CVEs processed
+and written successfully in this run", not "CVEs with actually new
+data". Consistent with all other CVE fetchers (Red Hat, GHSA, NVD). No
+change-detection pre-write.
+
+Full signaling schema:
+
+| Condition | Metric action |
+|-----------|---------------|
+| `upsert_cve()` called successfully | `record_updated()` |
+| `CVENotInSource` (HTTP 404 or "no extractable data" boundary) | No metric |
+| Guard 3.12 triggers (skip upsert) | `record_failed()` |
+| Phase 1 HTTP error (5xx / network) | `record_failed()` |
+
+**Edge case**: if ALL alias/related records fail but Phase 1 succeeds,
+see decision 3.12 — `upsert_cve()` is NOT called (previous data
+preserved). The CVE counts as `record_failed`.
+
+### 3.11 Abort Threshold Semantics
+
+**Decision**: 3 consecutive Phase 1 failures abort the entire
+`execute()` run. Only Phase 1 HTTP errors count toward the threshold.
+
+**What increments the counter**:
+
+| Condition | Increments? | Rationale |
+|-----------|-------------|-----------|
+| Phase 1 returns HTTP 5xx / network error | Yes | Infrastructure failure signal |
+| Phase 1 returns HTTP 404 (`CVENotInSource`) | No — clean skip | CVE not in OSV, normal condition |
+| Phase 2/3 individual alias/related fails | No | Per-alias isolation (3.10) |
+| Phase 2/3 all aliases fail but Phase 1 OK | No | Guard 3.12 skips upsert; CVE counted as `record_failed` |
+
+**What resets the counter**: any CVE where Phase 1 returns HTTP 200
+(regardless of Phase 2/3 outcome) resets the counter to zero.
+
+**Threshold**: 3 consecutive failures (aligned with `sync_redhat_cves`
+pattern at `cve-tracking.md:2625`).
+
+**On abort**: the `execute()` loop terminates early. The fetcher
+records status as `failure` with a sanitized message. The next
+scheduled run retries from the beginning (stateless — no cursor).
+
+### 3.12 Per-CVE Guard on Phase 2/3 Completeness
+
+**Decision**: if the CVE record lists alias and/or related IDs, but
+zero Phase 2/3 sub-requests succeed, `upsert_cve()` is NOT called for
+that CVE. Previous data remains intact. The CVE counts as
+`record_failed`.
+
+**Rule**:
+
+| Condition | Action |
+|-----------|--------|
+| Phase 1 has alias/related IDs, ≥1 Phase 2/3 fetch OK | Proceed with upsert (partial but valid) |
+| Phase 1 has alias/related IDs, 0 Phase 2/3 fetches OK | **Skip upsert**, `record_failed()` |
+| Phase 1 has no alias and no related | Proceed (Phase 1 is the complete dataset) |
+
+**Rationale**: delete-and-reinsert for `(cve_id, "osv")` is the
+correct mechanism when the fetcher has a complete snapshot. Calling it
+with only Phase 1 data when the source provides alias/related records
+causes regression — the DELETE removes previously-ingested ecosystem
+data and the INSERT writes only GIT ranges. The guard prevents this
+without global state or configuration (a single `if` per CVE).
+
+**Trade-off accepted**: in the remote case where OSV keeps an alias ID
+in the CVE record but the alias record itself has been deleted (an
+internal OSV inconsistency), the guard prevents reflecting the removal.
+The previous data (valid at the time of its successful fetch) is
+preserved. This is preferable to risking loss of valid enrichment data.
+
+**Interaction with decision 3.11**: the abort threshold table row
+"Phase 2/3 all aliases fail but Phase 1 OK" changes consequence —
+previously said "CVE is updated"; now the CVE is skipped (no upsert)
+and counted as `record_failed`. The abort threshold counter is still
+NOT incremented (Phase 1 succeeded, infrastructure is not failing).
+
 ---
 
 ## 4. Data Model Changes Required
@@ -368,7 +508,9 @@ ALTER TABLE cve_affected_version ADD COLUMN ecosystem VARCHAR(50);
 Current: `GHSA`  
 Add: `PYSEC`, `RUSTSEC`
 
-(VARCHAR-backed evolving enum — no migration needed beyond code change)
+(VARCHAR(20) + Python Enum in `app/core/enums.py` — adding values
+requires only a code change, no Alembic migration. Aligned with
+`CVESourceType` pattern per `data-model.md`.)
 
 ### 4.3 New CVESourceType Value
 
@@ -436,6 +578,17 @@ must follow the extended format used by all `BaseCVEFetcher` subclasses
   reasoning to transcribe.)
 - [ ] **Phase 2 side effects** (`resolved_packages` → SMELT resolution)
 - [x] **OSV reference type mapping** (resolved — see OP-OSV-6)
+- [x] **Transaction boundaries and multi-phase atomicity** (resolved —
+  see decision 3.9)
+- [x] **Per-alias failure isolation** (resolved — see decision 3.10)
+- [x] **Abort threshold semantics** (resolved — see decision 3.11)
+- [x] **Throttle scope** (resolved — see OP-OSV-2 amendment)
+- [x] **Per-CVE guard on Phase 2/3 completeness** (resolved — see
+  decision 3.12)
+- [x] **Boundary "no extractable data"** (resolved — see decision 3.9
+  amendment)
+- [x] **Metric strategy and signaling schema** (resolved — see
+  decision 3.10 amendment)
 
 ---
 
@@ -457,6 +610,19 @@ Changes:
 4. Add `"osv"` to CVESourceType description (if not implicit)
 5. Update safety-net unique constraint comment (ecosystem NOT included —
    same package in different ecosystems from different sources is valid)
+6. Convert `CVEExternalIdentifierSource` from PG ENUM to VARCHAR(20) +
+   Python Enum:
+   - Rewrite section "CVEExternalIdentifierSource Enum" (line 544)
+     following `CVESourceType` pattern (lines 471-497): header
+     "Python Enum", explicit "NOT a PostgreSQL ENUM", instructions for
+     adding values
+   - Column `source` in `CVEExternalIdentifier` table (line 564): type
+     from `ENUM(CVEExternalIdentifierSource)` to `VARCHAR(20)`
+   - Cross-reference in `CVESource.source` description (line 451):
+     "PG ENUM, e.g., `GHSA`" → "VARCHAR, Python Enum, e.g., `GHSA`"
+   - General note (line 1494): from "ENUM types are defined as
+     PostgreSQL enums" to hybrid note (stable=PG ENUM,
+     evolving=VARCHAR + Python Enum)
 
 ### Step 2: Fetcher Infrastructure Correction
 
@@ -470,7 +636,7 @@ Changes:
 | 797-803 | Add `sync_osv_advisories` to the list of fetchers using default `catch_up()` inherited from BaseCVEFetcher |
 | **826** | **Remove** `sync_osv_advisories` row from the opt-out table |
 | **828-836** | **Rewrite** the explanatory note to mention only `sync_cisa_kev` and `sync_epss_scores` (remove all OSV references) |
-| 1207 | Already present in hierarchy — no change |
+| 1207 | **Correct** classification from "API-based CVE discovery + enrichment" to "API-based CVE enrichment" (per decision 3.1 — enrichment only) |
 
 Additional (if not already present):
 - Add `"osv"` to `cve_source_type` registry in the CVE Source Type
@@ -509,9 +675,11 @@ Template: `sync_redhat_cves` (lines 2297-2550). Subsections:
 | Line(s) | Action |
 |---------|--------|
 | 357 | Add `sync_osv_advisories` to `resolved_packages` populated-by column in Phase 2 sources table |
-| 359-360 | Verify OSV `[Planned]` annotation in CNA/ADP CPE and vendor:product rows |
+| 359-360 | **Remove** `sync_osv_advisories [Planned]` from CNA/ADP CPE and vendor:product rows — OSV does not provide CPE or vendor:product data (per decision 3.4, package names go to `resolved_packages` only) |
 | **1213** | Change from `upsert_cve()` to `upsert_cve(), record_source_status() (failure path)` — consistent with Red Hat/GHSA pattern |
 | ~1117-1122 | Update `resolved_packages` field definition: acknowledge both "exact match" and "best-effort" usage patterns |
+| ~1037-1057 | Add `ecosystem: str \| None = Field(None, max_length=50)` to `AffectedVersionEntry` schema |
+| 1089-1090 | Change comment `# DB: PG ENUM but evolving` → `# DB: VARCHAR(20), Python Enum` |
 
 ### Step 5: Data Sources Registry Update
 
@@ -519,7 +687,7 @@ Template: `sync_redhat_cves` (lines 2297-2550). Subsections:
 
 | Line(s) | Action |
 |---------|--------|
-| 273-294 | Update OSV section description with actual design details (3-phase, no auth, no rate limits) |
+| 273-294 | Update OSV section description with actual design details (3-phase, no auth, no rate limits). **Remove** CVSS references: line 283 ("CVSS scores (aggregated from source databases)") and line 290 ("CVSS scores are stored as `CVECVSSAssessment` entries") — per decision 3.8, CVSS is explicitly NOT extracted |
 | 289 | Change "Schedule: TBD" to actual cron (per OP-OSV-1 decision) |
 | **967** | Complete Fetcher Registry row: schedule, auth, rate limits, data ingested, spec link `[cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_osv_advisories)`, `Spec Status: Complete` |
 
@@ -545,6 +713,33 @@ Changes to `sync_ghsa_advisories` section:
 2. Add note to OP-11 (Ecosystem Prefix Mapping) that the prerequisite
    (ecosystem column) is now in place; OP-11 remains deferred until
    hit rate is measured
+
+### Step 7b: New Open-Point — Fetcher Metrics Granularity
+
+**File**: `docs/drafts/open-points.md`
+
+Add a new open-point:
+
+> **OP-N: Fetcher metrics — granularity and semantics**
+>
+> Current problem: `record_updated` is incremented for every CVE where
+> `upsert_cve()` succeeds, regardless of whether the data actually
+> changed compared to the previous run. The metric means "processed"
+> not "updated with new data." It loses diagnostic value as the system
+> matures.
+>
+> Evaluate the feasibility of:
+> - `record_updated` → only when written data differs from previous
+>   state (change-detection pre-write)
+> - `record_skipped` → CVE processed but no upsert performed (e.g.,
+>   `CVENotInSource`, completeness guard 3.12)
+> - `record_missed` → CVEs tracked by Sentinel that the fetcher does
+>   not cover (delta between active tickets and CVEs present in the
+>   source)
+>
+> Impact: cross-cutting on `BaseFetcher`/`BaseCVEFetcher` and the
+> fetcher-operations dashboard. Must be evaluated together with the
+> dashboard design.
 
 ### Step 8: Summary Table Alignment
 
@@ -580,6 +775,42 @@ After all application steps, update this document:
 - Update session log
 - Change status to "Complete — ready for application" or archive
 
+### Step 10: Post-Application Review
+
+Run the following reviewers to verify correctness and coherence of the
+applied changes:
+
+1. **`@spec-coherence-reviewer`** on `docs/features/tickets/cve-tracking.md`
+   — verify no contradictions with other fetcher specs (Red Hat, GHSA,
+   NVD, MITRE, Kernel) and cross-cutting documents
+2. **`@data-model-reviewer`** — verify `ecosystem` column addition,
+   `CVEExternalIdentifierSource` VARCHAR conversion, and `CVESourceType`
+   new value are consistent with existing conventions
+3. **`@docs-reviewer`** — verify documentation completeness across all
+   modified files (data-model, data-sources, cve-service,
+   fetcher-infrastructure, cve-tracking)
+4. **`@fetcher-compliance-reviewer`** on the new `sync_osv_advisories`
+   spec — verify correct BaseCVEFetcher inheritance, metrics, and
+   dashboard representation
+
+Address any findings rated "Needs revision" before proceeding to
+Step 11. Minor issues should be fixed inline.
+
+### Step 11: Delete This Draft
+
+Once all application steps are complete, all reviewers pass, and the
+specification lives in its permanent location
+(`docs/features/tickets/cve-tracking.md`), delete this working document:
+
+```
+rm docs/drafts/osv-fetcher-spec-plan.md
+```
+
+This file is a working artifact — all decisions and rationale must be
+captured in the specification itself (Explicitly Ignored Fields table,
+inline notes, etc.) before deletion. Verify that no information is lost
+that is not already present in the applied spec.
+
 ---
 
 ## 7. Open Points — ALL RESOLVED
@@ -597,6 +828,10 @@ comfortably in the 24h period.
 
 **Decision**: `throttle_delay_seconds` = `0.2` (default), range
 `ge=0.05, le=10.0`.
+
+**Scope**: the throttle delay applies between every individual HTTP
+request regardless of phase (Phase 1, Phase 2 sub-requests, Phase 3
+sub-requests). The 4.2h runtime estimate assumes this uniform pacing.
 
 **Rationale**: OSV has no rate limits (confirmed in docs + FAQ). At
 0.2s (~5 req/sec), a full run of ~75,000 calls takes ~4.2h — well
@@ -757,3 +992,61 @@ Documents that need to be consulted during spec writing:
     already comes from dedicated fetchers with explicit attribution)
   - OP-OSV-5: no limit on aliases/related (fetch all)
 - All open points resolved — draft ready for application
+
+### Session 4 (2026-06-19)
+
+- Ran design-reviewer, spec-gap-analyzer, and spec-coherence-reviewer
+  on the draft
+- 8 findings evaluated; 3 must-fix + 5 should-address identified
+- Findings that did not address real problems were discarded (no
+  over-documentation)
+- **Corrections applied**:
+  - Fixed `ON CONFLICT DO NOTHING` → `ON CONFLICT DO UPDATE` for
+    `CVEExternalIdentifier` (contradicted `cve-service.md` contract)
+  - Added `ecosystem` field to Step 4 (`AffectedVersionEntry` schema
+    gap in application plan)
+- **New architectural decisions added**:
+  - 3.9: Transaction Boundaries and Multi-Phase Atomicity — all HTTP
+    requests complete in memory before `upsert_cve()`. Prevents data
+    regression from partial writes with delete-and-reinsert. Also
+    satisfies I/O-then-Lock convention
+  - 3.10: Per-Alias Failure Isolation — individual alias/related HTTP
+    errors are skipped (WARNING log), remaining data kept, CVE counts
+    as `record_updated`
+  - 3.11: Abort Threshold Semantics — only Phase 1 HTTP failure
+    increments counter. Threshold = 3. Reset on any Phase 1 success
+- **OP-OSV-2 amended**: throttle delay applies between every individual
+  HTTP request regardless of phase
+- Phase 3 reviewed for value — confirmed: keep as-is, no toggle
+- All findings resolved — draft ready for application
+
+### Session 5 (2026-06-19)
+
+- Ran design-reviewer, spec-gap-analyzer, spec-coherence-reviewer on
+  the draft (second pass, post-Session 4 amendments)
+- 5 findings evaluated; all addressed (0 discarded as
+  over-documentation)
+- **New architectural decision 3.12**: per-CVE guard on Phase 2/3
+  completeness — if alias/related IDs listed but zero fetched
+  successfully, skip upsert (preserve previous data, count as
+  `record_failed`). Trade-off: remote case of OSV internal
+  inconsistency (alias ID listed but record deleted) preserves stale
+  data rather than risking loss of valid enrichment
+- **Decision 3.9 amended**: added "no extractable data" boundary —
+  HTTP 200 with empty record (no affected/references/aliases/related)
+  treated as `CVENotInSource`. Consistent with Red Hat fetcher pattern
+- **Decision 3.10 amended**: explicit metric strategy —
+  `record_updated` on every successful upsert (no change-detection);
+  full signaling schema documented. Updated edge case to reference
+  guard 3.12
+- **Decision 3.11 updated**: abort threshold table row for "all
+  aliases fail" updated to reflect guard 3.12 (skip upsert, not
+  "CVE is updated")
+- **Section 4.2 corrected**: `CVEExternalIdentifierSource` is
+  VARCHAR(20) + Python Enum (not PG ENUM). Aligned with `CVESourceType`
+  pattern. Application plan Steps 1 and 4 expanded accordingly
+- **New Step 7b**: open-point for fetcher metrics granularity
+  (`record_updated` semantics, `record_skipped`, `record_missed`) —
+  cross-cutting, deferred to future evaluation
+- Updated checklist (section 5) with resolved items
+- Open points remaining: 0
