@@ -6,7 +6,8 @@ plan to produce a complete spec in `docs/features/tickets/cve-tracking.md`.
 
 **Status**: In progress — multi-session work  
 **Created**: 2026-06-19  
-**Last updated**: 2026-06-19
+**Last updated**: 2026-06-19  
+**Open points remaining**: 5 (OP-OSV-1 through OP-OSV-5)
 
 ---
 
@@ -255,8 +256,8 @@ tracking.
 
 ### 4.4 Source Prefix Registry
 
-In `fetcher-infrastructure.md`, register: `| osv | OSV (osv.dev) |`
-(already present as placeholder).
+In `fetcher-infrastructure.md`, the `osv` source prefix is already
+registered (line 241: `| osv | OSV (osv.dev) |`). No change needed.
 
 ---
 
@@ -265,7 +266,9 @@ In `fetcher-infrastructure.md`, register: `| osv | OSV (osv.dev) |`
 Checklist of every section required by the Fetcher Documentation
 Requirements (per `fetcher-infrastructure.md`):
 
-- [ ] **Properties table** (complete — all fields filled)
+- [ ] **Properties table** (complete — all fields filled, including:
+  `cve_source_type = "osv"`, `fetch_single() = Yes`,
+  `source_reference_url_pattern = https://osv.dev/vulnerability/{cve_id}`)
 - [ ] **Class structure** (Python class skeleton with attributes)
 - [ ] **Algorithm** (3-phase numbered steps)
 - [ ] **Field mapping — CVE record** (GIT ranges → CVEAffectedVersion)
@@ -282,7 +285,7 @@ Requirements (per `fetcher-infrastructure.md`):
 - [ ] **Custom settings** (throttle_delay_seconds)
 - [ ] **Explicitly ignored fields** (table with reasons)
 - [ ] **Phase 2 side effects** (resolved_packages)
-- [ ] **OSV reference type mapping** (OSV types → Sentinel types)
+- [x] **OSV reference type mapping** (resolved — see OP-OSV-6)
 - [ ] **Scope gap / catch_up** (enrichment scope + default catch_up)
 
 ---
@@ -310,7 +313,7 @@ Changes:
 **File**: `docs/features/platform/fetcher-infrastructure.md`
 
 Changes:
-1. Confirm `osv` source prefix in registry table (already present)
+1. Verify `osv` source prefix in registry table (already registered)
 2. Add `sync_osv_advisories` to fetcher descriptions table
 3. Add `"osv"` to `cve_source_type` registry (CVE Source Type Identity
    section)
@@ -322,7 +325,9 @@ Changes:
 Replace the TBD stub (lines 2273-2295) with the complete fetcher
 specification. This is the largest single piece of work. Subsections:
 
-1. Properties table
+1. Properties table (including `cve_source_type = "osv"`,
+   `fetch_single() = Yes`,
+   `source_reference_url_pattern = https://osv.dev/vulnerability/{cve_id}`)
 2. Class structure
 3. Algorithm (3-phase)
 4. Field mapping (3 tables: CVE record, alias records, related records)
@@ -334,6 +339,7 @@ specification. This is the largest single piece of work. Subsections:
 10. Metrics
 11. Custom settings
 12. Phase 2 side effects
+13. OSV reference type mapping (resolved — see OP-OSV-6)
 
 ### Step 4: CVE Service Update
 
@@ -345,6 +351,21 @@ Changes:
    potentially populated by OSV alias records)
 2. Add `sync_osv_advisories` to callers table for `upsert_cve()`
 3. Update crash recovery section (add OSV sync cycle timing)
+4. **Update `resolved_packages` field definition** — align with actual
+   usage:
+   - Field comment: change `# Pre-resolved SUSE package names` →
+     `# Package names for best-effort SMELT resolution`
+   - Design notes (line 1117-1122): update to acknowledge two usage
+     patterns:
+     - **Exact match**: fetchers that know the precise SUSE package name
+       (e.g., `sync_kernel_cves` → `"kernel-source"`)
+     - **Best-effort**: enrichment fetchers that pass upstream/ecosystem
+       package names with varying SMELT hit rates (e.g.,
+       `sync_redhat_cves`, `sync_ghsa_advisories`, `sync_osv_advisories`)
+   - Add reference to the "Expected hit rate by ecosystem category"
+     table in `cve-tracking.md` (lines 2264-2268)
+   - Add `sync_osv_advisories` to the `resolved_packages` populated-by
+     column in the package resolution sources table
 
 ### Step 5: Data Sources Registry Update
 
@@ -476,28 +497,31 @@ excessive in practice, add a configurable cap later.
 
 **Decision needed**: confirm (a) or set a cap.
 
-### OP-OSV-6: OSV Reference Type Mapping
+### OP-OSV-6: OSV Reference Type Mapping — RESOLVED
 
 **Context**: OSV `references[].type` values need to map to Sentinel's
 `TicketReference.type` classification.
 
-**Preliminary mapping** (to be confirmed):
+**Final mapping**:
 
 | OSV type | Sentinel type | Notes |
 |----------|--------------|-------|
 | `FIX` | `patch` | Direct link to fixing commit/PR |
-| `INTRODUCED` | `patch` | Link to introducing commit (informational) |
+| `INTRODUCED` | NULL | Link to introducing commit. Not a fix artifact — let URL pattern matching handle it (commit URLs → `patch` via heuristic). Introducing commit data is already captured structurally in `CVEAffectedVersion` (`version` + `version_type = "git"`) |
 | `REPORT` | `issue` | Bug report link |
 | `ADVISORY` | `advisory` | Advisory page |
 | `ARTICLE` | `article` | External writeup |
-| `PACKAGE` | `package` | Package repository link |
+| `PACKAGE` | NULL | Package registry/project page (e.g., pypi.org, npmjs.com). No `package` type exists in Sentinel's `ReferenceType` enum; low operational value for VAs. URL patterns for registries are not in the matching table → stays NULL (uncategorized) |
+| `GIT` | NULL | Link to git repository (not a specific commit) |
 | `EVIDENCE` | NULL | No direct Sentinel equivalent |
 | `WEB` | NULL | Generic web link |
 | `DETECTION` | NULL | Detection tooling |
 | `DISCUSSION` | NULL | Discussion forum link |
 
-**Decision needed**: confirm mapping, especially for types without
-Sentinel equivalent.
+**Decision**: confirmed. Only `FIX`, `REPORT`, `ADVISORY`, and
+`ARTICLE` produce explicit type values. All other OSV reference types
+fall through to URL pattern matching (which may classify some commit
+URLs as `patch`) or remain NULL.
 
 ---
 
@@ -538,3 +562,23 @@ Documents that need to be consulted during spec writing:
 - Established all architectural decisions (3.1-3.6)
 - Identified 6 open points for future sessions
 - Created this plan document
+
+### Session 2 (2026-06-19)
+
+- Coherence review of draft against current state of all referenced
+  documents
+- Confirmed all line references and structural assumptions still valid
+- **Resolved OP-OSV-6** (reference type mapping):
+  - `PACKAGE` → NULL (type `package` does not exist in Sentinel;
+    registry URLs have no URL pattern match → stays uncategorized)
+  - `INTRODUCED` → NULL (let URL pattern matching handle commit URLs;
+    introducing commit data already captured in `CVEAffectedVersion`)
+  - Added `GIT` type to mapping (→ NULL)
+- Fixed missing properties in checklist: `cve_source_type`,
+  `source_reference_url_pattern`, `fetch_single()`
+- Fixed imprecise note about `osv` source prefix (already registered,
+  not a placeholder)
+- Added Step 4 sub-item: update `resolved_packages` definition in
+  `cve-service.md` to align with best-effort usage pattern (drift from
+  original "Pre-resolved SUSE package names" comment)
+- Remaining open points: OP-OSV-1 through OP-OSV-5
