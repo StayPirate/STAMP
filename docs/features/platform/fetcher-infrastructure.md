@@ -801,6 +801,7 @@ enqueues a `run_catch_up` Celery task for each registered fetcher.
 | `sync_mitre_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_ghsa_advisories` | All advisories (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
+| `sync_osv_advisories` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call OSV API → upsert affected versions/refs/packages |
 | `detect_ibs_track_releases` | Tracks in active tickets | **Custom override** | Extract ticket's `TicketPackageTrack` records → check IBS for releases on each codestream |
 | `detect_ibs_product_releases` | Products in active tickets | **Custom override** | Extract ticket's `TicketPackageProduct` records → check `updateinfo.xml` for advisories |
 | `sync_ibs_requests` | Codestreams in active tickets | **Custom override** | Extract ticket's codestream names → query IBS Request Search API → correlate SRs/RRs |
@@ -823,17 +824,15 @@ on-demand discovery. The default `catch_up()` inherited from
 | `sync_ldap_directory` | Syncs all employee records |
 | `sync_cisa_kev` | Syncs entire KEV catalog (sets `participates_in_catch_up = False`) |
 | `sync_epss_scores` | Syncs all EPSS scores (sets `participates_in_catch_up = False`) |
-| `sync_osv_advisories` | Syncs all OSV advisories (sets `participates_in_catch_up = False`) |
 
-Note: `sync_cisa_kev`, `sync_epss_scores`, and `sync_osv_advisories`
-inherit from `BaseCVEFetcher` but opt out of catch-up via
+Note: `sync_cisa_kev` and `sync_epss_scores` inherit from
+`BaseCVEFetcher` but opt out of catch-up via
 `participates_in_catch_up = False` because their `execute()` syncs the
 entire catalog on every run — there is no gap to recover after ticket
 reactivation. In contrast, `sync_nvd_cves`, `sync_mitre_cves`,
-`sync_kernel_cves`, and `sync_ghsa_advisories` also have global-scope
-`execute()` methods but participate in catch-up because their
-`fetch_single()` provides immediate per-ticket recovery without waiting
-for the next periodic run.
+`sync_kernel_cves`, `sync_ghsa_advisories`, and `sync_osv_advisories`
+participate in catch-up because their `fetch_single()` provides immediate
+per-ticket recovery without waiting for the next periodic run.
 
 
 ## Error Message Sanitization
@@ -1204,7 +1203,7 @@ BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
     ├── SyncGhsaAdvisories   (API-based CVE discovery + enrichment)
     ├── SyncCisaKev          (planned — API-based CVE enrichment)
     ├── SyncEpssScores       (planned — API-based CVE enrichment)
-    └── SyncOsvAdvisories    (planned — API-based CVE discovery + enrichment)
+    └── SyncOsvAdvisories    (planned — API-based CVE enrichment)
 ```
 
 ### Class Attributes

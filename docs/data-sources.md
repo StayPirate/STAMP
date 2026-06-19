@@ -30,9 +30,9 @@ see `docs/architecture.md` and the relevant feature specifications in
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Planned |
 | EPSS | Public | Exploit probability scores | Planned |
-| GHSA | Public | Security advisories, CVSS, CWE | Planned |
-| Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Active |
-| OSV | Public | Aggregated vulnerability data | Planned |
+| GHSA | Public | Security advisories, CVSS, CWE | Specified |
+| Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Specified |
+| OSV | Public | Aggregated vulnerability data | Specified |
 | SMASH | Internal | Security update management (predecessor to Sentinel) | Not planned |
 | PackTrack | Internal | Patch submission tracking for maintainers | Not integrated |
 | embedded-code-wg-data | Internal | Embedded third-party library tracking per SUSE/openSUSE package | Not integrated |
@@ -275,21 +275,25 @@ kernel releases, followed by periods of inactivity. Observed 2026 data:
 OSV is an aggregated vulnerability database operated by Google that unifies
 advisories from 20+ databases (GitHub, PyPI, crates.io, Go, Debian,
 Alpine, Linux kernel, and more) into a standardized format. It provides a
-simple REST API that supports queries by CVE ID. While OSV overlaps with
-other sources Sentinel already integrates (NVD, GHSA), it can provide
-additional affected version data and reference links with type
-classification (FIX, EVIDENCE, ARTICLE, ADVISORY).
+simple REST API that supports queries by CVE ID. The OSV fetcher is an
+**enrichment fetcher** — it enriches CVEs already tracked by Sentinel with
+additional metadata from ecosystem-specific advisory databases.
 
-- **Relevant data**: CVSS scores (aggregated from source databases),
-  affected package version ranges across multiple ecosystems, reference
-  links with type tags (FIX, EVIDENCE, ARTICLE, ADVISORY), related
-  advisory identifiers (including SUSE security advisories when available)
+- **Relevant data**: GIT fix/introduce commit SHAs, ecosystem-specific
+  affected version ranges (PyPI, npm, Go, crates.io, Maven, etc.),
+  reference links with type tags (FIX, ADVISORY, REPORT, ARTICLE),
+  package names for best-effort SMELT resolution, external identifiers
+  (GHSA, PYSEC, RUSTSEC) via alias records, and related advisory
+  identifiers (including SUSE-SU when available)
 - **Access**: REST API at `https://api.osv.dev/v1/vulns/{id}`. No
-  authentication required. Supports query by CVE ID
-- **Integration status**: **Planned**. New `sync_osv_advisories` fetcher. Schedule:
-  TBD. CVSS scores are stored as `CVECVSSAssessment` entries. Affected
-  versions and reference URLs (with tags) are stored in their respective
-  tables
+  authentication required. No rate limits (confirmed in OSV docs/FAQ)
+- **Integration status**: **Specified**. The `sync_osv_advisories`
+  fetcher uses a three-phase per-CVE approach: (1) fetch CVE record for
+  GIT ranges and references, (2) fetch alias records for ecosystem data,
+  (3) fetch related records for distribution advisory references.
+  Schedule: daily at 05:00 UTC. CVSS scores are explicitly NOT extracted
+  (OSV provides no provider attribution; all CVSS data already covered by
+  dedicated fetchers with explicit provenance)
 - **Documentation**: https://osv.dev/,
   https://google.github.io/osv.dev/api/
 
@@ -964,7 +968,7 @@ feature documentation (not its implementation status):
 | `sync_epss_scores` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | — | TBD |
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), resolved packages (best-effort SMELT), references | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_ghsa_advisories) | Complete |
 | `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution. `source_container = "cna"` | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_kernel_cves) | Complete |
-| `sync_osv_advisories` | OSV (osv.dev) | TBD | None | None known | CVSS, affected versions, references | — | TBD |
+| `sync_osv_advisories` | OSV (osv.dev) | Daily at 05:00 UTC (`0 5 * * *`) | None | None (no rate limits) | GIT fix/introduce commits (CVEAffectedVersion), ecosystem affected versions (CVEAffectedVersion with ecosystem), references (TicketReference), external identifiers (GHSA/PYSEC/RUSTSEC), resolved packages (best-effort SMELT). `source_container = "osv"` | [cve-tracking.md](features/tickets/cve-tracking.md#fetcher-sync_osv_advisories) | Complete |
 
 Note: `IBSEventConsumer` (real-time codestream release detection via IBS
 RabbitMQ) is a continuous service, not a `BaseFetcher` subclass. See
@@ -983,4 +987,4 @@ schema details are in `docs/data-model.md`.
 | `CVESSVCAssessment` | CISA SSVC decision points (1:1 with CVE) | `sync_mitre_cves` (ADP block) |
 | `CVEKEVEntry` | CISA KEV catalog data (1:1 with CVE) | `sync_cisa_kev`, `sync_mitre_cves` (ADP block) |
 | `CVEEPSSScore` | FIRST EPSS score snapshot (1:1 with CVE, overwritten daily) | `sync_epss_scores` |
-| `CVEExternalIdentifier` | External vulnerability identifiers (e.g., GHSA-ID) | `sync_ghsa_advisories` (+ future fetchers) |
+| `CVEExternalIdentifier` | External vulnerability identifiers (e.g., GHSA-ID, PYSEC-ID, RUSTSEC-ID) | `sync_ghsa_advisories`, `sync_osv_advisories` |

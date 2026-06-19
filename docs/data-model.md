@@ -108,7 +108,7 @@ erDiagram
     CVEExternalIdentifier {
         UUID id PK
         UUID cve_id FK "NOT NULL"
-        ENUM source "NOT NULL"
+        VARCHAR_20 source "NOT NULL"
         VARCHAR_100 identifier "NOT NULL"
     }
     CVEAffectedVersion {
@@ -448,7 +448,7 @@ See `docs/features/tickets/cve-service.md`.
 |-------------|---------------|------------------------------------|------------------------------------|
 | id          | UUID          | PK                                 | Internal identifier                |
 | cve_id      | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                   |
-| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (PG ENUM, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
+| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (VARCHAR, Python Enum, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
 | status      | ENUM          | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). Uses PostgreSQL ENUM type `CVESourceFetchStatus`. No default — always written explicitly by the caller |
 | fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
@@ -483,6 +483,7 @@ requires only a code change, not an Alembic migration).
 | `"kernel"` | Linux kernel vulnerability tracker (vulns.git) |
 | `"redhat"` | Red Hat Security Data API |
 | `"ghsa"` | GitHub Advisory Database (GitHub CNA) |
+| `"osv"` | OSV (osv.dev) — aggregated ecosystem advisory data |
 
 **Format constraint**: values MUST match `[a-z][a-z0-9_]*` and not
 exceed 100 characters (matching the `CVESource.source` VARCHAR(100)
@@ -541,14 +542,27 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
   fetchers run on regular schedules, data converges to the most recent
   value within one cycle
 
-### CVEExternalIdentifierSource Enum
+### CVEExternalIdentifierSource Python Enum
 
 Identifies the naming authority that assigned an external vulnerability
-identifier.
+identifier. This is a **Python Enum** in `app/core/enums.py` — NOT a
+PostgreSQL ENUM. The database column remains `VARCHAR(20)` for migration
+flexibility (adding a new source requires only a code change, not an
+Alembic migration).
 
 | Value | Description |
 |-------|-------------|
-| GHSA  | GitHub Security Advisory identifier |
+| `GHSA` | GitHub Security Advisory identifier |
+| `PYSEC` | Python Security Advisory (PyPI) identifier |
+| `RUSTSEC` | Rust Security Advisory (crates.io) identifier |
+
+**Format constraint**: values MUST match `[A-Z][A-Z0-9_]*` and not
+exceed 20 characters (matching the `CVEExternalIdentifier.source`
+VARCHAR(20) column constraint). Enforced by a unit test on the Enum
+definition.
+
+**Adding a new value**: add the value to the `CVEExternalIdentifierSource`
+Enum in `app/core/enums.py`. No Alembic migration required.
 
 ### CVEExternalIdentifier
 
@@ -561,7 +575,7 @@ CVE remains the sole canonical identifier in Sentinel.
 |------------|----------------------------------------|-------------------------|------------------------------------------|
 | id         | UUID                                   | PK                      | Internal identifier                      |
 | cve_id     | UUID                                   | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                |
-| source     | ENUM(CVEExternalIdentifierSource)      | NOT NULL                | Naming authority (e.g., GHSA)            |
+| source     | VARCHAR(20)                            | NOT NULL                | Naming authority (e.g., `GHSA`, `PYSEC`, `RUSTSEC`). Valid values defined by the `CVEExternalIdentifierSource` Python Enum in `app/core/enums.py` (evolving value set). Column is VARCHAR (not PG ENUM) for migration flexibility |
 | identifier | VARCHAR(100)                           | NOT NULL                | External ID (e.g., `GHSA-xxxx-xxxx-xxxx`) |
 | url        | TEXT                                   | nullable                | Direct link to the advisory page         |
 | created_at | TIMESTAMPTZ                            | NOT NULL, DEFAULT       | Record creation timestamp                |
@@ -606,6 +620,7 @@ the general affected version model. See
 | version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
 | program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
 | cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Used for best-effort package resolution in Phase 2 (see `docs/features/tickets/cve-service.md`), alongside NVD CPE applicability statements passed via `cpe_matches`. Both feed the same `resolve_cpe_packages()` function |
+| ecosystem | VARCHAR(50) | nullable | OSV/OSSF ecosystem identifier (e.g., `"PyPI"`, `"npm"`, `"Go"`, `"crates.io"`, `"Maven"`). Populated by `sync_osv_advisories` (canonical values from OSV schema) and `sync_ghsa_advisories` (normalized from GitHub names). NULL for fetchers without ecosystem concept (NVD, MITRE, Red Hat, Kernel) |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 Records are replaced (delete-and-reinsert per `(cve_id,
@@ -629,6 +644,13 @@ UNIQUE (cve_id, source_container, vendor, product,
         COALESCE(version_type, ''), COALESCE(version, ''),
         COALESCE(version_end, ''))
 ```
+
+Note: `ecosystem` is intentionally excluded from the unique constraint.
+The same package in different ecosystems from different sources is valid
+(e.g., `"jinja2"` from OSV with `ecosystem = "PyPI"` and from GHSA with
+`ecosystem = "PyPI"` share a `source_container` and are replaced
+together). Different `source_container` values independently own their
+own set of rows.
 
 ### CVECWE
 
@@ -1491,7 +1513,12 @@ TBD — will be defined based on query patterns during implementation.
   replaced via delete-and-reinsert during sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
   group membership changes)
-- ENUM types are defined as PostgreSQL enums
+- ENUM types follow a hybrid approach: stable, closed value sets (e.g.,
+  `TicketStatus`, `CVESourceFetchStatus`) use PostgreSQL ENUM types
+  (adding a value requires a migration). Evolving value sets (e.g.,
+  `CVESourceType`, `CVEExternalIdentifierSource`) use VARCHAR columns
+  validated by Python Enums in `app/core/enums.py` (adding a value
+  requires only a code change)
 - All timestamp columns use `TIMESTAMPTZ` (timestamp with time zone), which
   normalizes values to UTC internally. See `docs/conventions.md` (Timestamps
   & Timezones) for the full timezone policy

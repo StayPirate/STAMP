@@ -386,23 +386,20 @@ or retention policy is needed. See
 
 ## 10. Ecosystem Column on CVEAffectedVersion
 
-**Origin**: GHSA fetcher spec (OP-8), Session 1 (2026-06-18)
+**Status**: **Resolved** (2026-06-19)
 
-**Context**: GHSA provides `.package.ecosystem` (e.g., "npm", "pip",
-"go") per affected version entry. This value is currently lost after
-processing — no field preserves it. An explicit `ecosystem VARCHAR(50)`
-nullable column on `CVEAffectedVersion` would preserve the ecosystem
-identifier for display ("npm: lodash"), filtering, and cross-source
-correlation (OSV uses the same concept).
+**Resolution**: `ecosystem VARCHAR(50)` nullable column added to
+`CVEAffectedVersion` (see `docs/data-model.md`). Populated by
+`sync_osv_advisories` (canonical OSV/OSSF values) and
+`sync_ghsa_advisories` (normalized from GitHub names via mapping dict).
+The column was justified by: (a) both OSV and GHSA fetchers populate it,
+(b) it enables ecosystem-aware display and filtering in the UI,
+(c) it is a prerequisite for OP-11 (Ecosystem Prefix Mapping).
 
-**Proposed approach**: add `ecosystem VARCHAR(50)` nullable column to
-`CVEAffectedVersion`. Only GHSA and future OSV fetchers would populate
-it. No breaking change (nullable, additive migration).
-
-**Decision needed**: is the display/filtering value sufficient to justify
-a column populated by only 2 of 6+ fetchers? Revisit when: (a)
-`sync_osv_advisories` is specified (both fetchers benefit), or (b) UI
-feedback shows VAs need ecosystem context for triage decisions.
+See:
+- `docs/features/tickets/cve-tracking.md` (Fetcher: `sync_osv_advisories`,
+  Fetcher: `sync_ghsa_advisories` — Ecosystem normalization)
+- `docs/data-model.md` (CVEAffectedVersion table)
 
 ---
 
@@ -426,8 +423,47 @@ resolution (e.g., `pip:requests` → `python-requests`, `npm:node-forge` →
 `resolved_packages` before passing to `add_package_to_ticket()`. Rules
 would be a simple dict in the fetcher or a shared module.
 
+**Prerequisite satisfied**: the `ecosystem` column on
+`CVEAffectedVersion` is now in place (see OP-10 resolution above). The
+ecosystem context needed for prefix mapping is available in the data
+model.
+
 **Decision needed**: is the additional hit rate worth the mapping
-maintenance burden? Revisit when: (a) GHSA hit rate is measured
+maintenance burden? Revisit when: (a) GHSA and OSV hit rate is measured
 post-implementation and found insufficient for system-level packages, or
-(b) `sync_osv_advisories` is specified (both fetchers benefit from the
-same transforms).
+(b) practical experience shows which transform rules have the highest
+ROI.
+
+---
+
+## 12. Fetcher Metrics — Granularity and Semantics
+
+**Origin**: OSV fetcher spec (Session 5, 2026-06-19)
+
+**Context**: `record_updated` is incremented for every CVE where
+`upsert_cve()` succeeds, regardless of whether the data actually changed
+compared to the previous run. The metric means "processed" not "updated
+with new data." All CVE fetchers (NVD, MITRE, Red Hat, GHSA, OSV) use
+this same convention. As the system matures and most CVEs are already
+enriched, the metric loses diagnostic value (high counts even when
+nothing changed).
+
+**Proposed approach**: evaluate the feasibility of:
+
+- `record_updated` → only when written data differs from previous state
+  (change-detection pre-write comparison)
+- `record_skipped` → CVE processed but no upsert performed (e.g.,
+  `CVENotInSource`, completeness guard, no-change detection)
+- `record_missed` → CVEs tracked by Sentinel that the fetcher does not
+  cover (delta between active tickets and CVEs present in the source)
+
+**Impact**: cross-cutting on `BaseFetcher`/`BaseCVEFetcher` and the
+fetcher-operations dashboard. Must be evaluated together with the
+dashboard design. Introducing change-detection pre-write would require
+comparing the payload against current database state before
+delete-and-reinsert — potentially doubling read I/O per CVE.
+
+**Decision needed**: is the diagnostic improvement worth the performance
+and complexity cost? Revisit when: (a) the fetcher-operations dashboard
+is implemented and operators report metric ambiguity, or (b) database
+size makes unnecessary writes a performance concern.
