@@ -514,16 +514,14 @@ classifications are used for automated triage/routing.
 
 ## 14. BaseFetcher All-Items-Failed Safety Check
 
-**Origin**: CISA KEV fetcher draft review (Session 5, 2026-06-20)
+**Status**: RESOLVED (2026-06-20)
 
-**Context**: when a `BaseFetcher` subclass's `execute()` returns normally
-but all items have failed (`items_failed > 0` and
-`items_created + items_updated == 0`), the run is marked `partial`.
-This is semantically incorrect — `partial` implies some items succeeded.
-`BaseGitFetcher` already has a safety check that converts this case to
-`failure`, but `BaseFetcher` and `BaseCVEFetcher` do not.
-
-**Proposed approach**: promote the safety check from `BaseGitFetcher`
-to `BaseFetcher.run()` so all fetcher subclasses benefit automatically.
-
-**Detailed analysis**: see `docs/drafts/basefetcher-all-items-failed.md`.
+**Resolution**: promoted the all-items-failed safety check from
+`BaseGitFetcher.execute()` (step 11) to `BaseFetcher.run()`. When
+`execute()` returns normally but all items failed (`items_failed > 0`
+and `items_created + items_updated == 0`), `run()` now sets
+`status = failure` directly (no `RuntimeError`). The `partial` status
+is reserved for runs where at least one item succeeded. The redundant
+step 11 in `BaseGitFetcher` was removed and renumbered. See
+`docs/features/platform/fetcher-infrastructure.md` (Status
+determination precedence).

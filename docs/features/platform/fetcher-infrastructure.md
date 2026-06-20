@@ -68,18 +68,29 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      with `error_message`, `error_detail`, and `error_traceback` populated
      (see "Error Message Sanitization" for the three-tier field
      architecture)
-         - Final status set to `success` or `partial` (if `items_failed > 0`)
-   - **Cursor persistence**: if `execute()` sets `self._cursor` (a dict),
-     `run()` writes it to the `FetcherRun.cursor` column in the same
-     transaction that sets `status` and `finished_at`. If `self._cursor`
-     is None (not set), no cursor is written. See "Git-Based Fetchers —
-     Cursor Persistence" for the full mechanism and query pattern
-   - **Status determination precedence**: if `execute()` raises an exception,
-     the run status is always `failure` regardless of metric counters
-     (`items_failed`, `items_created`, `items_updated` are preserved in the
-     record for diagnostic purposes but do not influence the final status).
-     The `partial` status is assigned only when `execute()` returns normally
-     and `items_failed > 0`
+         - Final status determined by status precedence rules (see below)
+   - **Cursor persistence**: if `execute()` returns normally, the final
+     status is `success` or `partial`, and `self._cursor` is set (a
+     dict), `run()` writes it to the `FetcherRun.cursor` column in the
+     same transaction that sets `status` and `finished_at`. Cursor is
+     NOT written when: `self._cursor` is None (not set), `execute()`
+     raised an exception (failure path), or the all-items-failed safety
+     check triggers (status set to `failure` despite normal return). See
+     "Git-Based Fetchers — Cursor Persistence" for the full mechanism
+     and query pattern
+   - **Status determination precedence**: the final status is assigned as
+     follows (evaluated in order):
+     1. If `execute()` raises an exception: `failure`. Metric counters are
+        preserved for diagnostics but do not influence the status
+     2. If `execute()` returns normally and all items failed
+        (`items_failed > 0` and `items_created + items_updated == 0`):
+        `failure`. `error_message` is set to
+        `"All {items_failed} items failed"`. `error_detail` and
+        `error_traceback` are NULL (no exception). The cursor is NOT
+        persisted (same behavior as exception-driven failure)
+     3. If `execute()` returns normally and `items_failed > 0` (with at
+        least one item created or updated): `partial`
+     4. Otherwise: `success`
 3. **Metric helpers**: methods that concrete fetchers call within their
    `execute()` to report work done:
    - `self.record_created(count=1)` — increment `items_created`
@@ -1442,7 +1453,7 @@ performed at any point.
 
 Git-based fetchers persist their checkpoint (the last successfully
 processed commit SHA) in the `FetcherRun.cursor` JSONB column. After
-a successful run, the fetcher writes:
+a run completes with `success` or `partial` status, the fetcher writes:
 
 ```json
 {"sha": "<40-char hex SHA>", "committed_at": "<ISO 8601 date>"}
@@ -1451,7 +1462,7 @@ a successful run, the fetcher writes:
 The next run reads the cursor from the most recent `FetcherRun` with
 `status IN ('success', 'partial')` for the same `fetcher_name`:
 
-- `sha`: the HEAD commit SHA at the end of a successful run
+- `sha`: the HEAD commit SHA at the end of a `success` or `partial` run
 - `committed_at`: the committer date of that commit (ISO 8601
   format). Used as the recovery boundary when the cursor SHA becomes
   unreachable (see "Cursor SHA Unreachable" below)
@@ -1470,10 +1481,13 @@ NVD uses `started_at`) leave it NULL.
 #### Write Mechanism
 
 Inside `execute()`, the fetcher sets `self._cursor` (a dict) with the
-checkpoint data. After `execute()` returns, `run()` reads
-`self._cursor` during finalization and writes it to the `FetcherRun`
-row in the same transaction that sets `status` and `finished_at`.
-If `self._cursor` is None (not set), no cursor is written.
+checkpoint data. After `execute()` returns, `run()` determines the
+final status (see "Status determination precedence") and then, only if
+the final status is `success` or `partial`, reads `self._cursor` and
+writes it to the `FetcherRun` row in the same transaction that sets
+`status` and `finished_at`. If `self._cursor` is None (not set), or
+the final status is `failure` (including the all-items-failed case),
+no cursor is written.
 
 This avoids giving `execute()` direct access to the `FetcherRun` row
 and keeps cursor persistence as a `run()` responsibility — consistent
@@ -2049,14 +2063,13 @@ algorithm from the sections above.
     subsequent items, and that Phase 2 side effects (enqueued
     post-commit by `cve_service.upsert_cve()`) are triggered per-item.
 
-11. **Safety check**: if `items_failed > 0` AND
-    `items_created + items_updated == 0`, raise `RuntimeError` ("All
-    {N} items failed — cursor not advanced for safety"). This prevents
-    cursor advance when every item failed (e.g., network drops in
-    blobless clone making every `show_file()` fail). Note: items
-    skipped in step 10b (file not at HEAD) do not increment any
-    counter and do not contribute to the safety check trigger
-12. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
+11. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
+
+Note: the all-items-failed safety check (preventing cursor advance when
+every item fails) is handled by `BaseFetcher.run()` after `execute()`
+returns — see "Status determination precedence" in the BaseFetcher
+section. Items skipped in step 10b (file not at HEAD) do not increment
+any counter and do not trigger the safety check.
 
 **Infrastructure errors**: exceptions from clone, fetch, HEAD read, or
 delta computation propagate naturally — `BaseFetcher.run()` catches them
@@ -2080,12 +2093,14 @@ On the next scheduled run, the First-Run Detection truth table
 re-evaluates the clone state and applies the appropriate recovery
 (row "Cursor exists + Clone invalid" → re-clone).
 
-The **safety check** (step 11) prevents a dangerous edge case: if all
-items fail (e.g., network drops after fetch in a blobless clone, making
-every `show_file()` fail), the cursor must NOT advance — otherwise those
-items are permanently lost. The `RuntimeError` causes `BaseFetcher.run()`
-to record `status = failure` and preserve the previous cursor, so the
-next run retries the same delta.
+The **all-items-failed safety check** is now handled by
+`BaseFetcher.run()` (see "Status determination precedence" in the
+BaseFetcher section). If all items fail (e.g., network drops after fetch
+in a blobless clone, making every `show_file()` fail), `run()` sets
+`status = failure` directly after `execute()` returns. Since the cursor
+is only persisted on `success` or `partial`, the previous cursor is
+preserved and the next run retries the same delta. This applies to all
+fetcher subclasses uniformly, not just git-based fetchers.
 
 **Status Determination**:
 
@@ -2095,10 +2110,10 @@ mechanism — no additional logic is needed:
 | Scenario | Status | Cursor advances? |
 |----------|--------|-----------------|
 | First run (no processing) | `success` | Yes (step 3e) |
-| Empty delta (HEAD unchanged) | `success` | Yes (step 12) |
-| All items succeed | `success` | Yes (step 12) |
-| Some items fail, some succeed | `partial` | Yes (step 12) |
-| All items fail (safety check) | `failure` | No (step 11) |
+| Empty delta (HEAD unchanged) | `success` | Yes (step 11) |
+| All items succeed | `success` | Yes (step 11) |
+| Some items fail, some succeed | `partial` | Yes (step 11) |
+| All items fail | `failure` | No (`BaseFetcher.run()` safety check) |
 | Infrastructure error | `failure` | No (propagates) |
 
 #### Hook Methods (Override Points)
@@ -2607,12 +2622,12 @@ the dashboard charts.
 | items_created | INTEGER | NOT NULL, DEFAULT 0 | Number of new records created |
 | items_updated | INTEGER | NOT NULL, DEFAULT 0 | Number of existing records updated |
 | items_failed | INTEGER | NOT NULL, DEFAULT 0 | Number of items that failed processing |
-| error_message | TEXT | nullable | Sanitized error description (for all users). Written explicitly by the fetcher (`FetcherError`) or by BaseFetcher's generic fallback (see "Error Message Sanitization") |
+| error_message | TEXT | nullable | Sanitized error description (for all users). Written explicitly by the fetcher (`FetcherError`), by BaseFetcher's generic fallback (see "Error Message Sanitization"), or by the all-items-failed safety check (`"All {N} items failed"` — see "Status determination precedence") |
 | error_detail | TEXT | nullable | Raw exception message — `str(exception)` (`manage_fetchers` capability required for visibility) |
 | error_traceback | TEXT | nullable | Full Python traceback (`manage_fetchers` capability required for visibility) |
 | triggered_by | ENUM | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
-| cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written on successful completion; read by the next run to determine the starting point. See "Git-Based Fetchers" for the git-specific usage pattern |
+| cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See "Git-Based Fetchers" for the git-specific usage pattern |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 **Notes**:
@@ -2639,8 +2654,8 @@ the dashboard charts.
 |---|---|
 | `running` | Execution in progress |
 | `success` | Completed without errors |
-| `failure` | Terminated with an unhandled exception |
-| `partial` | Completed but some items failed (`items_failed > 0`). Implies `execute()` returned normally (no exception raised) |
+| `failure` | Execution failed. Either: (a) `execute()` raised an unhandled exception, or (b) `execute()` returned normally but all items failed (`items_failed > 0` and `items_created + items_updated == 0`) — see "Status determination precedence" |
+| `partial` | Completed but some items failed (`items_failed > 0`) and at least one item succeeded (`items_created + items_updated > 0`). Implies `execute()` returned normally (no exception raised) |
 
 ### FetcherRunTriggeredBy Enum
 
