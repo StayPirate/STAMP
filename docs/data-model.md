@@ -484,6 +484,8 @@ requires only a code change, not an Alembic migration).
 | `"redhat"` | Red Hat Security Data API |
 | `"ghsa"` | GitHub Advisory Database (GitHub CNA) |
 | `"osv"` | OSV (osv.dev) — aggregated ecosystem advisory data |
+| `"kev"` | CISA Known Exploited Vulnerabilities catalog |
+| `"epss"` | FIRST EPSS (Exploit Prediction Scoring System) |
 
 **Format constraint**: values MUST match `[a-z][a-z0-9_]*` and not
 exceed 100 characters (matching the `CVESource.source` VARCHAR(100)
@@ -699,7 +701,6 @@ lean and gives the `sync_cisa_kev` fetcher a clean upsert target.
 | id | UUID | PK | Internal identifier |
 | cve_id | UUID | FK(cve.id) ON DELETE CASCADE, UNIQUE, NOT NULL | Parent CVE (one KEV entry per CVE) |
 | date_added | DATE | NOT NULL | Date added to KEV catalog |
-| remediation_deadline | DATE | nullable | FCEB remediation deadline (from BOD 22-01) |
 | reference_url | TEXT | nullable | URL to KEV catalog entry |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |

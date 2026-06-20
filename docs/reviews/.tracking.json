@@ -112,7 +112,7 @@
       "cache": null
     },
     "cve-sync-kev": {
-      "enabled": false,
+      "enabled": true,
       "abbr": "CSKV",
       "cache": null
     },

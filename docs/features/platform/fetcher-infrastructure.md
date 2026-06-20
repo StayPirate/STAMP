@@ -157,8 +157,9 @@ class SyncExampleData(BaseFetcher):
 **CVE fetcher example** — discovery fetcher (implements `fetch_single`):
 
 CVE fetchers inherit from `BaseCVEFetcher` (see "BaseCVEFetcher Class"
-below), which additionally requires `cve_source_type` (abstract) and
-`fetch_single()` (abstract).
+below), which additionally requires `cve_source_type` and provides
+optional `fetch_single()` (override required when
+`supports_fetch_single = True`, the default).
 
 ```python
 class SyncNvdCves(BaseCVEFetcher):
@@ -289,9 +290,11 @@ class names and Celery task names follow their own naming convention
 
 ## On-demand Single-Item Fetch
 
-`fetch_single` is defined as an abstract method on `BaseCVEFetcher`
-(see "BaseCVEFetcher Class" below). All CVE fetchers inherit the
-requirement to implement it:
+`fetch_single` is defined as a concrete method on `BaseCVEFetcher`
+(see "BaseCVEFetcher Class" below). Its default implementation raises
+`RuntimeError` as a safety net — it is never called for fetchers that
+set `supports_fetch_single = False`. CVE fetchers that support on-demand
+fetch override it with their source-specific logic:
 
 ```python
 async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
@@ -308,12 +311,12 @@ async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
     ...
 ```
 
-This method is structurally required for all `BaseCVEFetcher` subclasses
-(enforced by the abstract method declaration). Non-CVE fetchers do not
-inherit from `BaseCVEFetcher` and cannot implement it. The system
-discovers all CVE fetchers via `_CVE_SOURCE_TYPE_MAP` (populated at
-import time by `BaseCVEFetcher.__init_subclass__`) and invokes them in
-parallel when an on-demand fetch is needed (see
+CVE fetchers that support per-CVE APIs override this method (the
+default). Catalog-based fetchers (KEV, EPSS) that have no per-CVE API
+set `supports_fetch_single = False` and do NOT override `fetch_single`.
+The system discovers fetchers eligible for on-demand fetch via
+`get_fetch_single_fetchers()` (which filters by this attribute) and
+invokes them in parallel when an on-demand fetch is needed (see
 `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch").
 
 The `fetch_single` method does NOT create a `FetcherRun` record. It is
@@ -335,7 +338,7 @@ status in `CVESourceFetchStatus`.
 
 ### `fetch_single` Signaling Convention
 
-This convention applies to ALL CVE fetchers implementing `fetch_single`:
+This convention applies to CVE fetchers with `supports_fetch_single = True`:
 
 | Behavior | Meaning | Orchestrator action |
 |----------|---------|---------------------|
@@ -351,7 +354,8 @@ indicates the CVE does not exist.
 ### Retry Policy for `fetch_single`
 
 The Celery task wrapping `fetch_single` (`fetch_single_cve`) uses native
-Celery retry:
+Celery retry. This policy applies only to fetchers with
+`supports_fetch_single = True`:
 
 - **Max retries**: 3
 - **Backoff**: 5s → 10s → 20s (exponential with cap)
@@ -507,12 +511,12 @@ The fetcher infrastructure provides a registry-level accessor function:
 
 ```python
 def get_fetch_single_fetchers() -> dict[str, type[BaseCVEFetcher]]:
-    """Return CVE fetchers keyed by cve_source_type.
+    """Return CVE fetchers that support on-demand single-item fetch.
 
     Returns a dict mapping cve_source_type -> fetcher class for all
-    registered BaseCVEFetcher subclasses. The result is a direct read
-    of _CVE_SOURCE_TYPE_MAP (populated at import time by
-    BaseCVEFetcher.__init_subclass__).
+    registered BaseCVEFetcher subclasses where
+    supports_fetch_single = True. Fetchers that opt out (catalog-based
+    fetchers like KEV and EPSS) are excluded.
     """
 ```
 
@@ -521,19 +525,25 @@ This function:
 - Encapsulates the CVE fetcher enumeration logic in one place,
   avoiding fragile `hasattr(cls, 'fetch_single')` checks at multiple
   call sites
+- Filters by `supports_fetch_single = True`, excluding catalog-based
+  fetchers that have no per-CVE API
 - Returns results keyed by `cve_source_type` (not `BaseFetcher.name`),
   matching the primary use case (Redis key construction, source
   validation, status enumeration)
 - Is used by: on-demand fetch loop, refetch endpoint validation, fetch
   status read path
 
-**Implementation**: a direct read of `_CVE_SOURCE_TYPE_MAP` (the
+**Implementation**: a filtered read of `_CVE_SOURCE_TYPE_MAP` (the
 module-level dictionary populated at import time by
 `BaseCVEFetcher.__init_subclass__`):
 
 ```python
 def get_fetch_single_fetchers() -> dict[str, type[BaseCVEFetcher]]:
-    return dict(_CVE_SOURCE_TYPE_MAP)
+    return {
+        source_type: cls
+        for source_type, cls in _CVE_SOURCE_TYPE_MAP.items()
+        if cls.supports_fetch_single
+    }
 ```
 
 The map is fully populated after all fetcher modules have been imported.
@@ -606,8 +616,10 @@ set alongside `CVENotInSource`.
 
 `BaseCVEFetcher` provides the concrete default implementation that all
 CVE fetchers inherit (see "BaseCVEFetcher Class" below for the code
-block). The default delegates to `fetch_single()` — no MRO guard is
-needed because `fetch_single` is guaranteed by the abstract contract.
+block). The default delegates to `fetch_single()` — for fetchers with
+`supports_fetch_single = True`, this calls their override; for fetchers
+with `supports_fetch_single = False`, `catch_up()` is never invoked
+(they also set `participates_in_catch_up = False`).
 
 **Boundary conditions for custom `catch_up()` overrides** (applies to
 all fetchers — CVE and non-CVE):
@@ -618,7 +630,8 @@ all fetchers — CVE and non-CVE):
   proceeding. If the ticket does not exist or has no relevant data,
   the method MUST return silently (no exception, no log warning)
 
-CVE fetchers only need to implement `fetch_single(cve_id)`:
+CVE fetchers with `supports_fetch_single = True` only need to implement
+`fetch_single(cve_id)`:
 
 - `execute()` calls `self.fetch_single()` in a loop over active CVEs
 - `catch_up()` is inherited from `BaseCVEFetcher` (delegates to
@@ -842,10 +855,13 @@ Note: `sync_cisa_kev` and `sync_epss_scores` inherit from
 `BaseCVEFetcher` but opt out of catch-up via
 `participates_in_catch_up = False` because their `execute()` syncs the
 entire catalog on every run — there is no gap to recover after ticket
-reactivation. In contrast, `sync_nvd_cves`, `sync_mitre_cves`,
-`sync_kernel_cves`, `sync_ghsa_advisories`, and `sync_osv_advisories`
-participate in catch-up because their `fetch_single()` provides immediate
-per-ticket recovery without waiting for the next periodic run.
+reactivation. They also set `supports_fetch_single = False` because
+their data sources are monolithic catalogs with no per-CVE API — the
+`fetch_single_cve` task is never dispatched for these fetchers. In
+contrast, `sync_nvd_cves`, `sync_mitre_cves`, `sync_kernel_cves`,
+`sync_ghsa_advisories`, and `sync_osv_advisories` participate in
+catch-up because their `fetch_single()` provides immediate per-ticket
+recovery without waiting for the next periodic run.
 
 
 ## Error Message Sanitization
@@ -1190,8 +1206,8 @@ Example:
 Intermediate abstract class for all CVE fetchers — those that ingest or
 enrich CVE-related data from external sources. Sits between `BaseFetcher`
 (generic fetcher infrastructure) and concrete CVE fetchers, providing the
-CVE-specific contract: `cve_source_type`, `fetch_single()`, default
-`catch_up()`, and CVE-specific import-time validation.
+CVE-specific contract: `cve_source_type`, optional `fetch_single()`,
+default `catch_up()`, and CVE-specific import-time validation.
 
 **File location**: `backend/app/services/base_cve_fetcher.py`
 
@@ -1201,7 +1217,7 @@ CVE-specific contract: `cve_source_type`, `fetch_single()`, default
 BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
              concurrency, enabled check, Settings, error sanitization)
 │
-└── BaseCVEFetcher (CVE-specific: cve_source_type, fetch_single,
+└── BaseCVEFetcher (CVE-specific: cve_source_type, fetch_single (opt-out),
     │               CVENotInSource, source_reference_url_pattern,
     │               default catch_up, CVE import-time rules)
     │
@@ -1214,7 +1230,7 @@ BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
     ├── SyncNvdCves          (API-based CVE discovery + enrichment)
     ├── SyncRedhatCves       (API-based CVE enrichment)
     ├── SyncGhsaAdvisories   (API-based CVE discovery + enrichment)
-    ├── SyncCisaKev          (planned — API-based CVE enrichment)
+    ├── SyncCisaKev          (API-based CVE enrichment, catalog fetch)
     ├── SyncEpssScores       (planned — API-based CVE enrichment)
     └── SyncOsvAdvisories    (planned — API-based CVE enrichment)
 ```
@@ -1225,16 +1241,9 @@ BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
 |-----------|------|---------|-------------|
 | `abstract` | `bool` | `True` | Prevents registration in `FETCHER_REGISTRY` (intermediate class) |
 | `cve_source_type` | `str` | (required, abstract) | `CVESourceType` Enum value. Unique per fetcher. Stored in `CVESource.source` |
-| `source_reference_url_pattern` | `str \| None` | `None` | URL pattern with `{cve_id}` placeholder for human-readable CVE pages. When set, a TicketReference with type=advisory is automatically created for each processed CVE. CVE fetchers MUST call `reference_service.upsert_references()` after `cve_service.upsert_cve()`. See `docs/features/tickets/ticket-references.md` for details |
+| `source_reference_url_pattern` | `str \| None` | `None` | URL pattern with `{cve_id}` placeholder for human-readable CVE pages. Fetchers with this attribute set MUST pass the constructed URL as `source_url` to `reference_service.upsert_references()` after each `upsert_cve()` call — this creates a TicketReference with type=advisory. See `docs/features/tickets/ticket-references.md` for details |
 | `participates_in_catch_up` | `bool` | `True` | Whether the fetcher is included in `get_catch_up_fetchers()` results. Global-scope CVE fetchers that sync entire catalogs set this to `False` to opt out of per-ticket catch-up |
-
-### Abstract Methods
-
-Concrete subclasses MUST implement:
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `fetch_single` | `async def fetch_single(self, cve_id: str, session: AsyncSession) -> None` | Fetch a single CVE from the external source. Raises `CVENotInSource` if the source explicitly confirms the CVE does not exist |
+| `supports_fetch_single` | `bool` | `True` | Whether the fetcher supports on-demand single-CVE fetch. Catalog-based fetchers (KEV, EPSS) that have no per-CVE API set this to `False`. Fetchers with `False` are excluded from `get_fetch_single_fetchers()` results, are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()` |
 
 ### Concrete Methods
 
@@ -1242,7 +1251,8 @@ Inherited by all CVE fetchers:
 
 | Method | Description |
 |--------|-------------|
-| `catch_up(ticket_id, session)` | Default implementation: extract `cve_id` from ticket, call `self.fetch_single()`, catch `CVENotInSource` as no-op |
+| `fetch_single(cve_id, session)` | Default implementation raises `RuntimeError("fetch_single() called on a fetcher that does not support it")`. Fetchers with `supports_fetch_single = True` MUST override this method. Fetchers with `supports_fetch_single = False` inherit the default (never called in practice — `get_fetch_single_fetchers()` excludes them) |
+| `catch_up(ticket_id, session)` | Default implementation: extract `cve_id` from ticket, call `self.fetch_single()`, catch `CVENotInSource` as no-op. Only meaningful for fetchers with `supports_fetch_single = True`; fetchers with `False` also set `participates_in_catch_up = False` (so `catch_up()` is never invoked) |
 
 **Default `catch_up()` implementation**:
 
@@ -1374,11 +1384,12 @@ cross-test pollution from dynamically created mock fetcher classes.
 metric helper. The `BaseFetcher` lifecycle contract applies to all CVE
 fetchers unchanged. `BaseCVEFetcher` adds only:
 
-1. The `cve_source_type` + `fetch_single()` contract
+1. The `cve_source_type` + `fetch_single()` contract (opt-out via `supports_fetch_single`)
 2. The default `catch_up()` implementation
 3. CVE-specific import-time validation
 4. The `participates_in_catch_up` opt-out for catch-up participation
-5. The `source_reference_url_pattern` attribute (optional, default `None`)
+5. The `supports_fetch_single` opt-out for on-demand single-CVE fetch
+6. The `source_reference_url_pattern` attribute (optional, default `None`)
 
 ## Git-Based Fetchers
 
@@ -1939,7 +1950,7 @@ delegates per-item processing to concrete subclasses via hook methods.
 
 ```
 BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry)
-  └── BaseCVEFetcher (CVE-specific: cve_source_type, fetch_single, catch_up)
+  └── BaseCVEFetcher (CVE-specific: cve_source_type, fetch_single (opt-out), catch_up)
         └── BaseGitFetcher (git-specific: clone, fetch, delta, recovery, SHA ops)
               ├── SyncMitreCves (per-item: cvelistV5 JSON, CNA+ADP containers)
               └── SyncKernelCves (per-item: vulns.git JSON, kernel-specific mapping)
@@ -2158,9 +2169,9 @@ Default implementation returns the list unchanged.
 
 #### Default `fetch_single()` Implementation
 
-`BaseGitFetcher` provides a concrete implementation of the abstract
-`fetch_single()` method defined on `BaseCVEFetcher`. Concrete subclasses
-inherit it automatically (no override needed).
+`BaseGitFetcher` provides a concrete implementation of `fetch_single()`
+that overrides the `BaseCVEFetcher` default (which raises `RuntimeError`).
+Concrete subclasses inherit it automatically (no override needed).
 
 **Behavior**:
 
@@ -2844,8 +2855,9 @@ Invoke `@fetcher-compliance-reviewer` when:
    are defined on the class. For CVE fetchers,
    `source_reference_url_pattern` should be set if the source has a
    human-readable web page (see `docs/features/tickets/ticket-references.md`), and
-   `fetch_single()` must be implemented (see "On-demand Single-Item
-   Fetch" above)
+   `fetch_single()` must be implemented unless
+   `supports_fetch_single = False` (see "On-demand Single-Item Fetch"
+   above)
 3. **Unique name**: the fetcher's `name` does not conflict with any
    existing registered fetcher
 4. **Metric reporting**: the `execute()` method calls

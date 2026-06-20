@@ -23,6 +23,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-kernel | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
+| cve-sync-kev | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
 | cve-sync-mitre | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-nvd | — | — | — | — | — | —/— | — | |
@@ -69,7 +71,6 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 ### Disabled specs
 
 - cve-sync-epss
-- cve-sync-kev
 - cve-tracking
 - git-product-release-detection
 - git-track-release-detection
