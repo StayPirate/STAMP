@@ -467,3 +467,63 @@ delete-and-reinsert — potentially doubling read I/O per CVE.
 and complexity cost? Revisit when: (a) the fetcher-operations dashboard
 is implemented and operators report metric ambiguity, or (b) database
 size makes unnecessary writes a performance concern.
+
+---
+
+## 13. CWE Accumulation — Stale Records from Additive-Only Upsert
+
+**Origin**: CISA KEV fetcher spec review (Session 4, 2026-06-20)
+
+**Context**: `upsert_cve()` uses an additive-only pattern for `CVECWE`
+records — the upsert key is `(cve_id, cwe_id, source)`, so new CWE
+entries are inserted and existing ones are updated, but removed entries
+are never deleted. If an external source corrects a CWE classification
+(e.g., changes CWE-306 to CWE-79), the old record persists indefinitely
+alongside the new one.
+
+This affects any source that can revise CWE data over time: CISA KEV
+(`cwes` array), NVD (problemType), MITRE CNA/ADP containers. The issue
+is not specific to the KEV fetcher — it is a cross-cutting limitation of
+the `upsert_cve()` infrastructure.
+
+**Contrast with `CVEAffectedVersion`**: affected versions use
+delete-and-reinsert (clear all records for the source, then reinsert the
+current set), which naturally handles removals. `CVECWE` does not use
+this pattern — likely because CWE corrections are rare and the data is
+supplementary (VAs rely primarily on NVD/MITRE for CWE).
+
+**Proposed approaches**:
+
+- (a) Accept the limitation as-is — CWE data is supplementary,
+  corrections are rare, and stale entries have low practical impact
+- (b) Switch `CVECWE` to delete-and-reinsert per `(cve_id, source)` on
+  each fetch — clean but increases write I/O for every run
+- (c) Add a periodic cleanup job that compares current source data
+  against stored records — complex, deferred maintenance burden
+
+**Impact**: low for individual VAs (CWE is informational, not used for
+gating or automation). Higher if CWE data is ever exposed in the UI as
+authoritative or used for automated categorization.
+
+**Decision needed**: is the theoretical data staleness worth addressing
+now, or should it be deferred until practical impact is observed? Revisit
+when: (a) a VA reports incorrect CWE data on a ticket, or (b) CWE
+classifications are used for automated triage/routing.
+
+---
+
+## 14. BaseFetcher All-Items-Failed Safety Check
+
+**Origin**: CISA KEV fetcher draft review (Session 5, 2026-06-20)
+
+**Context**: when a `BaseFetcher` subclass's `execute()` returns normally
+but all items have failed (`items_failed > 0` and
+`items_created + items_updated == 0`), the run is marked `partial`.
+This is semantically incorrect — `partial` implies some items succeeded.
+`BaseGitFetcher` already has a safety check that converts this case to
+`failure`, but `BaseFetcher` and `BaseCVEFetcher` do not.
+
+**Proposed approach**: promote the safety check from `BaseGitFetcher`
+to `BaseFetcher.run()` so all fetcher subclasses benefit automatically.
+
+**Detailed analysis**: see `docs/drafts/basefetcher-all-items-failed.md`.
