@@ -397,8 +397,8 @@ The column was justified by: (a) both OSV and GHSA fetchers populate it,
 (c) it is a prerequisite for OP-11 (Ecosystem Prefix Mapping).
 
 See:
-- `docs/features/tickets/cve-tracking.md` (Fetcher: `sync_osv_advisories`,
-  Fetcher: `sync_ghsa_advisories` — Ecosystem normalization)
+- `docs/features/tickets/cve-sync-osv.md` (Fetcher: `sync_osv_advisories` — Ecosystem normalization)
+- `docs/features/tickets/cve-sync-ghsa.md` (Fetcher: `sync_ghsa_advisories` — Ecosystem normalization)
 - `docs/data-model.md` (CVEAffectedVersion table)
 
 ---

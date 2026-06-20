@@ -19,6 +19,18 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| cve-sync-ghsa | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
+| cve-sync-kernel | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
+| cve-sync-mitre | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
+| cve-sync-nvd | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
+| cve-sync-osv | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
+| cve-sync-redhat | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/20 | 2026-05-28 | ⚠️ |
@@ -56,6 +68,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 
 ### Disabled specs
 
+- cve-sync-epss
+- cve-sync-kev
 - cve-tracking
 - git-product-release-detection
 - git-track-release-detection

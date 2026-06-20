@@ -8,7 +8,15 @@ Core workflow entity — CVE ingestion, triage, severity, and audit trail.
 tickets.md              Ticket lifecycle, status gates, API endpoints
 ticket-service.md       ticket_service module contract (non-gate lifecycle operations, confidentiality management)
 ticket-mutations.md     ticket_mutations module contract (CVSS/severity mutations, status evaluation, manual-zone exits)
-cve-tracking.md         CVE ingestion from NVD/MITRE, on-demand fetch
+cve-tracking.md         CVE tracking feature (business rules, API, on-demand fetch, common fetcher conventions)
+cve-sync-nvd.md         NVD fetcher specification
+cve-sync-mitre.md       MITRE cvelistV5 fetcher specification
+cve-sync-kernel.md      Linux Kernel CNA fetcher specification
+cve-sync-ghsa.md        GitHub Advisory DB fetcher specification
+cve-sync-osv.md         OSV enrichment fetcher specification
+cve-sync-redhat.md      Red Hat Security Data fetcher specification
+cve-sync-kev.md         CISA KEV fetcher (planned)
+cve-sync-epss.md        EPSS fetcher (planned)
 cvss-scoring.md         Multi-provider CVSS assessments, severity resolution
 ticket-audit-log.md     TicketAuditEvent audit trail, event type contract
 ticket-references.md    External links on tickets (auto-classified by type, manual with manage_references capability)
@@ -29,6 +37,8 @@ ticket-references.md    External links on tickets (auto-classified by type, manu
   concurrency control, `auto_assign_actor()`).
   Package-centric mutations are in `packages/package-service.md`.
 - `cve-tracking.md` feeds tickets: each ingested CVE creates a ticket.
+  Individual CVE fetcher specs follow common conventions defined in
+  `cve-tracking.md`.
 - `cvss-scoring.md` drives ticket severity and product eligibility
   (consumed by `tickets.md` and `packages/package-model.md`).
 - `ticket-audit-log.md` defines the event contract that all ticket-mutating

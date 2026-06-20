@@ -58,7 +58,15 @@ Index of all feature specification domains.
 - [tickets.md](tickets/tickets.md) — Ticket lifecycle, status gates, centralized evaluation
 - [ticket-service.md](tickets/ticket-service.md) — Service-layer contract for non-gate ticket lifecycle operations and confidentiality management
 - [ticket-mutations.md](tickets/ticket-mutations.md) — Gate-relevant mutations, status evaluation, manual-zone exits
-- [cve-tracking.md](tickets/cve-tracking.md) — CVE ingestion from NVD/MITRE, on-demand fetch
+- [cve-tracking.md](tickets/cve-tracking.md) — CVE tracking feature (business rules, API, on-demand fetch, common fetcher conventions)
+- [cve-sync-nvd.md](tickets/cve-sync-nvd.md) — NVD fetcher specification
+- [cve-sync-mitre.md](tickets/cve-sync-mitre.md) — MITRE cvelistV5 fetcher specification
+- [cve-sync-kernel.md](tickets/cve-sync-kernel.md) — Linux Kernel CNA fetcher specification
+- [cve-sync-ghsa.md](tickets/cve-sync-ghsa.md) — GitHub Advisory DB fetcher specification
+- [cve-sync-osv.md](tickets/cve-sync-osv.md) — OSV enrichment fetcher specification
+- [cve-sync-redhat.md](tickets/cve-sync-redhat.md) — Red Hat Security Data fetcher specification
+- [cve-sync-kev.md](tickets/cve-sync-kev.md) — CISA KEV fetcher (planned)
+- [cve-sync-epss.md](tickets/cve-sync-epss.md) — EPSS fetcher (planned)
 - [cvss-scoring.md](tickets/cvss-scoring.md) — Multi-provider CVSS assessments, severity resolution
 - [ticket-audit-log.md](tickets/ticket-audit-log.md) — TicketAuditEvent audit trail, event type contract
 - [ticket-references.md](tickets/ticket-references.md) — External links on tickets (auto-classified by type, manual with manage_references capability)

@@ -159,7 +159,7 @@ directly on the assessment record.
 - **CVSS versions**: varies by CNA; may include v3.1, v4.0, or both
 - **Name resolution**: during CVE sync, the ingestion service resolves
   `source` email addresses to display names via the NVD Source API. See
-  `docs/features/tickets/cve-tracking.md` (NVD Source API Caching) for
+  `docs/features/tickets/cve-sync-nvd.md` (NVD Source API Caching) for
   the caching strategy
 - **Convergence with direct sources**: both NVD Secondary and direct-source
   fetchers (e.g., Red Hat) write to the same UPSERT conflict key
@@ -328,7 +328,7 @@ Recalculation Chain below).
 
 For the full fetcher definition — including the incremental algorithm,
 NVD Source API caching strategy, first-run behavior, and error handling
-— see [`cve-tracking.md`](cve-tracking.md) (Fetcher:
+— see [`cve-sync-nvd.md`](cve-sync-nvd.md) (Fetcher:
 `sync_nvd_cves`).
 
 ### Red Hat Sync
@@ -357,7 +357,7 @@ retrieve the latest Red Hat data. See
 For the full fetcher definition — including the complete algorithm,
 CWE/reference extraction, package best-effort addition, error
 handling, and `fetch_single` method — see
-[`cve-tracking.md`](cve-tracking.md) (Fetcher: `sync_redhat_cves`).
+[`cve-sync-redhat.md`](cve-sync-redhat.md) (Fetcher: `sync_redhat_cves`).
 
 ### Sync Scope
 
@@ -803,7 +803,7 @@ for the `catch_up()` method contract.
 ## Background Tasks
 
 The `sync_nvd_cves` fetcher (defined in
-`docs/features/tickets/cve-tracking.md`) also produces CVSS assessments
+`docs/features/tickets/cve-sync-nvd.md`) also produces CVSS assessments
 during CVE ingestion. See "NVD Sync (Incremental)" above for the
 consumer-oriented summary.
 
@@ -833,7 +833,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
   contract, field semantics
 - `docs/features/tickets/cve-service.md` — CVE Service Layer
   (`upsert_cve()`, `CVEIngestPayload`, Phase 1/Phase 2 transaction model)
-- `docs/features/tickets/cve-tracking.md` — `sync_nvd_cves` fetcher
+- `docs/features/tickets/cve-sync-nvd.md` — `sync_nvd_cves` fetcher
   definition (incremental algorithm, NVD Source API caching)
 - `docs/features/packages/package-model.md` — Three Orthogonal Dimensions,
   Axis 2: Eligibility (rules, override model, Reactive LTSS)

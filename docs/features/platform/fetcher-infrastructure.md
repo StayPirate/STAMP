@@ -274,6 +274,19 @@ they are acronyms — `nvd` → `Nvd`, not `NVD`; `ibs` → `Ibs`, not
 `IBS`; `ghsa` → `Ghsa`, not `GHSA`. This keeps the derivation
 mechanical and unambiguous.
 
+#### Batch Naming (Specification Files)
+
+When multiple fetchers serve the same feature domain performing the same
+action on different sources (e.g., 6+ CVE sync fetchers), use
+`<domain>-<action>-<source>.md` (e.g., `cve-sync-nvd.md`,
+`cve-sync-ghsa.md`) to ensure alphabetical grouping in directory
+listings. The shared prefix replaces the source-first pattern for
+discoverability.
+
+This convention applies to **specification filenames** only. Fetcher
+class names and Celery task names follow their own naming convention
+(`<verb>_<source>_<noun>`) independently.
+
 ## On-demand Single-Item Fetch
 
 `fetch_single` is defined as an abstract method on `BaseCVEFetcher`

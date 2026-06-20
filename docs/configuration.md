@@ -112,8 +112,8 @@ here.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay_seconds` custom setting from 6.0s to ~0.6s via the admin dashboard | `docs/features/tickets/cve-tracking.md` |
-| `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Without token: 60 req/hour (insufficient for production). With token: 5,000 req/hour. The fetcher refuses to execute if this is empty or unset | `docs/features/tickets/cve-tracking.md` |
+| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay_seconds` custom setting from 6.0s to ~0.6s via the admin dashboard | `docs/features/tickets/cve-sync-nvd.md` |
+| `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Without token: 60 req/hour (insufficient for production). With token: 5,000 req/hour. The fetcher refuses to execute if this is empty or unset | `docs/features/tickets/cve-sync-ghsa.md` |
 
 ## Git-Based Fetchers
 

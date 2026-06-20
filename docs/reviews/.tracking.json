@@ -96,6 +96,46 @@
         "not_reviewed": []
       }
     },
+    "cve-sync-epss": {
+      "enabled": false,
+      "abbr": "CSEP",
+      "cache": null
+    },
+    "cve-sync-ghsa": {
+      "enabled": true,
+      "abbr": "CSGH",
+      "cache": null
+    },
+    "cve-sync-kernel": {
+      "enabled": true,
+      "abbr": "CSKR",
+      "cache": null
+    },
+    "cve-sync-kev": {
+      "enabled": false,
+      "abbr": "CSKV",
+      "cache": null
+    },
+    "cve-sync-mitre": {
+      "enabled": true,
+      "abbr": "CSMT",
+      "cache": null
+    },
+    "cve-sync-nvd": {
+      "enabled": true,
+      "abbr": "CSNV",
+      "cache": null
+    },
+    "cve-sync-osv": {
+      "enabled": true,
+      "abbr": "CSOV",
+      "cache": null
+    },
+    "cve-sync-redhat": {
+      "enabled": true,
+      "abbr": "CSRH",
+      "cache": null
+    },
     "cve-tracking": {
       "enabled": false,
       "abbr": "CVET",
