@@ -120,11 +120,15 @@ The CISA KEV catalog is a single page, but it supports per-CVE filtering via
 query parameter:
 `https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}`
 
-This URL is set as `source_reference_url_pattern` on the class. The ingestion
-pipeline automatically:
-1. Stores the URL in `CVEKEVEntry.reference_url` (via `KEVEntry.reference_url`)
-2. Creates a `TicketReference` via the standard `source_reference_url_pattern`
-   substitution mechanism in `upsert_cve()`
+This URL is set as `source_reference_url_pattern` on the class. Two separate
+mechanisms store it:
+
+1. **CVE-level data** (`CVEKEVEntry.reference_url`): stored via
+   `KEVEntry.reference_url` in the `CVEIngestPayload` passed to `upsert_cve()`
+2. **Ticket-level link** (`TicketReference`): created by an explicit
+   `reference_service.upsert_references()` call **after** `upsert_cve()`,
+   passing the constructed URL as `source_url`. This is the fetcher's
+   responsibility (not automated by `upsert_cve()` or `BaseCVEFetcher`)
 
 The `(ticket_id, url)` unique constraint on `TicketReference` prevents
 duplicates if MITRE wrote the same URL first (MITRE uses the identical URL
@@ -233,7 +237,12 @@ Also add `"epss"` in the same edit — it is already declared by
         - `kev_data`: `KEVEntry(date_added=entry.dateAdded, reference_url=constructed_url)`
         - `cwe_classifications`: extracted from `entry.cwes` (if present and
           non-empty), with `source = "CISA KEV"`
-      - Call `upsert_cve(payload)`
+      - Call `upsert_cve(payload)` → receive `UpsertResult`
+      - Call `reference_service.upsert_references()` with:
+        - `ticket_id`: from `UpsertResult.ticket_id`
+        - `source`: `"sync_cisa_kev"`
+        - `source_url`: `source_reference_url_pattern.format(cve_id=cve_id)`
+        - `upstream_references`: `[]` (KEV feed has no reference URLs)
       - `record_updated()` on success
    e. On per-entry error (after successful CVE lookup):
       `record_source_status(session, cve_id, "kev", "failure")`,
@@ -323,6 +332,7 @@ does not implement `fetch_single()`.
 | CVE lookup database error | Isolated | `record_failed()`, skip entry, continue (no CVE UUID available) |
 | Invalid/missing `dateAdded` on entry | Isolated | `record_source_status("failure")`, `record_failed()`, skip entry, continue |
 | `upsert_cve()` failure on entry | Isolated | `record_source_status("failure")`, `record_failed()`, log, continue |
+| `upsert_references()` failure on entry | Isolated | WARNING log, continue (CVE data already committed; reference failure is non-critical) |
 | Invalid CWE format on entry | Isolated | Skip that CWE, WARNING log, continue processing entry |
 
 **Abort threshold**: no source-specific abort threshold is defined. After
@@ -336,6 +346,12 @@ has been successfully resolved (step 3b succeeds). Errors that occur
 before or during CVE lookup (invalid `cveID` format, database error in
 lookup) trigger only `record_failed()` + log — `record_source_status`
 requires a valid `cve_id` UUID (FK constraint).
+
+**`record_source_status` self-failure**: if `record_source_status` itself
+fails (e.g., database connection lost mid-run), the exception propagates
+and aborts the run. This is reasonable: a database connection failure
+means all subsequent entries would also fail, so continuing the loop
+provides no value. The run terminates with `status = failure`.
 
 **Sanitized `FetcherError` messages**:
 
@@ -392,18 +408,19 @@ benign.
 **Priority**: MEDIUM
 
 **Decision**: `source_reference_url_pattern = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}"`
-on the class. The ingestion pipeline constructs the URL per-CVE
-automatically:
+on the class. The fetcher constructs the URL per-CVE and passes it to
+`reference_service.upsert_references()`:
 
 ```
 https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}
 ```
 
-This URL is:
-1. Stored in `CVEKEVEntry.reference_url` (via `KEVEntry.reference_url` in
-   the payload)
-2. Automatically created as a `TicketReference` by the ingestion pipeline
-   (via `source_reference_url_pattern` substitution in `upsert_cve()`)
+This URL is stored in two independent places:
+1. **CVE-level**: `CVEKEVEntry.reference_url` (via `KEVEntry.reference_url` in
+   the payload passed to `upsert_cve()`)
+2. **Ticket-level**: `TicketReference` record (via explicit
+   `reference_service.upsert_references()` call post-upsert, with
+   `source_url` built from `source_reference_url_pattern`)
 
 **Deliverable**: Document in the algorithm and class structure sections.
 
@@ -524,6 +541,31 @@ of `cve-sync-mitre.md`, analogous to Kernel's:
 
 **Deliverable**: Update `docs/features/tickets/cve-sync-mitre.md`.
 
+### WI-19: Rewrite `source_reference_url_pattern` Description
+
+**Priority**: MEDIUM
+
+**Problem**: the description of `source_reference_url_pattern` in
+`docs/features/platform/fetcher-infrastructure.md` (line 1228, Class
+Attributes table) says "a TicketReference with type=advisory is
+**automatically** created for each processed CVE" — then immediately
+follows with "CVE fetchers **MUST call**
+`reference_service.upsert_references()`". The two statements contradict
+each other and caused a real error in this draft (session 5 removed the
+explicit call believing it was automatic).
+
+**Action**: Rewrite the description column to:
+
+> URL pattern with `{cve_id}` placeholder for human-readable CVE pages.
+> Fetchers with this attribute set MUST pass the constructed URL as
+> `source_url` to `reference_service.upsert_references()` after each
+> `upsert_cve()` call — this creates a TicketReference with
+> type=advisory. See `docs/features/tickets/ticket-references.md` for
+> details
+
+**Deliverable**: Update `docs/features/platform/fetcher-infrastructure.md`
+(executed in step 3 of the execution plan).
+
 ## WI-NEW-1: `supports_fetch_single` — Spec-Level Change
 
 **Priority**: HIGH
@@ -611,8 +653,8 @@ Ordered sequence of specification changes:
 | 1 | Remove `remediation_deadline` from `CVEKEVEntry` | `docs/data-model.md` | Column removal |
 | 1B | Add `"kev"` to `CVESourceType` enum | `docs/data-model.md` | Required before fetcher class registration (WI-2B) |
 | 2 | Remove `remediation_deadline` from `KEVEntry` | `docs/features/tickets/cve-service.md` | Payload alignment |
-| 3 | Implement `supports_fetch_single` changes | `docs/features/platform/fetcher-infrastructure.md` | Core contract change (WI-NEW-1 HIGH items) |
-| 4 | Update on-demand fetch documentation | `docs/features/tickets/cve-service.md`, `docs/features/tickets/cve-tracking.md` | Align with step 3; also update Callers table in `cve-service.md` (add `record_source_status()` to `sync_cisa_kev` row) |
+| 3 | Implement `supports_fetch_single` changes | `docs/features/platform/fetcher-infrastructure.md` | Core contract change (WI-NEW-1 HIGH items); also rewrite `source_reference_url_pattern` description (line 1228) to remove misleading "automatically" wording (WI-19) |
+| 4 | Update on-demand fetch documentation | `docs/features/tickets/cve-service.md`, `docs/features/tickets/cve-tracking.md` | Align with step 3; also update Callers table in `cve-service.md` (add `record_source_status()` and `reference_service.upsert_references()` to `sync_cisa_kev` row) |
 | 5 | Update minor references | `docs/architecture.md`, `docs/conventions.md`, `docs/features/tickets/cvss-scoring.md` | LOW/MEDIUM items from WI-NEW-1 |
 | 5B | Add explicit abort threshold note to MITRE | `docs/features/tickets/cve-sync-mitre.md` | WI-18 — document intentional absence of abort threshold |
 | 6 | Write complete fetcher spec | `docs/features/tickets/cve-sync-kev.md` | Full spec (WI-3, WI-4, WI-6, WI-8, WI-9, WI-11, WI-12, WI-13, WI-14, WI-16) |
@@ -649,3 +691,4 @@ Ordered sequence of specification changes:
 | 2026-06-20 | 3 | Ran 4 review agents (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`, `@docs-placement-reviewer`). Incorporated findings: added WI-2B (CVESourceType enum), added `record_source_status("failure")` to error paths, added `dateAdded` parse failure to error table, clarified metric semantics with OP-12 reference, added behavioral notes (data lifecycle, re-invocation safety, empty catalog, first-run), expanded WI-17 scope, noted Common First Run Behavior removal, updated execution plan with step 1B. G-6 (count sanity check) explicitly ignored. G-11 resolved via OP-12 alignment (existing "processed" convention) | G-11 resolved |
 | 2026-06-20 | 4 | Post-review refinements: added transaction-per-entry boundary to WI-3, split error handling step 3e into 3e/3f based on `record_source_status` precondition (CVE UUID availability), added HTTP timeout (30s) to WI-12, added `"epss"` to WI-2B (pre-existing gap), created OP-13 in `open-points.md` for CWE accumulation cross-cutting issue | — |
 | 2026-06-20 | 5 | Ran 4 review agents on draft plan (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`, `@docs-placement-reviewer`). Applied 5 findings: (1) changed `source_reference_url_pattern` from `None` to standard URL pattern, removed manual `upsert_references()` call from WI-3/WI-8/WI-11/WI-14/GAP-6; (2) added explicit "no abort threshold" note to WI-8 (Kernel precedent — local iteration after download, no remote API per-entry); (3) added Callers table update to execution plan step 4; (4) reworded WI-3 transaction boundary to "per-entry error isolation" (transactions managed internally by `upsert_cve()`); (5) added WI-18 for MITRE abort threshold documentation gap. Created `docs/drafts/basefetcher-all-items-failed.md` for cross-cutting safety check promotion from `BaseGitFetcher` to `BaseFetcher` | — |
+| 2026-06-20 | 6 | Ran 3 review agents (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`). Two actionable findings: (1) HIGH — session 5 incorrectly removed the explicit `reference_service.upsert_references()` call from the algorithm; `source_reference_url_pattern` is a data holder, not an automatic mechanism inside `upsert_cve()`. Reinstated the call in WI-3 step 3d, corrected GAP-6 and WI-11. (2) MEDIUM — unspecified behavior when `record_source_status("failure")` itself fails; resolved as "let propagate" (DB down = all subsequent entries fail anyway). Added `upsert_references()` failure to WI-8 error table. Added WI-19 (rewrite misleading `source_reference_url_pattern` description in `fetcher-infrastructure.md` line 1228). Updated execution plan step 3 and 4. Data model review: clean, no issues | — |
