@@ -192,6 +192,23 @@ class KEVEntry(BaseModel):
 
 **Deliverable**: Update `docs/features/tickets/cve-service.md`.
 
+### WI-2B: Add `"kev"` to CVESourceType Enum
+
+**Priority**: HIGH
+
+**Action**: Add `"kev"` to the `CVESourceType` values list in
+`docs/data-model.md`. The `BaseCVEFetcher.__init_subclass__` validation
+requires `cve_source_type` to be a member of `CVESourceType` — the enum must
+be updated before the fetcher class can be registered.
+
+**Final entry** (insert after `"ghsa"`):
+
+| Value | Description |
+|-------|-------------|
+| `kev` | CISA Known Exploited Vulnerabilities catalog |
+
+**Deliverable**: Update `docs/data-model.md` CVESourceType table.
+
 ### WI-3: Fetcher Algorithm
 
 **Priority**: HIGH
@@ -216,8 +233,25 @@ class KEVEntry(BaseModel):
         CISA KEV URL (`type = advisory`, `title = "CISA KEV"`,
         `source = "sync_cisa_kev"`)
       - `record_updated()` on success
-   e. On per-entry error: `record_failed()`, log error, continue (isolation)
+   e. On per-entry error: `record_source_status(session, cve_id, "kev",
+      "failure")`, `record_failed()`, log error, continue (isolation)
 4. End
+
+**Behavioral notes** (to be included in the spec):
+
+- **Data lifecycle**: KEV entries are never deleted from Sentinel. If CISA
+  removes a CVE from the catalog, its `CVEKEVEntry` record persists as
+  historical enrichment. The fetcher only creates/updates — no removal
+  mechanism.
+- **Re-invocation safety**: the fetcher is stateless; full catalog
+  re-processing is idempotent via `ON CONFLICT DO UPDATE` in `upsert_cve()`.
+  A crash mid-run followed by a retry produces the same final state.
+- **Empty catalog**: a valid JSON response with `"vulnerabilities": []`
+  passes validation, the loop iterates zero times, and the run completes
+  with `status = success` and zero metrics.
+- **First-run on empty DB**: all entries are silently skipped (no CVEs exist
+  yet); run succeeds with zero metrics. This is expected for an
+  enrichment-only fetcher — CVEs must be ingested by NVD/MITRE first.
 
 **Deliverable**: Write the Algorithm section in `cve-sync-kev.md`.
 
@@ -275,7 +309,8 @@ does not implement `fetch_single()`.
 | Unparseable JSON response | Fatal | Raise `FetcherError`, abort run |
 | Missing `vulnerabilities` key | Fatal | Raise `FetcherError`, abort run |
 | Invalid `cveID` format on entry | Isolated | `record_failed()`, skip entry, continue |
-| `upsert_cve()` failure on entry | Isolated | `record_failed()`, log, continue |
+| Invalid/missing `dateAdded` on entry | Isolated | `record_source_status("failure")`, `record_failed()`, skip entry, continue |
+| `upsert_cve()` failure on entry | Isolated | `record_source_status("failure")`, `record_failed()`, log, continue |
 | `upsert_references()` failure | Isolated | Log warning, continue (non-critical) |
 | Invalid CWE format on entry | Isolated | Skip that CWE, WARNING log, continue processing entry |
 
@@ -302,6 +337,13 @@ does not implement `fetch_single()`.
 
 Note: a single entry that upserts both KEV data and CWE counts as one
 `record_updated` (not two).
+
+**Metric semantics**: `record_updated` fires on every successful
+`upsert_cve()` call with "processed" semantics — consistent with all CVE
+fetchers (NVD, MITRE, Red Hat, GHSA, OSV). This means ~1600
+`record_updated` per run even when no data changed. Change-detection
+semantics are deferred as a cross-cutting concern (see OP-12 in
+`docs/drafts/open-points.md`).
 
 **Deliverable**: Write Metrics section in `cve-sync-kev.md`.
 
@@ -414,6 +456,10 @@ Update cross-references section to include:
 - `docs/data-model.md`
 - `docs/api-spec.md`
 
+Note: the final spec MUST NOT reference "Common First Run Behavior" from
+`cve-tracking.md` — this convention does not apply to stateless catalog
+fetchers (no cursor, no clone, no incremental state).
+
 ### WI-17: Fetcher Registry and `data-sources.md`
 
 **Priority**: LOW
@@ -422,6 +468,12 @@ Update the Fetcher Registry row in `docs/data-sources.md` with:
 - Schedule: `0 1,7,13,19 * * *`
 - Data ingested: KEV date_added, reference_url, CWE classifications
 - Spec status: Complete
+
+Additional `data-sources.md` updates:
+- Remove "remediation deadline" from the "Relevant data" prose description in
+  the CISA KEV source section (replace with accurate field list)
+- Add `sync_cisa_kev` to the CVECWE "Populated By" column in the Data
+  Population Matrix
 
 ## WI-NEW-1: `supports_fetch_single` — Spec-Level Change
 
@@ -508,15 +560,16 @@ Ordered sequence of specification changes:
 | Step | Action | Target file(s) | Notes |
 |------|--------|----------------|-------|
 | 1 | Remove `remediation_deadline` from `CVEKEVEntry` | `docs/data-model.md` | Column removal |
+| 1B | Add `"kev"` to `CVESourceType` enum | `docs/data-model.md` | Required before fetcher class registration (WI-2B) |
 | 2 | Remove `remediation_deadline` from `KEVEntry` | `docs/features/tickets/cve-service.md` | Payload alignment |
 | 3 | Implement `supports_fetch_single` changes | `docs/features/platform/fetcher-infrastructure.md` | Core contract change (WI-NEW-1 HIGH items) |
 | 4 | Update on-demand fetch documentation | `docs/features/tickets/cve-service.md`, `docs/features/tickets/cve-tracking.md` | Align with step 3 |
 | 5 | Update minor references | `docs/architecture.md`, `docs/conventions.md`, `docs/features/tickets/cvss-scoring.md` | LOW/MEDIUM items from WI-NEW-1 |
 | 6 | Write complete fetcher spec | `docs/features/tickets/cve-sync-kev.md` | Full spec (WI-3, WI-4, WI-6, WI-8, WI-9, WI-11, WI-12, WI-13, WI-14, WI-16) |
-| 7 | Update Fetcher Registry | `docs/data-sources.md` | Schedule, data, status |
+| 7 | Update Fetcher Registry and data-sources prose | `docs/data-sources.md` | Schedule, data, status, CVECWE populated-by |
 | 8 | Run `@spec-coherence-reviewer` | — | After steps 1-7 |
 | 9 | Run `@spec-gap-analyzer` | — | On `cve-sync-kev.md` |
-| 10 | Run `@data-model-reviewer` | — | On step 1 |
+| 10 | Run `@data-model-reviewer` | — | On steps 1 and 1B |
 | 11 | Run `@docs-placement-reviewer` | — | After steps 1-7 |
 
 ## Open Points — All Resolved
@@ -543,3 +596,4 @@ Ordered sequence of specification changes:
 |------|---------|-----------|---------------------|
 | 2026-06-20 | 1 | Initial analysis, gap identification, draft plan created | — |
 | 2026-06-20 | 2 | Live feed verification, all 13 OPs resolved, `supports_fetch_single` pattern designed, execution plan finalized | OP-1 through OP-13 |
+| 2026-06-20 | 3 | Ran 4 review agents (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`, `@docs-placement-reviewer`). Incorporated findings: added WI-2B (CVESourceType enum), added `record_source_status("failure")` to error paths, added `dateAdded` parse failure to error table, clarified metric semantics with OP-12 reference, added behavioral notes (data lifecycle, re-invocation safety, empty catalog, first-run), expanded WI-17 scope, noted Common First Run Behavior removal, updated execution plan with step 1B. G-6 (count sanity check) explicitly ignored. G-11 resolved via OP-12 alignment (existing "processed" convention) | G-11 resolved |
