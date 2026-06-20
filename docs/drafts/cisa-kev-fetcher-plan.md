@@ -201,11 +201,15 @@ class KEVEntry(BaseModel):
 requires `cve_source_type` to be a member of `CVESourceType` — the enum must
 be updated before the fetcher class can be registered.
 
-**Final entry** (insert after `"ghsa"`):
+Also add `"epss"` in the same edit — it is already declared by
+`cve-sync-epss.md` but missing from the `CVESourceType` table.
+
+**Final entries** (insert after `"ghsa"`):
 
 | Value | Description |
 |-------|-------------|
 | `kev` | CISA Known Exploited Vulnerabilities catalog |
+| `epss` | FIRST EPSS (Exploit Prediction Scoring System) |
 
 **Deliverable**: Update `docs/data-model.md` CVESourceType table.
 
@@ -215,7 +219,7 @@ be updated before the fetcher class can be registered.
 
 **Final algorithm for `execute()`**:
 
-1. Download the full KEV JSON file via HTTP GET
+1. Download the full KEV JSON file via HTTP GET (timeout: 30 seconds)
 2. Validate top-level structure:
    - `vulnerabilities` key must be present and be a list
    - Log `count` for observability (do not abort if mismatched)
@@ -233,9 +237,19 @@ be updated before the fetcher class can be registered.
         CISA KEV URL (`type = advisory`, `title = "CISA KEV"`,
         `source = "sync_cisa_kev"`)
       - `record_updated()` on success
-   e. On per-entry error: `record_source_status(session, cve_id, "kev",
-      "failure")`, `record_failed()`, log error, continue (isolation)
+   e. On per-entry error (after successful CVE lookup):
+      `record_source_status(session, cve_id, "kev", "failure")`,
+      `record_failed()`, log error, continue
+   f. On per-entry error (before CVE lookup or lookup failure):
+      `record_failed()`, log error, continue (no `record_source_status` —
+      CVE UUID unavailable)
 4. End
+
+**Transaction boundaries**: each entry (steps 3a–3f) is processed in its
+own transaction. Commit after successful upsert; rollback on per-entry
+error. This guarantees per-entry isolation (a failure at entry N does not
+affect entries 1..N-1) and avoids holding `FOR UPDATE` locks across the
+full catalog iteration.
 
 **Behavioral notes** (to be included in the spec):
 
@@ -308,11 +322,18 @@ does not implement `fetch_single()`.
 | Request timeout | Fatal | Raise `FetcherError`, abort run |
 | Unparseable JSON response | Fatal | Raise `FetcherError`, abort run |
 | Missing `vulnerabilities` key | Fatal | Raise `FetcherError`, abort run |
-| Invalid `cveID` format on entry | Isolated | `record_failed()`, skip entry, continue |
+| Invalid `cveID` format on entry | Isolated | `record_failed()`, skip entry, continue (no CVE UUID available) |
+| CVE lookup database error | Isolated | `record_failed()`, skip entry, continue (no CVE UUID available) |
 | Invalid/missing `dateAdded` on entry | Isolated | `record_source_status("failure")`, `record_failed()`, skip entry, continue |
 | `upsert_cve()` failure on entry | Isolated | `record_source_status("failure")`, `record_failed()`, log, continue |
 | `upsert_references()` failure | Isolated | Log warning, continue (non-critical) |
 | Invalid CWE format on entry | Isolated | Skip that CWE, WARNING log, continue processing entry |
+
+**`record_source_status` precondition**: called only after the CVE UUID
+has been successfully resolved (step 3b succeeds). Errors that occur
+before or during CVE lookup (invalid `cveID` format, database error in
+lookup) trigger only `record_failed()` + log — `record_source_status`
+requires a valid `cve_id` UUID (FK constraint).
 
 **Sanitized `FetcherError` messages**:
 
@@ -386,10 +407,13 @@ This URL is:
 
 **Priority**: LOW
 
-**Decision**: No custom settings. The feed is a single HTTP GET of ~1.5MB with
-no authentication, no rate limits.
+**Decision**: No custom settings. The feed URL is fixed, authentication is
+not required, and there are no rate limits. HTTP request timeout is 30
+seconds (sufficient for ~1.5MB download; prevents indefinite hang if
+CISA infrastructure is degraded).
 
-**Deliverable**: Document "Custom settings: None" in properties table.
+**Deliverable**: Document "Custom settings: None" and "HTTP timeout: 30s"
+in properties table.
 
 ### WI-13: Explicitly Ignored Fields
 
@@ -597,3 +621,4 @@ Ordered sequence of specification changes:
 | 2026-06-20 | 1 | Initial analysis, gap identification, draft plan created | — |
 | 2026-06-20 | 2 | Live feed verification, all 13 OPs resolved, `supports_fetch_single` pattern designed, execution plan finalized | OP-1 through OP-13 |
 | 2026-06-20 | 3 | Ran 4 review agents (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`, `@docs-placement-reviewer`). Incorporated findings: added WI-2B (CVESourceType enum), added `record_source_status("failure")` to error paths, added `dateAdded` parse failure to error table, clarified metric semantics with OP-12 reference, added behavioral notes (data lifecycle, re-invocation safety, empty catalog, first-run), expanded WI-17 scope, noted Common First Run Behavior removal, updated execution plan with step 1B. G-6 (count sanity check) explicitly ignored. G-11 resolved via OP-12 alignment (existing "processed" convention) | G-11 resolved |
+| 2026-06-20 | 4 | Post-review refinements: added transaction-per-entry boundary to WI-3, split error handling step 3e into 3e/3f based on `record_source_status` precondition (CVE UUID availability), added HTTP timeout (30s) to WI-12, added `"epss"` to WI-2B (pre-existing gap), created OP-13 in `open-points.md` for CWE accumulation cross-cutting issue | — |
