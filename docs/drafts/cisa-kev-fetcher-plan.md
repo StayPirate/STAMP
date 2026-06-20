@@ -114,16 +114,17 @@ fields (`date_added`, `reference_url`) with identical values. The overlap is
 complete — last-writer-wins produces the same result regardless of execution
 order. No merge conflict, no temporal gap, no authority ambiguity.
 
-### GAP-6: Source reference URL — Constructed per-CVE
+### GAP-6: Source reference URL — Standard mechanism
 
 The CISA KEV catalog is a single page, but it supports per-CVE filtering via
 query parameter:
 `https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}`
 
-This URL is:
-1. Stored in `CVEKEVEntry.reference_url`
-2. Added as a `TicketReference` via `upsert_references()` with
-   `source = "sync_cisa_kev"`, `type = advisory`, `title = "CISA KEV"`
+This URL is set as `source_reference_url_pattern` on the class. The ingestion
+pipeline automatically:
+1. Stores the URL in `CVEKEVEntry.reference_url` (via `KEVEntry.reference_url`)
+2. Creates a `TicketReference` via the standard `source_reference_url_pattern`
+   substitution mechanism in `upsert_cve()`
 
 The `(ticket_id, url)` unique constraint on `TicketReference` prevents
 duplicates if MITRE wrote the same URL first (MITRE uses the identical URL
@@ -233,9 +234,6 @@ Also add `"epss"` in the same edit — it is already declared by
         - `cwe_classifications`: extracted from `entry.cwes` (if present and
           non-empty), with `source = "CISA KEV"`
       - Call `upsert_cve(payload)`
-      - Call `reference_service.upsert_references()` with the constructed
-        CISA KEV URL (`type = advisory`, `title = "CISA KEV"`,
-        `source = "sync_cisa_kev"`)
       - `record_updated()` on success
    e. On per-entry error (after successful CVE lookup):
       `record_source_status(session, cve_id, "kev", "failure")`,
@@ -245,11 +243,10 @@ Also add `"epss"` in the same edit — it is already declared by
       CVE UUID unavailable)
 4. End
 
-**Transaction boundaries**: each entry (steps 3a–3f) is processed in its
-own transaction. Commit after successful upsert; rollback on per-entry
-error. This guarantees per-entry isolation (a failure at entry N does not
-affect entries 1..N-1) and avoids holding `FOR UPDATE` locks across the
-full catalog iteration.
+**Per-entry isolation**: each entry (steps 3a–3f) is processed
+independently with per-entry error isolation. A failure at entry N does
+not affect entries 1..N-1. Transaction boundaries are managed internally
+by `upsert_cve()` (which acquires its own `FOR UPDATE` lock per CVE).
 
 **Behavioral notes** (to be included in the spec):
 
@@ -326,8 +323,13 @@ does not implement `fetch_single()`.
 | CVE lookup database error | Isolated | `record_failed()`, skip entry, continue (no CVE UUID available) |
 | Invalid/missing `dateAdded` on entry | Isolated | `record_source_status("failure")`, `record_failed()`, skip entry, continue |
 | `upsert_cve()` failure on entry | Isolated | `record_source_status("failure")`, `record_failed()`, log, continue |
-| `upsert_references()` failure | Isolated | Log warning, continue (non-critical) |
 | Invalid CWE format on entry | Isolated | Skip that CWE, WARNING log, continue processing entry |
+
+**Abort threshold**: no source-specific abort threshold is defined. After
+a successful JSON download, all per-entry failures are local (database
+errors, parse errors). The shared Celery task timeout limits maximum run
+duration. The fetcher dashboard surfaces partial-status runs with high
+`items_failed` counts for operator attention.
 
 **`record_source_status` precondition**: called only after the CVE UUID
 has been successfully resolved (step 3b succeeds). Errors that occur
@@ -389,17 +391,19 @@ benign.
 
 **Priority**: MEDIUM
 
-**Decision**: `source_reference_url_pattern = None` on the class. Instead, the
-fetcher **constructs** the URL per-CVE:
+**Decision**: `source_reference_url_pattern = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}"`
+on the class. The ingestion pipeline constructs the URL per-CVE
+automatically:
 
 ```
 https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}
 ```
 
 This URL is:
-1. Stored in `CVEKEVEntry.reference_url`
-2. Passed to `reference_service.upsert_references()` as the source reference
-   with `title = "CISA KEV"`, `type = advisory`, `source = "sync_cisa_kev"`
+1. Stored in `CVEKEVEntry.reference_url` (via `KEVEntry.reference_url` in
+   the payload)
+2. Automatically created as a `TicketReference` by the ingestion pipeline
+   (via `source_reference_url_pattern` substitution in `upsert_cve()`)
 
 **Deliverable**: Document in the algorithm and class structure sections.
 
@@ -448,7 +452,7 @@ class SyncCisaKev(BaseCVEFetcher):
     default_schedule = "0 1,7,13,19 * * *"  # Every 6h
     participates_in_catch_up = False
     supports_fetch_single = False
-    source_reference_url_pattern = None
+    source_reference_url_pattern = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve={cve_id}"
 
     # No fetch_single() override — uses BaseCVEFetcher default (RuntimeError
     # safety net). This fetcher is excluded from get_fetch_single_fetchers()
@@ -498,6 +502,27 @@ Additional `data-sources.md` updates:
   the CISA KEV source section (replace with accurate field list)
 - Add `sync_cisa_kev` to the CVECWE "Populated By" column in the Data
   Population Matrix
+
+## WI-18: MITRE Abort Threshold — Explicit Documentation
+
+**Priority**: LOW
+
+**Problem**: the MITRE fetcher spec (`docs/features/tickets/cve-sync-mitre.md`)
+does not explicitly document that it has no source-specific abort threshold.
+This is an omission, not a decision. The Kernel fetcher, which has the same
+structural pattern (git-based, local iteration after pull), explicitly declares
+"no abort threshold" with rationale. MITRE should do the same for consistency.
+
+**Action**: Add an explicit abort threshold note to the Error Handling section
+of `cve-sync-mitre.md`, analogous to Kernel's:
+
+> **Abort threshold**: no source-specific abort threshold is defined. After a
+> successful git pull, all per-CVE failures are local (parse errors, upsert
+> failures). The shared Celery task timeout limits maximum run duration. The
+> fetcher dashboard surfaces partial-status runs with high `items_failed`
+> counts for operator attention.
+
+**Deliverable**: Update `docs/features/tickets/cve-sync-mitre.md`.
 
 ## WI-NEW-1: `supports_fetch_single` — Spec-Level Change
 
@@ -587,8 +612,9 @@ Ordered sequence of specification changes:
 | 1B | Add `"kev"` to `CVESourceType` enum | `docs/data-model.md` | Required before fetcher class registration (WI-2B) |
 | 2 | Remove `remediation_deadline` from `KEVEntry` | `docs/features/tickets/cve-service.md` | Payload alignment |
 | 3 | Implement `supports_fetch_single` changes | `docs/features/platform/fetcher-infrastructure.md` | Core contract change (WI-NEW-1 HIGH items) |
-| 4 | Update on-demand fetch documentation | `docs/features/tickets/cve-service.md`, `docs/features/tickets/cve-tracking.md` | Align with step 3 |
+| 4 | Update on-demand fetch documentation | `docs/features/tickets/cve-service.md`, `docs/features/tickets/cve-tracking.md` | Align with step 3; also update Callers table in `cve-service.md` (add `record_source_status()` to `sync_cisa_kev` row) |
 | 5 | Update minor references | `docs/architecture.md`, `docs/conventions.md`, `docs/features/tickets/cvss-scoring.md` | LOW/MEDIUM items from WI-NEW-1 |
+| 5B | Add explicit abort threshold note to MITRE | `docs/features/tickets/cve-sync-mitre.md` | WI-18 — document intentional absence of abort threshold |
 | 6 | Write complete fetcher spec | `docs/features/tickets/cve-sync-kev.md` | Full spec (WI-3, WI-4, WI-6, WI-8, WI-9, WI-11, WI-12, WI-13, WI-14, WI-16) |
 | 7 | Update Fetcher Registry and data-sources prose | `docs/data-sources.md` | Schedule, data, status, CVECWE populated-by |
 | 8 | Run `@spec-coherence-reviewer` | — | After steps 1-7 |
@@ -622,3 +648,4 @@ Ordered sequence of specification changes:
 | 2026-06-20 | 2 | Live feed verification, all 13 OPs resolved, `supports_fetch_single` pattern designed, execution plan finalized | OP-1 through OP-13 |
 | 2026-06-20 | 3 | Ran 4 review agents (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`, `@docs-placement-reviewer`). Incorporated findings: added WI-2B (CVESourceType enum), added `record_source_status("failure")` to error paths, added `dateAdded` parse failure to error table, clarified metric semantics with OP-12 reference, added behavioral notes (data lifecycle, re-invocation safety, empty catalog, first-run), expanded WI-17 scope, noted Common First Run Behavior removal, updated execution plan with step 1B. G-6 (count sanity check) explicitly ignored. G-11 resolved via OP-12 alignment (existing "processed" convention) | G-11 resolved |
 | 2026-06-20 | 4 | Post-review refinements: added transaction-per-entry boundary to WI-3, split error handling step 3e into 3e/3f based on `record_source_status` precondition (CVE UUID availability), added HTTP timeout (30s) to WI-12, added `"epss"` to WI-2B (pre-existing gap), created OP-13 in `open-points.md` for CWE accumulation cross-cutting issue | — |
+| 2026-06-20 | 5 | Ran 4 review agents on draft plan (`@spec-coherence-reviewer`, `@spec-gap-analyzer`, `@data-model-reviewer`, `@docs-placement-reviewer`). Applied 5 findings: (1) changed `source_reference_url_pattern` from `None` to standard URL pattern, removed manual `upsert_references()` call from WI-3/WI-8/WI-11/WI-14/GAP-6; (2) added explicit "no abort threshold" note to WI-8 (Kernel precedent — local iteration after download, no remote API per-entry); (3) added Callers table update to execution plan step 4; (4) reworded WI-3 transaction boundary to "per-entry error isolation" (transactions managed internally by `upsert_cve()`); (5) added WI-18 for MITRE abort threshold documentation gap. Created `docs/drafts/basefetcher-all-items-failed.md` for cross-cutting safety check promotion from `BaseGitFetcher` to `BaseFetcher` | — |
