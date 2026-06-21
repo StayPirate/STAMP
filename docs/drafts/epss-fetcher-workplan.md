@@ -2,7 +2,7 @@
 
 **Status**: Draft — work-in-progress across multiple sessions
 **Target**: `docs/features/tickets/cve-sync-epss.md` (replace current placeholder)
-**Last updated**: 2026-06-21 (Session 1c — completeness review)
+**Last updated**: 2026-06-21 (Session 1e — single-CVE algorithm decision)
 
 ## 1. Overview
 
@@ -20,12 +20,12 @@ without making autonomous design decisions.
 |----------|----------|--------|
 | Spec file (placeholder) | `docs/features/tickets/cve-sync-epss.md` | TBD sections only |
 | Data model (`CVEEPSSScore`) | `docs/data-model.md` (line 708) | Complete |
-| Pydantic schema (`EPSSEntry`) | `docs/features/tickets/cve-service.md` (line 1080) | Complete |
-| `CVEIngestPayload.epss_score` field | `docs/features/tickets/cve-service.md` (line 1008) | Complete |
-| `cve_source_type = "epss"` | `docs/features/platform/fetcher-infrastructure.md` (line 250) | Registered |
-| Fetcher Registry entry | `docs/data-sources.md` (line 970) | Incomplete (TBD fields) |
-| Source description | `docs/data-sources.md` (lines 145-162) | Complete |
-| Child table deduplication | `cve-service.md` (line 520) | ON CONFLICT DO UPDATE on `cve_id` |
+| Pydantic schema (`EPSSEntry`) | `docs/features/tickets/cve-service.md` (line 1091) | Complete |
+| `CVEIngestPayload.epss_score` field | `docs/features/tickets/cve-service.md` (line 1019) | Complete |
+| `cve_source_type = "epss"` | `docs/features/platform/fetcher-infrastructure.md` (line 255) | Registered |
+| Fetcher Registry entry | `docs/data-sources.md` (line 971) | Incomplete (TBD fields) |
+| Source description | `docs/data-sources.md` (lines 146-162) | Complete |
+| Child table deduplication | `cve-service.md` (line 522) | ON CONFLICT DO UPDATE on `cve_id` |
 
 ### What is missing in the spec
 
@@ -116,16 +116,18 @@ CISA KEV. Specifically:
 
 ### Locations requiring correction
 
+(Line numbers verified 2026-06-21, Session 1d)
+
 | File | Line(s) | Current text | Required change |
 |------|---------|--------------|-----------------|
-| `fetcher-infrastructure.md` | 326-327 | "Catalog-based fetchers (KEV, EPSS) that have no per-CVE API set `supports_fetch_single = False`" | Remove EPSS from this parenthetical; only KEV is catalog-based |
-| `fetcher-infrastructure.md` | 530 | "fetchers like KEV and EPSS) are excluded" | Remove EPSS |
-| `fetcher-infrastructure.md` | 863 | "sync_epss_scores \| Syncs all EPSS scores (sets participates_in_catch_up = False)" | Move EPSS to the "participate in catch-up" table |
-| `fetcher-infrastructure.md` | 865-875 | Groups KEV and EPSS with same rationale | Separate: KEV remains catalog-based, EPSS moves to per-CVE API category |
-| `fetcher-infrastructure.md` | 1257 | "Catalog-based fetchers (KEV, EPSS)" in `supports_fetch_single` description | Remove EPSS from the example |
-| `cve-tracking.md` | 466 | "(KEV, EPSS) that set `supports_fetch_single = False`" | Remove EPSS |
-| `cve-service.md` | 768 | '"epss") that set `supports_fetch_single = False` are excluded' | Remove EPSS |
-| `cve-service.md` | 1219 | Caller table: `sync_epss_scores` → only `upsert_cve()` | Add `record_source_status()` (failure path) |
+| `fetcher-infrastructure.md` | 337 | "Catalog-based fetchers (KEV, EPSS) that have no per-CVE API set `supports_fetch_single = False`" | Remove EPSS from this parenthetical; only KEV is catalog-based |
+| `fetcher-infrastructure.md` | 551 | "fetchers like KEV and EPSS) are excluded" | Remove EPSS |
+| `fetcher-infrastructure.md` | 885 | "sync_epss_scores \| Syncs all EPSS scores (sets participates_in_catch_up = False)" | Move EPSS to the "participate in catch-up" table (lines 860–873) |
+| `fetcher-infrastructure.md` | 887–897 | Narrative grouping KEV and EPSS with same rationale (monolithic catalog, no per-CVE API) | Separate: KEV remains catalog-based, EPSS moves to per-CVE API category. Rewrite note to apply to KEV only |
+| `fetcher-infrastructure.md` | 1279 | "Catalog-based fetchers (KEV, EPSS)" in `supports_fetch_single` description | Remove EPSS from the example |
+| `cve-tracking.md` | 465 | "(KEV, EPSS) that set `supports_fetch_single = False`" | Remove EPSS |
+| `cve-service.md` | 769–770 | '"epss") that set `supports_fetch_single = False` are excluded' | Remove EPSS |
+| `cve-service.md` | 1276 | Caller table: `sync_epss_scores` → only `upsert_cve()` | Add `record_source_status()` (orchestrator path) and `build_post_ingest_tasks()` |
 
 ## 4. Design Decisions (Determined)
 
@@ -147,6 +149,11 @@ conventions:
 | First-run behavior | No special behavior (RedHat pattern) | Stateless fetcher — iterates over all CVEs with active tickets. If no active tickets exist, the run completes immediately with zero records |
 | Cursor | None (stateless) | Re-processes the full in-scope set on each run. No cursor or incremental state to maintain between runs |
 | CVE existence precondition | Guaranteed by caller flow | In `execute()`: scope is CVEs with active tickets (already in DB). In `fetch_single()`: the `ensure_cve_exists()` → `trigger_on_demand_fetch()` flow guarantees the CVE record exists before `fetch_single()` is called. The fetcher never creates CVE records |
+| Transaction ownership | `upsert_cve()` is a pure service function — does NOT commit/rollback | Aligns with `cve-service.md` Transaction Ownership section and the `ticket_mutations`, `package_service`, `user_service` pattern |
+| Per-CVE commit | `commit_and_dispatch(session, None)` after every `upsert_cve()` | Pattern B from Session Lifecycle (`fetcher-infrastructure.md`). EPSS is enrichment-only → `build_post_ingest_tasks()` always returns `None` → no Phase 2 dispatch |
+| `fetch_single()` return type | `PostIngestTasks \| None` (always `None` for EPSS) | EPSS payloads contain only `epss_score` — no CPE, no affected versions, no resolved packages. `build_post_ingest_tasks()` returns `None` |
+| `record_source_status` in `execute()` | Not used explicitly — rollback is sufficient | Architecture decision (commit 305bab9): rollback discards the `CVESource` "success" written by `upsert_cve()`, preserving previous state. No explicit failure write needed in batch path |
+| Algorithm | Single-CVE requests (RedHat pattern) | `execute()` uses same `GET /epss?cve=CVE-XXX` call as `fetch_single()`. Batch deferred as future optimization — unnecessary at expected volume (~200-300 active tickets) |
 
 ## 5. Open Points
 
@@ -184,51 +191,65 @@ of the deployment environment, the following specs were updated:
 - `docs/features/platform/fetcher-infrastructure.md` — timezone note in
   Celery Integration section
 
-### OP-2: Algorithm strategy for `execute()`
+### OP-2: Algorithm strategy for `execute()` — RESOLVED
 
-Two viable strategies:
+**Resolution**: single-CVE requests (RedHat pattern). `execute()` iterates
+over CVE-IDs with active tickets and makes one `GET /epss?cve=CVE-XXX`
+request per CVE — the same HTTP call used by `fetch_single()`. With the
+expected volume (~200-300 active tickets), this completes in under a
+minute even with throttling. Batching is deferred as a future optimization
+if volume ever justifies it (the EPSS response format is identical for
+single and batch queries, making migration trivial).
 
-**Option A — Batch API (recommended)**:
-- Collect CVE-IDs with active tickets
-- Split into batches of ~120 CVEs (conservative: 2000-char limit minus overhead)
-- For each batch: `GET /epss?cve=CVE-1,CVE-2,...`
-- Parse response, upsert per-CVE
-- Throttle between batches
+Considered alternatives:
 
-**Option B — Full catalog download (CSV)**:
-- Download `https://epss.empiricalsecurity.com/epss_scores-YYYY-MM-DD.csv.gz`
-  (~15MB compressed)
-- Filter locally against CVEs with active tickets
-- Bulk upsert
+- **Batch API** (`?cve=CVE-1,CVE-2,...`): fewer HTTP requests but adds
+  batch-splitting logic, URL length management, two-level error handling,
+  and a separate code path from `fetch_single()`. Unnecessary at expected
+  volume (~200-300 active tickets vs 1000 req/min rate limit)
+- **Full CSV download** (~15MB, ~340k entries): single HTTP request but
+  downloads vastly more data than needed, no `fetch_single()` reuse,
+  different parsing format (CSV vs JSON)
 
-Trade-offs:
-- Option A: fewer data transferred (only relevant CVEs), simpler error isolation
-  per batch, API-native approach, aligns with `fetch_single()` reuse
-- Option B: single HTTP request, but downloads 200k+ entries when we may
-  only need a few thousand; no reuse with `fetch_single()` logic
+Reference pseudocode (single-CVE pattern):
 
-**Proposal**: Option A (batch API). The batch approach naturally aligns with
-the `fetch_single()` reuse pattern (fetch_single is just batch_size=1) and
-is more efficient for typical deployments (few thousand active tickets vs
-200k+ total CVEs in EPSS).
+```python
+async def execute(self, session: AsyncSession) -> None:
+    cve_ids = await self._get_active_ticket_cve_ids(session)
+    staleness_checked = False
+    for cve_id in cve_ids:
+        try:
+            response = await self._fetch_epss(cve_id)  # GET /epss?cve=CVE-XXX
+        except Exception:
+            self.record_failed()
+            continue
+        if not staleness_checked:
+            self._check_staleness(response)  # OP-11: first response only
+            staleness_checked = True
+        entry = self._extract_entry(response, cve_id)
+        if entry is None:
+            continue  # CVE not in EPSS — skip (OP-5 semantics)
+        try:
+            payload = self._build_payload(cve_id, entry)
+            await upsert_cve(session, cve_id, self.cve_source_type, payload)
+            await self.commit_and_dispatch(session, None)  # commit, no Phase 2
+            self.record_updated()  # OP-9: throughput metric
+        except Exception:
+            await session.rollback()
+            self.record_failed()
+        await asyncio.sleep(self.get_setting("throttle_delay_seconds"))
+```
 
-**Decision needed**: approve strategy, or choose alternative.
+### OP-3: `source_reference_url_pattern` — RESOLVED
 
-### OP-3: `source_reference_url_pattern`
+**Resolution**: `source_reference_url_pattern = None`. FIRST.org does not
+provide a human-readable per-CVE page for EPSS data (verified 2026-06-21
+on `first.org/epss/` and `first.org/epss/data_stats`). The only per-CVE
+access is the JSON API (`api.first.org/data/v1/epss?cve=CVE-XXX`), which
+is not suitable as a `TicketReference` link. This fetcher does not create
+`TicketReference` records.
 
-FIRST.org does not appear to have a dedicated human-readable page per CVE
-on `first.org/epss/`. The API response does not include reference URLs.
-
-Options:
-- `None` — EPSS has no per-CVE source page to link to
-- A constructed URL to the API itself (but that's not human-friendly)
-
-**Proposal**: `source_reference_url_pattern = None`. No `TicketReference`
-is created by this fetcher — it only writes EPSS data (score + percentile).
-
-**Decision needed**: confirm `None`, or identify an alternative URL pattern.
-
-### OP-4: `record_source_status` usage
+### OP-4: `record_source_status` usage — RESOLVED (architecture)
 
 The current caller table in `cve-service.md` shows `sync_epss_scores`
 calling only `upsert_cve()` (no `record_source_status`). However, if
@@ -239,13 +260,18 @@ Should the periodic `execute()` also call `record_source_status` per CVE?
 Red Hat does not (it handles errors internally), but it does have
 `record_source_status` available for the `fetch_single` path.
 
-**Proposal**: same as RedHat — `record_source_status()` is used implicitly
-by `upsert_cve()` on success, and explicitly by the `fetch_single_cve`
-orchestrator on failure/missing paths. The periodic `execute()` handles
-errors internally with `record_failed()`. Update caller table to add
-`record_source_status()` (failure path).
+**Resolution**: resolved by architecture (commits 72f8ef5, 305bab9).
+`upsert_cve()` is now a pure service function — it calls
+`record_source_status("success")` internally but does NOT commit. In
+`execute()`, rollback on error discards the "success" record (no explicit
+`record_source_status("failure")` needed in batch path — the rollback
+preserves the previous `CVESource` state). Only the `fetch_single_cve`
+orchestrator writes explicit `"failure"`/`"missing"` status. This matches
+the Red Hat pattern exactly.
 
-**Decision needed**: confirm pattern matches RedHat.
+**Remaining action**: update caller table in `cve-service.md` to add
+`record_source_status()` (orchestrator path) and
+`build_post_ingest_tasks()` — deferred to Session 3 (cross-spec fixes).
 
 ### OP-5: Handling "CVE not in EPSS" in `fetch_single()`
 
@@ -262,23 +288,18 @@ The orchestrator records `status = missing`, and the next periodic run
 
 **Decision needed**: confirm `CVENotInSource` on empty response.
 
-### OP-6: Batch size as custom setting
+### OP-6: Throttle delay as custom setting — RESOLVED
 
-Should the batch size (number of CVE-IDs per API request) be configurable?
-
-**Proposal**: yes, with custom settings:
+**Resolution**: single setting only. `batch_size` is no longer needed
+(single-CVE requests per OP-2 resolution).
 
 | Setting | Type | Default | Constraints | Description |
 |---------|------|---------|-------------|-------------|
-| `batch_size` | int | 100 | 10–500 | Number of CVE-IDs per batch API request |
-| `throttle_delay_seconds` | float | 0.5 | 0.1–10.0 | Delay between consecutive batch API requests |
+| `throttle_delay_seconds` | float | 0.5 | 0.1–10.0 | Delay between consecutive API requests |
 
-Rationale: batch_size=100 is conservative (~1500 chars for CVE-IDs, well
-under the 2000-char API limit). Throttle of 0.5s is less aggressive than
-Red Hat (2.0s) because EPSS has higher rate limits (1000 req/min) and
-batch requests are more efficient.
-
-**Decision needed**: confirm settings, or adjust defaults/constraints.
+`throttle_delay_seconds` default 0.5s is conservative for EPSS's
+1000 req/min rate limit (~200 requests in 100 seconds). At expected
+volume (~200-300 active tickets), total run time is ~100-150 seconds.
 
 ### OP-7: Significant score change tracking
 
@@ -314,7 +335,7 @@ refreshed on ticket reactivation via catch-up).
 
 ### OP-9: `record_updated` metric semantics
 
-`cve-service.md` (lines 1192–1197) states that enrichment fetchers always
+`cve-service.md` (lines 1203–1208) states that enrichment fetchers always
 receive `action = unchanged` from `upsert_cve()` and must "manage their own
 metrics based on their internal diff detection." This contradicts OP-7's
 proposal of firing `record_updated` on every successful upsert.
@@ -342,31 +363,24 @@ explicitly as a deviation from the common metric semantics: "for EPSS,
 `record_updated` counts every successfully processed CVE, not only those
 whose score actually changed."
 
+**Architecture context (Session 1d)**: `cve-service.md` explicitly
+states that enrichment fetchers always receive `action = unchanged` from
+`upsert_cve()` and "must manage their own metrics based on their
+internal diff detection." Option A is a conscious deviation — EPSS uses
+throughput counting instead of true diff detection. This is acceptable
+because EPSS scores change daily for most CVEs, making diff detection
+practically equivalent to throughput counting with added complexity.
+The spec must document this explicitly.
+
 **Decision needed**: confirm Option A, or choose Option B.
 
-### OP-10: CVE missing from batch response in `execute()`
+### OP-10: CVE missing from batch response in `execute()` — RESOLVED (N/A)
 
-When a batch request asks for N CVE-IDs and the response contains M < N
-entries, some CVEs are absent from the response. This is distinct from
-OP-5 (`fetch_single()` handling).
-
-Scenarios for missing CVEs in batch:
-- Very recent CVEs (< 24h) not yet scored by EPSS
-- REJECTED CVEs removed from EPSS coverage
-
-**Proposal**: skip silently — no `record_source_status()`, no
-`record_failed()`, no log. Rationale:
-- These are not errors — the CVE simply has no EPSS data (yet)
-- The next periodic run will retry them automatically
-- Calling `record_source_status(..., "missing")` for every unscored CVE
-  on every run would create noise in `CVESource` for a transient
-  condition
-- In `fetch_single()` (OP-5), `CVENotInSource` IS raised because the
-  orchestrator needs an explicit signal. In `execute()`, no orchestrator
-  exists — the fetcher owns the retry loop
-
-**Decision needed**: confirm skip-silently, or choose to record
-`missing` status.
+**Resolution**: not applicable. The single-CVE request pattern (OP-2
+resolution) eliminates this problem entirely. Each request targets one
+CVE; the response is either `data: [entry]` (scored) or `data: []` (not
+scored). The empty-response case uses OP-5 semantics (skip silently in
+`execute()`, `CVENotInSource` in `fetch_single()`).
 
 ### OP-11: `assessed_at` staleness validation
 
@@ -417,6 +431,16 @@ it and document any overrides.
 **Decision needed**: confirm values, or identify shared HTTP client
 infrastructure that already handles these.
 
+**Note (2026-06-21, Session 1d)**: a WIP draft
+(`docs/drafts/http-client-infrastructure.md`, commit daeb249) proposes
+cross-cutting HTTP client infrastructure for all fetchers — shared
+client factory, default timeout/retry, automatic User-Agent composed
+from `fetcher.name` (`Sentinel/{version} (sync_epss_scores)`). If that
+draft is approved and applied, it would substantially resolve this OP:
+the EPSS spec would reference shared defaults instead of hardcoding
+values. Until the draft is resolved, this OP remains open with the
+current proposal as fallback.
+
 ## 6. Application Plan (Steps to Complete the Spec)
 
 ### Session 1: Core design decisions (this session)
@@ -424,15 +448,27 @@ infrastructure that already handles these.
 - [x] Identify preconcept
 - [x] Cross-check with RedHat fetcher
 - [x] Create this work plan
-- [ ] Resolve Open Points OP-1 through OP-12
+- [ ] Resolve Open Points OP-5, OP-7, OP-8, OP-9, OP-11, OP-12
 
 ### Session 2: Write the complete spec
 - [ ] Write the full `cve-sync-epss.md` spec with all mandatory sections:
   - Properties table (with resolved schedule, scope, settings)
   - Algorithm (execute + fetch_single)
+    - `execute()`: single-CVE request pattern (RedHat-identical) —
+      iterates per-CVE, same `GET /epss?cve=CVE-XXX` call as
+      `fetch_single()`, commit per-CVE via
+      `commit_and_dispatch(session, None)`
+    - `fetch_single()`: single-CVE API query, returns
+      `PostIngestTasks | None` (always `None` — enrichment-only)
   - Error Handling (fetch_single + execute, table format like RedHat)
-  - Metrics (with explicit deviation note for `record_updated` semantics)
-  - Custom Settings table
+    - `execute()` error path: per-CVE — `session.rollback()` +
+      `record_failed()` (no explicit `record_source_status("failure")`
+      — architecture decision)
+    - `fetch_single()` error path: `CVENotInSource` on empty response
+      (orchestrator handles failure/missing status)
+  - Metrics (with explicit deviation note for `record_updated` semantics
+    — throughput metric, not diff-based)
+  - Custom Settings table (`throttle_delay_seconds` only)
   - Field Mapping
   - Explicitly Ignored Fields (EPSS API has `date`, `days`, etc.)
   - Behavioral Notes (data lifecycle, re-invocation, first-run)
@@ -445,8 +481,12 @@ infrastructure that already handles these.
     the CVE record is guaranteed to exist by the caller flow
     (`ensure_cve_exists()` → `trigger_on_demand_fetch()` →
     `fetch_single()`)
-  - HTTP client configuration (timeout, retry, User-Agent per OP-12)
-  - Class Structure (Python skeleton)
+  - HTTP client configuration (timeout, retry, User-Agent per OP-12 —
+    reference shared infrastructure draft if resolved, else hardcode
+    fallback values)
+  - Class Structure (Python skeleton with `commit_and_dispatch()` usage,
+    `fetch_single()` return type `PostIngestTasks | None`, and
+    `build_post_ingest_tasks()` call)
   - Cross-references
 
 ### Session 3: Fix cross-spec inconsistencies
@@ -475,10 +515,10 @@ Key patterns borrowed from `cve-sync-redhat.md`:
 | Pattern | RedHat | EPSS adaptation |
 |---------|--------|-----------------|
 | Per-CVE API → `fetch_single()` | Yes | Yes (API supports `?cve=X`) |
-| `execute()` iterates active tickets | Yes | Yes (batch instead of per-CVE) |
+| `execute()` iterates active tickets | Yes | Yes (per-CVE, identical to RedHat) |
 | Default `catch_up()` via `fetch_single()` | Yes | Yes (inherited from BaseCVEFetcher) |
-| Throttle delay custom setting | Yes (`throttle_delay_seconds`) | Yes + `batch_size` |
-| Error handling per-CVE in execute | Yes | Per-batch (different granularity) |
+| Throttle delay custom setting | Yes (`throttle_delay_seconds`) | Yes (`throttle_delay_seconds` only) |
+| Error handling per-CVE in execute | Yes | Yes (per-CVE, identical to RedHat) |
 | Enrichment-only (no CVE creation) | Yes | Yes |
 | Field Mapping table | Yes | Yes (simpler: only score + percentile) |
 | Explicitly Ignored Fields table | Yes | Yes |
@@ -486,12 +526,9 @@ Key patterns borrowed from `cve-sync-redhat.md`:
 | Consecutive failure abort threshold | 3 consecutive infra failures | Same pattern applicable |
 
 Differences from RedHat:
-- EPSS uses batch API (~130 CVEs/request vs 1 CVE/request)
 - EPSS has no CVSS, CWE, references, packages — only score + percentile
 - EPSS payload is trivial (3 fields) vs RedHat (multi-data-type extraction)
-- Throttle can be less aggressive (higher API rate limit, fewer requests)
-- Error isolation is per-batch, not per-CVE (but individual CVE failures
-  within a batch response are still tracked)
+- Throttle can be less aggressive (higher API rate limit: 1000 req/min)
 
 ## 8. Checklist — Ready to Move to `docs/features/`
 
@@ -520,6 +557,8 @@ Before the spec can be moved from draft to approved:
 | 2026-06-21 | #1 | Initial research, API verification, preconcept identified, cross-check with RedHat, work plan created, Open Points defined |
 | 2026-06-21 | #1b | Verified EPSS publication schedule (13:31 UTC daily, 12+ months of evidence). Resolved OP-1 (schedule → `0 14 * * *`). Confirmed `assessed_at` field already modeled correctly. Verified DST immunity (fixed UTC, no shift). Applied cross-cutting timezone enforcement fix to 4 spec files. Updated design decisions table |
 | 2026-06-21 | #1c | Completeness review: added OP-9 (metric semantics reconciliation with `cve-service.md`), OP-10 (batch missing CVEs in `execute()`), OP-11 (`assessed_at` staleness validation), OP-12 (HTTP client configuration). Added first-run behavior, statefulness, and CVE existence precondition to Design Decisions table and Session 2 plan. Updated "What is missing" list |
+| 2026-06-21 | #1d | Architecture alignment: reviewed commits 72f8ef5 (transaction ownership — `upsert_cve()` now pure service function, `commit_and_dispatch()` helper), 305bab9 (`record_source_status("failure")` removed from `execute()` path — rollback is sufficient), daeb249 (HTTP client infrastructure draft). Resolved OP-4 (architecture confirms pattern). Annotated OP-12 (WIP HTTP client draft may impact). Updated OP-2 pseudocode with `commit_and_dispatch` pattern and batch-adapted Pattern B. Added 4 new design decisions (transaction ownership, per-CVE commit, `fetch_single` return type, `record_source_status` in `execute()`). Added architecture context to OP-9. Verified and updated cross-spec correction line numbers (Sezione 3). Updated Session 2 plan with new architecture elements |
+| 2026-06-21 | #1e | Resolved OP-2 (single-CVE pattern, RedHat-identical — batch deferred as unnecessary at expected volume of ~200-300 active tickets). Resolved OP-3 (`source_reference_url_pattern = None` — no per-CVE page on FIRST.org, verified). Resolved OP-10 (N/A — no batch responses with single-CVE pattern). Simplified OP-6 (removed `batch_size`, only `throttle_delay_seconds` remains). Updated pseudocode, design decisions table, Session 2 plan, and RedHat cross-check to reflect single-CVE architecture |
 | | #2 | (pending) |
 | | #3 | (pending) |
 | | #4 | (pending) |
