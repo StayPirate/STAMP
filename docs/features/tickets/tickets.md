@@ -261,7 +261,7 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Duplicated | (evaluated) | User reverts duplicate status; `_reenter_gate_zone` determines target | Manual | `triage_ticket` (assignment only if actor holds VA role) |
 | Ignored    | (evaluated) | User reopens or system reopens (e.g., NVD rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | `triage_ticket` or System (assignment only if actor holds VA role) |
 
-**Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned; instead, a notification is sent to the assignee for manual review. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
+**Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned — the VA must review the rejection manually. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
 
 ### Gate: Analysis → Analyzed
 
@@ -783,7 +783,6 @@ features behave differently:
 | NVD rejection handling | Not applicable — no CVE means no `vulnStatus` changes |
 | NVD rejection revert handling | Not applicable |
 | Gate: SUSE CVSS required | Not applicable — severity is set via `severity_override` instead |
-| Critical CVE notification | Not applicable |
 
 Packages, tracks, and products can still be added and managed
 normally. The VA can set affectedness statuses and the ticket can

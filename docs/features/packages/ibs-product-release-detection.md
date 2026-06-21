@@ -233,9 +233,6 @@ Then:
 - Create a `TicketAuditEvent` of informational type recording: `advisory_id`,
   the source name derived from `primary.xml` if available, and a note that
   no ticket package matched.
-- Notify the ticket's assignee (notification mechanism is TBD at the system
-  level, see [Open Items](#open-items)).
-- Add the ticket to the **"Revisit" list** (separate feature spec, TBD).
 - **No automatic modification** is made to the ticket's package records.
 
 Note: codestream-level no-match behavior (CVE found in diff but package
@@ -306,10 +303,6 @@ sessions before implementation begins.
 
 ### Dependencies on separate features
 
-- **"Revisit" list** — Destination for tickets in the no-match flow.
-  Separate feature spec.
-- **Notifications** — Mechanism (in-app, email) for notifying the
-  assignee in the no-match flow. Separate feature spec.
 - **Admin "Sync diagnostics" page** — Destination for unrecognized title
   warnings (and, potentially, products without a configured update
   repository URL). Separate feature spec.

@@ -550,7 +550,6 @@ such as:
 - Status propagation to related entities
 - Eligibility or threshold re-evaluation
 - Audit event creation
-- Notification dispatch
 
 These side effects are a consequence of the domain model, not additional
 business workflows. The operation remains a PATCH because from the

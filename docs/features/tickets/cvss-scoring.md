@@ -22,8 +22,7 @@ ticket workflow progression.
    rather than falling back to absent. Only the configured default version
    (v3.1 or v4.0) is used for the Eligibility Score Resolution.
 3. **Configurable default version**: a system-wide setting determines which
-   CVSS version is used for all automated decisions (severity, eligibility,
-   notifications). Initially set to `3.1`, changeable by Admin. See
+   CVSS version is used for all automated decisions (severity, eligibility). Initially set to `3.1`, changeable by Admin. See
    `docs/features/platform/system-settings.md`.
 4. **SUSE assessment is authoritative**: when Sentinel needs a CVSS score to
    make a decision, it follows one of the two resolution strategies defined
@@ -53,7 +52,7 @@ Each is described below.
 
 ### Severity Resolution Cascade
 
-Used for: severity derivation, display, notifications, and any future
+Used for: severity derivation, display, and any future
 informational/triage logic.
 
 This cascade resolves the best available CVSS score, preferring SUSE's
@@ -503,7 +502,7 @@ distinct CVSS resolution strategies:
   CVSS version of the resolved score (e.g., `"3.1"`, `"4.0"`), `provider`
   is the provider that supplied it, and `label` is the severity rating
   (`"None"`, `"Low"`, `"Medium"`, `"High"`, `"Critical"`). Used for
-  display, triage, and notifications.
+  display and triage.
 
   The `severity` object is formally `null` when no CVSS assessments are
   available (Absent severity cascade step 5).
@@ -753,8 +752,7 @@ active tickets that will be recalculated (derived from data already
 available in the frontend — no dedicated preview endpoint is required).
 After confirmation, the batch task executes asynchronously. Completion
 metrics are available in application logs only — no dedicated result
-storage, audit trail enrichment, or notification mechanism is provided
-for the batch outcome.
+storage or audit trail enrichment is provided for the batch outcome.
 
 **Idempotency**: `recalculate_cvss_chain()` is idempotent —
 re-processing tickets already updated produces the same result. If

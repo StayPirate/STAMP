@@ -365,8 +365,6 @@ return a significant number of rows. Mitigation strategies:
 
 ## Future Considerations
 
-- **Notifications**: automated email or chat notifications to bugowners
-  when new pending fixes appear, linking to the per-ticket view
 - **Claim mechanism**: for group bugowners, ability to "claim" a pending
   fix to signal to other group members that someone is working on it
 - **Metrics**: aggregate statistics (average time to fix, submission

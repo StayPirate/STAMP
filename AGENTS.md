@@ -453,7 +453,7 @@ CRITICAL: Every component of the system that needs a CVSS score MUST:
    for the other:
    - **Severity** (`resolve_severity_score`): 5-step cascade,
      multi-provider with cross-version fallback. Used for: severity
-     derivation, display, notifications, triage
+     derivation, display, triage
    - **Eligibility** (`resolve_eligibility_score`): 2-step cascade,
      SUSE-only, 10.0 conservative fallback. Used for: product eligibility
      threshold comparison

@@ -152,7 +152,6 @@ current reality (gate conditions + data freshness).
   evaluation
 - May null `assignee_id` and create an `assignment` audit event if the
   current assignee is inactive (inactive assignee sanitization)
-- May add ticket to revisit queue after sanitization
 - May call `recalculate_cvss_chain()` when an inactive → active
   transition is detected (producing `severity_changed` and
   `product_eligibility_changed` audit events if derived values change)
@@ -252,9 +251,7 @@ the resulting status is active (Analysis or Analyzed) and
 2. Create `TicketAuditEvent` with `event_type = assignment`
    (system-initiated, `user_id = NULL`,
    `comment = "Unassigned from {username}: employee deactivated"`)
-3. Add the ticket to the revisit queue (to be defined in a future
-   specification)
-4. Emit a warning-level log: `"Inactive assignee {user_id} detected on
+3. Emit a warning-level log: `"Inactive assignee {user_id} detected on
    ticket {ticket_id} during reconciliation — this should have been
    handled by _unassign_active_tickets"`
 

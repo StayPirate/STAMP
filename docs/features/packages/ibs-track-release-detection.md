@@ -150,8 +150,6 @@ for package P (in any codestream).
 - Create a `TicketAuditEvent` with `event_type = package_added`,
   `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
   detected in `{C}`".
-- Notify the ticket's assignee.
-- Add the ticket to the "Revisit" list.
 
 ### Case C — No ticket exists for the CVE
 

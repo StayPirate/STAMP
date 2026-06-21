@@ -199,7 +199,7 @@ active source. See the data sources catalog for the full picture.
 - AD group memberships (`MEMBEROF`) are used to derive Sentinel roles via
   admin-configurable RoleMapping rules
 - Direct line manager (`manager` DN) is resolved and stored for
-  notification escalation and maintainer task management
+  maintainer task management
 - Connection: anonymous bind on port 636 (LDAPS — TLS validated against
   SUSE Trust Root CA committed at `certs/SUSE_Trust_Root.crt`). TLS is
   required because `MEMBEROF` data drives role assignment including admin

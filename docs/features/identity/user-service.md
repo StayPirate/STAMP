@@ -187,8 +187,6 @@ status — executes the unassignment unconditionally.
    - `old_value` = user's username
    - `new_value` = `NULL`
    - `comment` = `"Unassigned from {username}: {reason}"`
-5. Add the ticket to the revisit queue for follow-up reassignment (see
-   future specification)
 
 Unassignment does **not** change ticket status — the ticket remains in
 its current gate-zone status (Analysis or Analyzed) and is visible in
@@ -594,8 +592,8 @@ in this specific order):
 4. Unassign active tickets: call
    `_unassign_active_tickets(db, user_id, reason)` where `reason` is the
    value passed to `deactivate_user()`. This clears `assignee_id` on all
-   active tickets, creates `TicketAuditEvent` records, and adds tickets to
-   the revisit queue — all within the same transaction. Ticket status is
+   active tickets and creates `TicketAuditEvent` records — all within the
+   same transaction. Ticket status is
    not changed (see Architectural Invariant in `tickets.md`). See
    Private Helpers for the full contract.
 

@@ -975,17 +975,14 @@ handling is required.
   — the admin role is the highest trust level in the system, and
   additional friction would not meaningfully improve security given that
   a compromised admin already has full system access
-- **No notification on admin password reset (accepted risk)**: when an
-  admin resets a user's password via `POST /api/v1/admin/users/{user}/password`,
-  the target user receives no notification (no email, no in-app alert).
-  A compromised admin could covertly take over an account. This is
-  accepted because: (1) the admin trust level already implies full system
-  access; (2) the `IdentityAuditEvent` (`password_reset`) provides a
-  forensic trail of acting admin and target user; (3) adding a notification
-  system (SMTP infrastructure, templates, bounce handling) is
-  disproportionate to the residual risk in an internal tool. If the
-  threat model evolves (e.g., multi-tenant admin roles), user-facing
-  notifications should be reconsidered
+- **Admin password reset has no out-of-band alert (accepted risk)**: when
+  an admin resets a user's password via
+  `POST /api/v1/admin/users/{user}/password`, the target user receives no
+  out-of-band alert. A compromised admin could covertly take over an
+  account. This is accepted because: (1) the admin trust level already
+  implies full system access; (2) the `IdentityAuditEvent`
+  (`password_reset`) provides a forensic trail of acting admin and target
+  user
 - **Per-username lockout DoS vector (accepted risk)**: the per-username
   lockout mechanism (5 failed attempts → account locked for 10 minutes)
   allows anyone who knows a valid username to lock out that account by

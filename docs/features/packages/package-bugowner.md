@@ -15,8 +15,6 @@ This feature enables:
    packages I maintain")
 3. Future integration with a maintainer dashboard where each maintainer
    can see pending submissions and track progress (separate spec)
-4. Future notification system to alert maintainers about new tickets
-   affecting their packages (separate spec)
 
 This specification is the authoritative source for bugowner resolution,
 caching, and maintenance. See `docs/features/packages/package-model.md` for
@@ -433,9 +431,6 @@ visible to all users (same access level as package data in tickets).
   see all active tickets for packages they maintain, with submission
   status and progress tracking. Will be specified in a separate feature
   spec.
-- **Notification system**: automated notifications to bugowners when new
-  tickets are created for their packages, or when ticket status changes
-  require their attention. Will be specified in a separate feature spec.
 
 ## Cross-references
 
