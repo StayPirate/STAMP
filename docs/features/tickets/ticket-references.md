@@ -281,14 +281,16 @@ reference) executes normally if `source_url` is provided. The caller
 must not skip the `upsert_references()` call when there are no upstream
 references, because source reference creation is independent.
 
-**Transaction boundary**: `upsert_references()` runs in a **separate
-transaction** from `cve_service.upsert_cve()`. Although both receive
-the same `AsyncSession`, the fetcher commits the CVE upsert (Phase 1)
-before calling `upsert_references()`. This means reference failures
-cannot roll back CVE data. Each individual reference upsert is
-independent — if a single reference fails (e.g., a URL from upstream
-data exceeds the 2048-character limit), the service logs the failure
-and continues with the remaining references (skip-and-continue).
+**Transaction boundary**: `upsert_references()` runs in the **same
+per-CVE transaction** as `cve_service.upsert_cve()`. Both write to the
+session buffer; the caller commits via `commit_and_dispatch()` after
+both operations complete. Since all `upsert_references()` failure modes
+are handled internally (URL validation gate: skip-and-continue;
+IntegrityError: catch-and-merge), no exception propagates to the caller
+under normal operation. Each individual reference upsert is independent
+— if a single reference fails (e.g., a URL from upstream data exceeds
+the 2048-character limit), the service logs the failure and continues
+with the remaining references (skip-and-continue).
 
 There is no stale reference cleanup step. Fetchers only insert and update
 references — they never delete them. If an upstream source removes a

@@ -47,7 +47,12 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    `run()` manages its own database sessions internally — callers do
    not pass a session. Each database operation (record creation,
    finalization) uses a short-lived session. The connection is not held
-   open during `execute()`.
+   open during `execute()`. The session passed to `execute()` may be
+   committed and rolled back multiple times during execution (per-item
+   transaction boundaries). This is a documented pattern for both
+   git-based and API-based CVE fetchers — see "Session Lifecycle for
+   API-based CVE Fetchers" and "BaseGitFetcher Class" (step 10,
+   transaction boundaries).
 
    - **FetcherRun record acquisition**:
      - When `run_id` is `None` (scheduled runs): creates a new
@@ -180,7 +185,7 @@ class SyncNvdCves(BaseCVEFetcher):
     default_schedule = "0 */6 * * *"
     source_reference_url_pattern = "https://nvd.nist.gov/vuln/detail/{cve_id}"
 
-    async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
+    async def fetch_single(self, cve_id: str, session: AsyncSession) -> PostIngestTasks | None:
         ...
 
     async def execute(self, session: AsyncSession) -> None:
@@ -196,7 +201,7 @@ class SyncRedhatCves(BaseCVEFetcher):
     description = "Sync CVE data from Red Hat Security API"
     default_schedule = "0 3 * * *"
 
-    async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
+    async def fetch_single(self, cve_id: str, session: AsyncSession) -> PostIngestTasks | None:
         # Core per-CVE logic: call Red Hat API, upsert CVSS/CWE/refs
         await upsert_cve(db, cve_id, source=self.cve_source_type, ...)
 
@@ -308,13 +313,19 @@ set `supports_fetch_single = False`. CVE fetchers that support on-demand
 fetch override it with their source-specific logic:
 
 ```python
-async def fetch_single(self, cve_id: str, session: AsyncSession) -> None:
+async def fetch_single(self, cve_id: str, session: AsyncSession) -> PostIngestTasks | None:
     """Fetch a single CVE from the external source.
 
     Called on-demand when Sentinel encounters an unknown CVE-ID during
     ticket creation or CVE association. Writes data to the standard
     models (CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier,
     TicketReference) via cve_service.upsert_cve().
+
+    Returns `PostIngestTasks` containing the Celery task arguments for
+    Phase 2 dispatch, or `None` if no post-ingest tasks are needed
+    (e.g., enrichment-only upsert with no ticket or no CPE data).
+    Metrics (`record_created`/`record_updated`) are called inside
+    `fetch_single()` where `UpsertResult.action` is available.
 
     Raises CVENotInSource if the external source explicitly confirms
     the CVE does not exist (e.g., HTTP 404, empty response).
@@ -332,7 +343,10 @@ invokes them in parallel when an on-demand fetch is needed (see
 
 The `fetch_single` method does NOT create a `FetcherRun` record. It is
 a sub-operation invoked as a standalone Celery task, not a full fetcher
-execution. Metric reporting (`record_created`, etc.) is not used.
+execution. Metric reporting (`record_created`/`record_updated`) is
+performed inside `fetch_single()` where `UpsertResult.action` is
+available — the caller (`execute()` loop or `fetch_single_cve`
+orchestrator) does not record metrics.
 
 ### `CVENotInSource` Signal
 
@@ -349,13 +363,20 @@ status in `CVESourceFetchStatus`.
 
 ### `fetch_single` Signaling Convention
 
-This convention applies to CVE fetchers with `supports_fetch_single = True`:
+This convention applies to CVE fetchers with `supports_fetch_single = True`.
+The "Caller action" column describes the **`fetch_single_cve` orchestrator's**
+response (on-demand path). Other callers (`execute()` loops and `catch_up()`)
+apply context-specific handling — see "Session Lifecycle for API-based CVE
+Fetchers" for the batch `execute()` pattern where `CVENotInSource` is a
+simple rollback-and-skip without status writes.
 
-| Behavior | Meaning | Orchestrator action |
-|----------|---------|---------------------|
-| Returns normally | Data written via `upsert_cve()` | `status = success` (already written by `upsert_cve` via `record_source_status`) |
-| Raises `CVENotInSource` | CVE not present in source | `record_source_status(session, cve_id, fetcher_cls.cve_source_type, "missing")` |
-| Raises other exception | Transient error | Celery retries → then `record_source_status(session, cve_id, fetcher_cls.cve_source_type, "failure")` |
+| Behavior | Meaning | Caller action (orchestrator) |
+|----------|---------|------------------------------|
+| Returns `PostIngestTasks` | Data written to session buffer via `upsert_cve()` | `commit_and_dispatch(session, result)` — commits, dispatches Phase 2 |
+| Returns `None` | Data written but no post-ingest needed (enrichment-only, no ticket or no CPE data) | `commit_and_dispatch(session, None)` — commits without dispatch |
+| Raises `CVENotInSource` | CVE not present in source | `record_source_status(session, cve_id, source, "missing")`, then `commit_and_dispatch(session, None)` — commits the "missing" status, no dispatch |
+| Raises other exception (retryable) | Transient error | `session.rollback()`, Celery retry. After exhaustion: `record_source_status(session, cve_id, source, "failure")`, `commit_and_dispatch(session, None)` |
+| Raises other exception (non-retryable) | Permanent error | `session.rollback()`, `record_source_status(session, cve_id, source, "failure")`, `commit_and_dispatch(session, None)` |
 
 Fetchers MUST NOT catch transient exceptions internally — they must
 propagate to allow Celery retry to function. Fetchers MUST raise
@@ -747,8 +768,9 @@ execution. The following additional rules apply:
   creates and manages the `AsyncSession`, following the same pattern
   as `fetch_single_cve`. The session is passed to `catch_up()` as a
   parameter. Transaction boundaries depend on the implementation:
-  - **Default `catch_up()`** (CVE fetchers): single transaction —
-    reads the ticket, calls `fetch_single()`, commits on return
+  - **Default `catch_up()`** (CVE fetchers): reads the ticket, calls
+    `fetch_single()`, then commits via `self.commit_and_dispatch()`
+    internally — not via `run_catch_up` on return
   - **Custom `catch_up()` overrides** (non-CVE fetchers): the method
     receives the session for read-only queries (ticket lookup, item
     enumeration). Mutations on each item are delegated to the
@@ -1264,6 +1286,7 @@ Inherited by all CVE fetchers:
 |--------|-------------|
 | `fetch_single(cve_id, session)` | Default implementation raises `RuntimeError("fetch_single() called on a fetcher that does not support it")`. Fetchers with `supports_fetch_single = True` MUST override this method. Fetchers with `supports_fetch_single = False` inherit the default (never called in practice — `get_fetch_single_fetchers()` excludes them) |
 | `catch_up(ticket_id, session)` | Default implementation: extract `cve_id` from ticket, call `self.fetch_single()`, catch `CVENotInSource` as no-op. Only meaningful for fetchers with `supports_fetch_single = True`; fetchers with `False` also set `participates_in_catch_up = False` (so `catch_up()` is never invoked) |
+| `commit_and_dispatch(session, post_ingest)` | Helper method: commits the session, then dispatches `post_ingest` tasks (if not `None`) via `apply_async()`. Dispatches exactly one `resolve_ticket_packages.apply_async()` call per invocation. If `post_ingest` is `None`, commits without dispatching. **Commit failure**: if `session.commit()` raises (e.g., `OperationalError` from lost DB connection), the exception propagates to the caller — no dispatch is attempted. The caller is responsible for rollback. **Celery failure**: if `apply_async()` raises after a successful commit (e.g., Celery broker unreachable), the error is logged at WARNING level and the function returns normally — Phase 2 recovery relies on the next sync cycle (see `cve-service.md`, Crash Recovery). **Re-invocation safety**: if called twice with the same `post_ingest` (e.g., Celery retry after successful first invocation), the second `session.commit()` is a no-op (empty buffer); the second dispatch sends a duplicate Phase 2 task. Phase 2 tasks are idempotent (`TicketPackage` existence check), so duplicate dispatch is safe |
 
 **Default `catch_up()` implementation**:
 
@@ -1278,9 +1301,10 @@ class BaseCVEFetcher(BaseFetcher):
         ticket = await session.get(Ticket, UUID(ticket_id))
         if ticket and ticket.cve_id:
             try:
-                await self.fetch_single(str(ticket.cve_id), session)
+                result = await self.fetch_single(str(ticket.cve_id), session)
+                await self.commit_and_dispatch(session, result)
             except CVENotInSource:
-                pass  # CVE not in this source — nothing to catch up
+                await session.rollback()  # defensive: ensure clean session state
 ```
 
 **Boundary conditions** (CVE-specific):
@@ -1401,6 +1425,63 @@ fetchers unchanged. `BaseCVEFetcher` adds only:
 4. The `participates_in_catch_up` opt-out for catch-up participation
 5. The `supports_fetch_single` opt-out for on-demand single-CVE fetch
 6. The `source_reference_url_pattern` attribute (optional, default `None`)
+7. The `commit_and_dispatch()` helper method for per-CVE commit and
+   Phase 2 task dispatch
+
+### Session Lifecycle for API-based CVE Fetchers
+
+API-based CVE fetchers (NVD, Red Hat, GHSA, OSV, KEV) MUST commit
+per-CVE in their `execute()` loop. Each iteration has its own
+transaction boundary.
+
+**Standard pattern — Pattern B** (enrichment fetchers that delegate to
+`fetch_single()`):
+
+```python
+async def execute(self, session: AsyncSession) -> None:
+    for cve_id in scope:
+        try:
+            post_ingest = await self.fetch_single(cve_id, session)
+            await self.commit_and_dispatch(session, post_ingest)
+        except CVENotInSource:
+            await session.rollback()  # defensive: ensure clean session state
+        except Exception:
+            await session.rollback()
+            self.record_failed()
+        await asyncio.sleep(self.get_setting("throttle_delay_seconds"))
+```
+
+**Standard pattern — Pattern A** (discovery fetchers with inline `upsert_cve()`):
+
+```python
+async def execute(self, session: AsyncSession) -> None:
+    for item in source_items:
+        try:
+            result = await upsert_cve(session, cve_id, self.cve_source_type, payload)
+            await upsert_references(session, ...)
+            post_ingest = build_post_ingest_tasks(result, payload)
+            await self.commit_and_dispatch(session, post_ingest)
+            # record_created/record_updated based on result.action
+        except Exception:
+            await session.rollback()
+            self.record_failed()
+```
+
+Both patterns use `commit_and_dispatch()` as the per-CVE finalization
+step. The helper commits the session (releasing the `FOR UPDATE` lock
+acquired by `upsert_cve()`) and dispatches Phase 2 tasks if
+`post_ingest` is not `None`.
+
+**Metric placement**: metric helpers (`record_created`,
+`record_updated`, `record_failed`) are in-memory counter increments
+with no database interaction. Their placement relative to
+`commit_and_dispatch()` is functionally irrelevant — whether recorded
+before commit (Pattern B, inside `fetch_single()`) or after commit
+(Pattern A, in the `execute()` loop) does not affect correctness.
+
+This session lifecycle was always true for git-based fetchers (the
+`BaseGitFetcher` template commits per-item in step 10). This section
+formalizes the same pattern for API-based fetchers.
 
 ## Git-Based Fetchers
 
@@ -2049,19 +2130,23 @@ algorithm from the sections above.
        then deleted/renamed between cursor and HEAD): log WARNING
        ("File {path} in delta but not at HEAD — skipping"), continue
        to next item. No metric is recorded
-    c. Call `process_item(path, content, session)`
-    d. If any exception is raised during steps 10a or 10c: log WARNING
+    c. Call `post_ingest = process_item(path, content, session)` →
+       returns `PostIngestTasks | None`. On successful return, call
+       `self.commit_and_dispatch(session, post_ingest)`
+    d. If any exception is raised during steps 10a, 10c, or
+       `commit_and_dispatch()`: call `session.rollback()`, log WARNING
        ("Failed to process {path}: {error}"), call `record_failed()`,
        continue to next item
 
     **Transaction boundaries**: each iteration of the processing loop
-    operates in its own transaction boundary. After `process_item()`
-    returns successfully or raises an exception (caught by step 10d),
-    the session is committed or rolled back respectively before
-    proceeding to the next item. This ensures that a failure in one
-    item does not corrupt the session or affect the processing of
-    subsequent items, and that Phase 2 side effects (enqueued
-    post-commit by `cve_service.upsert_cve()`) are triggered per-item.
+    operates in its own transaction boundary. `process_item()` returns
+    `PostIngestTasks | None`; after a successful return, the template
+    calls `self.commit_and_dispatch(session, post_ingest)` which
+    commits the session and dispatches Phase 2 tasks if `post_ingest`
+    is not `None`. On exception (caught by step 10d), the template
+    calls `session.rollback()` before `record_failed()`. This ensures
+    that a failure in one item does not corrupt the session or affect
+    the processing of subsequent items.
 
 11. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
 
@@ -2134,7 +2219,7 @@ These are the extension points for concrete subclasses:
 |--------|-----------|---------|---------|
 | `_construct_candidate_paths(item_id)` | **Yes** (abstract) | — | Return ordered list of candidate file paths for local clone lookup |
 
-##### `process_item(path: str, content: bytes, session: AsyncSession) -> None`
+##### `process_item(path: str, content: bytes, session: AsyncSession) -> PostIngestTasks | None`
 
 The core extension point. Receives:
 - `path`: relative path within the repository (e.g., `cve/published/2024/CVE-2024-50055.json`)
@@ -2146,17 +2231,24 @@ The hook is responsible for:
 1. Parsing the content and applying business logic (upsert, etc.)
 2. Calling `self.record_created()` or `self.record_updated()` to report
    the outcome (same pattern as non-git `BaseFetcher` subclasses)
-3. Returning `None` if the item was skipped (already up-to-date) —
-   no metric is recorded, which is the correct behavior
+3. Returning `PostIngestTasks` if post-ingest dispatch is needed, or
+   `None` in two cases: (a) the item was skipped (already up-to-date,
+   no work done — no metric is recorded), or (b) the item was
+   processed but no post-ingest tasks are needed (e.g.,
+   enrichment-only upsert with no ticket or no CPE data — metric IS
+   recorded). Both `None` cases result in
+   `commit_and_dispatch(session, None)` — the template commits without
+   dispatching Phase 2 tasks
 
 Raises any exception on failure → caught by `execute()`, logged,
 `record_failed()` called.
 
 **Phase 2 side effects**: hooks that call `cve_service.upsert_cve()`
-trigger Phase 2 processing (package resolution, notifications)
-automatically via Celery task enqueue after the Phase 1 transaction
-commits. No post-processing batch hook is needed — Phase 2 is per-item
-and self-contained.
+return `PostIngestTasks` containing the Phase 2 task arguments. The
+`BaseGitFetcher` template dispatches these tasks via
+`commit_and_dispatch()` after committing the per-item transaction.
+No post-processing batch hook is needed — Phase 2 is per-item and
+self-contained.
 
 ##### `filter_delta_files(file_list: list[str]) -> list[str]`
 
@@ -2198,8 +2290,8 @@ Concrete subclasses inherit it automatically (no override needed).
    of candidate file paths
 4. For each `path` in the candidate list:
    a. Read file content via `show_file(repo_path, "HEAD", path)`
-   b. If content is not `None` (file found): call
-      `process_item(path, content, session)`, then return
+   b. If content is not `None` (file found): return the result of
+      `process_item(path, content, session)` (`PostIngestTasks | None`)
 5. If no candidate path produced content: raise
    `CVENotInSource(item_id)`
 
