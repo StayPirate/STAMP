@@ -27,6 +27,22 @@ explicitly in staging/production.
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
 | `CELERY_RESULT_BACKEND` | string | `redis://localhost:6379/2` | Celery result backend URL | `docs/architecture.md` |
 
+## Celery Worker Configuration
+
+These settings control the Celery worker and Beat scheduler behavior.
+The timezone settings are **fixed** — they MUST NOT be overridden.
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `CELERY_TIMEZONE` | string | `UTC` | Timezone for Celery Beat cron interpretation. MUST remain `UTC` — all fetcher schedules are expressed in UTC. Overriding this value causes all scheduled fetchers to run at incorrect times | `docs/conventions.md` |
+| `CELERY_ENABLE_UTC` | bool | `true` | Forces Celery internal message timestamps to UTC. MUST remain `true` | `docs/conventions.md` |
+
+**Startup validation**: the application MUST validate at Celery worker
+startup that these settings are `UTC` and `true` respectively. If either
+is overridden to a non-UTC value, the worker MUST refuse to start and
+log an error: `"FATAL: Celery timezone must be UTC. Current value:
+{value}. All fetcher schedules assume UTC — see docs/conventions.md."`
+
 ## SSO Configuration
 
 All SSO settings are **optional**. If any of the required SSO settings

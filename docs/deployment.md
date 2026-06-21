@@ -243,6 +243,27 @@ Before the first production deployment:
   off-peak maintenance window). In-flight SSO logins are also affected
   (max 10 minutes of disruption)
 
+### Timezone Requirements
+
+All Sentinel containers (API server, Celery worker, Celery Beat) MUST
+operate with UTC as the system timezone. This is enforced at two levels:
+
+1. **Celery configuration**: the application sets `timezone = "UTC"` and
+   `enable_utc = True` in the Celery config. The worker validates these
+   at startup and refuses to start if overridden (see
+   `docs/configuration.md`, Celery Worker Configuration)
+
+2. **Container timezone**: set `TZ=UTC` in the container environment (or
+   leave unset — most base images default to UTC). This ensures that
+   system-level time functions (`datetime.now()`, file timestamps, log
+   entries) are consistent with the Celery scheduler
+
+**Why this matters**: all fetcher cron schedules are expressed in UTC.
+Some external data sources publish at specific UTC times (e.g., EPSS at
+13:31 UTC daily). A timezone misconfiguration causes fetchers to run at
+incorrect wall-clock times, potentially before upstream data is
+available.
+
 ---
 
 ## Database Migrations

@@ -139,7 +139,12 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 - **Backend**: all datetime operations (comparisons, arithmetic,
   scheduling, TTL checks) operate in UTC. Use `datetime.now(UTC)` (never
   `datetime.utcnow()`, which returns a naive datetime). Celery Beat
-  schedules are expressed in UTC
+  schedules are expressed in UTC. The Celery application MUST be
+  configured with `timezone = "UTC"` and `enable_utc = True` (the
+  Celery 4+ defaults). These settings MUST NOT be overridden in any
+  environment — the worker validates them at startup and refuses to
+  start if they are incorrect (see `docs/configuration.md`, Celery
+  Worker Configuration)
 - **API responses**: all datetime values are serialized in UTC with the
   `Z` suffix (e.g., `2025-03-15T10:30:00Z`)
 - **API inputs**: datetime filter parameters (e.g., `from_date`,

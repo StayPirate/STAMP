@@ -2503,6 +2503,13 @@ default). When an admin modifies a fetcher's schedule via the API, the
 Beat schedule MUST be updated accordingly (using `celery-redbeat` or
 equivalent dynamic scheduler).
 
+**Timezone enforcement**: the Celery application is configured with
+`timezone = "UTC"` and `enable_utc = True`. All cron expressions in
+`default_schedule` and `FetcherConfig.schedule` are interpreted as UTC.
+The worker validates these settings at startup and refuses to start if
+they are overridden. See `docs/conventions.md` (Timestamps & Timezones)
+and `docs/configuration.md` (Celery Worker Configuration).
+
 ## Concurrency Control
 
 Only one instance of a given fetcher can run at a time. The concurrency
