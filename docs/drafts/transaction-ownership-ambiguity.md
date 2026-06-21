@@ -274,14 +274,18 @@ must be corrected.
 | `cve-sync-mitre.md` | Update "Phase 2 side effects" text: replace "enqueued by `cve_service` after Phase 1 commit" with "dispatched by `BaseGitFetcher` template via `commit_and_dispatch()`" |
 | `cve-sync-kernel.md` | Same as mitre |
 
-### 5.3 Must be verified (potential inconsistency, not blocking)
+### 5.3 No longer an inconsistency
 
-| File | Issue | Action |
-|------|-------|--------|
-| `cve-sync-redhat.md` | Pseudocode omits `record_source_status("failure")` in `except` block | Verify against Common CVE Fetcher Error Handling; align or document deviation |
-| `cve-sync-osv.md` | Same omission | Same action |
-| `cve-sync-nvd.md` | No explicit per-CVE failure handling documented | Verify coverage |
-| `cve-sync-ghsa.md` | References Common Error Handling but pseudocode doesn't show `record_source_status` call | Verify alignment |
+The pseudocode in `cve-sync-redhat.md`, `cve-sync-osv.md`,
+`cve-sync-nvd.md`, and `cve-sync-ghsa.md` omits
+`record_source_status("failure")` in the `execute()` error path. Per
+the OQ-3 resolution, this is now **correct by design** — the `execute()`
+batch path does NOT write failure status. Only the `fetch_single_cve`
+orchestrator (on-demand path) writes failure/missing status for
+user-visible feedback.
+
+The Common CVE Fetcher Error Handling must be updated to reflect this
+(see Step 3.2 in the Resolution Plan).
 
 ### 5.4 Discovered inconsistency: `cve-sync-redhat.md` return type
 
@@ -422,12 +426,14 @@ async def execute(self, session: AsyncSession) -> None:
      `record_source_status("failure")`, commit
 
 2. Update Common CVE Fetcher Error Handling:
+   - Remove `record_source_status("failure")` requirement from the
+     `execute()` batch path. The rollback discards the "success" written
+     by `upsert_cve()`, naturally preserving the previous CVESource state.
+     Explicit "failure" writes are only required in the `fetch_single_cve`
+     orchestrator (on-demand path, user-visible feedback)
    - Add `await session.rollback()` as step 2 (clean session for next
      item)
-   - Add `await session.commit()` after `record_source_status("failure")`
-     (persist the failure status in its own mini-transaction)
-   - Clarify: the rollback ensures the failed CVE's partial writes are
-     discarded; the subsequent commit persists only the failure status
+   - Simplified error path: rollback → `record_failed()` → continue
 
 ### Step 4: Update `cve-sync-kev.md`
 
@@ -444,6 +450,14 @@ async def execute(self, session: AsyncSession) -> None:
    - New: "`upsert_references()` failure modes are handled internally
      (skip-and-continue). Under normal operation, no exception
      propagates. Both CVE and reference data are committed together."
+
+3. Remove `record_source_status("failure")` from error handling (lines
+   100-102):
+   - Old: `record_source_status(session, cve_id, "kev", "failure")`,
+     `record_failed()`, log error, continue
+   - New: `await session.rollback()`, `record_failed()`, log error,
+     continue. The rollback discards any partial writes; `CVESource`
+     preserves its previous state (last successful fetch or absent)
 
 ### Step 5: Update `ticket-references.md`
 
@@ -498,16 +512,13 @@ Invoke `@spec-coherence-reviewer` on the primary modified specs:
 |---|----------|------------|
 | OQ-1 | API fetcher: explicit commit or template? | Helper method `commit_and_dispatch()` on `BaseCVEFetcher`, not a forced template. API fetchers keep their own `execute()` structure but use the shared helper for per-CVE finalization. |
 | OQ-2 | `upsert_references()`: same transaction or separate? | Same transaction. All `upsert_references()` failure modes are handled internally (skip-and-continue, IntegrityError catch). Independent failure is effectively impossible under normal operation. No nested savepoint needed. |
+| OQ-3 | Is `record_source_status("failure")` in `execute()` needed? | **No.** Removed from the `execute()` batch path. `upsert_cve()` writes "success" as part of Phase 1; if the transaction rolls back, the "success" is discarded and `CVESource` preserves its previous state. The rollback itself is sufficient signal — no explicit "failure" write needed. The `fetch_single_cve` orchestrator (on-demand path) continues to write "failure"/"missing" because user-triggered fetches require visible feedback. KEV's explicit `record_source_status("failure")` was based on the incorrect assumption that `upsert_cve()` committed internally; it is removed in the new architecture. |
 
-### Still open (non-blocking)
-
-| # | Question | Notes |
-|---|----------|-------|
-| OQ-3 | Is `record_source_status("failure")` in `execute()` functionally needed? | The Common CVE Fetcher Error Handling requires it. It provides observability (API shows "last fetch failed") but is not functionally necessary for the retry loop — `execute()` re-processes CVEs on next scheduled run regardless. Should be evaluated as a separate improvement, independent of transaction ownership. |
+### No open questions remain
 
 ## 8. Session Log
 
 | Date | Work done |
 |------|-----------|
 | 2026-06-21 | Initial analysis during EPSS draft work. Identified ambiguity, collected evidence from all fetcher specs, documented three possible architectures (A: service commits, B: caller commits with hooks, C: infrastructure template) |
-| 2026-06-21 | Deep analysis session. Evaluated 5 architectural solutions (pure caller, orchestrator wrapper, after_commit hooks, outbox pattern, unified template). Rejected after_commit hooks (rollback semantics issue), outbox (unnecessary complexity), and full template (API fetchers too diverse). Decided on pure service + explicit `commit_and_dispatch()` helper. Resolved OQ-1 (helper method, not template) and OQ-2 (same transaction — `upsert_references()` failure modes are all internal). Discovered `cve-sync-redhat.md` return type inconsistency. Discovered `ticket-references.md` "separate transaction" statement needs correction. Formulated 7-step resolution plan |
+| 2026-06-21 | Deep analysis session. Evaluated 5 architectural solutions (pure caller, orchestrator wrapper, after_commit hooks, outbox pattern, unified template). Rejected after_commit hooks (rollback semantics issue), outbox (unnecessary complexity), and full template (API fetchers too diverse). Decided on pure service + explicit `commit_and_dispatch()` helper. Resolved OQ-1 (helper method, not template) and OQ-2 (same transaction — `upsert_references()` failure modes are all internal). Discovered `cve-sync-redhat.md` return type inconsistency. Discovered `ticket-references.md` "separate transaction" statement needs correction. Formulated 7-step resolution plan. Resolved OQ-3: `record_source_status("failure")` removed from `execute()` batch path — rollback preserves previous CVESource state naturally; explicit failure writes only needed in on-demand path for user feedback. KEV's explicit failure write was based on incorrect architectural assumption. All open questions resolved |
