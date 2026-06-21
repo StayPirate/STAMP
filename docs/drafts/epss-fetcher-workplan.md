@@ -2,7 +2,7 @@
 
 **Status**: Draft — work-in-progress across multiple sessions
 **Target**: `docs/features/tickets/cve-sync-epss.md` (replace current placeholder)
-**Last updated**: 2026-06-21 (Session 1b — publication timing research)
+**Last updated**: 2026-06-21 (Session 1c — completeness review)
 
 ## 1. Overview
 
@@ -41,6 +41,10 @@ without making autonomous design decisions.
 - Class Structure
 - `fetch_single()` method definition
 - `source_reference_url_pattern`
+- First-run behavior declaration
+- Statefulness / cursor declaration
+- CVE existence precondition for `fetch_single()`
+- HTTP client configuration (timeout, retry, User-Agent)
 
 ## 3. Preconcept: KEV ≈ EPSS (ERRONEOUS)
 
@@ -140,6 +144,9 @@ conventions:
 | Schedule | Daily at 14:00 UTC (`0 14 * * *`) | EPSS publishes at 13:31 UTC; 29-min margin (see OP-1) |
 | Auth | None | Public API |
 | `assessed_at` field | Persist API `date` field | Already modeled as `CVEEPSSScore.assessed_at` (DATE, NOT NULL). Enables staleness detection in UI and allows the fetcher to detect stale API responses |
+| First-run behavior | No special behavior (RedHat pattern) | Stateless fetcher — iterates over all CVEs with active tickets. If no active tickets exist, the run completes immediately with zero records |
+| Cursor | None (stateless) | Re-processes the full in-scope set on each run. No cursor or incremental state to maintain between runs |
+| CVE existence precondition | Guaranteed by caller flow | In `execute()`: scope is CVEs with active tickets (already in DB). In `fetch_single()`: the `ensure_cve_exists()` → `trigger_on_demand_fetch()` flow guarantees the CVE record exists before `fetch_single()` is called. The fetcher never creates CVE records |
 
 ## 5. Open Points
 
@@ -305,6 +312,111 @@ refreshed on ticket reactivation via catch-up).
 
 **Decision needed**: confirm, or defer as trivial.
 
+### OP-9: `record_updated` metric semantics
+
+`cve-service.md` (lines 1192–1197) states that enrichment fetchers always
+receive `action = unchanged` from `upsert_cve()` and must "manage their own
+metrics based on their internal diff detection." This contradicts OP-7's
+proposal of firing `record_updated` on every successful upsert.
+
+Two options:
+
+**Option A — Fire on every upsert (throughput metric)**:
+- Every successful `upsert_cve()` call → `record_updated()`
+- Simple, no pre-read required
+- Semantically a "processed" count, not a true "updated" count
+- EPSS scores change daily for most CVEs, so the distinction is
+  academic in practice
+
+**Option B — Internal diff detection (true update metric)**:
+- Before `upsert_cve()`, read current `CVEEPSSScore` from DB
+- Compare score + percentile with fetched values
+- Fire `record_updated()` only if values differ
+- Adds one SELECT per CVE (or per batch with bulk read)
+
+**Proposal**: Option A. EPSS scores change daily for the vast majority
+of CVEs (the model recalculates all scores every day), so diff detection
+would fire `record_updated` almost every time anyway. The added
+complexity of pre-reads provides no practical value. Document this
+explicitly as a deviation from the common metric semantics: "for EPSS,
+`record_updated` counts every successfully processed CVE, not only those
+whose score actually changed."
+
+**Decision needed**: confirm Option A, or choose Option B.
+
+### OP-10: CVE missing from batch response in `execute()`
+
+When a batch request asks for N CVE-IDs and the response contains M < N
+entries, some CVEs are absent from the response. This is distinct from
+OP-5 (`fetch_single()` handling).
+
+Scenarios for missing CVEs in batch:
+- Very recent CVEs (< 24h) not yet scored by EPSS
+- REJECTED CVEs removed from EPSS coverage
+
+**Proposal**: skip silently — no `record_source_status()`, no
+`record_failed()`, no log. Rationale:
+- These are not errors — the CVE simply has no EPSS data (yet)
+- The next periodic run will retry them automatically
+- Calling `record_source_status(..., "missing")` for every unscored CVE
+  on every run would create noise in `CVESource` for a transient
+  condition
+- In `fetch_single()` (OP-5), `CVENotInSource` IS raised because the
+  orchestrator needs an explicit signal. In `execute()`, no orchestrator
+  exists — the fetcher owns the retry loop
+
+**Decision needed**: confirm skip-silently, or choose to record
+`missing` status.
+
+### OP-11: `assessed_at` staleness validation
+
+The EPSS API includes a `date` field (YYYY-MM-DD) indicating the
+assessment date. Normally this matches the current UTC date (publication
+at 13:31 UTC, fetcher runs at 14:00 UTC). Abnormal scenarios:
+
+- EPSS publication delayed → `date` = yesterday
+- EPSS API serving stale cached data → `date` several days old
+- Fetcher runs before publication (misconfigured schedule) → `date` =
+  yesterday
+
+**Proposal**: log-and-proceed strategy:
+1. After parsing the first batch response, extract the `date` field
+2. If `date < today(UTC) - 1 day` → log WARNING: "EPSS data is stale
+   (assessed_at={date}, expected={today})"
+3. Proceed with the upsert regardless — stale data is better than no
+   data
+4. The `assessed_at` field stored in `CVEEPSSScore` enables the frontend
+   to display a staleness indicator (already specified in
+   `data-model.md` UI display note)
+
+The check runs once per `execute()` invocation (first batch only), not
+per CVE. The threshold of `today - 1 day` accounts for timezone edge
+cases near midnight UTC.
+
+**Decision needed**: confirm log-and-proceed, adjust threshold, or skip
+validation entirely.
+
+### OP-12: HTTP client configuration
+
+The workplan does not specify HTTP client parameters. Other API-based
+fetchers (NVD, RedHat) configure these per-fetcher.
+
+**Proposal**:
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Request timeout | 30s | Batch responses are small (~10KB per 100 CVEs); 30s accommodates slow responses without blocking the worker |
+| Retry | 3 attempts, exponential backoff (1s, 2s, 4s) on 5xx / connection timeout | Standard transient error recovery |
+| User-Agent | `Sentinel/1.0 (EPSS fetcher)` | Courtesy identification for public API |
+
+These values are hardcoded constants (not custom settings), consistent
+with other API-based fetchers. If the fetcher infrastructure provides a
+shared HTTP client with default timeout/retry behavior, EPSS should use
+it and document any overrides.
+
+**Decision needed**: confirm values, or identify shared HTTP client
+infrastructure that already handles these.
+
 ## 6. Application Plan (Steps to Complete the Spec)
 
 ### Session 1: Core design decisions (this session)
@@ -312,18 +424,28 @@ refreshed on ticket reactivation via catch-up).
 - [x] Identify preconcept
 - [x] Cross-check with RedHat fetcher
 - [x] Create this work plan
-- [ ] Resolve Open Points OP-1 through OP-8
+- [ ] Resolve Open Points OP-1 through OP-12
 
 ### Session 2: Write the complete spec
 - [ ] Write the full `cve-sync-epss.md` spec with all mandatory sections:
   - Properties table (with resolved schedule, scope, settings)
   - Algorithm (execute + fetch_single)
   - Error Handling (fetch_single + execute, table format like RedHat)
-  - Metrics
+  - Metrics (with explicit deviation note for `record_updated` semantics)
   - Custom Settings table
   - Field Mapping
   - Explicitly Ignored Fields (EPSS API has `date`, `days`, etc.)
   - Behavioral Notes (data lifecycle, re-invocation, first-run)
+  - First-run behavior: "no special first-run behavior — iterates over
+    all CVEs with active tickets. If no active tickets, completes
+    immediately with zero records" (RedHat pattern)
+  - Statefulness: "stateless fetcher — no cursor. Each run reprocesses
+    the entire in-scope set"
+  - CVE existence precondition: document in `fetch_single()` section that
+    the CVE record is guaranteed to exist by the caller flow
+    (`ensure_cve_exists()` → `trigger_on_demand_fetch()` →
+    `fetch_single()`)
+  - HTTP client configuration (timeout, retry, User-Agent per OP-12)
   - Class Structure (Python skeleton)
   - Cross-references
 
@@ -397,6 +519,7 @@ Before the spec can be moved from draft to approved:
 |------|---------|-----------|
 | 2026-06-21 | #1 | Initial research, API verification, preconcept identified, cross-check with RedHat, work plan created, Open Points defined |
 | 2026-06-21 | #1b | Verified EPSS publication schedule (13:31 UTC daily, 12+ months of evidence). Resolved OP-1 (schedule → `0 14 * * *`). Confirmed `assessed_at` field already modeled correctly. Verified DST immunity (fixed UTC, no shift). Applied cross-cutting timezone enforcement fix to 4 spec files. Updated design decisions table |
+| 2026-06-21 | #1c | Completeness review: added OP-9 (metric semantics reconciliation with `cve-service.md`), OP-10 (batch missing CVEs in `execute()`), OP-11 (`assessed_at` staleness validation), OP-12 (HTTP client configuration). Added first-run behavior, statefulness, and CVE existence precondition to Design Decisions table and Session 2 plan. Updated "What is missing" list |
 | | #2 | (pending) |
 | | #3 | (pending) |
 | | #4 | (pending) |
