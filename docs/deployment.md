@@ -230,7 +230,7 @@ Before the first production deployment:
 - [ ] TLS certificate provisioned for `sentinel.suse.de`
 - [ ] Reverse proxy / ingress configured to route `/api` to backend
 - [ ] Rate limiting configured on the reverse proxy (see
-      `docs/drafts/open-points.md`, section 2)
+      `docs/drafts/open-points.md`, OP-2)
 - [ ] CORS origins set correctly
 - [ ] Log aggregation configured
 - [ ] Backup strategy for PostgreSQL defined

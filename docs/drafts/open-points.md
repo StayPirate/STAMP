@@ -2,9 +2,30 @@
 
 Architectural decisions pending resolution before implementation begins.
 
+## Summary
+
+| ID | Title | Domain | Status |
+|----|-------|--------|--------|
+| OP-1 | Enum Storage Strategy | Data Model | Open |
+| OP-2 | Rate Limiting via Reverse Proxy | Deployment | Open |
+| OP-4 | Anomaly Observer | Packages | Open |
+| OP-6 | Periodic Ticket Status Reconciliation | Tickets | Open |
+| OP-7 | Platform Status Monitoring | Platform | Open |
+| OP-8 | Simplify Duplicate Handling | Tickets | Open |
+| OP-11 | Ecosystem Prefix Mapping | Packages | Open |
+| OP-12 | Fetcher Metrics Granularity | Fetcher Infrastructure | Open |
+| OP-13 | CWE Accumulation | Fetcher Infrastructure | Open |
+| OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
+| OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
+| OP-9 | Remove FetcherRunWeeklyAggregate | — | Resolved |
+| OP-10 | Ecosystem Column on CVEAffectedVersion | — | Resolved |
+| OP-14 | BaseFetcher All-Items-Failed Safety Check | — | Resolved |
+
 ---
 
-## 1. Enum Storage Strategy: PostgreSQL ENUM vs VARCHAR + Python Enum
+## Open — Data Model
+
+### OP-1. Enum Storage Strategy: PostgreSQL ENUM vs VARCHAR + Python Enum
 
 **Origin**: while fixing finding UMGT-API-02 (missing validation for
 invalid role values in `POST /api/v1/admin/users/{user}/roles`), we
@@ -56,7 +77,9 @@ analysis.
 
 ---
 
-## 2. Rate Limiting via Dedicated Reverse Proxy
+## Open — Deployment
+
+### OP-2. Rate Limiting via Dedicated Reverse Proxy
 
 **Origin**: SSO-SEC-02 finding during sso-authentication spec review.
 
@@ -100,89 +123,9 @@ the proxy.
 
 ---
 
-## 3. Orphan CVE Re-Ticketing Mechanism — RESOLVED
+## Open — Tickets
 
-**Resolution**: resolved by the `cve_service` architecture
-(`docs/features/tickets/cve-service.md`). All CVE data now flows
-through `cve_service.upsert_cve()`, which checks for ticket existence
-on every call. Orphaned CVEs (those without a ticket due to data
-inconsistencies) are automatically re-ticketed the next time any fetcher
-processes them (~6 hours). This implements option (A) naturally without a
-dedicated orphan scanner — the check is inherent in the `upsert_cve()`
-contract and serves as a data integrity safeguard.
-
----
-
-## 4. Anomaly Observer Replacing Static Anomaly Matrix
-
-**Origin**: dimension decoupling analysis (C9 — Anomaly matrix,
-Affectedness x Delivery, observational coupling classified as KEEP).
-
-**Context**: the anomaly matrix in `package-model.md:523-558` defines 5
-anomalous combinations of affectedness and delivery as a static table.
-With eligibility decoupled from affectedness, the matrix could be
-extended to include eligibility-related
-anomalies (7+ combinations). The spec notes these are "destined to be
-integrated into the future Review Queue" but no implementation design
-exists.
-
-**Proposed approach**: replace the static matrix with an independent
-Anomaly Observer service — a pure function that reads the current values
-of all three dimensions (affectedness, eligibility, delivery) and
-produces anomaly tags. The observer would be called as a post-mutation
-hook (similar to `reconcile_ticket_status()`) and write results to a
-separate table consumed by the Review Queue UI. It would NEVER modify
-any dimension's state.
-
-**Infrastructure prerequisite**: if the observer needs to detect fixes
-present in codestreams where the track is in a final affectedness status
-(`NOT_AFFECTED`, `WONT_FIX`, or already `FIXED`), the IBS consumer
-(`IBSEventConsumer`) and the periodic fetcher
-(`detect_ibs_track_releases`) would need to be extended to also scan
-final-status tracks. Currently, both filter their scope to tracks with
-`status in (ANALYSIS, AFFECTED)` because the release detector only
-transitions non-final tracks. The anomaly observer would need the raw
-detection signal without the transition, requiring a broader scan scope.
-
-**Use case — rejected automatic transitions**: when `set_track_status()`
-rejects an automatic transition on a final-status track (e.g., IBS
-release detection finds a fix for a track marked `NOT_AFFECTED`), this
-is currently logged as a warning (see `package-service.md`,
-`set_track_status()` step 5). A future Anomaly Observer could consume
-these signals to surface them in the Review Queue as actionable
-anomalies (e.g., "IBS detected a fix in codestream X for track Y, but
-the VA marked it `NOT_AFFECTED` — review recommended"). This would
-replace the passive warning log with an active notification to the VA.
-
-**Decision needed**: (a) timing — implement alongside the Review Queue
-feature or earlier as infrastructure, (b) storage — separate
-`TicketAnomaly` table vs. flags on existing records, (c) whether the
-observer should also detect intra-dimensional anomalies (e.g., a track
-in `FIXED` status whose parent ticket has no CVE), (d) whether to
-extend the IBS consumer and fetcher scan scope immediately (as part of
-the decoupling work) or defer until the observer is implemented.
-
----
-
-## 5. Response Header for Silently Ignored Parameters
-
-**Status**: CLOSED (2026-06-10)
-
-**Resolution**: the Soft Conditional Check pattern and the associated
-response header proposal have been removed from the specifications. The
-only parameter that used the silent-ignore mechanism (`include_deleted`
-on ticket/CVE list endpoints) was removed when ticket soft-deletion was
-eliminated. With zero consumers of the pattern, the header adds
-complexity without value. The entire "Conditional Capability Checks"
-section in `rbac.md` and `api-spec.md` has been removed; the only
-remaining field-level capability pattern (Hard Conditional / `†`) is
-self-explanatory and documented inline in the Endpoint Permission Map
-legend. If a similar need arises in the future, the pattern can be
-re-introduced with a fresh design.
-
----
-
-## 6. Periodic Ticket Status Reconciliation as Drift Detection
+### OP-6. Periodic Ticket Status Reconciliation as Drift Detection
 
 **Origin**: analysis of TKM-DES-07 (race window between
 `deactivate_user` and concurrent ticket mutations) and broader
@@ -231,74 +174,7 @@ the audit trail).
 
 ---
 
-## 7. Platform Status Monitoring — System Info Endpoint and Admin Page
-
-**Origin**: CPE-to-Package mapping v2 draft
-(`docs/drafts/cpe-package-mapping-v2.md`) — the static mapping file is
-loaded once at application startup with no runtime observability. An
-administrator has no way to verify the mapping is correctly loaded or
-how many entries it contains.
-
-**Context**: Sentinel currently has no system info or diagnostics
-surface beyond the minimal `/health` liveness endpoint. The fetcher
-dashboard monitors `BaseFetcher` subclasses with execution lifecycle
-(runs, metrics, schedules), but infrastructure components that are not
-fetchers — such as in-memory static data, connection pools, or loaded
-configuration — have no monitoring surface.
-
-The CPE mapping dict (~2,450 entries, ~2,800 package mappings) is the
-first concrete case, but the need is broader: any static data loaded at
-startup, future sync diagnostics (referenced in
-`ibs-product-release-detection.md`), and general platform health
-indicators would benefit from a dedicated monitoring area.
-
-**Proposed approach**: two complementary mechanisms (not mutually
-exclusive):
-
-**(A) Lightweight public endpoint** — `GET /api/v1/system/info`
-
-A public read-only endpoint that reports the status of loaded
-infrastructure components. Initial payload:
-
-```json
-{
-  "data": {
-    "cpe_mapping": {
-      "loaded": true,
-      "entry_count": 2453,
-      "package_count": 2810
-    }
-  }
-}
-```
-
-Follows the IBS consumer status pattern (`GET
-/api/v1/ibs-consumer/status`) — a non-fetcher infrastructure
-component reporting its state via a dedicated endpoint. Useful for
-API consumers, health checks, and automated monitoring.
-
-**(C) Dedicated System Info admin page**
-
-A new page in the admin area (sidebar item under Admin Settings) backed
-by `GET /api/v1/admin/system-info`. Shows platform status information
-with admin-only details (file paths, version info, loaded module
-diagnostics). Room for growth: future sync diagnostics, data freshness
-indicators, dependency health.
-
-Options A and C can coexist: A provides a public API surface for
-monitoring tools and scripts, C provides a richer admin UI with
-additional detail. The public endpoint exposes a subset of the
-information available on the admin page.
-
-**Decision needed**: (a) whether to implement A alone first (minimal
-scope) or A+C together, (b) which additional platform components
-beyond CPE mapping should be included in the initial version, (c)
-capability requirement for the admin page (reuse `manage_settings`
-or a new `view_system_info` capability).
-
----
-
-## 8. Simplify Duplicate Handling — Eliminate Chains
+### OP-8. Simplify Duplicate Handling — Eliminate Chains
 
 **Origin**: architectural simplification review (pre-implementation
 phase).
@@ -372,38 +248,60 @@ could detect and show a warning in the UI without breaking correctness).
 
 ---
 
-## 9. Remove FetcherRunWeeklyAggregate Table
+## Open — Packages
 
-**Status**: RESOLVED
+### OP-4. Anomaly Observer Replacing Static Anomaly Matrix
 
-**Decision**: Accepted. Removed `FetcherRunWeeklyAggregate` and
-`aggregate_fetcher_runs` entirely. `FetcherRun` records are retained
-indefinitely (~20k rows/year, negligible for PostgreSQL). No cleanup task
-or retention policy is needed. See
-`docs/drafts/remove-fetcher-run-aggregation.md` for rationale.
+**Origin**: dimension decoupling analysis (C9 — Anomaly matrix,
+Affectedness x Delivery, observational coupling classified as KEEP).
+
+**Context**: the anomaly matrix in `package-model.md:523-558` defines 5
+anomalous combinations of affectedness and delivery as a static table.
+With eligibility decoupled from affectedness, the matrix could be
+extended to include eligibility-related
+anomalies (7+ combinations). The spec notes these are "destined to be
+integrated into the future Review Queue" but no implementation design
+exists.
+
+**Proposed approach**: replace the static matrix with an independent
+Anomaly Observer service — a pure function that reads the current values
+of all three dimensions (affectedness, eligibility, delivery) and
+produces anomaly tags. The observer would be called as a post-mutation
+hook (similar to `reconcile_ticket_status()`) and write results to a
+separate table consumed by the Review Queue UI. It would NEVER modify
+any dimension's state.
+
+**Infrastructure prerequisite**: if the observer needs to detect fixes
+present in codestreams where the track is in a final affectedness status
+(`NOT_AFFECTED`, `WONT_FIX`, or already `FIXED`), the IBS consumer
+(`IBSEventConsumer`) and the periodic fetcher
+(`detect_ibs_track_releases`) would need to be extended to also scan
+final-status tracks. Currently, both filter their scope to tracks with
+`status in (ANALYSIS, AFFECTED)` because the release detector only
+transitions non-final tracks. The anomaly observer would need the raw
+detection signal without the transition, requiring a broader scan scope.
+
+**Use case — rejected automatic transitions**: when `set_track_status()`
+rejects an automatic transition on a final-status track (e.g., IBS
+release detection finds a fix for a track marked `NOT_AFFECTED`), this
+is currently logged as a warning (see `package-service.md`,
+`set_track_status()` step 5). A future Anomaly Observer could consume
+these signals to surface them in the Review Queue as actionable
+anomalies (e.g., "IBS detected a fix in codestream X for track Y, but
+the VA marked it `NOT_AFFECTED` — review recommended"). This would
+replace the passive warning log with an active notification to the VA.
+
+**Decision needed**: (a) timing — implement alongside the Review Queue
+feature or earlier as infrastructure, (b) storage — separate
+`TicketAnomaly` table vs. flags on existing records, (c) whether the
+observer should also detect intra-dimensional anomalies (e.g., a track
+in `FIXED` status whose parent ticket has no CVE), (d) whether to
+extend the IBS consumer and fetcher scan scope immediately (as part of
+the decoupling work) or defer until the observer is implemented.
 
 ---
 
-## 10. Ecosystem Column on CVEAffectedVersion
-
-**Status**: **Resolved** (2026-06-19)
-
-**Resolution**: `ecosystem VARCHAR(50)` nullable column added to
-`CVEAffectedVersion` (see `docs/data-model.md`). Populated by
-`sync_osv_advisories` (canonical OSV/OSSF values) and
-`sync_ghsa_advisories` (normalized from GitHub names via mapping dict).
-The column was justified by: (a) both OSV and GHSA fetchers populate it,
-(b) it enables ecosystem-aware display and filtering in the UI,
-(c) it is a prerequisite for OP-11 (Ecosystem Prefix Mapping).
-
-See:
-- `docs/features/tickets/cve-sync-osv.md` (Fetcher: `sync_osv_advisories` — Ecosystem normalization)
-- `docs/features/tickets/cve-sync-ghsa.md` (Fetcher: `sync_ghsa_advisories` — Ecosystem normalization)
-- `docs/data-model.md` (CVEAffectedVersion table)
-
----
-
-## 11. Ecosystem Prefix Mapping for Package Resolution
+### OP-11. Ecosystem Prefix Mapping for Package Resolution
 
 **Origin**: GHSA fetcher spec (OP-9 follow-up), Session 2 (2026-06-18)
 
@@ -424,9 +322,9 @@ resolution (e.g., `pip:requests` → `python-requests`, `npm:node-forge` →
 would be a simple dict in the fetcher or a shared module.
 
 **Prerequisite satisfied**: the `ecosystem` column on
-`CVEAffectedVersion` is now in place (see OP-10 resolution above). The
-ecosystem context needed for prefix mapping is available in the data
-model.
+`CVEAffectedVersion` is now in place (see OP-10 resolution in Archive
+section). The ecosystem context needed for prefix mapping is available
+in the data model.
 
 **Decision needed**: is the additional hit rate worth the mapping
 maintenance burden? Revisit when: (a) GHSA and OSV hit rate is measured
@@ -436,7 +334,9 @@ ROI.
 
 ---
 
-## 12. Fetcher Metrics — Granularity and Semantics
+## Open — Fetcher Infrastructure
+
+### OP-12. Fetcher Metrics — Granularity and Semantics
 
 **Origin**: OSV fetcher spec (Session 5, 2026-06-19)
 
@@ -470,7 +370,7 @@ size makes unnecessary writes a performance concern.
 
 ---
 
-## 13. CWE Accumulation — Stale Records from Additive-Only Upsert
+### OP-13. CWE Accumulation — Stale Records from Additive-Only Upsert
 
 **Origin**: CISA KEV fetcher spec review (Session 4, 2026-06-20)
 
@@ -512,9 +412,134 @@ classifications are used for automated triage/routing.
 
 ---
 
-## 14. BaseFetcher All-Items-Failed Safety Check
+## Open — Platform
 
-**Status**: RESOLVED (2026-06-20)
+### OP-7. Platform Status Monitoring — System Info Endpoint and Admin Page
+
+**Origin**: CPE-to-Package mapping v2 draft
+(`docs/drafts/cpe-package-mapping-v2.md`) — the static mapping file is
+loaded once at application startup with no runtime observability. An
+administrator has no way to verify the mapping is correctly loaded or
+how many entries it contains.
+
+**Context**: Sentinel currently has no system info or diagnostics
+surface beyond the minimal `/health` liveness endpoint. The fetcher
+dashboard monitors `BaseFetcher` subclasses with execution lifecycle
+(runs, metrics, schedules), but infrastructure components that are not
+fetchers — such as in-memory static data, connection pools, or loaded
+configuration — have no monitoring surface.
+
+The CPE mapping dict (~2,450 entries, ~2,800 package mappings) is the
+first concrete case, but the need is broader: any static data loaded at
+startup, future sync diagnostics (referenced in
+`ibs-product-release-detection.md`), and general platform health
+indicators would benefit from a dedicated monitoring area.
+
+**Proposed approach**: two complementary mechanisms (not mutually
+exclusive):
+
+**(A) Lightweight public endpoint** — `GET /api/v1/system/info`
+
+A public read-only endpoint that reports the status of loaded
+infrastructure components. Initial payload:
+
+```json
+{
+  "data": {
+    "cpe_mapping": {
+      "loaded": true,
+      "entry_count": 2453,
+      "package_count": 2810
+    }
+  }
+}
+```
+
+Follows the IBS consumer status pattern (`GET
+/api/v1/ibs-consumer/status`) — a non-fetcher infrastructure
+component reporting its state via a dedicated endpoint. Useful for
+API consumers, health checks, and automated monitoring.
+
+**(C) Dedicated System Info admin page**
+
+A new page in the admin area (sidebar item under Admin Settings) backed
+by `GET /api/v1/admin/system-info`. Shows platform status information
+with admin-only details (file paths, version info, loaded module
+diagnostics). Room for growth: future sync diagnostics, data freshness
+indicators, dependency health.
+
+Options A and C can coexist: A provides a public API surface for
+monitoring tools and scripts, C provides a richer admin UI with
+additional detail. The public endpoint exposes a subset of the
+information available on the admin page.
+
+**Decision needed**: (a) whether to implement A alone first (minimal
+scope) or A+C together, (b) which additional platform components
+beyond CPE mapping should be included in the initial version, (c)
+capability requirement for the admin page (reuse `manage_settings`
+or a new `view_system_info` capability).
+
+---
+
+## Archive — Resolved
+
+### OP-3. Orphan CVE Re-Ticketing Mechanism — RESOLVED
+
+**Resolution**: resolved by the `cve_service` architecture
+(`docs/features/tickets/cve-service.md`). All CVE data now flows
+through `cve_service.upsert_cve()`, which checks for ticket existence
+on every call. Orphaned CVEs (those without a ticket due to data
+inconsistencies) are automatically re-ticketed the next time any fetcher
+processes them (~6 hours). This implements option (A) naturally without a
+dedicated orphan scanner — the check is inherent in the `upsert_cve()`
+contract and serves as a data integrity safeguard.
+
+---
+
+### OP-5. Response Header for Silently Ignored Parameters — CLOSED (2026-06-10)
+
+**Resolution**: the Soft Conditional Check pattern and the associated
+response header proposal have been removed from the specifications. The
+only parameter that used the silent-ignore mechanism (`include_deleted`
+on ticket/CVE list endpoints) was removed when ticket soft-deletion was
+eliminated. With zero consumers of the pattern, the header adds
+complexity without value. The entire "Conditional Capability Checks"
+section in `rbac.md` and `api-spec.md` has been removed; the only
+remaining field-level capability pattern (Hard Conditional / `†`) is
+self-explanatory and documented inline in the Endpoint Permission Map
+legend. If a similar need arises in the future, the pattern can be
+re-introduced with a fresh design.
+
+---
+
+### OP-9. Remove FetcherRunWeeklyAggregate Table — RESOLVED
+
+**Decision**: Accepted. Removed `FetcherRunWeeklyAggregate` and
+`aggregate_fetcher_runs` entirely. `FetcherRun` records are retained
+indefinitely (~20k rows/year, negligible for PostgreSQL). No cleanup task
+or retention policy is needed. See
+`docs/drafts/remove-fetcher-run-aggregation.md` for rationale.
+
+---
+
+### OP-10. Ecosystem Column on CVEAffectedVersion — RESOLVED (2026-06-19)
+
+**Resolution**: `ecosystem VARCHAR(50)` nullable column added to
+`CVEAffectedVersion` (see `docs/data-model.md`). Populated by
+`sync_osv_advisories` (canonical OSV/OSSF values) and
+`sync_ghsa_advisories` (normalized from GitHub names via mapping dict).
+The column was justified by: (a) both OSV and GHSA fetchers populate it,
+(b) it enables ecosystem-aware display and filtering in the UI,
+(c) it is a prerequisite for OP-11 (Ecosystem Prefix Mapping).
+
+See:
+- `docs/features/tickets/cve-sync-osv.md` (Fetcher: `sync_osv_advisories` — Ecosystem normalization)
+- `docs/features/tickets/cve-sync-ghsa.md` (Fetcher: `sync_ghsa_advisories` — Ecosystem normalization)
+- `docs/data-model.md` (CVEAffectedVersion table)
+
+---
+
+### OP-14. BaseFetcher All-Items-Failed Safety Check — RESOLVED (2026-06-20)
 
 **Resolution**: promoted the all-items-failed safety check from
 `BaseGitFetcher.execute()` (step 11) to `BaseFetcher.run()`. When
