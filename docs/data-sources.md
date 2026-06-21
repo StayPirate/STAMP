@@ -135,7 +135,8 @@ vulnerability is being actively used by threat actors.
   No authentication required, no significant rate limits. Single file
   (~1.5MB), complete download each sync
 - **Integration status**: **Specified**. `sync_cisa_kev` fetcher.
-  Schedule: every 6 hours (`0 1,7,13,19 * * *`). Data is stored in the
+  Schedule: 4x daily (`0 4,10,18,22 * * *`), aligned to CISA US Eastern
+  business-hours publication window. Data is stored in the
   `CVEKEVEntry` table (date_added, reference_url) and `CVECWE` table
   (CWE classifications with `source="CISA KEV"`). KEV reference URLs
   are also stored as `TicketReference` entries
@@ -966,7 +967,7 @@ feature documentation (not its implementation status):
 | `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping | [ad-integration.md](features/identity/ad-integration.md#fetcher-sync_ldap_directory) | Partial |
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Partial |
 | `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
-| `sync_cisa_kev` | CISA KEV | Every 6 hours (`0 1,7,13,19 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |
+| `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |
 | `sync_epss_scores` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | [cve-sync-epss.md](features/tickets/cve-sync-epss.md#fetcher-definition) | TBD |
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), resolved packages (best-effort SMELT), references | [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md#fetcher-definition) | Complete |
 | `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution. `source_container = "cna"` | [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md#fetcher-definition) | Complete |
