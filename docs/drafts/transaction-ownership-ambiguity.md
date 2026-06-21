@@ -269,8 +269,9 @@ must be corrected.
 |------|-----------------|
 | `cve-sync-redhat.md` | Update `execute()` pseudocode: add `commit_and_dispatch()`, fix `fetch_single()` return type. **Fix inconsistency**: line 264 declares `-> None` but line 282 uses `result.data_changed` — see section 5.4 |
 | `cve-sync-osv.md` | Update `execute()` pseudocode: add `commit_and_dispatch()`, update `fetch_single()` return type |
-| `cve-sync-nvd.md` | Add per-CVE `commit_and_dispatch()` to per-CVE processing within page loop |
-| `cve-sync-ghsa.md` | Add `commit_and_dispatch()` after `upsert_cve()` + `upsert_references()` in per-advisory step |
+| `cve-sync-nvd.md` | (1) Update `fetch_single()` signature from `-> None` to `-> PostIngestTasks \| None` (line 59). (2) Add full per-CVE transaction pattern in `execute()` page loop: `upsert_cve()` → `upsert_references()` → `build_post_ingest_tasks()` → `commit_and_dispatch()`. (3) Add `session.rollback()` in per-CVE error path. (4) Update Phase 2 text (line 172): replace "enqueued by `cve_service` after Phase 1 commit" with "dispatched by the fetcher via `commit_and_dispatch()` after per-CVE commit" |
+| `cve-sync-ghsa.md` | (1) Update `fetch_single()` signature from `-> None` to `-> PostIngestTasks \| None` (line 47). (2) Add full per-advisory transaction pattern in `execute()` page loop: `upsert_cve()` → `upsert_references()` → `build_post_ingest_tasks()` → `commit_and_dispatch()`. (3) Add `session.rollback()` in per-advisory error path. (4) Update Phase 2 text (line 178): same as NVD |
+| `cve-sync-kev.md` | (1) Add full per-entry transaction pattern: CVE lookup → `upsert_cve()` → `upsert_references()` → `build_post_ingest_tasks()` → `commit_and_dispatch()`. (2) Replace error handling steps 3e/3f: remove `record_source_status("failure")`, add `session.rollback()` → `record_failed()` → continue. (3) No `fetch_single()` changes needed (`supports_fetch_single = False`) |
 | `cve-sync-mitre.md` | Update "Phase 2 side effects" text: replace "enqueued by `cve_service` after Phase 1 commit" with "dispatched by `BaseGitFetcher` template via `commit_and_dispatch()`" |
 | `cve-sync-kernel.md` | Same as mitre |
 
@@ -477,23 +478,66 @@ async def execute(self, session: AsyncSession) -> None:
 
 ### Step 6: Update individual fetcher specs
 
+**Pattern B — Enrichment fetchers (delegate to `fetch_single()` in execute):**
+
 1. **`cve-sync-redhat.md`**: fix return type inconsistency (section
    5.4), update `execute()` pseudocode with `commit_and_dispatch()`,
-   move metric recording inside `fetch_single()`
+   move metric recording inside `fetch_single()`. The `execute()` loop
+   becomes: `post_ingest = await self.fetch_single(...)` →
+   `await self.commit_and_dispatch(session, post_ingest)`. Error path:
+   `session.rollback()` → `record_failed()`.
 
-2. **`cve-sync-osv.md`**: update `execute()` pseudocode with
-   `commit_and_dispatch()`, update `fetch_single()` return type
+2. **`cve-sync-osv.md`**: same pattern as RedHat — update
+   `fetch_single()` return type, add `commit_and_dispatch()` in loop,
+   add `session.rollback()` in error path.
 
-3. **`cve-sync-nvd.md`**: add per-CVE `commit_and_dispatch()` call
-   within page processing loop
+**Pattern A — Discovery fetchers (inline `upsert_cve()` in execute):**
 
-4. **`cve-sync-ghsa.md`**: add `commit_and_dispatch()` after
-   `upsert_cve()` + `upsert_references()` in per-advisory step
+3. **`cve-sync-nvd.md`**:
+   - Update `fetch_single()` signature (line 59): `-> PostIngestTasks | None`
+   - Add full per-CVE transaction pattern in the page loop (step 4e):
+     ```
+     result = await upsert_cve(session, cve_id, "nvd", payload)
+     await upsert_references(session, ...)
+     post_ingest = build_post_ingest_tasks(result, payload)
+     await self.commit_and_dispatch(session, post_ingest)
+     # record_created/record_updated based on result.action
+     ```
+   - Add error path per-CVE: `await session.rollback()` →
+     `record_failed()` → continue to next CVE
+   - Update "Phase 2 side effects" text (line 172)
 
-5. **`cve-sync-mitre.md`**: update Phase 2 text to reference
-   `BaseGitFetcher` template and `commit_and_dispatch()`
+4. **`cve-sync-ghsa.md`**:
+   - Update `fetch_single()` signature (line 47): `-> PostIngestTasks | None`
+   - Add full per-advisory transaction pattern (step 6.d after iv+v):
+     same as NVD inline pattern
+   - Add error path per-advisory (step 6.d.vii): `session.rollback()` →
+     `record_failed()` → continue
+   - Update "Phase 2 side effects" text (line 178)
 
-6. **`cve-sync-kernel.md`**: same as mitre
+**Pattern D — Catalog fetcher (inline `upsert_cve()`, no fetch_single):**
+
+5. **`cve-sync-kev.md`**:
+   - Add full per-entry transaction pattern in step 3d:
+     ```
+     result = await upsert_cve(session, cve_id, "kev", payload)
+     await upsert_references(session, ...)  # if ticket exists
+     post_ingest = build_post_ingest_tasks(result, payload)
+     await self.commit_and_dispatch(session, post_ingest)
+     record_updated()
+     ```
+   - Replace error handling steps 3e/3f: remove
+     `record_source_status("failure")`, add `session.rollback()` →
+     `record_failed()` → continue
+   - No `fetch_single()` changes (not implemented)
+
+**Pattern C — Git-based fetchers (BaseGitFetcher template):**
+
+6. **`cve-sync-mitre.md`**: update Phase 2 text to reference
+   `BaseGitFetcher` template and `commit_and_dispatch()`. No pseudocode
+   changes needed — the template handles commit/dispatch automatically.
+
+7. **`cve-sync-kernel.md`**: same as mitre
 
 ### Step 7: Validate coherence
 
@@ -522,3 +566,4 @@ Invoke `@spec-coherence-reviewer` on the primary modified specs:
 |------|-----------|
 | 2026-06-21 | Initial analysis during EPSS draft work. Identified ambiguity, collected evidence from all fetcher specs, documented three possible architectures (A: service commits, B: caller commits with hooks, C: infrastructure template) |
 | 2026-06-21 | Deep analysis session. Evaluated 5 architectural solutions (pure caller, orchestrator wrapper, after_commit hooks, outbox pattern, unified template). Rejected after_commit hooks (rollback semantics issue), outbox (unnecessary complexity), and full template (API fetchers too diverse). Decided on pure service + explicit `commit_and_dispatch()` helper. Resolved OQ-1 (helper method, not template) and OQ-2 (same transaction — `upsert_references()` failure modes are all internal). Discovered `cve-sync-redhat.md` return type inconsistency. Discovered `ticket-references.md` "separate transaction" statement needs correction. Formulated 7-step resolution plan. Resolved OQ-3: `record_source_status("failure")` removed from `execute()` batch path — rollback preserves previous CVESource state naturally; explicit failure writes only needed in on-demand path for user feedback. KEV's explicit failure write was based on incorrect architectural assumption. All open questions resolved |
+| 2026-06-21 | Fetcher alignment verification. Categorized all 7 CVE fetchers into 4 patterns (A: discovery/inline, B: enrichment/delegate, C: git-based/template, D: catalog). Identified missing changes in draft for NVD and GHSA (fetch_single return type, build_post_ingest_tasks in inline flow, session.rollback in error path, Phase 2 text). Expanded Step 6 with per-pattern instructions and inline code examples. Confirmed that manual-vs-scheduled distinction for Pattern B fetchers (RedHat, OSV) is handled entirely by the caller's error handling — `fetch_single()` itself is context-agnostic |
