@@ -181,7 +181,7 @@ BaseFetcher) cannot use the template, creating two parallel patterns.
 |-----------|----------------|
 | `upsert_cve(session, ...)` → `UpsertResult` | Phase 1: writes CVE + children + CVESource + ticket to session buffer. Does NOT commit, roll back, or enqueue. |
 | `build_post_ingest_tasks(result, payload)` → `PostIngestTasks \| None` | Stateless helper: constructs Celery task args for post-ingest dispatch. Returns `None` if no ticket or no package data. |
-| `BaseCVEFetcher.commit_and_dispatch(session, post_ingest)` | Helper method: commits the session, then dispatches post-ingest tasks (if any). Standard per-CVE finalization. |
+| `BaseCVEFetcher.commit_and_dispatch(session, post_ingest)` | Helper method: commits the session, then dispatches post-ingest tasks (if any). Standard per-CVE finalization. If `post_ingest` is `None`, commits without dispatching. If `apply_async()` raises after a successful commit (e.g., Celery broker unreachable), the error is logged at WARNING level and the function returns normally — Phase 2 recovery relies on the next sync cycle (see `cve-service.md`, Crash Recovery). |
 | `fetch_single(cve_id, session)` → `PostIngestTasks \| None` | Fetches from external source, calls `upsert_cve()` + `upsert_references()`, records metrics, returns pre-built post-ingest args. |
 | `process_item(path, content, session)` → `PostIngestTasks \| None` | Same as `fetch_single` but for git-based fetchers. Parses file content, calls `upsert_cve()` + `upsert_references()`, records metrics, returns post-ingest args. |
 
@@ -204,6 +204,15 @@ This applies to:
 - BaseGitFetcher template per-item step (`self.commit_and_dispatch`)
 - `fetch_single_cve` Celery task (`fetcher.commit_and_dispatch`)
 - `catch_up()` default implementation (`self.commit_and_dispatch`)
+
+**Non-success paths also use `commit_and_dispatch()`**: when
+`fetch_single()` raises `CVENotInSource`, the orchestrator writes
+`record_source_status("missing")` and then calls
+`commit_and_dispatch(session, None)` — the helper commits the session
+(persisting the "missing" status) and skips dispatch (since
+`post_ingest` is `None`). The same applies to the "failure" path after
+retry exhaustion. This avoids introducing a secondary bare
+`session.commit()` pattern alongside the helper.
 
 ### 4.5 Naming convention
 
@@ -257,6 +266,10 @@ must be corrected.
 | `fetcher-infrastructure.md` | `BaseGitFetcher` `execute()` step 10 | Update: `process_item()` returns `PostIngestTasks \| None`, template calls `commit_and_dispatch()` |
 | `fetcher-infrastructure.md` | `process_item()` hook | Change return type from `-> None` to `-> PostIngestTasks \| None` |
 | `fetcher-infrastructure.md` | `catch_up()` default | Add `commit_and_dispatch()` after `fetch_single()` |
+| `fetcher-infrastructure.md` | `catch_up()` interface contract (lines 750-757) | Update "commits on return" phrasing: the default `catch_up()` now commits internally via `commit_and_dispatch()`, not via `run_catch_up` on return |
+| `fetcher-infrastructure.md` | `BaseCVEFetcher` Non-Modification Statement (lines 1392-1403) | Add `commit_and_dispatch()` to the list of concrete methods provided by `BaseCVEFetcher` |
+| `fetcher-infrastructure.md` | `BaseFetcher.run()` session description (lines 47-50) | Add clarification: "The session passed to `execute()` may be committed and rolled back multiple times (per-item transaction boundaries)" — pre-existing for git-based fetchers, now formalized for API-based |
+| `fetcher-infrastructure.md` | `process_item()` hook documentation (lines 2137-2159) | Disambiguate `None` return: (a) item was skipped (already up-to-date, no work done), vs. (b) item was processed but no post-ingest tasks are needed (e.g., enrichment-only upsert with no ticket or no CPE data). Both cases result in `commit_and_dispatch(session, None)` — commit without dispatch |
 | `cve-tracking.md` | `fetch_single_cve` orchestrator | Add explicit commit/rollback/dispatch steps |
 | `cve-tracking.md` | Common CVE Fetcher Error Handling | Add rollback + per-CVE commit to the error handling pattern |
 | `cve-sync-kev.md` | Per-entry isolation (line 108) | Replace "managed internally by `upsert_cve()`" with accurate description |
@@ -405,26 +418,50 @@ async def execute(self, session: AsyncSession) -> None:
    - On exception: `session.rollback()`, `record_failed()`
 
 6. Update `process_item()` hook contract:
-   - Return type from `-> None` to `-> PostIngestTasks | None`
-   - Subclass calls `upsert_cve()` + `upsert_references()` +
-     `build_post_ingest_tasks()` internally
-   - Subclass records metrics internally (`record_created`/
-     `record_updated` where `UpsertResult.action` is available)
+    - Return type from `-> None` to `-> PostIngestTasks | None`
+    - Disambiguate `None` return: (a) item was skipped (already
+      up-to-date, no work done), vs. (b) item was processed but no
+      post-ingest tasks are needed (e.g., enrichment-only upsert with
+      no ticket or no CPE data). Both cases result in
+      `commit_and_dispatch(session, None)` — commit without dispatch
+    - Subclass calls `upsert_cve()` + `upsert_references()` +
+      `build_post_ingest_tasks()` internally
+    - Subclass records metrics internally (`record_created`/
+      `record_updated` where `UpsertResult.action` is available)
 
 7. Update `catch_up()` default implementation:
-   - After `self.fetch_single()`, call
-     `self.commit_and_dispatch(session, result)`
+    - After `self.fetch_single()`, call
+      `self.commit_and_dispatch(session, result)`
+
+8. Update `catch_up()` interface contract (lines 750-757):
+    - Replace "commits on return" with explicit statement: the default
+      `catch_up()` commits internally via `commit_and_dispatch()`, not
+      via `run_catch_up` on return
+
+9. Update `BaseCVEFetcher` Non-Modification Statement (lines 1392-1403):
+    - Add `commit_and_dispatch()` to the list of concrete methods
+      provided by `BaseCVEFetcher`
+
+10. Update `BaseFetcher.run()` session description (lines 47-50):
+    - Add clarification: "The session passed to `execute()` may be
+      committed and rolled back multiple times (per-item transaction
+      boundaries)." This was already true for git-based fetchers; the
+      change formalizes it for API-based fetchers as well
 
 ### Step 3: Update `cve-tracking.md`
 
 1. Rewrite `fetch_single_cve` Orchestrator Behavior with explicit
-   commit/rollback/dispatch:
-   - Success → `fetcher.commit_and_dispatch(session, result)`
-   - `CVENotInSource` → `record_source_status("missing")`, commit
-   - Retryable error → rollback, Celery retry; after exhaustion →
-     `record_source_status("failure")`, commit
-   - Non-retryable error → rollback,
-     `record_source_status("failure")`, commit
+    commit/rollback/dispatch:
+    - Success → `fetcher.commit_and_dispatch(session, result)`
+    - `CVENotInSource` → `record_source_status("missing")`,
+      `fetcher.commit_and_dispatch(session, None)` (commits the
+      "missing" status, skips dispatch)
+    - Retryable error → rollback, Celery retry; after exhaustion →
+      `record_source_status("failure")`,
+      `fetcher.commit_and_dispatch(session, None)`
+    - Non-retryable error → rollback,
+      `record_source_status("failure")`,
+      `fetcher.commit_and_dispatch(session, None)`
 
 2. Update Common CVE Fetcher Error Handling:
    - Remove `record_source_status("failure")` requirement from the
@@ -548,6 +585,30 @@ Invoke `@spec-coherence-reviewer` on the primary modified specs:
 - `cve-sync-kev.md`
 - `ticket-references.md`
 
+### Step 8: Post-application review
+
+Run the appropriate reviewers on each modified spec to verify that the
+draft was applied correctly and no new issues were introduced:
+
+- `@spec-coherence-reviewer` — one session per primary modified spec
+  (same list as Step 7) to verify inter-spec consistency after all
+  changes are in place
+- `@spec-gap-analyzer` — on `cve-service.md` and
+  `fetcher-infrastructure.md` (the two specs with the most structural
+  changes) to verify functional completeness of the new sections
+- `@docs-reviewer` — on `cve-service.md` and
+  `fetcher-infrastructure.md` to verify documentation accuracy and
+  completeness
+
+If any reviewer identifies "Needs revision" issues, address them before
+proceeding to Step 9.
+
+### Step 9: Delete draft
+
+Delete `docs/drafts/transaction-ownership-ambiguity.md`. The draft has
+served its purpose — the architecture decision and all changes are now
+captured in the authoritative feature specifications.
+
 ## 7. Open Questions
 
 ### Resolved
@@ -567,3 +628,4 @@ Invoke `@spec-coherence-reviewer` on the primary modified specs:
 | 2026-06-21 | Initial analysis during EPSS draft work. Identified ambiguity, collected evidence from all fetcher specs, documented three possible architectures (A: service commits, B: caller commits with hooks, C: infrastructure template) |
 | 2026-06-21 | Deep analysis session. Evaluated 5 architectural solutions (pure caller, orchestrator wrapper, after_commit hooks, outbox pattern, unified template). Rejected after_commit hooks (rollback semantics issue), outbox (unnecessary complexity), and full template (API fetchers too diverse). Decided on pure service + explicit `commit_and_dispatch()` helper. Resolved OQ-1 (helper method, not template) and OQ-2 (same transaction — `upsert_references()` failure modes are all internal). Discovered `cve-sync-redhat.md` return type inconsistency. Discovered `ticket-references.md` "separate transaction" statement needs correction. Formulated 7-step resolution plan. Resolved OQ-3: `record_source_status("failure")` removed from `execute()` batch path — rollback preserves previous CVESource state naturally; explicit failure writes only needed in on-demand path for user feedback. KEV's explicit failure write was based on incorrect architectural assumption. All open questions resolved |
 | 2026-06-21 | Fetcher alignment verification. Categorized all 7 CVE fetchers into 4 patterns (A: discovery/inline, B: enrichment/delegate, C: git-based/template, D: catalog). Identified missing changes in draft for NVD and GHSA (fetch_single return type, build_post_ingest_tasks in inline flow, session.rollback in error path, Phase 2 text). Expanded Step 6 with per-pattern instructions and inline code examples. Confirmed that manual-vs-scheduled distinction for Pattern B fetchers (RedHat, OSV) is handled entirely by the caller's error handling — `fetch_single()` itself is context-agnostic |
+| 2026-06-21 | Design review + spec coherence review. Design reviewer verdict: minor concerns — architecture is sound. Adopted recommendation: specified `commit_and_dispatch()` behavior on Celery dispatch failure (log WARNING, return normally, rely on next sync for Phase 2 recovery). Spec coherence reviewer verdict: minor issues — all major contradictions properly tracked. Integrated 4 previously untracked areas in `fetcher-infrastructure.md`: (1) `catch_up()` interface contract "commits on return" phrasing, (2) `BaseCVEFetcher` Non-Modification Statement missing `commit_and_dispatch()`, (3) `process_item()` `None` return ambiguity (skipped vs. no post-ingest), (4) `BaseFetcher.run()` session description per-item commit clarification. Clarified universal caller pattern: `CVENotInSource` and failure paths use `commit_and_dispatch(session, None)` instead of bare `session.commit()` |
