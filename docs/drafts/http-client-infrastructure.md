@@ -50,7 +50,16 @@ Additionally, these components make HTTP requests but are NOT
 | `IBSEventConsumer` | IBS API (via `IBSClient`) | HTTP Basic Auth | `integrations/ibs-rabbitmq-integration.md` |
 | `create_ticket_from_detection` | NVD API (via `fetch_single`) | API key | `integrations/ibs-integration.md` |
 
-## Open Points
+---
+
+## HTTP Client Defaults (Quick-Resolution Group)
+
+These open points have answers that are largely dictated by standard
+HTTP best practices. They are grouped here for efficient review — each
+includes a "Deduction" section summarizing why the recommended option
+is nearly certain, so the final decision can be made quickly.
+
+---
 
 ### OP-1: User-Agent header
 
@@ -103,9 +112,280 @@ Composition is automatic — fetcher authors do nothing.
 
 **Recommendation**: Option C.
 
+**Deduction**: the `name` attribute is already mandatory and unique per
+fetcher (BaseFetcher contract). httpx allows setting `User-Agent` at
+client instantiation level — zero per-fetcher effort. Exposing generic
+descriptive names like `sync_nvd_cves` to external providers carries no
+security risk. NVD documentation explicitly recommends application
+identification for favorable rate limits. Option C is the only option
+that provides both global identity and per-fetcher granularity with zero
+author effort.
+
 **Status**: `open`
 
 **Resolution**: —
+
+---
+
+### OP-5: HTTP response compression (Accept-Encoding)
+
+**Problem**: no fetcher spec mentions HTTP response compression. Some
+fetchers download substantial payloads (NVD pages up to 2000 CVEs,
+KEV full catalog, IBS `updateinfo.xml` files). Enabling compression
+could significantly reduce bandwidth and transfer time.
+
+**Current state in specs**: no mention of `Accept-Encoding`, `gzip`,
+or `deflate` in any fetcher spec. The only compression reference is
+in `ibs-rabbitmq-integration.md:29` regarding `updateinfo.xml`
+decompression (different context — that is gzip-compressed at the
+repository level, not HTTP-level compression).
+
+**Options**:
+
+**A) Enable by default in shared client**
+
+The shared HTTP client sends `Accept-Encoding: gzip, deflate` by
+default. Most modern HTTP libraries do this automatically when the
+appropriate decompression library is available. The spec documents
+this as default behavior.
+
+- Pro: bandwidth reduction for free; transparent to fetcher code
+- Con: negligible — decompression CPU cost is trivial
+
+**B) Don't specify — leave to HTTP library defaults**
+
+- Pro: no spec changes needed
+- Con: behavior depends on the library chosen and its configuration;
+  not explicitly documented
+
+**Recommendation**: Option A.
+
+**Deduction**: httpx enables `Accept-Encoding: gzip, deflate, br` by
+default when the `brotli` or `zstandard` codec is available (gzip/deflate
+always available via stdlib). The "decision" here is to **document** this
+explicitly as a default behavior of the shared client, not to implement
+it — httpx already does it. Decompression CPU cost is negligible compared
+to network I/O savings, especially for NVD responses (large JSON pages)
+and IBS XML downloads. Documenting the default prevents future confusion
+about whether compression is active.
+
+**Status**: `open`
+
+**Resolution**: —
+
+---
+
+### OP-7: Default Accept header
+
+**Problem**: only the GHSA fetcher specifies an `Accept` header
+(`application/vnd.github+json`, required by GitHub's API). No other
+fetcher spec declares what content type it expects. While most APIs
+return JSON by default, relying on server defaults is fragile.
+
+**Current state in specs**:
+
+| Fetcher | Accept header | Response format |
+|---------|---------------|-----------------|
+| `sync_ghsa_advisories` | `application/vnd.github+json` | JSON |
+| `sync_nvd_cves` | Not specified | JSON |
+| `sync_redhat_cves` | Not specified | JSON |
+| `sync_osv_advisories` | Not specified | JSON |
+| `sync_cisa_kev` | Not specified | JSON |
+| `sync_epss_scores` | Not specified | CSV |
+| IBS fetchers (via `IBSClient`) | Not specified | XML |
+| SMELT/AIMAAS fetchers | Not specified | JSON |
+
+**Options**:
+
+**A) Default Accept in shared client, per-fetcher override**
+
+The shared client sets `Accept: application/json` by default. XML
+consumers (IBS) and CSV consumers (EPSS) override to
+`application/xml` and `text/csv` respectively. Service-specific
+Accept values (GitHub) override as they already do.
+
+- Pro: explicit content negotiation; fails early if a server returns
+  an unexpected format
+- Con: minor — adds a header that most servers ignore anyway
+
+**B) No default — per-fetcher only when required by the API**
+
+Only specify `Accept` when the target API requires it (as GHSA does).
+
+- Pro: minimal spec changes
+- Con: inconsistent; not all fetchers negotiate content type
+
+**Recommendation**: Option A.
+
+**Deduction**: 10 of 13 HTTP fetchers consume JSON. Setting `Accept:
+application/json` as default covers the majority with zero per-fetcher
+effort. The 3 non-JSON consumers (IBS → XML, EPSS → CSV, IBS product
+release → binary/XML) override explicitly — this makes their non-standard
+content expectation visible in the code. An explicit Accept header is a
+standard HTTP best practice: it signals intent to the server and enables
+clear error responses (406 Not Acceptable) when there is a content-type
+mismatch, making debugging easier. The override mechanism is trivial
+(pass `headers={"Accept": "..."}` or set it on a per-client instance).
+
+**Status**: `open`
+
+**Resolution**: —
+
+---
+
+### OP-8: Conditional HTTP requests (ETag / If-Modified-Since)
+
+**Problem**: some fetchers download the same content repeatedly
+across runs. HTTP conditional requests (`If-None-Match` with ETag,
+`If-Modified-Since`) can avoid redundant downloads when the content
+has not changed.
+
+**Current state in specs**:
+- `ibs-rabbitmq-integration.md:29-31`: evaluated and explicitly
+  rejected for IBS repo.published events ("the benefit does not
+  justify the complexity")
+- `ibs-product-release-detection.md:288-290`: listed as an open item
+  ("Strategy for caching repomd.xml / updateinfo.xml / primary.xml
+  (ETag, Last-Modified)")
+- EPSS draft (`epss-fetcher-workplan.md:85`): notes that FIRST.org
+  serves `Last-Modified` on daily CSV files
+
+**Applicability assessment**:
+
+| Fetcher | Benefit | Rationale |
+|---------|---------|-----------|
+| `sync_cisa_kev` | Medium | Single JSON file (~1MB); re-downloaded 4x/day. 304 saves bandwidth when catalog hasn't changed |
+| `detect_ibs_product_releases` | High | Downloads `updateinfo.xml` files (can be large) for many product repositories |
+| `sync_epss_scores` | Medium | Daily CSV download; no benefit if file changes daily |
+| `sync_nvd_cves` | Low | Cursor-based incremental; only fetches modified CVEs |
+| `sync_redhat_cves` | None | Per-CVE API calls; no repeated bulk download |
+| `sync_ghsa_advisories` | None | Cursor-based incremental |
+| IBS API fetchers | None | Dynamic API responses, not cacheable |
+
+**Options**:
+
+**A) Shared utility for conditional requests, opt-in per fetcher**
+
+The shared client (OP-2) provides utility methods to store and reuse
+`ETag`/`Last-Modified` values from previous responses (e.g., in the
+database or in the fetcher's cursor). Fetchers opt in to conditional
+requests when beneficial.
+
+- Pro: infrastructure available when needed; no fetcher forced to
+  use it
+- Con: adds complexity to the shared client; requires storage for
+  ETag/Last-Modified values
+
+**B) Per-fetcher implementation when beneficial**
+
+Each fetcher that benefits from conditional requests implements
+its own caching. No shared infrastructure.
+
+- Pro: simpler shared client
+- Con: duplicated logic across fetchers that use it
+
+**C) Defer entirely — not needed for v1**
+
+None of the current fetcher volumes justify the optimization.
+Address when/if a fetcher demonstrates a concrete performance
+problem.
+
+- Pro: no work now
+- Con: missed optimization for IBS product release detection
+  (already flagged as an open item)
+
+**Recommendation**: Option C for v1.
+
+**Deduction**: no fetcher currently demonstrates a performance problem
+caused by redundant downloads. The only high-benefit case (IBS product
+release detection) already tracks this as its own spec-level open item
+(`ibs-product-release-detection.md:288-290`) — the solution will be
+designed in that context where the specific requirements (storage
+mechanism, invalidation strategy) are clearer. The shared client (OP-2)
+should not preclude future conditional request support (i.e., do not
+strip ETag/Last-Modified from responses), but should not implement
+storage or opt-in mechanisms now. When the IBS case is resolved, it may
+inform a reusable pattern for KEV and EPSS — but that is speculative
+today.
+
+**Status**: `open`
+
+**Resolution**: —
+
+---
+
+### OP-9: Retry-After header handling
+
+**Problem**: the current spec explicitly ignores the `Retry-After`
+header in 429 responses (`fetcher-infrastructure.md:433-434`,
+`cve-sync-nvd.md:225`). This is a deliberate v1 simplification, but
+it means fetchers may waste retry attempts when the rate-limit window
+exceeds the fixed backoff total (35s).
+
+**Current state in specs**: two specs document the decision:
+- `fetcher-infrastructure.md:433-434`: "This design deliberately
+  ignores the Retry-After header for simplicity."
+- `cve-sync-nvd.md:225`: "The Retry-After header is deliberately
+  ignored for simplicity"
+
+Both note that the 35s total backoff naturally clears most rate-limit
+windows (NVD: 30s window).
+
+**Options**:
+
+**A) Respect Retry-After in shared client (transport-level)**
+
+If OP-4 adds transport-level retry, the retry mechanism reads
+`Retry-After` from 429/503 responses and waits accordingly (with a
+reasonable cap, e.g., 300s).
+
+- Pro: optimal behavior — waits exactly as long as the server
+  requests
+- Pro: prevents wasted retry attempts
+- Con: adds complexity to the retry mechanism; a long `Retry-After`
+  (e.g., 3600s) could block a worker (mitigated by cap)
+
+**B) Keep current approach — ignore Retry-After**
+
+The fixed backoff (5s/10s/20s) remains. Documented as a v1
+trade-off.
+
+- Pro: simplicity
+- Con: may fail on providers with rate-limit windows > 35s
+
+**C) Opt-in per fetcher**
+
+Individual fetchers choose whether to respect `Retry-After`. The
+shared client provides the capability but doesn't enable it by
+default.
+
+- Pro: flexibility per provider
+- Con: more spec work per fetcher
+
+**Recommendation**: Option B for v1.
+
+**Deduction**: the decision is already made and documented in two
+approved specifications (`fetcher-infrastructure.md`, `cve-sync-nvd.md`).
+The fixed backoff of 5s + 10s + 20s = 35s total covers the known
+rate-limit windows of current providers (NVD: 30s window with API key,
+60s without). No provider in the current inventory has demonstrated a
+rate-limit window that consistently defeats the fixed backoff. If one
+is identified in the future, the fix is localized (add Retry-After
+support to the transport retry for that specific case). Reopening this
+decision now provides no concrete benefit.
+
+**Status**: `open`
+
+**Resolution**: —
+
+---
+
+## Architectural Decisions (Discussion Required)
+
+These open points require genuine architectural discussion because
+the answers are not obvious, have significant design implications, or
+involve trade-offs that depend on judgment about the system's future
+evolution.
 
 ---
 
@@ -169,6 +449,55 @@ shared factory (Option B) so that non-fetcher components like
 `IBSClient` can also benefit. This gives fetchers zero-effort
 defaults while keeping the factory reusable.
 
+#### Client Lifecycle Design Questions
+
+The choice of client lifecycle pattern has significant performance
+and correctness implications. httpx `AsyncClient` supports connection
+pooling — a persistent client instance reuses TCP connections across
+requests, which matters for fetchers that make many sequential
+requests to the same host.
+
+**Performance impact of connection pooling**:
+
+| Fetcher | Requests per run | Benefit of pooling |
+|---------|------------------|--------------------|
+| `sync_nvd_cves` | Hundreds (paginated) | High — same host, sequential |
+| `sync_redhat_cves` | Thousands (per-CVE) | High — same host, sequential |
+| `sync_osv_advisories` | Hundreds (per-alias) | High — same host, sequential |
+| `sync_ghsa_advisories` | Tens to hundreds (paginated) | Medium |
+| IBS fetchers | Tens to hundreds | Medium — same host |
+| `sync_cisa_kev` | 1 | None |
+
+**Lifecycle options to evaluate**:
+
+1. **Lazy property** (`self.http_client`): client created on first
+   access, reused for the entire `execute()` run, closed at run end.
+   Connection pooling active for the duration of the run.
+   - Pro: zero ceremony for fetcher authors; automatic pooling
+   - Con: BaseFetcher must manage client teardown (in `run()` finally
+     block or similar)
+
+2. **Factory method** (`self.create_http_client()`): returns a new
+   client instance on each call. Fetcher manages lifecycle with
+   `async with`.
+   - Pro: explicit lifecycle control; no state on BaseFetcher
+   - Con: fetcher authors must wrap usage in context manager;
+     forgetting to close leaks connections
+
+3. **Async context manager** (`async with self.http_client() as client`):
+   BaseFetcher provides a context manager that yields a pre-configured
+   client.
+   - Pro: explicit lifecycle with guaranteed cleanup
+   - Con: slightly more ceremony than a property; nesting in
+     `execute()` adds indentation
+
+**IBSClient relationship**: `IBSClient` has a different lifecycle — it
+is a service-level object shared between the `IBSEventConsumer`
+(long-running) and periodic fetchers. If the shared factory (Option B
+component) is the internal building block, `IBSClient` can use it to
+create its own long-lived client independently of BaseFetcher's
+per-run lifecycle.
+
 **Status**: `open`
 
 **Resolution**: —
@@ -228,9 +557,41 @@ Status quo. Fetchers specify timeouts only when they choose to.
 - Con: fetchers without explicit timeouts are vulnerable to indefinite
   blocking
 
-**Recommendation**: Option A. A sensible default protects against the
-worst case (indefinite blocking) while allowing per-fetcher tuning.
-The specific default values (connect vs. read) should be discussed.
+**Recommendation**: Option A.
+
+#### Proposed Default Values
+
+Starting point for discussion:
+
+| Timeout type | Proposed default | Rationale |
+|--------------|-----------------|-----------|
+| Connect timeout | **10 seconds** | Time to establish TCP + TLS handshake. 10s is generous for both public APIs (NVD, GitHub) and SUSE internal services. A server that doesn't accept a connection in 10s is likely down |
+| Read timeout | **30 seconds** | Time to receive the response body after the request is sent. 30s covers most API responses (JSON payloads from NVD, Red Hat, GHSA are typically <1s). Matches the only existing explicit timeout (KEV: 30s) |
+
+**Fetchers expected to override**:
+
+| Fetcher | Override needed | Reason |
+|---------|---------------|--------|
+| `detect_ibs_product_releases` | Read timeout → 120s+ | Downloads `updateinfo.xml` files that can be several MB for large product repositories |
+| `sync_epss_scores` | Read timeout → 60s | Daily CSV download (~30MB compressed) |
+| `sync_nvd_cves` (full sync) | Read timeout → 60s | Initial full sync pages with 2000 CVEs can be large |
+
+**Timeout hierarchy (clarification)**:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ FetcherConfig.timeout_seconds (default: 3600s)      │  ← Celery task level
+│ Detects stale runs (worker crashed, deadlock)       │     (stale run detection)
+│                                                     │
+│  ┌───────────────────────────────────────────────┐  │
+│  │ Per-HTTP-request timeout (this OP)            │  │  ← HTTP transport level
+│  │ connect: 10s, read: 30s (defaults)            │  │     (per request)
+│  │                                               │  │
+│  │ A single execute() run may make hundreds of   │  │
+│  │ HTTP requests, each with its own timeout.     │  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
 
 **Status**: `open`
 
@@ -301,47 +662,74 @@ disable the transport retry. This is complementary to, not a
 replacement for, Celery task retry which operates at a different
 scope.
 
-**Status**: `open`
+#### Retry Amplification Analysis
 
-**Resolution**: —
+Transport-level retry interacts with Celery task-level retry. The
+worst case must be bounded and understood.
 
----
+**Retry scopes**:
 
-### OP-5: HTTP response compression (Accept-Encoding)
+```
+┌─────────────────────────────────────────────────────────┐
+│ Celery task retry (fetch_single only)                   │
+│ Scope: entire task invocation                           │
+│ Trigger: task raises retryable exception after all      │
+│          internal attempts fail                         │
+│ Policy: 3x with 5s/10s/20s backoff                     │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │ Transport-level retry (per HTTP request)          │  │
+│  │ Scope: single HTTP request                        │  │
+│  │ Trigger: connection error, 502, 503, 504, timeout │  │
+│  │ Policy: 3x with 1s/2s/4s backoff (proposed)      │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
 
-**Problem**: no fetcher spec mentions HTTP response compression. Some
-fetchers download substantial payloads (NVD pages up to 2000 CVEs,
-KEV full catalog, IBS `updateinfo.xml` files). Enabling compression
-could significantly reduce bandwidth and transfer time.
+**Worst case for `fetch_single()`** (single-request fetchers like KEV,
+or on-demand single-CVE fetches):
 
-**Current state in specs**: no mention of `Accept-Encoding`, `gzip`,
-or `deflate` in any fetcher spec. The only compression reference is
-in `ibs-rabbitmq-integration.md:29` regarding `updateinfo.xml`
-decompression (different context — that is gzip-compressed at the
-repository level, not HTTP-level compression).
+- Transport retry: 3 attempts × 1 request = 3 HTTP requests
+- If all 3 fail → exception propagates → Celery retries the task
+- Celery retry: 3 task retries × 3 transport attempts = **9 total
+  HTTP requests** over ~42s (transport: 1+2+4=7s × 3 Celery retries
+  with 5+10+20=35s between them)
 
-**Options**:
+This is acceptable: 9 requests over 42 seconds for a persistently
+failing service is not aggressive, and the total time (42s) is well
+within the Celery task timeout (3600s default).
 
-**A) Enable by default in shared client**
+**For `execute()`** (batch fetchers — NVD, Red Hat, GHSA, etc.):
 
-The shared HTTP client sends `Accept-Encoding: gzip, deflate` by
-default. Most modern HTTP libraries do this automatically when the
-appropriate decompression library is available. The spec documents
-this as default behavior.
+- No Celery task-level retry exists for `execute()` — if the task
+  fails, it waits for the next scheduled run
+- Transport retry operates independently per request within the batch
+- Worst case per request: 3 attempts (same as `fetch_single`)
+- Total for a batch of N requests with persistent failure: 3N requests
+  before the fetcher's error-handling logic (abort or skip-and-continue)
+  takes effect
 
-- Pro: bandwidth reduction for free; transparent to fetcher code
-- Con: negligible — decompression CPU cost is trivial
+**No amplification risk for `execute()`**: since there is no Celery
+retry at the task level, transport retry only adds resilience against
+transient blips (connection reset between pages, momentary 503) without
+compounding.
 
-**B) Don't specify — leave to HTTP library defaults**
+**429 exclusion rationale**: HTTP 429 is excluded from transport-level
+retry because:
 
-- Pro: no spec changes needed
-- Con: behavior depends on the library chosen and its configuration;
-  not explicitly documented
+1. Rate-limit policies vary per provider (NVD: 30s window; GitHub:
+   per-hour budget; Red Hat: undocumented)
+2. The correct response to 429 depends on context — some fetchers
+   want to wait and retry (NVD), others want to skip and continue
+   (Red Hat), others want to abort (GHSA)
+3. NVD already specifies its own inline 429 retry; adding transport-
+   level 429 retry would create conflicting behavior
+4. 429 typically indicates a systemic problem (too many requests)
+   that won't resolve in 1-4 seconds of backoff — unlike 502/503/504
+   which often indicate momentary upstream issues
 
-**Recommendation**: Option A. Explicitly documenting that compression
-is enabled by default avoids ambiguity about whether it is active.
-The implementation effort is near-zero (most HTTP libraries support
-it natively).
+Fetchers that want 429 retry can enable it explicitly on their client
+instance.
 
 **Status**: `open`
 
@@ -410,196 +798,46 @@ specs so it is not an implicit assumption.
 - Pro: clarifies the assumption; no new configuration needed
 - Con: only works if the assumption is actually correct
 
-**Recommendation**: this requires a factual determination first. If
-SUSE internal HTTP services use the same Trust Root CA as LDAP (which
-is committed at `certs/SUSE_Trust_Root.crt`), Option A is cleaner.
-If they use publicly-trusted certs, Option C is sufficient. The
-decision cannot be made without verifying the actual certificate
-chain.
+**Recommendation**: this requires a factual determination first. The
+design decision follows directly from the factual answer — it cannot
+be resolved through discussion alone.
 
-**Status**: `open`
+#### Action Required
 
-**Resolution**: —
+Verify the certificate chain for each SUSE internal HTTP endpoint:
 
----
+```bash
+# Check certificate issuer for each host
+openssl s_client -connect api.suse.de:443 -showcerts </dev/null 2>/dev/null | \
+  openssl x509 -noout -issuer -subject
 
-### OP-7: Default Accept header
+openssl s_client -connect download.suse.de:443 -showcerts </dev/null 2>/dev/null | \
+  openssl x509 -noout -issuer -subject
 
-**Problem**: only the GHSA fetcher specifies an `Accept` header
-(`application/vnd.github+json`, required by GitHub's API). No other
-fetcher spec declares what content type it expects. While most APIs
-return JSON by default, relying on server defaults is fragile.
+openssl s_client -connect smelt.suse.de:443 -showcerts </dev/null 2>/dev/null | \
+  openssl x509 -noout -issuer -subject
 
-**Current state in specs**:
+openssl s_client -connect aimaas.suse.de:443 -showcerts </dev/null 2>/dev/null | \
+  openssl x509 -noout -issuer -subject
+```
 
-| Fetcher | Accept header | Response format |
-|---------|---------------|-----------------|
-| `sync_ghsa_advisories` | `application/vnd.github+json` | JSON |
-| `sync_nvd_cves` | Not specified | JSON |
-| `sync_redhat_cves` | Not specified | JSON |
-| `sync_osv_advisories` | Not specified | JSON |
-| `sync_cisa_kev` | Not specified | JSON |
-| `sync_epss_scores` | Not specified | CSV |
-| IBS fetchers (via `IBSClient`) | Not specified | XML |
-| SMELT/AIMAAS fetchers | Not specified | JSON |
+**Decision tree based on results**:
 
-**Options**:
+- If all hosts use the SUSE Trust Root CA (same CA as LDAP) → **Option A**
+  is the natural choice. Single `SUSE_CA_CERT_PATH` env var, shared
+  by LDAP and HTTP clients
+- If all hosts use publicly-trusted CAs (DigiCert, Let's Encrypt,
+  etc.) → **Option C**. Document explicitly that the system CA bundle
+  is sufficient. No new configuration needed
+- If mixed (some SUSE CA, some public) → **Option B**. Per-service
+  configuration, only for those that need the SUSE CA bundle
 
-**A) Default Accept in shared client, per-fetcher override**
+In all cases: TLS certificate verification MUST be enforced (not
+permissive). A failed TLS handshake is a hard error — the fetcher
+should fail immediately with a clear error message, not proceed with
+an unverified connection.
 
-The shared client sets `Accept: application/json` by default. XML
-consumers (IBS) and CSV consumers (EPSS) override to
-`application/xml` and `text/csv` respectively. Service-specific
-Accept values (GitHub) override as they already do.
-
-- Pro: explicit content negotiation; fails early if a server returns
-  an unexpected format
-- Con: minor — adds a header that most servers ignore anyway
-
-**B) No default — per-fetcher only when required by the API**
-
-Only specify `Accept` when the target API requires it (as GHSA does).
-
-- Pro: minimal spec changes
-- Con: inconsistent; not all fetchers negotiate content type
-
-**Recommendation**: Option A. Setting `Accept` explicitly is a
-best practice for HTTP clients. The default (`application/json`)
-covers the majority of fetchers. Overrides are straightforward.
-
-**Status**: `open`
-
-**Resolution**: —
-
----
-
-### OP-8: HTTP conditional requests (ETag / If-Modified-Since)
-
-**Problem**: some fetchers download the same content repeatedly
-across runs. HTTP conditional requests (`If-None-Match` with ETag,
-`If-Modified-Since`) can avoid redundant downloads when the content
-has not changed.
-
-**Current state in specs**:
-- `ibs-rabbitmq-integration.md:29-31`: evaluated and explicitly
-  rejected for IBS repo.published events ("the benefit does not
-  justify the complexity")
-- `ibs-product-release-detection.md:288-290`: listed as an open item
-  ("Strategy for caching repomd.xml / updateinfo.xml / primary.xml
-  (ETag, Last-Modified)")
-- EPSS draft (`epss-fetcher-workplan.md:85`): notes that FIRST.org
-  serves `Last-Modified` on daily CSV files
-
-**Applicability assessment**:
-
-| Fetcher | Benefit | Rationale |
-|---------|---------|-----------|
-| `sync_cisa_kev` | Medium | Single JSON file (~1MB); re-downloaded 4x/day. 304 saves bandwidth when catalog hasn't changed |
-| `detect_ibs_product_releases` | High | Downloads `updateinfo.xml` files (can be large) for many product repositories |
-| `sync_epss_scores` | Medium | Daily CSV download; no benefit if file changes daily |
-| `sync_nvd_cves` | Low | Cursor-based incremental; only fetches modified CVEs |
-| `sync_redhat_cves` | None | Per-CVE API calls; no repeated bulk download |
-| `sync_ghsa_advisories` | None | Cursor-based incremental |
-| IBS API fetchers | None | Dynamic API responses, not cacheable |
-
-**Options**:
-
-**A) Shared utility for conditional requests, opt-in per fetcher**
-
-The shared client (OP-2) provides utility methods to store and reuse
-`ETag`/`Last-Modified` values from previous responses (e.g., in the
-database or in the fetcher's cursor). Fetchers opt in to conditional
-requests when beneficial.
-
-- Pro: infrastructure available when needed; no fetcher forced to
-  use it
-- Con: adds complexity to the shared client; requires storage for
-  ETag/Last-Modified values
-
-**B) Per-fetcher implementation when beneficial**
-
-Each fetcher that benefits from conditional requests implements
-its own caching. No shared infrastructure.
-
-- Pro: simpler shared client
-- Con: duplicated logic across fetchers that use it
-
-**C) Defer entirely — not needed for v1**
-
-None of the current fetcher volumes justify the optimization.
-Address when/if a fetcher demonstrates a concrete performance
-problem.
-
-- Pro: no work now
-- Con: missed optimization for IBS product release detection
-  (already flagged as an open item)
-
-**Recommendation**: Option C for v1. The only high-benefit case (IBS
-product release detection) already has this as its own open item
-(`ibs-product-release-detection.md:288-290`). When that open item is
-resolved, the solution may inform a shared pattern for other fetchers.
-The shared client should not be designed for this now, but should
-not preclude it either.
-
-**Status**: `open`
-
-**Resolution**: —
-
----
-
-### OP-9: Retry-After header handling
-
-**Problem**: the current spec explicitly ignores the `Retry-After`
-header in 429 responses (`fetcher-infrastructure.md:433-434`,
-`cve-sync-nvd.md:225`). This is a deliberate v1 simplification, but
-it means fetchers may waste retry attempts when the rate-limit window
-exceeds the fixed backoff total (35s).
-
-**Current state in specs**: two specs document the decision:
-- `fetcher-infrastructure.md:433-434`: "This design deliberately
-  ignores the Retry-After header for simplicity."
-- `cve-sync-nvd.md:225`: "The Retry-After header is deliberately
-  ignored for simplicity"
-
-Both note that the 35s total backoff naturally clears most rate-limit
-windows (NVD: 30s window).
-
-**Options**:
-
-**A) Respect Retry-After in shared client (transport-level)**
-
-If OP-4 adds transport-level retry, the retry mechanism reads
-`Retry-After` from 429/503 responses and waits accordingly (with a
-reasonable cap, e.g., 300s).
-
-- Pro: optimal behavior — waits exactly as long as the server
-  requests
-- Pro: prevents wasted retry attempts
-- Con: adds complexity to the retry mechanism; a long `Retry-After`
-  (e.g., 3600s) could block a worker (mitigated by cap)
-
-**B) Keep current approach — ignore Retry-After**
-
-The fixed backoff (5s/10s/20s) remains. Documented as a v1
-trade-off.
-
-- Pro: simplicity
-- Con: may fail on providers with rate-limit windows > 35s
-
-**C) Opt-in per fetcher**
-
-Individual fetchers choose whether to respect `Retry-After`. The
-shared client provides the capability but doesn't enable it by
-default.
-
-- Pro: flexibility per provider
-- Con: more spec work per fetcher
-
-**Recommendation**: Option B for v1, as already decided. The current
-trade-off is well-documented and acceptable. Revisit if a provider
-is identified where the fixed backoff consistently fails.
-
-**Status**: `open`
+**Status**: `open` (blocked on factual verification)
 
 **Resolution**: —
 
@@ -617,6 +855,7 @@ This pattern exists in multiple specs but is not standardized.
 |---------|----------------|---------|---------------|
 | `sync_nvd_cves` | `request_delay_seconds` custom setting | 6.0s (0.6s with API key) | Yes (0.1–30.0) |
 | `sync_redhat_cves` | `throttle_delay_seconds` custom setting | 2.0s | Yes (0.1–30.0) |
+| `sync_osv_advisories` | `throttle_delay_seconds` custom setting | 0.2s | Yes (0.05–10.0) |
 | `sync_ibs_bugowners` | `rate_limit` from `FetcherConfig` | Not specified | Yes (generic field) |
 | Other fetchers | Not specified | — | — |
 
@@ -657,13 +896,128 @@ per-fetcher naming and semantics.
 - Con: over-engineered for current needs; none of the current fetchers
   use window-based rate limiting internally
 
-**Recommendation**: Option A for simplicity. The `rate_limit` field
-already exists — defining its semantics is low-cost. Fetchers with
-complex needs (NVD) continue to use custom settings for fine-grained
-control. Rename the existing `throttle_delay_seconds` and
-`request_delay_seconds` to align with the generic field semantics
-where possible, or document the relationship between the generic
-field and custom settings.
+**Recommendation**: Option A for simplicity.
+
+#### Enforcement Responsibility: Client vs. Fetcher
+
+A key design question for Option A: **who applies the delay?**
+
+**Option A1: Client-level enforcement**
+
+The shared HTTP client (OP-2) reads `rate_limit` from the fetcher's
+configuration and automatically sleeps between requests.
+
+- Pro: transparent to fetcher code; impossible to forget
+- Con: the client needs access to fetcher configuration (coupling)
+- Con: single-request fetchers (KEV) should not sleep after their
+  only request
+- Con: complex scenarios (NVD: different delay depending on API key
+  presence) are hard to express through a single float
+
+**Option A2: Fetcher-level enforcement (recommended)**
+
+The delay remains the fetcher's responsibility (via `asyncio.sleep()`
+in the pagination/iteration loop). `FetcherConfig.rate_limit` defines
+the **value** and makes it operator-tunable from the dashboard, but
+the fetcher **applies** it.
+
+- Pro: no coupling between client and fetcher configuration
+- Pro: fetcher controls exactly where the delay is applied (e.g.,
+  between pages but not between sub-requests within a page)
+- Pro: single-request fetchers naturally have no delay (no loop)
+- Pro: complex scenarios are easy (NVD reads its custom setting;
+  other fetchers read the generic `rate_limit`)
+- Con: fetcher authors must remember to apply the delay — but this
+  is already the case today
+
+**Naming standardization**: regardless of enforcement model, the
+existing inconsistency (`request_delay_seconds` vs
+`throttle_delay_seconds` vs `rate_limit`) should be addressed:
+
+- `FetcherConfig.rate_limit` → canonical field name, semantics:
+  "minimum inter-request delay in seconds (float)"
+- Per-fetcher custom settings → remain where they provide value
+  beyond the generic field (e.g., NVD's API-key-dependent delay).
+  Their spec documents the relationship to the generic field:
+  "overrides `rate_limit` when set"
+- New fetcher specs → use `rate_limit` from FetcherConfig unless
+  they have a specific reason for a custom setting
+
+**Status**: `open`
+
+**Resolution**: —
+
+---
+
+### OP-11: HTTP proxy support
+
+**Problem**: in enterprise deployment environments, outgoing HTTP
+traffic may be routed through a forward proxy. If the shared HTTP
+client does not support proxy configuration, fetchers cannot reach
+external services in such environments.
+
+**Current state in specs**: no fetcher spec or infrastructure document
+mentions HTTP proxy support. The deployment guide
+(`docs/deployment.md`) does not reference proxy configuration.
+
+**Current state in implementation**: httpx natively respects the
+standard environment variables `HTTPS_PROXY`, `HTTP_PROXY`, and
+`NO_PROXY` when creating a client with default transport. No code
+changes are needed to support proxies — only documentation and
+explicit acknowledgment.
+
+**Options**:
+
+**A) Document proxy support as inherited from httpx defaults**
+
+The shared HTTP client specification (OP-2) explicitly documents
+that proxy configuration is provided through standard environment
+variables. No custom configuration, no custom env vars, no
+per-fetcher logic.
+
+Environment variables:
+- `HTTPS_PROXY` — proxy URL for HTTPS requests (e.g.,
+  `http://proxy.corp:3128`)
+- `HTTP_PROXY` — proxy URL for HTTP requests (rarely needed —
+  Sentinel targets are all HTTPS)
+- `NO_PROXY` — comma-separated list of hosts that bypass the proxy
+  (e.g., `localhost,127.0.0.1`)
+
+- Pro: zero implementation effort — httpx already does this
+- Pro: standard mechanism understood by operations teams
+- Pro: works for all fetchers and non-fetcher HTTP components
+  (IBSClient, SSO) without per-component configuration
+- Con: none meaningful
+
+**B) Custom proxy configuration via Sentinel-specific env vars**
+
+Define Sentinel-specific env vars (e.g., `SENTINEL_HTTP_PROXY`) that
+are passed to the HTTP client explicitly.
+
+- Pro: explicit control within Sentinel configuration
+- Con: reinvents the standard; operations teams expect `HTTPS_PROXY`
+- Con: implementation effort for no benefit
+
+**C) No proxy support**
+
+- Pro: no documentation needed
+- Con: deployment in proxy-required environments is blocked; no
+  documentation means operators discover the limitation at runtime
+
+**Recommendation**: Option A.
+
+This is purely a documentation concern. The spec for the shared HTTP
+client (OP-2) should include a "Proxy Configuration" paragraph
+stating that standard proxy env vars are respected. Additionally,
+`docs/configuration.md` should list `HTTPS_PROXY`, `HTTP_PROXY`, and
+`NO_PROXY` in the environment variables index with a note that they
+are standard (not Sentinel-specific) and apply to all outgoing HTTP
+connections.
+
+For SUSE internal services (`*.suse.de`), operators in environments
+with a proxy will likely need to add these hosts to `NO_PROXY` since
+they are reachable directly from the internal network. This should be
+documented as a deployment note.
 
 **Status**: `open`
 
@@ -679,22 +1033,22 @@ as decisions are made.
 
 ### Specs affected by open point
 
-| Spec file | OP-1 | OP-2 | OP-3 | OP-4 | OP-5 | OP-6 | OP-7 | OP-8 | OP-9 | OP-10 |
-|-----------|------|------|------|------|------|------|------|------|------|-------|
-| `platform/fetcher-infrastructure.md` | Y | Y | Y | Y | Y | — | Y | — | — | Y |
-| `integrations/ibs-integration.md` | — | Y | — | — | — | Y | Y | — | — | — |
-| `tickets/cve-sync-nvd.md` | — | — | Y | Y | — | — | — | — | — | — |
-| `tickets/cve-sync-redhat.md` | — | — | — | Y | — | — | — | — | — | — |
-| `tickets/cve-sync-ghsa.md` | — | — | — | Y | — | — | — | — | — | — |
-| `tickets/cve-sync-osv.md` | — | — | — | Y | — | — | — | — | — | — |
-| `tickets/cve-sync-kev.md` | — | — | Y | — | — | — | — | Y | — | — |
-| `tickets/cve-sync-epss.md` | — | — | — | — | — | — | Y | Y | — | — |
-| `packages/product-catalog.md` | — | — | — | — | — | Y | — | — | — | — |
-| `packages/ibs-track-release-detection.md` | — | — | — | — | — | — | — | — | — | — |
-| `packages/ibs-product-release-detection.md` | — | — | — | — | — | — | — | Y | — | — |
-| `packages/package-bugowner.md` | — | — | — | — | — | — | — | — | — | Y |
-| `packages/ibs-submission-tracking.md` | — | — | — | — | — | — | — | — | — | — |
-| `docs/configuration.md` | — | — | Y | — | — | Y | — | — | — | — |
+| Spec file | OP-1 | OP-2 | OP-3 | OP-4 | OP-5 | OP-6 | OP-7 | OP-8 | OP-9 | OP-10 | OP-11 |
+|-----------|------|------|------|------|------|------|------|------|------|-------|-------|
+| `platform/fetcher-infrastructure.md` | Y | Y | Y | Y | Y | — | Y | — | — | Y | Y |
+| `integrations/ibs-integration.md` | — | Y | — | — | — | Y | Y | — | — | — | — |
+| `tickets/cve-sync-nvd.md` | — | — | Y | Y | — | — | — | — | — | — | — |
+| `tickets/cve-sync-redhat.md` | — | — | — | Y | — | — | — | — | — | — | — |
+| `tickets/cve-sync-ghsa.md` | — | — | — | Y | — | — | — | — | — | — | — |
+| `tickets/cve-sync-osv.md` | — | — | — | Y | — | — | — | — | — | — | — |
+| `tickets/cve-sync-kev.md` | — | — | Y | — | — | — | — | Y | — | — | — |
+| `tickets/cve-sync-epss.md` | — | — | — | — | — | — | Y | Y | — | — | — |
+| `packages/product-catalog.md` | — | — | — | — | — | Y | — | — | — | — | — |
+| `packages/ibs-track-release-detection.md` | — | — | — | — | — | — | — | — | — | — | — |
+| `packages/ibs-product-release-detection.md` | — | — | — | — | — | — | — | Y | — | — | — |
+| `packages/package-bugowner.md` | — | — | — | — | — | — | — | — | — | Y | — |
+| `packages/ibs-submission-tracking.md` | — | — | — | — | — | — | — | — | — | — | — |
+| `docs/configuration.md` | — | — | Y | — | — | Y | — | — | — | — | Y |
 
 All spec paths are relative to `docs/features/` unless otherwise noted.
 
@@ -728,6 +1082,7 @@ override.
   any standalone factory (if Option A+B hybrid is chosen)
 - Add the factory to the "What BaseFetcher provides" list (items
   1-4 in the current spec)
+- Document client lifecycle (creation, pooling, teardown)
 
 **Secondary target**: `integrations/ibs-integration.md`
 
@@ -765,6 +1120,7 @@ override.
 - Clarify the boundary between transport-level retry (automatic,
   per-request) and Celery task-level retry (per-task, for
   `fetch_single`)
+- Document the retry amplification bounds
 
 **Per-fetcher updates** (only where current behavior conflicts):
 - `cve-sync-nvd.md`: NVD's inline 429 retry logic may overlap with
@@ -842,6 +1198,7 @@ If reconsidered later:
 **Primary target**: `platform/fetcher-infrastructure.md`
 
 - Define `FetcherConfig.rate_limit` semantics (unit, type, behavior)
+- Document enforcement responsibility (client vs. fetcher)
 - Document the relationship with per-fetcher custom settings
 
 **Per-fetcher updates**:
@@ -851,6 +1208,21 @@ If reconsidered later:
   `rate_limit` and `request_delay_seconds` custom setting
 - `tickets/cve-sync-redhat.md`: document relationship between
   generic `rate_limit` and `throttle_delay_seconds` custom setting
+
+#### OP-11: HTTP proxy support
+
+**Primary target**: `platform/fetcher-infrastructure.md`
+
+- Add a "Proxy Configuration" paragraph to the HTTP client defaults
+  section documenting that standard env vars are respected
+
+**Secondary target**: `docs/configuration.md`
+
+- Add `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` to the environment
+  variables index with a note that they are standard (not
+  Sentinel-specific) and apply to all outgoing HTTP connections
+- Add deployment note about `NO_PROXY` for `*.suse.de` in proxy
+  environments
 
 ---
 
@@ -866,3 +1238,6 @@ If reconsidered later:
 - `docs/architecture.md` — deployment portability, external
   integrations overview
 - `docs/data-sources.md` — external service catalog
+- httpx documentation — https://www.python-httpx.org/ (implementation
+  reference for client lifecycle, connection pooling, proxy support,
+  timeout configuration, transport-level retry via custom transports)
