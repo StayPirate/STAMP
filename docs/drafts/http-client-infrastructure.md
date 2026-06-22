@@ -557,9 +557,74 @@ component) is the internal building block, `IBSClient` can use it to
 create its own long-lived client independently of BaseFetcher's
 per-run lifecycle.
 
-**Status**: `open`
+**Status**: `resolved`
 
-**Resolution**: —
+**Resolution**: A+B hybrid with lazy property lifecycle.
+
+**Architecture** (two layers):
+
+1. **Standalone factory module** (`backend/app/services/http_client.py`):
+   a function that creates a pre-configured httpx `AsyncClient` with all
+   cross-cutting defaults (User-Agent per OP-1, timeouts per OP-3,
+   compression per OP-5, Accept header per OP-7, transport-level retry
+   per OP-4). Any component in the system can call this factory —
+   fetchers, `IBSClient`, SSO module, or future consumers.
+
+2. **BaseFetcher integration**: `BaseFetcher` exposes a `self.http_client`
+   lazy property that internally calls the standalone factory. The client
+   is created on first access during `execute()` and closed automatically
+   by `BaseFetcher.run()` in its `finally` block. Fetcher authors use
+   `self.http_client` directly — zero configuration, zero boilerplate.
+
+**Lifecycle — lazy property pattern**:
+
+```python
+class MyFetcher(BaseFetcher):
+    async def execute(self):
+        # Client created on first access, pooling active for the
+        # entire run, closed automatically when execute() ends.
+        response = await self.http_client.get("https://example.com/api")
+```
+
+- Client created lazily on first `self.http_client` access
+- Lives for the duration of a single `execute()` run
+- Connection pooling active throughout the run (benefits fetchers
+  that make many sequential requests to the same host: NVD, Red Hat,
+  OSV, IBS)
+- Destroyed by `BaseFetcher.run()` in the `finally` block (same
+  place that calls `record_end`)
+- Between runs (hours apart), no client exists — no idle connections
+
+**Stale connection handling**: httpx closes idle connections after ~5
+seconds of inactivity within the pool. If a server closes a connection
+before that (shorter keep-alive), httpx detects the stale connection on
+the next request attempt and transparently opens a new one. Given that
+inter-request delays in fetchers are typically 0.2s–6s (rate limiting),
+connections are reused effectively within a run. No special
+configuration is needed.
+
+**Override mechanism**: fetchers with non-standard requirements (e.g.,
+longer read timeout for large downloads) can override the defaults by
+passing keyword arguments:
+
+```python
+class ProductReleaseFetcher(BaseFetcher):
+    # Override default read timeout for large XML downloads
+    http_client_options = {"timeout": httpx.Timeout(10.0, read=120.0)}
+```
+
+The exact override API (class attribute, method parameter, or both)
+will be defined in the implementation. The principle is: defaults work
+for the majority; overrides are explicit and visible.
+
+**IBSClient relationship**: `IBSClient` is a service-level object with
+a different lifecycle — it is long-lived, shared between the
+`IBSEventConsumer` (runs continuously) and periodic IBS fetchers. It
+calls the standalone factory directly (layer 1) and manages its own
+client lifecycle independently of `BaseFetcher`. httpx's internal
+keep-alive management (~5s idle timeout) applies identically to
+long-lived clients, preventing stale connections without manual
+intervention.
 
 ---
 
@@ -1143,19 +1208,27 @@ All spec paths are relative to `docs/features/` unless otherwise noted.
 
 **Primary target**: `platform/fetcher-infrastructure.md`
 
-- Extend the `BaseFetcher` contract with the client factory method
-  or property (signature, return type, default configuration)
-- Document the relationship between the fetcher-level client and
-  any standalone factory (if Option A+B hybrid is chosen)
-- Add the factory to the "What BaseFetcher provides" list (items
-  1-4 in the current spec)
-- Document client lifecycle (creation, pooling, teardown)
+- Extend the `BaseFetcher` contract with:
+  - `self.http_client` lazy property (signature, return type: httpx
+    `AsyncClient`)
+  - Default configuration applied (User-Agent, timeouts, Accept,
+    compression, transport retry — referencing OP-1/3/4/5/7)
+  - Teardown in `BaseFetcher.run()` finally block
+  - Override mechanism (`http_client_options` class attribute or
+    equivalent)
+- Add a "Shared HTTP Client" item to the "What BaseFetcher provides"
+  list (items 1-4 in the current spec)
+- Document the standalone factory module
+  (`backend/app/services/http_client.py`) and its public API
+- Document connection pooling behavior and stale connection handling
 
 **Secondary target**: `integrations/ibs-integration.md`
 
-- If `IBSClient` uses the shared factory, document this dependency
-- If `IBSClient` remains independent, document why (different
-  lifecycle, shared across multiple consumers)
+- Document that `IBSClient` uses the standalone factory directly
+  (not via BaseFetcher) with its own long-lived lifecycle
+- Document the rationale: `IBSClient` is shared between
+  `IBSEventConsumer` (continuous) and periodic fetchers — its
+  lifecycle is independent of any single fetcher run
 
 #### OP-3: Default HTTP request timeout
 
