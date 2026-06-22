@@ -54,10 +54,9 @@ Additionally, these components make HTTP requests but are NOT
 
 ## HTTP Client Defaults (Quick-Resolution Group)
 
-These open points have answers that are largely dictated by standard
-HTTP best practices. They are grouped here for efficient review — each
-includes a "Deduction" section summarizing why the recommended option
-is nearly certain, so the final decision can be made quickly.
+All open points in this group have been resolved. They had answers
+largely dictated by standard HTTP best practices and were reviewed
+and confirmed as a batch.
 
 ---
 
@@ -90,17 +89,21 @@ Each fetcher spec defines its own User-Agent string.
 - Pro: full granularity
 - Con: manual effort, risk of inconsistency, boilerplate in every spec
 
-**C) Composed User-Agent (base + fetcher name, automatic)**
+**C) Composed User-Agent (base + fetcher name + project URL, automatic)**
 
-Format: `Sentinel/{version} ({fetcher.name})`
+Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
 
 The base string is centralized. The fetcher name comes from the
 `name` attribute already required by the `BaseFetcher` contract.
+The project URL is hardcoded — it identifies the project and
+provides a contact path (issue tracker) for API providers.
 Composition is automatic — fetcher authors do nothing.
 
 - Pro: combines global identity with per-fetcher granularity at zero
   effort for authors; the `name` attribute already exists and is
   unique per fetcher
+- Pro: API providers can identify the project and reach operators
+  via the GitHub issue tracker
 - Con: reveals internal fetcher names to external providers (minimal
   risk — names are generic and descriptive)
 
@@ -112,18 +115,25 @@ Composition is automatic — fetcher authors do nothing.
 
 **Recommendation**: Option C.
 
-**Deduction**: the `name` attribute is already mandatory and unique per
-fetcher (BaseFetcher contract). httpx allows setting `User-Agent` at
-client instantiation level — zero per-fetcher effort. Exposing generic
-descriptive names like `sync_nvd_cves` to external providers carries no
-security risk. NVD documentation explicitly recommends application
-identification for favorable rate limits. Option C is the only option
-that provides both global identity and per-fetcher granularity with zero
-author effort.
+**Status**: `resolved`
 
-**Status**: `open`
+**Resolution**: Option C — composed User-Agent with project URL.
 
-**Resolution**: —
+- Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
+- Example: `Sentinel/1.0 (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
+- Platform version from the canonical source (e.g., `pyproject.toml`
+  via `importlib.metadata`) — no duplication
+- No per-fetcher versioning — fetchers do not have independent
+  release cycles; the platform version captures all changes
+- Project URL hardcoded in the code — not configurable via env var.
+  It is the project's identity, not a per-deployment setting
+- The fetcher name is automatic from `BaseFetcher.name` (already
+  mandatory and unique). It provides value for internal services
+  where multiple fetchers hit the same host (e.g., IBS has 5
+  consumers on `api.suse.de`)
+- Collateral action: add a brief "For API Providers" section in the
+  project README directing providers to open issues for traffic
+  concerns
 
 ---
 
@@ -160,18 +170,23 @@ this as default behavior.
 
 **Recommendation**: Option A.
 
-**Deduction**: httpx enables `Accept-Encoding: gzip, deflate, br` by
-default when the `brotli` or `zstandard` codec is available (gzip/deflate
-always available via stdlib). The "decision" here is to **document** this
-explicitly as a default behavior of the shared client, not to implement
-it — httpx already does it. Decompression CPU cost is negligible compared
-to network I/O savings, especially for NVD responses (large JSON pages)
-and IBS XML downloads. Documenting the default prevents future confusion
-about whether compression is active.
+**Status**: `resolved`
 
-**Status**: `open`
+**Resolution**: Option A — document compression as a default behavior
+of the shared HTTP client.
 
-**Resolution**: —
+- httpx sends `Accept-Encoding: gzip, deflate` by default using
+  Python standard library codecs (always available — no system
+  packages or additional Python dependencies required)
+- Brotli (`br`) is additionally supported if the `brotli` Python
+  package is installed, but it is not a required dependency
+- Responses are decompressed transparently by the HTTP library
+- No per-fetcher configuration needed
+- If httpx adds support for new compression codecs in future
+  versions (e.g., zstd), they are picked up automatically with no
+  code changes
+- This is purely a documentation concern — no implementation code
+  is needed to enable it
 
 ---
 
@@ -191,7 +206,7 @@ return JSON by default, relying on server defaults is fragile.
 | `sync_redhat_cves` | Not specified | JSON |
 | `sync_osv_advisories` | Not specified | JSON |
 | `sync_cisa_kev` | Not specified | JSON |
-| `sync_epss_scores` | Not specified | CSV |
+| `sync_epss_scores` | Not specified | JSON (API) |
 | IBS fetchers (via `IBSClient`) | Not specified | XML |
 | SMELT/AIMAAS fetchers | Not specified | JSON |
 
@@ -200,8 +215,7 @@ return JSON by default, relying on server defaults is fragile.
 **A) Default Accept in shared client, per-fetcher override**
 
 The shared client sets `Accept: application/json` by default. XML
-consumers (IBS) and CSV consumers (EPSS) override to
-`application/xml` and `text/csv` respectively. Service-specific
+consumers (IBS) override to `application/xml`. Service-specific
 Accept values (GitHub) override as they already do.
 
 - Pro: explicit content negotiation; fails early if a server returns
@@ -217,19 +231,23 @@ Only specify `Accept` when the target API requires it (as GHSA does).
 
 **Recommendation**: Option A.
 
-**Deduction**: 10 of 13 HTTP fetchers consume JSON. Setting `Accept:
-application/json` as default covers the majority with zero per-fetcher
-effort. The 3 non-JSON consumers (IBS → XML, EPSS → CSV, IBS product
-release → binary/XML) override explicitly — this makes their non-standard
-content expectation visible in the code. An explicit Accept header is a
-standard HTTP best practice: it signals intent to the server and enables
-clear error responses (406 Not Acceptable) when there is a content-type
-mismatch, making debugging easier. The override mechanism is trivial
-(pass `headers={"Accept": "..."}` or set it on a per-client instance).
+**Status**: `resolved`
 
-**Status**: `open`
+**Resolution**: Option A — `Accept: application/json` as the default
+header in the shared HTTP client.
 
-**Resolution**: —
+- 10 of 13 HTTP fetchers consume JSON — the default covers the
+  majority with zero per-fetcher effort
+- Non-JSON consumers override explicitly:
+  - IBSClient → `Accept: application/xml`
+  - GHSA → `Accept: application/vnd.github+json` (already specified)
+- Override mechanism: at client instantiation level or per-request
+  (both supported by httpx)
+- Whether IBS fetchers override individually or inherit from
+  IBSClient depends on the IBSClient design (OP-2 territory)
+- No preemptive verification of all sources needed — if a server
+  ignores the Accept header, it responds in its default format
+  regardless (HTTP content negotiation is non-binding)
 
 ---
 
@@ -296,21 +314,24 @@ problem.
 
 **Recommendation**: Option C for v1.
 
-**Deduction**: no fetcher currently demonstrates a performance problem
-caused by redundant downloads. The only high-benefit case (IBS product
-release detection) already tracks this as its own spec-level open item
-(`ibs-product-release-detection.md:288-290`) — the solution will be
-designed in that context where the specific requirements (storage
-mechanism, invalidation strategy) are clearer. The shared client (OP-2)
-should not preclude future conditional request support (i.e., do not
-strip ETag/Last-Modified from responses), but should not implement
-storage or opt-in mechanisms now. When the IBS case is resolved, it may
-inform a reusable pattern for KEV and EPSS — but that is speculative
-today.
+**Status**: `resolved`
 
-**Status**: `open`
+**Resolution**: Option C — defer entirely for v1.
 
-**Resolution**: —
+- No fetcher currently demonstrates a performance problem caused
+  by redundant downloads
+- The only high-benefit case (IBS product release detection) already
+  tracks this as its own spec-level open item
+  (`ibs-product-release-detection.md:288-290`) — the solution will
+  be designed in that context where the specific requirements
+  (storage mechanism, invalidation strategy, cache key design,
+  per-fetcher 304 semantics) are clearer
+- The shared client (OP-2) must not preclude future conditional
+  request support (i.e., do not strip ETag/Last-Modified from
+  responses), but must not implement storage or opt-in mechanisms
+  now
+- When the IBS case is resolved, it may inform a reusable pattern
+  for other fetchers — but that is speculative today
 
 ---
 
@@ -362,21 +383,59 @@ default.
 - Pro: flexibility per provider
 - Con: more spec work per fetcher
 
-**Recommendation**: Option B for v1.
+**Recommendation**: Option A (revised from original Option B).
 
-**Deduction**: the decision is already made and documented in two
-approved specifications (`fetcher-infrastructure.md`, `cve-sync-nvd.md`).
-The fixed backoff of 5s + 10s + 20s = 35s total covers the known
-rate-limit windows of current providers (NVD: 30s window with API key,
-60s without). No provider in the current inventory has demonstrated a
-rate-limit window that consistently defeats the fixed backoff. If one
-is identified in the future, the fix is localized (add Retry-After
-support to the transport retry for that specific case). Reopening this
-decision now provides no concrete benefit.
+The original recommendation was to ignore Retry-After for simplicity.
+After review, the complexity of respecting it is minimal (~15 lines
+of logic), and fixed backoff is a blind guess that fails when the
+server's rate-limit window exceeds 35s (e.g., NVD without API key:
+60s window). Respecting the server's explicit signal is more correct
+HTTP behavior with trivial implementation cost.
 
-**Status**: `open`
+**Status**: `resolved`
 
-**Resolution**: —
+**Resolution**: Option A — respect Retry-After with a safety cap.
+
+Transport-level behavior for 429 and 503 responses:
+
+| Condition | Behavior |
+|-----------|----------|
+| `Retry-After` present, value ≤ 120s | Wait the indicated value, retry once |
+| `Retry-After` present, value > 120s | Do not retry — propagate error to caller |
+| `Retry-After` absent (429) | Do not retry at transport level — the fetcher decides |
+| `Retry-After` absent (503) | Fixed backoff (same as other 5xx, per OP-4) |
+
+Design details:
+
+- **Cap**: 120 seconds. A worker sleeping 60s is acceptable; 120s
+  is the upper bound of reasonable. Beyond that, the rate-limit is
+  too aggressive for inline retry — fail and let the next scheduled
+  run handle it
+- **One retry only**: if the server returns 429 again after the
+  guided wait, do not retry further — propagate the error. This
+  prevents loops with servers that send escalating Retry-After values
+- **Parsing**: `Retry-After` is either an integer (seconds) or an
+  HTTP-date (RFC 7231). Most APIs use the integer format. The
+  parsing is trivial
+- **Impact on OP-4**: this decision modifies the OP-4
+  recommendation. 429 with `Retry-After` is now handled at transport
+  level (previously excluded entirely). 429 without `Retry-After`
+  remains excluded. See OP-4 for the updated retry scope
+
+Cleanup required in existing specs:
+
+- `fetcher-infrastructure.md:433-434`: remove the "Retry-After is
+  deliberately ignored for simplicity" note; document the new
+  transport behavior
+- `cve-sync-nvd.md:225`: remove the corresponding note
+- `cve-sync-nvd.md`: remove inline 429 retry logic (3x with
+  5s/10s/20s) — it becomes redundant (transport handles the common
+  case) and inconsistent (uses fixed backoff instead of
+  Retry-After). Replace with: "if 429 persists after transport
+  retry, save cursor and abort run; next scheduled run resumes
+  from cursor"
+- `ibs-integration.md`: evaluate IBSClient retry logic against
+  transport retry to avoid double-retry (OP-2 territory)
 
 ---
 
@@ -656,11 +715,10 @@ max attempts, backoff"), but leave implementation to each fetcher.
 - Con: still requires each fetcher spec to implement it
 
 **Recommendation**: Option A for a conservative default (retry 5xx
-and connection errors only; NOT 429 by default since 429 handling
-varies per provider). Fetchers with specific needs override or
-disable the transport retry. This is complementary to, not a
-replacement for, Celery task retry which operates at a different
-scope.
+and connection errors with fixed backoff; 429 with Retry-After per
+OP-9 decision). Fetchers with specific needs override or disable the
+transport retry. This is complementary to, not a replacement for,
+Celery task retry which operates at a different scope.
 
 #### Retry Amplification Analysis
 
@@ -680,14 +738,21 @@ worst case must be bounded and understood.
 │  ┌───────────────────────────────────────────────────┐  │
 │  │ Transport-level retry (per HTTP request)          │  │
 │  │ Scope: single HTTP request                        │  │
-│  │ Trigger: connection error, 502, 503, 504, timeout │  │
-│  │ Policy: 3x with 1s/2s/4s backoff (proposed)      │  │
+│  │                                                   │  │
+│  │ Triggers and policies:                            │  │
+│  │ • 5xx, connection error, timeout                  │  │
+│  │   → 3x with 1s/2s/4s fixed backoff               │  │
+│  │ • 429/503 with Retry-After ≤ 120s                 │  │
+│  │   → 1 retry, wait Retry-After value (per OP-9)   │  │
+│  │ • 429/503 with Retry-After > 120s                 │  │
+│  │   → no retry, propagate error                     │  │
+│  │ • 429 without Retry-After                         │  │
+│  │   → no retry, propagate to fetcher                │  │
 │  └───────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Worst case for `fetch_single()`** (single-request fetchers like KEV,
-or on-demand single-CVE fetches):
+**Worst case for `fetch_single()` — 5xx scenario**:
 
 - Transport retry: 3 attempts × 1 request = 3 HTTP requests
 - If all 3 fail → exception propagates → Celery retries the task
@@ -699,37 +764,41 @@ This is acceptable: 9 requests over 42 seconds for a persistently
 failing service is not aggressive, and the total time (42s) is well
 within the Celery task timeout (3600s default).
 
+**Worst case for `fetch_single()` — 429 with Retry-After scenario**:
+
+- Transport: waits up to 120s, retries once → 2 HTTP requests
+- If still 429 → exception propagates → Celery retries the task
+- Celery retry: 3 task retries × 2 transport attempts = **6 total
+  HTTP requests** over up to ~395s (3 × 120s wait + 35s Celery
+  backoff)
+- 395s is well within the 3600s task timeout
+
 **For `execute()`** (batch fetchers — NVD, Red Hat, GHSA, etc.):
 
 - No Celery task-level retry exists for `execute()` — if the task
   fails, it waits for the next scheduled run
 - Transport retry operates independently per request within the batch
-- Worst case per request: 3 attempts (same as `fetch_single`)
-- Total for a batch of N requests with persistent failure: 3N requests
-  before the fetcher's error-handling logic (abort or skip-and-continue)
-  takes effect
+- Worst case per request: 3 attempts for 5xx, or 2 attempts for 429
+  with Retry-After
+- Total for a batch of N requests with persistent failure: up to 3N
+  requests before the fetcher's error-handling logic (abort or
+  skip-and-continue) takes effect
 
 **No amplification risk for `execute()`**: since there is no Celery
 retry at the task level, transport retry only adds resilience against
 transient blips (connection reset between pages, momentary 503) without
 compounding.
 
-**429 exclusion rationale**: HTTP 429 is excluded from transport-level
-retry because:
+**429 handling rationale** (updated per OP-9 decision):
 
-1. Rate-limit policies vary per provider (NVD: 30s window; GitHub:
-   per-hour budget; Red Hat: undocumented)
-2. The correct response to 429 depends on context — some fetchers
-   want to wait and retry (NVD), others want to skip and continue
-   (Red Hat), others want to abort (GHSA)
-3. NVD already specifies its own inline 429 retry; adding transport-
-   level 429 retry would create conflicting behavior
-4. 429 typically indicates a systemic problem (too many requests)
-   that won't resolve in 1-4 seconds of backoff — unlike 502/503/504
-   which often indicate momentary upstream issues
-
-Fetchers that want 429 retry can enable it explicitly on their client
-instance.
+- 429 **with** `Retry-After`: handled at transport level. The server
+  provides explicit guidance — the transport respects it (capped at
+  120s, one retry). This replaces NVD's inline 429 retry logic,
+  which used fixed backoff and ignored Retry-After
+- 429 **without** `Retry-After`: NOT handled at transport level.
+  The correct response depends on context — some fetchers want to
+  skip and continue (Red Hat), others want to abort (GHSA). The
+  fetcher decides
 
 **Status**: `open`
 
@@ -1035,9 +1104,9 @@ as decisions are made.
 
 | Spec file | OP-1 | OP-2 | OP-3 | OP-4 | OP-5 | OP-6 | OP-7 | OP-8 | OP-9 | OP-10 | OP-11 |
 |-----------|------|------|------|------|------|------|------|------|------|-------|-------|
-| `platform/fetcher-infrastructure.md` | Y | Y | Y | Y | Y | — | Y | — | — | Y | Y |
-| `integrations/ibs-integration.md` | — | Y | — | — | — | Y | Y | — | — | — | — |
-| `tickets/cve-sync-nvd.md` | — | — | Y | Y | — | — | — | — | — | — | — |
+| `platform/fetcher-infrastructure.md` | Y | Y | Y | Y | Y | — | Y | — | Y | Y | Y |
+| `integrations/ibs-integration.md` | — | Y | — | — | — | Y | Y | — | Y | — | — |
+| `tickets/cve-sync-nvd.md` | — | — | Y | Y | — | — | — | — | Y | — | — |
 | `tickets/cve-sync-redhat.md` | — | — | — | Y | — | — | — | — | — | — | — |
 | `tickets/cve-sync-ghsa.md` | — | — | — | Y | — | — | — | — | — | — | — |
 | `tickets/cve-sync-osv.md` | — | — | — | Y | — | — | — | — | — | — | — |
@@ -1060,17 +1129,15 @@ All spec paths are relative to `docs/features/` unless otherwise noted.
 
 - Add a "HTTP Client Defaults" section (or similar) to the
   `BaseFetcher` specification documenting:
-  - The User-Agent format chosen
-  - How it is composed (automatic from `name` attribute, version
-    from application configuration)
-  - That fetchers inherit it automatically
-  - Override mechanism (if any)
+  - Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
+  - Version from the canonical platform source (e.g.,
+    `importlib.metadata`)
+  - Automatic composition from `BaseFetcher.name` — fetcher authors
+    do nothing
+  - Project URL hardcoded — not configurable
 - Individual fetcher specs do NOT need updating — the User-Agent is
   inherited from the base class, not declared per-fetcher
-
-**Secondary targets**: none initially. If a fetcher requires a
-non-standard User-Agent (unlikely), its spec would document the
-override.
+- Add a brief "For API Providers" section to the project README
 
 #### OP-2: Shared HTTP client factory
 
@@ -1123,11 +1190,11 @@ override.
 - Document the retry amplification bounds
 
 **Per-fetcher updates** (only where current behavior conflicts):
-- `cve-sync-nvd.md`: NVD's inline 429 retry logic may overlap with
-  transport-level retry. Document the interaction — e.g., transport
-  retry handles 5xx/connection errors; NVD's inline logic handles
-  429 specifically (since 429 is excluded from transport retry per
-  recommendation)
+- `cve-sync-nvd.md`: NVD's inline 429 retry logic (3x with
+  5s/10s/20s) is superseded by transport-level Retry-After handling
+  (per OP-9). Remove the inline retry; replace with: "if 429
+  persists after transport retry, save cursor and abort run." See
+  OP-9 resolution for details
 - `cve-sync-ghsa.md`: GHSA aborts on any page failure. If transport
   retry is active, a transient 5xx would be retried transparently
   before reaching the abort logic. Document that this is the
@@ -1168,30 +1235,34 @@ Depends on factual determination of certificate chains.
 **Per-fetcher documentation** (only non-JSON consumers):
 - `integrations/ibs-integration.md` (`IBSClient`): document
   `Accept: application/xml`
-- `tickets/cve-sync-epss.md`: document `Accept: text/csv`
-  (when EPSS spec is written)
 
 #### OP-8: Conditional HTTP requests
 
-Deferred (recommended). If resolved as Option C:
+Resolved as Option C (defer):
 - No spec changes needed
 - `ibs-product-release-detection.md:288-290` retains its existing
   open item independently
 
-If resolved as Option A:
-- `platform/fetcher-infrastructure.md`: document the utility methods
-- Per-fetcher specs for KEV, EPSS, IBS product release: document
-  opt-in usage
-
 #### OP-9: Retry-After handling
 
-If resolved as Option B (keep ignoring):
-- No spec changes needed — already documented
+**Primary target**: `platform/fetcher-infrastructure.md`
 
-If reconsidered later:
-- `platform/fetcher-infrastructure.md:433-434`: update the
-  deliberate-ignore note
-- `cve-sync-nvd.md:225`: update the corresponding note
+- Remove the "Retry-After is deliberately ignored for simplicity"
+  note (`fetcher-infrastructure.md:433-434`)
+- Document the new transport-level Retry-After behavior: respect
+  the header with 120s cap, one guided retry for 429/503 responses
+
+**Per-fetcher cleanup**:
+- `cve-sync-nvd.md`: remove the "Retry-After is deliberately
+  ignored" note (line 225). Remove the inline 429 retry logic (3x
+  with 5s/10s/20s) — it is superseded by transport-level
+  Retry-After handling. Replace with: "if 429 persists after
+  transport retry, save cursor and abort run; next scheduled run
+  resumes from cursor"
+- `ibs-integration.md`: evaluate IBSClient retry logic against
+  transport-level retry to avoid double-retry. If IBSClient uses
+  the shared factory (OP-2), its existing "retry with exponential
+  backoff" may conflict with transport-level retry
 
 #### OP-10: Rate limiting pattern
 
