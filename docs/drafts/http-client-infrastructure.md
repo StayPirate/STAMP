@@ -696,9 +696,7 @@ Starting point for discussion:
 
 | Fetcher | Override needed | Reason |
 |---------|---------------|--------|
-| `detect_ibs_product_releases` | Read timeout → 120s+ | Downloads `updateinfo.xml` files that can be several MB for large product repositories |
-| `sync_epss_scores` | Read timeout → 60s | Daily CSV download (~30MB compressed) |
-| `sync_nvd_cves` (full sync) | Read timeout → 60s | Initial full sync pages with 2000 CVEs can be large |
+| `detect_ibs_product_releases` | Read timeout → 120s | Downloads `updateinfo.xml` files that can be several MB for large product repositories |
 
 **Timeout hierarchy (clarification)**:
 
@@ -717,9 +715,29 @@ Starting point for discussion:
 └─────────────────────────────────────────────────────┘
 ```
 
-**Status**: `open`
+**Status**: `resolved`
 
-**Resolution**: —
+**Resolution**: Option A — default timeout in shared client, per-fetcher
+code-level override.
+
+- **Default values** (hardcoded in the standalone factory from OP-2):
+  - Connect timeout: 10 seconds
+  - Read timeout: 30 seconds
+- **Configurability**: none. No env var, no `FetcherConfig` field, no
+  admin panel. HTTP request timeouts are engineering decisions, not
+  operational knobs — they are almost never tuned at runtime. If a
+  fetcher consistently hits the timeout, the correct fix is a code-level
+  override (a conscious engineering decision), not a runtime knob
+- **Override mechanism**: per-fetcher via `http_client_options` class
+  attribute (same mechanism defined in OP-2). Only fetchers that
+  genuinely need different values declare an override. Currently only
+  `detect_ibs_product_releases` (read → 120s for large XML downloads)
+- **Alignment**: `sync_cisa_kev` currently declares an explicit 30s
+  timeout in its spec — this is now redundant (matches the default) and
+  should be removed when applying this draft to specs
+- **Not overriding**: `sync_epss_scores` (uses API calls, not bulk
+  download) and `sync_nvd_cves` (only fetches recent CVEs, not
+  historical bulk — pages are small) do not need overrides
 
 ---
 
@@ -865,9 +883,36 @@ compounding.
   skip and continue (Red Hat), others want to abort (GHSA). The
   fetcher decides
 
-**Status**: `open`
+**Status**: `resolved`
 
-**Resolution**: —
+**Resolution**: Option A — transport-level retry in shared HTTP client.
+
+The shared client (OP-2) automatically retries transient errors before
+the fetcher sees them. If all retries fail, the error propagates to the
+fetcher, which applies its own logic (abort, skip-and-continue, etc.).
+
+**Retry policy**:
+
+| Condition | Retry | Backoff |
+|-----------|-------|---------|
+| 5xx, connection error, timeout | 3 attempts | 1s / 2s / 4s (fixed) |
+| 429/503 with `Retry-After` ≤ 120s | 1 retry | Wait the indicated value (per OP-9) |
+| 429/503 with `Retry-After` > 120s | No retry | Error propagated immediately |
+| 429 without `Retry-After` | No retry at transport | Fetcher decides (knows its source) |
+| 4xx (non-429) | No retry | Client error — retrying is pointless |
+
+**Impact on existing fetchers** (all preserved or improved):
+
+| Fetcher | Before | After | Effect |
+|---------|--------|-------|--------|
+| `sync_nvd_cves` | Inline retry 3x (5s/10s/20s) for 429 only | Transport handles 429+Retry-After (server-guided). 5xx/timeout also retried | Improved — respects server guidance; covers more error types |
+| `sync_ghsa_advisories` | No retry → abort on page failure | Transient 5xx retried 3x before abort logic sees it | Improved — transient blips no longer trigger abort |
+| `sync_redhat_cves` / `sync_osv_advisories` | 5xx → `record_failed`, continue | 5xx retried 3x; only persistent failures reach `record_failed` | Improved — fewer false `record_failed` |
+| `sync_cisa_kev` | Failure → abort | 3 retries before abort | Improved — more resilient |
+| IBS fetchers | Own retry ("exponential backoff") | Needs evaluation — see IBSClient note in Application Plan | To be evaluated |
+
+**Override**: fetchers that do NOT want transport retry (hypothetical
+future case) can disable it via `http_client_options`.
 
 ---
 
@@ -971,9 +1016,65 @@ permissive). A failed TLS handshake is a hard error — the fetcher
 should fail immediately with a clear error message, not proceed with
 an unverified connection.
 
-**Status**: `open` (blocked on factual verification)
+**Status**: `resolved`
 
-**Resolution**: —
+**Resolution**: Option A — single shared CA configuration for all SUSE
+internal services, with combined trust store.
+
+#### Factual Verification (performed 2026-06-22)
+
+All SUSE internal services use certificates signed by the same internal
+CA chain:
+
+```
+SUSE Trust Root (self-signed, committed at certs/SUSE_Trust_Root.crt)
+  └── SUSE CA Root (intermediate)
+        └── SUSE CA all 2023.1 (issuing CA)
+              └── leaf certificates
+```
+
+| Service | Host:Port | Protocol | Issuer | Verified |
+|---------|-----------|----------|--------|----------|
+| IBS API | `api.suse.de:443` | HTTPS | SUSE CA all 2023.1 | Yes (`Verify return code: 0`) |
+| IBS Download | `download.suse.de:443` | HTTPS | SUSE CA all 2023.1 | Yes |
+| SMELT | `smelt.suse.de:443` | HTTPS | SUSE CA all 2023.1 | Yes |
+| AIMAAS | `aimaas.suse.de:443` | HTTPS | SUSE CA all 2023.1 | Yes |
+| RabbitMQ | `rabbit.suse.de:5671` | AMQPS | SUSE CA all 2023.1 | Yes |
+
+All verified with `openssl s_client -CAfile certs/SUSE_Trust_Root.crt`.
+Port 5672 (plaintext AMQP) is not available — RabbitMQ requires TLS.
+
+#### Design
+
+- **Env var**: `SUSE_CA_CERT_PATH` (default: `certs/SUSE_Trust_Root.crt`)
+  - The SUSE Trust Root CA file is committed in the repository. The
+    default path (relative to working directory) works both in
+    containers (workdir `/app`) and in local development (run from
+    project root). No configuration needed for standard deployments
+  - The env var exists as an override for non-standard deployments
+    where the cert file is at a different path
+- **Combined trust store**: at runtime, Python builds an SSL context
+  that includes both the system CA bundle (for public services: NVD,
+  GitHub, CISA, Red Hat, OSV, FIRST.org) and the SUSE CA (for internal
+  services). All connections use the same trust store — no host
+  matching, no fallback, no host list to maintain
+- **If `SUSE_CA_CERT_PATH` file does not exist**: the combined trust
+  store contains only system CAs. Connections to SUSE internal services
+  fail with a clear TLS error. This is the correct behavior for
+  environments without internal network access
+- **Scope**: all TLS connections — HTTP (via shared client, OP-2),
+  LDAP (sync_ldap_directory fetcher), AMQP (IBSEventConsumer)
+- **`LDAP_CA_CERT_PATH` deprecated**: replaced by `SUSE_CA_CERT_PATH`.
+  All references to `LDAP_CA_CERT_PATH` in specs and code must be
+  updated
+- **Container simplification**: the `backend/Dockerfile` currently
+  copies the cert into the system trust store via
+  `update-ca-certificates`. This is no longer needed — Python manages
+  the trust store at the application level. The COPY + RUN lines
+  should be removed
+- **TLS verification**: always enforced (fail hard). A failed TLS
+  handshake is an immediate error — never proceed with an unverified
+  connection
 
 ---
 
@@ -1077,9 +1178,74 @@ existing inconsistency (`request_delay_seconds` vs
 - New fetcher specs → use `rate_limit` from FetcherConfig unless
   they have a specific reason for a custom setting
 
-**Status**: `open`
+**Status**: `resolved`
 
-**Resolution**: —
+**Resolution**: Option A with fetcher-level enforcement (A2). The
+existing `FetcherConfig.rate_limit` field (VARCHAR, frequency format) is
+replaced by a new field with correct semantics.
+
+#### Field definition
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `request_delay` | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. 0 means no delay. Applied by the fetcher in its pagination/iteration loop via `asyncio.sleep(self.config.request_delay)` |
+
+#### Design decisions
+
+- **Name**: `request_delay` — describes what the value IS (a delay in
+  seconds), not what it achieves. Unambiguous about semantics
+- **Replaces**: `FetcherConfig.rate_limit` (VARCHAR, format `"2/s"`,
+  `"100/m"`) — removed entirely. The frequency format was never
+  implemented and is harder to reason about than a simple delay
+- **Default**: 0 (no delay). Fetchers that need throttling declare a
+  per-fetcher default at registration. Fetchers toward internal SUSE
+  services (no rate limits) naturally use 0
+- **Enforcement**: fetcher-level. The fetcher applies
+  `asyncio.sleep(self.config.request_delay)` in its iteration loop.
+  The shared HTTP client (OP-2) does NOT enforce the delay — it has
+  no knowledge of where delays should be inserted (between pages?
+  between sub-requests? after each request?)
+- **Runtime-configurable**: yes, via the admin dashboard (FetcherConfig
+  PATCH endpoint). The operator can adjust the delay without code
+  changes or redeployment
+- **Registration behavior**: `INSERT ... ON CONFLICT DO NOTHING` (per
+  existing spec). Operator overrides persist across deployments.
+  Default values from the spec are only installed on first registration
+
+#### Migration of custom settings
+
+The per-fetcher custom settings that existed because no centralized
+field was available are eliminated:
+
+| Fetcher | Old custom setting | New FetcherConfig default |
+|---------|-------------------|--------------------------|
+| `sync_nvd_cves` | `request_delay_seconds` (6.0) | `request_delay` = 6.0 (conservative: safe without API key. Operator reduces to 0.6 after configuring API key) |
+| `sync_redhat_cves` | `throttle_delay_seconds` (2.0) | `request_delay` = 2.0 |
+| `sync_osv_advisories` | `throttle_delay_seconds` (0.2) | `request_delay` = 0.2 |
+| `sync_ibs_bugowners` | used `rate_limit` generically | `request_delay` = 0 (no delay needed for internal IBS API) |
+
+#### Additional rename: `timeout_seconds` → `run_timeout`
+
+While updating FetcherConfig fields, the existing `timeout_seconds`
+field is renamed to `run_timeout` for clarity:
+
+- **Rationale**: `timeout_seconds` is generic ("timeout of what?").
+  `run_timeout` makes it clear it refers to the maximum duration of a
+  fetcher run — the same concept used for both Celery soft time limit
+  enforcement and stale run detection
+- **Not Celery-specific**: the field is consumed by Celery (soft time
+  limit), the API trigger endpoint (stale detection), the dashboard
+  (stale hint), and the CLI. Naming it after the application concept
+  (run timeout) rather than the enforcement mechanism (Celery timeout)
+  is more accurate
+- **Consistent with `request_delay`**: both fields use the
+  `<noun>_<noun>` pattern without a `_seconds` suffix. Unit (seconds)
+  is documented in the column description
+- **Default**: 3600 (unchanged). 1 hour is a reasonable safety net
+  for the majority of fetchers. Fetchers that are known to be fast
+  (kernel: 300, LDAP: 900) override with a tighter value for faster
+  stale detection
+- **Type**: INTEGER, NOT NULL (unchanged)
 
 ---
 
@@ -1148,14 +1314,22 @@ stating that standard proxy env vars are respected. Additionally,
 are standard (not Sentinel-specific) and apply to all outgoing HTTP
 connections.
 
-For SUSE internal services (`*.suse.de`), operators in environments
-with a proxy will likely need to add these hosts to `NO_PROXY` since
-they are reachable directly from the internal network. This should be
-documented as a deployment note.
+**Status**: `resolved`
 
-**Status**: `open`
+**Resolution**: Option A — document proxy support as inherited from
+httpx defaults.
 
-**Resolution**: —
+- httpx natively respects `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`
+  environment variables. No code changes needed
+- These are standard system-level environment variables, not
+  Sentinel-specific configuration. They are set at the container or
+  system level, not in application configuration
+- Documentation only: add a "Proxy Configuration" paragraph to the
+  HTTP client defaults section in `fetcher-infrastructure.md`, and
+  list the variables in `docs/configuration.md` with a note marking
+  them as standard (not Sentinel-specific)
+- No `.env.example` entry — these are system-level vars that
+  operators familiar with proxy setup already know about
 
 ---
 
@@ -1169,20 +1343,27 @@ as decisions are made.
 
 | Spec file | OP-1 | OP-2 | OP-3 | OP-4 | OP-5 | OP-6 | OP-7 | OP-8 | OP-9 | OP-10 | OP-11 |
 |-----------|------|------|------|------|------|------|------|------|------|-------|-------|
-| `platform/fetcher-infrastructure.md` | Y | Y | Y | Y | Y | — | Y | — | Y | Y | Y |
+| `platform/fetcher-infrastructure.md` | Y | Y | Y | Y | Y | Y | Y | — | Y | Y | Y |
+| `platform/fetcher-operations.md` | — | — | — | — | — | — | — | — | — | Y | — |
 | `integrations/ibs-integration.md` | — | Y | — | — | — | Y | Y | — | Y | — | — |
-| `tickets/cve-sync-nvd.md` | — | — | Y | Y | — | — | — | — | Y | — | — |
-| `tickets/cve-sync-redhat.md` | — | — | — | Y | — | — | — | — | — | — | — |
+| `integrations/ibs-rabbitmq-integration.md` | — | — | — | — | — | Y | — | — | — | — | — |
+| `identity/ad-integration.md` | — | — | — | — | — | Y | — | — | — | — | — |
+| `tickets/cve-sync-nvd.md` | — | — | — | Y | — | — | — | — | Y | Y | — |
+| `tickets/cve-sync-redhat.md` | — | — | — | Y | — | — | — | — | — | Y | — |
 | `tickets/cve-sync-ghsa.md` | — | — | — | Y | — | — | — | — | — | — | — |
-| `tickets/cve-sync-osv.md` | — | — | — | Y | — | — | — | — | — | — | — |
+| `tickets/cve-sync-osv.md` | — | — | — | Y | — | — | — | — | — | Y | — |
 | `tickets/cve-sync-kev.md` | — | — | Y | — | — | — | — | Y | — | — | — |
 | `tickets/cve-sync-epss.md` | — | — | — | — | — | — | Y | Y | — | — | — |
+| `tickets/cve-sync-kernel.md` | — | — | — | — | — | — | — | — | — | Y | — |
 | `packages/product-catalog.md` | — | — | — | — | — | Y | — | — | — | — | — |
 | `packages/ibs-track-release-detection.md` | — | — | — | — | — | — | — | — | — | — | — |
-| `packages/ibs-product-release-detection.md` | — | — | — | — | — | — | — | Y | — | — | — |
+| `packages/ibs-product-release-detection.md` | — | — | Y | — | — | — | — | Y | — | — | — |
 | `packages/package-bugowner.md` | — | — | — | — | — | — | — | — | — | Y | — |
 | `packages/ibs-submission-tracking.md` | — | — | — | — | — | — | — | — | — | — | — |
-| `docs/configuration.md` | — | — | Y | — | — | Y | — | — | — | — | Y |
+| `docs/configuration.md` | — | — | — | — | — | Y | — | — | — | Y | Y |
+| `docs/conventions.md` | — | — | — | — | — | Y | — | — | — | — | — |
+| `docs/deployment.md` | — | — | — | — | — | Y | — | — | — | — | — |
+| `backend/Dockerfile` | — | — | — | — | — | Y | — | — | — | — | — |
 
 All spec paths are relative to `docs/features/` unless otherwise noted.
 
@@ -1234,22 +1415,25 @@ All spec paths are relative to `docs/features/` unless otherwise noted.
 
 **Primary target**: `platform/fetcher-infrastructure.md`
 
-- Document the default timeout values (connect, read) in the HTTP
-  client defaults section (see OP-1/OP-2)
+- Document the default timeout values (connect: 10s, read: 30s) in the
+  HTTP client defaults section (see OP-1/OP-2)
 - Clarify the distinction between HTTP request timeout (per-request)
   and `FetcherConfig.timeout_seconds` (Celery task-level, stale run
   detection)
+- No configuration env var needed — timeouts are hardcoded
 
 **Per-fetcher updates**:
-- `cve-sync-kev.md`: already specifies 30s — verify compatibility
-  with the chosen default. If the default is 30s, the per-fetcher
-  specification can reference the default instead of hardcoding
-- `cve-sync-nvd.md`: may need explicit timeout for large paginated
-  responses if default differs from NVD's needs
 
-**Configuration**: `docs/configuration.md`
-- If the default timeout is configurable via env var, add it to the
-  configuration reference
+- `tickets/cve-sync-kev.md`:
+  - Remove `| HTTP timeout | 30 seconds |` from the properties table
+    (redundant — matches the centralized default)
+  - Remove `(timeout: 30 seconds)` from algorithm step 1
+  - In the error handling table, change `Request timeout (>30s)` to
+    `Request timeout`
+- `packages/ibs-product-release-detection.md`:
+  - Add `| HTTP read timeout | 120 seconds (override) |` to the
+    fetcher properties table (reason: `updateinfo.xml` files can be
+    several MB for products with years of accumulated advisories)
 
 #### OP-4: HTTP-level retry for transient errors
 
@@ -1277,6 +1461,15 @@ All spec paths are relative to `docs/features/` unless otherwise noted.
 - `cve-sync-osv.md`: similar to Red Hat — skip-and-continue after
   retry exhaustion. No conflict
 
+**IBSClient note**: `integrations/ibs-integration.md`
+
+- Evaluate `IBSClient`'s existing retry logic ("retry with
+  exponential backoff", line 241) against transport-level retry to
+  avoid double-retry. If `IBSClient` uses the shared factory (OP-2),
+  it must either disable transport-level retry in its client
+  configuration or remove its own retry logic. The two must not
+  coexist for the same request
+
 #### OP-5: HTTP response compression
 
 **Primary target**: `platform/fetcher-infrastructure.md`
@@ -1288,15 +1481,49 @@ All spec paths are relative to `docs/features/` unless otherwise noted.
 
 #### OP-6: TLS for SUSE internal services
 
-Depends on factual determination of certificate chains.
+**Primary target**: `platform/fetcher-infrastructure.md`
 
-**Potential targets**:
-- `platform/fetcher-infrastructure.md`: if a shared CA bundle
-  config is added
-- `integrations/ibs-integration.md`: if IBS-specific TLS config
-  is needed
-- `packages/product-catalog.md`: if SMELT/AIMAAS need TLS config
-- `docs/configuration.md`: new env var for CA bundle path
+- Document the combined trust store in the HTTP client defaults
+  section: system CAs + SUSE CA from `SUSE_CA_CERT_PATH`
+- Replace `LDAP_CA_CERT_PATH` with `SUSE_CA_CERT_PATH` in the env
+  var exclusion table (line 1008)
+
+**Per-spec updates**:
+
+- `identity/ad-integration.md`:
+  - Replace all references to `LDAP_CA_CERT_PATH` with
+    `SUSE_CA_CERT_PATH`
+  - Update lines 35-37: remove "installed in the container system
+    trust store at build time"; replace with: "loaded into Python's
+    SSL context at runtime via `SUSE_CA_CERT_PATH`"
+  - Update the Security Considerations section (line 906) accordingly
+- `integrations/ibs-integration.md`:
+  - Document that `IBSClient` uses TLS validated against the SUSE
+    Trust Root CA via the shared factory's combined trust store
+- `integrations/ibs-rabbitmq-integration.md`:
+  - Document that the AMQPS connection to `rabbit.suse.de:5671` uses
+    `SUSE_CA_CERT_PATH` for TLS validation
+- `packages/product-catalog.md`:
+  - Document that SMELT/AIMAAS HTTPS connections are validated via
+    the combined trust store (SUSE Trust Root CA)
+
+**Cross-cutting updates**:
+
+- `docs/configuration.md`:
+  - Replace `LDAP_CA_CERT_PATH` row with `SUSE_CA_CERT_PATH`
+    (default: `certs/SUSE_Trust_Root.crt`, description: "Path to
+    SUSE internal CA certificate for TLS validation of all
+    connections to *.suse.de services (HTTP, LDAP, AMQP). Combined
+    with system CA bundle at runtime.")
+- `docs/conventions.md`:
+  - Update LDAP row in AD/LDAP/SSO terminology table: replace
+    `LDAP_CA_CERT_PATH` with `SUSE_CA_CERT_PATH`
+- `docs/deployment.md`:
+  - Replace `LDAP_CA_CERT_PATH` reference with `SUSE_CA_CERT_PATH`
+- `backend/Dockerfile`:
+  - Remove lines 16-22 (COPY cert + update-ca-certificates). Python
+    manages the trust store at the application level; system-wide CA
+    installation is no longer needed
 
 #### OP-7: Default Accept header
 
@@ -1341,32 +1568,83 @@ Resolved as Option C (defer):
 
 **Primary target**: `platform/fetcher-infrastructure.md`
 
-- Define `FetcherConfig.rate_limit` semantics (unit, type, behavior)
-- Document enforcement responsibility (client vs. fetcher)
-- Document the relationship with per-fetcher custom settings
+- In the FetcherConfig table: remove `rate_limit` (VARCHAR) row, add
+  `request_delay` (FLOAT, NOT NULL, DEFAULT 0) row
+- In the FetcherConfig table: rename `timeout_seconds` to `run_timeout`
+  (same type INTEGER, same default 3600, updated description)
+- Update all references to `rate_limit` → `request_delay` throughout
+  the spec
+- Update all references to `timeout_seconds` → `run_timeout` throughout
+  the spec (this includes: stale run detection section, Celery task
+  integration, custom settings section, audit event types, deregistered
+  fetcher lifecycle)
+- Update the custom settings section: remove
+  `throttle_delay_seconds` from examples (it is no longer a custom
+  setting — replaced by the FetcherConfig field)
+- Document enforcement model: "The fetcher applies
+  `asyncio.sleep(self.config.request_delay)` in its iteration loop.
+  The shared HTTP client does not enforce the delay."
+
+**Secondary target**: `platform/fetcher-operations.md`
+
+- Update validation rules: remove `rate_limit` pattern validation,
+  add `request_delay` validation (float, ≥ 0)
+- Rename `timeout_seconds` → `run_timeout` in validation rules
+- Update all JSON examples containing `rate_limit` or `timeout_seconds`
+- Update CLI output examples (`sentinel fetcher config`)
+- Update audit event examples (`config_changed` field names)
 
 **Per-fetcher updates**:
-- `packages/package-bugowner.md`: already references `rate_limit`
-  from `FetcherConfig` — verify consistency with new semantics
-- `tickets/cve-sync-nvd.md`: document relationship between generic
-  `rate_limit` and `request_delay_seconds` custom setting
-- `tickets/cve-sync-redhat.md`: document relationship between
-  generic `rate_limit` and `throttle_delay_seconds` custom setting
+
+- `tickets/cve-sync-nvd.md`:
+  - Remove `request_delay_seconds` from the `Settings` Pydantic model
+  - Remove it from the custom settings table
+  - Document: "Default `request_delay` = 6.0 (registered in
+    FetcherConfig at first startup). Operator should reduce to 0.6
+    after configuring the NVD API key via the dashboard."
+  - Replace `self.get_setting("request_delay_seconds")` with
+    `self.config.request_delay` in algorithm steps
+- `tickets/cve-sync-redhat.md`:
+  - Remove `throttle_delay_seconds` from the `Settings` model and
+    custom settings table
+  - Document: "Default `request_delay` = 2.0"
+  - Replace `self.settings.throttle_delay_seconds` with
+    `self.config.request_delay` in algorithm steps
+- `tickets/cve-sync-osv.md`:
+  - Remove `throttle_delay_seconds` from the `Settings` model and
+    custom settings table
+  - Document: "Default `request_delay` = 0.2"
+  - Replace `self.settings.throttle_delay_seconds` with
+    `self.config.request_delay` in algorithm steps
+- `packages/package-bugowner.md`:
+  - Replace "Respect the `rate_limit` from `FetcherConfig`" with
+    "Respect `request_delay` from `FetcherConfig`"
+  - Update: "default: 0 — admin-configurable via the fetcher
+    dashboard"
+
+**Cross-cutting updates** (for `run_timeout` rename):
+
+- `docs/configuration.md`: if `timeout_seconds` is referenced,
+  rename to `run_timeout`
+- `identity/ad-integration.md`: if fetcher timeout is referenced,
+  update name
+- `tickets/cve-sync-kernel.md`: references `timeout_seconds` for
+  the 300s override — rename to `run_timeout`
 
 #### OP-11: HTTP proxy support
 
 **Primary target**: `platform/fetcher-infrastructure.md`
 
 - Add a "Proxy Configuration" paragraph to the HTTP client defaults
-  section documenting that standard env vars are respected
+  section: "The shared HTTP client respects the standard `HTTPS_PROXY`,
+  `HTTP_PROXY`, and `NO_PROXY` environment variables for proxy
+  configuration. No application-level proxy settings exist."
 
 **Secondary target**: `docs/configuration.md`
 
 - Add `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` to the environment
   variables index with a note that they are standard (not
   Sentinel-specific) and apply to all outgoing HTTP connections
-- Add deployment note about `NO_PROXY` for `*.suse.de` in proxy
-  environments
 
 ---
 
