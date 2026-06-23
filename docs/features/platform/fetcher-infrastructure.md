@@ -338,8 +338,8 @@ async def fetch_single(self, cve_id: str, session: AsyncSession) -> PostIngestTa
 ```
 
 CVE fetchers that support per-CVE APIs override this method (the
-default). Catalog-based fetchers (KEV, EPSS) that have no per-CVE API
-set `supports_fetch_single = False` and do NOT override `fetch_single`.
+default). Catalog-based fetchers (KEV) that have no per-CVE API set
+`supports_fetch_single = False` and do NOT override `fetch_single`.
 The system discovers fetchers eligible for on-demand fetch via
 `get_fetch_single_fetchers()` (which filters by this attribute) and
 invokes them in parallel when an on-demand fetch is needed (see
@@ -554,7 +554,7 @@ def get_fetch_single_fetchers() -> dict[str, type[BaseCVEFetcher]]:
     Returns a dict mapping cve_source_type -> fetcher class for all
     registered BaseCVEFetcher subclasses where
     supports_fetch_single = True. Fetchers that opt out (catalog-based
-    fetchers like KEV and EPSS) are excluded.
+    fetchers like KEV) are excluded.
     """
 ```
 
@@ -862,6 +862,7 @@ enqueues a `run_catch_up` Celery task for each registered fetcher.
 | Fetcher | `execute()` scope filter | `catch_up()` type | What catch-up does |
 |---|---|---|---|
 | `sync_redhat_cves` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call Red Hat API → upsert CVSS/CWE/refs/packages |
+| `sync_epss_scores` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call EPSS API → upsert score/percentile |
 | `sync_nvd_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Already has `fetch_single` for on-demand discovery; catch-up is free |
 | `sync_mitre_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
@@ -888,19 +889,18 @@ on-demand discovery. The default `catch_up()` inherited from
 | `sync_aimaas_thresholds` | Syncs all CVSS thresholds |
 | `sync_ldap_directory` | Syncs all employee records |
 | `sync_cisa_kev` | Syncs entire KEV catalog (sets `participates_in_catch_up = False`) |
-| `sync_epss_scores` | Syncs all EPSS scores (sets `participates_in_catch_up = False`) |
 
-Note: `sync_cisa_kev` and `sync_epss_scores` inherit from
-`BaseCVEFetcher` but opt out of catch-up via
-`participates_in_catch_up = False` because their `execute()` syncs the
-entire catalog on every run — there is no gap to recover after ticket
-reactivation. They also set `supports_fetch_single = False` because
-their data sources are monolithic catalogs with no per-CVE API — the
-`fetch_single_cve` task is never dispatched for these fetchers. In
-contrast, `sync_nvd_cves`, `sync_mitre_cves`, `sync_kernel_cves`,
-`sync_ghsa_advisories`, and `sync_osv_advisories` participate in
-catch-up because their `fetch_single()` provides immediate per-ticket
-recovery without waiting for the next periodic run.
+Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but opts out of
+catch-up via `participates_in_catch_up = False` because its `execute()`
+syncs the entire catalog on every run — there is no gap to recover after
+ticket reactivation. It also sets `supports_fetch_single = False` because
+CISA KEV is a monolithic catalog with no per-CVE API — the
+`fetch_single_cve` task is never dispatched for this fetcher. In contrast,
+`sync_nvd_cves`, `sync_mitre_cves`, `sync_kernel_cves`,
+`sync_ghsa_advisories`, `sync_osv_advisories`, `sync_redhat_cves`, and
+`sync_epss_scores` participate in catch-up because their `fetch_single()`
+provides immediate per-ticket recovery without waiting for the next
+periodic run.
 
 
 ## Error Message Sanitization
@@ -1532,7 +1532,7 @@ BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
     ├── SyncRedhatCves       (API-based CVE enrichment)
     ├── SyncGhsaAdvisories   (API-based CVE discovery + enrichment)
     ├── SyncCisaKev          (API-based CVE enrichment, catalog fetch)
-    ├── SyncEpssScores       (planned — API-based CVE enrichment)
+    ├── SyncEpssScores       (API-based CVE enrichment)
     └── SyncOsvAdvisories    (planned — API-based CVE enrichment)
 ```
 
@@ -1544,7 +1544,7 @@ BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
 | `cve_source_type` | `str` | (required, abstract) | `CVESourceType` Enum value. Unique per fetcher. Stored in `CVESource.source` |
 | `source_reference_url_pattern` | `str \| None` | `None` | URL pattern with `{cve_id}` placeholder for human-readable CVE pages. Fetchers with this attribute set MUST pass the constructed URL as `source_url` to `reference_service.upsert_references()` after each `upsert_cve()` call — this creates a TicketReference with type=advisory. See `docs/features/tickets/ticket-references.md` for details |
 | `participates_in_catch_up` | `bool` | `True` | Whether the fetcher is included in `get_catch_up_fetchers()` results. Global-scope CVE fetchers that sync entire catalogs set this to `False` to opt out of per-ticket catch-up |
-| `supports_fetch_single` | `bool` | `True` | Whether the fetcher supports on-demand single-CVE fetch. Catalog-based fetchers (KEV, EPSS) that have no per-CVE API set this to `False`. Fetchers with `False` are excluded from `get_fetch_single_fetchers()` results, are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()` |
+| `supports_fetch_single` | `bool` | `True` | Whether the fetcher supports on-demand single-CVE fetch. Catalog-based fetchers (KEV) that have no per-CVE API set this to `False`. Fetchers with `False` are excluded from `get_fetch_single_fetchers()` results, are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()` |
 
 ### Concrete Methods
 
@@ -1698,7 +1698,7 @@ fetchers unchanged. `BaseCVEFetcher` adds only:
 
 ### Session Lifecycle for API-based CVE Fetchers
 
-API-based CVE fetchers (NVD, Red Hat, GHSA, OSV, KEV) MUST commit
+API-based CVE fetchers (NVD, Red Hat, GHSA, OSV, KEV, EPSS) MUST commit
 per-CVE in their `execute()` loop. Each iteration has its own
 transaction boundary.
 

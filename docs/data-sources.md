@@ -29,7 +29,7 @@ see `docs/architecture.md` and the relevant feature specifications in
 | SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Specified |
-| EPSS | Public | Exploit probability scores | Planned |
+| EPSS | Public | Exploit probability scores | Specified |
 | GHSA | Public | Security advisories, CVSS, CWE | Specified |
 | Linux Kernel CVE | Public | Kernel CVE data, fix/introduce commits | Specified |
 | OSV | Public | Aggregated vulnerability data | Specified |
@@ -157,8 +157,9 @@ CVSS measures severity, EPSS measures likelihood of exploitation.
   single-CVE queries and bulk queries with pagination. Supports date
   filtering for incremental sync. No authentication required. Also
   available as a bulk CSV download (~15MB compressed)
-- **Integration status**: **Planned**. New `sync_epss_scores` fetcher. Schedule:
-  TBD. Data is stored in a dedicated EPSS table linked to CVE records
+- **Integration status**: **Specified**. `sync_epss_scores` fetcher. Schedule:
+  daily at 14:00 UTC. Data is stored in a dedicated EPSS table linked to CVE
+  records. Rate limit: 1000 req/min (public, unauthenticated)
 - **Documentation**: https://www.first.org/epss/,
   https://www.first.org/epss/api
 
@@ -968,7 +969,7 @@ feature documentation (not its implementation status):
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Partial |
 | `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |
-| `sync_epss_scores` | FIRST.org EPSS | TBD | None | None known | EPSS score + percentile per CVE | [cve-sync-epss.md](features/tickets/cve-sync-epss.md#fetcher-definition) | TBD |
+| `sync_epss_scores` | FIRST.org EPSS | Daily at 14:00 UTC | None | 1000 req/min (public) | EPSS score + percentile per CVE | [cve-sync-epss.md](features/tickets/cve-sync-epss.md#fetcher-definition) | Complete |
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), resolved packages (best-effort SMELT), references | [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md#fetcher-definition) | Complete |
 | `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` for direct package resolution. `source_container = "cna"` | [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md#fetcher-definition) | Complete |
 | `sync_osv_advisories` | OSV (osv.dev) | Daily at 05:00 UTC (`0 5 * * *`) | None | None (no rate limits) | GIT fix/introduce commits (CVEAffectedVersion), ecosystem affected versions (CVEAffectedVersion with ecosystem), references (TicketReference), external identifiers (GHSA/PYSEC/RUSTSEC), resolved packages (best-effort SMELT). `source_container = "osv"` | [cve-sync-osv.md](features/tickets/cve-sync-osv.md#fetcher-definition) | Complete |

@@ -732,13 +732,12 @@ values have variable precision (e.g., 0.00043, 0.97565) that would
 require a wide DECIMAL scale.
 
 **Lifecycle**: the `sync_epss_scores` fetcher refreshes EPSS data only for
-CVEs with **active tickets** (New, Analysis, Analyzed). When a ticket transitions to Resolved, Ignored,
-or Duplicated, the CVEEPSSScore record is **retained** but no longer
-refreshed — consistent with the CVSS lifecycle pattern
-(`docs/features/tickets/cvss-scoring.md`, Sync Scope). If the ticket
-later regresses to an active status (e.g., `reconcile_ticket_status()`
-moves it back to Analyzed), the fetcher resumes refreshing the record
-on its next run.
+CVEs with **active tickets** (New, Analysis, Analyzed). When a ticket
+transitions to an inactive status, the CVEEPSSScore record is **retained**
+but no longer refreshed — consistent with the CVSS lifecycle pattern
+(`docs/features/tickets/cvss-scoring.md`, Sync Scope). If the ticket later
+returns to an active status, the fetcher resumes refreshing the record on
+its next run.
 
 **UI display note**: the frontend SHOULD display the EPSS score only
 for active tickets. For inactive tickets, the score
