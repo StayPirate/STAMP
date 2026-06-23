@@ -2,7 +2,7 @@
 
 **Status**: Draft — work-in-progress across multiple sessions
 **Target**: `docs/features/tickets/cve-sync-epss.md` (replace current placeholder)
-**Last updated**: 2026-06-23 (Session 1h — reviewer feedback incorporated)
+**Last updated**: 2026-06-23 (Session 1i — second reviewer pass, 3 fixes applied)
 
 ## 1. Overview
 
@@ -137,6 +137,7 @@ conventions:
 | `supports_fetch_single` | `True` | EPSS API supports `?cve=CVE-XXX` |
 | `participates_in_catch_up` | `True` | `fetch_single()` provides per-ticket recovery |
 | Base class | `BaseCVEFetcher` | CVE enrichment fetcher |
+| `description` | `"Sync EPSS scores from FIRST.org"` | Required `BaseFetcher` class attribute — displayed in dashboard and fetcher registry |
 | Role | Enrichment-only | Does not create CVE records |
 | Data lifecycle | Overwrite (1:1 snapshot) | `ON CONFLICT DO UPDATE` on `cve_id` UNIQUE |
 | Scope (periodic run) | CVEs with active tickets | Consistent with `data-model.md` lifecycle note |
@@ -154,11 +155,12 @@ conventions:
 | Algorithm | Pattern B — `execute()` delegates to `fetch_single()` | `execute()` iterates CVE-IDs with active tickets, calls `self.fetch_single(cve_id, session)` per CVE, then `commit_and_dispatch(session, post_ingest)`. Core logic lives in `fetch_single()` only (DRY). Identical to Red Hat pattern |
 | `default_request_delay` | `0.2` | 0.2s → max 300 req/min = 30% of EPSS rate limit (1000 req/min). Same value as OSV. At ~200-300 active tickets, runtime ~40-60s |
 | Consecutive failure abort | 3 consecutive infra failures → abort with `FetcherError` | Counter resets after any success or clean skip (`CVENotInSource`). Only uninterrupted sequences of infrastructure failures (HTTP 5xx post-transport-retry, network timeout, DNS error) count. Identical to Red Hat |
-| Response validation error | `record_failed()` + continue | If EPSS API returns values that fail `EPSSEntry` Pydantic validation (unparseable float, score outside [0.0, 1.0], malformed date), treat as per-CVE error: `record_failed()`, continue to next CVE |
+| Response validation error | `record_failed()` + continue (does NOT count toward abort) | If EPSS API returns values that fail `EPSSEntry` Pydantic validation (unparseable float, score outside [0.0, 1.0], malformed date), treat as per-CVE data-quality error: `record_failed()`, reset `consecutive_failures` (API is reachable — HTTP 200 received), continue to next CVE |
 | EPSS model version change | Informational limitation — no detection logic | EPSS model recalibrations (v4→v5, ~every 2 years) cause score discontinuities. No `model_version` field in API response (verified). `assessed_at` provides indirect signal. No automated detection — changes are announced publicly. Documented as a known limitation |
 | HTTP client configuration | Shared defaults (no `http_client_options`) | Resolved by infrastructure (commit 6691351) — 30s read timeout, transport-level retry, automatic User-Agent. No per-fetcher override needed |
 | `fetch_single()` empty response | Raise `CVENotInSource` | API returns HTTP 200 + `data: []` for unscored CVEs (verified). Same semantic as Red Hat (404) and NVD (empty). Orchestrator records `status = missing` |
 | `execute()` empty response | Caught as `CVENotInSource` — silent skip | `fetch_single()` raises `CVENotInSource` when API returns `data: []`. `execute()` catches it, rolls back (defensive), resets failure counter. No error, no metric, no log |
+| `_extract_entry` logic | Access `data[0]` directly | The fetcher always queries a single CVE (`?cve=CVE-XXXX`) without `scope=time-series`. Per FIRST.org API contract, this returns exactly 0 or 1 entries in `data[]`. Multiple entries are only returned for batch queries or time-series scope — neither used by this fetcher. If the API contract changes, Pydantic validation catches the unexpected shape |
 | Score change tracking | None (simple overwrite) | No pre-read, no diff detection. Individual scores may remain stable for days; `assessed_at` update makes upsert mandatory regardless |
 | `record_updated` semantics | Throughput (fire on every upsert), called inside `fetch_single()` | Documented deviation from "internal diff detection" guideline. Upsert is unconditional (for `assessed_at`), so pre-read adds overhead without avoiding writes. Placed inside `fetch_single()` per Pattern B metric placement convention |
 | Staleness validation | Log-and-proceed (WARNING if `date < today - 1d`) | Check once per `execute()` (first response). `date` is batch-level (same for all CVEs). No abort — stale data > no data. `assessed_at` enables UI staleness indicator |
@@ -263,7 +265,9 @@ async def execute(self, session: AsyncSession) -> None:
         except ValidationError:
             await session.rollback()
             self.record_failed()
-            consecutive_failures += 1
+            # ValidationError is a data-quality issue (HTTP 200 received),
+            # NOT an infrastructure failure — do not count toward abort
+            consecutive_failures = 0
         except Exception:
             await session.rollback()
             self.record_failed()
@@ -664,6 +668,7 @@ Before the work is considered done:
 | 2026-06-23 | #1f | Infrastructure alignment review: resolved OP-12 (shared HTTP client finalized, commit 6691351 — EPSS uses shared defaults, no per-fetcher HTTP config). Lowered `default_request_delay` from 0.5 to 0.2 (30% of 1000 req/min rate limit, same as OSV). Updated cross-spec correction line numbers (Section 3 — line shifts from +347 lines in fetcher-infrastructure.md). Added RedHat operational note fix (800 tickets, ~27min) to Session 3 plan. Updated Session 2 plan to reference shared infrastructure. Updated RedHat Cross-Check Summary with new `default_request_delay` and HTTP client rows |
 | 2026-06-23 | #1g | Resolved all remaining Open Points. OP-5: confirmed `CVENotInSource` on empty `data[]` (verified API returns HTTP 200 + empty array for non-existent CVEs). OP-7: confirmed simple overwrite, no change detection. OP-8: resolved as "simplify existing note" — remove `reconcile_ticket_status()` mechanism detail, do NOT add catch-up sentence (belongs in fetcher spec). OP-9: confirmed Option A (throughput metric) with corrected rationale — upsert is mandatory regardless (to update `assessed_at`), making pre-read diff detection pure overhead. Empirically verified that individual EPSS scores may remain stable for days (CVE-2024-0001: identical score 3 days). OP-11: confirmed log-and-proceed with `today - 1 day` threshold; verified `date` field is batch-level (same for all CVEs on same day). Session 1 complete — all design decisions determined, ready for Session 2 |
 | 2026-06-23 | #1h | Reviewer feedback session. Ran 4 reviewers (@spec-coherence, @spec-gap-analyzer, @fetcher-compliance, @docs-placement). Key findings incorporated: (1) Corrected algorithm to Pattern B — `execute()` now delegates to `self.fetch_single()`, metrics placed inside `fetch_single()` (was incorrectly Pattern A in pseudocode). (2) Added consecutive failure abort threshold (3 consecutive infra failures → `FetcherError`, identical to Red Hat). (3) Added `ValidationError` handling as `record_failed()` + continue. (4) Added EPSS model version change as known limitation (no detection logic). (5) Confirmed M4 (no `request_delay` floor — by design) and M5 (CVE REJECTED with active ticket is possible but handled correctly by normal empty-response skip). Updated pseudocode, design decisions, Session 2 plan, and RedHat cross-check table |
+| 2026-06-23 | #1i | Second reviewer pass. Ran 4 reviewers again (@spec-coherence, @spec-gap-analyzer, @fetcher-compliance, @docs-placement). Three real findings incorporated: (1) Fixed `ValidationError` in pseudocode — must NOT increment `consecutive_failures` (data-quality error on HTTP 200, not infra failure; resets counter instead). (2) Added `_extract_entry` logic design decision — `data[0]` is correct because single-CVE query (`?cve=X`) without `scope=time-series` returns exactly 0 or 1 entries per FIRST.org API contract (verified via docs + live API). (3) Added `description` class attribute. Verified FIRST.org API docs: multiple entries in `data[]` only for batch queries or `scope=time-series` — neither used by this fetcher |
 | | #2 | (pending) |
 | | #3 | (pending) |
 | | #4 | (pending) |
