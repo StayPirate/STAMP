@@ -2,7 +2,7 @@
 
 **Status**: Draft — work-in-progress across multiple sessions
 **Target**: `docs/features/tickets/cve-sync-epss.md` (replace current placeholder)
-**Last updated**: 2026-06-21 (Session 1e — single-CVE algorithm decision)
+**Last updated**: 2026-06-23 (Session 1f — infrastructure alignment review)
 
 ## 1. Overview
 
@@ -44,7 +44,6 @@ without making autonomous design decisions.
 - First-run behavior declaration
 - Statefulness / cursor declaration
 - CVE existence precondition for `fetch_single()`
-- HTTP client configuration (timeout, retry, User-Agent)
 
 ## 3. Preconcept: KEV ≈ EPSS (ERRONEOUS)
 
@@ -116,18 +115,18 @@ CISA KEV. Specifically:
 
 ### Locations requiring correction
 
-(Line numbers verified 2026-06-21, Session 1d)
+(Line numbers verified 2026-06-23, Session 1f)
 
 | File | Line(s) | Current text | Required change |
 |------|---------|--------------|-----------------|
-| `fetcher-infrastructure.md` | 337 | "Catalog-based fetchers (KEV, EPSS) that have no per-CVE API set `supports_fetch_single = False`" | Remove EPSS from this parenthetical; only KEV is catalog-based |
-| `fetcher-infrastructure.md` | 551 | "fetchers like KEV and EPSS) are excluded" | Remove EPSS |
-| `fetcher-infrastructure.md` | 885 | "sync_epss_scores \| Syncs all EPSS scores (sets participates_in_catch_up = False)" | Move EPSS to the "participate in catch-up" table (lines 860–873) |
-| `fetcher-infrastructure.md` | 887–897 | Narrative grouping KEV and EPSS with same rationale (monolithic catalog, no per-CVE API) | Separate: KEV remains catalog-based, EPSS moves to per-CVE API category. Rewrite note to apply to KEV only |
-| `fetcher-infrastructure.md` | 1279 | "Catalog-based fetchers (KEV, EPSS)" in `supports_fetch_single` description | Remove EPSS from the example |
+| `fetcher-infrastructure.md` | 341 | "Catalog-based fetchers (KEV, EPSS) that have no per-CVE API set `supports_fetch_single = False`" | Remove EPSS from this parenthetical; only KEV is catalog-based |
+| `fetcher-infrastructure.md` | 557 | "fetchers like KEV and EPSS) are excluded" | Remove EPSS |
+| `fetcher-infrastructure.md` | 891 | "sync_epss_scores \| Syncs all EPSS scores (sets participates_in_catch_up = False)" | Move EPSS to the "participate in catch-up" table (lines 866–879) |
+| `fetcher-infrastructure.md` | 893–903 | Narrative grouping KEV and EPSS with same rationale (monolithic catalog, no per-CVE API) | Separate: KEV remains catalog-based, EPSS moves to per-CVE API category. Rewrite note to apply to KEV only |
+| `fetcher-infrastructure.md` | 1547 | "Catalog-based fetchers (KEV, EPSS)" in `supports_fetch_single` description | Remove EPSS from the example |
 | `cve-tracking.md` | 465 | "(KEV, EPSS) that set `supports_fetch_single = False`" | Remove EPSS |
-| `cve-service.md` | 769–770 | '"epss") that set `supports_fetch_single = False` are excluded' | Remove EPSS |
-| `cve-service.md` | 1276 | Caller table: `sync_epss_scores` → only `upsert_cve()` | Add `record_source_status()` (orchestrator path) and `build_post_ingest_tasks()` |
+| `cve-service.md` | 770 | '"epss") that set `supports_fetch_single = False` are excluded' | Remove EPSS |
+| `cve-service.md` | 1276 | Caller table: `sync_epss_scores` → only `upsert_cve()` | Add `(via fetch_single())` annotation, consistent with RedHat/OSV rows |
 
 ## 4. Design Decisions (Determined)
 
@@ -154,6 +153,8 @@ conventions:
 | `fetch_single()` return type | `PostIngestTasks \| None` (always `None` for EPSS) | EPSS payloads contain only `epss_score` — no CPE, no affected versions, no resolved packages. `build_post_ingest_tasks()` returns `None` |
 | `record_source_status` in `execute()` | Not used explicitly — rollback is sufficient | Architecture decision (commit 305bab9): rollback discards the `CVESource` "success" written by `upsert_cve()`, preserving previous state. No explicit failure write needed in batch path |
 | Algorithm | Single-CVE requests (RedHat pattern) | `execute()` uses same `GET /epss?cve=CVE-XXX` call as `fetch_single()`. Batch deferred as future optimization — unnecessary at expected volume (~200-300 active tickets) |
+| `default_request_delay` | `0.2` | 0.2s → max 300 req/min = 30% of EPSS rate limit (1000 req/min). Same value as OSV. At ~200-300 active tickets, runtime ~40-60s |
+| HTTP client configuration | Shared defaults (no `http_client_options`) | Resolved by infrastructure (commit 6691351) — 30s read timeout, transport-level retry, automatic User-Agent. No per-fetcher override needed |
 
 ## 5. Open Points
 
@@ -196,8 +197,8 @@ of the deployment environment, the following specs were updated:
 **Resolution**: single-CVE requests (RedHat pattern). `execute()` iterates
 over CVE-IDs with active tickets and makes one `GET /epss?cve=CVE-XXX`
 request per CVE — the same HTTP call used by `fetch_single()`. With the
-expected volume (~200-300 active tickets), this completes in under a
-minute even with throttling. Batching is deferred as a future optimization
+expected volume (~200-300 active tickets) and 0.2s delay, this completes
+in ~40-60 seconds. Batching is deferred as a future optimization
 if volume ever justifies it (the EPSS response format is identical for
 single and batch queries, making migration trivial).
 
@@ -290,16 +291,18 @@ The orchestrator records `status = missing`, and the next periodic run
 
 ### OP-6: Throttle delay as custom setting — RESOLVED
 
-**Resolution**: single setting only. `batch_size` is no longer needed
-(single-CVE requests per OP-2 resolution).
+**Resolution**: no custom settings. The inter-request delay is
+configured via `FetcherConfig.request_delay`, initialized from
+`default_request_delay = 0.2` at auto-registration.
 
 | Setting | Type | Default | Constraints | Description |
 |---------|------|---------|-------------|-------------|
-| (none) | — | — | — | The inter-request delay is configured via `FetcherConfig.request_delay` (default: 0.5) |
+| (none) | — | — | — | The inter-request delay is configured via `FetcherConfig.request_delay` (initial: 0.2, from `default_request_delay`) |
 
-`request_delay` default 0.5s is conservative for EPSS's
-1000 req/min rate limit (~200 requests in 100 seconds). At expected
-volume (~200-300 active tickets), total run time is ~100-150 seconds.
+`request_delay` initial 0.2s → max 300 req/min = 30% of EPSS's
+1000 req/min rate limit. At expected volume (~200-300 active tickets),
+total run time is ~40-60 seconds. Operators can adjust via admin
+dashboard without code changes.
 
 ### OP-7: Significant score change tracking
 
@@ -410,36 +413,24 @@ cases near midnight UTC.
 **Decision needed**: confirm log-and-proceed, adjust threshold, or skip
 validation entirely.
 
-### OP-12: HTTP client configuration
+### OP-12: HTTP client configuration — RESOLVED
 
-The workplan does not specify HTTP client parameters. Other API-based
-fetchers (NVD, RedHat) configure these per-fetcher.
+**Resolution**: resolved by shared HTTP client infrastructure (commit
+6691351). The HTTP client draft was finalized and applied to all
+approved specs. The EPSS fetcher uses `self.http_client` with zero
+configuration — shared defaults are appropriate for the EPSS API:
 
-**Proposal**:
+| Aspect | Shared default | EPSS needs |
+|--------|----------------|------------|
+| Read timeout | 30s | 30s (responses are small, ~1KB per CVE) |
+| Transport retry | 4 attempts on 5xx (1s/2s/4s backoff) | Appropriate |
+| 429 handling | Retry-After guided (1 retry if ≤120s) | Appropriate |
+| User-Agent | `Sentinel/{ver} (sync_epss_scores; +https://...)` | Automatic |
+| TLS | Combined trust store (system CAs + SUSE CA) | Not needed (public API, standard CAs) |
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Request timeout | 30s | Batch responses are small (~10KB per 100 CVEs); 30s accommodates slow responses without blocking the worker |
-| Retry | 3 attempts, exponential backoff (1s, 2s, 4s) on 5xx / connection timeout | Standard transient error recovery |
-| User-Agent | `Sentinel/1.0 (EPSS fetcher)` | Courtesy identification for public API |
-
-These values are hardcoded constants (not custom settings), consistent
-with other API-based fetchers. If the fetcher infrastructure provides a
-shared HTTP client with default timeout/retry behavior, EPSS should use
-it and document any overrides.
-
-**Decision needed**: confirm values, or identify shared HTTP client
-infrastructure that already handles these.
-
-**Note (2026-06-21, Session 1d)**: a WIP draft
-(`docs/drafts/http-client-infrastructure.md`, commit daeb249) proposes
-cross-cutting HTTP client infrastructure for all fetchers — shared
-client factory, default timeout/retry, automatic User-Agent composed
-from `fetcher.name` (`Sentinel/{version} (sync_epss_scores)`). If that
-draft is approved and applied, it would substantially resolve this OP:
-the EPSS spec would reference shared defaults instead of hardcoding
-values. Until the draft is resolved, this OP remains open with the
-current proposal as fallback.
+No `http_client_options` override needed. The per-fetcher HTTP client
+configuration section originally planned for Session 2 is replaced by
+a cross-reference to `fetcher-infrastructure.md` ("Shared HTTP Client").
 
 ## 6. Application Plan (Steps to Complete the Spec)
 
@@ -448,7 +439,8 @@ current proposal as fallback.
 - [x] Identify preconcept
 - [x] Cross-check with RedHat fetcher
 - [x] Create this work plan
-- [ ] Resolve Open Points OP-5, OP-7, OP-8, OP-9, OP-11, OP-12
+- [x] Resolve OP-12 (resolved by shared HTTP client infrastructure)
+- [ ] Resolve Open Points OP-5, OP-7, OP-8, OP-9, OP-11
 
 ### Session 2: Write the complete spec
 - [ ] Write the full `cve-sync-epss.md` spec with all mandatory sections:
@@ -468,7 +460,8 @@ current proposal as fallback.
       (orchestrator handles failure/missing status)
   - Metrics (with explicit deviation note for `record_updated` semantics
     — throughput metric, not diff-based)
-  - Custom Settings table (none — uses `FetcherConfig.request_delay`)
+  - Custom Settings table (none — declares `default_request_delay = 0.2`,
+    delay managed via `FetcherConfig.request_delay`)
   - Field Mapping
   - Explicitly Ignored Fields (EPSS API has `date`, `days`, etc.)
   - Behavioral Notes (data lifecycle, re-invocation, first-run)
@@ -481,17 +474,20 @@ current proposal as fallback.
     the CVE record is guaranteed to exist by the caller flow
     (`ensure_cve_exists()` → `trigger_on_demand_fetch()` →
     `fetch_single()`)
-  - HTTP client configuration (timeout, retry, User-Agent per OP-12 —
-    reference shared infrastructure draft if resolved, else hardcode
-    fallback values)
+  - HTTP client: cross-reference to `fetcher-infrastructure.md` Shared
+    HTTP Client section (no per-fetcher config — shared defaults are
+    appropriate)
+  - Error handling note: transport-level retry (5xx: 4 attempts,
+    429+Retry-After: 1 guided retry) happens before the fetcher sees
+    the error. Error table documents post-transport behavior only
   - Class Structure (Python skeleton with `commit_and_dispatch()` usage,
-    `fetch_single()` return type `PostIngestTasks | None`, and
-    `build_post_ingest_tasks()` call)
+    `default_request_delay = 0.2`, `fetch_single()` return type
+    `PostIngestTasks | None`, and `build_post_ingest_tasks()` call)
   - Cross-references
 
 ### Session 3: Fix cross-spec inconsistencies
 - [ ] Update `fetcher-infrastructure.md`: remove EPSS from catalog-based
-  references (6 locations)
+  references (5 locations per Section 3 table)
 - [ ] Update `cve-tracking.md`: remove EPSS from `supports_fetch_single = False`
   list
 - [ ] Update `cve-service.md`: update caller table and `supports_fetch_single`
@@ -499,6 +495,9 @@ current proposal as fallback.
 - [ ] Update `data-sources.md`: complete the Fetcher Registry entry (schedule,
   rate limits)
 - [ ] Update `data-model.md`: add catch-up sentence to lifecycle note
+- [ ] Update `cve-sync-redhat.md`: replace "5000 active tickets" with "800
+  active tickets" in operational notes (line 398), recalculate runtime
+  (~27 minutes at 2.0s delay)
 
 ### Session 4: Review and validation
 - [ ] Invoke `@fetcher-compliance-reviewer` on completed spec
@@ -517,18 +516,21 @@ Key patterns borrowed from `cve-sync-redhat.md`:
 | Per-CVE API → `fetch_single()` | Yes | Yes (API supports `?cve=X`) |
 | `execute()` iterates active tickets | Yes | Yes (per-CVE, identical to RedHat) |
 | Default `catch_up()` via `fetch_single()` | Yes | Yes (inherited from BaseCVEFetcher) |
-| Throttle delay custom setting | Yes (`FetcherConfig.request_delay`) | Yes (`FetcherConfig.request_delay` only) |
+| `default_request_delay` | 2.0 (no official rate limit) | 0.2 (1000 req/min published limit) |
+| `FetcherConfig.request_delay` | Operator-tunable via admin dashboard | Same mechanism |
 | Error handling per-CVE in execute | Yes | Yes (per-CVE, identical to RedHat) |
 | Enrichment-only (no CVE creation) | Yes | Yes |
 | Field Mapping table | Yes | Yes (simpler: only score + percentile) |
 | Explicitly Ignored Fields table | Yes | Yes |
 | `source_reference_url_pattern` | `https://access.redhat.com/security/cve/{cve_id}` | `None` (no per-CVE page) |
 | Consecutive failure abort threshold | 3 consecutive infra failures | Same pattern applicable |
+| HTTP client | Shared defaults (no `http_client_options`) | Same — shared defaults appropriate |
 
 Differences from RedHat:
 - EPSS has no CVSS, CWE, references, packages — only score + percentile
 - EPSS payload is trivial (3 fields) vs RedHat (multi-data-type extraction)
-- Throttle can be less aggressive (higher API rate limit: 1000 req/min)
+- Lower `default_request_delay` (0.2 vs 2.0) — EPSS publishes official rate
+  limit (1000 req/min), RedHat does not
 
 ## 8. Checklist — Ready to Move to `docs/features/`
 
@@ -559,6 +561,7 @@ Before the spec can be moved from draft to approved:
 | 2026-06-21 | #1c | Completeness review: added OP-9 (metric semantics reconciliation with `cve-service.md`), OP-10 (batch missing CVEs in `execute()`), OP-11 (`assessed_at` staleness validation), OP-12 (HTTP client configuration). Added first-run behavior, statefulness, and CVE existence precondition to Design Decisions table and Session 2 plan. Updated "What is missing" list |
 | 2026-06-21 | #1d | Architecture alignment: reviewed commits 72f8ef5 (transaction ownership — `upsert_cve()` now pure service function, `commit_and_dispatch()` helper), 305bab9 (`record_source_status("failure")` removed from `execute()` path — rollback is sufficient), daeb249 (HTTP client infrastructure draft). Resolved OP-4 (architecture confirms pattern). Annotated OP-12 (WIP HTTP client draft may impact). Updated OP-2 pseudocode with `commit_and_dispatch` pattern and batch-adapted Pattern B. Added 4 new design decisions (transaction ownership, per-CVE commit, `fetch_single` return type, `record_source_status` in `execute()`). Added architecture context to OP-9. Verified and updated cross-spec correction line numbers (Sezione 3). Updated Session 2 plan with new architecture elements |
 | 2026-06-21 | #1e | Resolved OP-2 (single-CVE pattern, RedHat-identical — batch deferred as unnecessary at expected volume of ~200-300 active tickets). Resolved OP-3 (`source_reference_url_pattern = None` — no per-CVE page on FIRST.org, verified). Resolved OP-10 (N/A — no batch responses with single-CVE pattern). Simplified OP-6 (removed `batch_size`, only `throttle_delay_seconds` remains). Updated pseudocode, design decisions table, Session 2 plan, and RedHat cross-check to reflect single-CVE architecture |
+| 2026-06-23 | #1f | Infrastructure alignment review: resolved OP-12 (shared HTTP client finalized, commit 6691351 — EPSS uses shared defaults, no per-fetcher HTTP config). Lowered `default_request_delay` from 0.5 to 0.2 (30% of 1000 req/min rate limit, same as OSV). Updated cross-spec correction line numbers (Section 3 — line shifts from +347 lines in fetcher-infrastructure.md). Added RedHat operational note fix (800 tickets, ~27min) to Session 3 plan. Updated Session 2 plan to reference shared infrastructure. Updated RedHat Cross-Check Summary with new `default_request_delay` and HTTP client rows |
 | | #2 | (pending) |
 | | #3 | (pending) |
 | | #4 | (pending) |
