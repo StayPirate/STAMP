@@ -641,8 +641,9 @@ for the majority; overrides are explicit and visible.
 
 **Merge semantics**: `http_client_options` entries are passed as keyword
 arguments to the factory, overriding individual defaults. Headers are
-merged (fetcher-specific headers are added to defaults; User-Agent is
-always preserved and cannot be overridden). Other options (timeout,
+merged: for same-key headers, the fetcher-specific value replaces the
+factory default (last-writer-wins). User-Agent is the sole exception —
+it is always preserved and cannot be overridden. Other options (timeout,
 transport configuration) replace the corresponding default at the
 top-level kwarg level — they are not deep-merged.
 
@@ -978,6 +979,11 @@ fetcher, which applies its own logic (abort, skip-and-continue, etc.).
 
 **Retry policy**:
 
+**Dispatch rule**: when a response matches multiple rows (e.g., 503 is
+both a 5xx and may carry `Retry-After`), the most specific row wins. If
+`Retry-After` is present and parseable, the guided path is selected;
+otherwise, the generic status-code row applies.
+
 | Condition | Retry | Backoff |
 |-----------|-------|---------|
 | 5xx, connection error, timeout | 3 attempts | 1s / 2s / 4s (fixed) |
@@ -993,6 +999,13 @@ retry (e.g., the guided retry returns 503 without `Retry-After`), no
 additional fixed-backoff attempts are made — the error is propagated to
 the caller. The two retry paths are mutually exclusive within a single
 request sequence.
+
+Consequence: a server that sends `Retry-After` on 503 receives one
+guided retry, whereas the same 503 without `Retry-After` receives three
+fixed-backoff retries. This is intentional: the server's explicit
+guidance replaces the client's blind attempts. If the server-guided
+retry fails, a more persistent issue is likely — additional immediate
+retries at arbitrary intervals are unlikely to improve the outcome.
 
 **Impact on existing fetchers** (all preserved or improved):
 
@@ -1483,312 +1496,827 @@ as decisions are made.
 
 All spec paths are relative to `docs/features/` unless otherwise noted.
 
-### Detailed application instructions per open point
+**Matrix interpretation**: a `Y` cell means the spec is *affected* by
+the open point's resolution. Not all affected specs require textual
+changes — some benefit transparently without conflicting with their
+current text. Specifically:
 
-#### OP-1: User-Agent header
+- **OP-4 for `cve-sync-ghsa.md`, `cve-sync-redhat.md`,
+  `cve-sync-osv.md`**: transport-level retry improves resilience for
+  these fetchers, but their current error handling descriptions remain
+  correct — they describe fetcher-level behavior (what happens after
+  transport retry is exhausted). No textual changes needed. Only specs
+  with *conflicting* inline retry logic (NVD, IBS) require modification
+- **OP-7 for `cve-sync-epss.md`**: the `Accept: application/json`
+  default aligns with the EPSS fetcher's JSON consumption. The spec is
+  a stub (TBD) — no changes needed now; the default will apply when the
+  spec is designed
+- **OP-8 for `cve-sync-kev.md`, `cve-sync-epss.md`,
+  `ibs-product-release-detection.md`**: OP-8 was resolved as "defer
+  entirely". These specs are marked because they were discussed during
+  OP-8 analysis, but no changes result from the deferral.
+  `ibs-product-release-detection.md` retains its own spec-level open
+  item for future ETag/caching design
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+### Detailed Execution Plan
 
-- Add a "HTTP Client Defaults" section (or similar) to the
-  `BaseFetcher` specification documenting:
-  - Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
-  - Version from the canonical platform source (e.g.,
-    `importlib.metadata`)
-  - Automatic composition from `BaseFetcher.name` — fetcher authors
-    do nothing
-  - Project URL hardcoded — not configurable
-- Individual fetcher specs do NOT need updating — the User-Agent is
-  inherited from the base class, not declared per-fetcher
-- Add a brief "For API Providers" section to the project README
+This section contains the exact modifications to apply. Each step is
+self-contained and specifies the precise text to add, remove, or
+replace. Steps MUST be executed in order (later steps depend on earlier
+ones being complete).
 
-#### OP-2: Shared HTTP client factory
+---
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+#### Step 1: Add "Shared HTTP Client" section to `fetcher-infrastructure.md`
 
-- Extend the `BaseFetcher` contract with:
-  - `self.http_client` lazy property (signature, return type: httpx
-    `AsyncClient`)
-  - Default configuration applied (User-Agent, timeouts, Accept,
-    compression, transport retry — referencing OP-1/3/4/5/7)
-  - Teardown in `BaseFetcher.run()` finally block
-  - Override mechanism (`http_client_options` class attribute or
-    equivalent)
-- Add a "Shared HTTP Client" item to the "What BaseFetcher provides"
-  list (items 1-4 in the current spec)
-- Document the standalone factory module
-  (`backend/app/services/http_client.py`) and its public API
-- Document connection pooling behavior and stale connection handling
+**Location**: insert as a new `##` section immediately after the
+"Custom Settings Schema" section (after line ~1235, before
+"## BaseCVEFetcher Class").
 
-**Secondary target**: `integrations/ibs-integration.md`
+**Rationale**: the HTTP client is a BaseFetcher capability, but its
+full specification is too large to inline in the "BaseFetcher Base
+Class" list. It is placed after Custom Settings Schema because it
+references `http_client_options` overrides (a parallel concept).
 
-- Document that `IBSClient` uses the standalone factory directly
-  (not via BaseFetcher) with its own long-lived lifecycle
-- Document the rationale: `IBSClient` is shared between
-  `IBSEventConsumer` (continuous) and periodic fetchers — its
-  lifecycle is independent of any single fetcher run
+**Full text to insert**:
 
-#### OP-3: Default HTTP request timeout
+```markdown
+## Shared HTTP Client
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+All outgoing HTTP requests from fetchers and service-level clients use
+a shared HTTP client infrastructure based on httpx `AsyncClient`. The
+infrastructure provides two layers:
 
-- Document the default timeout values (connect: 10s, read: 30s) in the
-  HTTP client defaults section (see OP-1/OP-2)
-- Clarify the distinction between HTTP request timeout (per-request)
-  and `FetcherConfig.timeout_seconds` (Celery task-level, stale run
-  detection)
-- No configuration env var needed — timeouts are hardcoded
+1. **Standalone factory module** (`backend/app/services/http_client.py`):
+   creates a pre-configured httpx `AsyncClient` with all cross-cutting
+   defaults. Any component can call this factory — fetchers, `IBSClient`,
+   or future consumers.
 
-**Per-fetcher updates**:
+2. **BaseFetcher integration**: `BaseFetcher` exposes a `self.http_client`
+   lazy property that internally calls the standalone factory. Fetcher
+   authors use `self.http_client` directly — zero configuration, zero
+   boilerplate.
 
-- `tickets/cve-sync-kev.md`:
-  - Remove `| HTTP timeout | 30 seconds |` from the properties table
-    (redundant — matches the centralized default)
-  - Remove `(timeout: 30 seconds)` from algorithm step 1
-  - In the error handling table, change `Request timeout (>30s)` to
-    `Request timeout`
-- `packages/ibs-product-release-detection.md`:
-  - Add `| HTTP read timeout | 120 seconds (override) |` to the
-    fetcher properties table (reason: `updateinfo.xml` files can be
-    several MB for products with years of accumulated advisories)
+### Factory Module
 
-#### OP-4: HTTP-level retry for transient errors
+Location: `backend/app/services/http_client.py`
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+```python
+def create_http_client(**overrides) -> httpx.AsyncClient:
+    """Create a pre-configured httpx AsyncClient.
 
-- Document the transport-level retry policy (conditions, max
-  attempts, backoff) as part of the HTTP client defaults
-- Clarify the boundary between transport-level retry (automatic,
-  per-request) and Celery task-level retry (per-task, for
-  `fetch_single`)
-- Document the retry amplification bounds
+    Applies all cross-cutting defaults (User-Agent, timeouts, TLS,
+    compression, Accept header, transport-level retry). Keyword
+    arguments override individual defaults.
+    """
+```
 
-**Per-fetcher updates** (only where current behavior conflicts):
-- `cve-sync-nvd.md`: NVD's inline 429 retry logic (3x with
-  5s/10s/20s) is superseded by transport-level Retry-After handling
-  (per OP-9). Remove the inline retry; replace with: "if 429
-  persists after transport retry, abort run (`status = failure`);
-  cursor does not advance — the next scheduled run retries the same
-  time window." See OP-9 resolution for details
-- `cve-sync-ghsa.md`: GHSA aborts on any page failure. If transport
-  retry is active, a transient 5xx would be retried transparently
-  before reaching the abort logic. Document that this is the
-  intended behavior
-- `cve-sync-redhat.md`: Red Hat's `record_failed` + continue
-  pattern operates after transport retry is exhausted. No conflict
-- `cve-sync-osv.md`: similar to Red Hat — skip-and-continue after
-  retry exhaustion. No conflict
+### Default Configuration
 
-**IBSClient retry resolution**: `integrations/ibs-integration.md`
+| Setting | Default | Override mechanism |
+|---------|---------|-------------------|
+| User-Agent | `Sentinel/{version} ({name}; +https://github.com/SUSE/sentinel)` | Not overridable |
+| Connect timeout | 10 seconds | `http_client_options` |
+| Read timeout | 30 seconds | `http_client_options` |
+| Write timeout | 10 seconds | `http_client_options` |
+| Pool timeout | 10 seconds | `http_client_options` |
+| Accept | `application/json` | `http_client_options` (headers) |
+| Accept-Encoding | `gzip, deflate` (httpx built-in) | — |
+| TLS | Combined trust store (system CAs + SUSE CA) | `SUSE_CA_CERT_PATH` env var |
+| Transport retry | See "Transport-Level Retry" below | `http_client_options` |
+| Proxy | Standard env vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) | System-level |
 
-- Remove the business rule "IBS API calls use retry logic with
-  exponential backoff" (line 241). IBSClient's own retry is superseded
-  by the transport-level retry in the shared factory (3 attempts,
-  1s/2s/4s for 5xx/timeout/connection errors). Rationale:
-  - IBSClient retry was under-specified (no attempt count, no error
-    conditions, no backoff cap) — the transport-level retry is strictly
-    better-specified
-  - Both operate at the same scope (per-HTTP-request) — coexistence
-    would produce double-retry (up to 9 total attempts for a single
-    request)
-  - Higher-level recovery mechanisms (periodic re-runs, MD5 cache
-    non-update, Celery task retry for `correlate_submission_request`)
-    are unaffected — they operate at a different scope
-- No replacement text needed — transport retry is transparent to
-  IBSClient code
+#### User-Agent
 
-#### OP-5: HTTP response compression
+Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+- Platform version from `importlib.metadata.version("sentinel")`. If
+  `PackageNotFoundError` (running from source without installation),
+  defaults to `"dev"`
+- Fetcher name automatic from `BaseFetcher.name` (mandatory, unique)
+- Project URL hardcoded — not configurable
+- Example: `Sentinel/1.0 (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
+- Example (dev): `Sentinel/dev (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
 
-- Add to the HTTP client defaults section: "The HTTP client sends
-  `Accept-Encoding: gzip, deflate` by default. Responses are
-  decompressed transparently."
-- No per-fetcher updates needed
+For non-fetcher components (e.g., `IBSClient`), the `name` parameter
+is passed explicitly to the factory.
 
-#### OP-6: TLS for SUSE internal services
+#### Timeouts
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+- Connect: 10 seconds (TCP + TLS handshake)
+- Read: 30 seconds (time to receive response body)
+- Write: 10 seconds (time to send request body)
+- Pool: 10 seconds (time waiting for a connection from the pool)
 
-- Document the combined trust store in the HTTP client defaults
-  section: system CAs + SUSE CA from `SUSE_CA_CERT_PATH`
-- Replace `LDAP_CA_CERT_PATH` with `SUSE_CA_CERT_PATH` in the env
-  var exclusion table (line 1008)
+Not configurable via env var or admin panel — these are engineering
+decisions. Fetchers that need different values override via
+`http_client_options`.
 
-**Per-spec updates**:
+Timeout hierarchy (independent concerns):
 
-- `identity/ad-integration.md`:
-  - Replace all references to `LDAP_CA_CERT_PATH` with
-    `SUSE_CA_CERT_PATH`
-  - Update lines 35-37: remove "installed in the container system
-    trust store at build time"; replace with: "loaded into Python's
-    SSL context at runtime via `SUSE_CA_CERT_PATH`"
-  - Update the Security Considerations section (line 906) accordingly
-- `integrations/ibs-integration.md`:
-  - Document that `IBSClient` uses TLS validated against the SUSE
-    Trust Root CA via the shared factory's combined trust store
-- `integrations/ibs-rabbitmq-integration.md`:
-  - Document that the AMQPS connection to `rabbit.suse.de:5671` uses
-    `SUSE_CA_CERT_PATH` for TLS validation
-- `packages/product-catalog.md`:
-  - Document that SMELT/AIMAAS HTTPS connections are validated via
-    the combined trust store (SUSE Trust Root CA)
+```
+┌─────────────────────────────────────────────────────┐
+│ FetcherConfig.run_timeout (default: 3600s)          │  ← Celery task level
+│ Detects stale runs (worker crashed, deadlock)       │     (per entire run)
+│                                                     │
+│  ┌───────────────────────────────────────────────┐  │
+│  │ Per-HTTP-request timeout                      │  │  ← HTTP transport level
+│  │ connect: 10s, read: 30s                       │  │     (per single request)
+│  │                                               │  │
+│  │ A single execute() run may make hundreds of   │  │
+│  │ HTTP requests, each with its own timeout.     │  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
 
-**Cross-cutting updates**:
+#### TLS Configuration
 
-- `docs/configuration.md`:
-  - Replace `LDAP_CA_CERT_PATH` row with `SUSE_CA_CERT_PATH`
-    (default: `certs/SUSE_Trust_Root.crt`, description: "Path to
-    SUSE internal CA certificate for TLS validation of all
-    connections to *.suse.de services (HTTP, LDAP, AMQP). Combined
-    with system CA bundle at runtime.")
-- `docs/conventions.md`:
-  - In the AD/LDAP/SSO terminology table, LDAP row: remove
-    `LDAP_CA_CERT_PATH` from the examples list (since the variable is
-    now `SUSE_CA_CERT_PATH` and is no longer LDAP-scoped — it covers
-    HTTP and AMQP too). Keep only `LDAP_URI` as the LDAP-scoped env
-    var example. Do NOT add `SUSE_CA_CERT_PATH` to the LDAP row
-- `docs/deployment.md`:
-  - Replace `LDAP_CA_CERT_PATH` reference with `SUSE_CA_CERT_PATH`
+All outgoing TLS connections (HTTP, LDAP, AMQP) use a combined trust
+store that includes both the system CA bundle and the SUSE internal CA:
 
-#### OP-7: Default Accept header
+- **Env var**: `SUSE_CA_CERT_PATH` (default: `certs/SUSE_Trust_Root.crt`)
+  - The SUSE Trust Root CA file is committed in the repository. The
+    default path works both in containers (workdir `/app`) and in local
+    development (run from project root). No configuration needed for
+    standard deployments
+  - The env var exists as an override for non-standard deployments
+- **Combined trust store**: at runtime, the SSL context includes system
+  CAs (for public services: NVD, GitHub, CISA, Red Hat, OSV, FIRST.org)
+  and the SUSE CA (for internal services: IBS, SMELT, AIMAAS, RabbitMQ)
+- **If file does not exist**: combined trust store contains only system
+  CAs. Connections to SUSE internal services fail with TLS error. A log
+  warning is emitted at startup (does not block startup)
+- **If file is corrupt or unparseable**: SSL context creation raises an
+  error at client creation time. The fetcher fails with a clear error
+  message
+- **TLS verification**: always enforced. Failed handshake is an immediate
+  error — never proceed with an unverified connection
+- **Scope**: HTTP (shared client), LDAP (`sync_ldap_directory`), AMQP
+  (`IBSEventConsumer`)
+- **Certificate rotation**: SSL context is built at client creation time.
+  Long-lived clients (IBSClient) require process restart to pick up a
+  rotated CA certificate. Acceptable given CA rotations are infrequent
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+#### Transport-Level Retry
 
-- Document the default `Accept: application/json` in HTTP client
-  defaults
+The shared client automatically retries transient errors before the
+fetcher sees them. If all retries fail, the error propagates to the
+fetcher, which applies its own logic (abort, skip-and-continue, etc.).
 
-**Per-fetcher documentation** (only non-JSON consumers):
-- `integrations/ibs-integration.md` (`IBSClient`): document
-  `Accept: application/xml`
+**Dispatch rule**: when a response matches multiple rows (e.g., 503 is
+both a 5xx and may carry `Retry-After`), the most specific row wins. If
+`Retry-After` is present and parseable, the guided path is selected;
+otherwise, the generic status-code row applies.
 
-#### OP-8: Conditional HTTP requests
+| Condition | Retry | Backoff |
+|-----------|-------|---------|
+| 5xx, connection error, timeout | 3 attempts | 1s / 2s / 4s (fixed) |
+| 429/503 with `Retry-After` ≤ 120s | 1 retry | Wait the indicated value |
+| 429/503 with `Retry-After` > 120s | No retry | Error propagated immediately |
+| 429 without `Retry-After` | No retry at transport | Fetcher decides |
+| 4xx (non-429) | No retry | Client error — retrying is pointless |
 
-Resolved as Option C (defer):
-- No spec changes needed
-- `ibs-product-release-detection.md:288-290` retains its existing
-  open item independently
+**Path exclusivity**: if a response enters the Retry-After guided path,
+the guided retry is the final attempt. The two retry paths are mutually
+exclusive within a single request sequence. Consequence: a server that
+sends `Retry-After` receives one guided retry, whereas the same status
+without the header receives three fixed-backoff retries. This is
+intentional — the server's explicit guidance replaces blind attempts.
+If the server-guided retry fails, a more persistent issue is likely.
 
-#### OP-9: Retry-After handling
+**Retry-After parsing**: integer (seconds) or HTTP-date (RFC 7231).
+Malformed values (unparseable strings, negative integers) are treated as
+absent — the response falls through to the "Retry-After absent" row.
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+**Shutdown**: all retry sleeps (both fixed-backoff and Retry-After waits)
+use `asyncio.sleep()`, cancelled automatically on `SoftTimeLimitExceeded`
+or task revocation. No special handling needed.
 
-- Remove the "Retry-After is deliberately ignored for simplicity"
-  note (`fetcher-infrastructure.md:433-434`)
-- Document the new transport-level Retry-After behavior: respect
-  the header with 120s cap, one guided retry for 429/503 responses
+#### HTTP Response Compression
 
-**Per-fetcher cleanup**:
-- `cve-sync-nvd.md`: remove the "Retry-After is deliberately
-  ignored" note (line 225). Remove the inline 429 retry logic (3x
-  with 5s/10s/20s) — it is superseded by transport-level
-  Retry-After handling. Replace with: "if 429 persists after
-  transport retry, abort run (`status = failure`); cursor does not
-  advance — the next scheduled run retries the same time window"
-- `ibs-integration.md`: remove "IBS API calls use retry logic with
-  exponential backoff" (line 241). Transport-level retry in the shared
-  factory handles transient failures. See OP-4 resolution (IBSClient
-  retry resolution) for the full rationale
+The HTTP client sends `Accept-Encoding: gzip, deflate` by default (httpx
+built-in behavior using Python standard library codecs). Responses are
+decompressed transparently. Brotli (`br`) additionally supported if the
+`brotli` package is installed. No per-fetcher configuration needed.
 
-#### OP-10: Rate limiting pattern
+#### Proxy Configuration
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+The shared HTTP client respects the standard `HTTPS_PROXY`, `HTTP_PROXY`,
+and `NO_PROXY` environment variables for proxy configuration. No
+application-level proxy settings exist. These are system-level variables
+set at the container or host level.
 
-- In the FetcherConfig table: remove `rate_limit` (VARCHAR) row, add
-  `request_delay` (FLOAT, NOT NULL, DEFAULT 0) row
-- In the FetcherConfig table: rename `timeout_seconds` to `run_timeout`
-  (same type INTEGER, same default 3600, updated description)
-- Update all references to `rate_limit` → `request_delay` throughout
-  the spec
-- Update all references to `timeout_seconds` → `run_timeout` throughout
-  the spec (this includes: stale run detection section, Celery task
-  integration, custom settings section, audit event types, deregistered
-  fetcher lifecycle)
-- Update the `config_changed` audit event field values table: replace
-  `"timeout_seconds"` and `"rate_limit"` with `"run_timeout"` and
-  `"request_delay"` in the `detail` JSONB examples
-- Update the custom settings section: remove
-  `throttle_delay_seconds` from examples (it is no longer a custom
-  setting — replaced by the FetcherConfig field)
-- Document enforcement model: "The fetcher applies
-  `asyncio.sleep(self.config.request_delay)` in its iteration loop.
-  The shared HTTP client does not enforce the delay."
+If the deployment uses a TLS-intercepting proxy, the proxy's CA
+certificate must be present in the system CA bundle (standard procedure,
+no Sentinel-specific configuration needed).
 
-**Secondary target**: `platform/fetcher-operations.md`
+### BaseFetcher Integration
 
-- Update validation rules: remove `rate_limit` pattern validation,
-  add `request_delay` validation (float, ≥ 0)
-- Rename `timeout_seconds` → `run_timeout` in validation rules
-  (including the stale detection explanation at line 594)
-- Update the `FETCHER_ALREADY_RUNNING` error code description (line
-  449): replace `timeout_seconds > 0` with `run_timeout > 0`
-- Update all JSON examples containing `rate_limit` or `timeout_seconds`
-  (lines 513-514, 583-584)
-- Update CLI output examples (`sentinel fetcher config`)
-- Update audit event examples (`config_changed` field names)
-- Update the stale run hint logic description (lines 814-816):
-  replace `timeout_seconds` references with `run_timeout`
-- Update the warning condition (line 911): replace `timeout_seconds`
-  with `run_timeout`
+#### Lazy Property: `self.http_client`
 
-**Per-fetcher updates**:
+```python
+class BaseFetcher:
+    http_client_options: ClassVar[dict] = {}
 
-- `tickets/cve-sync-nvd.md`:
-  - Remove `request_delay_seconds` from the `Settings` Pydantic model
-  - Remove it from the custom settings table
-  - Document: "Default `request_delay` = 6.0 (registered in
-    FetcherConfig at first startup). Operator should reduce to 0.6
-    after configuring the NVD API key via the dashboard."
-  - Replace `self.get_setting("request_delay_seconds")` with
-    `self.config.request_delay` in algorithm steps
-- `tickets/cve-sync-redhat.md`:
-  - Remove `throttle_delay_seconds` from the `Settings` model and
-    custom settings table
-  - Document: "Default `request_delay` = 2.0"
-  - Replace `self.settings.throttle_delay_seconds` with
-    `self.config.request_delay` in algorithm steps
-- `tickets/cve-sync-osv.md`:
-  - Remove `throttle_delay_seconds` from the `Settings` model and
-    custom settings table
-  - Document: "Default `request_delay` = 0.2"
-  - Replace `self.settings.throttle_delay_seconds` with
-    `self.config.request_delay` in algorithm steps
-- `packages/package-bugowner.md`:
-  - Replace "Respect the `rate_limit` from `FetcherConfig`" with
-    "Respect `request_delay` from `FetcherConfig`"
-  - Update: "default: 0 — admin-configurable via the fetcher
-    dashboard"
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Pre-configured HTTP client, created on first access."""
+        if self._http_client is None:
+            self._http_client = create_http_client(
+                name=self.name, **self.http_client_options
+            )
+        return self._http_client
+```
 
-**Cross-cutting updates** (for `run_timeout` rename):
+- Created lazily on first access during `execute()`
+- Connection pooling active for the entire run
+- Destroyed by `BaseFetcher.run()` in the `finally` block (after
+  `record_end()`, suppressing `aclose()` exceptions with a log warning)
+- Between runs: no client exists, no idle connections
+- Stale connection handling: httpx closes idle connections after ~5s of
+  inactivity within the pool. If a server closes a connection earlier,
+  httpx transparently opens a new one on the next request
+- If never accessed during a run: teardown is a no-op
 
-- `docs/data-model.md`:
-  - In the FetcherConfig table: rename `timeout_seconds` → `run_timeout`
-    (line 1410), remove `rate_limit` row (line 1411), add
-    `request_delay` (FLOAT, NOT NULL, DEFAULT 0) row
-  - In the ER diagram: update `INTEGER timeout_seconds` to
-    `INTEGER run_timeout`, remove `rate_limit`, add `request_delay`
-- `docs/configuration.md`: if `timeout_seconds` is referenced,
-  rename to `run_timeout`. Also update the `NVD_API_KEY` description:
-  replace "reduce the `sync_nvd_cves` fetcher's `request_delay_seconds`
-  custom setting" with "reduce `request_delay` in the fetcher dashboard"
-- `identity/ad-integration.md`: if fetcher timeout is referenced,
-  update name
-- `tickets/cve-sync-kernel.md`: references `timeout_seconds` for
-  the 300s override — rename to `run_timeout`
+#### Override Mechanism
 
-#### OP-11: HTTP proxy support
+Fetchers with non-standard requirements override via a class attribute:
 
-**Primary target**: `platform/fetcher-infrastructure.md`
+```python
+class ProductReleaseFetcher(BaseFetcher):
+    http_client_options = {"timeout": httpx.Timeout(10.0, read=120.0)}
+```
 
-- Add a "Proxy Configuration" paragraph to the HTTP client defaults
-  section: "The shared HTTP client respects the standard `HTTPS_PROXY`,
-  `HTTP_PROXY`, and `NO_PROXY` environment variables for proxy
-  configuration. No application-level proxy settings exist."
+Merge semantics: `http_client_options` entries are keyword arguments to
+the factory. For same-key headers, the fetcher-specific value replaces
+the factory default (last-writer-wins). User-Agent is the sole exception
+— always preserved and cannot be overridden. Other options (timeout,
+transport) replace defaults at the top-level kwarg level (not
+deep-merged).
 
-**Secondary target**: `docs/configuration.md`
+#### `fetch_single()` and `catch_up()` Lifecycle
 
-- Add `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` to the environment
-  variables index with a note that they are standard (not
-  Sentinel-specific) and apply to all outgoing HTTP connections
+`fetch_single()` is safe to call from any context:
+
+- If `self._http_client` exists (inside an active `run()` → `execute()`
+  flow): reuses it. Connection pooling preserved for Pattern B fetchers
+  (Red Hat, OSV) that call `fetch_single()` in a loop
+- If `self._http_client` does not exist (standalone invocation from a
+  task wrapper, test, or any future call site): creates a temporary
+  client for the duration of the call, closes on return
+- `catch_up()` inherits this behavior (delegates to `fetch_single()`)
+- Error handling: if temporary client creation fails (e.g., TLS
+  misconfiguration), the exception propagates normally. No cleanup needed
+  for a client that was never created
+
+No caller responsibility: task wrappers (`fetch_single_cve`,
+`run_catch_up`) do not manage HTTP client lifecycle.
+
+### Non-Fetcher Components
+
+`IBSClient` calls the standalone factory directly and manages its own
+client lifecycle independently of `BaseFetcher`:
+
+- Instantiated per-process (each Celery worker and IBSEventConsumer)
+- Long-lived client with connection pooling
+- Uses `Accept: application/xml` override (from JSON default)
+- TLS validated via the same combined trust store
+- httpx idle connection management (~5s timeout) prevents stale
+  connections without manual intervention
+- Certificate rotation requires process restart (same as BaseFetcher)
+```
+
+Additionally, add a brief item 5 to the "BaseFetcher Base Class" list
+(after item 4 "Enabled check" at line ~113):
+
+```markdown
+5. **Shared HTTP client**: a pre-configured `self.http_client` lazy
+   property for outgoing HTTP requests. See "Shared HTTP Client" section
+   for the full specification.
+```
+
+---
+
+#### Step 2: Modify FetcherConfig table in `fetcher-infrastructure.md`
+
+**Location**: FetcherConfig table at line 2780-2781.
+
+**Find**:
+
+```
+| timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
+| rate_limit | VARCHAR(20) | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
+```
+
+**Replace with**:
+
+```
+| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold and Celery soft time limit. 0 disables both. |
+| request_delay | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. Applied by the fetcher in its pagination/iteration loop via `asyncio.sleep(self.config.request_delay)`. 0 means no delay. CHECK constraint: >= 0 AND <= 300. |
+```
+
+---
+
+#### Step 3: Update FetcherConfig notes in `fetcher-infrastructure.md`
+
+**Location**: Notes section at line 2790.
+
+**Find**:
+
+```
+- `timeout_seconds` serves two purposes:
+```
+
+**Replace with**:
+
+```
+- `run_timeout` serves two purposes:
+```
+
+Then find/replace all remaining occurrences of `timeout_seconds` in
+the file with `run_timeout` (approximately 10 occurrences across
+the stale run detection section and audit event examples).
+
+---
+
+#### Step 4: Remove "Retry-After ignored" note in `fetcher-infrastructure.md`
+
+**Location**: search for "Retry-After" in the file (approximately line
+433-434 based on the original reference, though line numbers may have
+shifted).
+
+**Find and remove** any paragraph containing:
+
+> "This design deliberately ignores the Retry-After header for
+> simplicity."
+
+If not present (already removed in a prior edit), skip this step.
+
+---
+
+#### Step 5: Replace `LDAP_CA_CERT_PATH` in `fetcher-infrastructure.md`
+
+**Location**: env var exclusion table, line ~1008.
+
+**Find**:
+
+```
+| TLS configuration | `LDAP_CA_CERT_PATH` | Infrastructure — tied to certificate management |
+```
+
+**Replace with**:
+
+```
+| TLS configuration | `SUSE_CA_CERT_PATH` | Infrastructure — tied to certificate management |
+```
+
+---
+
+#### Step 6: Update `cve-sync-nvd.md` — remove inline retry, update delay
+
+**6a. Remove inline 429 retry logic**.
+
+**Find** (lines 225-245):
+
+```markdown
+**HTTP 429 handling**: when a page request returns HTTP 429 (Too Many
+Requests), the fetcher retries that single request with exponential
+backoff:
+
+| Attempt | Delay before retry |
+|---------|--------------------|
+| 1st retry | 5 seconds |
+| 2nd retry | 10 seconds |
+| 3rd retry | 20 seconds |
+
+This is consistent with the `fetch_single()` retry policy defined in
+`docs/features/platform/fetcher-infrastructure.md` (Retry Policy for
+`fetch_single`). The `Retry-After` header is deliberately ignored for
+simplicity — the fixed backoff (total 35 seconds) naturally clears
+NVD's 30-second rate-limit window.
+
+**After 3 retries exhausted on a single page**: the page is considered
+a permanent failure. The fetcher raises an exception immediately,
+aborting the run with `status = failure`. The cursor does not advance —
+the next scheduled run retries the same time window. No page skipping,
+no consecutive failure counter.
+```
+
+**Replace with**:
+
+```markdown
+**HTTP 429 handling**: transport-level retry handles 429 responses with
+`Retry-After` automatically (server-guided wait + 1 retry, see
+`fetcher-infrastructure.md`, Shared HTTP Client — Transport-Level
+Retry). If the transport retry resolves the 429, execution continues
+transparently.
+
+If 429 without `Retry-After` (or transport retry exhausted): the
+fetcher applies a pre-calculated delay of 30 seconds (NVD's documented
+rate-limit window duration) and retries the page once. If the retry
+also returns 429: abort run (`status = failure`). The cursor does not
+advance — the next scheduled run retries the same time window.
+```
+
+**6b. Remove `request_delay_seconds` custom setting**.
+
+**Find** in the Settings model (line ~46):
+
+```python
+        request_delay_seconds: float = Field(
+```
+
+Remove the entire field definition from the `Settings` class.
+
+**Find** in the custom settings table (line ~91):
+
+```
+| `request_delay_seconds` | float | 6.0 | 0.1–30.0 | Delay between consecutive NVD API requests (Source API and pagination pages) |
+```
+
+**Replace with** a note after the table:
+
+```
+The inter-request delay is configured via `FetcherConfig.request_delay`
+(default: 6.0, registered at first startup). The operator should reduce
+to 0.6 after configuring the NVD API key via the fetcher dashboard.
+```
+
+**6c. Replace delay references in the algorithm**.
+
+**Find** all occurrences of:
+
+```
+self.get_setting("request_delay_seconds")
+```
+
+**Replace with**:
+
+```
+self.config.request_delay
+```
+
+---
+
+#### Step 7: Update `cve-sync-redhat.md` — remove custom setting
+
+**Find** in the Settings model (line ~257):
+
+```python
+        throttle_delay_seconds: float = Field(
+```
+
+Remove the entire field definition from the `Settings` class.
+
+**Find** in the custom settings table (line ~401):
+
+```
+| `throttle_delay_seconds` | float | 2.0 | 0.1–30.0 | Delay between consecutive Red Hat API requests |
+```
+
+**Replace with** a note:
+
+```
+The inter-request delay is configured via `FetcherConfig.request_delay`
+(default: 2.0, registered at first startup).
+```
+
+**Find** all occurrences of:
+
+```
+self.settings.throttle_delay_seconds
+```
+
+**Replace with**:
+
+```
+self.config.request_delay
+```
+
+---
+
+#### Step 8: Update `cve-sync-osv.md` — remove custom setting
+
+**Find** in the Settings model (line ~292):
+
+```python
+        throttle_delay_seconds: float = Field(
+```
+
+Remove the entire field definition from the `Settings` class.
+
+**Find** in the custom settings table (line ~440):
+
+```
+| `throttle_delay_seconds` | float | 0.2 | 0.05–10.0 | Delay between consecutive OSV API requests (all phases) |
+```
+
+**Replace with** a note:
+
+```
+The inter-request delay is configured via `FetcherConfig.request_delay`
+(default: 0.2, registered at first startup).
+```
+
+**Find** all occurrences of:
+
+```
+self.settings.throttle_delay_seconds
+```
+
+**Replace with**:
+
+```
+self.config.request_delay
+```
+
+---
+
+#### Step 9: Update `cve-sync-kev.md` — remove redundant timeout
+
+**Find** the HTTP timeout row in the fetcher properties table:
+
+```
+| HTTP timeout | 30 seconds |
+```
+
+**Remove** this row (now matches the centralized default — redundant).
+
+**Find** any reference to `(timeout: 30 seconds)` in the algorithm
+section and remove the parenthetical.
+
+**Find** in the error handling table:
+
+```
+Request timeout (>30s)
+```
+
+**Replace with**:
+
+```
+Request timeout
+```
+
+---
+
+#### Step 10: Update `ibs-integration.md` — remove retry, add TLS/Accept
+
+**10a. Remove inline retry rule**.
+
+**Find** (line 241):
+
+```
+2. IBS API calls use retry logic with exponential backoff
+```
+
+**Remove** this entire business rule line. Transport-level retry in the
+shared factory handles transient failures transparently.
+
+**10b. Add IBSClient infrastructure notes**.
+
+**Find** a suitable location in the IBSClient section (near the
+connection/configuration description) and add:
+
+```markdown
+**HTTP client infrastructure**: `IBSClient` uses the standalone HTTP
+client factory (`backend/app/services/http_client.py`) directly, with
+the following overrides:
+
+- `Accept: application/xml` (IBS API returns XML, not JSON)
+- TLS validated against the SUSE Trust Root CA via the combined trust
+  store (see `fetcher-infrastructure.md`, Shared HTTP Client — TLS
+  Configuration)
+- Transport-level retry active (3 attempts for 5xx/timeout/connection
+  errors)
+- Long-lived client: instantiated per-process, not per-request
+```
+
+---
+
+#### Step 11: Update `ibs-rabbitmq-integration.md` — add TLS reference
+
+**Find** a suitable location near the AMQPS connection description and
+add a note:
+
+```markdown
+The AMQPS connection to `rabbit.suse.de:5671` validates TLS against the
+SUSE Trust Root CA via `SUSE_CA_CERT_PATH` (see
+`fetcher-infrastructure.md`, Shared HTTP Client — TLS Configuration).
+```
+
+---
+
+#### Step 12: Update `ad-integration.md` — rename env var
+
+**Find** (line 36):
+
+```
+store at build time. The `LDAP_URI` and `LDAP_CA_CERT_PATH` environment
+variables control the connection (see `docs/configuration.md`).
+```
+
+**Replace with**:
+
+```
+store at build time. The `LDAP_URI` and `SUSE_CA_CERT_PATH` environment
+variables control the connection (see `docs/configuration.md`).
+```
+
+---
+
+#### Step 13: Update `product-catalog.md` — add TLS note
+
+**Find** a suitable location in the SMELT/AIMAAS connection description
+and add:
+
+```markdown
+HTTPS connections to SMELT (`smelt.suse.de`) and AIMAAS
+(`aimaas.suse.de`) are validated via the combined trust store (system
+CAs + SUSE Trust Root CA). See `fetcher-infrastructure.md`, Shared HTTP
+Client — TLS Configuration.
+```
+
+---
+
+#### Step 14: Update `package-bugowner.md` — update rate_limit reference
+
+**Find** any reference to:
+
+```
+rate_limit
+```
+
+**Replace with**:
+
+```
+request_delay
+```
+
+And update the surrounding description to say:
+
+```
+Respects `request_delay` from `FetcherConfig` (default: 0 — no delay
+needed for internal IBS API; admin-configurable via the fetcher
+dashboard).
+```
+
+---
+
+#### Step 15: Update `cve-sync-kernel.md` — rename timeout_seconds
+
+**Find** any reference to `timeout_seconds` (likely the 300s override
+for the kernel fetcher).
+
+**Replace with** `run_timeout`.
+
+---
+
+#### Step 16: Update `ibs-product-release-detection.md` — add timeout override
+
+**Find** the fetcher properties table and add a row:
+
+```
+| HTTP read timeout | 120 seconds (override) | `updateinfo.xml` files can be several MB for products with years of accumulated advisories |
+```
+
+---
+
+#### Step 17: Update `fetcher-operations.md` — rename fields
+
+Apply the following find/replace operations across the entire file:
+
+| Find | Replace |
+|------|---------|
+| `timeout_seconds` | `run_timeout` |
+| `"rate_limit"` | (remove — field no longer exists) |
+| `rate_limit` (in validation rules) | `request_delay` |
+
+Specific locations:
+
+- Line 449: `timeout_seconds > 0` → `run_timeout > 0`
+- Lines 513-514: update JSON example:
+  `"timeout_seconds": 3600` → `"run_timeout": 3600`
+  `"rate_limit": null` → `"request_delay": 0`
+- Lines 583-584: update JSON example:
+  `"timeout_seconds": 600` → `"run_timeout": 600`
+  `"rate_limit": "2/s"` → `"request_delay": 2.0`
+- Line 594: `timeout_seconds: must be a non-negative integer` →
+  `run_timeout: must be a non-negative integer`
+- Line 597: remove `rate_limit` pattern validation; add:
+  `request_delay: must be a float >= 0 and <= 300`
+- Lines 814-816: `timeout_seconds` → `run_timeout`
+- Line 911: `timeout_seconds` → `run_timeout`
+
+---
+
+#### Step 18: Update `docs/data-model.md` — FetcherConfig table
+
+**Find** in the FetcherConfig table:
+
+```
+| timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | ... |
+| rate_limit | VARCHAR(20) | nullable | ... |
+```
+
+**Replace with**:
+
+```
+| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as stale run detection threshold and Celery soft time limit. 0 disables both. |
+| request_delay | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. 0 = no delay. CHECK (>= 0 AND <= 300). |
+```
+
+Also update the ER diagram if it contains `timeout_seconds` or
+`rate_limit`.
+
+---
+
+#### Step 19: Update `docs/configuration.md`
+
+**19a. Replace `LDAP_CA_CERT_PATH`**.
+
+**Find** the `LDAP_CA_CERT_PATH` row in the environment variables table.
+
+**Replace with**:
+
+```
+| `SUSE_CA_CERT_PATH` | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, LDAP, AMQP). Combined with system CA bundle at runtime. |
+```
+
+**19b. Add proxy variables**.
+
+Add to the environment variables table (in a "Standard (non-Sentinel)"
+section or with a note):
+
+```
+| `HTTPS_PROXY` | (none) | Standard. Proxy URL for outgoing HTTPS connections. Respected by all HTTP clients. |
+| `HTTP_PROXY` | (none) | Standard. Proxy URL for outgoing HTTP connections. |
+| `NO_PROXY` | (none) | Standard. Comma-separated hosts that bypass the proxy. |
+```
+
+**19c. Update NVD_API_KEY description** (if present).
+
+**Find** any reference to `request_delay_seconds` custom setting.
+
+**Replace with**: `request_delay` in the fetcher dashboard.
+
+**19d. Add `request_delay` documentation** (if FetcherConfig fields are
+listed).
+
+Ensure the renamed `run_timeout` and new `request_delay` are documented
+consistently with the field definitions in Step 2.
+
+---
+
+#### Step 20: Update `docs/conventions.md` — LDAP terminology
+
+**Find** in the AD/LDAP/SSO terminology table, LDAP row, the examples
+that mention `LDAP_CA_CERT_PATH`.
+
+**Remove** `LDAP_CA_CERT_PATH` from the examples (since it is now
+`SUSE_CA_CERT_PATH` and covers HTTP and AMQP too — no longer
+LDAP-scoped). Keep `LDAP_URI` as the LDAP-scoped env var example.
+
+---
+
+#### Step 21: Update `docs/deployment.md` — cert reference
+
+**Find** any reference to `LDAP_CA_CERT_PATH`.
+
+**Replace with** `SUSE_CA_CERT_PATH`.
+
+---
+
+#### Step 22: Run reviewers
+
+After all modifications are applied, run the following reviewers to
+verify coherence:
+
+1. `@spec-coherence-reviewer` on `fetcher-infrastructure.md` — verify
+   the new Shared HTTP Client section does not contradict existing
+   sections (retry policy for `fetch_single`, custom settings, error
+   handling)
+2. `@spec-coherence-reviewer` on `cve-sync-nvd.md` — verify the updated
+   429 handling is consistent with the transport-level retry defined in
+   `fetcher-infrastructure.md`
+3. `@docs-reviewer` on the set of modified files — verify documentation
+   completeness and cross-reference accuracy
+
+If reviewers identify issues rated "Needs revision", fix them before
+considering the application complete.
+
+---
+
+#### Step 23: Delete this draft
+
+Once all modifications are applied and verified:
+
+```
+rm docs/drafts/http-client-infrastructure.md
+```
+
+The decisions and their rationale are now embedded in the approved
+specifications. The draft has served its purpose and must not remain
+as a parallel source of truth.
 
 ---
 
