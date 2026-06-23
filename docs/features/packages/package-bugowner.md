@@ -304,9 +304,8 @@ records.
       members, remove departed members, update changed emails
    d. If the IBS query fails, log the error, call
       `self.record_failed()`, and continue to the next package
-   e. Respect the `rate_limit` from `FetcherConfig` between IBS
-      requests (default: no limit — admin-configurable via the fetcher
-      dashboard)
+   e. Respect `request_delay` from `FetcherConfig` between IBS API
+      calls via `asyncio.sleep(self.config.request_delay)`
 
 ### Operation 3: Repair
 
@@ -322,8 +321,8 @@ from the cache.
    b. Call `self.record_created()` for each new record
    c. If the IBS query fails, log the error, call
       `self.record_failed()`, and continue to the next package
-   d. Respect the `rate_limit` from `FetcherConfig` between IBS
-      requests
+   d. Respect `request_delay` from `FetcherConfig` between IBS API
+      calls via `asyncio.sleep(self.config.request_delay)`
 
 ### Execution Order
 

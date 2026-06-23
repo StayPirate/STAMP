@@ -360,7 +360,7 @@ use these endpoints for automated health monitoring.
 
 1. Verify `LDAP_URI` is correct and port 636 is reachable
 2. Verify the SUSE Trust Root CA is installed at the path specified by
-   `LDAP_CA_CERT_PATH`
+   `SUSE_CA_CERT_PATH`
 3. Check logs for TLS handshake errors
 
 ### Celery Tasks Not Running

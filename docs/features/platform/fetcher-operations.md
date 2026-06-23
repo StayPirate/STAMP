@@ -196,7 +196,7 @@ provides the distinction.
         "items_failed": 0
       },
       "custom_settings": {
-        "throttle_delay_seconds": 5.0
+        "results_per_page": 500
       }
     }
   ]
@@ -446,7 +446,7 @@ Enqueues a manual run of the specified fetcher.
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be triggered. |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
-| 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `timeout_seconds > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
+| 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `run_timeout > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
 | 503 | `CELERY_ENQUEUE_FAILED` | Task broker unavailable — run record marked as failed |
 
 **`Capability: manage_fetchers`**
@@ -510,21 +510,21 @@ fetcher-specific custom settings and the schema that describes them.
     "schedule_override": null,
     "default_schedule": "0 3 * * *",
     "effective_schedule": "0 3 * * *",
-    "timeout_seconds": 3600,
-    "rate_limit": null,
+    "run_timeout": 3600,
+    "request_delay": 0,
     "custom_settings": {
-      "throttle_delay_seconds": 5.0
+      "results_per_page": 500
     },
     "settings_schema": {
       "type": "object",
       "title": "Settings",
       "properties": {
-        "throttle_delay_seconds": {
-          "type": "number",
-          "default": 2.0,
-          "minimum": 0.1,
-          "maximum": 30.0,
-          "description": "Delay between consecutive Red Hat API requests."
+        "results_per_page": {
+          "type": "integer",
+          "default": 2000,
+          "minimum": 100,
+          "maximum": 2000,
+          "description": "Number of CVE records per API page."
         }
       }
     },
@@ -580,10 +580,10 @@ include the fields to change.
 {
   "enabled": false,
   "schedule_override": "0 */4 * * *",
-  "timeout_seconds": 600,
-  "rate_limit": "2/s",
+  "run_timeout": 600,
+  "request_delay": 2.0,
   "custom_settings": {
-    "throttle_delay_seconds": 5.0
+    "results_per_page": 500
   }
 }
 ```
@@ -591,11 +591,10 @@ include the fields to change.
 **Validation rules**:
 - `schedule_override`: must be a valid 5-field cron expression, or `null`
   to revert to the default schedule
-- `timeout_seconds`: must be a non-negative integer. 0 disables both
+- `run_timeout`: must be a non-negative integer. 0 disables both
   the Celery soft time limit and stale run detection (stuck runs will
   require manual resolution via the CLI). Default: 3600 (1 hour)
-- `rate_limit`: must match the pattern `"<number>/<unit>"` where unit is
-  `s`, `m`, or `h`, or `null` to disable
+- `request_delay`: must be a float >= 0 and <= 300
 
 **Validation rules for `custom_settings`**:
 - Each key MUST exist in the fetcher's `Settings` model. Unknown
@@ -608,7 +607,7 @@ include the fields to change.
 - Partial updates are supported: only the keys included in the request
   are updated. Omitted keys retain their current value. To reset a
   setting to its default, the key must be explicitly set to `null`:
-  `{"custom_settings": {"throttle_delay_seconds": null}}` — this
+  `{"custom_settings": {"results_per_page": null}}` — this
   removes the key from the JSONB column, causing `get_setting()` to
   fall back to the model's field default.
 - If the fetcher declares no `Settings` class and the request
@@ -628,7 +627,7 @@ include the fields to change.
   - If `enabled` changed: one event with `event_type = disabled` or
     `enabled` (`old_value`, `new_value`, and `detail` are all `null`)
   - For each standard field that changed (`schedule_override`,
-    `timeout_seconds`, `rate_limit`): one event with
+    `run_timeout`, `request_delay`): one event with
     `event_type = config_changed`, `old_value` = previous value,
     `new_value` = new value, `detail = {"field": "<field_name>"}`
   - For each `custom_settings` sub-key that changed: one event with
@@ -654,7 +653,7 @@ include the fields to change.
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be configured. |
 | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` (not declared in the fetcher's schema) |
 | 422 | `FETCHER_SETTING_INVALID` | Value in `custom_settings` fails type, range, or choices validation |
-| 422 | `VALIDATION_ERROR` | Invalid cron expression, timeout, or rate limit format |
+| 422 | `VALIDATION_ERROR` | Invalid cron expression, run_timeout, or request_delay value |
 
 ### Get Fetcher Audit Log
 
@@ -811,9 +810,9 @@ is unavailable).
 
 1. If a `FetcherRun` with `status = running` exists for the fetcher:
    show `running ({elapsed} elapsed)` where elapsed is calculated from
-   `started_at`. If `timeout_seconds > 0` and the elapsed time exceeds
+   `started_at`. If `run_timeout > 0` and the elapsed time exceeds
    it, append `(stale?)` — e.g., `running (2h 30m elapsed, stale?)`.
-   If `timeout_seconds = 0`, the `(stale?)` hint is never shown.
+   If `run_timeout = 0`, the `(stale?)` hint is never shown.
 2. If no running record exists but completed runs exist: show the status
    of the most recent `FetcherRun` with its duration — e.g.,
    `success (3m 12s)`, `failure`, `partial (1m 5s)`
@@ -852,11 +851,11 @@ Fetcher: sync_redhat_cves
 Enabled: yes
 Schedule: 0 3 * * * (default)
 Timeout: 3600s
-Rate limit: —
+Request delay: 0s
 
 Custom settings:
-  throttle_delay_seconds = 5.0  (default: 2.0, range: 0.1–30.0)
-    Delay between consecutive Red Hat API requests.
+  results_per_page = 500  (default: 2000, range: 100–2000)
+    Number of CVE records per API page.
 ```
 
 For a fetcher with no custom settings schema:
@@ -866,7 +865,7 @@ Fetcher: sync_nvd_cves
 Enabled: yes
 Schedule: 0 */6 * * * (default)
 Timeout: 3600s
-Rate limit: —
+Request delay: 0s
 
 No custom settings available for this fetcher.
 ```
@@ -878,10 +877,10 @@ Fetcher: old_fetcher (deregistered)
 Enabled: yes
 Schedule override: 0 */6 * * *
 Timeout: 3600s
-Rate limit: —
+Request delay: 0s
 
 Custom settings (schema unavailable — raw stored values):
-  throttle_delay_seconds = 5.0
+  results_per_page = 500
 ```
 
 Differences from the registered fetcher output:
@@ -908,7 +907,7 @@ registered fetchers, also reads the `Settings` model from the
 fetcher registry. For deregistered fetchers, only DB-stored data is
 available.
 
-When `timeout_seconds` is 0, the command MUST emit a warning to stderr:
+When `run_timeout` is 0, the command MUST emit a warning to stderr:
 
 ```
 Warning: Stale detection disabled — stuck runs will require manual resolution.

@@ -43,6 +43,9 @@ fetcher as a catch-up mechanism for events missed during downtime.
 - **Queue**: exclusive, auto-delete — declared by the consumer at
   connection time. Exclusive queues are transient: messages published while
   the consumer is disconnected are lost
+- **TLS**: the AMQPS connection to `rabbit.suse.de:5671` validates TLS
+  against the SUSE Trust Root CA via `SUSE_CA_CERT_PATH` (see
+  `fetcher-infrastructure.md`, TLS Trust Store Configuration)
 
 ### Consumed Events
 

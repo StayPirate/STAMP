@@ -113,6 +113,9 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      immediately
    In both cases, a DEBUG-level log is emitted:
    `logger.debug("Fetcher '%s' is disabled — skipping run", self.name)`
+5. **Shared HTTP client**: a pre-configured `self.http_client` lazy
+   property for outgoing HTTP requests. See "Shared HTTP Client" section
+   for the full specification.
 
 **FetcherRun creation failure**: if the database INSERT for the `FetcherRun`
 record fails (e.g., database connection error), the task MUST:
@@ -153,6 +156,7 @@ class SyncExampleData(BaseFetcher):
     name: str = "sync_example_data"      # unique identifier, snake_case, max 100 chars
     description: str = "Human-readable description"
     default_schedule: str = "0 */6 * * *"  # cron expression (every 6h)
+    default_request_delay: float = 0  # Optional: initial request_delay at auto-registration
     queue: str | None = None  # Optional: Celery queue name (default = default queue)
 
     # Optional: per-fetcher operational parameters configurable at
@@ -451,11 +455,13 @@ fetcher MUST NOT catch parsing exceptions internally — it should let them
 propagate, but the orchestrator should classify them as non-retryable
 (immediate `failure`) rather than feeding them into the Celery retry loop.
 
-**HTTP 429 and `Retry-After`**: this design deliberately ignores the
-`Retry-After` header for simplicity. The fixed backoff (5s → 10s → 20s,
-total 35s) naturally clears most rate-limit windows (NVD: 30s window). For
-longer rate-limit windows, all 3 retries may fail — this is an acceptable
-trade-off for v1.
+**HTTP 429 and `Retry-After`**: 429 responses with a `Retry-After` header
+are handled at the transport level (see "Shared HTTP Client — Transport-Level
+Retry"): the transport waits the indicated value (capped at 120s) and retries
+once. If the guided retry fails or `Retry-After` is absent/exceeds the cap,
+the error propagates to the Celery retry loop. 429 without `Retry-After` is
+not retried at transport level — it propagates directly to the fetcher or
+Celery retry.
 
 ### Isolation Guarantee
 
@@ -987,7 +993,7 @@ lookback windows, retention periods) can be declared by each fetcher and
 managed at runtime through the admin dashboard without worker restart.
 
 This mechanism complements the generic `FetcherConfig` fields (`enabled`,
-`schedule_override`, `timeout_seconds`, `rate_limit`) which apply
+`schedule_override`, `run_timeout`, `request_delay`) which apply
 uniformly to all fetchers. Custom settings are fetcher-specific — each
 fetcher declares its own schema and reads its own values.
 
@@ -1005,7 +1011,7 @@ Operational parameters that:
 |----------|----------|--------|
 | Credentials | `IBS_USERNAME`, `IBS_PASSWORD`, `NVD_API_KEY` | Secrets — managed via env vars / Kubernetes Secrets |
 | Connection URIs | `LDAP_URI`, `IBS_API_URL` | Infrastructure — changes with deployment environment |
-| TLS configuration | `LDAP_CA_CERT_PATH` | Infrastructure — tied to certificate management |
+| TLS configuration | `SUSE_CA_CERT_PATH` | Infrastructure — tied to certificate management |
 
 ### Schema declaration
 
@@ -1018,17 +1024,17 @@ that inherits from `pydantic.BaseModel`. If not declared (or set to
 from pydantic import BaseModel, Field
 
 
-class SyncRedhatCves(BaseCVEFetcher):
-    name = "sync_redhat_cves"
-    description = "Re-fetches Red Hat CVE data for active tickets"
-    default_schedule = "0 3 * * *"
+class SyncNvdCves(BaseCVEFetcher):
+    name = "sync_nvd_cves"
+    description = "Sync CVE data from NVD"
+    default_schedule = "0 */6 * * *"
 
     class Settings(BaseModel):
-        throttle_delay_seconds: float = Field(
-            default=2.0,
-            ge=0.1,
-            le=30.0,
-            description="Delay between consecutive Red Hat API requests.",
+        results_per_page: int = Field(
+            default=2000,
+            ge=100,
+            le=2000,
+            description="Number of CVE records per API page.",
         )
 ```
 
@@ -1147,7 +1153,7 @@ with a clear precedence:
 
 ```python
 # Inside execute():
-delay = self.get_setting("throttle_delay_seconds")  # returns DB value or 2.0
+page_size = self.get_setting("results_per_page")  # returns DB value or 2000
 ```
 
 Settings are read from the DB at the start of each `run()` invocation
@@ -1233,6 +1239,268 @@ Example:
 > | Setting | Type | Default | Constraints | Description |
 > |---------|------|---------|-------------|-------------|
 > | `my_setting` | int | 10 | 1–100 | Description of the setting |
+
+## Shared HTTP Client
+
+All outgoing HTTP requests from fetchers and service-level clients use
+a shared HTTP client infrastructure based on httpx `AsyncClient`. The
+infrastructure provides two layers:
+
+1. **Standalone factory module** (`backend/app/services/http_client.py`):
+   creates a pre-configured httpx `AsyncClient` with all cross-cutting
+   defaults. Any component can call this factory — fetchers, `IBSClient`,
+   or future consumers.
+
+2. **BaseFetcher integration**: `BaseFetcher` exposes a `self.http_client`
+   lazy property that internally calls the standalone factory. Fetcher
+   authors use `self.http_client` directly — zero configuration, zero
+   boilerplate.
+
+### Factory Module
+
+Location: `backend/app/services/http_client.py`
+
+```python
+def create_http_client(**overrides) -> httpx.AsyncClient:
+    """Create a pre-configured httpx AsyncClient.
+
+    Applies all cross-cutting defaults (User-Agent, timeouts, TLS,
+    compression, Accept header, transport-level retry). Keyword
+    arguments override individual defaults.
+    """
+```
+
+### Default Configuration
+
+| Setting | Default | Override mechanism |
+|---------|---------|-------------------|
+| User-Agent | `Sentinel/{version} ({name}; +https://github.com/SUSE/sentinel)` | Not overridable |
+| Connect timeout | 10 seconds | `http_client_options` |
+| Read timeout | 30 seconds | `http_client_options` |
+| Write timeout | 10 seconds | `http_client_options` |
+| Pool timeout | 10 seconds | `http_client_options` |
+| Accept | `application/json` | `http_client_options` (headers) |
+| Accept-Encoding | `gzip, deflate` (httpx built-in) | — |
+| TLS | Combined trust store (system CAs + SUSE CA) | See "TLS Trust Store Configuration" section |
+| Transport retry | See "Transport-Level Retry" below | `http_client_options` |
+| Proxy | Standard env vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) | System-level |
+
+#### User-Agent
+
+Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
+
+- Platform version from `importlib.metadata.version("sentinel")`. If
+  `PackageNotFoundError` (running from source without installation),
+  defaults to `"dev"`
+- Fetcher name automatic from `BaseFetcher.name` (mandatory, unique)
+- Project URL hardcoded — not configurable
+- Example: `Sentinel/1.0 (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
+- Example (dev): `Sentinel/dev (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
+
+For non-fetcher components (e.g., `IBSClient`), the `name` parameter
+is passed explicitly to the factory.
+
+#### Timeouts
+
+- Connect: 10 seconds (TCP + TLS handshake)
+- Read: 30 seconds (time to receive response body)
+- Write: 10 seconds (time to send request body)
+- Pool: 10 seconds (time waiting for a connection from the pool)
+
+Not configurable via env var or admin panel — these are engineering
+decisions. Fetchers that need different values override via
+`http_client_options`.
+
+Timeout hierarchy (independent concerns):
+
+```
+┌─────────────────────────────────────────────────────┐
+│ FetcherConfig.run_timeout (default: 3600s)          │  ← Celery task level
+│ Detects stale runs (worker crashed, deadlock)       │     (per entire run)
+│                                                     │
+│  ┌───────────────────────────────────────────────┐  │
+│  │ Per-HTTP-request timeout                      │  │  ← HTTP transport level
+│  │ connect: 10s, read: 30s                       │  │     (per single request)
+│  │                                               │  │
+│  │ A single execute() run may make hundreds of   │  │
+│  │ HTTP requests, each with its own timeout.     │  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+#### TLS Configuration
+
+See the peer-level "TLS Trust Store Configuration" section (below) for
+the full specification. The shared HTTP client uses the combined trust
+store (system CAs + SUSE CA) by default — no per-fetcher configuration
+needed.
+
+#### Transport-Level Retry
+
+The shared client automatically retries transient errors before the
+fetcher sees them. If all retries fail, the error propagates to the
+fetcher, which applies its own logic (abort, skip-and-continue, etc.).
+
+**Dispatch rule**: when a response matches multiple rows (e.g., 503 is
+both a 5xx and may carry `Retry-After`), the most specific row wins. If
+`Retry-After` is present and parseable, the guided path is selected;
+otherwise, the generic status-code row applies.
+
+| Condition | Retry | Backoff |
+|-----------|-------|---------|
+| 5xx, connection error, timeout | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
+| 429/503 with `Retry-After` ≤ 120s | 1 retry | Wait the indicated value |
+| 429/503 with `Retry-After` > 120s | No retry | Error propagated immediately |
+| 429 without `Retry-After` | No retry at transport | Fetcher decides |
+| 4xx (non-429) | No retry | Client error — retrying is pointless |
+
+**Path exclusivity**: if a response enters the Retry-After guided path,
+the guided retry is the final attempt. The two retry paths are mutually
+exclusive within a single request sequence. Consequence: a server that
+sends `Retry-After` receives one guided retry, whereas the same status
+without the header receives three fixed-backoff retries. This is
+intentional — the server's explicit guidance replaces blind attempts.
+If the server-guided retry fails, a more persistent issue is likely.
+
+**Retry-After parsing**: integer (seconds) or HTTP-date (RFC 7231).
+Malformed values (unparseable strings, negative integers) are treated as
+absent — the response falls through to the "Retry-After absent" row.
+
+**Shutdown**: all retry sleeps (both fixed-backoff and Retry-After waits)
+use `asyncio.sleep()`, cancelled automatically on `SoftTimeLimitExceeded`
+or task revocation. No special handling needed.
+
+#### HTTP Response Compression
+
+The HTTP client sends `Accept-Encoding: gzip, deflate` by default (httpx
+built-in behavior using Python standard library codecs). Responses are
+decompressed transparently. Brotli (`br`) additionally supported if the
+`brotli` package is installed. No per-fetcher configuration needed.
+
+#### Proxy Configuration
+
+The shared HTTP client respects the standard `HTTPS_PROXY`, `HTTP_PROXY`,
+and `NO_PROXY` environment variables for proxy configuration. No
+application-level proxy settings exist. These are system-level variables
+set at the container or host level.
+
+If the deployment uses a TLS-intercepting proxy, the proxy's CA
+certificate must be present in the system CA bundle (standard procedure,
+no Sentinel-specific configuration needed).
+
+### BaseFetcher Integration
+
+#### Lazy Property: `self.http_client`
+
+```python
+class BaseFetcher:
+    http_client_options: ClassVar[dict] = {}
+
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Pre-configured HTTP client, created on first access."""
+        if self._http_client is None:
+            self._http_client = create_http_client(
+                name=self.name, **self.http_client_options
+            )
+        return self._http_client
+```
+
+- Created lazily on first access during `execute()`
+- Connection pooling active for the entire run
+- Destroyed by `BaseFetcher.run()` in the `finally` block (after
+  `record_end()`, suppressing `aclose()` exceptions with a log warning)
+- Between runs: no client exists, no idle connections
+- Stale connection handling: httpx closes idle connections after ~5s of
+  inactivity within the pool. If a server closes a connection earlier,
+  httpx transparently opens a new one on the next request
+- If never accessed during a run: teardown is a no-op
+
+#### Override Mechanism
+
+Fetchers with non-standard requirements override via a class attribute:
+
+```python
+class ProductReleaseFetcher(BaseFetcher):
+    http_client_options = {"timeout": httpx.Timeout(10.0, read=120.0)}
+```
+
+Merge semantics: `http_client_options` entries are keyword arguments to
+the factory. For same-key headers, the fetcher-specific value replaces
+the factory default (last-writer-wins). User-Agent is the sole exception
+— always preserved and cannot be overridden. Other options (timeout,
+transport) replace defaults at the top-level kwarg level (not
+deep-merged).
+
+#### `fetch_single()` and `catch_up()` Lifecycle
+
+`fetch_single()` is safe to call from any context:
+
+- If `self._http_client` exists (inside an active `run()` → `execute()`
+  flow): reuses it. Connection pooling preserved for Pattern B fetchers
+  (Red Hat, OSV) that call `fetch_single()` in a loop
+- If `self._http_client` does not exist (standalone invocation from a
+  task wrapper, test, or any future call site): creates a temporary
+  client for the duration of the call, closes on return
+- `catch_up()` inherits this behavior (delegates to `fetch_single()`)
+- Error handling: if temporary client creation fails (e.g., TLS
+  misconfiguration), the exception propagates normally. No cleanup needed
+  for a client that was never created
+
+No caller responsibility: task wrappers (`fetch_single_cve`,
+`run_catch_up`) do not manage HTTP client lifecycle.
+
+### Non-Fetcher Components
+
+`IBSClient` calls the standalone factory directly and manages its own
+client lifecycle independently of `BaseFetcher`:
+
+- Instantiated per-process (each Celery worker and IBSEventConsumer)
+- Long-lived client with connection pooling
+- Uses `Accept: application/xml` override (from JSON default)
+- TLS validated via the same combined trust store
+- httpx idle connection management (~5s timeout) prevents stale
+  connections without manual intervention
+- Certificate rotation requires process restart (same as BaseFetcher)
+
+## TLS Trust Store Configuration
+
+All outgoing TLS connections from Sentinel — HTTP (shared client), LDAP
+(`sync_ldap_directory`), AMQP (`IBSEventConsumer`) — use a combined
+trust store that includes both the system CA bundle and the SUSE
+internal CA.
+
+- **Env var**: `SUSE_CA_CERT_PATH` (default: `certs/SUSE_Trust_Root.crt`)
+  - The SUSE Trust Root CA file is committed in the repository. The
+    default path works both in containers (workdir `/app`) and in local
+    development (run from project root). No configuration needed for
+    standard deployments
+  - The env var exists as an override for non-standard deployments
+- **Combined trust store**: at runtime, Python builds an SSL context
+  that includes system CAs (for public services: NVD, GitHub, CISA,
+  Red Hat, OSV, FIRST.org) and the SUSE CA (for internal services: IBS,
+  SMELT, AIMAAS, RabbitMQ). All connections use the same trust store —
+  no host matching, no fallback, no host list to maintain
+- **If file does not exist**: combined trust store contains only system
+  CAs. Connections to SUSE internal services fail with TLS error. A log
+  warning is emitted at startup (does not block startup)
+- **If file is corrupt or unparseable**: SSL context creation raises an
+  error at client creation time. The fetcher fails with a clear error
+  message
+- **TLS verification**: always enforced. Failed handshake is an immediate
+  error — never proceed with an unverified connection
+- **Certificate rotation**: SSL context is built at client creation time.
+  Long-lived clients (IBSClient) require process restart to pick up a
+  rotated CA certificate. Acceptable given CA rotations are infrequent
+  (years between)
+
+### Protocol-Specific Integration
+
+| Protocol | Component | Trust Store Source |
+|----------|-----------|-------------------|
+| HTTPS | Shared HTTP client (all fetchers, IBSClient) | Combined trust store via factory |
+| LDAPS | `sync_ldap_directory` fetcher | Same `SUSE_CA_CERT_PATH`, passed to python-ldap SSL context |
+| AMQPS | `IBSEventConsumer` | Same `SUSE_CA_CERT_PATH`, passed to aio-pika/aiormq SSL context |
 
 ## BaseCVEFetcher Class
 
@@ -1448,7 +1716,7 @@ async def execute(self, session: AsyncSession) -> None:
         except Exception:
             await session.rollback()
             self.record_failed()
-        await asyncio.sleep(self.get_setting("throttle_delay_seconds"))
+        await asyncio.sleep(self.config.request_delay)
 ```
 
 **Standard pattern — Pattern A** (discovery fetchers with inline `upsert_cve()`):
@@ -2642,7 +2910,7 @@ This applies to all trigger sources:
 | Admin triggers while another manual run is active | `manual` | `manual` | API returns **409 Conflict** |
 | Schedule fires while stale run exists | any | `schedule` | Stale run marked as `failure`, new run proceeds |
 | Admin triggers while stale run exists | any | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
-| Any trigger with stale run but `timeout_seconds = 0` | any | any | Stale detection disabled — treated as active run (409 or silent discard) |
+| Any trigger with stale run but `run_timeout = 0` | any | any | Stale detection disabled — treated as active run (409 or silent discard) |
 
 The distinction is:
 
@@ -2662,8 +2930,8 @@ deployments, without atomic locking two workers can simultaneously read
 ## Stale Run Detection
 
 A run is considered **stale** when it has been in `running` status for
-longer than the fetcher's `timeout_seconds` (from `FetcherConfig`). The
-default `timeout_seconds` is 3600 (1 hour). If `timeout_seconds` is set
+longer than the fetcher's `run_timeout` (from `FetcherConfig`). The
+default `run_timeout` is 3600 (1 hour). If `run_timeout` is set
 to 0, stale detection is disabled for that fetcher — the run is never
 considered stale regardless of how long it has been running.
 
@@ -2671,12 +2939,12 @@ When a stale run is detected (by the Celery task or the API trigger
 endpoint), it is resolved by updating the stale `FetcherRun`
 record:
 
-**Operational risk of `timeout_seconds=0`**: disabling stale detection
+**Operational risk of `run_timeout=0`**: disabling stale detection
 means a fetcher that gets stuck will block all future executions
-indefinitely, requiring manual intervention. When `timeout_seconds` is
-set to 0 via the API, a warning is surfaced to the operator (see
-`docs/features/platform/fetcher-operations.md`, "Update Fetcher Config"
-for the API warning field).
+indefinitely, requiring manual intervention. When `run_timeout` is
+set to 0 via the API, the validation rules document the operational risk
+(see `docs/features/platform/fetcher-operations.md`, "Update Fetcher
+Config").
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
@@ -2688,7 +2956,7 @@ An application-level log message is emitted:
 
 ```
 logger.warning("Marking stale run %s for '%s' as failure (running since %s, timeout %ds)",
-               run_id, fetcher_name, started_at, timeout_seconds)
+               run_id, fetcher_name, started_at, run_timeout)
 ```
 
 Stale run detection is a recovery mechanism for unclean process
@@ -2777,8 +3045,8 @@ Kubernetes multi-replica deployments).
 | fetcher_name | VARCHAR(100) | PK | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled | BOOLEAN | NOT NULL, DEFAULT true | Whether the fetcher is active |
 | schedule_override | VARCHAR(50) | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
-| timeout_seconds | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
-| rate_limit | VARCHAR(20) | nullable | Rate limit expression (e.g., `"2/s"`, `"100/m"`). NULL means no limit. |
+| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
+| request_delay | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. 0 = no delay. CHECK (>= 0 AND <= 300). Applied by the fetcher via `asyncio.sleep(self.config.request_delay)`. |
 | custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see "Custom Settings Schema" above). |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Last modification timestamp |
 
@@ -2787,7 +3055,7 @@ Kubernetes multi-replica deployments).
   fetcher names are unique identifiers defined in code.
 - The `schedule_override` uses standard cron syntax (5-field). When set,
   the Celery Beat schedule for this fetcher MUST be updated dynamically.
-- `timeout_seconds` serves two purposes:
+- `run_timeout` serves two purposes:
   1. **Celery soft time limit**: when > 0, enforced by the Celery task
      (`soft_time_limit`). When a fetcher exceeds this, a
      `SoftTimeLimitExceeded` exception is raised and the run is marked
@@ -2799,6 +3067,14 @@ Kubernetes multi-replica deployments).
   time limit, and stale detection treats the run as indefinitely active.
   The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
   record is auto-created for a newly registered fetcher.
+- `request_delay` is initialized from the fetcher's
+  `default_request_delay` class attribute (default: 0) at auto-creation
+  time. This per-fetcher initial value is only used at first registration
+  — the `INSERT ... ON CONFLICT DO NOTHING` semantics preserve operator
+  overrides across redeployments. Fetchers that target external APIs with
+  rate limits MUST declare a non-zero `default_request_delay` to ensure
+  safe behavior on a fresh deployment without manual operator
+  intervention.
 
 ### FetcherAuditEvent
 
@@ -2823,7 +3099,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | `disabled` | Fetcher was disabled by an admin |
 | `enabled` | Fetcher was re-enabled by an admin |
 | `triggered` | Fetcher was manually triggered by an admin |
-| `config_changed` | Fetcher configuration was modified (schedule, timeout, rate limit, custom settings) |
+| `config_changed` | Fetcher configuration was modified (schedule, run timeout, request delay, custom settings) |
 
 ### Event Field Values
 
@@ -2831,7 +3107,7 @@ Each event type uses `old_value`, `new_value`, and `detail` as follows:
 
 | Event Type | `old_value` | `new_value` | `detail` |
 |---|---|---|---|
-| `config_changed` (standard field) | Previous value (e.g., `"0 */6 * * *"`) | New value (e.g., `"0 */4 * * *"`) | `{"field": "<field_name>"}` where field is `schedule_override`, `timeout_seconds`, or `rate_limit` |
+| `config_changed` (standard field) | Previous value (e.g., `"0 */6 * * *"`) | New value (e.g., `"0 */4 * * *"`) | `{"field": "<field_name>"}` where field is `schedule_override`, `run_timeout`, or `request_delay` |
 | `config_changed` (custom setting) | Previous value as string (e.g., `"2.0"`), or `null` if set for the first time | New value as string (e.g., `"5.0"`), or `null` if reset to default | `{"field": "custom_settings", "key": "<setting_key>"}` |
 | `disabled` | `null` | `null` | `null` |
 | `enabled` | `null` | `null` | `null` |
@@ -2845,8 +3121,8 @@ Each custom setting sub-key counts as a separate field. Toggle
 changes (`enabled` field) produce a separate `disabled` or `enabled`
 event, not a `config_changed` event.
 
-Example: a PATCH that changes `schedule_override`, `timeout_seconds`,
-and `custom_settings.throttle_delay_seconds` produces three
+Example: a PATCH that changes `schedule_override`, `run_timeout`,
+and `custom_settings.results_per_page` produces three
 `config_changed` events, each with its own `old_value`/`new_value`
 pair and identifying `detail`. All events share the same `created_at`
 timestamp and `user_id`. If the same PATCH also changes `enabled` to
@@ -2919,7 +3195,8 @@ See Guardrail 14 in `AGENTS.md`. Every background task that fetches data
 from an external source MUST:
 
 1. Inherit from `BaseFetcher`
-2. Define `name`, `description`, and `default_schedule`
+2. Define `name`, `description`, and `default_schedule`. Additionally,
+   define `default_request_delay` if the target API has rate limits
 3. Implement `execute()` with proper metric reporting
 4. NOT bypass the base class with a raw Celery task
 

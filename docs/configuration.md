@@ -103,7 +103,7 @@ At startup, the application logs an INFO message indicating SSO status:
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ad-integration.md` |
-| `LDAP_CA_CERT_PATH` | string | `/etc/ssl/certs/ca-certificates.crt` | Path to CA bundle for LDAP TLS validation. The default works in containers where `update-ca-certificates` has installed `certs/SUSE_Trust_Root.crt` | `docs/features/identity/ad-integration.md` |
+| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, LDAP, AMQP). Combined with system CA bundle at runtime. | `docs/features/platform/fetcher-infrastructure.md` |
 
 Note: operational parameters for the `sync_ldap_directory` fetcher
 (`max_deactivations`, `ldap_connect_timeout`, `ldap_operation_timeout`,
@@ -128,7 +128,7 @@ here.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay_seconds` custom setting from 6.0s to ~0.6s via the admin dashboard | `docs/features/tickets/cve-sync-nvd.md` |
+| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay` from 6.0s to ~0.6s via the fetcher admin dashboard | `docs/features/tickets/cve-sync-nvd.md` |
 | `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Without token: 60 req/hour (insufficient for production). With token: 5,000 req/hour. The fetcher refuses to execute if this is empty or unset | `docs/features/tickets/cve-sync-ghsa.md` |
 
 ## Git-Based Fetchers
@@ -144,6 +144,18 @@ here.
 | `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | `docs/architecture.md` |
 | `DEBUG` | bool | `false` | Enable debug mode (never in production) | `docs/architecture.md` |
 | `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for the frontend | `docs/architecture.md` |
+
+### Standard Environment Variables (Non-Sentinel)
+
+These are standard system-level variables respected by the HTTP client
+library (httpx). They are NOT Sentinel-specific and are typically set at
+the container or system level.
+
+| Variable | Type | Default | Description | Defined in |
+|----------|------|---------|-------------|------------|
+| `HTTPS_PROXY` | string | (none) | Proxy URL for outgoing HTTPS connections. Respected by all HTTP clients | — |
+| `HTTP_PROXY` | string | (none) | Proxy URL for outgoing HTTP connections | — |
+| `NO_PROXY` | string | (none) | Comma-separated hosts that bypass the proxy | — |
 
 ## Runtime Database Settings
 

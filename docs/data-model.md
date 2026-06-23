@@ -319,7 +319,8 @@ erDiagram
         VARCHAR_100 fetcher_name PK
         BOOLEAN enabled "DEFAULT true"
         VARCHAR_50 schedule_override "nullable"
-        INTEGER timeout_seconds "DEFAULT 3600"
+        INTEGER run_timeout "DEFAULT 3600"
+        FLOAT request_delay "DEFAULT 0"
         JSONB custom_settings "DEFAULT empty"
     }
     FetcherRun {
@@ -1407,8 +1408,8 @@ startup if not present.
 | fetcher_name      | VARCHAR(100) | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
 | schedule_override | VARCHAR(50)  | nullable           | Cron expression to override the default schedule |
-| timeout_seconds   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds. Also used as stale run detection threshold. 0 disables both. |
-| rate_limit        | VARCHAR(20)  | nullable           | Rate limit (e.g., `"2/s"`, `"100/m"`) |
+| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds. Also used as stale run detection threshold. 0 disables both. |
+| request_delay     | FLOAT       | NOT NULL, DEFAULT 0  | Minimum inter-request delay in seconds. 0 = no delay. CHECK (>= 0 AND <= 300). |
 | custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp        |
 

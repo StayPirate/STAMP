@@ -237,7 +237,7 @@ async def execute(self, session: AsyncSession) -> None:
         except Exception:
             await session.rollback()
             self.record_failed()
-        await asyncio.sleep(self.get_setting("throttle_delay_seconds"))
+        await asyncio.sleep(self.config.request_delay)
 ```
 
 ### OP-3: `source_reference_url_pattern` — RESOLVED
@@ -295,9 +295,9 @@ The orchestrator records `status = missing`, and the next periodic run
 
 | Setting | Type | Default | Constraints | Description |
 |---------|------|---------|-------------|-------------|
-| `throttle_delay_seconds` | float | 0.5 | 0.1–10.0 | Delay between consecutive API requests |
+| (none) | — | — | — | The inter-request delay is configured via `FetcherConfig.request_delay` (default: 0.5) |
 
-`throttle_delay_seconds` default 0.5s is conservative for EPSS's
+`request_delay` default 0.5s is conservative for EPSS's
 1000 req/min rate limit (~200 requests in 100 seconds). At expected
 volume (~200-300 active tickets), total run time is ~100-150 seconds.
 
@@ -468,7 +468,7 @@ current proposal as fallback.
       (orchestrator handles failure/missing status)
   - Metrics (with explicit deviation note for `record_updated` semantics
     — throughput metric, not diff-based)
-  - Custom Settings table (`throttle_delay_seconds` only)
+  - Custom Settings table (none — uses `FetcherConfig.request_delay`)
   - Field Mapping
   - Explicitly Ignored Fields (EPSS API has `date`, `days`, etc.)
   - Behavioral Notes (data lifecycle, re-invocation, first-run)
@@ -517,7 +517,7 @@ Key patterns borrowed from `cve-sync-redhat.md`:
 | Per-CVE API → `fetch_single()` | Yes | Yes (API supports `?cve=X`) |
 | `execute()` iterates active tickets | Yes | Yes (per-CVE, identical to RedHat) |
 | Default `catch_up()` via `fetch_single()` | Yes | Yes (inherited from BaseCVEFetcher) |
-| Throttle delay custom setting | Yes (`throttle_delay_seconds`) | Yes (`throttle_delay_seconds` only) |
+| Throttle delay custom setting | Yes (`FetcherConfig.request_delay`) | Yes (`FetcherConfig.request_delay` only) |
 | Error handling per-CVE in execute | Yes | Yes (per-CVE, identical to RedHat) |
 | Enrichment-only (no CVE creation) | Yes | Yes |
 | Field Mapping table | Yes | Yes (simpler: only score + percentile) |

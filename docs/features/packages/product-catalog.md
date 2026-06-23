@@ -111,6 +111,11 @@ for the general SMELT description.
 
 ## AIMAAS Integration
 
+HTTPS connections to SMELT (`smelt.suse.de`) and AIMAAS
+(`aimaas.suse.de`) are validated via the combined trust store (system
+CAs + SUSE Trust Root CA). See `fetcher-infrastructure.md`, TLS Trust
+Store Configuration.
+
 ### Product Lifecycle Sync (periodic)
 
 - **Endpoint**: `GET /api/entity/products/{slug}` (individual product)

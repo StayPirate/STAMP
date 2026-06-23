@@ -252,6 +252,7 @@ not tracked in ticket, or no ticket exists at all) is described in
 | Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. Soft-deleted products are included |
 | Auth | HTTP Basic / API token (internal) |
 | Custom settings | No |
+| HTTP read timeout | 120 seconds (override) — `updateinfo.xml` files can be several MB for products with years of accumulated advisories |
 
 #### Catch-Up
 

@@ -205,6 +205,18 @@ Methods:
 Configuration is injected via the application settings (`IBS_API_URL`,
 `IBS_USERNAME`, `IBS_PASSWORD`).
 
+**HTTP client infrastructure**: `IBSClient` uses the standalone HTTP
+client factory (`backend/app/services/http_client.py`) directly, with
+the following overrides:
+
+- `Accept: application/xml` (IBS API returns XML, not JSON)
+- TLS validated against the SUSE Trust Root CA via the combined trust
+  store (see `fetcher-infrastructure.md`, TLS Trust Store
+  Configuration)
+- Transport-level retry active (4 attempts for 5xx/timeout/connection
+  errors)
+- Long-lived client: instantiated per-process, not per-request
+
 #### IBSTrackReleaseDetector (`backend/app/services/ibs_track_release_detector.py`)
 
 Orchestrates codestream-level release detection using the `IBSClient`.
@@ -238,9 +250,8 @@ Full procedure is documented in
 ### Business Rules
 
 1. IBS credentials are validated at startup; warn if not configured
-2. IBS API calls use retry logic with exponential backoff
-3. All IBS operations are logged for audit purposes
-4. The `IBSTrackReleaseDetector` only modifies records with status
+2. All IBS operations are logged for audit purposes
+3. The `IBSTrackReleaseDetector` only modifies records with status
    `AFFECTED` or `ANALYSIS` (soft-deleted tracks in these statuses are
    still modified — see `docs/features/packages/package-service.md`,
    Package/track/product-level soft-deletion)
