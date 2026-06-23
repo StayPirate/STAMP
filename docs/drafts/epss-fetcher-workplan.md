@@ -2,7 +2,7 @@
 
 **Status**: Draft — work-in-progress across multiple sessions
 **Target**: `docs/features/tickets/cve-sync-epss.md` (replace current placeholder)
-**Last updated**: 2026-06-23 (Session 1f — infrastructure alignment review)
+**Last updated**: 2026-06-23 (Session 1g — all Open Points resolved)
 
 ## 1. Overview
 
@@ -110,8 +110,7 @@ CISA KEV. Specifically:
 
 - It CAN implement `fetch_single()` for on-demand single-CVE queries
 - It CAN participate in catch-up
-- It uses batch queries for its periodic `execute()` (more efficient than
-  Red Hat's one-request-per-CVE approach)
+- Its periodic `execute()` uses per-CVE requests (same pattern as Red Hat)
 
 ### Locations requiring correction
 
@@ -155,6 +154,11 @@ conventions:
 | Algorithm | Single-CVE requests (RedHat pattern) | `execute()` uses same `GET /epss?cve=CVE-XXX` call as `fetch_single()`. Batch deferred as future optimization — unnecessary at expected volume (~200-300 active tickets) |
 | `default_request_delay` | `0.2` | 0.2s → max 300 req/min = 30% of EPSS rate limit (1000 req/min). Same value as OSV. At ~200-300 active tickets, runtime ~40-60s |
 | HTTP client configuration | Shared defaults (no `http_client_options`) | Resolved by infrastructure (commit 6691351) — 30s read timeout, transport-level retry, automatic User-Agent. No per-fetcher override needed |
+| `fetch_single()` empty response | Raise `CVENotInSource` | API returns HTTP 200 + `data: []` for unscored CVEs (verified). Same semantic as Red Hat (404) and NVD (empty). Orchestrator records `status = missing` |
+| `execute()` empty response | Silent skip (`continue`) | CVE is in scope (active ticket) but not yet scored. Not an error — no metric, no log |
+| Score change tracking | None (simple overwrite) | No pre-read, no diff detection. Individual scores may remain stable for days; `assessed_at` update makes upsert mandatory regardless |
+| `record_updated` semantics | Throughput (fire on every upsert) | Documented deviation from "internal diff detection" guideline. Upsert is unconditional (for `assessed_at`), so pre-read adds overhead without avoiding writes |
+| Staleness validation | Log-and-proceed (WARNING if `date < today - 1d`) | Check once per `execute()` (first response). `date` is batch-level (same for all CVEs). No abort — stale data > no data. `assessed_at` enables UI staleness indicator |
 
 ## 5. Open Points
 
@@ -274,20 +278,28 @@ the Red Hat pattern exactly.
 `record_source_status()` (orchestrator path) and
 `build_post_ingest_tasks()` — deferred to Session 3 (cross-spec fixes).
 
-### OP-5: Handling "CVE not in EPSS" in `fetch_single()`
+### OP-5: Handling "CVE not in EPSS" in `fetch_single()` — RESOLVED
 
-Very recent CVEs (< 24h old) may not have EPSS scores yet. How should
-`fetch_single()` handle this?
+Very recent CVEs (< 24h old) may not have EPSS scores yet. The EPSS API
+returns HTTP 200 with empty `data: []` and `total: 0` (verified
+2026-06-23 with `CVE-9999-99999`). This is different from HTTP 404.
 
-The EPSS API returns a valid response with empty `data: []` when a CVE
-is not found (HTTP 200, `total: 0`). This is different from HTTP 404.
+**Resolution**:
 
-**Proposal**: empty `data` array → raise `CVENotInSource`. This is the
-same semantic signal used by Red Hat (HTTP 404) and NVD (empty response).
-The orchestrator records `status = missing`, and the next periodic run
-(or catch-up) will eventually find the score when EPSS has it.
+| Path | Condition | Action |
+|------|-----------|--------|
+| `fetch_single()` | `data: []` (CVE not scored) | Raise `CVENotInSource` |
+| `execute()` | `data: []` (CVE not scored) | Silent skip (`continue`) — no error, no metric |
 
-**Decision needed**: confirm `CVENotInSource` on empty response.
+The orchestrator (`fetch_single_cve`) catches `CVENotInSource` and
+records `status = missing` in `CVESource`. The next periodic run (or
+catch-up) will find the score when EPSS has it.
+
+Rationale: `CVENotInSource` is the standard semantic signal used by
+Red Hat (HTTP 404) and NVD (empty response) for "data does not exist
+yet in this source." The silent skip in `execute()` is appropriate
+because the CVE is in scope (has an active ticket) — it is not an
+error, just data not yet available.
 
 ### OP-6: Throttle delay as custom setting — RESOLVED
 
@@ -304,78 +316,91 @@ configured via `FetcherConfig.request_delay`, initialized from
 total run time is ~40-60 seconds. Operators can adjust via admin
 dashboard without code changes.
 
-### OP-7: Significant score change tracking
+### OP-7: Significant score change tracking — RESOLVED
 
-When an EPSS score changes, should the fetcher log or trigger any side
-effect? Or is simple overwrite sufficient?
+**Resolution**: simple overwrite, no change detection.
 
-Current data model: `CVEEPSSScore` is a point-in-time snapshot (overwritten
-daily). No history table exists.
+- `upsert_cve()` overwrites `score` and `percentile` unconditionally
+  (ON CONFLICT DO UPDATE)
+- No pre-read to compare previous values
+- No logging or side effects on score changes
+- `record_updated()` fires on every successful upsert (throughput
+  semantics — see OP-9)
 
-**Proposal**: simple overwrite, no change detection beyond what `upsert_cve()`
-provides. The metric `record_updated` fires on every successful upsert
-(consistent with KEV "processed" semantics). Significant change alerting
-can be added as a future enhancement if needed.
+Rationale: EPSS recalculates the full model daily, but individual CVE
+scores may remain stable for days (verified 2026-06-23: CVE-2024-0001
+had identical score for 3 consecutive days). A "significant change
+alert" mechanism would require configurable thresholds, pre-reads, and
+an alert destination — complexity without a current consumer. If
+historical tracking is needed in the future, a `CVEEPSSScoreHistory`
+table can be added without impacting the fetcher.
 
-**Decision needed**: confirm simple overwrite approach.
+### OP-8: Data model lifecycle note enhancement — RESOLVED
 
-### OP-8: Data model lifecycle note enhancement (optional)
+**Resolution**: do NOT add the catch-up/`fetch_single()` sentence (that
+is mechanism detail belonging to the fetcher spec). Instead, simplify the
+existing lifecycle note in `data-model.md` by removing implementation
+details (`reconcile_ticket_status()` reference, explicit status list).
 
-The `data-model.md` lifecycle note (line 733) says:
-> "the sync_epss_scores fetcher refreshes EPSS data only for CVEs with
-> **active tickets**"
+Current text (lines 734–741):
+> the `sync_epss_scores` fetcher refreshes EPSS data only for CVEs with
+> **active tickets** (New, Analysis, Analyzed). When a ticket transitions
+> to Resolved, Ignored, or Duplicated, the CVEEPSSScore record is
+> **retained** but no longer refreshed — consistent with the CVSS
+> lifecycle pattern [...]. If the ticket later regresses to an active
+> status (e.g., `reconcile_ticket_status()` moves it back to Analyzed),
+> the fetcher resumes refreshing the record on its next run.
 
-This is correct given the per-active-ticket scope. However, it could also
-mention the `fetch_single()` / catch-up behavior (EPSS data is also
-refreshed on ticket reactivation via catch-up).
+Simplified version (to apply in Session 3):
+> the `sync_epss_scores` fetcher refreshes EPSS data only for CVEs with
+> **active tickets** (New, Analysis, Analyzed). When a ticket transitions
+> to an inactive status, the CVEEPSSScore record is **retained** but no
+> longer refreshed — consistent with the CVSS lifecycle pattern [...].
+> If the ticket later returns to an active status, the fetcher resumes
+> refreshing the record on its next run.
 
-**Proposal**: add a sentence about catch-up to the lifecycle note:
-> "If a ticket is reactivated (returns to an active status), the catch-up
-> mechanism invokes `fetch_single()` to immediately refresh the EPSS score
-> without waiting for the next periodic run."
+Changes:
+- Replaced "Resolved, Ignored, or Duplicated" → "an inactive status"
+  (canonical term from `conventions.md`)
+- Removed "(e.g., `reconcile_ticket_status()` moves it back to
+  Analyzed)" — implementation mechanism detail
 
-**Decision needed**: confirm, or defer as trivial.
+Rationale: `data-model.md` documents data completeness and freshness
+semantics (essential for schema consumers). Mechanism details (which
+function triggers the transition) belong in the fetcher/service specs.
 
-### OP-9: `record_updated` metric semantics
+### OP-9: `record_updated` metric semantics — RESOLVED
 
-`cve-service.md` (lines 1203–1208) states that enrichment fetchers always
-receive `action = unchanged` from `upsert_cve()` and must "manage their own
-metrics based on their internal diff detection." This contradicts OP-7's
-proposal of firing `record_updated` on every successful upsert.
+**Resolution**: Option A — throughput metric.
 
-Two options:
+Every successful `upsert_cve()` call → `record_updated()`. No pre-read,
+no diff detection.
 
-**Option A — Fire on every upsert (throughput metric)**:
-- Every successful `upsert_cve()` call → `record_updated()`
-- Simple, no pre-read required
-- Semantically a "processed" count, not a true "updated" count
-- EPSS scores change daily for most CVEs, so the distinction is
-  academic in practice
+**Corrected rationale** (verified 2026-06-23): the original justification
+("EPSS scores change daily for most CVEs") was inaccurate. Empirical
+verification shows individual CVE scores may remain stable for multiple
+consecutive days (e.g., CVE-2024-0001 had identical `epss` value for 3+
+days). However, Option A remains correct for a different reason:
 
-**Option B — Internal diff detection (true update metric)**:
-- Before `upsert_cve()`, read current `CVEEPSSScore` from DB
-- Compare score + percentile with fetched values
-- Fire `record_updated()` only if values differ
-- Adds one SELECT per CVE (or per batch with bulk read)
+- The upsert MUST happen regardless of whether the score changed, because
+  `assessed_at` (the API `date` field) advances daily and must be
+  persisted to enable staleness detection in the UI
+- Since the upsert always executes, a pre-read for diff detection would
+  add one SELECT per CVE without avoiding any writes
+- The overhead is unjustified: diff detection and throughput counting
+  produce the same DB writes, only the metric number differs slightly
 
-**Proposal**: Option A. EPSS scores change daily for the vast majority
-of CVEs (the model recalculates all scores every day), so diff detection
-would fire `record_updated` almost every time anyway. The added
-complexity of pre-reads provides no practical value. Document this
-explicitly as a deviation from the common metric semantics: "for EPSS,
+The spec documents this explicitly as a deviation: "for EPSS,
 `record_updated` counts every successfully processed CVE, not only those
-whose score actually changed."
+whose score actually changed. This is because the upsert is required
+regardless (to update `assessed_at`), making pre-read diff detection
+pure overhead."
 
-**Architecture context (Session 1d)**: `cve-service.md` explicitly
-states that enrichment fetchers always receive `action = unchanged` from
-`upsert_cve()` and "must manage their own metrics based on their
-internal diff detection." Option A is a conscious deviation — EPSS uses
-throughput counting instead of true diff detection. This is acceptable
-because EPSS scores change daily for most CVEs, making diff detection
-practically equivalent to throughput counting with added complexity.
-The spec must document this explicitly.
-
-**Decision needed**: confirm Option A, or choose Option B.
+**Architecture context**: `cve-service.md` states enrichment fetchers
+always receive `action = unchanged` from `upsert_cve()` and "must manage
+their own metrics based on internal diff detection." Option A is a
+conscious, documented deviation — justified by the mandatory
+`assessed_at` update that makes the upsert unconditional.
 
 ### OP-10: CVE missing from batch response in `execute()` — RESOLVED (N/A)
 
@@ -385,33 +410,44 @@ CVE; the response is either `data: [entry]` (scored) or `data: []` (not
 scored). The empty-response case uses OP-5 semantics (skip silently in
 `execute()`, `CVENotInSource` in `fetch_single()`).
 
-### OP-11: `assessed_at` staleness validation
+### OP-11: `assessed_at` staleness validation — RESOLVED
 
 The EPSS API includes a `date` field (YYYY-MM-DD) indicating the
-assessment date. Normally this matches the current UTC date (publication
-at 13:31 UTC, fetcher runs at 14:00 UTC). Abnormal scenarios:
+assessment date. This is a **batch-level** publication date — the same
+for ALL CVEs returned on a given day (verified 2026-06-23: all CVEs
+queried returned `date: 2026-06-23`). Normally this matches the current
+UTC date (publication at 13:31 UTC, fetcher runs at 14:00 UTC).
 
+Abnormal scenarios:
 - EPSS publication delayed → `date` = yesterday
 - EPSS API serving stale cached data → `date` several days old
 - Fetcher runs before publication (misconfigured schedule) → `date` =
   yesterday
 
-**Proposal**: log-and-proceed strategy:
-1. After parsing the first batch response, extract the `date` field
+**Resolution**: log-and-proceed strategy:
+
+1. After the first API response in `execute()`, extract the `date` field
 2. If `date < today(UTC) - 1 day` → log WARNING: "EPSS data is stale
    (assessed_at={date}, expected={today})"
-3. Proceed with the upsert regardless — stale data is better than no
+3. Proceed with all upserts regardless — stale data is better than no
    data
 4. The `assessed_at` field stored in `CVEEPSSScore` enables the frontend
-   to display a staleness indicator (already specified in
-   `data-model.md` UI display note)
+   to display a staleness indicator (already specified in `data-model.md`
+   UI display note)
 
-The check runs once per `execute()` invocation (first batch only), not
-per CVE. The threshold of `today - 1 day` accounts for timezone edge
-cases near midnight UTC.
-
-**Decision needed**: confirm log-and-proceed, adjust threshold, or skip
-validation entirely.
+Behavioral details:
+- The check runs **once** per `execute()` invocation (first response
+  only) — since the `date` is batch-level, checking one CVE is
+  sufficient
+- Threshold: `today - 1 day` (not `today`) to tolerate timezone edge
+  cases near midnight UTC and minor publication delays
+- `date == yesterday` → no warning (within tolerance)
+- `date < yesterday` → WARNING in log
+- No abort, no error metric, no failure — only diagnostic visibility
+  for the operator
+- The `fetch_single()` path does NOT perform staleness validation (it
+  processes a single CVE on-demand; staleness is only relevant for the
+  periodic batch run)
 
 ### OP-12: HTTP client configuration — RESOLVED
 
@@ -440,7 +476,7 @@ a cross-reference to `fetcher-infrastructure.md` ("Shared HTTP Client").
 - [x] Cross-check with RedHat fetcher
 - [x] Create this work plan
 - [x] Resolve OP-12 (resolved by shared HTTP client infrastructure)
-- [ ] Resolve Open Points OP-5, OP-7, OP-8, OP-9, OP-11
+- [x] Resolve Open Points OP-5, OP-7, OP-8, OP-9, OP-11
 
 ### Session 2: Write the complete spec
 - [ ] Write the full `cve-sync-epss.md` spec with all mandatory sections:
@@ -463,7 +499,10 @@ a cross-reference to `fetcher-infrastructure.md` ("Shared HTTP Client").
   - Custom Settings table (none — declares `default_request_delay = 0.2`,
     delay managed via `FetcherConfig.request_delay`)
   - Field Mapping
-  - Explicitly Ignored Fields (EPSS API has `date`, `days`, etc.)
+  - Explicitly Ignored Fields (envelope: `status`, `status-code`,
+    `version`, `access`, `total`, `offset`, `limit`; and `time-series`
+    array if present. Note: `date` is NOT ignored — mapped to
+    `assessed_at`)
   - Behavioral Notes (data lifecycle, re-invocation, first-run)
   - First-run behavior: "no special first-run behavior — iterates over
     all CVEs with active tickets. If no active tickets, completes
@@ -494,7 +533,8 @@ a cross-reference to `fetcher-infrastructure.md` ("Shared HTTP Client").
   reference
 - [ ] Update `data-sources.md`: complete the Fetcher Registry entry (schedule,
   rate limits)
-- [ ] Update `data-model.md`: add catch-up sentence to lifecycle note
+- [ ] Update `data-model.md`: simplify lifecycle note (remove
+  `reconcile_ticket_status()` reference, use "inactive status" term)
 - [ ] Update `cve-sync-redhat.md`: replace "5000 active tickets" with "800
   active tickets" in operational notes (line 398), recalculate runtime
   (~27 minutes at 2.0s delay)
@@ -536,7 +576,7 @@ Differences from RedHat:
 
 Before the spec can be moved from draft to approved:
 
-- [ ] All Open Points resolved
+- [x] All Open Points resolved
 - [ ] Algorithm section complete (numbered steps, no TBD)
 - [ ] Error Handling section complete (both fetch_single and execute)
 - [ ] Metrics section complete
@@ -562,6 +602,7 @@ Before the spec can be moved from draft to approved:
 | 2026-06-21 | #1d | Architecture alignment: reviewed commits 72f8ef5 (transaction ownership — `upsert_cve()` now pure service function, `commit_and_dispatch()` helper), 305bab9 (`record_source_status("failure")` removed from `execute()` path — rollback is sufficient), daeb249 (HTTP client infrastructure draft). Resolved OP-4 (architecture confirms pattern). Annotated OP-12 (WIP HTTP client draft may impact). Updated OP-2 pseudocode with `commit_and_dispatch` pattern and batch-adapted Pattern B. Added 4 new design decisions (transaction ownership, per-CVE commit, `fetch_single` return type, `record_source_status` in `execute()`). Added architecture context to OP-9. Verified and updated cross-spec correction line numbers (Sezione 3). Updated Session 2 plan with new architecture elements |
 | 2026-06-21 | #1e | Resolved OP-2 (single-CVE pattern, RedHat-identical — batch deferred as unnecessary at expected volume of ~200-300 active tickets). Resolved OP-3 (`source_reference_url_pattern = None` — no per-CVE page on FIRST.org, verified). Resolved OP-10 (N/A — no batch responses with single-CVE pattern). Simplified OP-6 (removed `batch_size`, only `throttle_delay_seconds` remains). Updated pseudocode, design decisions table, Session 2 plan, and RedHat cross-check to reflect single-CVE architecture |
 | 2026-06-23 | #1f | Infrastructure alignment review: resolved OP-12 (shared HTTP client finalized, commit 6691351 — EPSS uses shared defaults, no per-fetcher HTTP config). Lowered `default_request_delay` from 0.5 to 0.2 (30% of 1000 req/min rate limit, same as OSV). Updated cross-spec correction line numbers (Section 3 — line shifts from +347 lines in fetcher-infrastructure.md). Added RedHat operational note fix (800 tickets, ~27min) to Session 3 plan. Updated Session 2 plan to reference shared infrastructure. Updated RedHat Cross-Check Summary with new `default_request_delay` and HTTP client rows |
+| 2026-06-23 | #1g | Resolved all remaining Open Points. OP-5: confirmed `CVENotInSource` on empty `data[]` (verified API returns HTTP 200 + empty array for non-existent CVEs). OP-7: confirmed simple overwrite, no change detection. OP-8: resolved as "simplify existing note" — remove `reconcile_ticket_status()` mechanism detail, do NOT add catch-up sentence (belongs in fetcher spec). OP-9: confirmed Option A (throughput metric) with corrected rationale — upsert is mandatory regardless (to update `assessed_at`), making pre-read diff detection pure overhead. Empirically verified that individual EPSS scores may remain stable for days (CVE-2024-0001: identical score 3 days). OP-11: confirmed log-and-proceed with `today - 1 day` threshold; verified `date` field is batch-level (same for all CVEs on same day). Session 1 complete — all design decisions determined, ready for Session 2 |
 | | #2 | (pending) |
 | | #3 | (pending) |
 | | #4 | (pending) |
