@@ -181,6 +181,7 @@ Examples:
 | `AD_UNAVAILABLE` | Active Directory (via LDAP) |
 | `SMELT_UNAVAILABLE` | SMELT API |
 | `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
+| `CELERY_ENQUEUE_FAILED` | Celery task broker (task dispatch failed) |
 
 ### Pagination
 

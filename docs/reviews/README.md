@@ -35,8 +35,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-redhat | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
-| [cve-tracking](cve-tracking.md) | 1 | 2 | 2 | 1 | 1 | 7/22 | 2026-06-24 | |
-| | 1:🟡 | 2:🟡 | 2:🟠 | 1:🟠 | 1:🟡 |  |  |  |
+| [cve-tracking](cve-tracking.md) | 1 | 2 | 🟢 | 1 | 1 | 5/22 | 2026-06-24 | |
+| | 1:🟡 | 2:🟡 |  | 1:🟠 | 1:🟡 |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/20 | 2026-05-28 | ⚠️ |
@@ -69,8 +69,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **2** | **2** | **1** | **1** | **9/779** |  |  |
-| | 2:🟠 1:🟡 | 2:🟡 | 2:🟠 | 1:🟠 | 1:🟡 |  |  |  |
+| **Total** | **3** | **2** | **🟢** | **1** | **1** | **7/779** |  |  |
+| | 2:🟠 1:🟡 | 2:🟡 |  | 1:🟠 | 1:🟡 |  |  |  |
 
 ### Disabled specs
 
