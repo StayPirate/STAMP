@@ -488,8 +488,8 @@ during ticket creation or CVE association, it triggers on-demand
 single-CVE fetches via standalone Celery tasks (not through this trigger
 endpoint). These on-demand fetches are sub-operations that do not create
 `FetcherRun` records, do not check concurrency, and do not appear in the
-dashboard. See `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE
-Fetch" for details.
+dashboard. See `docs/features/tickets/cve-service.md`, "On-Demand Fetch:
+fetch_single_cve" for details.
 
 ### Get Fetcher Config
 

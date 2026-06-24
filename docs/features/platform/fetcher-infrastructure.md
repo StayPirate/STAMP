@@ -343,22 +343,23 @@ default). Catalog-based fetchers (KEV) that have no per-CVE API set
 The system discovers fetchers eligible for on-demand fetch via
 `get_fetch_single_fetchers()` (which filters by this attribute) and
 invokes them in parallel when an on-demand fetch is needed (see
-`docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch").
+`docs/features/tickets/cve-service.md`, "On-Demand Fetch: fetch_single_cve").
 
 The `fetch_single` method does NOT create a `FetcherRun` record. It is
 a sub-operation invoked as a standalone Celery task, not a full fetcher
 execution. Metric reporting (`record_created`/`record_updated`) is
 performed inside `fetch_single()` where `UpsertResult.action` is
 available — the caller (`execute()` loop or `fetch_single_cve`
-orchestrator) does not record metrics.
+orchestrator — see `docs/features/tickets/cve-service.md`) does not
+record metrics.
 
 ### `CVENotInSource` Signal
 
 `CVENotInSource` is a dedicated signal class (not an error) provided by
 the fetcher infrastructure module. It indicates that the external source
 explicitly confirmed the CVE does not exist (e.g., HTTP 404, empty
-response). The orchestrator (`fetch_single_cve` task wrapper in
-`cve-tracking.md`) catches this specific exception and records
+response). The orchestrator (`fetch_single_cve` task wrapper — see
+`docs/features/tickets/cve-service.md`) catches this specific exception and records
 `status=missing` via `record_source_status()`.
 
 `CVENotInSource` does NOT inherit from `FetcherError` — it is not a
@@ -1437,8 +1438,8 @@ deep-merged).
 `fetch_single()` is safe to call from any context:
 
 - If `self._http_client` exists (inside an active `run()` → `execute()`
-  flow): reuses it. Connection pooling preserved for Pattern B fetchers
-  (Red Hat, OSV) that call `fetch_single()` in a loop
+  flow): reuses it. Connection pooling preserved for fetchers whose
+  `execute()` delegates to `fetch_single()` in a loop (Red Hat, OSV, EPSS)
 - If `self._http_client` does not exist (standalone invocation from a
   task wrapper, test, or any future call site): creates a temporary
   client for the duration of the call, closes on return
@@ -1533,7 +1534,7 @@ BaseFetcher (generic: lifecycle, metrics, FetcherRun, cursor, registry,
     ├── SyncGhsaAdvisories   (API-based CVE discovery + enrichment)
     ├── SyncCisaKev          (API-based CVE enrichment, catalog fetch)
     ├── SyncEpssScores       (API-based CVE enrichment)
-    └── SyncOsvAdvisories    (planned — API-based CVE enrichment)
+    └── SyncOsvAdvisories    (API-based CVE enrichment)
 ```
 
 ### Class Attributes
@@ -1702,8 +1703,12 @@ API-based CVE fetchers (NVD, Red Hat, GHSA, OSV, KEV, EPSS) MUST commit
 per-CVE in their `execute()` loop. Each iteration has its own
 transaction boundary.
 
-**Standard pattern — Pattern B** (enrichment fetchers that delegate to
-`fetch_single()`):
+#### When `execute()` delegates to `fetch_single()` in a loop
+
+Use this structure when the fetcher iterates over a pre-known list of
+CVE-IDs (e.g., all CVEs with active tickets) and delegates per-CVE
+processing to `self.fetch_single()`. This allows the same per-CVE logic
+to serve both periodic batch execution and on-demand invocation.
 
 ```python
 async def execute(self, session: AsyncSession) -> None:
@@ -1719,7 +1724,12 @@ async def execute(self, session: AsyncSession) -> None:
         await asyncio.sleep(self.config.request_delay)
 ```
 
-**Standard pattern — Pattern A** (discovery fetchers with inline `upsert_cve()`):
+#### When `execute()` processes paginated API responses inline
+
+Use this structure when the fetcher iterates over paginated API responses
+(e.g., NVD time-window query, GHSA cursor pagination) and processes each
+item inline. The CVE-IDs are discovered during iteration, so
+`fetch_single()` cannot be used in the loop.
 
 ```python
 async def execute(self, session: AsyncSession) -> None:
@@ -1735,7 +1745,7 @@ async def execute(self, session: AsyncSession) -> None:
             self.record_failed()
 ```
 
-Both patterns use `commit_and_dispatch()` as the per-CVE finalization
+Both structures use `commit_and_dispatch()` as the per-CVE finalization
 step. The helper commits the session (releasing the `FOR UPDATE` lock
 acquired by `upsert_cve()`) and dispatches Phase 2 tasks if
 `post_ingest` is not `None`.
@@ -1744,12 +1754,89 @@ acquired by `upsert_cve()`) and dispatches Phase 2 tasks if
 `record_updated`, `record_failed`) are in-memory counter increments
 with no database interaction. Their placement relative to
 `commit_and_dispatch()` is functionally irrelevant — whether recorded
-before commit (Pattern B, inside `fetch_single()`) or after commit
-(Pattern A, in the `execute()` loop) does not affect correctness.
+before commit (inside `fetch_single()`) or after commit (in the
+`execute()` loop) does not affect correctness.
 
 This session lifecycle was always true for git-based fetchers (the
 `BaseGitFetcher` template commits per-item in step 10). This section
 formalizes the same pattern for API-based fetchers.
+
+## CVE Fetcher Conventions
+
+All CVE fetchers (inheriting from `BaseCVEFetcher` or `BaseGitFetcher`)
+share these conventions. Individual fetcher specifications document only
+source-specific deviations.
+
+### Batch Error Handling
+
+All CVE fetchers follow the same error handling pattern for individual
+CVE parse/upsert failures during batch execution (`execute()`):
+
+1. Log ERROR with CVE-ID and exception details
+2. `await session.rollback()` — clean the session for the next item.
+   The rollback discards the `CVESource` "success" written by
+   `upsert_cve()`, naturally preserving the previous `CVESource` state.
+   No explicit `record_source_status("failure")` is needed in the
+   batch path
+3. Call `self.record_failed()` and continue processing the next CVE.
+   A batch must never abort entirely due to a single CVE failure.
+   Source-specific abort conditions (e.g., persistent infrastructure
+   failure after N consecutive errors) are documented in each fetcher's
+   dedicated specification (see the CVE Fetcher Specifications table
+   in `docs/features/tickets/cve-tracking.md`)
+
+**Distinction from the on-demand path**: the `fetch_single_cve`
+orchestrator (on-demand path) explicitly writes
+`record_source_status("failure"/"missing")` because user-triggered
+fetches require visible per-source feedback via the Fetch Status Read
+Path (see `docs/features/tickets/cve-service.md`). The `execute()` batch
+path does not write explicit failure status — the rollback is sufficient.
+
+Each individual fetcher specification documents only source-specific
+error handling deviations (e.g., API-level vs. Git-level failures). The
+common pattern above is inherited by all CVE fetchers.
+
+### First Run Behavior
+
+All CVE fetchers are designed for **forward-only ingestion**: they
+begin tracking from the moment of deployment and do not bulk-ingest
+historical CVE data. First-run behavior is determined by the fetcher's
+category:
+
+| Category | First-run behavior | Examples |
+|----------|-------------------|----------|
+| Cursor-based (API with timestamp/cursor) | Records the current cursor position without fetching data | NVD, GHSA |
+| Git-based (`BaseGitFetcher`) | Clones the repository and records HEAD commit SHA without processing files | MITRE, kernel |
+| Stateless (iterates over all in-scope CVEs each run) | No first-run distinction; behaves identically to subsequent runs | Red Hat, OSV, EPSS |
+
+Individual fetcher specifications document their specific first-run
+behavior in their own Algorithm sections. The category rules above are
+inherited from the base class hierarchy (`BaseCVEFetcher` /
+`BaseGitFetcher`).
+
+**Historical CVE access**: individual historical CVEs are accessible
+on-demand via `fetch_single()`. When a VA associates a historical
+CVE-ID with a ticket, the on-demand fetch mechanism
+(`trigger_on_demand_fetch()`) retrieves it from the source and ingests
+it with the same `cve_service.upsert_cve()` path as batch-processed
+CVEs.
+
+### Metric Definitions
+
+Unless otherwise specified per-fetcher, CVE fetchers use these metric
+definitions:
+
+- `record_created`: a new CVE record was inserted (first time seen from
+  this source)
+- `record_updated`: an existing CVE record was updated (metadata, CVSS
+  assessments, CWE, references, or other enrichment data changed). If
+  `upsert_cve()` produces no changes (all upserts are no-ops), no
+  metric is recorded for that CVE
+- `record_failed`: a CVE could not be processed (structural parse
+  error, unrecognized field values, or database constraint violation)
+
+Individual fetcher specifications document only deviations from these
+definitions.
 
 ## Git-Based Fetchers
 

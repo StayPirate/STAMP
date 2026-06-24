@@ -58,7 +58,7 @@ Index of all feature specification domains.
 - [tickets.md](tickets/tickets.md) — Ticket lifecycle, status gates, centralized evaluation
 - [ticket-service.md](tickets/ticket-service.md) — Service-layer contract for non-gate ticket lifecycle operations and confidentiality management
 - [ticket-mutations.md](tickets/ticket-mutations.md) — Gate-relevant mutations, status evaluation, manual-zone exits
-- [cve-tracking.md](tickets/cve-tracking.md) — CVE tracking feature (business rules, API, on-demand fetch, common fetcher conventions)
+- [cve-tracking.md](tickets/cve-tracking.md) — CVE tracking feature (business rules, API endpoints, CVE rejection handling)
 - [cve-sync-nvd.md](tickets/cve-sync-nvd.md) — NVD fetcher specification
 - [cve-sync-mitre.md](tickets/cve-sync-mitre.md) — MITRE cvelistV5 fetcher specification
 - [cve-sync-kernel.md](tickets/cve-sync-kernel.md) — Linux Kernel CNA fetcher specification

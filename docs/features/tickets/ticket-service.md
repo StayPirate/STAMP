@@ -860,7 +860,7 @@ behavior of `ticket_service` operations:
   contract
 - `docs/features/tickets/tickets.md` — CVE Resolution Behavior (section
   "CVE Resolution Behavior")
-- `docs/features/tickets/cve-tracking.md` — On-demand Single-CVE Fetch
+- `docs/features/tickets/cve-service.md` — On-Demand Fetch: fetch_single_cve
 - `docs/features/identity/rbac.md` — capability definitions
   (`triage_ticket`, `manage_confidentiality`,
   `create_ticket`)

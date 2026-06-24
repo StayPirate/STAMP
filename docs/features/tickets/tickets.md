@@ -250,7 +250,7 @@ New ──→ Analysis ──────────→ Analyzed ────�
 |------------|------------|--------------------------------------------------------|--------------------|----------------------------------------|
 | New        | Analysis   | First assignment of a VA (explicit or implicit via any modifying operation); one-way irreversible | Manual (explicit) or Manual (implicit) | `assign_ticket`, `auto_assign_actor` |
 | New        | Ignored    | User clicks "Ignore" action                            | Manual             | `triage_ticket`                        |
-| New        | Ignored    | NVD rejects the CVE (`vulnStatus = Rejected`)          | Automatic          | System                                 |
+| New        | Ignored    | CVE is rejected (`cve_state` → `REJECTED`)             | Automatic          | System                                 |
 | Analysis   | Analyzed   | All "Analyzed" gate conditions met                     | Automatic          | System                                 |
 | Analysis   | Ignored    | User determines issue is not relevant                  | Manual             | `triage_ticket`                        |
 | Analyzed   | Resolved   | All "Resolved" gate conditions met                     | Automatic          | System                                 |
@@ -259,9 +259,9 @@ New ──→ Analysis ──────────→ Analyzed ────�
 | Resolved   | Analysis   | Both "Resolved" and "Analyzed" gate conditions no longer met | Automatic    | System (triggered by user or system action) |
 | New, Analysis, Analyzed, Resolved | Duplicated | User marks ticket as duplicate | Manual | `triage_ticket` |
 | Duplicated | (evaluated) | User reverts duplicate status; `_reenter_gate_zone` determines target | Manual | `triage_ticket` (assignment only if actor holds VA role) |
-| Ignored    | (evaluated) | User reopens or system reopens (e.g., NVD rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | `triage_ticket` or System (assignment only if actor holds VA role) |
+| Ignored    | (evaluated) | User reopens or system reopens (e.g., CVE rejection revert); `_reenter_gate_zone` determines target | Manual / Automatic | `triage_ticket` or System (assignment only if actor holds VA role) |
 
-**Note on NVD Rejections**: When a CVE's `vulnStatus` changes to `Rejected` in NVD, only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned — the VA must review the rejection manually. For the complete flow regarding NVD rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
+**Note on CVE Rejections**: When a CVE's `cve_state` changes to `REJECTED` (detectable from any discovery fetcher — NVD, MITRE, or kernel), only tickets in `New` status are automatically transitioned to `Ignored`. Tickets in `Analysis` or later statuses are NOT automatically transitioned — the VA must review the rejection manually. For the complete flow regarding CVE rejections and rejection reverts, see `docs/features/tickets/cve-tracking.md` ("Rejection handling" and "Rejection revert handling").
 
 ### Gate: Analysis → Analyzed
 
@@ -706,7 +706,7 @@ operates on Ignored tickets. Two exit transitions are allowed:
 1. **VA assigns themselves (manual):** the VA becomes the assignee.
 2. **System reopens (automatic):** the last active assignee is restored,
    or no assignee is set if none exists or the previous one is
-   deactivated. This handles cases like NVD rejection reverts (see
+   deactivated. This handles cases like CVE rejection reverts (see
    `docs/features/tickets/cve-tracking.md`, "Rejection revert handling").
 
 Both transitions go through `ticket_mutations.reopen_from_ignored()`:
@@ -780,8 +780,8 @@ features behave differently:
 | Severity | Manual via `severity_override` (editable by VA) |
 | Release tracking (track) | Not applicable — track-level detection relies on CVE-ID in IBS diffs |
 | Release tracking (product) | Not applicable — product-level detection relies on CVE-ID in `updateinfo.xml` |
-| NVD rejection handling | Not applicable — no CVE means no `vulnStatus` changes |
-| NVD rejection revert handling | Not applicable |
+| CVE rejection handling | Not applicable — no CVE means no `cve_state` changes |
+| CVE rejection revert handling | Not applicable |
 | Gate: SUSE CVSS required | Not applicable — severity is set via `severity_override` instead |
 
 Packages, tracks, and products can still be added and managed
@@ -1074,7 +1074,7 @@ outcome. Sources never attempted are omitted from the response.
 | Field | Type | Description |
 |-------|------|-------------|
 | `source` | string | Source identifier (e.g., `nvd`, `mitre`, `kernel`) |
-| `status` | string | Fetch outcome: `"success"`, `"failure"`, `"missing"`, or `"pending"`. See `docs/features/tickets/cve-tracking.md` (Fetch Status Read Path) for the resolution rules combining DB state and Redis pending keys |
+| `status` | string | Fetch outcome: `"success"`, `"failure"`, `"missing"`, or `"pending"`. See `docs/features/tickets/cve-service.md` (Fetch Status Read Path) for the resolution rules combining DB state and Redis pending keys |
 
 **CVEDetail** — expanded CVE representation for detail views:
 
@@ -1308,7 +1308,7 @@ Request body:
 - `cve_id` (string, optional): CVE identifier string to associate with
   the ticket. If the CVE is not in the database, a minimal CVE record
   is created and on-demand fetch is triggered (see
-  `docs/features/tickets/cve-tracking.md`, "On-demand Single-CVE Fetch")
+  `docs/features/tickets/cve-service.md`, "On-Demand Fetch: fetch_single_cve")
 - `severity` (string, optional): initial severity override (critical,
   high, medium, low, none). If omitted, severity is `None` until set
   by the user. Ignored if `cve_id` is provided (severity is derived from
@@ -1339,8 +1339,8 @@ POST /api/v1/tickets/{ticket_id}/associate-cve
 
 Associates a CVE with a ticket that does not have one. If the CVE is not
 yet in the Sentinel database, a minimal CVE record is created and on-demand
-fetch is triggered automatically (see `docs/features/tickets/cve-tracking.md`,
-"On-demand Single-CVE Fetch").
+fetch is triggered automatically (see `docs/features/tickets/cve-service.md`,
+"On-Demand Fetch: fetch_single_cve").
 
 Request body:
 

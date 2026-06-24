@@ -8,7 +8,7 @@ Core workflow entity — CVE ingestion, triage, severity, and audit trail.
 tickets.md              Ticket lifecycle, status gates, API endpoints
 ticket-service.md       ticket_service module contract (non-gate lifecycle operations, confidentiality management)
 ticket-mutations.md     ticket_mutations module contract (CVSS/severity mutations, status evaluation, manual-zone exits)
-cve-tracking.md         CVE tracking feature (business rules, API, on-demand fetch, common fetcher conventions)
+cve-tracking.md         CVE tracking feature (business rules, API endpoints, CVE rejection handling)
 cve-sync-nvd.md         NVD fetcher specification
 cve-sync-mitre.md       MITRE cvelistV5 fetcher specification
 cve-sync-kernel.md      Linux Kernel CNA fetcher specification
@@ -38,7 +38,7 @@ ticket-references.md    External links on tickets (auto-classified by type, manu
   Package-centric mutations are in `packages/package-service.md`.
 - `cve-tracking.md` feeds tickets: each ingested CVE creates a ticket.
   Individual CVE fetcher specs follow common conventions defined in
-  `cve-tracking.md`.
+  `docs/features/platform/fetcher-infrastructure.md` (CVE Fetcher Conventions).
 - `cvss-scoring.md` drives ticket severity and product eligibility
   (consumed by `tickets.md` and `packages/package-model.md`).
 - `ticket-audit-log.md` defines the event contract that all ticket-mutating
