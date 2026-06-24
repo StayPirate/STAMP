@@ -19,6 +19,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| cve-sync-epss | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
 | cve-sync-ghsa | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-kernel | — | — | — | — | — | —/— | — | |
@@ -32,6 +34,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 | cve-sync-osv | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-redhat | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
+| cve-tracking | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -70,8 +74,6 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 
 ### Disabled specs
 
-- cve-sync-epss
-- cve-tracking
 - git-product-release-detection
 - git-track-release-detection
 - ibs-integration
