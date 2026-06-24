@@ -421,8 +421,9 @@ visible to all users (same access level as package data in tickets).
 - Bugowner information is visible to all users (no role required), as
   it is non-sensitive organizational data
 - The `sync_ibs_bugowners` fetcher configuration (enable/disable,
-  schedule, rate limit) is admin-only, managed via the fetcher dashboard
-  like all other fetchers. See `docs/features/identity/rbac.md`
+  schedule, rate limit) requires the `manage_fetchers` capability, managed
+  via the fetcher dashboard like all other fetchers. See
+  `docs/features/identity/rbac.md`
 
 ## Future Considerations
 

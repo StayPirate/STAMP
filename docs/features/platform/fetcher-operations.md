@@ -4,9 +4,10 @@
 
 Provide centralized monitoring and operational control for all data
 fetchers in Sentinel. All users have visibility into fetcher health and
-performance (no authentication required), while admins have operational
-control (manual trigger, enable/disable, configuration) and CLI
-commands for diagnostics and troubleshooting.
+performance (no authentication required), while users with the
+`manage_fetchers` capability have operational control (manual trigger,
+enable/disable, configuration) and CLI commands for diagnostics and
+troubleshooting.
 
 This feature depends on the fetcher infrastructure defined in
 `docs/features/platform/fetcher-infrastructure.md`. Read that spec first for the
@@ -227,8 +228,8 @@ provides the distinction.
   Celery Beat schedule state is unavailable (e.g., Redis flushed, Beat
   not yet started).
 - `last_run`: the most recent `FetcherRun` record, or `null` if never
-  run. Does NOT include `error_traceback` (admin-only, available on the
-  detail endpoint). Note: for deregistered fetchers that have no
+  run. Does NOT include `error_traceback` (requires `manage_fetchers`,
+  available on the detail endpoint). Note: for deregistered fetchers that have no
   `FetcherRun` records (e.g., a fetcher that was registered but never
   triggered before being removed), this field is `null`.
 - `custom_settings`: included in each fetcher's data (current values

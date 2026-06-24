@@ -1081,7 +1081,7 @@ The submission tracking feature introduces no new authentication
 mechanisms or credentials:
 
 - **API endpoints**: same access rules as
-  `GET /api/v1/tickets/{ticket_id}` — no additional role required.
+  `GET /api/v1/tickets/{ticket_id}` — no additional capability required.
 - **IBS API calls**: use the same IBS credentials already configured
   for `IBSTrackReleaseDetector` and the existing `IBSEventConsumer`
   (see `ibs-rabbitmq-integration.md` and `ibs-integration.md`).

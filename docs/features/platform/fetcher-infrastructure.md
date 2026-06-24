@@ -939,7 +939,8 @@ async def execute(self, session: AsyncSession) -> None:
 `FetcherError` is a dedicated exception class provided by the fetcher
 infrastructure module. When `BaseFetcher.run()` catches a `FetcherError`,
 it stores the exception message in `error_message` (public) and
-`str(exception.__cause__)` in `error_detail` (admin-only). If
+`str(exception.__cause__)` in `error_detail` (visible only with
+`manage_fetchers` capability). If
 `__cause__` is `None` (no chained exception), `error_detail` is set to
 `NULL`.
 

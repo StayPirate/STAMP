@@ -270,6 +270,18 @@ Endpoints that support sorting by semantic fields MUST note this in
 their query parameter specification: "semantic ordering (see General
 Conventions)".
 
+#### Sort Parameter Validation
+
+A `sort_by` value not present in the endpoint's documented list of valid
+sort fields returns `422 VALIDATION_ERROR`. Similarly, a `sort_order`
+value other than `asc` or `desc` returns `422 VALIDATION_ERROR`.
+
+Rationale: sorting is a singular operation (one active field per
+request). Unlike set-based enum filters — where removing an invalid
+value still produces a valid narrower result — an invalid sort field
+leaves the entire response ordering undefined. Silent fallback to the
+default sort would mask client errors (e.g., typos in field names).
+
 ### Request Tracing
 
 Every API response includes an `X-Request-ID` header containing a UUID that

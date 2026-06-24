@@ -327,7 +327,7 @@ containing the UUID of the original ticket.
 ## Security
 
 - All endpoints require authentication
-- No role restriction — any authenticated user can access their own
+- No capability restriction — any authenticated user can access their own
   maintainer data
 - Users can only see data for packages they are bugowner of (enforced
   server-side via email matching)

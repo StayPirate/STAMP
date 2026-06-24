@@ -208,7 +208,7 @@ List all products synced from SMELT. Paginated.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | Invalid query parameter value (e.g., non-integer `page`, unknown `sort_by` field, unknown `lifecycle_phase` value) |
+| 422 | `VALIDATION_ERROR` | Invalid query parameter value (e.g., non-integer `page`, unknown `lifecycle_phase` value) |
 
 ---
 
