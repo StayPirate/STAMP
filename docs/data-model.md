@@ -589,7 +589,7 @@ globally unique within its naming system.
 
 **Notes**:
 - A CVE can have multiple external identifiers from different sources
-  (e.g., one GHSA-ID and one RUSTSEC-ID in the future)
+  (e.g., one GHSA-ID and one RUSTSEC-ID)
 - A CVE can also have multiple identifiers from the same source (rare,
   but possible when multiple advisories map to one CVE)
 - External identifiers persist regardless of ticket status or existence
