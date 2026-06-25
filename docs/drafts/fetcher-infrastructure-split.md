@@ -717,8 +717,9 @@ reviewed):
 | git-fetcher-infrastructure | — | — | — | — | — | —/— | — | |
 ```
 
-Mark `fetcher-infrastructure` row with `⚠️` stale indicator (spec
-substantially modified after last review 2026-05-28).
+Mark `fetcher-infrastructure` row with `⚠️` stale indicator if not
+already present (the row already has `⚠️` as of 2026-06-25 — verify
+before adding a duplicate).
 
 Update the "Total" row counts.
 
@@ -742,6 +743,12 @@ new specs:
 | `git-fetcher-infrastructure.md` | `@docs-reviewer`, `@spec-gap-analyzer` | New spec |
 | `fetcher-infrastructure.md` | `@docs-reviewer`, `@spec-coherence-reviewer` | Substantially modified; verify bridge consolidation is coherent |
 
+#### 4n. Draft cleanup
+
+Delete `docs/drafts/fetcher-infrastructure-split.md`. The plan has been
+fully executed; the file serves no further purpose and its presence would
+suggest the split is still pending.
+
 #### Definition of done (Phase 4)
 
 - [ ] Bridge stubs consolidated into single "Related specifications"
@@ -759,6 +766,7 @@ new specs:
 - [ ] .tracking.json has 3 new entries
 - [ ] reviews/README.md has 3 new rows + stale marker
 - [ ] Verification checklist passes (see below)
+- [ ] `docs/drafts/fetcher-infrastructure-split.md` deleted
 
 ---
 
@@ -771,17 +779,17 @@ targets. The "Action" column indicates what changes.
 
 | File | Current reference | New target | Anchor |
 |---|---|---|---|
-| `tickets/cve-sync-mitre.md` | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
-| `tickets/cve-sync-kernel.md` | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
-| `tickets/cve-sync-ghsa.md` | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
-| `tickets/cve-sync-osv.md` | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
-| `tickets/cve-sync-nvd.md` | `fetcher-infrastructure.md#fetch_single-signaling-convention` | `cve-fetcher-infrastructure.md#fetch_single-signaling-convention` | same |
-| `tickets/cve-sync-epss.md` | `fetcher-infrastructure.md#metric-definitions` | `cve-fetcher-infrastructure.md#metric-definitions` | same |
+| `tickets/cve-sync-mitre.md` (line 283) | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
+| `tickets/cve-sync-kernel.md` (line 115) | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
+| `tickets/cve-sync-kernel.md` (line 258) | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
+| `tickets/cve-sync-ghsa.md` (line 169) | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
+| `tickets/cve-sync-ghsa.md` (line 509) | `fetcher-infrastructure.md#batch-error-handling` | `cve-fetcher-infrastructure.md#batch-error-handling` | same |
+| `tickets/cve-sync-osv.md` (line 406) | `fetcher-infrastructure.md#metric-definitions` | `cve-fetcher-infrastructure.md#metric-definitions` | same |
+| `tickets/cve-sync-nvd.md` (line 609) | `fetcher-infrastructure.md#fetch_single-signaling-convention` | `cve-fetcher-infrastructure.md#fetch_single-signaling-convention` | same |
 
-**Note on inventory accuracy**: verify actual anchored refs with the
-grep below before executing. The `cve-sync-redhat.md` file was
-previously listed but may not have anchored references (only generic).
-Confirm during execution.
+**Note**: `cve-sync-epss.md` was previously listed but has no anchored
+references (only generic). `cve-sync-redhat.md` similarly has no
+anchored references.
 
 **Verification command** (run after Phase 4):
 
@@ -817,7 +825,7 @@ are genuinely about the generic BaseFetcher contract stay pointing to
 | `tickets/cve-sync-ghsa.md` | 6 | split | same as osv |
 | `platform/fetcher-operations.md` | 6 | keep | all references are about generic BaseFetcher concepts (concurrency, registry, FetcherRun) |
 | `tickets/cve-sync-redhat.md` | 5 | split | CVE conventions → `cve-fetcher-infrastructure.md`; generic refs keep |
-| `tickets/cve-sync-nvd.md` | 5 | split | CVE conventions + session lifecycle → `cve-fetcher-infrastructure.md`; generic refs keep |
+| `tickets/cve-sync-nvd.md` | 5 | split | CVE conventions + session lifecycle → `cve-fetcher-infrastructure.md`; line 220 "Shared HTTP Client — Transport-Level" → `networking.md`; generic refs keep |
 | `data-model.md` | 5 | keep | references FetcherRun/FetcherConfig data model (stays in core) |
 | `tickets/cve-tracking.md` | 4 | split | CVE fetcher specs table → add `cve-fetcher-infrastructure.md`; generic refs keep |
 | `tickets/cve-sync-epss.md` | 4 | split | CVE conventions → `cve-fetcher-infrastructure.md`; generic refs keep |
@@ -835,14 +843,14 @@ are genuinely about the generic BaseFetcher contract stay pointing to
 | `integrations/ibs-integration.md` | 2 | repoint | HTTP client/TLS → `networking.md` |
 | `architecture.md` | 2 | add | see Phase 4k |
 | `identity/ad-integration.md` | 1 | keep + add | Existing ref is to Custom Settings (stays in core) → keep. Add separate `networking.md` ref for TLS |
-| `deployment.md` | 1 | repoint | TLS/HTTP → `networking.md` |
+| `deployment.md` | 1 | repoint | "Git-Based Fetchers" → `git-fetcher-infrastructure.md` |
 | `data-sources.md` | 1 | add | see Phase 4j |
 | `drafts/open-points.md` | 1 | keep | informal reference |
 | `features/README.md` | 1 | keep | |
 | `tickets/README.md` | 1 | keep | |
 | `tickets/ticket-mutations.md` | 1 | keep | |
 | `packages/product-lifecycle-transitions.md` | 1 | keep | generic ref |
-| `packages/product-catalog.md` | 1 | keep | generic ref |
+| `packages/product-catalog.md` | 1 | repoint | "TLS Trust Store" → `networking.md` |
 | `packages/package-bugowner.md` | 1 | keep | generic ref |
 | `packages/ibs-track-release-detection.md` | 1 | keep | generic ref |
 | `packages/ibs-product-release-detection.md` | 1 | keep | generic ref |
