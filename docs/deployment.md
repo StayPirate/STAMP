@@ -323,7 +323,7 @@ Bare clones have no working tree — accidental checkout expansion
 (which could consume ~4 GB for cvelistV5 alone) is structurally
 impossible.
 
-See `docs/features/platform/fetcher-infrastructure.md` (Git-Based
+See `docs/features/platform/git-fetcher-infrastructure.md` (Git-Based
 Fetchers) for volume layout, recovery procedures, and worker affinity
 configuration.
 

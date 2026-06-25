@@ -211,7 +211,7 @@ the following overrides:
 
 - `Accept: application/xml` (IBS API returns XML, not JSON)
 - TLS validated against the SUSE Trust Root CA via the combined trust
-  store (see `fetcher-infrastructure.md`, TLS Trust Store
+  store (see `networking.md`, TLS Trust Store
   Configuration)
 - Transport-level retry active (4 attempts for 5xx/timeout/connection
   errors)

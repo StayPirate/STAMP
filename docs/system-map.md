@@ -712,6 +712,9 @@ flowchart TD
     subgraph platform["Platform"]
         SETTINGS["system-settings"]
         FETCHER_INFRA["fetcher-infrastructure"]
+        CVE_FETCHER_INFRA["cve-fetcher-infrastructure"]
+        GIT_FETCHER_INFRA["git-fetcher-infrastructure"]
+        NETWORKING["networking"]
         FETCHER["fetcher-operations"]
     end
 
@@ -787,5 +790,8 @@ other feature:
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [system-settings](features/platform/system-settings.md) | Platform | System settings (default CVSS version) |
 | [fetcher-infrastructure](features/platform/fetcher-infrastructure.md) | Platform | BaseFetcher base class, registry, data model |
+| [cve-fetcher-infrastructure](features/platform/cve-fetcher-infrastructure.md) | Platform | BaseCVEFetcher base class, CVE fetcher conventions |
+| [git-fetcher-infrastructure](features/platform/git-fetcher-infrastructure.md) | Platform | BaseGitFetcher base class, git_operations, delta flow |
+| [networking](features/platform/networking.md) | Platform | Shared HTTP client factory, transport retry, TLS trust store |
 | [fetcher-operations](features/platform/fetcher-operations.md) | Platform | Background task monitoring, API, and CLI diagnostics |
 | [maintainer](features/packages/maintainer.md) | Integration | Maintainer-oriented package/ticket views |

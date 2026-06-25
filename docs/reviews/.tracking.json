@@ -180,6 +180,11 @@
         "not_reviewed": []
       }
     },
+    "cve-fetcher-infrastructure": {
+      "enabled": true,
+      "abbr": "CFI",
+      "cache": null
+    },
     "cve-service": {
       "enabled": true,
       "abbr": "CVES",
@@ -400,6 +405,11 @@
         "not_reviewed": []
       }
     },
+    "git-fetcher-infrastructure": {
+      "enabled": true,
+      "abbr": "GFI",
+      "cache": null
+    },
     "git-product-release-detection": {
       "enabled": false,
       "abbr": "GPRD",
@@ -545,6 +555,11 @@
           "SEC"
         ]
       }
+    },
+    "networking": {
+      "enabled": true,
+      "abbr": "NET",
+      "cache": null
     },
     "package-bugowner": {
       "enabled": false,

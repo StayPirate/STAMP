@@ -2,15 +2,17 @@
 
 ## Purpose
 
-Define the mandatory infrastructure that all data fetchers in Sentinel must
-use. Fetchers are background tasks that periodically pull data from
-external sources (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS) and update
-the local database. This specification covers the `BaseFetcher` abstract
-base class, the fetcher registry, Celery integration, concurrency
-control, data model, and data retention.
+This document defines the mandatory infrastructure that all data fetchers
+in Sentinel must use. Fetchers are background tasks that periodically
+pull data from external sources (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS)
+and update the local database. It covers the generic `BaseFetcher`
+abstract base class: the fetcher registry, Celery integration,
+concurrency control, data model, and data retention.
 
-For the monitoring dashboard (API endpoints, frontend pages, CLI
-diagnostics) that consumes this infrastructure, see
+The fetcher infrastructure is documented across several complementary
+specifications — see the Related Specifications section below for the
+full map. For the monitoring dashboard (API endpoints, frontend pages,
+CLI diagnostics) that consumes this infrastructure, see
 `docs/features/platform/fetcher-operations.md`.
 
 ## Terminology
@@ -20,6 +22,19 @@ diagnostics) that consumes this infrastructure, see
 | **Fetcher** | A background task that retrieves data from an external source and creates/updates local records. Implemented as a subclass of `BaseFetcher`. |
 | **Run** | A single execution of a fetcher, tracked from start to finish with metrics (duration, item counts, status). |
 | **Registry** | An in-memory dictionary of all registered fetcher classes, populated automatically via `BaseFetcher` auto-discovery. |
+
+## Related Specifications
+
+This document specifies the generic `BaseFetcher` contract. The
+fetcher infrastructure is documented across five complementary specs:
+
+| Spec | Content |
+|---|---|
+| **This document** | BaseFetcher base class, naming, error sanitization, custom settings, catch_up mechanism (generic), registry, Celery, concurrency, stale run detection, data model, retention, deregistered lifecycle, doc requirements |
+| `cve-fetcher-infrastructure.md` | BaseCVEFetcher class, on-demand fetch_single, CVE source type identity, CVE catch_up default, CVE conventions |
+| `git-fetcher-infrastructure.md` | BaseGitFetcher class, git_operations.py, clone/delta infrastructure |
+| `networking.md` | Shared HTTP client factory, transport retry, TLS trust store (cross-cutting) |
+| `fetcher-operations.md` | Monitoring dashboard, API endpoints, CLI diagnostics |
 
 ## BaseFetcher Base Class
 
@@ -50,9 +65,11 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    open during `execute()`. The session passed to `execute()` may be
    committed and rolled back multiple times during execution (per-item
    transaction boundaries). This is a documented pattern for both
-   git-based and API-based CVE fetchers — see "Session Lifecycle for
-   API-based CVE Fetchers" and "BaseGitFetcher Class" (step 10,
-   transaction boundaries).
+   git-based and API-based CVE fetchers — see
+   `docs/features/platform/cve-fetcher-infrastructure.md` (Session
+   Lifecycle for API-based CVE Fetchers) and
+   `docs/features/platform/git-fetcher-infrastructure.md` (BaseGitFetcher
+   Class, step 10, transaction boundaries).
 
    - **FetcherRun record acquisition**:
      - When `run_id` is `None` (scheduled runs): creates a new
@@ -81,7 +98,7 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      NOT written when: `self._cursor` is None (not set), `execute()`
      raised an exception (failure path), or the all-items-failed safety
      check triggers (status set to `failure` despite normal return). See
-     "Git-Based Fetchers — Cursor Persistence" for the full mechanism
+     `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the full mechanism
      and query pattern
    - **Status determination precedence**: the final status is assigned as
      follows (evaluated in order):
@@ -176,8 +193,9 @@ class SyncExampleData(BaseFetcher):
 
 **CVE fetcher example** — discovery fetcher (implements `fetch_single`):
 
-CVE fetchers inherit from `BaseCVEFetcher` (see "BaseCVEFetcher Class"
-below), which additionally requires `cve_source_type` and provides
+CVE fetchers inherit from `BaseCVEFetcher` (see
+`docs/features/platform/cve-fetcher-infrastructure.md`), which
+additionally requires `cve_source_type` and provides
 optional `fetch_single()` (override required when
 `supports_fetch_single = True`, the default).
 
@@ -307,20 +325,6 @@ discoverability.
 This convention applies to **specification filenames** only. Fetcher
 class names and Celery task names follow their own naming convention
 (`<verb>_<source>_<noun>`) independently.
-
-## On-demand Single-Item Fetch
-
-For the `fetch_single()` method, `CVENotInSource` signal, signaling
-convention, retry policy, error categorization, and isolation
-guarantee, see
-`docs/features/platform/cve-fetcher-infrastructure.md`.
-
-## CVE Source Type Identity
-
-For the `cve_source_type` class attribute, data contract stability
-rule, code convention, and `get_fetch_single_fetchers()` registry
-accessor, see
-`docs/features/platform/cve-fetcher-infrastructure.md`.
 
 ## Per-Ticket Catch-Up: `catch_up()` Method
 
@@ -473,7 +477,9 @@ it does, it indicates a custom override that forgot to catch it.
 ### Interface contract
 
 `catch_up()` shares the same sub-operation classification as
-`fetch_single()` (see "On-demand Single-Item Fetch" above): no
+`fetch_single()` (see
+`docs/features/platform/cve-fetcher-infrastructure.md`, On-demand
+Single-Item Fetch): no
 `FetcherRun` record, no metric reporting, not a `BaseFetcher`
 execution. The following additional rules apply:
 
@@ -824,8 +830,9 @@ the invalid field.
    and not available to direct `BaseFetcher` subclasses
 
 CVE-specific validation (`cve_source_type` uniqueness, Enum membership)
-is handled by `BaseCVEFetcher.__init_subclass__` — see "BaseCVEFetcher
-Class" below.
+is handled by `BaseCVEFetcher.__init_subclass__` — see
+`docs/features/platform/cve-fetcher-infrastructure.md` (BaseCVEFetcher
+Class).
 
 **Abstract fetcher exemption**: fetcher classes with `abstract = True`
 (which opt out of registration per the existing `__init_subclass__`
@@ -841,8 +848,9 @@ non-concrete. Concrete subclasses of both are validated normally.
 define their own `__init_subclass__` MUST call
 `super().__init_subclass__(**kwargs)` to ensure `BaseFetcher`'s
 validation rules execute for all subclasses in the hierarchy.
-`BaseCVEFetcher` follows this pattern (see "BaseCVEFetcher Class"
-below). `BaseGitFetcher` does not define its own `__init_subclass__` —
+`BaseCVEFetcher` follows this pattern (see
+`docs/features/platform/cve-fetcher-infrastructure.md`).
+`BaseGitFetcher` does not define its own `__init_subclass__` —
 validation flows through `BaseCVEFetcher` naturally via the MRO.
 
 **Format constraint**: `CVESourceType` Enum values MUST match
@@ -955,16 +963,15 @@ Example:
 > |---------|------|---------|-------------|-------------|
 > | `my_setting` | int | 10 | 1–100 | Description of the setting |
 
-## Shared HTTP Client
+## BaseFetcher HTTP Client Integration
 
 All outgoing HTTP requests from fetchers use a shared HTTP client
 infrastructure. For the factory module, default configuration, transport
 retry, TLS trust store, and non-fetcher usage, see
-`docs/features/platform/networking.md`.
+`docs/features/platform/networking.md`. This section covers only the
+`BaseFetcher`-specific integration.
 
-### BaseFetcher Integration
-
-#### Lazy Property: `self.http_client`
+### Lazy Property: `self.http_client`
 
 ```python
 class BaseFetcher:
@@ -990,7 +997,7 @@ class BaseFetcher:
   httpx transparently opens a new one on the next request
 - If never accessed during a run: teardown is a no-op
 
-#### Override Mechanism
+### Override Mechanism
 
 Fetchers with non-standard requirements override via a class attribute:
 
@@ -1006,7 +1013,7 @@ the factory default (last-writer-wins). User-Agent is the sole exception
 transport) replace defaults at the top-level kwarg level (not
 deep-merged).
 
-#### `fetch_single()` and `catch_up()` Lifecycle
+### `fetch_single()` and `catch_up()` Lifecycle
 
 `fetch_single()` is safe to call from any context:
 
@@ -1023,31 +1030,6 @@ deep-merged).
 
 No caller responsibility: task wrappers (`fetch_single_cve`,
 `run_catch_up`) do not manage HTTP client lifecycle.
-
-## TLS Trust Store Configuration
-
-See `docs/features/platform/networking.md` (TLS Trust Store
-Configuration).
-
-## BaseCVEFetcher Class
-
-For the intermediate abstract class for CVE fetchers
-(class attributes, concrete methods, `__init_subclass__` validation,
-session lifecycle), see
-`docs/features/platform/cve-fetcher-infrastructure.md`.
-
-## CVE Fetcher Conventions
-
-For shared CVE fetcher conventions (batch error handling, first run
-behavior, metric definitions), see
-`docs/features/platform/cve-fetcher-infrastructure.md`.
-
-## Git-Based Fetchers
-
-For the BaseGitFetcher template-method class, git_operations.py utility
-module, and all git-specific infrastructure (bare clone pattern, cursor
-persistence, recovery, worker affinity, error classification), see
-`docs/features/platform/git-fetcher-infrastructure.md`.
 
 ## Fetcher Documentation Requirements
 
@@ -1328,7 +1310,7 @@ the dashboard charts.
 | error_traceback | TEXT | nullable | Full Python traceback (`manage_fetchers` capability required for visibility) |
 | triggered_by | ENUM | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
-| cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See "Git-Based Fetchers" for the git-specific usage pattern |
+| cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the git-specific usage pattern |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 **Notes**:
@@ -1525,87 +1507,12 @@ finally the `FetcherConfig` row.
 
 ## Guardrail: Fetcher Base Class Compliance
 
-See Guardrail 14 in `AGENTS.md`. Every background task that fetches data
-from an external source MUST:
-
-1. Inherit from `BaseFetcher`
-2. Define `name`, `description`, and `default_schedule`. Additionally,
-   define `default_request_delay` if the target API has rate limits
-3. Implement `execute()` with proper metric reporting
-4. NOT bypass the base class with a raw Celery task
-
-**Exception — sub-operation tasks**: background tasks that fetch from
-external sources as a sub-operation of an existing fetcher (not as an
-independent periodic sync) are exempt from `BaseFetcher`. These tasks:
-
-- Are triggered on-demand by a parent fetcher, not by Celery Beat
-- Do not have their own schedule
-- Do not appear as separate cards in the dashboard
-- Their metrics are not tracked independently
-
-Example: `create_ticket_from_detection` is enqueued by the
-`detect_ibs_track_releases` fetcher (Case C) and fetches CVE data from
-NVD and package data from SMELT. It is a standalone Celery task, not a
-`BaseFetcher` subclass, because it is a reaction to a discovery made by
-the parent fetcher, not an independent sync process.
-
-If there is a compelling reason to bypass `BaseFetcher` for a specific
-case beyond this exception, the agent MUST stop and inform the user with
-a detailed explanation of why the bypass is advantageous, so the decision
-can be made together.
-
-After creating or modifying a fetcher, the `@fetcher-compliance-reviewer`
-agent MUST be invoked.
+See AGENTS.md (Guardrail 14) for the full compliance rules.
 
 ## Subagent: @fetcher-compliance-reviewer
 
-A read-only reviewer agent that verifies fetcher implementations are
-correctly integrated with the fetcher infrastructure.
-
-### Trigger Conditions
-
-Invoke `@fetcher-compliance-reviewer` when:
-
-- A new file is created in `backend/app/tasks/` or `backend/app/services/`
-  that implements fetching/sync logic
-- An existing fetcher is modified in ways that affect its metrics or
-  registration
-- `BaseFetcher` itself is modified
-
-### What It Checks
-
-1. **Base class inheritance**: the fetcher class inherits from
-   `BaseFetcher` (not bypassing it with a raw Celery task)
-2. **Required attributes**: `name`, `description`, and `default_schedule`
-   are defined on the class. For CVE fetchers,
-   `source_reference_url_pattern` should be set if the source has a
-   human-readable web page (see `docs/features/tickets/ticket-references.md`), and
-   `fetch_single()` must be implemented unless
-   `supports_fetch_single = False` (see "On-demand Single-Item Fetch"
-   above)
-3. **Unique name**: the fetcher's `name` does not conflict with any
-   existing registered fetcher
-4. **Metric reporting**: the `execute()` method calls
-   `self.record_created()` and/or `self.record_updated()` where
-   appropriate (creating/updating records without calling these methods
-   means the dashboard will show 0 items)
-5. **Test coverage**: tests exist that:
-   - Verify `FetcherRun` records are created after execution
-   - Verify item counts are correct
-   - Verify error handling produces `failure` status
-6. **No raw Celery tasks for fetching**: any background task that fetches
-   external data MUST go through `BaseFetcher`, not be a standalone
-   `@celery_app.task`
-
-### Output
-
-Structured summary with:
-
-1. **Clean**: aspects that correctly follow the `BaseFetcher` pattern
-2. **Integration issues**: problems with registration, metrics, or
-   dashboard representation
-3. **Test gaps**: missing test coverage for fetcher runs
-4. **Verdict**: `Clean`, `Minor issues`, or `Needs revision`
+See `.opencode/agents/fetcher-compliance-reviewer.md` for trigger
+conditions, checks, and output format.
 
 ## Dependencies
 

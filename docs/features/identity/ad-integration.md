@@ -33,8 +33,11 @@ Implementation Notes below).
   the SUSE internal PKI (chain: SUSE CA all 2023.1 → SUSE CA Root → SUSE
   Trust Root). The root CA certificate is committed at
   `certs/SUSE_Trust_Root.crt` and installed in the container system trust
-  store at build time. The `LDAP_URI` and `SUSE_CA_CERT_PATH` environment
-  variables control the connection (see `docs/configuration.md`).
+   store at build time. The `LDAP_URI` and `SUSE_CA_CERT_PATH` environment
+   variables control the connection (see `docs/configuration.md`). The
+   combined trust store (system CAs + SUSE Trust Root CA) is shared with
+   all HTTPS integrations — see
+   `docs/features/platform/networking.md`, "TLS Trust Store Configuration".
 
 ### Security rationale
 

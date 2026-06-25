@@ -103,7 +103,7 @@ At startup, the application logs an INFO message indicating SSO status:
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ad-integration.md` |
-| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, LDAP, AMQP). Combined with system CA bundle at runtime. | `docs/features/platform/fetcher-infrastructure.md` |
+| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, LDAP, AMQP). Combined with system CA bundle at runtime. | `docs/features/platform/networking.md` |
 
 Note: operational parameters for the `sync_ldap_directory` fetcher
 (`max_deactivations`, `ldap_connect_timeout`, `ldap_operation_timeout`,
@@ -135,7 +135,7 @@ here.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `GIT_CLONE_BASE_DIR` | string (path) | `/var/lib/sentinel/git` | Base directory for persistent bare clones used by git-based fetchers (`sync_mitre_cves`, `sync_kernel_cves`). Must be backed by persistent storage in containerized deployments | `docs/features/platform/fetcher-infrastructure.md` |
+| `GIT_CLONE_BASE_DIR` | string (path) | `/var/lib/sentinel/git` | Base directory for persistent bare clones used by git-based fetchers (`sync_mitre_cves`, `sync_kernel_cves`). Must be backed by persistent storage in containerized deployments | `docs/features/platform/git-fetcher-infrastructure.md` |
 
 ## Application
 
@@ -153,9 +153,9 @@ the container or system level.
 
 | Variable | Type | Default | Description | Defined in |
 |----------|------|---------|-------------|------------|
-| `HTTPS_PROXY` | string | (none) | Proxy URL for outgoing HTTPS connections. Respected by all HTTP clients | — |
-| `HTTP_PROXY` | string | (none) | Proxy URL for outgoing HTTP connections | — |
-| `NO_PROXY` | string | (none) | Comma-separated hosts that bypass the proxy | — |
+| `HTTPS_PROXY` | string | (none) | Proxy URL for outgoing HTTPS connections. Respected by all HTTP clients | `docs/features/platform/networking.md` |
+| `HTTP_PROXY` | string | (none) | Proxy URL for outgoing HTTP connections | `docs/features/platform/networking.md` |
+| `NO_PROXY` | string | (none) | Comma-separated hosts that bypass the proxy | `docs/features/platform/networking.md` |
 
 ## Runtime Database Settings
 

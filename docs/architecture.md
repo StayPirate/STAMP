@@ -100,10 +100,14 @@ coordination across multiple maintained distribution versions.
   inherit from `BaseCVEFetcher` (`app/services/base_cve_fetcher.py`),
   which provides the `cve_source_type`, optional `fetch_single()`, and default
   `catch_up()` contracts. The fetcher registry feeds
-  a dashboard that shows execution history, performance charts, and
+   a dashboard that shows execution history, performance charts, and
    operational controls. See `docs/features/platform/fetcher-infrastructure.md`
-   for the base class contract and `docs/features/platform/fetcher-operations.md`
-   for the monitoring dashboard.
+   for the generic `BaseFetcher` contract,
+   `docs/features/platform/cve-fetcher-infrastructure.md` for the
+   `BaseCVEFetcher` contract, and
+   `docs/features/platform/git-fetcher-infrastructure.md` for the
+   `BaseGitFetcher` contract (git-based CVE fetchers). See
+   `docs/features/platform/fetcher-operations.md` for the monitoring dashboard.
 
 ### Database (PostgreSQL)
 
@@ -329,7 +333,7 @@ Redis, or external services.
 Recoverable caches (e.g., git clone volumes used by CVE fetchers) may
 use persistent local storage for performance, provided the application
 remains correct without them — see
-`docs/features/platform/fetcher-infrastructure.md` (Git-Based Fetchers,
+`docs/features/platform/git-fetcher-infrastructure.md` (Git-Based Fetchers,
 Recovery).
 
 Local Docker/Podman environments may run PostgreSQL and Redis as containers.

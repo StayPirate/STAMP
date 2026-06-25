@@ -191,12 +191,13 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 - **CVE fetchers**: inherit from `BaseCVEFetcher`
   (`backend/app/services/base_cve_fetcher.py`). Declare
   `cve_source_type` and implement `fetch_single()` (unless
-  `supports_fetch_single = False`)
+  `supports_fetch_single = False`). See
+  `docs/features/platform/cve-fetcher-infrastructure.md`
 - **Git-based CVE fetchers (delta-flow)**: inherit from `BaseGitFetcher`
   (`backend/app/services/base_git_fetcher.py`). Only implement
   `process_item()`, `_construct_candidate_paths()`, and optionally
   `filter_delta_files()` / `deduplicate_items()`. Do NOT override
-  `execute()`
+  `execute()`. See `docs/features/platform/git-fetcher-infrastructure.md`
 
 ### FastAPI Conventions
 

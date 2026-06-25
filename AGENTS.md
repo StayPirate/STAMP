@@ -472,7 +472,10 @@ ingestion) MUST:
    external sources) MUST inherit from `BaseCVEFetcher`
    (`backend/app/services/base_cve_fetcher.py`), which provides the
    `cve_source_type`, `fetch_single()`, and default `catch_up()`
-   contracts
+   contracts. See `docs/features/platform/cve-fetcher-infrastructure.md`.
+   Git-based CVE fetchers (delta-flow) MUST inherit from
+   `BaseGitFetcher` (`backend/app/services/base_git_fetcher.py`). See
+   `docs/features/platform/git-fetcher-infrastructure.md`
 2. Define `name`, `description`, and `default_schedule` class attributes
 3. Implement the `execute()` method with proper metric reporting via
    `self.record_created()`, `self.record_updated()`, and
@@ -497,7 +500,10 @@ After creating or modifying any fetcher, invoke
 `@fetcher-compliance-reviewer` to verify correct integration with the
 fetcher infrastructure.
 
-See `docs/features/platform/fetcher-infrastructure.md` for the full specification.
+See `docs/features/platform/fetcher-infrastructure.md` for the full
+specification. Related specs: `docs/features/platform/cve-fetcher-infrastructure.md`
+(BaseCVEFetcher), `docs/features/platform/git-fetcher-infrastructure.md`
+(BaseGitFetcher), `docs/features/platform/networking.md` (HTTP client, TLS).
 
 #### Fetcher documentation compliance
 

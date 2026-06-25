@@ -496,7 +496,7 @@ column constraint). Enforced by a unit test on the Enum definition.
 1. Add the value to the `CVESourceType` Enum in `app/core/enums.py`
 2. Declare `cve_source_type` on the corresponding `BaseCVEFetcher` subclass
 
-See `docs/features/platform/fetcher-infrastructure.md` ("CVE Source Type
+See `docs/features/platform/cve-fetcher-infrastructure.md` ("CVE Source Type
 Identity") for the full contract including import-time validation,
 stability rules, and the `get_fetch_single_fetchers()` accessor.
 

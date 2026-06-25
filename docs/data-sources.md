@@ -942,8 +942,12 @@ normalizes all forms to the canonical `bsc#` prefix.
 All `BaseFetcher` subclasses are automatically registered in the fetcher
 registry. The table below lists all fetchers — both active and planned —
 with their schedule, authentication requirements, rate limits, and data
-ingested. See `docs/features/platform/fetcher-infrastructure.md` for infrastructure
-details.
+ingested. See `docs/features/platform/fetcher-infrastructure.md` for generic
+`BaseFetcher` infrastructure details,
+`docs/features/platform/cve-fetcher-infrastructure.md` for the
+`BaseCVEFetcher` contract (CVE fetchers), and
+`docs/features/platform/git-fetcher-infrastructure.md` for the
+`BaseGitFetcher` contract (git-based CVE fetchers).
 
 **Spec Status** indicates how completely the fetcher is specified in the
 feature documentation (not its implementation status):

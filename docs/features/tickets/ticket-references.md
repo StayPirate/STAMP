@@ -183,7 +183,7 @@ after the change.
 ### source_reference_url_pattern
 
 CVE fetchers that inherit from `BaseCVEFetcher` (see
-`docs/features/platform/fetcher-infrastructure.md`) have an optional class
+`docs/features/platform/cve-fetcher-infrastructure.md`) have an optional class
 attribute `source_reference_url_pattern` that defines the URL pattern for
 the fetcher's human-readable CVE page.
 
@@ -835,7 +835,7 @@ VA's research workflow.
 - `docs/features/tickets/cve-tracking.md` — CVE ingestion flow creates
   references. Contains the full `sync_nvd_cves` fetcher definition
   (algorithm, NVD Source API caching, metrics)
-- `docs/features/platform/fetcher-infrastructure.md` — `BaseCVEFetcher`
+- `docs/features/platform/cve-fetcher-infrastructure.md` — `BaseCVEFetcher`
   contract for `source_reference_url_pattern`
 - `docs/features/tickets/cve-service.md` — `UpsertResult` usage for
   post-upsert reference creation

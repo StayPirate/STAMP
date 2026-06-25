@@ -38,7 +38,7 @@ ticket-references.md    External links on tickets (auto-classified by type, manu
   Package-centric mutations are in `packages/package-service.md`.
 - `cve-tracking.md` feeds tickets: each ingested CVE creates a ticket.
   Individual CVE fetcher specs follow common conventions defined in
-  `docs/features/platform/fetcher-infrastructure.md` (CVE Fetcher Conventions).
+  `docs/features/platform/cve-fetcher-infrastructure.md` (CVE Fetcher Conventions).
 - `cvss-scoring.md` drives ticket severity and product eligibility
   (consumed by `tickets.md` and `packages/package-model.md`).
 - `ticket-audit-log.md` defines the event contract that all ticket-mutating

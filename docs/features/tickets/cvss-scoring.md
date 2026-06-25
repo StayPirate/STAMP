@@ -837,9 +837,10 @@ See `docs/data-model.md` for the full schema. This feature introduces the
   Axis 2: Eligibility (rules, override model, Reactive LTSS)
 - `docs/features/platform/system-settings.md` — `default_cvss_version`
   setting, batch recalculation trigger
-- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` /
-  `BaseCVEFetcher` contract, `catch_up()` method, `fetch_single` capability,
-  sub-operation exception
+- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`
+  contract, `catch_up()` method, sub-operation exception
+- `docs/features/platform/cve-fetcher-infrastructure.md` — `BaseCVEFetcher`
+  contract, `fetch_single` capability
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses), CVE Accessibility Check, CVE Identifier
   Resolution
