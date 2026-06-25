@@ -16,9 +16,9 @@ see `docs/architecture.md` and the relevant feature specifications in
 
 | Source | Scope | Data Provided | Integration Status |
 |---|---|---|---|
-| NVD | Public | CVE data, CVSS scores, CPE matches | Active |
-| MITRE CVE Services | Public | Early CVE assignments | Active |
-| Red Hat Security Data | Public | CVSS assessments | Active |
+| NVD | Public | CVE data, CVSS scores, CPE matches | Specified |
+| MITRE CVE Services | Public | Early CVE assignments | Specified |
+| Red Hat Security Data | Public | CVSS assessments | Specified |
 | IBS | Internal | Source packages, builds, repos (SUSE commercial) | Active |
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
 | IBS RabbitMQ | Internal | Real-time build and publish events | Active |
@@ -53,22 +53,21 @@ vulnerability information including severity scores, affected product
 configurations, and references to advisories and patches.
 
 - **Relevant data**: CVE identifiers, descriptions, CVSS v3.1 scores
-  (v4.0 support is being gradually added by NVD), both primary NVD
-  assessments and secondary CNA assessments, CWE identifiers (weakness
-  type classification from the `weaknesses` array), CPE-based affected
-  product configurations with version ranges (extracted as structured
-  affected version data), vulnerability status (e.g. Analyzed, Rejected),
-  and reference links to advisories and patches
+  (v4.0 support is being gradually added by NVD), primary NVD and
+  secondary CNA assessments, CWE identifiers, CPE-based affected
+  product configurations with version ranges, vulnerability status, and
+  reference links to advisories and patches
 - **Access**: REST API v2 at `services.nvd.nist.gov/rest/json/cves/2.0`.
   Public access without authentication is rate-limited; an API key
   (free registration) provides higher rate limits. A companion Source API
   at `services.nvd.nist.gov/rest/json/source/2.0` resolves CNA identifiers
-  to human-readable names
-- **Integration status**: **Active**. Sentinel syncs CVE data every 6 hours
-  via the `sync_nvd_cves` fetcher. NVD is also used for CVSS score
-  ingestion, CWE extraction, affected version parsing, and on-demand
-  single-CVE lookups
+  to human-readable names. Rate limits: 5 req/30s without key, 50 req/30s
+  with key
+- **Integration status**: **Specified**
 - **Documentation**: https://nvd.nist.gov/developers
+
+> See [cve-sync-nvd.md](features/platform/cve-sync-nvd.md) for the full
+> fetcher specification.
 
 ### MITRE CVE Services
 
@@ -79,25 +78,17 @@ MITRE a valuable source for early awareness of new vulnerabilities.
 
 - **Relevant data**: CVE identifiers, descriptions, CNA-provided metadata.
   Data is typically less enriched than NVD (no CVSS scores from MITRE
-  itself, limited CPE data) but available earlier. Additionally, the CVE
-  5.x record format includes an `adp` (Authorized Data Publisher) block
-  in `containers.adp`. Multiple ADP providers may contribute containers.
-  Sentinel extracts common data (affected versions, CVSS) from **all**
-  ADP containers. The CISA ADP container (when present with
-  `title: "CISA ADP Vulnrichment"`) additionally provides:
-  - **SSVC** decision points (Exploitation, Automatable, Technical Impact)
-    in `metrics[].other.type == "ssvc"`
-  - **KEV** status (date added, reference URL) in
-    `metrics[].other.type == "kev"`
-  - **CWE** identifiers from CISA analysis
+  itself, limited CPE data) but available earlier. The CVE 5.x record
+  format includes ADP (Authorized Data Publisher) containers with
+  additional data from multiple providers, including CISA Vulnrichment
+  (SSVC, KEV, CWE)
 - **Access**: `cvelistV5` GitHub repository (bare clone + fetch). Public access
-- **Integration status**: **Active**. Sentinel syncs every 6 hours via the
-  `sync_mitre_cves` fetcher, with on-demand single-CVE fetch support.
-  The fetcher extracts the CNA block (CVE core data), all ADP blocks
-  (affected versions, CVSS), and CISA-specific enrichment (SSVC, KEV,
-  CWE) when present
+- **Integration status**: **Specified**
 - **Documentation**: https://www.cve.org/,
   https://cveawg.mitre.org/api-docs/openapi.json
+
+> See [cve-sync-mitre.md](features/platform/cve-sync-mitre.md) for the full
+> fetcher specification.
 
 ### Red Hat Security Data
 
@@ -106,18 +97,18 @@ products. Since Red Hat Enterprise Linux and SUSE Linux Enterprise share a
 common upstream heritage for many packages, Red Hat's severity assessments
 provide a useful secondary perspective when evaluating vulnerabilities.
 
-- **Relevant data**: CVSS v2.0 and v3.1 base scores and scoring vectors, CWE identifiers, reference URLs, source package names for CVEs
-  affecting Red Hat products, CWE identifiers (weakness classification),
-  and reference links (CVE references, KEV catalog, upstream commits)
+- **Relevant data**: CVSS v2.0 and v3.1 base scores and scoring vectors,
+  CWE identifiers, reference URLs, and source package names for CVEs
+  affecting Red Hat products
 - **Access**: REST API at
   `access.redhat.com/hydra/rest/securitydata/cve/{CVE-ID}.json`. Public
-  access, no authentication required. Does not support incremental
-  fetching — each CVE must be queried individually
-- **Integration status**: **Active**. Sentinel syncs daily via the
-  `sync_redhat_cves` fetcher, re-fetching CVSS data, CWE identifiers,
-  and reference links for all active tickets
+  access, no authentication required. Rate limits undocumented
+- **Integration status**: **Specified**
 - **Documentation**:
   https://docs.redhat.com/en/documentation/red_hat_security_data_api/1.0/html-single/red_hat_security_data_api/index
+
+> See [cve-sync-redhat.md](features/platform/cve-sync-redhat.md) for the
+> full fetcher specification.
 
 ### CISA KEV (Known Exploited Vulnerabilities)
 
@@ -134,14 +125,12 @@ vulnerability is being actively used by threat actors.
   `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json`.
   No authentication required, no significant rate limits. Single file
   (~1.5MB), complete download each sync
-- **Integration status**: **Specified**. `sync_cisa_kev` fetcher.
-  Schedule: 4x daily (`0 4,10,18,22 * * *`), aligned to CISA US Eastern
-  business-hours publication window. Data is stored in the
-  `CVEKEVEntry` table (date_added, reference_url) and `CVECWE` table
-  (CWE classifications with `source="CISA KEV"`). KEV reference URLs
-  are also stored as `TicketReference` entries
+- **Integration status**: **Specified**
 - **Documentation**:
   https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+
+> See [cve-sync-kev.md](features/platform/cve-sync-kev.md) for the full
+> fetcher specification.
 
 ### EPSS (Exploit Prediction Scoring System)
 
@@ -156,12 +145,14 @@ CVSS measures severity, EPSS measures likelihood of exploitation.
 - **Access**: REST API at `https://api.first.org/data/v1/epss`. Supports
   single-CVE queries and bulk queries with pagination. Supports date
   filtering for incremental sync. No authentication required. Also
-  available as a bulk CSV download (~15MB compressed)
-- **Integration status**: **Specified**. `sync_epss_scores` fetcher. Schedule:
-  daily at 14:00 UTC. Data is stored in a dedicated EPSS table linked to CVE
-  records. Rate limit: 1000 req/min (public, unauthenticated)
+  available as a bulk CSV download (~15MB compressed). Rate limit:
+  1000 req/min (public, unauthenticated)
+- **Integration status**: **Specified**
 - **Documentation**: https://www.first.org/epss/,
   https://www.first.org/epss/api
+
+> See [cve-sync-epss.md](features/platform/cve-sync-epss.md) for the full
+> fetcher specification.
 
 ### GHSA (GitHub Security Advisories)
 
@@ -175,24 +166,19 @@ information relevant for Vulnerability Analysts.
 
 - **Relevant data**: CVSS scores (GitHub's own assessment, v3.x and
   v4.0), CWE identifiers, affected packages with precise version ranges
-  across multiple ecosystems, reference links, GHSA-IDs (stored as
-  `CVEExternalIdentifier`). GitHub is a CNA — may publish CVEs before
-  other sources
+  across multiple ecosystems, reference links, GHSA-IDs. GitHub is a
+  CNA — may publish CVEs before other sources
 - **Access**: REST API at `https://api.github.com/advisories`. Requires a
-  GitHub personal access token (free). Supports incremental sync via the
-  `modified` parameter (ISO 8601 date range syntax). Rate limit: 5,000
-  requests/hour with token (60/hour without — insufficient for
-  production). The advisory database is also available as a Git repository
-  at `https://github.com/github/advisory-database.git` (not used by
-  Sentinel — REST API chosen for `fetch_single(cve_id)` support)
-- **Integration status**: **Planned**. `sync_ghsa_advisories` fetcher.
-  Schedule: every 3 hours (`0 */3 * * *`). Discovery fetcher (can create
-  tickets). CVSS scores stored as `CVECVSSAssessment` entries with
-  `provider_name = "GitHub"`. GHSA-ID stored as `CVEExternalIdentifier`
-  with `source = GHSA`. CWE identifiers, affected versions, resolved
-  packages, and reference URLs stored in their respective tables
+  GitHub personal access token (free). Rate limit: 5,000 requests/hour
+  with token (60/hour without — insufficient for production). The advisory
+  database is also available as a Git repository at
+  `https://github.com/github/advisory-database.git` (not used by Sentinel)
+- **Integration status**: **Specified**
 - **Documentation**:
   https://docs.github.com/en/code-security/security-advisories/working-with-global-security-advisories-from-the-github-advisory-database
+
+> See [cve-sync-ghsa.md](features/platform/cve-sync-ghsa.md) for the full
+> fetcher specification.
 
 ### Linux Kernel CVE Feed
 
@@ -214,15 +200,11 @@ backport verification.
   (rejected), organized by year. No authentication required. Sync via
   bare clone + fetch (NO `--filter=blob:none` — server does not
   advertise the `filter` capability)
-- **Integration status**: **Active**. `sync_kernel_cves` fetcher, every
-  3 hours. CVSS scores are stored as `CVECVSSAssessment` entries with
-  `provider_name = "Linux"`. Fix/introduce commit hashes are stored as
-  `CVEAffectedVersion` records with `version_type = "git"` (introducing
-  commit in `version`, fixing commit in `version_end`). Affected kernel
-  versions (semver blocks) and reference URLs are stored in their
-  respective tables. `source_container = "cna"` (same as MITRE —
-  content is identical by construction)
+- **Integration status**: **Specified**
 - **Documentation**: https://docs.kernel.org/process/cve.html
+
+> See [cve-sync-kernel.md](features/platform/cve-sync-kernel.md) for the
+> full fetcher specification.
 
 **Access note — Anubis bot protection**: the `git.kernel.org` web
 interface (cgit) is protected by Anubis (proof-of-work anti-bot
@@ -291,15 +273,12 @@ additional metadata from ecosystem-specific advisory databases.
   identifiers (including SUSE-SU when available)
 - **Access**: REST API at `https://api.osv.dev/v1/vulns/{id}`. No
   authentication required. No rate limits (confirmed in OSV docs/FAQ)
-- **Integration status**: **Specified**. The `sync_osv_advisories`
-  fetcher uses a three-phase per-CVE approach: (1) fetch CVE record for
-  GIT ranges and references, (2) fetch alias records for ecosystem data,
-  (3) fetch related records for distribution advisory references.
-  Schedule: daily at 05:00 UTC. CVSS scores are explicitly NOT extracted
-  (OSV provides no provider attribution; all CVSS data already covered by
-  dedicated fetchers with explicit provenance)
+- **Integration status**: **Specified**
 - **Documentation**: https://osv.dev/,
   https://google.github.io/osv.dev/api/
+
+> See [cve-sync-osv.md](features/platform/cve-sync-osv.md) for the full
+> fetcher specification.
 
 ---
 

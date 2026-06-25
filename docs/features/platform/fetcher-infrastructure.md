@@ -24,6 +24,7 @@ CLI diagnostics) that consumes this infrastructure, see
 | **Fetcher** | A background task that retrieves data from an external source and creates/updates local records. Implemented as a subclass of `BaseFetcher`. |
 | **Run** | A single execution of a fetcher, tracked from start to finish with metrics (duration, item counts, status). |
 | **Registry** | An in-memory dictionary of all registered fetcher classes, populated automatically via `BaseFetcher` auto-discovery. |
+| **Cursor** | Used in two distinct senses: (1) **Conceptual cursor** — any mechanism a fetcher uses to determine where to resume on the next run (timestamp, page token, commit SHA, offset). A fetcher classified as "cursor-based" uses some form of incremental checkpoint. (2) **`FetcherRun.cursor` column** — the optional JSONB column in the `FetcherRun` table, used only by fetchers that need structured checkpoint data not representable by the scalar fields of `FetcherRun` (e.g., git commit SHA + commit date). Fetchers that use `started_at` as their checkpoint (e.g., NVD, GHSA) are conceptually cursor-based but leave the JSONB column NULL. |
 
 ## Related Specifications
 

@@ -77,25 +77,11 @@ to enumerate it (2026-06-25)
 
 ### FEI-COH-003 — Overloaded term "cursor" across sibling specs (Low)
 
-**Status**: OPEN
-
-`cve-fetcher-infrastructure.md` classifies NVD/GHSA as "Cursor-based (API
-with timestamp/cursor)", while `git-fetcher-infrastructure.md` and
-`data-model.md` state NVD uses `started_at` and leaves the `cursor` JSONB
-column NULL. "Cursor" denotes both the conceptual incremental position and
-the `FetcherRun.cursor` column. Reconcilable on careful reading, but the
-divergent wording in now-adjacent sibling specs invites confusion. A
-one-line clarification distinguishing "conceptual cursor" from the JSONB
-column would help. (Tracked here as the consolidation owner; see also
-CFI-COH-02.)
+**Status**: RESOLVED — Added "Cursor" disambiguation to fetcher-infrastructure.md Terminology table and cross-reference note in cve-fetcher-infrastructure.md First Run Behavior table (2026-06-25)
 
 ### FEI-COH-004 — `data-sources.md` GHSA status mismatch (Low)
 
-**Status**: OPEN
-
-`data-sources.md` summary table says GHSA = "Specified" while its prose says
-"Planned". Pre-existing and unrelated to the fetcher split (internal to
-`data-sources.md`); flagged for completeness only.
+**Status**: RESOLVED — Aligned GHSA status from "Planned" to "Specified" in data-sources.md prose section. Additionally performed systematic snellimento of all 8 CVE source sections: removed redundant fetcher names, schedules, data model mappings, and algorithm details (confirmed present in respective feature specs); fixed status drift for NVD/MITRE/Red Hat ("Active" → "Specified") and Linux Kernel prose ("Active" → "Specified"); added cross-reference links to feature specs in all sections (2026-06-25)
 
 ---
 
