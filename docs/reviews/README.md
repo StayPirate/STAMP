@@ -17,8 +17,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-06-01 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| cve-fetcher-infrastructure | — | — | — | — | — | —/— | — | |
-|  |  |  |  |  |  |  |  |  |
+| [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 8 | 3 | — | — | — | 11/11 | 2026-06-25 | |
+| | 3:🟠 5:🟡 | 3:🟡 |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-epss | — | — | — | — | — | —/— | — | |
@@ -41,18 +41,18 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 | | 1:🟡 | 2:🟡 |  | 1:🟠 | 1:🟡 |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/20 | 2026-05-28 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 2 | 🟢 | 🟢 | 🟢 | 2/24 | 2026-06-25 | |
+| |  | 2:🟡 |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| git-fetcher-infrastructure | — | — | — | — | — | —/— | — | |
-|  |  |  |  |  |  |  |  |  |
+| [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 10 | — | — | — | — | 10/10 | 2026-06-25 | |
+| | 1:🔴 6:🟠 3:🟡 |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/16 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/21 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| networking | — | — | — | — | — | —/— | — | |
-|  |  |  |  |  |  |  |  |  |
+| [networking](networking.md) | 10 | — | — | — | — | 10/10 | 2026-06-25 | |
+| | 1:🔴 5:🟠 4:🟡 |  |  |  |  |  |  |  |
 | [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-22 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [package-service](package-service.md) | 2 | 🟢 | 🟢 | 🟢 | 🟢 | 2/30 | 2026-06-03 | ⚠️ |
@@ -75,8 +75,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **2** | **🟢** | **1** | **1** | **7/779** |  |  |
-| | 2:🟠 1:🟡 | 2:🟡 |  | 1:🟠 | 1:🟡 |  |  |  |
+| **Total** | **31** | **7** | **🟢** | **1** | **1** | **40/814** |  |  |
+| | 2:🔴 16:🟠 13:🟡 | 7:🟡 |  | 1:🟠 | 1:🟡 |  |  |  |
 
 ### Disabled specs
 

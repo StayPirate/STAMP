@@ -1,8 +1,14 @@
 # Review: fetcher-infrastructure
 
 **Spec**: `docs/features/platform/fetcher-infrastructure.md`
-**Last reviewed**: 2026-05-28
-**Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
+**Last reviewed**: 2026-06-25
+**Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions, Documentation
+
+> Post-split re-review (fetcher-infrastructure split, Phase 4m). After the
+> document was reduced to the generic `BaseFetcher` core (HTTP/TLS, CVE, and
+> git content moved to sibling specs), Coherence and Documentation reviewers
+> were re-run to verify the consolidation. New findings are recorded below
+> (FEI-COH-* and FEI-DOC-*). The split was content-preserving.
 
 ---
 
@@ -52,7 +58,44 @@
 
 ## Coherence
 
-_No findings._
+_No findings (2026-05-28 round)._
+
+### FEI-COH-001 — Dangling intra-document reference to the renamed "Shared HTTP Client" section (Medium)
+
+**Status**: RESOLVED — Item 5 of BaseFetcher Base Class referenced a "Shared
+HTTP Client" section that no longer exists in this document after the split
+(its content moved to `networking.md`; the surviving local section is
+"BaseFetcher HTTP Client Integration"). Updated to point to the local
+section and to `networking.md` (2026-06-25)
+
+### FEI-COH-002 — Self-description omits retained HTTP Client Integration content (Low)
+
+**Status**: RESOLVED — The Purpose paragraph and the "This document" row of
+the Related Specifications table omitted the "BaseFetcher HTTP Client
+Integration" content that the document still owns post-split. Both updated
+to enumerate it (2026-06-25)
+
+### FEI-COH-003 — Overloaded term "cursor" across sibling specs (Low)
+
+**Status**: OPEN
+
+`cve-fetcher-infrastructure.md` classifies NVD/GHSA as "Cursor-based (API
+with timestamp/cursor)", while `git-fetcher-infrastructure.md` and
+`data-model.md` state NVD uses `started_at` and leaves the `cursor` JSONB
+column NULL. "Cursor" denotes both the conceptual incremental position and
+the `FetcherRun.cursor` column. Reconcilable on careful reading, but the
+divergent wording in now-adjacent sibling specs invites confusion. A
+one-line clarification distinguishing "conceptual cursor" from the JSONB
+column would help. (Tracked here as the consolidation owner; see also
+CFI-COH-02.)
+
+### FEI-COH-004 — `data-sources.md` GHSA status mismatch (Low)
+
+**Status**: OPEN
+
+`data-sources.md` summary table says GHSA = "Specified" while its prose says
+"Planned". Pre-existing and unrelated to the fetcher split (internal to
+`data-sources.md`); flagged for completeness only.
 
 ---
 
@@ -107,3 +150,35 @@ _No findings._
 ## API Conventions
 
 _No findings._
+
+---
+
+## Documentation
+
+> Documentation reviewer findings from the post-split round (2026-06-25).
+> The dangling-reference items overlap with FEI-COH-001/002 and the sibling
+> specs' DOC findings; all were fixed in the same change.
+
+### FEI-DOC-001 — Broken internal reference to moved "Shared HTTP Client" content (Medium)
+
+**Status**: RESOLVED — Same defect as FEI-COH-001; the BaseFetcher Base
+Class item-5 pointer was corrected to the local "BaseFetcher HTTP Client
+Integration" section and `networking.md` (2026-06-25)
+
+### FEI-DOC-002 — Purpose intro under-enumerates retained content (Low)
+
+**Status**: RESOLVED — Purpose paragraph updated to mention catch_up
+mechanism, custom settings, error sanitization, and HTTP client integration
+(2026-06-25)
+
+### FEI-DOC-003 — "Related Specifications" row omits HTTP Client Integration (Low)
+
+**Status**: RESOLVED — "This document" row updated to include BaseFetcher
+HTTP client integration (2026-06-25)
+
+### FEI-DOC-004 — Soft cross-doc references in sibling `git-fetcher-infrastructure.md` (Low)
+
+**Status**: RESOLVED — The sibling references to "Recovery Strategy" and
+"Status determination precedence … in the BaseFetcher section" were
+corrected to name the actual headings and the owning document
+(`fetcher-infrastructure.md`); see GFI-DOC-03 and GFI-DOC-04 (2026-06-25)

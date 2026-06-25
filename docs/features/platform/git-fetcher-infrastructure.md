@@ -33,8 +33,8 @@ fetcher-infrastructure.md
 
 Some fetchers synchronize data from external Git repositories rather
 than HTTP APIs. These fetchers share common infrastructure requirements
-documented in this section. Individual fetcher specs define their own
-algorithm, metrics, and source-specific behavior; this section defines
+documented in this document. Individual fetcher specs define their own
+algorithm, metrics, and source-specific behavior; this document defines
 only the shared operational pattern.
 
 Current git-based fetchers: `sync_mitre_cves`, `sync_kernel_cves`.
@@ -109,7 +109,8 @@ NVD uses `started_at`) leave it NULL.
 
 Inside `execute()`, the fetcher sets `self._cursor` (a dict) with the
 checkpoint data. After `execute()` returns, `run()` determines the
-final status (see "Status determination precedence") and then, only if
+final status (see "Status determination precedence" in
+`fetcher-infrastructure.md`) and then, only if
 the final status is `success` or `partial`, reads `self._cursor` and
 writes it to the `FetcherRun` row in the same transaction that sets
 `status` and `finished_at`. If `self._cursor` is None (not set), or
@@ -140,7 +141,7 @@ the first-run logic:
 | No | No (absent or invalid) | If directory exists but is invalid (fails `git rev-parse --git-dir`): delete entirely. Clone repository. Record HEAD without processing |
 | No | Yes | Skip clone (previous attempt succeeded but cursor was not persisted). Record HEAD without processing |
 | Yes | Yes | Subsequent run: fetch + delta detection from cursor |
-| Yes | No (absent or invalid) | Delete invalid directory if present. Re-clone. Then apply cursor reachability check (see Recovery Strategy below) |
+| Yes | No (absent or invalid) | Delete invalid directory if present. Re-clone. Then apply cursor reachability check (see "Recovery" and "Cursor SHA Unreachable" below) |
 
 "Invalid" means: the directory exists but `git rev-parse --git-dir`
 fails (corrupted pack files, incomplete clone from interrupted
@@ -636,8 +637,9 @@ The `execute()` method implements the full git-based fetcher state
 machine. Concrete subclasses MUST NOT override `execute()` (they
 implement hooks instead).
 
-Implements the First-Run Detection truth table and Recovery Strategy
-algorithm from the sections above.
+Implements the First-Run Detection truth table and the recovery
+algorithm ("Recovery" and "Cursor SHA Unreachable") from the sections
+above.
 
 **Behavior**:
 
@@ -699,8 +701,8 @@ algorithm from the sections above.
 
 Note: the all-items-failed safety check (preventing cursor advance when
 every item fails) is handled by `BaseFetcher.run()` after `execute()`
-returns — see "Status determination precedence" in the BaseFetcher
-section. Items skipped in step 10b (file not at HEAD) do not increment
+returns — see "Status determination precedence" in
+`fetcher-infrastructure.md`. Items skipped in step 10b (file not at HEAD) do not increment
 any counter and do not trigger the safety check.
 
 **Infrastructure errors**: exceptions from clone, fetch, HEAD read, or
@@ -726,8 +728,8 @@ re-evaluates the clone state and applies the appropriate recovery
 (row "Cursor exists + Clone invalid" → re-clone).
 
 The **all-items-failed safety check** is now handled by
-`BaseFetcher.run()` (see "Status determination precedence" in the
-BaseFetcher section). If all items fail (e.g., network drops after fetch
+`BaseFetcher.run()` (see "Status determination precedence" in
+`fetcher-infrastructure.md`). If all items fail (e.g., network drops after fetch
 in a blobless clone, making every `show_file()` fail), `run()` sets
 `status = failure` directly after `execute()` returns. Since the cursor
 is only persisted on `success` or `partial`, the previous cursor is

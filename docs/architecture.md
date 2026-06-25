@@ -333,8 +333,7 @@ Redis, or external services.
 Recoverable caches (e.g., git clone volumes used by CVE fetchers) may
 use persistent local storage for performance, provided the application
 remains correct without them — see
-`docs/features/platform/git-fetcher-infrastructure.md` (Git-Based Fetchers,
-Recovery).
+`docs/features/platform/git-fetcher-infrastructure.md` (Recovery).
 
 Local Docker/Podman environments may run PostgreSQL and Redis as containers.
 Production environments may instead use managed services or separately managed

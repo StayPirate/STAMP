@@ -7,7 +7,9 @@ in Sentinel must use. Fetchers are background tasks that periodically
 pull data from external sources (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS)
 and update the local database. It covers the generic `BaseFetcher`
 abstract base class: the fetcher registry, Celery integration,
-concurrency control, data model, and data retention.
+concurrency control, the per-ticket `catch_up()` mechanism, custom
+settings schema, error message sanitization, BaseFetcher HTTP client
+integration, data model, and data retention.
 
 The fetcher infrastructure is documented across several complementary
 specifications — see the Related Specifications section below for the
@@ -30,7 +32,7 @@ fetcher infrastructure is documented across five complementary specs:
 
 | Spec | Content |
 |---|---|
-| **This document** | BaseFetcher base class, naming, error sanitization, custom settings, catch_up mechanism (generic), registry, Celery, concurrency, stale run detection, data model, retention, deregistered lifecycle, doc requirements |
+| **This document** | BaseFetcher base class, naming, error sanitization, custom settings, catch_up mechanism (generic), BaseFetcher HTTP client integration (lazy property, overrides, lifecycle), registry, Celery, concurrency, stale run detection, data model, retention, deregistered lifecycle, doc requirements |
 | `cve-fetcher-infrastructure.md` | BaseCVEFetcher class, on-demand fetch_single, CVE source type identity, CVE catch_up default, CVE conventions |
 | `git-fetcher-infrastructure.md` | BaseGitFetcher class, git_operations.py, clone/delta infrastructure |
 | `networking.md` | Shared HTTP client factory, transport retry, TLS trust store (cross-cutting) |
@@ -131,8 +133,9 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    In both cases, a DEBUG-level log is emitted:
    `logger.debug("Fetcher '%s' is disabled — skipping run", self.name)`
 5. **Shared HTTP client**: a pre-configured `self.http_client` lazy
-   property for outgoing HTTP requests. See "Shared HTTP Client" section
-   for the full specification.
+   property for outgoing HTTP requests. See "BaseFetcher HTTP Client
+   Integration" section for the local integration, and `networking.md`
+   ("Shared HTTP Client") for the full client factory specification.
 
 **FetcherRun creation failure**: if the database INSERT for the `FetcherRun`
 record fails (e.g., database connection error), the task MUST:

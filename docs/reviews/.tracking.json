@@ -183,7 +183,42 @@
     "cve-fetcher-infrastructure": {
       "enabled": true,
       "abbr": "CFI",
-      "cache": null
+      "cache": {
+        "last_review": "2026-06-25T00:00:00+0000",
+        "open": {
+          "GAP": {
+            "H": 0,
+            "M": 3,
+            "L": 5
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 3
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
+        },
+        "resolved": 0,
+        "not_reviewed": [
+          "DES",
+          "SEC",
+          "API"
+        ]
+      }
     },
     "cve-service": {
       "enabled": true,
@@ -337,7 +372,7 @@
       "enabled": true,
       "abbr": "FEI",
       "cache": {
-        "last_review": "2026-05-28T00:00:00+0000",
+        "last_review": "2026-06-25T00:00:00+0000",
         "open": {
           "GAP": {
             "H": 0,
@@ -347,7 +382,7 @@
           "COH": {
             "H": 0,
             "M": 0,
-            "L": 0
+            "L": 2
           },
           "DES": {
             "H": 0,
@@ -365,7 +400,7 @@
             "L": 0
           }
         },
-        "resolved": 20,
+        "resolved": 22,
         "not_reviewed": []
       }
     },
@@ -408,7 +443,43 @@
     "git-fetcher-infrastructure": {
       "enabled": true,
       "abbr": "GFI",
-      "cache": null
+      "cache": {
+        "last_review": "2026-06-25T00:00:00+0000",
+        "open": {
+          "GAP": {
+            "H": 1,
+            "M": 6,
+            "L": 3
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
+        },
+        "resolved": 0,
+        "not_reviewed": [
+          "COH",
+          "DES",
+          "SEC",
+          "API"
+        ]
+      }
     },
     "git-product-release-detection": {
       "enabled": false,
@@ -559,7 +630,43 @@
     "networking": {
       "enabled": true,
       "abbr": "NET",
-      "cache": null
+      "cache": {
+        "last_review": "2026-06-25T00:00:00+0000",
+        "open": {
+          "GAP": {
+            "H": 1,
+            "M": 5,
+            "L": 4
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
+        },
+        "resolved": 0,
+        "not_reviewed": [
+          "COH",
+          "DES",
+          "SEC",
+          "API"
+        ]
+      }
     },
     "package-bugowner": {
       "enabled": false,
