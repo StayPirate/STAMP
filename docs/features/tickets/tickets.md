@@ -107,9 +107,9 @@ An VA can associate a CVE with a ticket that does not yet have one, via
 - When a CVE is associated:
   - `Ticket.cve_id` is set
   - The automatic severity from CVSS takes over (see
-    [Severity Resolution](#severity-resolution)) — initially `None` if
-    the CVE data has not been fetched yet; updated automatically once
-    CVSS data arrives from the on-demand fetch
+    [Severity Resolution](#severity-resolution)) — initially `null`
+    (unresolved) if the CVE data has not been fetched yet; updated
+    automatically once CVSS data arrives from the on-demand fetch
   - CVSS sync and release tracking begin applying to the ticket
   - The ticket may regress from Analyzed to Analysis if CVSS data has
     not arrived yet (gate #3 and #4 may fail)
@@ -191,10 +191,11 @@ layer.
 
 1. If the ticket has a CVE (`cve_id IS NOT NULL`): severity =
    `cve.severity` (derived from CVSS assessments via the resolution
-   cascade — see `docs/features/tickets/cvss-scoring.md`)
+   cascade — see `docs/features/tickets/cvss-scoring.md`). Note:
+   `cve.severity` can be `null` if no CVSS data is available yet
 2. If the ticket does not have a CVE (`cve_id IS NULL`): severity =
    `ticket.severity_override`
-3. If neither is available: severity = `None` (unknown)
+3. If neither is available: severity = `null` (unresolved)
 
 ### severity_override Field
 
@@ -273,8 +274,10 @@ when ALL of the following conditions are met:
 2. **All track affectedness decided**: no active `TicketPackageTrack`
    records in `ANALYSIS` status
 3. **Severity set**: the ticket must have a determined severity (not
-   `None`). For tickets with CVE, this is derived from CVSS. For tickets
-   without CVE, `severity_override` must be set by the VA
+   `NULL`). Severity `None` (CVSS score 0.0) IS a valid determined
+   severity and satisfies this gate. For tickets with CVE, this is
+   derived from CVSS. For tickets without CVE, `severity_override`
+   must be set by the VA
 4. **SUSE CVSS provided** (only for tickets with CVE): the VA must have
    provided BOTH SUSE CVSS v3.1 AND v4.0 assessments (see
    `docs/features/tickets/cvss-scoring.md`). Note: this is a data
@@ -1043,6 +1046,10 @@ The PascalCase forms used elsewhere in this spec (e.g., `New`,
 `Analysis`, `Critical`) refer to the logical values; the wire format is
 always lowercase.
 
+**Nullable enum fields**: nullable enum fields (e.g., `severity`)
+serialize as JSON `null` when unset. The enum value `"none"` is a
+distinct valid value (CVSS score 0.0), not equivalent to JSON `null`.
+
 **Soft-deletion visibility**: package, track, and product entities
 include a `deleted_at` field (`datetime | null`) that indicates
 exclusion status. In single-ticket views (`TicketDetail`, `GET
@@ -1164,7 +1171,7 @@ views without the full package tree.
 | `id` | UUID | Ticket primary key |
 | `identifier` | string | Human-readable identifier (`SNTL-{n}`) |
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
-| `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
+| `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no override. `"none"` = CVSS score 0.0 (informational) |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
 | `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
@@ -1183,7 +1190,7 @@ TicketSummary with the full package tree and expanded CVE data.
 | `id` | UUID | Ticket primary key |
 | `identifier` | string | Human-readable identifier (`SNTL-{n}`) |
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
-| `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved |
+| `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no override. `"none"` = CVSS score 0.0 (informational) |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates and sources, or `null` if no CVE |
 | `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
@@ -1243,7 +1250,9 @@ Query parameters:
   tickets.
 - `severity` (string, repeatable, optional): filter by severity level.
   Accepts one or more values from: `critical`, `high`, `medium`, `low`,
-  `none`.
+  `none`, `unresolved`. `none` matches tickets with severity `None`
+  (CVSS score 0.0). `unresolved` matches tickets with `NULL` severity
+  (no CVSS data and no override set).
 - `bugowner` (string, optional): filter tickets to those containing at
   least one package whose bugowner matches the value (matches against
   bugowner email, name, or group member email/userid — see
@@ -1310,9 +1319,9 @@ Request body:
   is created and on-demand fetch is triggered (see
   `docs/features/tickets/cve-service.md`, "On-Demand Fetch: fetch_single_cve")
 - `severity` (string, optional): initial severity override (critical,
-  high, medium, low, none). If omitted, severity is `None` until set
-  by the user. Ignored if `cve_id` is provided (severity is derived from
-  CVSS)
+  high, medium, low, none). If omitted, severity is `null` (unresolved)
+  until set by the user. Ignored if `cve_id` is provided (severity is
+  derived from CVSS)
 - `is_confidential` (boolean, optional): if `true`, the ticket is
   created as confidential. Requires the `manage_confidentiality`
   capability in addition to `create_ticket`. If the caller lacks
@@ -1714,7 +1723,7 @@ table:
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
 | status            | ENUM        | NOT NULL, DEFAULT New        | Ticket status |
 | assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |
-| severity_override | ENUM        | nullable                     | Manual severity (Critical, High, Medium, Low, None). Used when `cve_id IS NULL` |
+| severity_override | ENUM        | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = VA explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |

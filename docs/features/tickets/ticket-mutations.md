@@ -579,7 +579,7 @@ Sets or clears the `severity_override` field on a ticket.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to modify |
-| `severity` | `Severity \| None` | Yes | New severity value, or `None` to clear |
+| `severity` | `Severity \| None` | Yes | New severity value (`Critical`, `High`, `Medium`, `Low`, or `None` for CVSS score 0.0 / informational), or Python `None` to clear the override (sets `severity_override` to SQL `NULL` = unresolved) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -642,7 +642,10 @@ triggered by a default CVSS version change (see
    from `settings_service.get_default_cvss_version(db)`. Call
    `cvss.resolve_severity_score()` with the resolved version to
    determine the new resolved score
-3. Map the result to a severity label via `cvss.calculate_severity()`.
+3. If `resolve_severity_score()` returned a score, map it to a severity
+   label via `cvss.calculate_severity()` (score 0.0 maps to `None`).
+   If `resolve_severity_score()` returned `None` (absent), the new
+   severity is `NULL` (unresolved).
    If severity changed, update `CVE.severity`
 4. Call `cvss.resolve_eligibility_score()` with the resolved
    `default_cvss_version` to determine the eligibility score

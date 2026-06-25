@@ -88,7 +88,7 @@ erDiagram
     CVE {
         UUID id PK
         VARCHAR_20 cve_id UK "NOT NULL"
-        ENUM severity
+        ENUM severity "nullable"
         ENUM cve_state "NOT NULL, DEFAULT PUBLISHED"
         TIMESTAMPTZ date_rejected "nullable"
     }
@@ -430,7 +430,7 @@ Represents a Common Vulnerability and Exposure entry.
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
 | title          | VARCHAR(256) |                      | Brief summary from the CNA (CVE 5.x `containers.cna.title`). Populated by fetchers that parse CVE JSON 5.x format (`sync_mitre_cves`, `sync_kernel_cves`). Null when the CNA does not provide a title. Max 256 chars per CVE schema specification |
 | description    | TEXT         |                      | Vulnerability description       |
-| severity       | ENUM         | NOT NULL, DEFAULT None | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
+| severity       | ENUM         | nullable               | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). `NULL` when no CVSS assessment is available from any provider (unresolved). `None` is a valid severity value representing a CVSS score of exactly 0.0 (the standard CVSS "None" rating). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
 | cve_state      | ENUM         | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Uses PostgreSQL ENUM (stable value set defined by the CVE Program). Populated by any discovery fetcher: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
@@ -1064,7 +1064,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
 | status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
+| severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the canonical target ticket when status is Duplicated. May transiently reference a Duplicated ticket if a flattening was interrupted; the `resolve_canonical_target` function handles resolution at read time. Hop limit: 50 |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |

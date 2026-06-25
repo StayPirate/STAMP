@@ -152,7 +152,7 @@ Returns pending fixes for the authenticated user.
 | ticket_id | uuid | Ticket UUID |
 | ticket_sequence_id | integer | Ticket sequence number (for `SNTL-{n}` display) |
 | cve_id | string \| null | CVE identifier (null if ticket has no CVE) |
-| severity | string | Resolved severity: critical, high, moderate, low |
+| severity | string \| null | Resolved severity: critical, high, medium, low, none (null if unresolved) |
 | reference | string | Target codestream name |
 | analyzed_at | datetime | When the ticket entered `Analyzed` status (consumers compute "Waiting" from this) |
 

@@ -265,7 +265,9 @@ When `sort_by` references a field with domain-defined ordinal semantics
 |-------|--------------------------------|
 | `severity` | None (0) < Low (1) < Medium (2) < High (3) < Critical (4) |
 
-NULL values sort last regardless of sort direction.
+`None` is the resolved severity label for CVSS score 0.0 (rank 0 in the
+semantic ordering). `NULL` (severity not yet resolved) is not part of the
+ranking — NULL values sort last regardless of sort direction.
 
 Endpoints that support sorting by semantic fields MUST note this in
 their query parameter specification: "semantic ordering (see General

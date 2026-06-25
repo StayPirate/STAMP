@@ -52,7 +52,8 @@ values will be defined during implementation, but the semantic usage is:
 | High       | `warning`      | Orange/amber-toned                 |
 | Medium     | `warning`      | Yellow-toned, less intense         |
 | Low        | `success`      | Green-toned, low visual prominence |
-| None       | `muted`        | Gray, minimal visual weight        |
+| None       | `secondary` or `outline` | CVSS 0.0 / informational, minimal visual weight |
+| Unresolved | `muted`        | Null/unresolved severity; show "—" placeholder |
 
 ### Ticket Status Colors
 

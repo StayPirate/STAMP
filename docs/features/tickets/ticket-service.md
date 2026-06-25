@@ -269,7 +269,7 @@ resolution source. `recalculate_cvss_chain()` recalculates severity via
 `resolve_severity_score()` (5-step cascade using the CVE's existing
 assessments) and product eligibility via `resolve_eligibility_score()`
 (SUSE-only, 2-step). If the CVE has no assessments (e.g., MITRE-sourced
-CVE with no CVSS data), severity resolves to `None` (gate #3 fails) and
+CVE with no CVSS data), severity resolves to `null` (gate #3 fails) and
 eligibility remains at the 10.0 conservative fallback — the chain is
 effectively a no-op for eligibility in this case. The final
 `reconcile_ticket_status()` call (chain step 7) evaluates gates and may

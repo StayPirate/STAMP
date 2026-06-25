@@ -74,7 +74,7 @@ providers and versions to maximize informational coverage:
    highest by version priority order (`4.0 > 3.1 > 3.0 > 2.0`); within
    the same version, prefer the highest score.
 5. **Absent**. No provider has published any assessment for any version.
-   The score is treated as absent (severity = `None`).
+   The score is treated as absent (`CVE.severity` is set to `NULL`).
 
 **Cross-version severity mapping**: when the resolved score comes from a
 version other than the default (steps 2 or 4), severity is mapped using
@@ -249,10 +249,17 @@ Both CVSS v3.1 and v4.0 use the same severity rating scale:
 | 7.0 – 8.9  | High     |
 | 9.0 – 10.0 | Critical |
 
+A score of exactly 0.0 maps to severity `None` — this is a valid CVSS
+rating indicating no security impact, distinct from `NULL` (no assessment
+available / unresolved).
+
 ## Severity Derivation
 
-The `severity` field on the CVE table is a denormalized field, always
-derived from CVSS assessments. It is never set manually.
+The `severity` field on the CVE table is a denormalized, nullable field,
+always derived from CVSS assessments. It is never set manually.
+`NULL` indicates that no CVSS assessment is available from any provider
+(unresolved). The enum value `None` indicates a resolved CVSS score of
+exactly 0.0 (the standard CVSS "None" rating — no security impact).
 
 **Note**: for tickets without a CVE, severity is determined by the
 `severity_override` field on the Ticket, set manually by the VA. The
@@ -267,7 +274,8 @@ for the unified resolution logic.
    default version → highest provider other version → absent
 2. If a score is found: map it to a severity using the rating scale
    thresholds for the version of that score
-3. If no score is found (absent): severity is `None`
+3. If no score is found (absent): `CVE.severity` is set to `NULL`
+   (unresolved)
 
 ### When Severity is Recalculated
 
@@ -407,8 +415,9 @@ When a CVSS assessment changes (added, modified, or removed) for a CVE
 with an active ticket, Sentinel performs the following recalculation:
 
 1. **Recalculate severity**: call `resolve_severity_score()` (5-step
-   severity cascade) to determine the new resolved score. Map the result
-   to a severity label via `calculate_severity()`. If severity changed,
+   severity cascade) to determine the new resolved score. If a score is
+   found, map it to a severity label via `calculate_severity()`. If no
+   score is found (absent), set `CVE.severity` to `NULL`. If severity changed,
    update the CVE's `severity` field.
 2. **Recalculate product eligibility**: call `resolve_eligibility_score()`
    (2-step SUSE-only cascade — separate call with different semantics; the
@@ -676,7 +685,8 @@ the write path, each serving a distinct purpose:
 - **`resolve_severity_score()`** (5-step cascade): determines the
   resolved CVSS score used to derive `CVE.severity`. This is the
   exclusive source of truth for `CVE.severity` — `resolve_eligibility_score()`
-  is never used for this purpose.
+  is never used for this purpose. When the cascade returns no score
+  (absent), `CVE.severity` is set to `NULL` (unresolved).
 - **`resolve_eligibility_score()`** (2-step SUSE-only cascade):
   determines the score compared against product CVSS thresholds to
   evaluate `TicketPackageProduct.eligible`. This is the exclusive

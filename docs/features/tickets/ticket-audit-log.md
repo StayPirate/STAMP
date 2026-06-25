@@ -38,7 +38,12 @@ fields populated according to this table:
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "advisory_id": "..."}` (see detail contract) |
 | `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) | `NULL` |
 | `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | `NULL` |
-| `severity_changed` | CVSS recalculation changes ticket severity (system) or VA sets/clears severity override (manual) | `NULL` for automatic CVSS recalculation, acting user's UUID for manual severity override (`set_severity_override()`) | Old severity (e.g., `High`) | New severity (e.g., `Critical`) | `NULL` | `NULL` |
+| `severity_changed` | CVSS recalculation changes ticket severity (system) or VA sets/clears severity override (manual) | `NULL` for automatic CVSS recalculation, acting user's UUID for manual severity override (`set_severity_override()`) | Old severity (e.g., `High`) or `NULL` | New severity (e.g., `Critical`) or `NULL` | `NULL` | `NULL` |
+
+> **Note**: `old_value` and `new_value` can be `NULL` for `severity_changed`
+> events. When severity transitions from unresolved (`NULL`) to a resolved
+> value, `old_value` is `NULL`. When all CVSS assessments are deleted and
+> severity becomes unresolved, `new_value` is `NULL`.
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` | `NULL` |
 | `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
 | `track_excluded` | Track directly soft-deleted (excluded) from ticket. One event per action — child products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Track name | `NULL` | `NULL` | `{"track": "...", "package": "...", "reason": "..."}` (see detail contract) |

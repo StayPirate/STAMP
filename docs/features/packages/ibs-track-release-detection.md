@@ -161,7 +161,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
    1. Fetch CVE data from NVD API v2
       (`GET /rest/json/cves/2.0?cveId={cve_id}`). If NVD is unreachable
       or the CVE is not yet published, create a minimal CVE record with
-      only the CVE-ID and `severity = None`.
+      only the CVE-ID and `severity = NULL`.
    2. Create the CVE record.
    3. Create a Ticket with status `New`, no assignee.
    4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
