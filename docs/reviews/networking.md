@@ -35,16 +35,7 @@
 
 ### NET-GAP-05 — TLS verification override safety not enforced (Medium)
 
-**Category**: Override safety / TLS enforcement
-**Status**: OPEN
-
-The spec states TLS verification is "always enforced", but the factory
-signature is `create_http_client(**overrides)` with last-writer-wins
-semantics, and only User-Agent is documented as protected. It is
-unspecified whether `verify=False` (or a substitute SSL context) can be
-injected via `http_client_options`/overrides, which would silently defeat
-the "always enforced" guarantee. The spec should mark `verify`/TLS as
-non-overridable like User-Agent.
+**Status**: RESOLVED — TLS verify documented as overridable with WARNING log; UA remains template-protected (2026-06-26)
 
 ### NET-GAP-06 — SSL context caching / certificate rotation behavior unspecified (Medium)
 

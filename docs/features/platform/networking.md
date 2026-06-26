@@ -44,6 +44,22 @@ def create_http_client(**overrides) -> httpx.AsyncClient:
     """
 ```
 
+#### Override Safety
+
+Two settings receive special protection in the factory:
+
+- **User-Agent**: always built from the standard template using the
+  `name` parameter. Not overridable via `http_client_options` or
+  `**overrides` — any `user-agent` key in headers or top-level
+  `headers` override is silently dropped and replaced with the
+  template-generated value.
+- **TLS verify / ssl_context**: overridable via `**overrides` or
+  `http_client_options`, but every override that sets `verify=False`
+  or provides a custom `ssl_context` emits a WARNING-level log at
+  client creation time, including the caller's `name` for
+  traceability. Example log: `"TLS verify overridden by
+  'sync_nvd_cves' — verify=False"`.
+
 ### Default Configuration
 
 | Setting | Default | Override mechanism |
@@ -57,7 +73,7 @@ def create_http_client(**overrides) -> httpx.AsyncClient:
 | Max keepalive connections | 20 | `http_client_options` (limits) |
 | Accept | `application/json` | `http_client_options` (headers) |
 | Accept-Encoding | `gzip, deflate` (httpx built-in) | — |
-| TLS | Combined trust store (system CAs + SUSE CA) | See "TLS Trust Store Configuration" section |
+| TLS | Combined trust store (system CAs + SUSE CA), verify enabled | `http_client_options` / `**overrides` (emits WARNING — see "Override Safety") |
 | Transport retry | See "Transport-Level Retry" below | `http_client_options` |
 | Proxy | Standard env vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) | System-level |
 
@@ -252,8 +268,12 @@ internal CA.
   lifecycle model (see each integration spec for component-specific
   behavior). This is a configuration error, not a transient condition
   — retrying without fixing the file is pointless
-- **TLS verification**: always enforced. Failed handshake is an immediate
-  error — never proceed with an unverified connection
+- **TLS verification**: enabled by default using the SUSE Trust Root CA
+  bundle. Callers may override `verify` or provide a custom `ssl_context`
+  via factory overrides; doing so causes a WARNING-level log at client
+  creation (including the caller's `name`) to ensure visibility. Failed
+  TLS handshake with verification enabled is an immediate error — never
+  proceed with an unverified connection unless explicitly overridden
 - **Certificate rotation**: since the SSL context is built fresh per
   `create_http_client()` invocation (not cached at module level):
   - Fetchers pick up a rotated CA automatically on the next run without
