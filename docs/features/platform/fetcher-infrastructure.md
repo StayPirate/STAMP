@@ -796,12 +796,12 @@ To attach a safety warning for dangerous settings, use
 
 ```python
 class Settings(BaseModel):
-    max_concurrent_requests: int = Field(
-        default=5,
+    lookback_days: int = Field(
+        default=7,
         ge=1,
-        le=50,
-        json_schema_extra={"warning": "Values above 20 may trigger rate limiting on the external service."},
-        description="Maximum parallel HTTP requests.",
+        le=90,
+        json_schema_extra={"warning": "Values above 30 increase run duration significantly."},
+        description="Number of days to look back for modified records.",
     )
 ```
 
@@ -1010,11 +1010,25 @@ class ProductReleaseFetcher(BaseFetcher):
     http_client_options = {"timeout": httpx.Timeout(10.0, read=120.0)}
 ```
 
+Connection pool limits can also be overridden for fetchers that make
+parallel requests (e.g., via `asyncio.gather()` with concurrency above
+the factory defaults):
+
+```python
+class HighConcurrencyFetcher(BaseFetcher):
+    http_client_options = {
+        "limits": httpx.Limits(
+            max_connections=50,
+            max_keepalive_connections=20,
+        ),
+    }
+```
+
 Merge semantics: `http_client_options` entries are keyword arguments to
 the factory. For same-key headers, the fetcher-specific value replaces
 the factory default (last-writer-wins). User-Agent is the sole exception
 — always preserved and cannot be overridden. Other options (timeout,
-transport) replace defaults at the top-level kwarg level (not
+limits, transport) replace defaults at the top-level kwarg level (not
 deep-merged).
 
 ### `fetch_single()` and `catch_up()` Lifecycle

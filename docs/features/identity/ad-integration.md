@@ -150,9 +150,11 @@ only if you understand the impact."
    - If all attempts fail, the exception propagates to
      `BaseFetcher.run()` which marks the run as `failure`
    - Only connection timeouts and operation timeouts trigger retries.
-     Other exceptions (e.g., TLS certificate validation failure,
-     authentication errors) fail immediately without retry — these
-     indicate configuration problems, not transient issues
+     Other exceptions (e.g., `TLSConfigurationError` from
+     `build_tls_context()` for a corrupt/unparseable CA file, TLS
+     certificate validation failure during handshake, authentication
+     errors) fail immediately without retry — these indicate
+     configuration problems, not transient issues
 
    After pre-flight checks pass (step 2), entries with
    `EMPLOYEESTATUS != Active` are used only for building the

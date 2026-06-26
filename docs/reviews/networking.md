@@ -19,55 +19,19 @@
 
 ### NET-GAP-01 — Transport retry on non-idempotent requests may duplicate writes (High)
 
-**Category**: Error/concurrency (retry idempotency)
-**Status**: OPEN
-
-Transport-level retry treats all timeouts (including read/write timeouts)
-and connection errors as retryable, without distinguishing idempotent
-(GET) from non-idempotent (POST/PUT) requests. A read/write timeout can
-occur after the server has received and begun processing a request. The
-shared client is used by `IBSClient`, which performs write operations.
-Automatically retrying a timed-out POST could submit a duplicate
-operation. The spec should either restrict timeout/connection retry to
-idempotent methods or explicitly state that all consumers must ensure
-idempotency.
+**Status**: RESOLVED — Method safety sub-section added to Transport-Level Retry; retry restricted to idempotent methods by default with opt-in for non-idempotent; httpx built-in retry explicitly excluded; IBSClient retry safety documented in ibs-integration.md (2026-06-26)
 
 ### NET-GAP-02 — Timing of the missing-CA-file warning is ambiguous (Medium)
 
-**Category**: TLS failure handling
-**Status**: OPEN
-
-The spec states a warning is emitted "at startup" for a missing CA file,
-but also that the SSL context is built "at client creation time". For
-`BaseFetcher`, `self.http_client` is a lazy property created during
-`execute()`, not at startup. It is unspecified when the missing-file
-check runs and whether the warning fires once at process start, once per
-client creation (per fetcher run), or per request.
+**Status**: RESOLVED — SSL context lifecycle clarified: built fresh per create_http_client() invocation, not at startup; warning frequency documented per component type (2026-06-26)
 
 ### NET-GAP-03 — Corrupt-CA handling for non-HTTP protocols unspecified (Medium)
 
-**Category**: TLS failure handling
-**Status**: OPEN
-
-The corrupt/unparseable CA file behavior is documented only for the
-HTTP/fetcher path ("the fetcher fails"). The same `SUSE_CA_CERT_PATH`
-feeds the LDAP (`sync_ldap_directory`) and AMQP (`IBSEventConsumer`) SSL
-contexts. The behavior of the long-lived `IBSEventConsumer` on a corrupt
-CA file (crash at startup, crash-loop, retry) is unspecified, despite the
-consumer being a continuously-running process where this matters most.
+**Status**: RESOLVED — Introduced shared `build_tls_context()` function with uniform contract (missing→warning, corrupt→TLSConfigurationError); documented component-specific error handling in ibs-rabbitmq-integration.md (terminate process) and ad-integration.md (fail without retry) (2026-06-26)
 
 ### NET-GAP-04 — Connection pool size limits unspecified (Medium)
 
-**Category**: Concurrency
-**Status**: OPEN
-
-The spec defines a Pool timeout (10s) but never specifies the connection
-pool size limits (max connections, max keepalive). A fetcher issuing many
-parallel requests (up to the documented `max_concurrent_requests`, e.g.
-50) against the default httpx pool would experience pool-timeout errors
-once the pool is saturated. For a shared HTTP client spec, the pool
-capacity is a core concurrency parameter; its absence forces an
-implementer to guess (httpx defaults vs. explicit limits).
+**Status**: RESOLVED — Explicit pool limits (100 max connections, 20 max keepalive) added to Default Configuration table with override mechanism; note clarifying sequential usage pattern added; pool override example added to fetcher-infrastructure.md Override Mechanism section (2026-06-26)
 
 ### NET-GAP-05 — TLS verification override safety not enforced (Medium)
 
@@ -84,17 +48,7 @@ non-overridable like User-Agent.
 
 ### NET-GAP-06 — SSL context caching / certificate rotation behavior unspecified (Medium)
 
-**Category**: Certificate rotation
-**Status**: OPEN
-
-The spec says the SSL context is built at client creation time and that
-long-lived clients need a restart to pick up a rotated CA. It is
-unspecified whether the combined trust store / SSL context is cached at
-module level or rebuilt on every `create_http_client()` call. This
-determines whether fetchers (which create a fresh client per run) pick up
-a rotated CA on the next run without restart, or whether even they require
-a restart (if cached at import). The two interpretations yield materially
-different operational behavior.
+**Status**: RESOLVED — Explicitly specified that SSL context is rebuilt per create_http_client() invocation (no module-level caching); fetchers pick up rotated CA on next run without restart (2026-06-26)
 
 ### NET-GAP-07 — Retry-After HTTP-date in the past / clock skew not addressed (Low)
 

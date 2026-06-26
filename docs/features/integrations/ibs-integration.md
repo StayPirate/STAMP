@@ -217,6 +217,14 @@ the following overrides:
   errors)
 - Long-lived client: instantiated per-process, not per-request
 
+**Retry safety for POST operations**: IBSClient's POST operations
+(`cmd=diff` for source diff and request diff) are semantically
+read-only — they compute diffs without modifying IBS server state.
+Therefore, IBSClient enables `retry_non_idempotent=True` for these
+calls, allowing automatic retry on timeout and connection error as
+for idempotent methods. See `docs/features/platform/networking.md`
+(Transport-Level Retry, Method Safety) for the opt-in mechanism.
+
 #### IBSTrackReleaseDetector (`backend/app/services/ibs_track_release_detector.py`)
 
 Orchestrates codestream-level release detection using the `IBSClient`.

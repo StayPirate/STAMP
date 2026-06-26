@@ -15,6 +15,7 @@ Architectural decisions pending resolution before implementation begins.
 | OP-11 | Ecosystem Prefix Mapping | Packages | Open |
 | OP-12 | Fetcher Metrics Granularity | Fetcher Infrastructure | Open |
 | OP-13 | CWE Accumulation | Fetcher Infrastructure | Open |
+| OP-15 | IBSEventConsumer Admin Restart Endpoint | Platform | Open |
 | OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
 | OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
 | OP-9 | Remove FetcherRunWeeklyAggregate | — | Resolved |
@@ -478,6 +479,69 @@ scope) or A+C together, (b) which additional platform components
 beyond CPE mapping should be included in the initial version, (c)
 capability requirement for the admin page (reuse `manage_settings`
 or a new `view_system_info` capability).
+
+---
+
+### OP-15. IBSEventConsumer Admin Restart Endpoint
+
+**Origin**: analysis during fix of NET-GAP-02/06 (networking.md spec
+review). While evaluating the SSL context lifecycle for long-lived
+components, we identified that the IBSEventConsumer process has no
+application-level restart mechanism accessible to administrators.
+
+**Context**: `IBSEventConsumer` is a singleton long-running process that
+maintains a persistent AMQPS connection to `rabbit.suse.de`. On
+connection loss, it reconnects with exponential backoff (5s → 300s) and
+retries indefinitely — there is no give-up condition. The only existing
+management surface is a read-only status endpoint
+(`GET /api/v1/ibs-consumer/status`).
+
+Currently, the only way to restart the consumer is via infrastructure
+access (SSH, `docker restart`, Kubernetes pod deletion). This creates a
+dependency on infrastructure operators for scenarios that an application
+administrator should be able to resolve independently:
+
+- **Stuck state**: consumer reports `connected` but is not processing
+  messages (edge case in AMQP heartbeat detection)
+- **Memory leak / resource exhaustion**: long-running process accumulates
+  resources over weeks/months; periodic restart is a common operational
+  practice
+- **Credential rotation**: RabbitMQ credentials changed via environment
+  variables but the running process holds the old credentials
+- **Post-deploy verification**: after a deploy, admin wants to ensure the
+  consumer picks up the new code without relying on orchestrator health
+  checks
+- **Generic "try restarting"**: most common first-response to anomalous
+  behavior visible in the dashboard
+
+**Proposed approach**: `POST /api/v1/admin/ibs-consumer/restart`
+(admin-only, capability: `manage_settings` or a dedicated
+`manage_ibs_consumer` capability).
+
+Design considerations to evaluate:
+
+1. **Signaling mechanism**: the API server and the consumer run in
+   separate processes. Options: (a) Redis flag that the consumer checks
+   periodically (simple, slight delay), (b) signal the process via
+   orchestrator API (Docker/Kubernetes — couples to deployment target),
+   (c) a dedicated control channel (AMQP management queue — adds
+   complexity)
+2. **Event loss window**: during restart, the transient AMQP queue is
+   destroyed and messages are lost. The periodic catch-up fetcher
+   (`detect_ibs_track_releases`, every 24h) mitigates this, but the
+   admin should be warned in the UI. Consider a confirmation dialog:
+   "Events will be lost during restart (~30s window). The periodic
+   fetcher will catch up within 24 hours."
+3. **Scope**: should this extend to other singleton processes (Celery
+   Beat)? Or is the consumer the only one with this operational need?
+4. **Audit trail**: should restart actions be logged in an audit trail?
+   Probably yes (IdentityAuditEvent or a platform-level audit log).
+5. **Cooldown**: prevent rapid repeated restarts (e.g., minimum 60s
+   between restart requests).
+
+**Decision needed**: (a) signaling mechanism, (b) scope (consumer only
+vs. all singletons), (c) capability assignment, (d) priority relative
+to other open points.
 
 ---
 

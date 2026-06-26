@@ -118,7 +118,10 @@ RabbitMQ broker and processes commit events in real-time.
 2. **Consume loop**: for each incoming message, execute the processing
    pipeline (see [Processing Pipeline](#processing-pipeline))
 3. **Reconnection**: on connection loss, reconnect with exponential backoff
-   (initial: 5s, max: 300s). Log each reconnection attempt at WARNING level
+   (initial: 5s, max: 300s). Log each reconnection attempt at WARNING
+   level. The AMQPS SSL context is rebuilt on each reconnection attempt,
+   ensuring that a rotated CA certificate is picked up automatically
+   without process restart
 4. **Shutdown**: on SIGTERM/SIGINT, close the connection and drain
    in-progress messages gracefully
 
@@ -286,6 +289,7 @@ The two mechanisms are fully independent:
 
 | Condition | Behavior |
 |---|---|
+| SSL context creation failure (`TLSConfigurationError` from `build_tls_context()`) | Log ERROR with file path and error detail. Terminate process with non-zero exit code. Do NOT enter the reconnection loop — a corrupt CA file is a configuration error, not a transient network condition. Operator must fix the file and restart the process |
 | RabbitMQ broker unreachable at startup | Log ERROR, retry with exponential backoff |
 | Connection lost during consumption | Log WARNING, reconnect with exponential backoff. Events during disconnection are lost (caught by periodic fetcher) |
 | Invalid/unparseable message payload | Log WARNING with raw payload, acknowledge and discard |

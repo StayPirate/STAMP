@@ -53,11 +53,20 @@ def create_http_client(**overrides) -> httpx.AsyncClient:
 | Read timeout | 30 seconds | `http_client_options` |
 | Write timeout | 10 seconds | `http_client_options` |
 | Pool timeout | 10 seconds | `http_client_options` |
+| Max connections | 100 | `http_client_options` (limits) |
+| Max keepalive connections | 20 | `http_client_options` (limits) |
 | Accept | `application/json` | `http_client_options` (headers) |
 | Accept-Encoding | `gzip, deflate` (httpx built-in) | — |
 | TLS | Combined trust store (system CAs + SUSE CA) | See "TLS Trust Store Configuration" section |
 | Transport retry | See "Transport-Level Retry" below | `http_client_options` |
 | Proxy | Standard env vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) | System-level |
+
+Connection pool note: all current consumers make sequential requests
+within a single task (one HTTP request at a time per client instance).
+The pool exists for keepalive connection reuse between sequential
+requests to the same host, not for managing parallelism. These limits
+match httpx defaults and provide ample headroom for future consumers
+with higher concurrency needs.
 
 #### User-Agent
 
@@ -115,7 +124,8 @@ otherwise, the generic status-code row applies.
 
 | Condition | Retry | Backoff |
 |-----------|-------|---------|
-| 5xx, connection error, timeout | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
+| 5xx (any method) | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
+| Connection error, timeout (idempotent methods only†) | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
 | 429/503 with `Retry-After` ≤ 120s | 1 retry | Wait the indicated value |
 | 429/503 with `Retry-After` > 120s | No retry | Error propagated immediately |
 | 429 without `Retry-After` | No retry at transport | Fetcher decides |
@@ -136,6 +146,41 @@ absent — the response falls through to the "Retry-After absent" row.
 **Shutdown**: all retry sleeps (both fixed-backoff and Retry-After waits)
 use `asyncio.sleep()`, cancelled automatically on `SoftTimeLimitExceeded`
 or task revocation. No special handling needed.
+
+##### Method Safety
+
+Per RFC 9110 Section 9.2.2, a client SHOULD NOT automatically retry a
+request with a non-idempotent method unless it has means to know that
+the request semantics are actually idempotent.
+
+Default retry eligibility by method:
+
+- **Idempotent methods** (GET, HEAD, OPTIONS, PUT, DELETE): retry on
+  connection error, timeout (read/write), and 5xx with readable response
+- **Non-idempotent methods** (POST, PATCH): retry on 5xx with readable
+  response only. No retry on timeout or connection error by default —
+  these conditions can occur after the server has received and begun
+  processing the request, risking duplicate writes
+
+The `†` marker in the retry condition table above indicates the
+idempotent-method restriction.
+
+**Opt-in for non-idempotent methods**: the factory accepts a
+`retry_non_idempotent` parameter (boolean, default `False`). When
+`True`, retry applies to all methods uniformly (connection error and
+timeout are retried regardless of HTTP method). The caller is
+responsible for ensuring their operations are semantically safe to
+retry (e.g., IBS `cmd=diff` POST endpoints are read-only despite
+using POST).
+
+##### httpx Built-In Retry Exclusion
+
+httpx's built-in transport retry (`retries` parameter on
+`AsyncHTTPTransport`) is not used. The custom transport-level retry
+described above replaces it entirely, providing unified backoff,
+Retry-After support, method safety enforcement, and observability. Do
+not enable `retries` on the transport — this would cause multiplicative
+retry behavior (N httpx retries x M custom retries per attempt).
 
 #### HTTP Response Compression
 
@@ -166,7 +211,8 @@ client lifecycle independently of `BaseFetcher`:
 - TLS validated via the same combined trust store
 - httpx idle connection management (~5s timeout) prevents stale
   connections without manual intervention
-- Certificate rotation requires process restart (same as BaseFetcher)
+- Certificate rotation requires process restart (long-lived client;
+  see "Certificate rotation" below)
 
 ## TLS Trust Store Configuration
 
@@ -188,24 +234,75 @@ internal CA.
   no host matching, no fallback, no host list to maintain
 - **If file does not exist**: combined trust store contains only system
   CAs. Connections to SUSE internal services fail with TLS error. A log
-  warning is emitted at startup (does not block startup)
-- **If file is corrupt or unparseable**: SSL context creation raises an
-  error at client creation time. The fetcher fails with a clear error
-  message
+  warning is emitted when `create_http_client()` is invoked (does not
+  block startup). The file existence check runs inside
+  `create_http_client()` when constructing the SSL context — the SSL
+  context is built fresh on every invocation (no module-level caching).
+  Warning frequency per component type:
+  - Fetchers in batch mode (`execute()` loop): once per run — the client
+    is created lazily on first access and reused for all `fetch_single()`
+    calls within the same run
+  - Standalone `fetch_single_cve` tasks: once per task — a temporary
+    client is created and destroyed per call
+  - Long-lived clients (IBSClient, IBSEventConsumer): once per process
+    lifetime
+- **If file is corrupt or unparseable**: `build_tls_context()` raises
+  `TLSConfigurationError` with the file path and parse error detail.
+  The calling component handles this error according to its own
+  lifecycle model (see each integration spec for component-specific
+  behavior). This is a configuration error, not a transient condition
+  — retrying without fixing the file is pointless
 - **TLS verification**: always enforced. Failed handshake is an immediate
   error — never proceed with an unverified connection
-- **Certificate rotation**: SSL context is built at client creation time.
-  Long-lived clients (IBSClient) require process restart to pick up a
-  rotated CA certificate. Acceptable given CA rotations are infrequent
-  (years between)
+- **Certificate rotation**: since the SSL context is built fresh per
+  `create_http_client()` invocation (not cached at module level):
+  - Fetchers pick up a rotated CA automatically on the next run without
+    process restart
+  - IBSEventConsumer rebuilds its AMQPS SSL context on each
+    reconnection attempt (see `ibs-rabbitmq-integration.md`), picking
+    up a rotated CA automatically after any connection loss without
+    process restart
+  - IBSClient requires a process restart to pick up a rotated CA
+    (long-lived HTTP client with no reconnection event that would
+    trigger a rebuild)
+  - Acceptable given CA rotations are infrequent (years between
+    rotations)
+
+### Shared Trust Store Function
+
+All protocols use `build_tls_context()` to construct their SSL context:
+
+```python
+def build_tls_context() -> ssl.SSLContext:
+    """Build the combined TLS trust store (system CAs + SUSE CA).
+
+    Returns an ssl.SSLContext suitable for any protocol (HTTPS, LDAPS,
+    AMQPS).
+
+    Behavior:
+    - SUSE_CA_CERT_PATH missing: log WARNING, return system-only context
+    - SUSE_CA_CERT_PATH corrupt/unparseable: raise TLSConfigurationError
+    - SUSE_CA_CERT_PATH valid: return combined context (system + SUSE CA)
+    """
+```
+
+`create_http_client()` calls `build_tls_context()` internally.
+Non-HTTP components (`sync_ldap_directory`, `IBSEventConsumer`) call it
+directly and pass the returned context to their respective protocol
+libraries.
+
+Responsibility boundary: `build_tls_context()` is responsible only for
+constructing the context and signaling errors. The *handling* of
+`TLSConfigurationError` (retry, termination, failure marking) is owned
+by each component and documented in its respective spec.
 
 ### Protocol-Specific Integration
 
 | Protocol | Component | Trust Store Source |
 |----------|-----------|-------------------|
-| HTTPS | Shared HTTP client (all fetchers, IBSClient) | Combined trust store via factory |
-| LDAPS | `sync_ldap_directory` fetcher | Same `SUSE_CA_CERT_PATH`, passed to python-ldap SSL context |
-| AMQPS | `IBSEventConsumer` | Same `SUSE_CA_CERT_PATH`, passed to aio-pika/aiormq SSL context |
+| HTTPS | Shared HTTP client (all fetchers, IBSClient) | `build_tls_context()` via `create_http_client()` |
+| LDAPS | `sync_ldap_directory` fetcher | `build_tls_context()` passed to python-ldap |
+| AMQPS | `IBSEventConsumer` | `build_tls_context()` passed to aio-pika/aiormq |
 
 ## Cross-references
 
@@ -216,3 +313,5 @@ internal CA.
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — AMQP TLS
   configuration
 - `docs/configuration.md` — environment variable index
+- RFC 9110 Section 9.2.2 — HTTP method idempotency semantics (normative
+  basis for transport-level retry method safety)

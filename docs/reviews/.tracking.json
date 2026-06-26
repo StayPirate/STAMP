@@ -634,8 +634,8 @@
         "last_review": "2026-06-25T00:00:00+0000",
         "open": {
           "GAP": {
-            "H": 1,
-            "M": 5,
+            "H": 0,
+            "M": 1,
             "L": 4
           },
           "COH": {
@@ -659,7 +659,7 @@
             "L": 0
           }
         },
-        "resolved": 0,
+        "resolved": 5,
         "not_reviewed": [
           "COH",
           "DES",
