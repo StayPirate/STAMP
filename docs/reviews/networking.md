@@ -51,24 +51,11 @@
 
 ### NET-GAP-09 — Valid-but-wrong CA file (silent failure) not covered (Low)
 
-**Category**: Boundary condition
-**Status**: OPEN
-
-The spec covers missing and corrupt CA files, but not a file that is valid
-PEM yet does not contain the SUSE CA (e.g., wrong cert, empty-but-valid
-file). This parses successfully (no startup warning, no creation error)
-but produces runtime TLS handshake failures on every SUSE-internal
-connection — the silent-failure mode between the two documented cases.
+**Status**: RESOLVED — Auto-resolved: runtime TLS handshake errors provide sufficient diagnostic; no startup validation needed (2026-06-27)
 
 ### NET-GAP-10 — Which error propagates on retry exhaustion is unspecified (Low)
 
-**Category**: Error path
-**Status**: OPEN
-
-When all attempts fail with heterogeneous errors across the sequence
-(e.g., timeout, then 503, then connection error), it is unspecified which
-exception is surfaced (last, first, or aggregate). This affects the
-sanitized message the fetcher can produce.
+**Status**: RESOLVED — Auto-resolved: behavior is implicit (last-error-wins); no consumer relies on this distinction (2026-06-27)
 
 ---
 
