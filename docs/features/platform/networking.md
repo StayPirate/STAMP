@@ -35,8 +35,13 @@ infrastructure provides two layers:
 Location: `backend/app/services/http_client.py`
 
 ```python
-def create_http_client(**overrides) -> httpx.AsyncClient:
+def create_http_client(name: str, **overrides) -> httpx.AsyncClient:
     """Create a pre-configured httpx AsyncClient.
+
+    Args:
+        name: Identifies the calling component (fetcher name or client
+              name). Used to build the User-Agent header and included
+              in WARNING-level logs for TLS override traceability.
 
     Applies all cross-cutting defaults (User-Agent, timeouts, TLS,
     compression, Accept header, transport-level retry). Keyword
@@ -158,6 +163,11 @@ If the server-guided retry fails, a more persistent issue is likely.
 **Retry-After parsing**: integer (seconds) or HTTP-date (RFC 7231).
 Malformed values (unparseable strings, negative integers) are treated as
 absent — the response falls through to the "Retry-After absent" row.
+For HTTP-date values, the wait is computed as `parsed_date - now()`; if
+the result is ≤ 0 (date already elapsed or server clock ahead of client),
+the value is treated as absent (same fallthrough). This prevents
+zero-delay retries caused by server clock skew or stale dates and ensures
+consistent behavior with the negative-integer rule.
 
 **Shutdown**: all retry sleeps (both fixed-backoff and Retry-After waits)
 use `asyncio.sleep()`, cancelled automatically on `SoftTimeLimitExceeded`

@@ -43,27 +43,11 @@
 
 ### NET-GAP-07 — Retry-After HTTP-date in the past / clock skew not addressed (Low)
 
-**Category**: Boundary condition
-**Status**: OPEN
-
-Retry-After parsing handles negative integers as absent, but does not
-address an HTTP-date that resolves to a past instant (server clock skew,
-or an already-elapsed date). The computed wait would be ≤ 0; it is
-unspecified whether this is treated as absent, clamped to 0, or compared
-against the 120s ceiling. The `≤ 120s` threshold for HTTP-dates depends on
-`date - now()`, which is clock-skew sensitive and not discussed.
+**Status**: RESOLVED — HTTP-date ≤ now() treated as absent; clock skew addressed (2026-06-27)
 
 ### NET-GAP-08 — `name` parameter handling for non-fetcher callers unspecified (Low)
 
-**Category**: Function completeness
-**Status**: OPEN
-
-The User-Agent format requires `{name}`, and the spec says "the `name`
-parameter is passed explicitly to the factory", but the factory signature
-(`create_http_client(**overrides)`) does not declare `name` as a formal
-required parameter. The behavior when a non-fetcher caller omits `name`
-(raise, empty segment, default value) is unspecified. (See also
-NET-DOC-02.)
+**Status**: RESOLVED — Factory signature changed to require name as formal parameter (2026-06-27)
 
 ### NET-GAP-09 — Valid-but-wrong CA file (silent failure) not covered (Low)
 
@@ -100,11 +84,4 @@ Client") for the full factory spec (2026-06-25)
 
 ### NET-DOC-02 — Factory signature omits the required `name` parameter (Low)
 
-**Status**: OPEN
-
-The factory is documented as `create_http_client(**overrides)`, but `name`
-is mandatory to build the User-Agent and is passed explicitly by callers.
-The signature/docstring does not surface `name` as a distinct required
-argument, leaving a small ambiguity about how a non-overridable value is
-supplied through `**overrides`. Pre-existing (content-preserving split);
-overlaps with NET-GAP-08.
+**Status**: RESOLVED — Factory signature now declares name: str as required parameter (2026-06-27)

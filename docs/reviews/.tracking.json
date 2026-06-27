@@ -636,7 +636,7 @@
           "GAP": {
             "H": 0,
             "M": 0,
-            "L": 4
+            "L": 2
           },
           "COH": {
             "H": 0,
@@ -659,7 +659,7 @@
             "L": 0
           }
         },
-        "resolved": 6,
+        "resolved": 8,
         "not_reviewed": [
           "COH",
           "DES",
