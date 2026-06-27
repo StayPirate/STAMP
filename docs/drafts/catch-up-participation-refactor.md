@@ -201,6 +201,45 @@ elif getattr(resolved, '_is_default_cve_catch_up', False):
 
 This is deferred until needed (YAGNI).
 
+### Why `supports_fetch_single` remains a flag (not identity-detected like `catch_up`)
+
+Natural question: if `supports_fetch_single` merely records whether a
+fetcher implements `fetch_single()`, why not detect it by identity
+(`cls.fetch_single is not BaseCVEFetcher.fetch_single`) and eliminate
+the flag — the same approach this refactor uses for `catch_up`?
+
+The asymmetry is deliberate, rooted in the opposite nature of the two
+defaults:
+
+- **`BaseCVEFetcher.catch_up`** is a **usable** default (delegates to
+  `fetch_single()`). Every default-catch_up CVE fetcher inherits it
+  correctly without override → identity detection is **forced** (cannot
+  infer participation from "did you override?" because nobody does).
+- **`BaseCVEFetcher.fetch_single`** is a **sentinel** default (raises
+  `RuntimeError`). Representing the capability as an opt-out flag
+  (default `True`) is a choice that buys two properties identity
+  detection would lose:
+
+  1. **Explicit intent**: `supports_fetch_single = False` is a
+     deliberate declaration (KEV), distinguishable from an accidental
+     omission (bug).
+  2. **Loud failure**: with default `True`, a fetcher that forgets the
+     override gets included → on-demand/catch-up call `fetch_single()`
+     → `RuntimeError` caught immediately in tests. With identity
+     detection, the same mistake silently excludes the fetcher from
+     both rosters — the bug is masked.
+
+This reflects opt-out vs opt-in semantics: `fetch_single` support is
+the norm for CVE fetchers (7 of 8) → opt-out with default-`True` flag
+catches omissions loudly. Custom `catch_up()` on non-CVE fetchers is
+the exception → opt-in by presence/identity, where silent exclusion is
+correct default behavior.
+
+Pragmatically, the flag also keeps the catch-up predicate readable:
+it tests `cls.supports_fetch_single` (a clean boolean) instead of
+`cls.fetch_single is not BaseCVEFetcher.fetch_single` (obscure,
+coupled to sentinel name).
+
 ### Import-time validation adjustment
 
 The existing `__init_subclass__` validation in `BaseCVEFetcher` does
@@ -223,6 +262,7 @@ AsyncSession) -> None`."
 | Location | Current | Action |
 |----------|---------|--------|
 | Line 55 (Class Attributes table) | Row for `participates_in_catch_up` | **Remove row** |
+| Line 56 (Class Attributes, `supports_fetch_single` description) | "...are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()`" | **Extend**: append that `supports_fetch_single = False` also excludes the fetcher from the catch-up roster (`get_catch_up_fetchers()`), because the default `catch_up()` delegates to `fetch_single()`. Makes the dual role of the attribute explicit |
 | Line 65 (Concrete Methods table, `catch_up` description) | "...fetchers with `False` also set `participates_in_catch_up = False` (so `catch_up()` is never invoked)" | **Reword**: "...fetchers with `supports_fetch_single = False` are excluded from `get_catch_up_fetchers()` results (so `catch_up()` is never invoked for them)" |
 | Line 166 (pseudocode `__init_subclass__`) | `participates_in_catch_up: bool = True` | **Remove line** |
 | Line 207 (Non-Modification Statement, item 4) | "The `participates_in_catch_up` opt-out for catch-up participation" | **Remove item** (renumber subsequent items) |
