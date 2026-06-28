@@ -1,14 +1,16 @@
 # Catch-Up Participation Refactor
 
 **Status**: DRAFT — pending review before application  
-**Scope**: Eliminate `participates_in_catch_up` flag; adopt identity-based
-catch-up predicate  
-**Out of scope**: Package topology re-resolution on ticket reopen (separate
-future spec)  
-**Resolves**: CFI-GAP-01 (by construction — the coupling no longer exists)  
+**Revision**: 2 (complete rewrite; supersedes Option 6 draft reviewed
+2026-06-28 — see git history for prior version)  
+**Scope**: Promote `participates_in_catch_up` to `BaseFetcher` with
+uniform predicate; auto-derive for CVE fetchers from
+`supports_fetch_single`  
+**Out of scope**: Package topology re-resolution on ticket reopen
+(separate future spec)  
+**Resolves**: CFI-GAP-01 (coupling dissolved by auto-derivation)  
 **Affected specs**: `cve-fetcher-infrastructure.md`,
-`fetcher-infrastructure.md`, `git-fetcher-infrastructure.md`,
-`cve-sync-kev.md`
+`fetcher-infrastructure.md`, `cve-sync-kev.md`
 
 ---
 
@@ -25,9 +27,10 @@ catch-up participation:
 | `supports_fetch_single` | 2026-06-20 | `2d417a2` → `c9d6f13` | Opt-out for catalog-based CVE fetchers with no per-CVE API |
 
 Both flags were introduced on consecutive days to solve problems on the
-same fetcher (CISA KEV). No divergent use case has ever existed.
+same fetcher (CISA KEV). No divergent use case has ever existed: every
+fetcher sets both to the same value.
 
-### Redundancy
+### Redundancy on the CVE side
 
 The default `catch_up()` on `BaseCVEFetcher` delegates to
 `fetch_single()`:
@@ -40,219 +43,225 @@ async def catch_up(self, ticket_id: str, session: AsyncSession) -> None:
         await self.commit_and_dispatch(session, result)
 ```
 
-This creates a mechanical coupling: a CVE fetcher using the default
-`catch_up()` **can** participate in catch-up **if and only if**
-`supports_fetch_single = True`. The two flags must always agree for
-default-catch_up CVE fetchers:
+A CVE fetcher using this default **can** participate in catch-up **if
+and only if** `supports_fetch_single = True`. The two flags must always
+agree for default-catch_up CVE fetchers:
 
 | `supports_fetch_single` | `participates_in_catch_up` | Status |
 |---|---|---|
 | `True` | `True` | 7 fetchers (all default-catch_up CVE fetchers) |
 | `False` | `False` | 1 fetcher (KEV) |
-| `True` | `False` | 0 — never used; speculative |
-| `False` | `True` | 0 — mechanically invalid (RuntimeError at catch-up time) |
+| `True` | `False` | 0 — speculative, never used |
+| `False` | `True` | 0 — mechanically invalid (RuntimeError) |
 
-`participates_in_catch_up` encodes a fact already implied by
-`supports_fetch_single`. It is a redundant flag.
-
-### CFI-GAP-01 — The coupling is unenforced
+### CFI-GAP-01 — Unenforced coupling
 
 The `__init_subclass__` validation on `BaseCVEFetcher` validates only
-`cve_source_type` (Enum membership, uniqueness). It does NOT validate
-that `supports_fetch_single = False` implies
-`participates_in_catch_up = False`. A fetcher that sets one without the
-other passes all import-time checks and crashes only at catch-up
-runtime — a rare, hard-to-diagnose moment.
+`cve_source_type`. A fetcher that sets `supports_fetch_single = False`
+but forgets `participates_in_catch_up = False` passes all import-time
+checks and crashes at catch-up runtime.
 
-The original fix proposed by CFI-GAP-01 is to enforce the coupling via
-`__init_subclass__` validation. This draft proposes a stronger solution:
-eliminate the redundant flag entirely, dissolving the coupling by
-construction.
-
-### Latent fragility in non-CVE catch-up detection
+### Fragility on the non-CVE side
 
 `get_catch_up_fetchers()` uses `'catch_up' in cls.__dict__` to detect
-non-CVE fetchers with custom catch-up. This introspection check is
-fragile: if a non-CVE fetcher inherits `catch_up()` from an
-intermediate base class (e.g., a future `BaseIBSReleaseFetcher` shared
-by track and product detection), the subclass's `__dict__` will not
-contain the method, causing it to be incorrectly excluded from the
-catch-up roster. This is the same inheritance problem that forced the
-flag onto `BaseCVEFetcher`.
+non-CVE fetchers. This breaks when a non-CVE fetcher inherits
+`catch_up()` from an intermediate base class (method in the base's
+`__dict__`, not the subclass's). This is a latent fragility that
+becomes a **concrete near-term problem** given the project roadmap:
+delivery detection will expand to git (beyond IBS), and products will
+be sourced from 3+ providers — both scenarios naturally produce
+intermediate base classes sharing a `catch_up()` implementation.
 
 ---
 
 ## 2. Decision
 
-**Eliminate `participates_in_catch_up`.** Derive CVE catch-up
-participation from `supports_fetch_single`. Replace the `__dict__`
-introspection for non-CVE fetchers with an identity-based predicate
-robust to inheritance depth.
+**Promote `participates_in_catch_up` to `BaseFetcher`** (default
+`False`). On `BaseCVEFetcher`, **auto-derive** the flag from
+`supports_fetch_single` via `__init_subclass__` unless explicitly
+overridden. Replace the current two-branch predicate with a **uniform
+single-flag check**.
 
 ---
 
 ## 3. Alternatives Considered
 
-| Option | Description | CFI-GAP-01 | Non-CVE fragility | Complexity | Flexibility |
-|--------|-------------|------------|-------------------|------------|-------------|
-| 1. Enforce coupling | Add `__init_subclass__` check for flag agreement | Mitigated (guard) | Remains | Low | Keeps speculative (True,False) case |
-| 2. Eliminate flag, minimal predicate | Remove flag; `get_catch_up_fetchers` checks `supports_fetch_single` for CVE, keeps `__dict__` for non-CVE | **Dissolved** | Remains | Minimal | Loses (True,False) case |
-| 3. Move flag to BaseFetcher | Unify on a single flag for all fetchers | Remains (guard) | Resolved | Medium + boilerplate | Keeps (True,False) case |
-| **6. Eliminate flag, robust predicate** | Remove flag; identity-based 3-way predicate | **Dissolved** | **Resolved** | Medium (centralized) | Loses (True,False) case |
+| Option | Description | CFI-GAP-01 | Non-CVE intermediate bases | Complexity | Notes |
+|--------|-------------|------------|---------------------------|------------|-------|
+| 1. Enforce coupling | Add `__init_subclass__` check for flag agreement | Mitigated (guard) | Not addressed | Low | Treats symptom, not cause |
+| 2. Eliminate flag, `__dict__` predicate | Remove `participates_in_catch_up`; check `supports_fetch_single` for CVE, `__dict__` for non-CVE | Dissolved | **Not addressed** — breaks with intermediate bases | Minimal | Good for simple hierarchies; insufficient for multi-source roadmap |
+| 6. Eliminate flag, identity predicate | Remove flag; identity-based 3-way predicate (`resolved is BaseCVEFetcher.catch_up`) | Dissolved | Addressed | Medium | Reviewed and rejected: introduces new fragilities (decorators, intermediate CVE overrides) requiring sentinel + import-time guard — lateral complexity move |
+| **3+D. Uniform flag + derivation** | Promote flag to BaseFetcher; auto-derive on CVE side from `supports_fetch_single` | **Dissolved by derivation** | **Addressed natively** | Medium (contained) | Chosen — robust to MRO depth, decorators, intermediate bases on both sides |
 
-**Chosen: Option 6.** Rationale:
+### Why Option 6 was rejected
 
-- Dissolves CFI-GAP-01 by construction (no coupling to enforce)
-- Resolves the latent non-CVE fragility (no `__dict__` introspection)
-- Reduces conceptual surface (one flag instead of two)
-- The lost (True,False) case is speculative, has never been used, and is
-  cheaply re-introducible as an additive change if ever needed
-- Cost is contained: the predicate complexity is centralized in one
-  function
+Option 6 was reviewed by design, coherence, and gap-analysis agents
+(2026-06-28). Reviewer findings:
+
+- The identity-based predicate requires a sentinel attribute
+  (`_is_default_cve_catch_up`) to handle intermediate CVE bases that
+  override `catch_up()` — adding enforcement machinery instead of
+  eliminating it
+- Decorators on `catch_up()` break identity comparison (different
+  concern category than the current spec)
+- Net assessment: complexity was redistributed, not reduced
+
+The roadmap confirmation (git-based delivery detection, multi-source
+products) then made Option 2's `__dict__` predicate untenable for
+non-CVE fetchers, leaving Option 3 + derivation as the design that
+addresses both sides with minimal machinery.
 
 ---
 
-## 4. New Predicate Specification
+## 4. New Design
 
-### `get_catch_up_fetchers()` — identity-based 3-way predicate
+### `BaseFetcher` — new class attribute
+
+```python
+class BaseFetcher:
+    participates_in_catch_up: bool = False
+```
+
+Default `False`: non-CVE fetchers opt IN explicitly (by setting `True`
+on their class or an intermediate base). This is consistent with the
+non-CVE norm (most non-CVE fetchers do not participate in catch-up).
+
+### `BaseCVEFetcher` — auto-derivation in `__init_subclass__`
+
+```python
+class BaseCVEFetcher(BaseFetcher):
+    supports_fetch_single: bool = True
+
+    def __init_subclass__(cls, **kwargs):
+        if not cls.__dict__.get('abstract', False):
+            # CVE-specific validation (cve_source_type) ...
+            ...
+
+            # Auto-derive participates_in_catch_up from supports_fetch_single
+            # unless the subclass explicitly declares it
+            if 'participates_in_catch_up' not in cls.__dict__:
+                cls.participates_in_catch_up = cls.supports_fetch_single
+
+        super().__init_subclass__(**kwargs)
+        # ... registration in _CVE_SOURCE_TYPE_MAP ...
+```
+
+**Effect**: a CVE fetcher only needs to set `supports_fetch_single`.
+The catch-up participation derives automatically. KEV sets
+`supports_fetch_single = False` → `participates_in_catch_up` becomes
+`False` without explicit declaration.
+
+**Explicit override preserved**: a future CVE fetcher CAN set
+`participates_in_catch_up = False` explicitly (even with
+`supports_fetch_single = True`) to opt out of catch-up while retaining
+on-demand capability. This is the `(True, False)` case — expressible
+but not required.
+
+### `get_catch_up_fetchers()` — uniform predicate
 
 ```python
 def get_catch_up_fetchers() -> dict[str, type[BaseFetcher]]:
-    """Return fetchers with catch-up capability, keyed by fetcher name.
+    """Return fetchers that participate in per-ticket catch-up.
 
-    A fetcher has catch-up capability if:
-    1. Its resolved catch_up method is BaseCVEFetcher's default AND
-       it has supports_fetch_single = True (default delegates to
-       fetch_single — only works if fetch_single is implemented), OR
-    2. Its resolved catch_up method is a real override (neither
-       BaseFetcher's abstract placeholder nor BaseCVEFetcher's default)
-       — this covers both non-CVE fetchers with custom catch_up and
-       CVE fetchers with custom catch_up implementations.
+    Selection is based solely on the participates_in_catch_up class
+    attribute. This attribute is:
+    - Auto-derived from supports_fetch_single for BaseCVEFetcher
+      subclasses (unless explicitly overridden)
+    - Set explicitly by non-CVE fetchers (on the concrete class or
+      an intermediate base)
+    - Default False on BaseFetcher (non-participating unless declared)
 
-    Fetchers whose resolved catch_up is BaseFetcher.catch_up (the
-    abstract placeholder that raises NotImplementedError) are excluded.
+    Note: this predicate selects by CAPABILITY, not by enabled state.
+    The enabled check is performed downstream in run_catch_up at task
+    execution time. A disabled fetcher is still returned here but
+    skipped silently at runtime.
     """
-    from app.services.base_cve_fetcher import BaseCVEFetcher
-
-    fetchers: dict[str, type[BaseFetcher]] = {}
-    for name, cls in FETCHER_REGISTRY.items():
-        resolved = cls.catch_up
-        if resolved is BaseFetcher.catch_up:
-            # Abstract placeholder — no catch-up capability
-            continue
-        elif resolved is BaseCVEFetcher.catch_up:
-            # Default CVE catch_up — delegates to fetch_single
-            if cls.supports_fetch_single:
-                fetchers[name] = cls
-        else:
-            # Real override (non-CVE custom OR CVE custom) — always included
-            fetchers[name] = cls
-    return fetchers
+    return {
+        name: cls
+        for name, cls in FETCHER_REGISTRY.items()
+        if cls.participates_in_catch_up
+    }
 ```
 
-### Trace table — verification across all hierarchy levels
+### Trace table — all hierarchy levels
 
-| Concrete class | Hierarchy depth | `catch_up` resolved to | Branch | `supports_fetch_single` | In roster? |
-|---|---|---|---|---|---|
-| `SyncNvdCves` | 3 (BF→BCVEF→concrete) | `BaseCVEFetcher.catch_up` | branch 2 | `True` | Yes |
-| `SyncMitreCves` | 4 (BF→BCVEF→BGF→concrete) | `BaseCVEFetcher.catch_up` (via BGF) | branch 2 | `True` | Yes |
-| `SyncKernelCves` | 4 (BF→BCVEF→BGF→concrete) | `BaseCVEFetcher.catch_up` (via BGF) | branch 2 | `True` | Yes |
-| `SyncCisaKev` | 3 (BF→BCVEF→concrete) | `BaseCVEFetcher.catch_up` | branch 2 | `False` | **No** |
-| `SyncRedhatCves` | 3 | `BaseCVEFetcher.catch_up` | branch 2 | `True` | Yes |
-| `SyncEpssScores` | 3 | `BaseCVEFetcher.catch_up` | branch 2 | `True` | Yes |
-| `SyncGhsaAdvisories` | 3 | `BaseCVEFetcher.catch_up` | branch 2 | `True` | Yes |
-| `SyncOsvAdvisories` | 3 | `BaseCVEFetcher.catch_up` | branch 2 | `True` | Yes |
-| `DetectIbsTrackReleases` | 2 (BF→concrete) | own override | branch 3 | N/A | Yes |
-| `DetectIbsProductReleases` | 2 (BF→concrete) | own override | branch 3 | N/A | Yes |
-| `SyncIbsRequests` | 2 (BF→concrete) | own override | branch 3 | N/A | Yes |
-| `EvaluateLifecycleTransitions` | 2 (BF→concrete) | own override | branch 3 | N/A | Yes |
-| `SyncIbsBugowners` | 2 (BF→concrete) | own override | branch 3 | N/A | Yes |
-| `SyncSmeltProducts` | 2 (BF→concrete) | `BaseFetcher.catch_up` | branch 1 | N/A | **No** |
-| `SyncLdapDirectory` | 2 (BF→concrete) | `BaseFetcher.catch_up` | branch 1 | N/A | **No** |
-| *future* `BaseIBSReleaseFetcher` → `DetectIbsTrackReleases` | 3 (BF→intermediate→concrete) | override on intermediate | branch 3 | N/A | Yes |
+| Concrete class | Hierarchy | `participates_in_catch_up` | Source | In roster? |
+|---|---|---|---|---|
+| `SyncNvdCves` | BF→BCVEF→concrete | `True` | derived from `supports_fetch_single=True` | Yes |
+| `SyncMitreCves` | BF→BCVEF→BGF→concrete | `True` | derived (BGF doesn't override) | Yes |
+| `SyncKernelCves` | BF→BCVEF→BGF→concrete | `True` | derived | Yes |
+| `SyncCisaKev` | BF→BCVEF→concrete | `False` | derived from `supports_fetch_single=False` | **No** |
+| `SyncRedhatCves` | BF→BCVEF→concrete | `True` | derived | Yes |
+| `SyncEpssScores` | BF→BCVEF→concrete | `True` | derived | Yes |
+| `SyncGhsaAdvisories` | BF→BCVEF→concrete | `True` | derived | Yes |
+| `SyncOsvAdvisories` | BF→BCVEF→concrete | `True` | derived | Yes |
+| `DetectIbsTrackReleases` | BF→concrete | `True` | explicit on class | Yes |
+| `DetectIbsProductReleases` | BF→concrete | `True` | explicit on class | Yes |
+| `SyncIbsRequests` | BF→concrete | `True` | explicit on class | Yes |
+| `EvaluateLifecycleTransitions` | BF→concrete | `True` | explicit on class | Yes |
+| `SyncIbsBugowners` | BF→concrete | `True` | explicit on class | Yes |
+| `SyncSmeltProducts` | BF→concrete | `False` | inherited default | **No** |
+| `SyncLdapDirectory` | BF→concrete | `False` | inherited default | **No** |
+| *future* `BaseTrackReleaseFetcher` → `DetectIbsTrackReleases` | BF→intermediate→concrete | `True` | explicit on intermediate, inherited by concrete | Yes |
+| *future* `BaseTrackReleaseFetcher` → `DetectGitTrackReleases` | BF→intermediate→concrete | `True` | inherited from intermediate | Yes |
 
-### Intermediate CVE base class assumption
+### Intermediate non-CVE base classes
 
-**Design rule**: intermediate CVE base classes (e.g., `BaseGitFetcher`,
-or any future intermediate between `BaseCVEFetcher` and a concrete
-fetcher) MUST NOT override `catch_up()`. They inherit the default
-delegation from `BaseCVEFetcher`.
-
-**Rationale**: if an intermediate base overrides `catch_up()` with its
-own delegation to `fetch_single()`, the identity check
-`resolved is BaseCVEFetcher.catch_up` would fail, causing the fetcher
-to land in branch 3 (unconditionally included) regardless of
-`supports_fetch_single`. This would be incorrect for a subclass that
-sets `supports_fetch_single = False`.
-
-**Extension path**: if this constraint ever needs to be relaxed (an
-intermediate CVE base needs a custom `catch_up()`), the predicate can
-be extended by marking default-delegating catch_up methods with a
-sentinel attribute:
+The pattern for shared catch-up logic across delivery/product sources:
 
 ```python
-# Mark default-delegating catch_up methods
-BaseCVEFetcher.catch_up._is_default_cve_catch_up = True
+class BaseTrackReleaseFetcher(BaseFetcher):
+    participates_in_catch_up = True      # set once on the base
+    abstract = True                       # not registered in FETCHER_REGISTRY
 
-# In get_catch_up_fetchers:
-elif getattr(resolved, '_is_default_cve_catch_up', False):
-    if cls.supports_fetch_single:
-        fetchers[name] = cls
+    async def catch_up(self, ticket_id: str, session: AsyncSession) -> None:
+        """Shared catch-up logic for track release detection."""
+        ...
+
+class DetectIbsTrackReleases(BaseTrackReleaseFetcher):
+    name = "detect_ibs_track_releases"
+    # inherits participates_in_catch_up = True
+    # inherits catch_up()
+
+class DetectGitTrackReleases(BaseTrackReleaseFetcher):
+    name = "detect_git_track_releases"
+    # inherits participates_in_catch_up = True
+    # inherits catch_up()
 ```
 
-This is deferred until needed (YAGNI).
+Both concrete fetchers participate in catch-up via inherited flag —
+no `__dict__` fragility, no convention workarounds.
 
-### Why `supports_fetch_single` remains a flag (not identity-detected like `catch_up`)
+### Why `supports_fetch_single` remains a flag
 
-Natural question: if `supports_fetch_single` merely records whether a
-fetcher implements `fetch_single()`, why not detect it by identity
-(`cls.fetch_single is not BaseCVEFetcher.fetch_single`) and eliminate
-the flag — the same approach this refactor uses for `catch_up`?
+`supports_fetch_single` is NOT auto-detected from method presence
+(unlike what Option 6 proposed for `catch_up`). The asymmetry is
+deliberate:
 
-The asymmetry is deliberate, rooted in the opposite nature of the two
-defaults:
-
-- **`BaseCVEFetcher.catch_up`** is a **usable** default (delegates to
-  `fetch_single()`). Every default-catch_up CVE fetcher inherits it
-  correctly without override → identity detection is **forced** (cannot
-  infer participation from "did you override?" because nobody does).
 - **`BaseCVEFetcher.fetch_single`** is a **sentinel** default (raises
-  `RuntimeError`). Representing the capability as an opt-out flag
-  (default `True`) is a choice that buys two properties identity
-  detection would lose:
-
+  `RuntimeError`). An opt-out flag (default `True`) provides:
   1. **Explicit intent**: `supports_fetch_single = False` is a
-     deliberate declaration (KEV), distinguishable from an accidental
-     omission (bug).
-  2. **Loud failure**: with default `True`, a fetcher that forgets the
-     override gets included → on-demand/catch-up call `fetch_single()`
-     → `RuntimeError` caught immediately in tests. With identity
-     detection, the same mistake silently excludes the fetcher from
-     both rosters — the bug is masked.
+     deliberate declaration, distinguishable from a forgotten override
+  2. **Loud failure**: a fetcher that forgets the override is included
+     → `RuntimeError` caught immediately in tests (not silently
+     excluded)
+- **`participates_in_catch_up`** is an **explicit participation
+  signal** that works uniformly across all fetcher types via MRO
+  attribute lookup — no introspection needed
 
-This reflects opt-out vs opt-in semantics: `fetch_single` support is
-the norm for CVE fetchers (7 of 8) → opt-out with default-`True` flag
-catches omissions loudly. Custom `catch_up()` on non-CVE fetchers is
-the exception → opt-in by presence/identity, where silent exclusion is
-correct default behavior.
+### Caching semantics clarification
 
-Pragmatically, the flag also keeps the catch-up predicate readable:
-it tests `cls.supports_fetch_single` (a clean boolean) instead of
-`cls.fetch_single is not BaseCVEFetcher.fetch_single` (obscure,
-coupled to sentinel name).
+The current spec contains a contradiction (lines 439-444 of
+`fetcher-infrastructure.md`): it states the function is "computed on
+each call (not cached)" but requires a `_clear_catch_up_cache()` test
+helper. Resolution:
 
-### Import-time validation adjustment
-
-The existing `__init_subclass__` validation in `BaseCVEFetcher` does
-NOT need a new check for `participates_in_catch_up` (since the flag no
-longer exists). No new validation rule is introduced — the catch-up
-roster is derived entirely from the predicate at runtime.
-
-The existing `BaseFetcher.__init_subclass__` rule that validates the
-`catch_up()` signature (riga 829 of `fetcher-infrastructure.md`) still
-applies unchanged: "If a fetcher defines `catch_up()` in its
-`__dict__`, it must accept `(self, ticket_id: str, session:
-AsyncSession) -> None`."
+**Adopt "no cache"**: the predicate iterates `FETCHER_REGISTRY` on
+each call. The `_clear_catch_up_cache()` test helper is **removed** —
+test suites that dynamically register mock fetcher classes need only
+clean `FETCHER_REGISTRY` (already required for `_clear_fetch_single_cache()`
+and general fetcher test isolation). This eliminates the contradiction
+and removes an unnecessary abstraction.
 
 ---
 
@@ -262,114 +271,118 @@ AsyncSession) -> None`."
 
 | Location | Current | Action |
 |----------|---------|--------|
-| Line 55 (Class Attributes table) | Row for `participates_in_catch_up` | **Remove row** |
-| Line 56 (Class Attributes, `supports_fetch_single` description) | "...are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()`" | **Extend**: append that `supports_fetch_single = False` also excludes the fetcher from the catch-up roster (`get_catch_up_fetchers()`), because the default `catch_up()` delegates to `fetch_single()`. Makes the dual role of the attribute explicit |
-| Line 65 (Concrete Methods table, `catch_up` description) | "...fetchers with `False` also set `participates_in_catch_up = False` (so `catch_up()` is never invoked)" | **Reword**: "...fetchers with `supports_fetch_single = False` are excluded from `get_catch_up_fetchers()` results (so `catch_up()` is never invoked for them)" |
-| Line 166 (pseudocode `__init_subclass__`) | `participates_in_catch_up: bool = True` | **Remove line** |
-| Line 207 (Non-Modification Statement, item 4) | "The `participates_in_catch_up` opt-out for catch-up participation" | **Remove item** (renumber subsequent items) |
-| Line 579 (Default catch_up section) | "(they also set `participates_in_catch_up = False`)" | **Reword**: "(they are excluded from `get_catch_up_fetchers()` because `supports_fetch_single = False`)" |
+| Line 55 (Class Attributes table, `participates_in_catch_up` row) | Row with default `True`, description references `get_catch_up_fetchers()` | **Reword**: default remains `True`, but description changes to: "Whether the fetcher participates in per-ticket catch-up. Inherited from `BaseFetcher` (default `False`); on `BaseCVEFetcher` subclasses, **auto-derived** from `supports_fetch_single` via `__init_subclass__` unless explicitly overridden in the subclass body. Global-scope CVE fetchers (KEV) set `supports_fetch_single = False` and the derivation produces `participates_in_catch_up = False` automatically" |
+| Line 56 (Class Attributes, `supports_fetch_single` description) | "...are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()`" | **Extend**: append that `supports_fetch_single = False` also causes `participates_in_catch_up` to derive as `False`, excluding the fetcher from the catch-up roster. Makes the dual role explicit |
+| Line 65 (Concrete Methods, `catch_up` description) | "...fetchers with `False` also set `participates_in_catch_up = False` (so `catch_up()` is never invoked)" | **Reword**: "...fetchers with `supports_fetch_single = False` have `participates_in_catch_up` auto-derived as `False` (so `catch_up()` is never invoked for them)" |
+| Lines 166-188 (pseudocode `__init_subclass__`) | Only validates `cve_source_type` | **Add** the auto-derivation block after uniqueness check and before `super().__init_subclass__()`: `if 'participates_in_catch_up' not in cls.__dict__: cls.participates_in_catch_up = cls.supports_fetch_single` |
+| Line 207 (Non-Modification Statement, item 4) | "The `participates_in_catch_up` opt-out for catch-up participation" | **Reword**: "The `participates_in_catch_up` auto-derivation from `supports_fetch_single` (catch-up roster inclusion)" |
+| Line 579 (Default catch_up section) | "(they also set `participates_in_catch_up = False`)" | **Reword**: "(their `participates_in_catch_up` is auto-derived as `False` from `supports_fetch_single = False`)" |
 
 ### File 2: `docs/features/platform/fetcher-infrastructure.md`
 
 | Location | Current | Action |
 |----------|---------|--------|
-| Lines 403-437 (`get_catch_up_fetchers()` section) | Two-branch predicate with `participates_in_catch_up` + `'catch_up' in cls.__dict__` | **Replace entirely** with the new 3-way identity-based predicate (Section 4 of this draft). Update docstring, code block, and explanatory text. Lines 439-444 (Caching semantics + `_clear_catch_up_cache()`) are preserved unchanged below the new section |
-| Line 615 (excluded fetchers table, `sync_cisa_kev` row) | "Syncs entire KEV catalog (sets `participates_in_catch_up = False`)" | **Reword**: "Syncs entire KEV catalog (`supports_fetch_single = False` — excluded from catch-up by predicate)" |
-| Lines 617-622 (KEV exclusion explanatory note) | Full paragraph: "Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but opts out of catch-up via `participates_in_catch_up = False` because its `execute()` syncs the entire catalog on every run — there is no gap to recover after ticket reactivation. It also sets `supports_fetch_single = False` because CISA KEV is a monolithic catalog with no per-CVE API — the `fetch_single_cve` task is never dispatched for this fetcher." | **Replace entire paragraph** with: "Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but sets `supports_fetch_single = False` because CISA KEV is a monolithic catalog with no per-CVE API. This single attribute excludes it from both `get_fetch_single_fetchers()` (never dispatched by `fetch_single_cve`) and `get_catch_up_fetchers()` (the predicate's branch 2 checks `supports_fetch_single` before including default-catch_up CVE fetchers). Its `execute()` syncs the entire catalog on every run, so there is no gap to recover after ticket reactivation." |
-| Line 829 (import-time validation rule) | "If a fetcher defines `catch_up()` in its `__dict__`, it must accept..." | **Keep rule semantics** (the validation still applies to any fetcher that defines `catch_up()` in its `__dict__`) — no change needed |
-| After the new predicate section | (does not exist) | **Add**: "Intermediate CVE base class assumption" paragraph (Section 4 of this draft). Insert between the new predicate explanatory text and the existing "Caching semantics" paragraph (current line 439) |
+| BaseFetcher class attributes section (near line 50) | No `participates_in_catch_up` attribute | **Add row**: `participates_in_catch_up` / `bool` / `False` / "Whether the fetcher participates in per-ticket catch-up. Default `False` — non-CVE fetchers opt in explicitly (on the concrete class or an intermediate base). `BaseCVEFetcher` auto-derives this from `supports_fetch_single` for its subclasses" |
+| Lines 403-437 (`get_catch_up_fetchers()` section) | Two-branch predicate with `participates_in_catch_up` + `'catch_up' in cls.__dict__` | **Replace entirely** with the new uniform predicate (Section 4 of this draft) |
+| Lines 439-444 (Caching semantics) | Contradictory text about no-cache + `_clear_catch_up_cache()` | **Replace**: "Computed on each call from the current registry state (not cached). No dedicated cache-clearing test helper is needed — test suites that dynamically register fetcher classes clean `FETCHER_REGISTRY` directly" |
+| Line 615 (excluded fetchers table, `sync_cisa_kev` row) | "Syncs entire KEV catalog (sets `participates_in_catch_up = False`)" | **Reword**: "Syncs entire KEV catalog (`supports_fetch_single = False` → `participates_in_catch_up` derived as `False`)" |
+| Lines 617-622 (KEV exclusion explanatory note) | References `participates_in_catch_up = False` as explicit opt-out | **Reword** to explain it is now auto-derived from `supports_fetch_single = False` |
+| Import-time validation (line 829) | "If a fetcher defines `catch_up()` in its `__dict__`..." | **Keep unchanged** — the signature validation still applies regardless of how participation is signaled |
 
 ### File 3: `docs/features/tickets/cve-sync-kev.md`
 
 | Location | Current | Action |
 |----------|---------|--------|
-| Line 37 (code example) | `participates_in_catch_up = False` | **Remove line** |
-| Line 64 (attributes table) | Row: `participates_in_catch_up` / `False` | **Remove row** |
-| Surrounding text (if any explanation references the flag) | "...sets `participates_in_catch_up = False`..." | **Reword** to reference `supports_fetch_single = False` as the sole opt-out mechanism |
+| Line 37 (code example) | `participates_in_catch_up = False` | **Remove line** (auto-derived from `supports_fetch_single = False`) |
+| Line 64 (attributes table) | Row: `participates_in_catch_up` / `False` | **Remove row** or **reword** to: "auto-derived as `False` from `supports_fetch_single`" (author's choice; removing is cleaner since the derivation is documented in the infrastructure spec) |
 
 ### File 4: `docs/features/platform/git-fetcher-infrastructure.md`
 
 | Location | Current | Action |
 |----------|---------|--------|
-| Lines 962-968 (Registry Detection Predicate Update) | "The `get_fetch_single_fetchers()` and `get_catch_up_fetchers()` registry accessors use `_CVE_SOURCE_TYPE_MAP` and `BaseCVEFetcher` subclass detection respectively" | **Reword**: replace "BaseCVEFetcher subclass detection" with "identity-based method resolution (3-way predicate)" to reflect the new mechanism. The rest of the paragraph (BaseGitFetcher inherits from BaseCVEFetcher → automatic inclusion) remains factually correct |
+| Lines 962-968 (Registry Detection section) | References `BaseCVEFetcher subclass detection` for `get_catch_up_fetchers()` | **Reword**: "`get_catch_up_fetchers()` uses the `participates_in_catch_up` class attribute (auto-derived from `supports_fetch_single` for CVE fetchers). `BaseGitFetcher` does not override `supports_fetch_single` (default `True`) nor `participates_in_catch_up` — all git-based fetchers participate in catch-up automatically" |
 
 ### Verification files (confirm no changes needed)
 
 | File | Reference | Expected action |
 |------|-----------|-----------------|
-| `ticket-mutations.md:213` | "...via `get_catch_up_fetchers()`" | No change — references the function name, not the predicate internals |
-| `cvss-scoring.md:790` | "...via `get_catch_up_fetchers()` — not limited to CVSS fetchers" | No change — factual statement remains true |
+| `ticket-mutations.md:213` | "...via `get_catch_up_fetchers()`" | No change — function name unchanged |
+| `cvss-scoring.md:790` | "...via `get_catch_up_fetchers()` — not limited to CVSS fetchers" | No change — factual, still true |
 
 ### Post-application: review file update
 
-After all spec changes are applied:
-
 - Mark `CFI-GAP-01` as RESOLVED in `docs/reviews/cve-fetcher-infrastructure.md`:
-  `**Status**: RESOLVED — Flag eliminated; coupling dissolved by construction (YYYY-MM-DD)`
-- Update `.tracking.json` cache for `cve-fetcher-infrastructure`:
-  `"GAP" → "M"`: current value `3` → target `2`
-- Update `docs/reviews/README.md`, row `cve-fetcher-infrastructure`:
-  GAP total `8` → `7`, breakdown `3:🟠 5:🟡` → `2:🟠 5:🟡`,
-  Open column `11/11` → `10/11`
+  `**Status**: RESOLVED — Coupling dissolved by auto-derivation; participates_in_catch_up now derives from supports_fetch_single via __init_subclass__ (YYYY-MM-DD)`
+- Update `.tracking.json` cache (decrement GAP Medium by 1)
+- Update `docs/reviews/README.md`
 
 ### Post-application: verification
 
-Run `@spec-coherence-reviewer` on each modified spec to verify that
-the applied changes do not introduce contradictions with consumer specs:
+Run reviewers on each modified spec:
 
 | Reviewer | Target spec | What to verify |
 |----------|-------------|----------------|
-| `@spec-coherence-reviewer` | `cve-fetcher-infrastructure.md` | Internal references to/from `fetcher-infrastructure.md` and `cve-sync-kev.md` are consistent |
-| `@spec-coherence-reviewer` | `fetcher-infrastructure.md` | New predicate section does not contradict consumer specs (`ticket-mutations.md`, `cvss-scoring.md`) |
-| `@spec-coherence-reviewer` | `git-fetcher-infrastructure.md` | Updated mechanism description is consistent with BaseGitFetcher sections |
-
-If any reviewer identifies issues rated "Needs revision", fix them
-before proceeding to cleanup.
+| `@spec-coherence-reviewer` | `cve-fetcher-infrastructure.md` | Derivation description consistent with `fetcher-infrastructure.md` |
+| `@spec-coherence-reviewer` | `fetcher-infrastructure.md` | New predicate and attribute consistent with all consumer specs |
+| `@spec-gap-analyzer` | `fetcher-infrastructure.md` | New attribute + predicate covers all edge cases |
 
 ### Post-application: cleanup
 
-Once all modifications are applied, verified, and review files updated:
+Once all modifications are applied and verified:
 
-- **Delete** `docs/drafts/catch-up-participation-refactor.md` (this
-  file). It is a working document, not a permanent spec — the
-  authoritative definitions now live in the modified spec files
+- **Delete** this draft file (authoritative definitions live in the
+  modified spec files)
 
 ---
 
-## 6. Edge Cases and Future Considerations
+## 6. Edge Cases
 
-### Loss of the (True, False) case
+### KEV: only needs `supports_fetch_single = False`
 
-A CVE fetcher that supports `fetch_single` but wants to opt out of
-automatic catch-up is no longer expressible with a single flag. If this
-ever becomes necessary:
-
-1. Re-introduce `participates_in_catch_up` (additive, non-breaking)
-2. Add a branch in the predicate:
-   `elif resolved is BaseCVEFetcher.catch_up: if cls.supports_fetch_single and cls.participates_in_catch_up:`
-3. Default remains `True` — existing fetchers unaffected
-
-This is deferred until a concrete use case materializes. The catch-up
-operation is a single `fetch_single()` call (idempotent, cheap) — the
-motivation to opt out while retaining on-demand capability is weak.
+After the change, KEV no longer explicitly sets
+`participates_in_catch_up = False`. The derivation in
+`__init_subclass__` sets it automatically from
+`supports_fetch_single = False`. This eliminates the coupling footgun
+entirely — there is only one flag to manage.
 
 ### CVE fetcher with custom `catch_up()` override
 
-A future CVE fetcher that overrides `catch_up()` with custom logic
-(not delegating to `fetch_single()`) would land in branch 3
-(unconditionally included). This is correct: if it has a custom
-implementation, it should participate regardless of
-`supports_fetch_single`. The custom override is responsible for its
-own correctness.
+A CVE fetcher that overrides `catch_up()` with custom logic (not
+delegating to `fetch_single()`) inherits `participates_in_catch_up`
+from the auto-derivation. If it has `supports_fetch_single = True`
+(the default), it auto-derives `participates_in_catch_up = True` →
+included in catch-up. If it has `supports_fetch_single = False` but
+still wants to participate (its custom `catch_up()` doesn't use
+`fetch_single()`), it explicitly sets
+`participates_in_catch_up = True` → the `'participates_in_catch_up'
+not in cls.__dict__` guard preserves the explicit declaration.
 
-### Package topology re-resolution on reopen
+### Non-CVE fetcher forgets the flag but defines `catch_up()`
 
-This draft explicitly does NOT address the gap identified during
-analysis: no catch-up fetcher currently re-queries SMELT to discover
-new tracks/products for existing packages on a ticket. A future
-non-CVE fetcher implementing this feature would land in branch 3 of
-the new predicate (real override → always included) — the refactored
-design supports it cleanly.
+With the uniform predicate, a non-CVE fetcher that defines
+`catch_up()` but forgets `participates_in_catch_up = True` is
+**silently excluded** from the catch-up roster. This is the one
+trade-off vs the old `__dict__` approach (where defining the method
+was sufficient). Mitigation:
+
+- For intermediate bases (the common case going forward): set the flag
+  **once on the base** — all subclasses inherit it. The risk of
+  omission is confined to the base definition, not repeated per
+  subclass
+- A `__init_subclass__` warning (not error) on `BaseFetcher` could
+  detect "defines `catch_up()` but `participates_in_catch_up` is
+  False" and log a warning at import time. This is optional and
+  deferred — the mismatch would surface in integration tests when
+  catch-up doesn't run
+
+### The `(True, False)` case
+
+A CVE fetcher that supports on-demand `fetch_single` but wants to opt
+out of automatic catch-up can explicitly set
+`participates_in_catch_up = False` in its class body. The derivation
+guard (`'participates_in_catch_up' not in cls.__dict__`) preserves
+this explicit declaration. No current fetcher uses this; it remains
+expressible without additional machinery.
 
 ---
 
@@ -377,24 +390,23 @@ design supports it cleanly.
 
 Before applying the plan, this draft should be reviewed by:
 
-- [ ] `@design-reviewer` — validate predicate design, identity-based
-  approach, intermediate base class assumption
-- [ ] `@spec-coherence-reviewer` — verify no contradictions introduced
-  across `cve-fetcher-infrastructure.md`, `fetcher-infrastructure.md`,
-  `cve-sync-kev.md`, and consumer specs
-- [ ] `@spec-gap-analyzer` — verify the new predicate spec covers all
-  edge cases (hierarchy depths, abstract classes, disabled fetchers)
+- [ ] `@design-reviewer` — validate uniform flag + derivation design,
+  trade-off of silent exclusion for non-CVE fetchers that forget flag
+- [ ] `@spec-coherence-reviewer` — verify no contradictions across
+  modified specs
+- [ ] `@spec-gap-analyzer` — verify predicate + derivation covers all
+  edge cases
 
 ---
 
 ## Cross-references
 
 - `docs/features/platform/cve-fetcher-infrastructure.md` — BaseCVEFetcher
-  class, `supports_fetch_single`, default `catch_up()`
+  class, `supports_fetch_single`, default `catch_up()`, `__init_subclass__`
 - `docs/features/platform/fetcher-infrastructure.md` — BaseFetcher,
   `get_catch_up_fetchers()`, Per-Ticket Catch-Up
 - `docs/features/platform/git-fetcher-infrastructure.md` — BaseGitFetcher
-  (intermediate, does not override `catch_up()`)
-- `docs/features/tickets/cve-sync-kev.md` — sole fetcher with explicit
-  `False` flags
+  (intermediate, inherits all defaults)
+- `docs/features/tickets/cve-sync-kev.md` — sole fetcher with
+  `supports_fetch_single = False`
 - `docs/reviews/cve-fetcher-infrastructure.md` — CFI-GAP-01 finding
