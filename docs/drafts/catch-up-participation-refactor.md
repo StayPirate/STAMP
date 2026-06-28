@@ -10,7 +10,10 @@ uniform predicate; auto-derive for CVE fetchers from
 (separate future spec)  
 **Resolves**: CFI-GAP-01 (coupling dissolved by auto-derivation)  
 **Affected specs**: `cve-fetcher-infrastructure.md`,
-`fetcher-infrastructure.md`, `cve-sync-kev.md`
+`fetcher-infrastructure.md`, `git-fetcher-infrastructure.md`,
+`cve-sync-kev.md`, `ibs-track-release-detection.md`,
+`ibs-product-release-detection.md`, `ibs-submission-tracking.md`,
+`product-lifecycle-transitions.md`, `package-bugowner.md`
 
 ---
 
@@ -147,6 +150,15 @@ warning fires after `BaseCVEFetcher.__init_subclass__` has already
 auto-derived the flag (via `super().__init_subclass__()`), so it does
 not produce spurious warnings for CVE fetchers.
 
+**Intentionally not gated by `abstract`**: the warning fires on abstract
+intermediate classes too (e.g., a `BaseTrackReleaseFetcher` that defines
+`catch_up()` but forgets `participates_in_catch_up = True`). This is
+the most valuable case — catching the bug at the intermediate definition
+site prevents silent exclusion of all its concrete subclasses. The
+warning does not fire spuriously on `BaseCVEFetcher` because it
+explicitly declares `participates_in_catch_up = True` (see Retention
+note below).
+
 ### `BaseCVEFetcher` — auto-derivation in `__init_subclass__`
 
 ```python
@@ -164,9 +176,9 @@ class BaseCVEFetcher(BaseFetcher):
             if 'participates_in_catch_up' not in cls.__dict__:
                 cls.participates_in_catch_up = cls.supports_fetch_single
 
-            # Guard: (False, True) without custom catch_up is invalid
+            # Guard: (False, True) with the default catch_up is invalid
             if cls.participates_in_catch_up and not cls.supports_fetch_single:
-                if 'catch_up' not in cls.__dict__:
+                if cls.catch_up is BaseCVEFetcher.catch_up:
                     raise TypeError(
                         f"{cls.__name__} has participates_in_catch_up=True but "
                         f"supports_fetch_single=False without a custom catch_up() "
@@ -182,11 +194,16 @@ The catch-up participation derives automatically. KEV sets
 `supports_fetch_single = False` → `participates_in_catch_up` becomes
 `False` without explicit declaration.
 
-**Inverse coupling guard**: if a subclass explicitly sets
+**Inverse coupling guard**: if a subclass has
 `participates_in_catch_up = True` with `supports_fetch_single = False`
-but does NOT provide a custom `catch_up()` override, `__init_subclass__`
-raises `TypeError` at import time. This prevents the inverse of
-CFI-GAP-01 — the same class of bug in the opposite direction.
+and its resolved `catch_up` is still `BaseCVEFetcher.catch_up` (the
+default that delegates to `fetch_single()`), `__init_subclass__` raises
+`TypeError` at import time. This prevents the inverse of CFI-GAP-01.
+The guard uses identity comparison (`cls.catch_up is
+BaseCVEFetcher.catch_up`) rather than `__dict__` membership — this
+correctly allows a concrete class that inherits a custom `catch_up()`
+from an intermediate CVE base to declare `(False, True)` without
+triggering a false positive.
 
 **Explicit override preserved**: a future CVE fetcher CAN set
 `participates_in_catch_up = False` explicitly (even with
@@ -196,12 +213,12 @@ but not required.
 
 **Retention note**: `BaseCVEFetcher` retains an explicit
 `participates_in_catch_up: bool = True` in its class body. This is
-**not functionally necessary** — the per-subclass derivation in
-`__init_subclass__` overrides the inherited value on each concrete
-class. It is retained for **readability**: a developer reading the
+**functionally required**: without it, the import-time warning would
+fire spuriously on `BaseCVEFetcher` itself (which defines `catch_up()`
+in its own `__dict__` and would otherwise inherit `False` from
+`BaseFetcher`). It also serves **readability**: a developer reading the
 class definition immediately sees that CVE fetchers default to
-participating in catch-up, without needing to trace the derivation
-logic.
+participating in catch-up.
 
 ### `get_catch_up_fetchers()` — uniform predicate
 
@@ -327,7 +344,7 @@ there is no shared state to protect. The function returns a plain
 | Line 55 (Class Attributes table, `participates_in_catch_up` row) | Row with default `True`, description references `get_catch_up_fetchers()` | **Reword**: default remains `True`, but description changes to: "Whether the fetcher participates in per-ticket catch-up. Inherited from `BaseFetcher` (default `False`); on `BaseCVEFetcher` subclasses, **auto-derived** from `supports_fetch_single` via `__init_subclass__` unless explicitly overridden in the subclass body. Global-scope CVE fetchers (KEV) set `supports_fetch_single = False` and the derivation produces `participates_in_catch_up = False` automatically" |
 | Line 56 (Class Attributes, `supports_fetch_single` description) | "...are never dispatched by `fetch_single_cve`, and do not need to override `fetch_single()`" | **Extend**: append that `supports_fetch_single = False` also causes `participates_in_catch_up` to derive as `False`, excluding the fetcher from the catch-up roster. Makes the dual role explicit |
 | Line 65 (Concrete Methods, `catch_up` description) | "...fetchers with `False` also set `participates_in_catch_up = False` (so `catch_up()` is never invoked)" | **Reword**: "...fetchers with `supports_fetch_single = False` have `participates_in_catch_up` auto-derived as `False` (so `catch_up()` is never invoked for them)" |
-| Lines 166-188 (pseudocode `__init_subclass__`) | Only validates `cve_source_type` | **Add** the auto-derivation block after uniqueness check and before `super().__init_subclass__()`: (1) `if 'participates_in_catch_up' not in cls.__dict__: cls.participates_in_catch_up = cls.supports_fetch_single`, then (2) the inverse coupling guard: `if cls.participates_in_catch_up and not cls.supports_fetch_single and 'catch_up' not in cls.__dict__: raise TypeError(...)` |
+| Lines 166-188 (pseudocode `__init_subclass__`) | Only validates `cve_source_type` | **Add** the auto-derivation block after uniqueness check and before `super().__init_subclass__()`: (1) `if 'participates_in_catch_up' not in cls.__dict__: cls.participates_in_catch_up = cls.supports_fetch_single`, then (2) the inverse coupling guard: `if cls.participates_in_catch_up and not cls.supports_fetch_single and cls.catch_up is BaseCVEFetcher.catch_up: raise TypeError(...)` |
 | Line 207 (Non-Modification Statement, item 4) | "The `participates_in_catch_up` opt-out for catch-up participation" | **Reword**: "The `participates_in_catch_up` auto-derivation from `supports_fetch_single` (catch-up roster inclusion)" |
 | Line 579 (Default catch_up section) | "(they also set `participates_in_catch_up = False`)" | **Reword**: "(their `participates_in_catch_up` is auto-derived as `False` from `supports_fetch_single = False`)" |
 
@@ -338,7 +355,7 @@ there is no shared state to protect. The function returns a plain
 | BaseFetcher class attributes section (near line 50) | No `participates_in_catch_up` attribute | **Add row**: `participates_in_catch_up` / `bool` / `False` / "Whether the fetcher participates in per-ticket catch-up. Default `False` — non-CVE fetchers opt in explicitly (on the concrete class or an intermediate base). `BaseCVEFetcher` auto-derives this from `supports_fetch_single` for its subclasses" |
 | Lines 403-437 (`get_catch_up_fetchers()` section) | Two-branch predicate with `participates_in_catch_up` + `'catch_up' in cls.__dict__` | **Replace entirely** with the new uniform predicate (Section 4 of this draft). Drop `MappingProxyType` wrapping (no cache to protect — fresh dict on each call) |
 | Lines 439-444 (Caching semantics) | Contradictory text about no-cache + `_clear_catch_up_cache()` | **Replace**: "Computed on each call from the current registry state (not cached). No dedicated cache-clearing test helper is needed — test suites that dynamically register fetcher classes clean `FETCHER_REGISTRY` directly" |
-| Import-time validation (near line 829) | Rule 7: "If a fetcher defines `catch_up()` in its `__dict__`..." | **Add** the import-time warning to BaseFetcher's `__init_subclass__` validation rules: "If a non-abstract fetcher defines `catch_up()` in its `__dict__` but `participates_in_catch_up` resolves to `False`, emit `warnings.warn()` at import time" |
+| Import-time validation (near line 829) | Rule 7: "If a fetcher defines `catch_up()` in its `__dict__`..." | **Rewrite** Rule 7: "If a fetcher defines `catch_up()` in its own class body (or inherits it from an intermediate base with `abstract=True`), it MUST also ensure `participates_in_catch_up` resolves to `True` — either by setting it explicitly or inheriting it from a base that does. Defining `catch_up()` alone is no longer sufficient for catch-up roster inclusion." Also add the import-time warning as a new validation rule: "If a fetcher defines `catch_up()` in its `__dict__` but `participates_in_catch_up` resolves to `False`, emit `warnings.warn()` at import time" |
 | Line 615 (excluded fetchers table, `sync_cisa_kev` row) | "Syncs entire KEV catalog (sets `participates_in_catch_up = False`)" | **Reword**: "Syncs entire KEV catalog (`supports_fetch_single = False` → `participates_in_catch_up` derived as `False`)" |
 | Lines 617-622 (KEV exclusion explanatory note) | References `participates_in_catch_up = False` as explicit opt-out | **Reword** to explain it is now auto-derived from `supports_fetch_single = False` |
 
@@ -468,6 +485,14 @@ out of automatic catch-up can explicitly set
 guard (`'participates_in_catch_up' not in cls.__dict__`) preserves
 this explicit declaration. No current fetcher uses this; it remains
 expressible without additional machinery.
+
+### Test monkey-patching
+
+The auto-derivation runs once at import time (in `__init_subclass__`).
+Tests that monkey-patch `supports_fetch_single` on a class after import
+will NOT see `participates_in_catch_up` update — the derivation is
+one-shot. Test authors must patch both attributes together, or use
+dynamic class creation to trigger `__init_subclass__` afresh.
 
 ---
 
