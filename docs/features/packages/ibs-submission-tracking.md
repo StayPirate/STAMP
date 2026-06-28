@@ -1003,6 +1003,7 @@ SR correlation: find SRs correlated to the ticket, collect their
 | Source | IBS (`build.suse.de`) |
 | Scope | Active codestreams with `TicketPackageTrack` records in active tickets, plus open `SubmissionRequest`/`ReleaseRequest` records for reconciliation |
 | Auth | HTTP Basic / API token (internal) |
+| `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | Yes (see "sync_ibs_requests — Custom Settings" below) |
 
 #### Algorithm

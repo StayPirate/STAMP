@@ -43,6 +43,7 @@ reflect temporary SMELT data issues and is not a reliable EOL signal.
 | Source | Local (no external source) |
 | Scope | Products in Reactive LTSS or EOL phase with actionable `TicketPackageProduct` records in active tickets |
 | Auth | N/A |
+| `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
 
 Recommended to run after `sync_aimaas_lifecycle` and

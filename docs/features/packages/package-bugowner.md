@@ -258,6 +258,7 @@ performs periodic maintenance of the bugowner cache. It runs every
 | Source | IBS (`build.suse.de`) |
 | Scope | All `PackageBugowner` records + packages in active tickets missing from the cache |
 | Auth | HTTP Basic / API token (internal) |
+| `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
 
 #### Catch-Up

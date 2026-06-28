@@ -179,6 +179,7 @@ class SyncExampleData(BaseFetcher):
     default_schedule: str = "0 */6 * * *"  # cron expression (every 6h)
     default_request_delay: float = 0  # Optional: initial request_delay at auto-registration
     queue: str | None = None  # Optional: Celery queue name (default = default queue)
+    participates_in_catch_up: bool = False  # Optional: set True for per-ticket catch-up participation
 
     # Optional: per-fetcher operational parameters configurable at
     # runtime via the admin dashboard. See "Custom Settings Schema"
@@ -404,44 +405,32 @@ their data domain.
 
 ```python
 def get_catch_up_fetchers() -> dict[str, type[BaseFetcher]]:
-    """Return fetchers implementing catch_up(), keyed by fetcher name.
+    """Return fetchers that participate in per-ticket catch-up.
 
-    A fetcher "implements catch_up" if:
-    - It is a BaseCVEFetcher subclass with participates_in_catch_up=True
-      (inherits the default catch_up from BaseCVEFetcher), OR
-    - It defines catch_up() in its own __dict__ (explicit override —
-      non-CVE fetchers)
+    Selection is based solely on the participates_in_catch_up class
+    attribute. This attribute is:
+    - Auto-derived from supports_fetch_single for BaseCVEFetcher
+      subclasses (unless explicitly overridden)
+    - Set explicitly by non-CVE fetchers (on the concrete class or
+      an intermediate base)
+    - Default False on BaseFetcher (non-participating unless declared)
+
+    Note: this predicate selects by CAPABILITY, not by enabled state.
+    The enabled check is performed downstream in run_catch_up at task
+    execution time. A disabled fetcher is still returned here but
+    skipped silently at runtime.
     """
-    ...
+    return {
+        name: cls
+        for name, cls in FETCHER_REGISTRY.items()
+        if cls.participates_in_catch_up
+    }
 ```
-
-The detection predicate:
-
-```python
-fetchers = {}
-for name, cls in FETCHER_REGISTRY.items():
-    if issubclass(cls, BaseCVEFetcher) and cls.participates_in_catch_up:
-        # Inherits default catch_up from BaseCVEFetcher, not opted out
-        fetchers[name] = cls
-    elif 'catch_up' in cls.__dict__:
-        # Explicit override (non-CVE fetchers)
-        fetchers[name] = cls
-return fetchers
-```
-
-The `participates_in_catch_up` class attribute (default `True` on
-`BaseCVEFetcher`) allows global-scope CVE fetchers to opt out of
-catch-up while still inheriting the full `BaseCVEFetcher` contract.
-
-Fetchers that match neither condition (global non-CVE fetchers) are
-excluded.
 
 **Caching semantics**: computed on each call from the current registry
-state (not cached at import time). The returned dict MUST NOT be mutated
-by callers (return `types.MappingProxyType`).
-A `_clear_catch_up_cache()` test helper MUST be provided to invalidate
-any internal state in test suites that dynamically register mock fetcher
-classes.
+state (not cached). No dedicated cache-clearing test helper is needed —
+test suites that dynamically register fetcher classes clean
+`FETCHER_REGISTRY` directly.
 
 ### Celery task wrapper
 
@@ -612,14 +601,15 @@ on-demand discovery. The default `catch_up()` inherited from
 | `sync_aimaas_lifecycle` | Syncs all product lifecycle dates |
 | `sync_aimaas_thresholds` | Syncs all CVSS thresholds |
 | `sync_ldap_directory` | Syncs all employee records |
-| `sync_cisa_kev` | Syncs entire KEV catalog (sets `participates_in_catch_up = False`) |
+| `sync_cisa_kev` | Syncs entire KEV catalog (`supports_fetch_single = False` → `participates_in_catch_up` derived as `False`) |
 
-Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but opts out of
-catch-up via `participates_in_catch_up = False` because its `execute()`
-syncs the entire catalog on every run — there is no gap to recover after
-ticket reactivation. It also sets `supports_fetch_single = False` because
-CISA KEV is a monolithic catalog with no per-CVE API — the
-`fetch_single_cve` task is never dispatched for this fetcher. In contrast,
+Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but is excluded from
+catch-up because its `supports_fetch_single = False` attribute causes
+`participates_in_catch_up` to be auto-derived as `False` via
+`BaseCVEFetcher.__init_subclass__`. Its `execute()` syncs the entire catalog
+on every run — there is no gap to recover after ticket reactivation. The CISA
+KEV catalog is monolithic with no per-CVE API, so `fetch_single_cve` is never
+dispatched for this fetcher either. In contrast,
 `sync_nvd_cves`, `sync_mitre_cves`, `sync_kernel_cves`,
 `sync_ghsa_advisories`, `sync_osv_advisories`, `sync_redhat_cves`, and
 `sync_epss_scores` participate in catch-up because their `fetch_single()`
@@ -828,10 +818,17 @@ the invalid field.
    underscores only)
 6. If a fetcher defines `catch_up()` in its `__dict__`, it must accept
    the signature `(self, ticket_id: str, session: AsyncSession) -> None`
-7. If a direct `BaseFetcher` subclass (non-CVE fetcher) needs catch-up,
-   it MUST define `catch_up()` explicitly in its own class body — the
-   default `catch_up()` implementation is provided by `BaseCVEFetcher`
-   and not available to direct `BaseFetcher` subclasses
+7. If a fetcher participates in catch-up
+   (`participates_in_catch_up = True`), it MUST have a `catch_up()`
+   implementation available — either defined in its own class body,
+   inherited from an intermediate base, or (for CVE fetchers) inherited
+   from `BaseCVEFetcher`. Defining `catch_up()` alone is no longer
+   sufficient for roster inclusion; `participates_in_catch_up` must also
+   resolve to `True`
+8. If a non-abstract fetcher defines `catch_up()` in its `__dict__` but
+   `participates_in_catch_up` resolves to `False`, emit
+   `warnings.warn()` at import time (catches silent-exclusion bugs where
+   a developer defines catch-up logic but forgets the flag)
 
 CVE-specific validation (`cve_source_type` uniqueness, Enum membership)
 is handled by `BaseCVEFetcher.__init_subclass__` — see

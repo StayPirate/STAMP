@@ -202,6 +202,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 | Source | IBS (`build.suse.de`) |
 | Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active tickets (New, Analysis, Analyzed). Soft-deleted tracks under active tickets are included |
 | Auth | HTTP Basic / API token (internal) |
+| `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
 
 Catch-up mechanism for events missed by the real-time

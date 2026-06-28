@@ -959,13 +959,13 @@ of specific items.
 
 ## Registry Detection Predicate Update
 
-The `get_fetch_single_fetchers()` and `get_catch_up_fetchers()` registry
-accessors use `_CVE_SOURCE_TYPE_MAP` and `BaseCVEFetcher` subclass
-detection respectively (see
-`docs/features/platform/cve-fetcher-infrastructure.md`). Since `BaseGitFetcher` inherits
-from `BaseCVEFetcher`, its concrete subclasses are automatically
-included in both accessors — they declare their own `cve_source_type`
-via the `BaseCVEFetcher.__init_subclass__` chain.
+`get_catch_up_fetchers()` uses the `participates_in_catch_up` class
+attribute (auto-derived from `supports_fetch_single` for CVE fetchers).
+`get_fetch_single_fetchers()` uses `_CVE_SOURCE_TYPE_MAP` filtered by
+`supports_fetch_single`. `BaseGitFetcher` does not override either
+attribute — all git-based fetchers participate in both rosters
+automatically via their inherited `supports_fetch_single = True`
+(which derives `participates_in_catch_up = True`).
 
 ## When NOT to Use `BaseGitFetcher`
 
