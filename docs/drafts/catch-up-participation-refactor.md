@@ -7,7 +7,8 @@ catch-up predicate
 future spec)  
 **Resolves**: CFI-GAP-01 (by construction — the coupling no longer exists)  
 **Affected specs**: `cve-fetcher-infrastructure.md`,
-`fetcher-infrastructure.md`, `cve-sync-kev.md`
+`fetcher-infrastructure.md`, `git-fetcher-infrastructure.md`,
+`cve-sync-kev.md`
 
 ---
 
@@ -272,12 +273,11 @@ AsyncSession) -> None`."
 
 | Location | Current | Action |
 |----------|---------|--------|
-| Lines 403-437 (`get_catch_up_fetchers()` section) | Two-branch predicate with `participates_in_catch_up` + `'catch_up' in cls.__dict__` | **Replace entirely** with the new 3-way identity-based predicate (Section 4 of this draft). Update docstring, code block, and explanatory text |
-| Lines 432-434 (explanatory paragraph about the flag) | "The `participates_in_catch_up` class attribute (default `True` on `BaseCVEFetcher`) allows..." | **Replace** with explanation of the identity-based approach |
+| Lines 403-437 (`get_catch_up_fetchers()` section) | Two-branch predicate with `participates_in_catch_up` + `'catch_up' in cls.__dict__` | **Replace entirely** with the new 3-way identity-based predicate (Section 4 of this draft). Update docstring, code block, and explanatory text. Lines 439-444 (Caching semantics + `_clear_catch_up_cache()`) are preserved unchanged below the new section |
 | Line 615 (excluded fetchers table, `sync_cisa_kev` row) | "Syncs entire KEV catalog (sets `participates_in_catch_up = False`)" | **Reword**: "Syncs entire KEV catalog (`supports_fetch_single = False` — excluded from catch-up by predicate)" |
-| Line 618 (explanatory text for KEV exclusion) | "catch-up via `participates_in_catch_up = False` because..." | **Reword**: "catch-up because `supports_fetch_single = False` (no per-CVE API; the predicate excludes fetchers whose default `catch_up()` would fail)" |
+| Lines 617-622 (KEV exclusion explanatory note) | Full paragraph: "Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but opts out of catch-up via `participates_in_catch_up = False` because its `execute()` syncs the entire catalog on every run — there is no gap to recover after ticket reactivation. It also sets `supports_fetch_single = False` because CISA KEV is a monolithic catalog with no per-CVE API — the `fetch_single_cve` task is never dispatched for this fetcher." | **Replace entire paragraph** with: "Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but sets `supports_fetch_single = False` because CISA KEV is a monolithic catalog with no per-CVE API. This single attribute excludes it from both `get_fetch_single_fetchers()` (never dispatched by `fetch_single_cve`) and `get_catch_up_fetchers()` (the predicate's branch 2 checks `supports_fetch_single` before including default-catch_up CVE fetchers). Its `execute()` syncs the entire catalog on every run, so there is no gap to recover after ticket reactivation." |
 | Line 829 (import-time validation rule) | "If a fetcher defines `catch_up()` in its `__dict__`, it must accept..." | **Keep rule semantics** (the validation still applies to any fetcher that defines `catch_up()` in its `__dict__`) — no change needed |
-| After the new predicate section | (does not exist) | **Add**: "Intermediate CVE base class assumption" paragraph (Section 4 of this draft) |
+| After the new predicate section | (does not exist) | **Add**: "Intermediate CVE base class assumption" paragraph (Section 4 of this draft). Insert between the new predicate explanatory text and the existing "Caching semantics" paragraph (current line 439) |
 
 ### File 3: `docs/features/tickets/cve-sync-kev.md`
 
@@ -287,13 +287,18 @@ AsyncSession) -> None`."
 | Line 64 (attributes table) | Row: `participates_in_catch_up` / `False` | **Remove row** |
 | Surrounding text (if any explanation references the flag) | "...sets `participates_in_catch_up = False`..." | **Reword** to reference `supports_fetch_single = False` as the sole opt-out mechanism |
 
+### File 4: `docs/features/platform/git-fetcher-infrastructure.md`
+
+| Location | Current | Action |
+|----------|---------|--------|
+| Lines 962-968 (Registry Detection Predicate Update) | "The `get_fetch_single_fetchers()` and `get_catch_up_fetchers()` registry accessors use `_CVE_SOURCE_TYPE_MAP` and `BaseCVEFetcher` subclass detection respectively" | **Reword**: replace "BaseCVEFetcher subclass detection" with "identity-based method resolution (3-way predicate)" to reflect the new mechanism. The rest of the paragraph (BaseGitFetcher inherits from BaseCVEFetcher → automatic inclusion) remains factually correct |
+
 ### Verification files (confirm no changes needed)
 
 | File | Reference | Expected action |
 |------|-----------|-----------------|
 | `ticket-mutations.md:213` | "...via `get_catch_up_fetchers()`" | No change — references the function name, not the predicate internals |
 | `cvss-scoring.md:790` | "...via `get_catch_up_fetchers()` — not limited to CVSS fetchers" | No change — factual statement remains true |
-| `git-fetcher-infrastructure.md:962` | Mentions both registry accessors | Verify wording; likely no change needed (mentions function name only) |
 
 ### Post-application: review file update
 
@@ -301,8 +306,33 @@ After all spec changes are applied:
 
 - Mark `CFI-GAP-01` as RESOLVED in `docs/reviews/cve-fetcher-infrastructure.md`:
   `**Status**: RESOLVED — Flag eliminated; coupling dissolved by construction (YYYY-MM-DD)`
-- Update `.tracking.json` cache (decrement GAP Medium by 1)
-- Update `docs/reviews/README.md`
+- Update `.tracking.json` cache for `cve-fetcher-infrastructure`:
+  `"GAP" → "M"`: current value `3` → target `2`
+- Update `docs/reviews/README.md`, row `cve-fetcher-infrastructure`:
+  GAP total `8` → `7`, breakdown `3:🟠 5:🟡` → `2:🟠 5:🟡`,
+  Open column `11/11` → `10/11`
+
+### Post-application: verification
+
+Run `@spec-coherence-reviewer` on each modified spec to verify that
+the applied changes do not introduce contradictions with consumer specs:
+
+| Reviewer | Target spec | What to verify |
+|----------|-------------|----------------|
+| `@spec-coherence-reviewer` | `cve-fetcher-infrastructure.md` | Internal references to/from `fetcher-infrastructure.md` and `cve-sync-kev.md` are consistent |
+| `@spec-coherence-reviewer` | `fetcher-infrastructure.md` | New predicate section does not contradict consumer specs (`ticket-mutations.md`, `cvss-scoring.md`) |
+| `@spec-coherence-reviewer` | `git-fetcher-infrastructure.md` | Updated mechanism description is consistent with BaseGitFetcher sections |
+
+If any reviewer identifies issues rated "Needs revision", fix them
+before proceeding to cleanup.
+
+### Post-application: cleanup
+
+Once all modifications are applied, verified, and review files updated:
+
+- **Delete** `docs/drafts/catch-up-participation-refactor.md` (this
+  file). It is a working document, not a permanent spec — the
+  authoritative definitions now live in the modified spec files
 
 ---
 
