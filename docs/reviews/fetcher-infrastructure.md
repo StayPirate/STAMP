@@ -54,6 +54,44 @@
 
 **Status**: RESOLVED — Added "FetcherRun retrieval failure" section documenting DB-unreachable and record-not-found cases in fetcher-infrastructure.md (2026-05-29)
 
+### FEI-GAP-019 — HTTP client lifecycle for custom catch_up() sub-operations unspecified (Medium)
+
+**Category**: Gap Analysis
+**Status**: OPEN
+
+The `catch_up()` interface contract specifies parameters, idempotency,
+and boundary conditions but does not document how custom `catch_up()`
+implementations (non-CVE fetchers) that need HTTP access manage the
+HTTP client lifecycle. The `run_catch_up` Celery task wrapper creates a
+DB session but not an HTTP client. Custom implementations that query
+external services (IBS, SMELT) must create their own short-lived client
+— but this is not stated in the interface contract. Pre-existing gap,
+surfaced during the catch-up participation refactor review.
+
+### FEI-GAP-020 — Rule 7 enforcement mechanism for non-CVE fetchers relies on runtime NotImplementedError (Low)
+
+**Status**: RESOLVED — A non-CVE fetcher that sets participates_in_catch_up=True without defining catch_up() anywhere in the MRO will hit BaseFetcher.catch_up (raises NotImplementedError) at runtime. NotImplementedError is already in the non-retryable exception set (run_catch_up section, lines 474-479) and is logged as an error. The failure mode is loud and caught by integration tests. Import-time enforcement would require identity comparison on the non-CVE path, adding complexity for a case already handled by existing runtime behavior (2026-06-29)
+
+### FEI-GAP-021 — Import-time warning does not fire when catch_up() is inherited from intermediate (Low)
+
+**Status**: RESOLVED — The warning checks 'catch_up' in cls.__dict__, so it fires on the intermediate base (where catch_up is defined) but not on concrete subclasses that inherit it. This is correct: the bug originates at the intermediate level, and the warning catches it there. For the concrete to be silently excluded would require both: (1) the intermediate forgetting the flag AND (2) the developer ignoring the warning on the intermediate. Double omission + ignored warning is beyond spec responsibility (2026-06-29)
+
+### FEI-GAP-022 — Immutability contract for get_catch_up_fetchers() return value (Low)
+
+**Status**: RESOLVED — Already documented: the caching semantics section explicitly states "returns a plain dict — callers receive an independent copy". No MappingProxyType needed because there is no shared cache to protect (fresh dict computed on each call) (2026-06-29)
+
+### FEI-GAP-023 — Test cleanup cross-reference between FETCHER_REGISTRY and _CVE_SOURCE_TYPE_MAP (Low)
+
+**Status**: RESOLVED — Already cross-referenced in the caching semantics paragraph: "test suites that dynamically register fetcher classes clean FETCHER_REGISTRY directly (already required for _clear_fetch_single_cache() and general fetcher test isolation)". The parenthetical references _clear_fetch_single_cache() which clears _CVE_SOURCE_TYPE_MAP (2026-06-29)
+
+### FEI-GAP-024 — Duplicate catch-up task enqueue from recursive reconcile_ticket_status (Low)
+
+**Status**: RESOLVED — Safe by the idempotency contract of catch_up(): "Idempotent: if external data is unchanged, no side effects" (interface contract section). Duplicate enqueue produces duplicate tasks that execute as no-ops. Pre-existing behavior unchanged by the participation refactor (2026-06-29)
+
+### FEI-GAP-025 — run_catch_up non-retryable exception handling mechanics for non-CVE fetchers (Low)
+
+**Status**: RESOLVED — Already documented in the run_catch_up Celery task wrapper section (lines 470-479): NotImplementedError and CVENotInSource are in the non-retryable exception set, other exceptions trigger Celery retry. This applies uniformly to all fetchers regardless of type. No change introduced by the participation refactor (2026-06-29)
+
 ---
 
 ## Coherence

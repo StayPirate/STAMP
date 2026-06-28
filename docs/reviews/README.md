@@ -17,8 +17,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-06-01 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 8 | 3 | — | — | — | 11/11 | 2026-06-25 | |
-| | 3:🟠 5:🟡 | 3:🟡 |  |  |  |  |  |  |
+| [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 7 | 3 | — | — | — | 10/11 | 2026-06-25 | |
+| | 2:🟠 5:🟡 | 3:🟡 |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-epss | — | — | — | — | — | —/— | — | |
@@ -41,8 +41,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-06-25 | |
-|  |  |  |  |  |  |  |  |  |
+| [fetcher-infrastructure](fetcher-infrastructure.md) | 1 | 🟢 | 🟢 | 🟢 | 🟢 | 1/31 | 2026-06-29 | |
+|  | 1:🟠 |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 10 | — | — | — | — | 10/10 | 2026-06-25 | |
@@ -75,8 +75,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **20** | **3** | **🟢** | **🟢** | **🟢** | **23/814** |  |  |
-| | 1:🔴 11:🟠 8:🟡 | 3:🟡 |  |  |  |  |  |  |
+| **Total** | **19** | **3** | **🟢** | **🟢** | **🟢** | **22/814** |  |  |
+| | 1:🔴 10:🟠 8:🟡 | 3:🟡 |  |  |  |  |  |  |
 
 ### Disabled specs
 

@@ -188,7 +188,7 @@
         "open": {
           "GAP": {
             "H": 0,
-            "M": 3,
+            "M": 2,
             "L": 5
           },
           "COH": {
@@ -212,7 +212,7 @@
             "L": 0
           }
         },
-        "resolved": 0,
+        "resolved": 1,
         "not_reviewed": [
           "DES",
           "SEC",
@@ -372,11 +372,11 @@
       "enabled": true,
       "abbr": "FEI",
       "cache": {
-        "last_review": "2026-06-25T00:00:00+0000",
+        "last_review": "2026-06-29T00:00:00+0000",
         "open": {
           "GAP": {
             "H": 0,
-            "M": 0,
+            "M": 1,
             "L": 0
           },
           "COH": {
@@ -400,7 +400,7 @@
             "L": 0
           }
         },
-        "resolved": 24,
+        "resolved": 30,
         "not_reviewed": []
       }
     },
