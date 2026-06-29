@@ -394,7 +394,7 @@ def get_all_cve_source_types() -> dict[str, type[BaseCVEFetcher]]:
     this includes catalog-based fetchers (KEV) and any future fetchers
     that set supports_fetch_single = False.
 
-    Used by: sources endpoint, Fetch Status Read Path.
+    Used by: sources endpoint.
     """
     return dict(_CVE_SOURCE_TYPE_MAP)
 ```
@@ -529,10 +529,9 @@ re-querying exceeds the benefit for this marginal case.
 |------|---------|--------|
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Batch Error Handling | Add `record_source_status("failure"/"missing")` + isolated status commit to error handling pattern |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Default `catch_up()` Implementation | Add `record_source_status("missing")` after `CVENotInSource` catch |
-| `docs/features/platform/cve-fetcher-infrastructure.md` | `fetch_single` Signaling Convention table | Add note that batch/catch-up now also write status |
-| `docs/features/platform/cve-fetcher-infrastructure.md` | Prose above Signaling Convention table | Remove "without status writes" statement (no longer accurate) |
-| `docs/features/tickets/cve-service.md` | CVESource Management | Note that all paths now write status (remove "batch path does not write"). Note that KEV uses CVEKEVEntry derivation instead of CVESource |
-| `docs/features/tickets/cve-service.md` | Fetch Status Read Path | Replace with pointer to the new endpoint's resolution algorithm (or remove section entirely — superseded by the endpoint spec) |
+| `docs/features/platform/cve-fetcher-infrastructure.md` | Prose above Signaling Convention table | Replace paragraph (lines 370-373) with updated text reflecting that all paths now write status via isolated status commits |
+| `docs/features/tickets/cve-service.md` | CVESource Management | Update callers list (line 197-198) to include batch `execute()` and `catch_up()` as status writers |
+| `docs/features/tickets/cve-service.md` | Fetch Status Read Path | Remove section entirely; replace with single-line cross-reference to the new endpoint's resolution algorithm |
 | `docs/features/tickets/cve-service.md` | Placeholder Records section | Update mechanism description: UI uses dedicated endpoint, not direct CVESource record comparison |
 | `docs/features/tickets/tickets.md` | CVEDetail sub-schema | Remove `sources: CVESource[]` field; add cross-reference to dedicated endpoint |
 | `docs/features/tickets/tickets.md` | CVESource response sub-schema | Remove (no longer needed — replaced by dedicated endpoint response) |
@@ -542,7 +541,6 @@ re-querying exceeds the benefit for this marginal case.
 | `docs/features/tickets/cve-tracking.md` | Fetch Status Read Path cross-reference | Update pointer to new endpoint location in `cve-service.md` |
 | `docs/features/tickets/cve-tracking.md` | Refetch endpoint documentation (line 385) | Update cross-reference: replace "ticket detail endpoint" with `GET /api/v1/cves/{cve_id}/sources` |
 | `docs/data-model.md` | CVESource section | Update prose: some sources write only `success` records (generalized formulation with KEV as example). No schema change |
-| `docs/api-spec.md` | Endpoint registry | Add `GET /api/v1/cves/{cve_id}/sources` |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Registry accessors | Add `get_all_cve_source_types()` specification |
 | `docs/features/identity/rbac.md` | Endpoint Permission Map | Add `GET /api/v1/cves/{cve_id}/sources` with `Public` access level |
 
@@ -571,17 +569,28 @@ state. Steps should be executed in order but can span multiple sessions.
 **Target**: `docs/features/platform/cve-fetcher-infrastructure.md`
 
 **Changes**:
-1. In section "Batch Error Handling" (around line 629): replace the
-   current "no explicit `record_source_status("failure")` is needed"
-   text with the new isolated status commit pattern
-2. Add handling for `CVENotInSource` in batch: after rollback, write
-   `record_source_status("missing")` via isolated status commit
-3. Update the "Distinction from the on-demand path" paragraph: remove
+1. In section "Batch Error Handling" (line 629): replace the current
+   "no explicit `record_source_status("failure")` is needed" text
+   (lines 637-639) with the new isolated status commit pattern for
+   both error and `CVENotInSource` cases (as specified in Change 1)
+2. Update the "Distinction from the on-demand path" paragraph: remove
    the statement that batch does not write failure/missing status.
-   Replace with a note that all paths now write status, with the only
-   difference being Redis pending keys (on-demand only)
-4. Update the `execute()` pseudocode (around line 256) to show the new
-   error handling with isolated status commits (independent session)
+   Replace with: "All paths now write status. The only difference is
+   that the on-demand path sets Redis pending keys for real-time UI
+   feedback; batch and catch-up do not."
+3. Update the `execute()` pseudocode (line 257) to show the new error
+   handling with isolated status commits (independent session) as
+   specified in Change 1
+4. Replace the prose paragraph above the Signaling Convention table
+   (lines 370-373). Current text: "Other callers (`execute()` loops
+   and `catch_up()`) apply context-specific handling — see 'Session
+   Lifecycle for API-based CVE Fetchers' for the batch `execute()`
+   pattern where `CVENotInSource` is a simple rollback-and-skip
+   without status writes." Replace with: "Other callers (`execute()`
+   loops and `catch_up()`) also write status via isolated status
+   commits — `failure` or `missing` after rollback. See 'Batch Error
+   Handling' below for the full pattern. The only difference from the
+   orchestrator is that batch/catch-up do not set Redis pending keys."
 
 **Validation**: verify no contradiction with other sections in the same
 file or in `cve-service.md`.
@@ -591,10 +600,23 @@ file or in `cve-service.md`.
 **Target**: `docs/features/platform/cve-fetcher-infrastructure.md`
 
 **Changes**:
-1. Update the default `catch_up()` pseudocode (around line 70): after
-   catching `CVENotInSource`, add `record_source_status("missing")` via
-   isolated status commit instead of bare rollback
-2. Add a note in the boundary conditions about the new status write
+1. Update the default `catch_up()` pseudocode (line 70): after catching
+   `CVENotInSource`, add `record_source_status("missing")` via isolated
+   status commit (independent session) instead of bare rollback. Replace
+   lines 83-84:
+   ```
+   except CVENotInSource:
+       await session.rollback()  # defensive: ensure clean session state
+   ```
+   with the pattern from Change 2 (rollback + isolated status commit +
+   return)
+2. Update the `CVENotInSource` boundary condition bullet (line 95-96).
+   Current text: "`CVENotInSource`: caught silently — the CVE is not
+   in this source, nothing to catch up on". Replace with:
+   "`CVENotInSource`: writes `missing` status via isolated status
+   commit (independent session), then returns. The CVE is not in this
+   source — the status write gives VAs visibility into source coverage
+   checked during catch-up"
 
 **Validation**: verify consistency with the "best-effort" catch-up
 philosophy documented elsewhere in fetcher-infrastructure.md.
@@ -634,12 +656,11 @@ is a read-path concern, not a fetcher concern).
 
 **Changes**:
 1. Add a new section after "Registry accessor:
-   `get_fetch_single_fetchers()`" documenting
+   `get_fetch_single_fetchers()`" (line 545) documenting
    `get_all_cve_source_types()`
 2. Specify: returns ALL registered `cve_source_type` → fetcher class
    mappings (no filtering)
-3. Specify: used by the sources endpoint and the updated Fetch Status
-   Read Path
+3. Specify: used by the sources endpoint
 4. Note that `get_fetch_single_fetchers()` remains unchanged (used by
    on-demand dispatch and refetch validation)
 
@@ -667,32 +688,37 @@ elsewhere don't need updating.
 5. Document KEV derivation logic inline (with vestigial `CVESource`
    record explanation)
 
-**Also update**: `docs/api-spec.md` (endpoint registry),
-`docs/features/identity/rbac.md` (Endpoint Permission Map — add the new
-endpoint with `Public` access level).
+**Also update**: `docs/features/identity/rbac.md` (Endpoint Permission
+Map — add the new endpoint with `Public` access level, in the CVEs
+subsection after line 428).
 
 **Validation**: run `@api-convention-reviewer` on the new endpoint
 definition.
 
-### Step 6: Update Fetch Status Read Path
+### Step 6: Update cve-service.md read-path sections
 
 **Target**: `docs/features/tickets/cve-service.md`
 
 **Changes**:
-1. Update the existing "Fetch Status Read Path" section to reference the
-   new endpoint as the primary mechanism
-2. Remove the inline `sources[]` from `CVEDetail` — the dedicated
-   endpoint is the sole source status mechanism. Update `CVEDetail`
-   sub-schema in `tickets.md` (remove `sources` field and the
-   `CVESource` response sub-schema)
-3. Remove the statement "source not attempted (omit from response)" —
-   no longer applicable (the dedicated endpoint handles `not_attempted`)
-4. The Fetch Status Read Path section in `cve-service.md` can either be
-   removed entirely (replaced by the endpoint's resolution algorithm in
-   Step 5) or kept as a pointer to the endpoint spec
+1. Update the "CVESource Management" section (line 197-198). Current
+   text: "used by `upsert_cve()` for success, by Celery error handlers
+   for failure, and by the orchestrator for missing." Replace with:
+   "used by `upsert_cve()` for success, by the on-demand orchestrator
+   and batch `execute()` loop for failure/missing, and by `catch_up()`
+   for missing. All non-success writes use the isolated status commit
+   pattern (independent session after rollback)."
+2. Remove the "Fetch Status Read Path" section (line 980) entirely.
+   Replace with a single line: "The source status resolution algorithm
+   is documented in `GET /api/v1/cves/{cve_id}/sources` above."
+3. Update the "Placeholder Records" section (line 612-620): replace the
+   description of UI using direct `CVESource` record comparison against
+   the fetcher registry with: "Source status visibility is provided by
+   `GET /api/v1/cves/{cve_id}/sources`, which combines `CVESource` DB
+   records, Redis pending keys, and data-table derivation (KEV) into a
+   unified response."
 
-**Validation**: verify consistency between the endpoint spec (Step 5)
-and the read path description.
+**Validation**: verify no dangling cross-references to the removed
+"Fetch Status Read Path" section within `cve-service.md` itself.
 
 ### Step 7: Update cross-references and data model docs
 
@@ -712,14 +738,21 @@ and the read path description.
 1. Remove `sources: CVESource[]` field from the `CVEDetail` sub-schema
 2. Remove the `CVESource` response sub-schema definition (no longer
    needed — replaced by the dedicated endpoint's response schema)
-3. Add a cross-reference note: "Source status is available via
+3. Update the TicketDetail `cve` field description: remove "and sources"
+   (no longer inline in the ticket response)
+4. Add a cross-reference note: "Source status is available via
    `GET /api/v1/cves/{cve_id}/sources` — see `cve-service.md`"
 
 **Changes in cve-tracking.md**:
-1. Remove `sources` field from `CVEListItem` response schema (line 122)
-2. Add a cross-reference note: "Source status is available via
-   `GET /api/v1/cves/{cve_id}/sources` — see `cve-service.md`"
-3. Update the refetch endpoint documentation (line 385-388): replace
+1. Remove `sources` field from `CVEListItem` response schema (line 122).
+   Add a cross-reference note in its place: "Source status is available
+   via `GET /api/v1/cves/{cve_id}/sources` — see `cve-service.md`"
+2. Update the intro paragraph (line 62): remove "sources" from the
+   inline data listing (no longer part of the ticket-centric response)
+3. Remove the "Fetch Status Read Path" section (lines 423-427) entirely
+   — its content is superseded by the endpoint spec in `cve-service.md`
+   and by the cross-reference notes in changes 1 and 4
+4. Update the refetch endpoint documentation (line 385-388): replace
    "Clients can track fetch progress via the CVE source status in the
    ticket detail endpoint" with "Clients can track fetch progress via
    `GET /api/v1/cves/{cve_id}/sources`"
