@@ -460,12 +460,15 @@ If `fetcher_name` is not found in the registry (e.g., a deployment
 removed the fetcher between enqueue and execution), the task logs an
 error and returns without retry.
 
-**Non-retryable exceptions**: `NotImplementedError` and `CVENotInSource`
-are in the non-retryable exception set. `NotImplementedError` indicates a
-programming error (incorrect invocation on a fetcher without a real
-`catch_up()` implementation). `CVENotInSource` is caught internally by
-the default `BaseCVEFetcher.catch_up()` and should never propagate — if
-it does, it indicates a custom override that forgot to catch it.
+**Non-retryable exceptions**: `NotImplementedError`, `CVENotInSource`,
+and `ValueError` are in the non-retryable exception set.
+`NotImplementedError` indicates a programming error (incorrect invocation
+on a fetcher without a real `catch_up()` implementation). `CVENotInSource`
+is caught internally by the default `BaseCVEFetcher.catch_up()` and should
+never propagate — if it does, it indicates a custom override that forgot
+to catch it. `ValueError` indicates a malformed `ticket_id` parameter
+(not a valid UUID) — a contract violation by the caller, not a transient
+failure.
 
 ### Interface contract
 

@@ -842,7 +842,7 @@ Concrete subclasses inherit it automatically (no override needed).
    b. If content is not `None` (file found): return the result of
       `process_item(path, content, session)` (`PostIngestTasks | None`)
 5. If no candidate path produced content: raise
-   `CVENotInSource(item_id)`
+    `CVENotInSource()`
 
 **Audit events**: none created directly. Side effects (DB mutations,
 audit events) are delegated entirely to `process_item()` — the
