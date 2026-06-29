@@ -204,9 +204,14 @@ never deleted). Presence = "CVE is/was in the KEV catalog." Absence =
 
 ```
 kev_entry = lookup CVEKEVEntry for cve_id
+kev_last_successful_run = latest FetcherRun for KEV with status=success (may be None)
+
 if kev_entry exists:
     status = "success"
     fetched_at = kev_entry.updated_at
+elif kev_last_successful_run is None:
+    status = "not_attempted"  (KEV has never completed successfully)
+    fetched_at = null
 elif kev_last_successful_run >= cve.created_at:
     status = "missing"  (derived: KEV ran and CVE is not in catalog)
     fetched_at = kev_last_successful_run
@@ -357,7 +362,8 @@ cannot grow unbounded.
 |--------|------|-----------|
 | 404 | `CVE_NOT_FOUND` | CVE does not exist or is not accessible (scoped `require_accessible_cve` dependency) |
 
-Global responses (401, 422, 500) apply per `api-spec.md`.
+Global responses (422, 500) apply per `api-spec.md`. This endpoint is
+Public and exempt from 401.
 
 **Redis graceful degradation**: if Redis is unreachable, `pending`
 status is never shown — sources with an in-flight fetch appear with
@@ -524,11 +530,16 @@ re-querying exceeds the benefit for this marginal case.
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Batch Error Handling | Add `record_source_status("failure"/"missing")` + isolated status commit to error handling pattern |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Default `catch_up()` Implementation | Add `record_source_status("missing")` after `CVENotInSource` catch |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | `fetch_single` Signaling Convention table | Add note that batch/catch-up now also write status |
+| `docs/features/platform/cve-fetcher-infrastructure.md` | Prose above Signaling Convention table | Remove "without status writes" statement (no longer accurate) |
 | `docs/features/tickets/cve-service.md` | CVESource Management | Note that all paths now write status (remove "batch path does not write"). Note that KEV uses CVEKEVEntry derivation instead of CVESource |
 | `docs/features/tickets/cve-service.md` | Fetch Status Read Path | Replace with pointer to the new endpoint's resolution algorithm (or remove section entirely — superseded by the endpoint spec) |
+| `docs/features/tickets/cve-service.md` | Placeholder Records section | Update mechanism description: UI uses dedicated endpoint, not direct CVESource record comparison |
 | `docs/features/tickets/tickets.md` | CVEDetail sub-schema | Remove `sources: CVESource[]` field; add cross-reference to dedicated endpoint |
 | `docs/features/tickets/tickets.md` | CVESource response sub-schema | Remove (no longer needed — replaced by dedicated endpoint response) |
+| `docs/features/tickets/tickets.md` | TicketDetail `cve` field description | Remove "and sources" from description (no longer inline) |
 | `docs/features/tickets/cve-tracking.md` | `CVEListItem` response schema | Remove `sources` field from `CVEListItem`; add cross-reference to dedicated endpoint |
+| `docs/features/tickets/cve-tracking.md` | Intro paragraph | Remove "sources" from inline data listing (no longer part of ticket-centric response) |
+| `docs/features/tickets/cve-tracking.md` | Fetch Status Read Path cross-reference | Update pointer to new endpoint location in `cve-service.md` |
 | `docs/features/tickets/cve-tracking.md` | Refetch endpoint documentation (line 385) | Update cross-reference: replace "ticket detail endpoint" with `GET /api/v1/cves/{cve_id}/sources` |
 | `docs/data-model.md` | CVESource section | Update prose: some sources write only `success` records (generalized formulation with KEV as example). No schema change |
 | `docs/api-spec.md` | Endpoint registry | Add `GET /api/v1/cves/{cve_id}/sources` |
