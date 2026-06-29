@@ -441,8 +441,11 @@ Represents a Common Vulnerability and Exposure entry.
 ### CVESource
 
 Tracks the fetch outcome for each CVE data source. One record per source
-per CVE. Records are created for all outcomes — successful data ingestion,
-transient failures, and sources that do not have the CVE.
+per CVE. Most sources write records for all outcomes (success, failure,
+missing). Some sources write only `success` records; their `failure` and
+`missing` statuses are derived at read time from other data (e.g., KEV
+derives status from `CVEKEVEntry` presence — see
+`docs/features/tickets/cve-service.md` for the derivation logic).
 See `docs/features/tickets/cve-service.md`.
 
 | Column      | Type          | Constraints                        | Description                        |

@@ -1074,15 +1074,6 @@ the canonical definition.
 | `title` | string \| null | Brief summary from CNA (max 256 chars). Null if not provided by the CNA |
 | `description` | string \| null | Vulnerability description |
 
-**CVESource** — fetch outcome for an individual CVE data source. The
-`sources[]` array includes all attempted sources with their fetch
-outcome. Sources never attempted are omitted from the response.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `source` | string | Source identifier (e.g., `nvd`, `mitre`, `kernel`) |
-| `status` | string | Fetch outcome: `"success"`, `"failure"`, `"missing"`, or `"pending"`. See `docs/features/tickets/cve-service.md` (Fetch Status Read Path) for the resolution rules combining DB state and Redis pending keys |
-
 **CVEDetail** — expanded CVE representation for detail views:
 
 | Field | Type | Description |
@@ -1095,8 +1086,10 @@ outcome. Sources never attempted are omitted from the response.
 | `modified_date` | datetime \| null | Date last modified (UTC) |
 | `cve_state` | string | CVE record state (`"published"` or `"rejected"`) |
 | `date_rejected` | datetime \| null | When the CVE was rejected (UTC). `null` if `cve_state` is `"published"` |
-| `sources` | CVESource[] | Data sources for this CVE |
 | `external_identifiers` | CVEExternalIdentifierResponse[] | External identifiers from other naming authorities |
+
+Source status is available via `GET /api/v1/cves/{cve_id}/sources` — see
+`docs/features/tickets/cve-service.md`.
 
 **CVEExternalIdentifierResponse** — external vulnerability identifier:
 
@@ -1192,7 +1185,7 @@ TicketSummary with the full package tree and expanded CVE data.
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
 | `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no override. `"none"` = CVSS score 0.0 (informational) |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
-| `cve` | CVEDetail \| null | Expanded CVE data with dates and sources, or `null` if no CVE |
+| `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
 | `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
 | `packages` | PackageDetail[] | Full package/track/product tree with bugowner data |

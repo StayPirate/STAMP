@@ -423,6 +423,7 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/cves` | Public | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
 | GET | `/api/v1/cves/{cve_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
+| GET | `/api/v1/cves/{cve_id}/sources` | Public | [cve-service](../tickets/cve-service.md#cve-source-status-get-apiv1cvescve_idsources) |
 | POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#post-apiv1cvescve_idrefetch) |

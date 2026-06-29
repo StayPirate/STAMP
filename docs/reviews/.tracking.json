@@ -189,7 +189,7 @@
           "GAP": {
             "H": 0,
             "M": 1,
-            "L": 5
+            "L": 4
           },
           "COH": {
             "H": 0,
@@ -212,7 +212,7 @@
             "L": 0
           }
         },
-        "resolved": 2,
+        "resolved": 3,
         "not_reviewed": [
           "DES",
           "SEC",
