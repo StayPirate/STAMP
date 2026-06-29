@@ -268,8 +268,10 @@ internal CA.
   - Fetchers in batch mode (`execute()` loop): once per run — the client
     is created lazily on first access and reused for all `fetch_single()`
     calls within the same run
-  - Standalone `fetch_single_cve` tasks: once per task — a temporary
-    client is created and destroyed per call
+  - Standalone `fetch_single_cve` tasks: once per task — a client is
+    created lazily and closed by the task wrapper per call
+  - Standalone `run_catch_up` tasks: once per task — same pattern as
+    `fetch_single_cve`
   - Long-lived clients (IBSClient, IBSEventConsumer): once per process
     lifetime
 - **If file is corrupt or unparseable**: `build_tls_context()` raises

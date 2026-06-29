@@ -184,7 +184,7 @@
       "enabled": true,
       "abbr": "CFI",
       "cache": {
-        "last_review": "2026-06-25T00:00:00+0000",
+        "last_review": "2026-06-29T19:49:59+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -213,11 +213,7 @@
           }
         },
         "resolved": 11,
-        "not_reviewed": [
-          "DES",
-          "SEC",
-          "API"
-        ]
+        "not_reviewed": []
       }
     },
     "cve-service": {
@@ -376,7 +372,7 @@
         "open": {
           "GAP": {
             "H": 0,
-            "M": 1,
+            "M": 0,
             "L": 0
           },
           "COH": {
@@ -400,7 +396,7 @@
             "L": 0
           }
         },
-        "resolved": 30,
+        "resolved": 31,
         "not_reviewed": []
       }
     },

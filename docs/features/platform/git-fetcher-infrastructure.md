@@ -1007,5 +1007,3 @@ imposing a fixed execution order.
   (consumer)
 - `docs/features/tickets/cve-sync-kernel.md` — Kernel CVE fetcher
   (consumer)
-- `docs/features/platform/networking.md` — Shared HTTP client (used by
-  fetch_single blob download)

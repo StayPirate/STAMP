@@ -452,9 +452,25 @@ def run_catch_up(fetcher_name: str, ticket_id: str) -> None:
     fetcher = fetcher_cls()
     async def _run():
         async with get_async_session() as session:
-            await fetcher.catch_up(ticket_id, session)
+            try:
+                await fetcher.catch_up(ticket_id, session)
+            finally:
+                if fetcher._http_client is not None:
+                    try:
+                        await fetcher._http_client.aclose()
+                    except Exception:
+                        logger.warning("Failed to close HTTP client for %s", fetcher_name)
+                    fetcher._http_client = None
     async_run(_run())
 ```
+
+The `finally` block implements the HTTP client ownership rule (see
+"`fetch_single()` and `catch_up()` Lifecycle" below): the outermost
+wrapper that invokes a sub-operation owns the client lifecycle. If
+`catch_up()` (or any method it delegates to, including `fetch_single()`)
+accessed `self.http_client` during execution, the client is closed here.
+If no HTTP request was made (`_http_client is None`), the teardown is a
+no-op.
 
 If `fetcher_name` is not found in the registry (e.g., a deployment
 removed the fetcher between enqueue and execution), the task logs an
@@ -1043,21 +1059,87 @@ level (not deep-merged).
 
 ### `fetch_single()` and `catch_up()` Lifecycle
 
-`fetch_single()` is safe to call from any context:
+#### HTTP Client Ownership Rule
 
-- If `self._http_client` exists (inside an active `run()` → `execute()`
-  flow): reuses it. Connection pooling preserved for fetchers whose
-  `execute()` delegates to `fetch_single()` in a loop (Red Hat, OSV, EPSS)
-- If `self._http_client` does not exist (standalone invocation from a
-  task wrapper, test, or any future call site): creates a temporary
-  client for the duration of the call, closes on return
-- `catch_up()` inherits this behavior (delegates to `fetch_single()`)
-- Error handling: if temporary client creation fails (e.g., TLS
-  misconfiguration), the exception propagates normally. No cleanup needed
-  for a client that was never created
+The outermost wrapper that invokes a sub-operation (`fetch_single()` or
+`catch_up()`) owns the HTTP client lifecycle and MUST close
+`self._http_client` in a `finally` block after the method returns. The
+sub-operation methods themselves use `self.http_client` (the lazy
+property) freely and MUST NOT close the client.
 
-No caller responsibility: task wrappers (`fetch_single_cve`,
-`run_catch_up`) do not manage HTTP client lifecycle.
+The three ownership contexts:
+
+| Wrapper (owner) | Sub-operation | Client creation | Teardown |
+|-----------------|---------------|-----------------|----------|
+| `run()` | `execute()` | Lazy property on first `self.http_client` access | `run()` `finally` block |
+| `fetch_single_cve` task | `fetch_single()` | Lazy property on first `self.http_client` access | `fetch_single_cve` `finally` block |
+| `run_catch_up` task | `catch_up()` | Lazy property on first `self.http_client` access (direct or via `fetch_single()` delegation) | `run_catch_up` `finally` block |
+
+Connection pooling within a single invocation:
+
+- **`run()` → `execute()` flow**: the client is created once (first
+  access) and reused for all HTTP calls within `execute()`, including
+  repeated `fetch_single()` calls in a loop (Red Hat, OSV, EPSS).
+  Pooling is preserved for the entire run
+- **`fetch_single_cve` → `fetch_single()`**: the client is created on
+  first access inside `fetch_single()` and closed by the wrapper on
+  return. Single-call lifetime
+- **`run_catch_up` → `catch_up()`**: the client is created on first
+  access (whether by a custom override's direct HTTP calls or by the
+  default `catch_up()` delegating to `fetch_single()`). Pooling is
+  preserved across multiple HTTP calls within the same `catch_up()`
+  invocation. Closed by the wrapper on return
+
+#### Teardown pattern
+
+All three wrappers apply the same teardown in their `finally` block:
+
+```python
+finally:
+    if fetcher._http_client is not None:
+        try:
+            await fetcher._http_client.aclose()
+        except Exception:
+            logger.warning("Failed to close HTTP client for %s", fetcher.name)
+        fetcher._http_client = None
+```
+
+If `_http_client` is `None` (the sub-operation never made HTTP
+requests), teardown is a no-op. The `aclose()` call is wrapped in
+try/except to suppress transport errors during shutdown — preventing
+them from masking the original exception that triggered the `finally`
+block.
+
+#### New call site requirement
+
+Any future code that invokes `fetch_single()` or `catch_up()` outside
+the three documented wrappers MUST apply the same `finally` teardown
+pattern. Calling these methods without teardown will leak the HTTP
+client (unclosed connections).
+
+#### Retry interaction
+
+Both `fetch_single_cve` and `run_catch_up` use Celery native retry
+(`self.retry()`). When a retryable exception occurs:
+
+1. The exception propagates through the `finally` block — the HTTP
+   client is closed and `_http_client` is set to `None`
+2. Celery raises `Retry`, which re-enqueues the task
+3. On the next attempt, the task function re-executes from the
+   beginning: a **fresh fetcher instance** is created
+   (`fetcher = fetcher_cls()`), starting with `_http_client = None`
+4. A new HTTP client is created lazily on first access during the
+   retry attempt
+
+No HTTP client state survives across retries. Each attempt has an
+independent client lifecycle.
+
+#### Error handling
+
+If temporary client creation fails (e.g., TLS misconfiguration from a
+corrupt CA bundle), the exception propagates normally to the caller. No
+cleanup is needed for a client that was never created
+(`_http_client` remains `None`).
 
 ## Fetcher Documentation Requirements
 

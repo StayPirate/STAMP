@@ -56,17 +56,7 @@
 
 ### FEI-GAP-019 — HTTP client lifecycle for custom catch_up() sub-operations unspecified (Medium)
 
-**Category**: Gap Analysis
-**Status**: OPEN
-
-The `catch_up()` interface contract specifies parameters, idempotency,
-and boundary conditions but does not document how custom `catch_up()`
-implementations (non-CVE fetchers) that need HTTP access manage the
-HTTP client lifecycle. The `run_catch_up` Celery task wrapper creates a
-DB session but not an HTTP client. Custom implementations that query
-external services (IBS, SMELT) must create their own short-lived client
-— but this is not stated in the interface contract. Pre-existing gap,
-surfaced during the catch-up participation refactor review.
+**Status**: RESOLVED — Unified HTTP client ownership rule: all three task wrappers (run, fetch_single_cve, run_catch_up) own client lifecycle via finally blocks; fetch_single()/catch_up() never self-close; new call site requirement documented (2026-06-29)
 
 ### FEI-GAP-020 — Rule 7 enforcement mechanism for non-CVE fetchers relies on runtime NotImplementedError (Low)
 
