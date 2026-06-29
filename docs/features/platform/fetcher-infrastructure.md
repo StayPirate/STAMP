@@ -513,6 +513,14 @@ execution. The following additional rules apply:
     to catch up on). `CVENotInSource` MUST NOT propagate to the
     `run_catch_up` wrapper. Transient errors (network, HTTP 5xx)
     propagate to the wrapper for retry
+  - **Post-exhaustion (CVE fetchers)**: after all retries are
+    exhausted, the task fails with no `CVESource` status write.
+    `run_catch_up` receives only `(fetcher_name, ticket_id)` — it
+    lacks direct `cve_id` access. Re-querying the ticket in an error
+    handler adds complexity disproportionate to the benefit: retry
+    exhaustion indicates infrastructure instability (a rare condition),
+    and the next periodic `execute()` run (within 24h) overwrites the
+    status with the correct value
   - **Non-CVE fetchers** (custom `catch_up()` override): MUST use
     per-item error handling — if one item (track, product, package)
     fails, continue with the remaining items rather than aborting the
