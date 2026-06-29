@@ -98,33 +98,38 @@ skip.
 ```
 On error (non-CVENotInSource):
   1. session.rollback()
-  2. try:
-       record_source_status(session, cve_id, self.cve_source_type, "failure")
-       session.commit()
-     except Exception:
-       session.rollback()
-       log warning ("could not persist failure status for {cve_id}")
+  2. Isolated status commit:
+       async with get_async_session() as status_session:
+           try:
+               record_source_status(status_session, cve_id, self.cve_source_type, "failure")
+               await status_session.commit()
+           except Exception:
+               log warning ("could not persist failure status for {cve_id}")
   3. self.record_failed()
   4. continue
 
 On CVENotInSource:
   1. session.rollback()
-  2. try:
-       record_source_status(session, cve_id, self.cve_source_type, "missing")
-       session.commit()
-     except Exception:
-       session.rollback()
-       log warning ("could not persist missing status for {cve_id}")
+  2. Isolated status commit:
+       async with get_async_session() as status_session:
+           try:
+               record_source_status(status_session, cve_id, self.cve_source_type, "missing")
+               await status_session.commit()
+           except Exception:
+               log warning ("could not persist missing status for {cve_id}")
   3. continue (no metric — missing is not a failure)
 ```
 
-**Transaction pattern**: the rollback clears the failed/partial data,
-then a fresh write + commit persists only the status record. Bare
+**Isolated status commit**: an *isolated status commit* is a short-lived
+independent transaction (separate `get_async_session()` session) that
+writes only the `CVESource` status record after the main transaction has
+been rolled back. The independent session eliminates any risk of session
+state corruption from the rolled-back transaction. Bare
 `session.commit()` is used (not `commit_and_dispatch`) because there are
 no post-ingest tasks to dispatch after a failure/missing outcome.
 
-**Mini-commit failure handling**: the status write is informational (VA
-visibility), not functional. If the mini-commit itself fails (e.g., DB
+**Failure handling**: the status write is informational (VA visibility),
+not functional. If the isolated status commit itself fails (e.g., DB
 connection lost), the loop logs a warning and continues processing the
 next CVE. The status will be corrected on the next successful run.
 
@@ -146,7 +151,7 @@ not a failure condition").
 EPSS). Cursor-based (NVD) and git-based (MITRE, kernel) fetchers do not
 encounter `CVENotInSource` in their batch path.
 
-### Change 2: Catch-up writes `failure` and `missing`
+### Change 2: Catch-up writes `missing`
 
 **Current behavior**: default `catch_up()` catches `CVENotInSource` →
 silent rollback. Errors propagate to `run_catch_up` wrapper for retry;
@@ -157,32 +162,32 @@ after exhaustion, task fails with no status write.
 ```
 Default catch_up() — CVENotInSource:
   1. session.rollback()
-  2. try:
-       record_source_status(session, cve_id, self.cve_source_type, "missing")
-       session.commit()
-     except Exception:
-       session.rollback()
-       log warning ("could not persist missing status for {cve_id}")
-
-run_catch_up wrapper — after retry exhaustion:
-  1. session.rollback()  (if session is dirty)
-  2. try:
-       record_source_status(session, cve_id, fetcher_cls.cve_source_type, "failure")
-       session.commit()
-     except Exception:
-       session.rollback()
-       log warning ("could not persist failure status for {cve_id}")
+  2. Isolated status commit:
+       async with get_async_session() as status_session:
+           try:
+               record_source_status(status_session, cve_id, self.cve_source_type, "missing")
+               await status_session.commit()
+           except Exception:
+               log warning ("could not persist missing status for {cve_id}")
 ```
 
-**Transaction pattern**: same as batch — bare `session.commit()` (not
-`commit_and_dispatch`), with try/except around the mini-commit. Status
-writes are informational; their failure must not disrupt the catch-up
-flow.
+**Transaction pattern**: same as batch — independent session for the
+isolated status commit. Status writes are informational; their failure
+must not disrupt the catch-up flow.
+
+**`run_catch_up` wrapper unchanged**: the wrapper does NOT write
+`failure` after retry exhaustion. Rationale: `run_catch_up` receives
+only `fetcher_name` and `ticket_id` — it lacks direct access to
+`cve_id`. Re-querying the ticket to extract `cve_id` in the error
+handler adds complexity disproportionate to the benefit: retry
+exhaustion indicates infrastructure instability (a rare condition), and
+the next periodic `execute()` run (within 24h) serves as the safety net,
+overwriting the status with the correct value.
 
 **Rationale**: catch-up is best-effort data recovery on ticket
-reactivation. Writing status records gives the VA visibility into what
-happened during catch-up without changing catch-up's fire-and-forget
-nature. The next periodic `execute()` run serves as the safety net.
+reactivation. Writing `missing` status gives the VA visibility into
+source coverage checked during catch-up without changing catch-up's
+fire-and-forget nature.
 
 ### Change 3: KEV status derived from `CVEKEVEntry` (no writes)
 
@@ -202,7 +207,7 @@ kev_entry = lookup CVEKEVEntry for cve_id
 if kev_entry exists:
     status = "success"
     fetched_at = kev_entry.updated_at
-elif kev_last_successful_run > cve.created_at:
+elif kev_last_successful_run >= cve.created_at:
     status = "missing"  (derived: KEV ran and CVE is not in catalog)
     fetched_at = kev_last_successful_run
 else:
@@ -218,6 +223,17 @@ value).
 `CVEKEVEntry` via `upsert_cve()` as today. `CVESource("kev", "success")`
 continues to be written as a side-effect of `upsert_cve()` but is not
 consulted by the sources endpoint for KEV status.
+
+**Vestigial `CVESource` record**: `CVESource("kev", "success")` is
+intentionally retained despite being unused by the sources endpoint.
+Removing it would require KEV-specific branching inside `upsert_cve()`
+(checking whether the caller is KEV to skip the status write), violating
+the uniform enrichment contract. The record is harmless — one row per
+KEV-listed CVE (~1200 total), written once and updated in-place on
+subsequent runs. It provides a secondary consistency check if needed
+(the `CVESource` record and the `CVEKEVEntry` should always agree for
+KEV-listed CVEs). The sources endpoint derives KEV status exclusively
+from `CVEKEVEntry` presence.
 
 **No reverse pass, no scaling concern**: regardless of CVE count (10K
 or 300K+), zero additional writes are needed for KEV missing status.
@@ -244,11 +260,15 @@ mechanism.
 
 **Path**: `GET /api/v1/cves/{cve_id}/sources`
 
-**Response**:
+**Access**: Public (subject to `require_accessible_cve` — returns
+404 `CVE_NOT_FOUND` for non-existent CVEs or CVEs associated with
+confidential tickets the caller cannot access)
+
+**Success response**: 200 OK
 
 ```json
 {
-  "sources": [
+  "data": [
     {
       "source": "nvd",
       "status": "success",
@@ -298,6 +318,11 @@ mechanism.
 | `registered` | boolean | Whether the source is currently registered in the fetcher registry |
 | `refetchable` | boolean | Whether on-demand refetch is supported (`supports_fetch_single`) |
 
+**Pagination**: intentionally unpaginated. The response is bounded by
+the number of registered CVE source types (currently 8) plus any
+deregistered sources with historical data — a fixed, small set that
+cannot grow unbounded.
+
 **Status values**:
 
 | Status | Derivation |
@@ -316,7 +341,7 @@ mechanism.
 3. For each source, resolve status:
    - **KEV** (derivation from data table): lookup `CVEKEVEntry` for
      `cve_id`. If exists → `success` (`fetched_at` = entry's
-     `updated_at`). If not exists and KEV last successful run >
+     `updated_at`). If not exists and KEV last successful run >=
      `CVE.created_at` → `missing` (`fetched_at` = last run). Otherwise
      → `not_attempted`
    - **All other registered sources**: check Redis pending key
@@ -325,6 +350,19 @@ mechanism.
      `not_attempted` if neither)
 4. For any DB records with a `source` value NOT in the current registry
    → include with `registered: false, refetchable: false`
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `CVE_NOT_FOUND` | CVE does not exist or is not accessible (scoped `require_accessible_cve` dependency) |
+
+Global responses (401, 422, 500) apply per `api-spec.md`.
+
+**Redis graceful degradation**: if Redis is unreachable, `pending`
+status is never shown — sources with an in-flight fetch appear with
+their last DB status (or `not_attempted`). This is consistent with
+existing behavior in the Fetch Status Read Path.
 
 **Relationship to ticket detail**: the `sources[]` array in `CVEDetail`
 (returned by `GET /api/v1/tickets/{ticket_id}`) is **removed**. The
@@ -443,20 +481,23 @@ All status writes — from batch, on-demand, and catch-up — go through
 - Single place to add future logic (e.g., logging, event emission)
 - No divergence between paths
 
-### Why the mini-commit pattern is acceptable for batch
+### Why the isolated status commit pattern is acceptable for batch
 
-After a rollback in the `execute()` loop, a mini-commit for the
-`CVESource` status record is safe because:
+After a rollback in the `execute()` loop, an isolated status commit for
+the `CVESource` status record is safe because:
 
 - The rollback cleared all partial data from the failed item
+- The status write uses an independent session (`get_async_session()`),
+  completely isolated from the batch session — no risk of session state
+  corruption from the rolled-back transaction
 - The status write is a single atomic upsert on a different table
-- The loop continues with the next CVE in a clean session state
+- The loop continues with the next CVE unaffected
 - The on-demand orchestrator already uses the same conceptual pattern
   (rollback → write status → commit), differing only in using
   `commit_and_dispatch(session, None)` instead of bare `session.commit()`
   because it handles both success and failure in the same code path
 
-### Why catch-up behaves identically to batch (not to on-demand)
+### Why catch-up writes only `missing` (not `failure`)
 
 Catch-up is a best-effort recovery mechanism, not user-initiated. Like
 batch:
@@ -468,8 +509,11 @@ Unlike on-demand:
 - No user waiting for feedback
 - No Redis dedup keys needed
 
-The only difference from the current batch design: catch-up now writes
-`missing`/`failure` for visibility, same as the new batch behavior.
+Catch-up writes `missing` (via isolated status commit) when
+`CVENotInSource` is caught — this gives the VA visibility into source
+coverage. It does NOT write `failure` after retry exhaustion because the
+`run_catch_up` wrapper lacks direct `cve_id` access and the cost of
+re-querying exceeds the benefit for this marginal case.
 
 ## Impact on Existing Specs
 
@@ -477,18 +521,19 @@ The only difference from the current batch design: catch-up now writes
 
 | File | Section | Change |
 |------|---------|--------|
-| `docs/features/platform/cve-fetcher-infrastructure.md` | Batch Error Handling | Add `record_source_status("failure"/"missing")` + mini-commit to error handling pattern |
+| `docs/features/platform/cve-fetcher-infrastructure.md` | Batch Error Handling | Add `record_source_status("failure"/"missing")` + isolated status commit to error handling pattern |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Default `catch_up()` Implementation | Add `record_source_status("missing")` after `CVENotInSource` catch |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | `fetch_single` Signaling Convention table | Add note that batch/catch-up now also write status |
-| `docs/features/platform/fetcher-infrastructure.md` | `catch_up()` Error handling | Specify `record_source_status("failure")` after retry exhaustion in `run_catch_up` |
 | `docs/features/tickets/cve-service.md` | CVESource Management | Note that all paths now write status (remove "batch path does not write"). Note that KEV uses CVEKEVEntry derivation instead of CVESource |
 | `docs/features/tickets/cve-service.md` | Fetch Status Read Path | Replace with pointer to the new endpoint's resolution algorithm (or remove section entirely — superseded by the endpoint spec) |
 | `docs/features/tickets/tickets.md` | CVEDetail sub-schema | Remove `sources: CVESource[]` field; add cross-reference to dedicated endpoint |
 | `docs/features/tickets/tickets.md` | CVESource response sub-schema | Remove (no longer needed — replaced by dedicated endpoint response) |
+| `docs/features/tickets/cve-tracking.md` | `CVEListItem` response schema | Remove `sources` field from `CVEListItem`; add cross-reference to dedicated endpoint |
+| `docs/features/tickets/cve-tracking.md` | Refetch endpoint documentation (line 385) | Update cross-reference: replace "ticket detail endpoint" with `GET /api/v1/cves/{cve_id}/sources` |
 | `docs/data-model.md` | CVESource section | Update prose: some sources write only `success` records (generalized formulation with KEV as example). No schema change |
 | `docs/api-spec.md` | Endpoint registry | Add `GET /api/v1/cves/{cve_id}/sources` |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Registry accessors | Add `get_all_cve_source_types()` specification |
-| `docs/features/identity/rbac.md` | Endpoint Permission Map | Add `GET /api/v1/cves/{cve_id}/sources` with appropriate access level |
+| `docs/features/identity/rbac.md` | Endpoint Permission Map | Add `GET /api/v1/cves/{cve_id}/sources` with `Public` access level |
 
 ### Files that need a new section
 
@@ -501,6 +546,8 @@ The only difference from the current batch design: catch-up now writes
 - `docs/features/platform/git-fetcher-infrastructure.md` — git fetchers
   don't encounter `CVENotInSource` in batch (they process files, not
   per-CVE queries)
+- `docs/features/platform/fetcher-infrastructure.md` — the `run_catch_up`
+  wrapper is unchanged (no failure status write after retry exhaustion)
 - NVD fetcher spec — cursor-based, no `CVENotInSource` in batch
 
 ## Execution Plan
@@ -515,41 +562,35 @@ state. Steps should be executed in order but can span multiple sessions.
 **Changes**:
 1. In section "Batch Error Handling" (around line 629): replace the
    current "no explicit `record_source_status("failure")` is needed"
-   text with the new pattern including mini-commit
+   text with the new isolated status commit pattern
 2. Add handling for `CVENotInSource` in batch: after rollback, write
-   `record_source_status("missing")` + commit
+   `record_source_status("missing")` via isolated status commit
 3. Update the "Distinction from the on-demand path" paragraph: remove
    the statement that batch does not write failure/missing status.
    Replace with a note that all paths now write status, with the only
    difference being Redis pending keys (on-demand only)
 4. Update the `execute()` pseudocode (around line 256) to show the new
-   error handling with mini-commits
+   error handling with isolated status commits (independent session)
 
 **Validation**: verify no contradiction with other sections in the same
 file or in `cve-service.md`.
 
 ### Step 2: Update catch-up behavior
 
-**Target**: `docs/features/platform/cve-fetcher-infrastructure.md` and
-`docs/features/platform/fetcher-infrastructure.md`
+**Target**: `docs/features/platform/cve-fetcher-infrastructure.md`
 
-**Changes in cve-fetcher-infrastructure.md**:
+**Changes**:
 1. Update the default `catch_up()` pseudocode (around line 70): after
-   catching `CVENotInSource`, add `record_source_status("missing")` +
-   commit instead of bare rollback
-2. Add a note in the boundary conditions about the new status writes
-
-**Changes in fetcher-infrastructure.md**:
-1. In the `catch_up()` interface contract → Error handling section
-   (around line 505): add a sub-point specifying that after
-   `run_catch_up` retry exhaustion, the wrapper writes
-   `record_source_status("failure")` + commit
-2. Clarify that this applies to CVE fetchers (via the default
-   `catch_up()`) — non-CVE fetcher custom overrides manage their own
-   error handling
+   catching `CVENotInSource`, add `record_source_status("missing")` via
+   isolated status commit instead of bare rollback
+2. Add a note in the boundary conditions about the new status write
 
 **Validation**: verify consistency with the "best-effort" catch-up
 philosophy documented elsewhere in fetcher-infrastructure.md.
+
+Note: `docs/features/platform/fetcher-infrastructure.md` does NOT need
+changes — the `run_catch_up` wrapper behavior is unchanged (no failure
+status write after retry exhaustion).
 
 ### Step 3: Document KEV derivation in sources endpoint
 
@@ -599,19 +640,25 @@ elsewhere don't need updating.
 **Target**: `docs/features/tickets/cve-service.md`
 
 **Changes**:
-1. Add a new section specifying the endpoint (path, method, auth,
-   request, response schema, resolution algorithm)
-2. Include all five status values: `success`, `failure`, `missing`,
-   `pending`, `not_attempted`
-3. Include `registered` and `refetchable` fields
-4. Specify deregistered fetcher handling (DB records for sources not in
+1. Add a new section specifying the endpoint:
+   - Path: `GET /api/v1/cves/{cve_id}/sources`
+   - Access: `Public` (subject to `require_accessible_cve`)
+   - Success response: `200 OK`
+   - Response envelope: `{"data": [...]}`
+   - Pagination: intentionally unpaginated (bounded set)
+   - Error responses: 404 `CVE_NOT_FOUND` (scoped dependency)
+   - Resolution algorithm (all five status values)
+2. Include `registered` and `refetchable` fields
+3. Specify deregistered fetcher handling (DB records for sources not in
    current registry)
-5. Specify Redis graceful degradation (same as current: if Redis
+4. Specify Redis graceful degradation (same as current: if Redis
    unreachable, no `pending` shown)
+5. Document KEV derivation logic inline (with vestigial `CVESource`
+   record explanation)
 
 **Also update**: `docs/api-spec.md` (endpoint registry),
 `docs/features/identity/rbac.md` (Endpoint Permission Map — add the new
-endpoint with appropriate access level).
+endpoint with `Public` access level).
 
 **Validation**: run `@api-convention-reviewer` on the new endpoint
 definition.
@@ -658,8 +705,13 @@ and the read path description.
    `GET /api/v1/cves/{cve_id}/sources` — see `cve-service.md`"
 
 **Changes in cve-tracking.md**:
-1. If there's a Fetch Status Read Path pointer section, update to
-   reference the new endpoint
+1. Remove `sources` field from `CVEListItem` response schema (line 122)
+2. Add a cross-reference note: "Source status is available via
+   `GET /api/v1/cves/{cve_id}/sources` — see `cve-service.md`"
+3. Update the refetch endpoint documentation (line 385-388): replace
+   "Clients can track fetch progress via the CVE source status in the
+   ticket detail endpoint" with "Clients can track fetch progress via
+   `GET /api/v1/cves/{cve_id}/sources`"
 
 **Validation**: run `@spec-coherence-reviewer` on modified files.
 
@@ -668,8 +720,6 @@ and the read path description.
 After all spec changes are applied, the following review findings should
 be re-evaluated (they may be auto-resolvable):
 
-- **CFI-GAP-03** — "No failure-status recording on catch-up retry
-  exhaustion" → directly addressed by Step 2
 - **CFI-GAP-06** — "Catch-up does not record `missing` status" →
   directly addressed by Step 2
 
@@ -684,7 +734,6 @@ were introduced:
 1. **`@spec-coherence-reviewer`** on all modified specs — detect
    contradictions or terminology drift introduced by the changes:
    - `cve-fetcher-infrastructure`
-   - `fetcher-infrastructure`
    - `cve-service`
    - `tickets`
    - `cve-tracking`
@@ -719,13 +768,54 @@ authoritative specification now lives in the modified spec files.
    is the sole mechanism for source status visibility. Rationale: source
    status is a property of the CVE (not the ticket), eliminates two
    divergent response schemas for the same data, single source of truth.
-2. **Mini-commit mechanism** (resolved 2026-06-29): bare
-   `session.commit()` (not `commit_and_dispatch`). No post-ingest tasks
-   to dispatch after failure/missing.
-3. **Mini-commit failure handling** (resolved 2026-06-29): log warning +
-   continue. Status writes are informational — their failure must not
-   interrupt the batch/catch-up loop.
+2. **Isolated status commit mechanism** (resolved 2026-06-29): use an
+   independent session (`get_async_session()`) for status writes after
+   rollback. Bare `session.commit()` (not `commit_and_dispatch`). No
+   post-ingest tasks to dispatch after failure/missing. The independent
+   session eliminates session state corruption risk.
+3. **Isolated status commit failure handling** (resolved 2026-06-29):
+   log warning + continue. Status writes are informational — their
+   failure must not interrupt the batch/catch-up loop.
 4. **EPSS and `missing`** (resolved 2026-06-29): EPSS follows the
    uniform pattern — writes `missing` for the rare CVEs it doesn't
    cover. The volume is negligible and transient (resolved by next daily
    run) and does not justify special-case logic.
+5. **Catch-up failure write** (resolved 2026-06-29): `run_catch_up`
+   does NOT write `failure` after retry exhaustion. The wrapper lacks
+   direct `cve_id` access, and the cost of re-querying the ticket
+   exceeds the benefit for a marginal case (retry exhaustion =
+   infrastructure instability). Only `catch_up()` writes `missing`
+   (where `cve_id` is already available). The next periodic `execute()`
+   serves as the safety net.
+6. **KEV comparison operator** (resolved 2026-06-29): use `>=` (not
+   `>`) for `kev_last_successful_run >= cve.created_at`. Semantically
+   more precise — if KEV finished at the same instant the CVE was
+   created, the catalog was fully scanned. No downside.
+7. **Access level** (resolved 2026-06-29): `Public` — consistent with
+   `GET /cves/{cve_id}/cvss`. Subject to `require_accessible_cve`
+   scoped dependency (confidential ticket visibility).
+8. **Response envelope** (resolved 2026-06-29): `{"data": [...]}` per
+   `api-spec.md` convention (not `{"sources": [...]}`).
+9. **Pagination** (resolved 2026-06-29): intentionally unpaginated —
+   bounded by registered source count (~8). No growth vector.
+10. **CVE non-existent behavior** (resolved 2026-06-29): handled by
+    `require_accessible_cve` router-level dependency (404
+    `CVE_NOT_FOUND`). No endpoint-specific logic needed.
+11. **Breaking change concern** (resolved 2026-06-29): not applicable —
+    no implementation exists yet. Clean spec redesign.
+12. **Write volume concern** (resolved 2026-06-29): invalidated —
+    reviewer's 800K estimate was based on incorrect scope assumption
+    (300K total CVEs vs. actual ~1-3K active tickets in batch scope).
+    Real volume: ~3000 writes/day, negligible.
+13. **`not_attempted` ambiguity** (resolved 2026-06-29): invalidated —
+    the state correctly represents "no record exists and no fetch is
+    in-flight." The theoretical ambiguity (vs. "not yet reached in
+    current batch") is a transient window of minutes with no practical
+    impact.
+14. **Terminology** (resolved 2026-06-29): "isolated status commit"
+    replaces informal "mini-commit." Defined inline in the spec as the
+    canonical term for the pattern.
+15. **`CVEListItem.sources[]`** (resolved 2026-06-29): removed from the
+    CVE list endpoint response. No existing consumer depends on it. The
+    dedicated endpoint is the sole mechanism for source status visibility
+    across all contexts (ticket detail, CVE list, standalone query).
