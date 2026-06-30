@@ -87,9 +87,11 @@ Derived values:
 | Stale threshold | `run_timeout + margin` | DB cleanup for orphaned records (process guaranteed dead) |
 
 The `margin` in the stale threshold accounts for the brief window between
-SIGKILL delivery and process termination (kernel scheduling). A fixed 60
-seconds is sufficient (SIGKILL is immediate in practice; the margin
-exists for clock skew in multi-node deployments).
+SIGKILL delivery and process termination (kernel scheduling). A fixed,
+hardcoded margin of 60 seconds is used (not configurable per-fetcher).
+SIGKILL is immediate in practice; the margin exists for clock skew in
+multi-node deployments. This value is embedded in the stale detection
+logic, not derived from `FetcherConfig`.
 
 **Rationale**: `run_timeout` now means what an admin intuitively expects
 ("a run will never exceed this duration"). The stale threshold stays
@@ -211,6 +213,8 @@ alone provides sufficient diagnostic value for a rare scenario.
 | Individual fetcher pattern alignment (D5) | `cve-sync-{nvd,redhat,ghsa,epss,osv,kev}.md` | Inline code must match updated canonical patterns |
 | Informative error message (D6) | `git-fetcher-infrastructure.md` | Git-fetcher-specific enrichment |
 | Operational note (large deltas) | `git-fetcher-infrastructure.md` | Git-fetcher-specific guidance |
+| SoftTimeLimitExceeded exclusion check | `.opencode/agents/fetcher-compliance-reviewer.md` | Agent must verify the new convention |
+| Agent description update | `.opencode/README.md` | Keep README in sync with agent changes |
 
 ## Spec Modification Plan
 
@@ -280,10 +284,10 @@ longer than the fetcher's `run_timeout` (from `FetcherConfig`).
 ```
 A run is considered **stale** when it has been in `running` status for
 longer than `run_timeout + 60` seconds (the **stale threshold**). The
-60-second margin ensures that the hard time limit (`time_limit =
-run_timeout`) has had time to terminate the process before a new run is
-started — guaranteeing the single-instance invariant even if the soft
-time limit was not honored.
+60-second margin is a hardcoded constant (not configurable). It ensures
+that the hard time limit (`time_limit = run_timeout`) has had time to
+terminate the process before a new run is started — guaranteeing the
+single-instance invariant even if the soft time limit was not honored.
 ```
 
 **Add after line 1392** (after the SIGTERM paragraph):
@@ -351,12 +355,24 @@ Concrete fetchers MAY catch `SoftTimeLimitExceeded` at the
 error message before re-raising as `FetcherError`. This is optional —
 if not caught at the `execute()` level, `run()` applies the generic
 fallback message ("Execution timed out").
+
+**Not excluded — `OperationalError` and database connection loss**:
+database errors are caught per-item (not excluded from the per-item
+catch). When a connection is lost, all subsequent items will also fail.
+The all-items-failed safety check in `run()` then triggers, setting
+status to `failure` and preventing cursor advancement. This is
+suboptimal (the loop iterates through doomed items until the timeout
+fires) but not dangerous — the safety check protects cursor integrity.
+Excluding database errors would add complexity (distinguishing
+transient vs. fatal DB errors is non-trivial) for marginal benefit,
+and the timeout mechanism provides the actual time bound.
 ```
 
 #### 1.5 Status determination — clarification
 
-**Add note after line 109** (after "Metric counters are preserved for
-diagnostics"):
+**Add after line 109** (after "preserved for diagnostics but do not
+influence the status"), as a continuation of the same numbered item 1,
+at the same indentation level (6 spaces):
 
 ```
       This includes `SoftTimeLimitExceeded` — when the soft time limit
@@ -439,8 +455,9 @@ from the phase.
 
 #### 2.4 Operational note — large deltas
 
-**Add new subsection** (suggest after the "Recovery" section or at the
-end of the operational considerations):
+**Add new subsection after line 325** (after the "Cursor SHA
+Unreachable" subsection, immediately before `## Runtime Dependencies`
+at line 327):
 
 ```
 ### Operational: large delta convergence
@@ -475,10 +492,12 @@ This scenario is uncommon in normal operation:
 
 #### 2.5 "No anti-loop logic" note — update
 
-**Current text** (lines 389-390):
+**Current text** (lines 389-392):
 ```
 **No anti-loop logic**: Celery task timeout limits each run's
-duration.
+duration. Repeated failures (e.g., corruption loop from faulty disk)
+produce visible `failure` records in the fetcher dashboard for
+operator intervention.
 ```
 
 **Replace with**:
@@ -487,7 +506,9 @@ duration.
 run_timeout`) guarantees each run's duration is bounded. The soft time
 limit (at 95% of `run_timeout`) provides early warning for clean
 shutdown. Step 10d ensures `SoftTimeLimitExceeded` propagates rather
-than being caught as a per-item error.
+than being caught as a per-item error. Repeated failures (e.g.,
+corruption loop from faulty disk) produce visible `failure` records in
+the fetcher dashboard for operator intervention.
 ```
 
 ### Phase 2b: `cve-fetcher-infrastructure.md`
@@ -742,12 +763,17 @@ with `except Exception:`. The fix in Phase 2b propagates automatically.
             if not staleness_checked and self._last_assessed_date is not None:
                 try:
                     self._check_staleness(self._last_assessed_date)
-                except (SoftTimeLimitExceeded, MemoryError):
-                    raise  # whole-run signals — propagate even in diagnostic blocks
                 except Exception:
                     pass  # staleness is purely diagnostic
                 staleness_checked = True
 ```
+
+**Staleness check block**: the `except Exception:` in the staleness
+check (lines 255-258) is NOT subject to `SoftTimeLimitExceeded`
+exclusion. The same reasoning as `_isolated_status_commit()` applies
+(see Phase 2b.3) — the timing window is negligibly small (single
+in-memory date comparison, no I/O), and the hard time limit guarantees
+process termination at `run_timeout` regardless.
 
 #### 2c.5 `cve-sync-osv.md` (lines 308-327)
 
@@ -927,6 +953,60 @@ in Shutdown section) — the soft limit still exists at 95% of
 `run_timeout` and the described behavior (asyncio.sleep cancellation)
 remains correct.
 
+### Phase 3b: Fetcher compliance reviewer agent
+
+#### 3b.1 Error handling section (`.opencode/agents/fetcher-compliance-reviewer.md`, lines 79-86)
+
+**Current text**:
+```
+### Error handling
+
+- Does the `execute()` method let exceptions propagate naturally (so
+  `BaseFetcher.run()` can catch them and record the failure)?
+- Are there broad `except` clauses that swallow exceptions without
+  re-raising? This would prevent the dashboard from showing failures.
+- Is partial failure handled correctly? If some items fail but the fetcher
+  continues, are failed items reported via `self.record_failed()`?
+```
+
+**Replace with**:
+```
+### Error handling
+
+- Does the `execute()` method let exceptions propagate naturally (so
+  `BaseFetcher.run()` can catch them and record the failure)?
+- Are there broad `except` clauses that swallow exceptions without
+  re-raising? This would prevent the dashboard from showing failures.
+- **`SoftTimeLimitExceeded` exclusion**: do per-item `except Exception:`
+  blocks in the `execute()` loop explicitly exclude
+  `SoftTimeLimitExceeded` and `MemoryError` with a preceding
+  `except (SoftTimeLimitExceeded, MemoryError): raise`? Catching these
+  exceptions per-item silently defeats the timeout mechanism — the soft
+  time limit signal is delivered once and, once consumed, is never
+  re-raised. This is a "Needs revision" issue. See
+  "`SoftTimeLimitExceeded` handling convention" in
+  `fetcher-infrastructure.md`.
+- **Exception**: fire-and-forget helper blocks with negligible timing
+  windows (e.g., `_isolated_status_commit()`, diagnostic checks) are
+  exempt — the hard time limit provides the backstop for these cases.
+- Is partial failure handled correctly? If some items fail but the fetcher
+  continues, are failed items reported via `self.record_failed()`?
+```
+
+#### 3b.2 `.opencode/README.md`
+
+Find the `@fetcher-compliance-reviewer` row in the agents table.
+
+**Current text**:
+```
+| `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies fetchers inherit from BaseFetcher (or BaseCVEFetcher for CVE fetchers) and report metrics correctly |
+```
+
+**Replace with**:
+```
+| `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies fetchers inherit from BaseFetcher (or BaseCVEFetcher for CVE fetchers), report metrics correctly, and exclude `SoftTimeLimitExceeded` from per-item catches |
+```
+
 ## Impact on Existing Findings
 
 ### GFI-GAP-01 — Resolved by this draft
@@ -984,7 +1064,7 @@ All items investigated and resolved:
 
 ### Phase 4: Verification
 
-After all modifications from Phase 1, 2, 2b, 2c, and 3 have been
+After all modifications from Phase 1, 2, 2b, 2c, 3, and 3b have been
 applied to the specs, run the following reviewers to verify correctness:
 
 **4.1 `spec-coherence-reviewer`** — run on each of:
