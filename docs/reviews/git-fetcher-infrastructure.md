@@ -40,15 +40,7 @@ partial-cursor mechanism for deltas larger than one task window.
 
 ### GFI-GAP-02 — `partial` runs advance the cursor and abandon failed items (Medium)
 
-**Category**: Data lifecycle / Error path
-**Status**: OPEN
-
-A single `show_file()` blob download timeout (transient network blip) →
-`record_failed()`, run ends `partial`, cursor advances to HEAD. The failed
-CVE file is now behind the cursor; the next delta starts at the new HEAD,
-so the item is never reprocessed unless the upstream file changes again.
-The only recovery is a manual `fetch_single()`. No automatic retry/requeue
-for items failed during a `partial` run is specified.
+**Status**: RESOLVED — Documented as intentional trade-off per OP-9 design decision (commit `a7e2632`). Failed items are identified in WARNING logs by file path; `fetch_single()` provides manual recovery. Design note added to Status Determination section. (2026-06-30)
 
 ### GFI-GAP-03 — Recovery with a cursor that has `sha` but missing `committed_at` (Medium)
 
