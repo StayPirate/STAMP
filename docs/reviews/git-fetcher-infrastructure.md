@@ -19,7 +19,15 @@
 ### GFI-GAP-01 — Large recovery/initial delta cannot converge within the task window (High)
 
 **Category**: Boundary / Temporal
-**Status**: OPEN
+**Status**: RESOLVED
+
+**Resolution** (2026-06-30): Resolved via fetcher-timeout-architecture —
+`SoftTimeLimitExceeded` exclusion from per-item catch (step 10d) + hard
+time limit backstop (`time_limit = run_timeout`) + operational
+convergence note documenting guaranteed convergence through idempotent
+reprocessing. See `fetcher-infrastructure.md` ("`SoftTimeLimitExceeded`
+handling convention") and `git-fetcher-infrastructure.md` ("Operational:
+large delta convergence").
 
 After an extended outage, `_compute_recovery_delta` (or a long catch-up
 delta) can yield tens of thousands of files. In a blobless clone each

@@ -1410,7 +1410,7 @@ startup if not present.
 | fetcher_name      | VARCHAR(100) | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
 | schedule_override | VARCHAR(50)  | nullable           | Cron expression to override the default schedule |
-| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds. Also used as stale run detection threshold. 0 disables both. |
+| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds (hard ceiling). Also used to derive the soft time limit (×0.95) and stale detection threshold (+60s). 0 disables all time limits and stale detection. |
 | request_delay     | FLOAT       | NOT NULL, DEFAULT 0  | Minimum inter-request delay in seconds. 0 = no delay. CHECK (>= 0 AND <= 300). |
 | custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp        |

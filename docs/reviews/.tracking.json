@@ -443,7 +443,7 @@
         "last_review": "2026-06-25T00:00:00+0000",
         "open": {
           "GAP": {
-            "H": 1,
+            "H": 0,
             "M": 6,
             "L": 3
           },
@@ -468,7 +468,7 @@
             "L": 0
           }
         },
-        "resolved": 0,
+        "resolved": 1,
         "not_reviewed": [
           "COH",
           "DES",

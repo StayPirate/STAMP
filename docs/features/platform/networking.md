@@ -120,7 +120,7 @@ Timeout hierarchy (independent concerns):
 ```
 ┌─────────────────────────────────────────────────────┐
 │ FetcherConfig.run_timeout (default: 3600s)          │  ← Celery task level
-│ Detects stale runs (worker crashed, deadlock)       │     (per entire run)
+│ Hard ceiling: task killed at this limit             │     (per entire run)
 │                                                     │
 │  ┌───────────────────────────────────────────────┐  │
 │  │ Per-HTTP-request timeout                      │  │  ← HTTP transport level

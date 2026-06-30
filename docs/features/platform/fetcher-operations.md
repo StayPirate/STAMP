@@ -473,7 +473,8 @@ fails (any exception from Celery/Redis), the endpoint updates the
 Unavailable with code `CELERY_ENQUEUE_FAILED`. This cleanup is critical
 because the `FetcherRun` record with `status = running` is the
 concurrency mechanism — if not cleaned up, it blocks all future runs of
-this fetcher until stale detection timeout (default 3600s).
+this fetcher until the stale detection threshold (default 3660s,
+derived from `run_timeout + 60`).
 
 **Note on trigger-then-disable race condition**: if an admin triggers a
 fetcher (passing the enabled check in this endpoint) and another admin
@@ -592,9 +593,10 @@ include the fields to change.
 **Validation rules**:
 - `schedule_override`: must be a valid 5-field cron expression, or `null`
   to revert to the default schedule
-- `run_timeout`: must be a non-negative integer. 0 disables both
-  the Celery soft time limit and stale run detection (stuck runs will
-  require manual resolution via the CLI). Default: 3600 (1 hour)
+- `run_timeout`: must be a non-negative integer. 0 disables all
+  Celery time limits (soft and hard) and stale run detection (stuck
+  runs will never be forcibly terminated and will require manual
+  resolution via the CLI). Default: 3600 (1 hour)
 - `request_delay`: must be a float >= 0 and <= 300
 
 **Validation rules for `custom_settings`**:
@@ -812,7 +814,10 @@ is unavailable).
 1. If a `FetcherRun` with `status = running` exists for the fetcher:
    show `running ({elapsed} elapsed)` where elapsed is calculated from
    `started_at`. If `run_timeout > 0` and the elapsed time exceeds
-   it, append `(stale?)` — e.g., `running (2h 30m elapsed, stale?)`.
+   `run_timeout + 60` (the stale threshold), append `(stale?)` —
+   e.g., `running (1h 2m elapsed, stale?)`. This indicates the
+   process was terminated by the hard limit and the orphaned record
+   has not yet been cleaned up by stale detection.
    If `run_timeout = 0`, the `(stale?)` hint is never shown.
 2. If no running record exists but completed runs exist: show the status
    of the most recent `FetcherRun` with its duration — e.g.,
@@ -911,7 +916,7 @@ available.
 When `run_timeout` is 0, the command MUST emit a warning to stderr:
 
 ```
-Warning: Stale detection disabled — stuck runs will require manual resolution.
+Warning: Execution timeout disabled — runs will never be forcibly terminated and stuck runs will require manual resolution.
 ```
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any

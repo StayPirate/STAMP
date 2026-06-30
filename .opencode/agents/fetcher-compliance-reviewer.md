@@ -82,6 +82,18 @@ or modify code.
   `BaseFetcher.run()` can catch them and record the failure)?
 - Are there broad `except` clauses that swallow exceptions without
   re-raising? This would prevent the dashboard from showing failures.
+- **`SoftTimeLimitExceeded` exclusion**: do per-item `except Exception:`
+  blocks in the `execute()` loop explicitly exclude
+  `SoftTimeLimitExceeded` and `MemoryError` with a preceding
+  `except (SoftTimeLimitExceeded, MemoryError): raise`? Catching these
+  exceptions per-item silently defeats the timeout mechanism — the soft
+  time limit signal is delivered once and, once consumed, is never
+  re-raised. This is a "Needs revision" issue. See
+  "`SoftTimeLimitExceeded` handling convention" in
+  `fetcher-infrastructure.md`.
+- **Exception**: fire-and-forget helper blocks with negligible timing
+  windows (e.g., `_isolated_status_commit()`, diagnostic checks) are
+  exempt — the hard time limit provides the backstop for these cases.
 - Is partial failure handled correctly? If some items fail but the fetcher
   continues, are failed items reported via `self.record_failed()`?
 

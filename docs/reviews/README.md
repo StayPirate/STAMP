@@ -45,8 +45,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 10 | — | — | — | — | 10/10 | 2026-06-25 | |
-| | 1:🔴 6:🟠 3:🟡 |  |  |  |  |  |  |  |
+| [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 9 | — | — | — | — | 9/10 | 2026-06-25 | |
+| | 6:🟠 3:🟡 |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/16 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/21 | 2026-05-07 | ⚠️ |
@@ -75,8 +75,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **12** | **🟢** | **🟢** | **🟢** | **🟢** | **12/827** |  |  |
-| | 1:🔴 8:🟠 3:🟡 |  |  |  |  |  |  |  |
+| **Total** | **11** | **🟢** | **🟢** | **🟢** | **🟢** | **11/828** |  |  |
+| | 8:🟠 3:🟡 |  |  |  |  |  |  |  |
 
 ### Disabled specs
 

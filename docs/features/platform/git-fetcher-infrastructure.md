@@ -324,6 +324,35 @@ implemented by `BaseGitFetcher.execute()` — concrete fetchers only
 declare `recovery_path_prefix` as a class attribute. See
 "BaseGitFetcher Class" below.
 
+### Operational: large delta convergence
+
+After an extended outage (weeks or longer), the recovery delta may
+contain thousands of files. In a blobless clone, each file requires an
+on-demand blob download. If the delta cannot be fully processed within
+`run_timeout`, the soft time limit fires, the run ends as `failure`,
+and the cursor does not advance.
+
+On the next scheduled execution, the same delta is recomputed. Items
+already processed produce idempotent upserts (no observable side
+effects). The loop processes items until the timeout fires again. This
+continues across successive runs until all items are processed —
+**convergence is guaranteed** through the combination of idempotent
+processing and stable cursor position.
+
+To accelerate recovery, an admin can temporarily increase `run_timeout`
+for the specific fetcher via FetcherConfig (e.g., from 3600 to 36000
+for a one-time large delta), then reset it after the recovery completes.
+The dashboard's `error_message` field includes the number of items
+processed before timeout, allowing the admin to estimate the required
+duration.
+
+This scenario is uncommon in normal operation:
+- First-run records HEAD without processing (no delta)
+- Recovery delta uses `cursor_committed_at - 1 day` as boundary (not
+  full repo history)
+- Only extended outages (weeks+) produce deltas exceeding 1 hour of
+  processing time
+
 ## Runtime Dependencies
 
 Git-based fetchers require the `git` binary available in the
@@ -386,10 +415,13 @@ successful `git fetch` proves network connectivity. If a subsequent
 read operation fails, the only remaining explanation is local
 corruption. No stderr parsing or exit code mapping is needed.
 
-**No anti-loop logic**: Celery task timeout limits each run's
-duration. Repeated failures (e.g., corruption loop from faulty disk)
-produce visible `failure` records in the fetcher dashboard for
-operator intervention.
+**No anti-loop logic**: the Celery hard time limit (`time_limit =
+run_timeout`) guarantees each run's duration is bounded. The soft time
+limit (at 95% of `run_timeout`) provides early warning for clean
+shutdown. Step 10d ensures `SoftTimeLimitExceeded` propagates rather
+than being caught as a per-item error. Repeated failures (e.g.,
+corruption loop from faulty disk) produce visible `failure` records in
+the fetcher dashboard for operator intervention.
 
 ## Implementation Location
 
@@ -682,7 +714,12 @@ above.
     c. Call `post_ingest = process_item(path, content, session)` →
        returns `PostIngestTasks | None`. On successful return, call
        `self.commit_and_dispatch(session, post_ingest)`
-    d. If any exception is raised during steps 10a, 10c, or
+    d. If `SoftTimeLimitExceeded` or `MemoryError` is raised during
+       steps 10a, 10c, or `commit_and_dispatch()`: **re-raise
+       immediately** (these are whole-run signals, not per-item errors;
+       see "`SoftTimeLimitExceeded` handling convention" in
+       `fetcher-infrastructure.md`).
+    e. If any other exception is raised during steps 10a, 10c, or
        `commit_and_dispatch()`: call `session.rollback()`, log WARNING
        ("Failed to process {path}: {error}"), call `record_failed()`,
        continue to next item
@@ -692,10 +729,21 @@ above.
     `PostIngestTasks | None`; after a successful return, the template
     calls `self.commit_and_dispatch(session, post_ingest)` which
     commits the session and dispatches Phase 2 tasks if `post_ingest`
-    is not `None`. On exception (caught by step 10d), the template
+    is not `None`. On exception (caught by step 10e), the template
     calls `session.rollback()` before `record_failed()`. This ensures
     that a failure in one item does not corrupt the session or affect
     the processing of subsequent items.
+
+    **Session state on timeout propagation**: when `SoftTimeLimitExceeded`
+    propagates via step 10d, the session may contain uncommitted changes
+    and hold a `FOR UPDATE` lock from `process_item()`. No explicit
+    rollback is performed — the exception propagates directly to
+    `BaseFetcher.run()`. This is safe because: (1) `run()` uses
+    independent short-lived sessions for `FetcherRun` finalization, not
+    the `execute()` session; (2) SQLAlchemy performs an implicit rollback
+    when the session is closed or garbage-collected, releasing any held
+    locks. The window between propagation and implicit rollback is
+    negligible (milliseconds).
 
 11. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
 

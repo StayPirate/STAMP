@@ -106,7 +106,14 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    - **Status determination precedence**: the final status is assigned as
      follows (evaluated in order):
      1. If `execute()` raises an exception: `failure`. Metric counters are
-        preserved for diagnostics but do not influence the status
+         preserved for diagnostics but do not influence the status.
+         This includes `SoftTimeLimitExceeded` — when the soft time limit
+         is reached, the exception propagates to `run()`, resulting in
+         `failure` status with an enriched error message (see the generic
+         fallback table entry for `SoftTimeLimitExceeded` above).
+         The hard time limit (`time_limit`) terminates the process if the
+         soft limit fails to stop execution within the grace window (5% of
+         `run_timeout`).
      2. If `execute()` returns normally and all items failed
         (`items_failed > 0` and `items_created + items_updated == 0`):
         `failure`. `error_message` is set to
@@ -695,11 +702,58 @@ fallback** — it maps the exception type to a safe, generic message:
 | `ConnectionError`, `Timeout` | `"External service unreachable"` |
 | `HTTPStatusError` (4xx) | `"External service rejected request"` |
 | `HTTPStatusError` (5xx) | `"External service returned server error"` |
-| `SoftTimeLimitExceeded` | `"Execution timed out"` |
+| `SoftTimeLimitExceeded` | `f"Execution timed out after {self.config.run_timeout}s ({processed} items processed before timeout). Consider increasing run_timeout via FetcherConfig for fetcher '{self.name}'."` (where `processed = self._created + self._updated + self._failed`) |
 | Any other exception | `"Unexpected error"` |
 
 In all cases, `error_detail` receives `str(exception)` and
 `error_traceback` receives the full traceback.
+
+### `SoftTimeLimitExceeded` handling convention
+
+`SoftTimeLimitExceeded` is a **whole-run signal**, not a per-item error.
+All fetcher implementations MUST ensure this exception propagates to
+`BaseFetcher.run()` for proper finalization. Specifically:
+
+- Per-item exception handlers (e.g., try/except loops that catch
+  `Exception` to isolate individual item failures) MUST exclude
+  `SoftTimeLimitExceeded` from the catch. Failing to do so silently
+  defeats the timeout mechanism — the exception is consumed, and the
+  task continues indefinitely past the soft time limit until the hard
+  limit terminates the process.
+- `MemoryError` SHOULD also be excluded from per-item catches, as
+  continuing after memory exhaustion is futile.
+
+The recommended pattern for per-item exception handling:
+
+```python
+from celery.exceptions import SoftTimeLimitExceeded
+
+for item in items:
+    try:
+        process(item)
+    except (SoftTimeLimitExceeded, MemoryError):
+        raise  # whole-run signals — never catch per-item
+    except Exception as e:
+        session.rollback()
+        self.record_failed()
+        logger.warning("Failed to process %s: %s", item, e)
+        continue
+```
+
+Concrete fetchers do NOT need to catch `SoftTimeLimitExceeded` at the
+`execute()` level — `run()` provides the enriched timeout message
+automatically (see the generic fallback table above).
+
+**Not excluded — `OperationalError` and database connection loss**:
+database errors are caught per-item (not excluded from the per-item
+catch). When a connection is lost, all subsequent items will also fail.
+The all-items-failed safety check in `run()` then triggers, setting
+status to `failure` and preventing cursor advancement. This is
+suboptimal (the loop iterates through doomed items until the timeout
+fires) but not dangerous — the safety check protects cursor integrity.
+Excluding database errors would add complexity (distinguishing
+transient vs. fatal DB errors is non-trivial) for marginal benefit,
+and the timeout mechanism provides the actual time bound.
 
 ### What constitutes infrastructure details
 
@@ -1336,7 +1390,7 @@ This applies to all trigger sources:
 | Admin triggers while another manual run is active | `manual` | `manual` | API returns **409 Conflict** |
 | Schedule fires while stale run exists | any | `schedule` | Stale run marked as `failure`, new run proceeds |
 | Admin triggers while stale run exists | any | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
-| Any trigger with stale run but `run_timeout = 0` | any | any | Stale detection disabled — treated as active run (409 or silent discard) |
+| Any trigger with stale run but `run_timeout = 0` | any | any | Time limits and stale detection disabled — treated as active run (409 or silent discard) |
 
 The distinction is:
 
@@ -1356,10 +1410,15 @@ deployments, without atomic locking two workers can simultaneously read
 ## Stale Run Detection
 
 A run is considered **stale** when it has been in `running` status for
-longer than the fetcher's `run_timeout` (from `FetcherConfig`). The
-default `run_timeout` is 3600 (1 hour). If `run_timeout` is set
-to 0, stale detection is disabled for that fetcher — the run is never
-considered stale regardless of how long it has been running.
+longer than `run_timeout + 60` seconds (the **stale threshold**). The
+60-second margin is a hardcoded constant (not configurable). It ensures
+that the hard time limit (`time_limit = run_timeout`) has had time to
+terminate the process before a new run is started — guaranteeing the
+single-instance invariant even if the soft time limit was not honored.
+The default `run_timeout` is 3600 (1 hour), yielding a stale threshold
+of 3660 seconds. If `run_timeout` is set to 0, stale detection is
+disabled for that fetcher — the run is never considered stale regardless
+of how long it has been running.
 
 When a stale run is detected (by the Celery task or the API trigger
 endpoint), it is resolved by updating the stale `FetcherRun`
@@ -1390,6 +1449,14 @@ terminations (OOM-kill, node crash, `kill -9`). Celery workers handle
 `SIGTERM` via the Celery runtime's own signal handling — when a worker
 shuts down gracefully, active tasks are revoked and their `FetcherRun`
 records are finalized by the `run()` method's exception handler.
+
+**Relationship to hard time limit**: the stale threshold is
+intentionally set ABOVE the hard time limit (`run_timeout + 60 > run_timeout`).
+This ensures that when stale detection triggers, the process is
+already dead (killed by the hard limit at `run_timeout`). The stale
+detection mechanism therefore never needs to kill or revoke a task —
+it only cleans up the orphaned database record left behind by a
+force-killed process.
 
 Note: Celery broker unavailability during the trigger endpoint is handled
 synchronously (the FetcherRun record is immediately marked as failure).
@@ -1471,7 +1538,7 @@ Kubernetes multi-replica deployments).
 | fetcher_name | VARCHAR(100) | PK | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled | BOOLEAN | NOT NULL, DEFAULT true | Whether the fetcher is active |
 | schedule_override | VARCHAR(50) | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
-| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds. Also used as the stale run detection threshold. 0 disables both soft time limit and stale detection. |
+| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds (hard ceiling). The task is guaranteed to be terminated at this limit. Also used as the basis for the stale run detection threshold. 0 disables both time limits and stale detection. |
 | request_delay | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. 0 = no delay. CHECK (>= 0 AND <= 300). Applied by the fetcher via `asyncio.sleep(self.config.request_delay)`. |
 | custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see "Custom Settings Schema" above). |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Last modification timestamp |
@@ -1481,18 +1548,37 @@ Kubernetes multi-replica deployments).
   fetcher names are unique identifiers defined in code.
 - The `schedule_override` uses standard cron syntax (5-field). When set,
   the Celery Beat schedule for this fetcher MUST be updated dynamically.
-- `run_timeout` serves two purposes:
-  1. **Celery soft time limit**: when > 0, enforced by the Celery task
-     (`soft_time_limit`). When a fetcher exceeds this, a
-     `SoftTimeLimitExceeded` exception is raised and the run is marked
-     `failure`.
-   2. **Stale run detection threshold**: when > 0, used by the Celery task
-      and API trigger endpoint to determine whether a `running`
-     record is stale (see "Stale Run Detection" above).
-  When set to 0, both mechanisms are disabled: Celery does not enforce a
-  time limit, and stale detection treats the run as indefinitely active.
+- `run_timeout` serves three purposes:
+  1. **Celery hard time limit** (`time_limit`): when > 0, the Celery
+     task's `time_limit` is set to `run_timeout`. If the task exceeds
+     this duration, the worker forcibly terminates the process
+     (SIGKILL). This is the absolute ceiling — the task is guaranteed
+     dead at this point.
+  2. **Celery soft time limit** (`soft_time_limit`): when > 0, set to
+     `max(1, floor(run_timeout × 0.95))`. When reached, Celery raises
+     `SoftTimeLimitExceeded` in the task context. This gives the task
+     a grace window (5% of `run_timeout`) to finalize the `FetcherRun`
+     record cleanly before the hard kill.
+  3. **Stale run detection threshold**: when > 0, a `FetcherRun`
+     record is considered stale if it has been in `running` status
+     for longer than `run_timeout + 60` seconds. The 60-second
+     margin accounts for clock skew in multi-node deployments (the
+     process is guaranteed dead at `run_timeout` by the hard limit).
+  When set to 0, all three mechanisms are disabled: Celery does not
+  enforce any time limit, stale detection treats the run as
+  indefinitely active, and no soft time limit exception is raised.
   The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
   record is auto-created for a newly registered fetcher.
+
+  **Formula**: `soft_time_limit = max(1, floor(run_timeout × 0.95))`.
+  The `max(1, ...)` prevents Celery from interpreting
+  `soft_time_limit = 0` as "disabled" when `run_timeout` is very small
+  (e.g., `run_timeout = 1` would produce `floor(0.95) = 0` without the
+  `max(1, ...)`). The grace window is always 5% of `run_timeout` (e.g., 180s
+  for 3600s, 30s for 600s, 3s for 60s). For very small `run_timeout`
+  values (< 20), the grace window is minimal but the hard limit always
+  provides a backstop — the task is guaranteed dead at `run_timeout`
+  regardless of whether the soft signal achieves clean finalization.
 - `request_delay` is initialized from the fetcher's
   `default_request_delay` class attribute (default: 0) at auto-creation
   time. This per-fetcher initial value is only used at first registration
