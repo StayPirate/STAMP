@@ -271,7 +271,7 @@ this limit. Also used as the basis for the stale run detection threshold.
   The `max(1, ...)` prevents Celery from interpreting
   `soft_time_limit = 0` as "disabled" when `run_timeout` is very small
   (e.g., `run_timeout = 1` would produce `floor(0.95) = 0` without the
-  floor). The grace window is always 5% of `run_timeout` (e.g., 180s
+  `max(1, ...)`). The grace window is always 5% of `run_timeout` (e.g., 180s
   for 3600s, 30s for 600s, 3s for 60s). For very small `run_timeout`
   values (< 20), the grace window is minimal but the hard limit always
   provides a backstop — the task is guaranteed dead at `run_timeout`
@@ -381,7 +381,8 @@ at the same indentation level (6 spaces):
 ```
       This includes `SoftTimeLimitExceeded` — when the soft time limit
       is reached, the exception propagates to `run()`, resulting in
-      `failure` status with an enriched error message (see Phase 1.6).
+      `failure` status with an enriched error message (see the generic
+      fallback table entry for `SoftTimeLimitExceeded` above).
       The hard time limit (`time_limit`) terminates the process if the
       soft limit fails to stop execution within the grace window (5% of
       `run_timeout`).
@@ -624,6 +625,19 @@ this is acceptable because: (1) the timing window is negligibly small
 whether the soft signal was honored. Adding `SoftTimeLimitExceeded`
 exclusion to the helper's catch would add complexity for near-zero
 practical benefit.
+
+#### 2b.4 "Batch Error Handling" narrative — cross-reference (lines 740-769)
+
+**Add at the end of the "Batch Error Handling" section** (after line 769):
+
+```
+Note: the per-item isolation guarantee applies to business-logic
+exceptions only. `SoftTimeLimitExceeded` and `MemoryError` are
+excluded — they are whole-run signals that must propagate to
+`BaseFetcher.run()` regardless of the per-item boundary. See
+"`SoftTimeLimitExceeded` handling convention" in
+`fetcher-infrastructure.md`.
+```
 
 ### Phase 2c: Individual fetcher specs
 
