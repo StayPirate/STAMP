@@ -5,7 +5,8 @@
 **Origin**: Finding GFI-GAP-01 analysis → expanded to BaseFetcher scope
 **Affects**: `fetcher-infrastructure.md`, `git-fetcher-infrastructure.md`,
 `cve-fetcher-infrastructure.md`, `cve-sync-nvd.md`, `cve-sync-redhat.md`,
-`cve-sync-ghsa.md`, `cve-sync-epss.md`, `cve-sync-osv.md`, `cve-sync-kev.md`
+`cve-sync-ghsa.md`, `cve-sync-epss.md`, `cve-sync-osv.md`, `cve-sync-kev.md`,
+`cve-sync-kernel.md`
 
 ## Problem Statement
 
@@ -176,20 +177,19 @@ database errors adds complexity (distinguishing transient vs. fatal DB
 errors is non-trivial) for marginal benefit. The timeout mechanism
 provides the actual time bound.
 
-### D6: Informative error message for timeout (Opzione A)
+### D6: Informative error message for timeout
 
 When `SoftTimeLimitExceeded` propagates to `run()`, the error message
 stored in `FetcherRun.error_message` should include actionable context.
-This is achieved by catching `SoftTimeLimitExceeded` at the
-`execute()` level in BaseGitFetcher (above the per-item loop) and
-re-raising as `FetcherError` with an enriched message.
+This is achieved by enriching the `SoftTimeLimitExceeded` entry in
+`BaseFetcher.run()`'s generic fallback table — replacing the static
+`"Execution timed out"` string with a formatted message.
 
-Available context at that point:
+Available context in `run()`:
 - `run_timeout`: from FetcherConfig (accessible via `self.config.run_timeout`)
 - Items processed: `self._created + self._updated + self._failed`
   (metric counters, preserved on exception)
-- Total items in delta: **not available** (local variable lost on
-  exception propagation)
+- Fetcher name: `self.name`
 
 Message format:
 ```
@@ -198,8 +198,11 @@ processed before timeout). Consider temporarily increasing run_timeout
 via FetcherConfig for fetcher '{self.name}'."
 ```
 
-No `self._total_items` instance variable added — the processed count
-alone provides sufficient diagnostic value for a rare scenario.
+This enrichment lives in `BaseFetcher.run()` (not in subclass
+`execute()` methods), giving ALL fetchers the enriched message with
+zero per-fetcher code. No `self._total_items` instance variable added
+— the processed count alone provides sufficient diagnostic value for
+a rare scenario.
 
 ### D7: Scope — where each change lives
 
@@ -211,7 +214,8 @@ alone provides sufficient diagnostic value for a rare scenario.
 | Step 10d exception exclusion list (D5) | `git-fetcher-infrastructure.md` | Concrete application in git template method |
 | Canonical pattern updates (D5) | `cve-fetcher-infrastructure.md` | Authoritative source for API-based fetcher patterns |
 | Individual fetcher pattern alignment (D5) | `cve-sync-{nvd,redhat,ghsa,epss,osv,kev}.md` | Inline code must match updated canonical patterns |
-| Informative error message (D6) | `git-fetcher-infrastructure.md` | Git-fetcher-specific enrichment |
+| Recovery timeout overrun prose correction | `cve-sync-kernel.md` | Remove false "infinite retry loop" claim; document convergence |
+| Informative error message (D6) | `fetcher-infrastructure.md` | BaseFetcher concern — benefits all fetchers |
 | Operational note (large deltas) | `git-fetcher-infrastructure.md` | Git-fetcher-specific guidance |
 | SoftTimeLimitExceeded exclusion check | `.opencode/agents/fetcher-compliance-reviewer.md` | Agent must verify the new convention |
 | Agent description update | `.opencode/README.md` | Keep README in sync with agent changes |
@@ -248,7 +252,7 @@ this limit. Also used as the basis for the stale run detection threshold.
      (SIGKILL). This is the absolute ceiling — the task is guaranteed
      dead at this point.
   2. **Celery soft time limit** (`soft_time_limit`): when > 0, set to
-     `floor(run_timeout × 0.95)`. When reached, Celery raises
+     `max(1, floor(run_timeout × 0.95))`. When reached, Celery raises
      `SoftTimeLimitExceeded` in the task context. This gives the task
      a grace window (5% of `run_timeout`) to finalize the `FetcherRun`
      record cleanly before the hard kill.
@@ -263,13 +267,15 @@ this limit. Also used as the basis for the stale run detection threshold.
   The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
   record is auto-created for a newly registered fetcher.
 
-  **Formula**: `soft_time_limit = floor(run_timeout × 0.95)`. No
-  special cases. The grace window is always 5% of `run_timeout`
-  (e.g., 180s for 3600s, 30s for 600s, 3s for 60s). For very small
-  `run_timeout` values, the grace window is proportionally small but
-  the hard limit always provides a backstop — the task is guaranteed
-  dead at `run_timeout` regardless of whether the soft signal
-  achieves clean finalization.
+  **Formula**: `soft_time_limit = max(1, floor(run_timeout × 0.95))`.
+  The `max(1, ...)` prevents Celery from interpreting
+  `soft_time_limit = 0` as "disabled" when `run_timeout` is very small
+  (e.g., `run_timeout = 1` would produce `floor(0.95) = 0` without the
+  floor). The grace window is always 5% of `run_timeout` (e.g., 180s
+  for 3600s, 30s for 600s, 3s for 60s). For very small `run_timeout`
+  values (< 20), the grace window is minimal but the hard limit always
+  provides a backstop — the task is guaranteed dead at `run_timeout`
+  regardless of whether the soft signal achieves clean finalization.
 ```
 
 #### 1.2 Stale Run Detection (lines 1356-1398)
@@ -350,11 +356,9 @@ The recommended pattern for per-item exception handling:
             continue
     ```
 
-Concrete fetchers MAY catch `SoftTimeLimitExceeded` at the
-`execute()` level (wrapping the entire processing loop) to enrich the
-error message before re-raising as `FetcherError`. This is optional —
-if not caught at the `execute()` level, `run()` applies the generic
-fallback message ("Execution timed out").
+Concrete fetchers do NOT need to catch `SoftTimeLimitExceeded` at the
+`execute()` level — `run()` provides the enriched timeout message
+automatically (see Phase 1.6 below).
 
 **Not excluded — `OperationalError` and database connection loss**:
 database errors are caught per-item (not excluded from the per-item
@@ -376,12 +380,32 @@ at the same indentation level (6 spaces):
 
 ```
       This includes `SoftTimeLimitExceeded` — when the soft time limit
-      is reached, the exception propagates to `run()` (either directly
-      or re-raised as `FetcherError` by `execute()`), resulting in
-      `failure` status. The hard time limit (`time_limit`) terminates
-      the process if the soft limit fails to stop execution within the
-      grace window (5% of `run_timeout`).
+      is reached, the exception propagates to `run()`, resulting in
+      `failure` status with an enriched error message (see Phase 1.6).
+      The hard time limit (`time_limit`) terminates the process if the
+      soft limit fails to stop execution within the grace window (5% of
+      `run_timeout`).
 ```
+
+#### 1.6 Generic fallback table — enriched timeout message (D6)
+
+**Current entry** in the generic fallback table (line 698 of
+`fetcher-infrastructure.md`):
+
+| Exception | `error_message` |
+|-----------|-----------------|
+| `SoftTimeLimitExceeded` | `"Execution timed out"` |
+
+**Replace with**:
+
+| Exception | `error_message` |
+|-----------|-----------------|
+| `SoftTimeLimitExceeded` | `f"Execution timed out after {self.config.run_timeout}s ({processed} items processed before timeout). Consider increasing run_timeout via FetcherConfig for fetcher '{self.name}'."` |
+
+Where `processed = self._created + self._updated + self._failed`.
+
+This gives ALL fetchers (git-based, API-based, future types) actionable
+diagnostic context in the dashboard with zero per-fetcher code.
 
 ### Phase 2: `git-fetcher-infrastructure.md`
 
@@ -410,48 +434,37 @@ at the same indentation level (6 spaces):
 
 **Note**: this renumbers step 10e (was 10d). Step 11 (cursor write) and
 all subsequent references remain unchanged (they reference step 10 as a
-whole, not sub-steps).
+whole, not sub-steps), with one exception: see Phase 2.1b below.
 
-#### 2.2 Informative error message — new section
+#### 2.1b Transaction boundaries paragraph — step reference update
 
-**Add after step 11** (after line 706, before "Infrastructure errors"):
-
+**Current text** (line 695):
 ```
-**Timeout error enrichment**: `BaseGitFetcher.execute()` wraps the
-processing loop (steps 5-11) in an outer try/except that catches
-`SoftTimeLimitExceeded` and re-raises as `FetcherError` with
-enriched context:
-
-    ```python
-    except SoftTimeLimitExceeded:
-        processed = self._created + self._updated + self._failed
-        timeout = self.config.run_timeout
-        raise FetcherError(
-            f"Execution timed out after {timeout}s "
-            f"({processed} items processed before timeout). "
-            f"Consider temporarily increasing run_timeout via "
-            f"FetcherConfig for fetcher '{self.name}'."
-        ) from None
-    ```
-
-This enriched message is stored in `FetcherRun.error_message` (via
-the `FetcherError` handling path in `run()`), providing operators with
-immediate diagnostic context in the dashboard.
-
-If `SoftTimeLimitExceeded` is raised OUTSIDE the processing loop
-(during clone, fetch, or delta computation), it propagates naturally
-to `run()` and receives the generic fallback message ("Execution timed
-out") — no enrichment is needed since the failure point is obvious
-from the phase.
+On exception (caught by step 10d), the template
+calls `session.rollback()` before `record_failed()`.
 ```
 
-#### 2.3 Phase-based error classification — update
-
-**Add row to the table** (after line 382):
-
+**Replace with**:
 ```
-| Per-item processing (step 10d) | `SoftTimeLimitExceeded` or `MemoryError` | (original exception) | **Re-raise immediately**. Not a per-item error — whole-run signal |
+On exception (caught by step 10e), the template
+calls `session.rollback()` before `record_failed()`.
 ```
+
+#### 2.2 ~~Informative error message~~ — REMOVED
+
+Superseded by Phase 1.6. The enriched timeout message now lives in
+`BaseFetcher.run()`'s generic fallback table, benefiting all fetchers
+without per-subclass code. No git-fetcher-specific section is needed.
+
+#### 2.3 ~~Phase-based error classification~~ — REMOVED
+
+The `SoftTimeLimitExceeded` re-raise does not belong in the
+phase-based error classification table, which is scoped to **git
+operation failures** (`git clone`, `git fetch`, `git diff`, `git show`).
+`SoftTimeLimitExceeded` is a Celery runtime signal, not a git error.
+The re-raise behavior is already documented in step 10d itself and in
+the cross-reference to `fetcher-infrastructure.md`'s
+"`SoftTimeLimitExceeded` handling convention" section.
 
 #### 2.4 Operational note — large deltas
 
@@ -637,7 +650,7 @@ existing `except Exception:`.
 **Replace with**:
 ```python
        try:
-           result = await upsert_cve(session, cve_id, "nvd", payload)
+           result = await upsert_cve(session, cve_id, self.cve_source_type, payload)
            await upsert_references(session, ...)
            post_ingest = build_post_ingest_tasks(result, payload)
            await self.commit_and_dispatch(session, post_ingest)
@@ -648,6 +661,10 @@ existing `except Exception:`.
            await session.rollback()
            self.record_failed()
 ```
+
+**Note**: also fixes pre-existing convention violation — hardcoded
+`"nvd"` replaced with `self.cve_source_type` per the mandatory
+convention in `cve-fetcher-infrastructure.md` (lines 597-611).
 
 #### 2c.2 `cve-sync-redhat.md` (lines 270-281)
 
@@ -854,8 +871,61 @@ whole-run signals that must propagate immediately (see
 ```
 
 **Git-based fetchers** (`cve-sync-mitre.md`, `cve-sync-kernel.md`):
-no changes needed — they inherit the fix from Phase 2 (BaseGitFetcher
-step 10d).
+no changes needed for per-item exception handling — they inherit the
+fix from Phase 2 (BaseGitFetcher step 10d). However, `cve-sync-kernel.md`
+requires a prose update — see Phase 2c.7 below.
+
+#### 2c.7 `cve-sync-kernel.md` — Recovery timeout overrun (lines 319-330)
+
+**Current text**:
+```
+**Recovery timeout overrun**: if the recovery delta exceeds processing
+capacity within the task timeout (e.g., after extended downtime
+producing 1000+ CVEs in the recovery window), the task is interrupted
+by `SoftTimeLimitExceeded` before processing all items. Since the
+cursor is not advanced on exception, the next scheduled run would
+re-attempt the same delta. To prevent an infinite retry loop, the
+operator MUST increase `run_timeout` for the fetcher (via the
+fetcher dashboard configuration) before the next run triggers.
+Alternatively, the operator can use `fetch_single()` to process
+specific high-priority CVEs individually and wait for normal-cadence
+processing to catch up once the recovery window shrinks below timeout
+capacity.
+```
+
+**Replace with**:
+```
+**Recovery timeout overrun**: if the recovery delta exceeds processing
+capacity within a single run (e.g., after extended downtime producing
+1000+ CVEs in the recovery window), the task is interrupted by
+`SoftTimeLimitExceeded` before processing all items. Since the cursor
+is not advanced on exception, the next scheduled run re-attempts the
+same delta. Previously processed items are resolved from local blob
+cache and produce idempotent upserts (~10× faster than initial
+processing), allowing each successive run to make forward progress
+beyond the previous timeout point. Convergence is automatic within
+2-3 runs for typical recovery scenarios.
+
+To accelerate recovery, the operator can increase `run_timeout`
+temporarily via the fetcher dashboard configuration. Alternatively,
+the operator can use `fetch_single()` to process specific
+high-priority CVEs individually.
+```
+
+**Also update** the preceding paragraph (line 316) — terminology
+alignment:
+
+**Current text**:
+```
+Celery task timeout is configured at 300 seconds (5 minutes) to
+accommodate batches up to ~500 CVEs under normal database load.
+```
+
+**Replace with**:
+```
+`run_timeout` is configured at 300 seconds (5 minutes) to accommodate
+batches up to ~500 CVEs under normal database load.
+```
 
 **IBS fetchers** (`ibs-track-release-detection.md`,
 `ibs-product-release-detection.md`): currently disabled and describe
@@ -893,6 +963,19 @@ enabled/implemented. No action in this draft.
   Celery time limits (soft and hard) and stale run detection (stuck
   runs will never be forcibly terminated and will require manual
   resolution via the CLI). Default: 3600 (1 hour)
+```
+
+**3.2.1b Trigger endpoint — stale threshold parenthetical (line 476)**
+
+**Current text**:
+```
+this fetcher until stale detection timeout (default 3600s).
+```
+
+**Replace with**:
+```
+this fetcher until the stale detection threshold (default 3660s,
+derived from `run_timeout + 60`).
 ```
 
 **3.2.2 Status column logic (lines 814-816)**
@@ -1045,8 +1128,8 @@ All items investigated and resolved:
   — found in `fetcher-operations.md` (line 596) and `data-model.md`
   (line 1413). Covered in Phase 3.1 and 3.2
 - [x] Verify `fetcher-operations.md` mentions of timeout semantics —
-  3 locations need update (lines 595-596, 814-816, 911). Covered in
-  Phase 3.2
+  4 locations need update (lines 476, 595-596, 814-816, 911). Covered
+  in Phase 3.2
 - [x] Verify `data-model.md` FetcherConfig documentation — line 1413
   needs update. Covered in Phase 3.1
 - [x] Check if `networking.md` references need updating — line 122-123
@@ -1056,8 +1139,9 @@ All items investigated and resolved:
   Sufficient for SIGKILL + NTP clock skew. Proportional margin
   rejected (unnecessary complexity)
 - [x] Review soft limit floor formula — simplified to
-  `floor(run_timeout × 0.95)` with no special cases. Original
-  formula had a bug (`max()` instead of `min()`) and was
+  `max(1, floor(run_timeout × 0.95))`. The `max(1, ...)` prevents
+  Celery from interpreting 0 as "disabled" for degenerate inputs.
+  Original formula had a bug (`max()` instead of `min()`) and was
   over-engineered for improbable scenarios
 
 ## Post-Application Steps
@@ -1081,7 +1165,7 @@ applied to the specs, run the following reviewers to verify correctness:
 - `fetcher-infrastructure.md` (new 3-layer timeout behavior —
   soft/hard/stale — may have edge cases not covered by the spec)
 - `git-fetcher-infrastructure.md` (modified execute() template with
-  new step 10d/10e split, timeout enrichment section)
+  new step 10d/10e split, convergence section)
 
 **4.3 `docs-placement-reviewer`** — run on:
 - `fetcher-infrastructure.md` (new "`SoftTimeLimitExceeded` handling
@@ -1113,13 +1197,13 @@ the analysis session.
 
 ## Future Consideration: Template Method for API-based Fetchers
 
-The current approach (Strada A) relies on a documented convention: every
+The current approach (Approach A) relies on a documented convention: every
 fetcher author must remember to exclude `SoftTimeLimitExceeded` from
 per-item catches. This is enforced through canonical patterns in
 `cve-fetcher-infrastructure.md` and verified by the
 `@fetcher-compliance-reviewer` agent.
 
-A future evolution (Strada B) would move the per-item exception handling
+A future evolution (Approach B) would move the per-item exception handling
 into a template method in `BaseCVEFetcher`, making the exclusion
 transparent to fetcher authors — similar to how `BaseGitFetcher` already
 encapsulates it in step 10d. This would require analyzing whether
