@@ -236,6 +236,15 @@ normalization), the endpoint returns **400 Bad Request** with error code
 `DATE_RANGE_INVERTED`. This validation applies globally to all endpoints
 that accept date range parameters.
 
+**Maximum range constraint**: endpoints that return unbounded datasets
+without pagination (e.g., chart/timeline data) SHOULD declare a maximum
+allowed interval between `from_date` and `to_date`. When the interval
+exceeds the declared limit, the endpoint returns **400 Bad Request** with
+error code `DATE_RANGE_TOO_WIDE`. Paginated endpoints generally do not
+need this constraint — pagination already bounds the response size.
+Each endpoint that enforces this constraint MUST document its specific
+limit in its own error table.
+
 This ensures that "inclusive bounds" means inclusive of the full day when no
 time component is specified. For the full timezone policy, see
 `docs/conventions.md` (Timestamps & Timezones).

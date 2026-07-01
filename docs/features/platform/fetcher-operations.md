@@ -417,7 +417,6 @@ time-series and must be in chronological order for chart rendering.
 
 | Status | Code | Condition |
 |---|---|---|
-| 400 | `DATE_RANGE_INVERTED` | `from_date` is after `to_date` (see `api-spec.md`, Date Range Interpretation) |
 | 400 | `DATE_RANGE_TOO_WIDE` | Requested interval between `from_date` and `to_date` exceeds 1825 days |
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
 
