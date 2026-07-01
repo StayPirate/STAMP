@@ -164,6 +164,7 @@ provides the distinction.
       "schedule": "0 */6 * * *",
       "schedule_is_override": false,
       "default_schedule": "0 */6 * * *",
+      "cve_source_type": "nvd",
       "next_run_at": "2025-04-20T18:00:00Z",
       "last_run": {
         "id": "uuid",
@@ -185,6 +186,7 @@ provides the distinction.
       "schedule": null,
       "schedule_is_override": null,
       "default_schedule": null,
+      "cve_source_type": null,
       "next_run_at": null,
       "last_run": {
         "id": "uuid",
@@ -211,6 +213,10 @@ provides the distinction.
   configured, or scheduled — only their historical data is accessible.
 - `description`: human-readable description from the fetcher class.
   `null` for deregistered fetchers (the class no longer exists).
+- `cve_source_type`: the `CVESourceType` identifier for CVE fetchers
+  (`BaseCVEFetcher` subclasses), e.g., `"nvd"`, `"mitre"`. `null` for
+  non-CVE fetchers and deregistered fetchers (the class attribute is
+  unavailable when the code is removed).
 - `enabled`: whether the fetcher is active. For deregistered fetchers,
   this reflects the stored DB value at the time the fetcher was removed.
   It has no practical effect — the fetcher cannot be scheduled or
@@ -338,6 +344,14 @@ Users with `manage_fetchers` capability see additional fields (`error_detail`,
 | Status | Code | Condition |
 |---|---|---|
 | 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name, or run not found |
+
+**Failure drill-down**: for CVE fetchers (where `cve_source_type` is
+defined in the fetcher registry response), the run detail view can link
+to `GET /api/v1/cve-sources?source={cve_source_type}&status=failure&from_date={started_at}&to_date={finished_at}`
+to show individual CVEs that failed during the run. For runs still in
+`running` status, omit `to_date` for a live view of accumulated
+failures. See `docs/features/tickets/cve-service.md` (Global CVE Source
+Listing).
 
 ### Get Fetcher Run Timeline Data
 
@@ -956,3 +970,5 @@ None at this time.
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
+- `docs/features/tickets/cve-service.md` — Global CVE Source Listing
+  endpoint (failure drill-down from fetcher runs)

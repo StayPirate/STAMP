@@ -427,6 +427,7 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#post-apiv1cvescve_idrefetch) |
+| GET | `/api/v1/cve-sources` | Public | [cve-service](../tickets/cve-service.md#global-cve-source-listing-get-apiv1cve-sources) |
 
 ### Ticket Events
 
