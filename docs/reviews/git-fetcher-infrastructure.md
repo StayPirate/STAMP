@@ -52,41 +52,15 @@ partial-cursor mechanism for deltas larger than one task window.
 
 ### GFI-GAP-05 — `_construct_candidate_paths()` exceptions on malformed `item_id` unspecified (Medium)
 
-**Category**: Function completeness
-**Status**: OPEN
-
-`fetch_single()` invoked with an `item_id` not in `CVE-YYYY-NNNN` form
-(e.g., a free-form identifier from another source) makes the kernel hook's
-`split("-")[1]` raise `IndexError`. The fetch_single exceptions list does
-not cover hook-construction exceptions, leaving dispatch behavior undefined
-(crash vs. skip-and-try-next).
+**Status**: RESOLVED — ValueError contract added to _construct_candidate_paths() hook; fetch_single() catches ValueError → ERROR log + CVENotInSource (2026-07-01)
 
 ### GFI-GAP-06 — Directory deletion failure (`OSError`) during re-clone/recovery unclassified (Medium)
 
-**Category**: Error path / Temporal (loop risk)
-**Status**: OPEN
-
-Corrupted-clone recovery (or first-run cleanup of an invalid directory)
-calls delete, but the filesystem may reject it (read-only mount,
-permission, busy handle on a network volume). `OSError` is not in the
-phase-based classification table (which covers only Git* exceptions). It
-would propagate as an unclassified exception → `failure`, and every
-subsequent run re-attempts delete on the same un-deletable directory → a
-permanent failure loop with no operator guidance distinct from the
-corruption case.
+**Status**: RESOLVED — OSError classified in error table; execute() steps 3a/4a log distinct ERROR with path+errno and propagate as FetcherError; infrastructure failures table updated (2026-07-01)
 
 ### GFI-GAP-07 — Concurrency rules don't cover the delete-and-re-clone window (Medium)
 
-**Category**: Concurrency
-**Status**: OPEN
-
-The append-only/atomic safety argument justifies `fetch_single()` reads
-during a periodic `git fetch`, but the corruption-recovery and "cursor
-exists + clone invalid" paths delete the entire directory — not an
-append-only operation. A `fetch_single()` that passes the `is_clone_valid()`
-guard and then calls `show_file()` while the periodic task is mid-delete
-hits a TOCTOU race with undefined result. The safety reasoning explicitly
-does not extend to destructive operations.
+**Status**: RESOLVED — Accepted risk: the TOCTOU race during delete-and-re-clone is mitigated by GitFileError catch in fetch_single() step 4b (graceful degradation to RuntimeError); locking not warranted for a rare event with safe outcome (2026-07-01)
 
 ### GFI-GAP-08 — Transient read errors forced into the "corruption" class (Low)
 
@@ -153,20 +127,8 @@ actual headings "Recovery" and "Cursor SHA Unreachable" (2026-06-25)
 
 ### GFI-DOC-05 — Redundant consumer listing (Low)
 
-**Status**: OPEN
-
-The consumer fetchers (`sync_mitre_cves`, `sync_kernel_cves`) are listed in
-Purpose ("Current consumers") and again in the intro ("Current git-based
-fetchers"). Harmless duplication; consolidating would tighten the intro.
-(Low-value; left open rather than fixed to avoid churn.)
+**Status**: RESOLVED — Removed redundant consumer listing at line 40; consumers already named in Purpose section and hierarchy diagram (2026-07-01)
 
 ### GFI-DOC-06 — "Function Catalog" section has no table (Low)
 
-**Status**: OPEN
-
-"Function Catalog" introduces "the following table" but the actual function
-tables live in sibling H2 sections (Clone Operations, Fetch Operations,
-…), leaving the Function Catalog section itself with only an intro. These
-would be more coherent as H3 subsections under Function Catalog. Purely
-structural; no content is missing. (Low-value; left open rather than
-fixed.)
+**Status**: RESOLVED — Restructured Function Catalog: changed "table" to "sections" in intro, promoted Clone/Fetch/Read/Show/Filesystem Operations and Bare and Blobless Compatibility from H2 siblings to H3 subsections under Function Catalog (2026-07-01)

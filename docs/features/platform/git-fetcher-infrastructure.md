@@ -37,8 +37,6 @@ documented in this document. Individual fetcher specs define their own
 algorithm, metrics, and source-specific behavior; this document defines
 only the shared operational pattern.
 
-Current git-based fetchers: `sync_mitre_cves`, `sync_kernel_cves`.
-
 ## Bare Clone Pattern
 
 Git-based fetchers use **bare clones without a working tree**. This
@@ -409,6 +407,7 @@ class GitFileError(GitError): ...        # Per-file — continue processing
 | `git clone` / `git fetch` | Any failure (network, auth, timeout) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
 | Read after successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`) | Any failure | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
 | `git show` during delta file processing | Any failure (timeout, missing blob) | `GitFileError` | `record_failed()` for that item. Continue to next file |
+| Directory deletion (recovery/cleanup) | Filesystem rejection (permissions, read-only mount, busy handle) | `OSError` | Log ERROR with distinct message: path, errno, and guidance ("Manual intervention required — check filesystem permissions and mount state"). Raise `FetcherError`. Next cycle re-attempts (permanent until operator resolves filesystem issue) |
 
 **Design rationale**: classification is purely phase-based because a
 successful `git fetch` proves network connectivity. If a subsequent
@@ -476,11 +475,11 @@ independently usable.
 
 ## Function Catalog
 
-The following table defines the complete public interface of
+The following sections define the complete public interface of
 `git_operations.py`. These are the functions that `BaseGitFetcher`
 delegates to and that any `BaseFetcher`-direct subclass may also call.
 
-## Clone Operations
+### Clone Operations
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
@@ -497,7 +496,7 @@ delegates to and that any `BaseFetcher`-direct subclass may also call.
 6. If the process exits with non-zero code: raise `GitFetchError` with
    stderr content
 
-## Fetch Operations
+### Fetch Operations
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
@@ -506,7 +505,7 @@ delegates to and that any `BaseFetcher`-direct subclass may also call.
 Semantics: runs `git fetch origin` in the specified repository.
 Incremental — only new objects are transferred.
 
-## Read Operations
+### Read Operations
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
@@ -556,7 +555,7 @@ Semantics:
   no commit exists before the specified date (empty output from git).
   Used for recovery boundary detection
 
-## Show Operations
+### Show Operations
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
@@ -577,7 +576,7 @@ In blobless clones, step 1 triggers an on-demand blob download from the
 remote — requires network access. If the remote is unreachable, step 4
 fires.
 
-## Filesystem Operations
+### Filesystem Operations
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
@@ -587,7 +586,7 @@ Semantics: recursively deletes the directory at `path` if it exists.
 No-op if the path does not exist. This is NOT a git operation — it is
 included in the module for co-location with clone lifecycle management.
 
-## Bare and Blobless Compatibility
+### Bare and Blobless Compatibility
 
 All git operations in the function catalog are compatible with both
 plain bare clones and blobless bare clones (`--filter=blob:none`):
@@ -682,7 +681,11 @@ above.
    `None`
 3. **First-run branch** — if `cursor_sha` is `None`:
    a. If clone is NOT valid at `repo_path`: delete directory if it
-      exists, then clone repository with configured options
+      exists (if `_delete_if_exists()` raises `OSError`: log ERROR
+      "Cannot delete clone directory at {repo_path}: {e}. Manual
+      intervention required — check filesystem permissions and mount
+      state.", propagate as `FetcherError`), then clone repository
+      with configured options
    b. If clone IS valid: skip clone (reuse existing)
    c. Read HEAD SHA from the repository
    d. Read HEAD commit date via `get_commit_date(repo_path, "HEAD")`
@@ -690,7 +693,11 @@ above.
    f. Return — first-run complete, no items processed
 4. **Subsequent-run branch** — `cursor_sha` exists:
    a. If clone is NOT valid: log WARNING ("Clone invalid but cursor
-      exists — rebuilding"), delete directory if exists, clone repository
+      exists — rebuilding"), delete directory if exists (if
+      `_delete_if_exists()` raises `OSError`: log ERROR "Cannot delete
+      clone directory at {repo_path}: {e}. Manual intervention required
+      — check filesystem permissions and mount state.", propagate as
+      `FetcherError`), clone repository
    b. If clone IS valid: fetch origin (incremental update)
 5. Read HEAD SHA from the repository
 6. Read HEAD commit date via `get_commit_date(repo_path, "HEAD")`
@@ -775,6 +782,7 @@ Infrastructure failures and their outcomes:
 | Fetch fails (network) | `GitFetchError` | `status = failure`, cursor not advanced |
 | HEAD unreadable (corruption) | `GitCorruptionError` | `status = failure`, cursor not advanced |
 | Delta computation fails | `GitCorruptionError` | `status = failure`, cursor not advanced |
+| Directory deletion fails (filesystem) | `OSError` | `status = failure`, cursor not advanced. Distinct from `GitCorruptionError`: requires operator filesystem intervention (permissions, mount state), not a git-level issue |
 
 On the next scheduled run, the First-Run Detection truth table
 re-evaluates the clone state and applies the appropriate recovery
@@ -901,7 +909,10 @@ Concrete subclasses inherit it automatically (no override needed).
    `RuntimeError` ("Clone not available at {repo_path} for single-item
    lookup")
 3. Call `_construct_candidate_paths(item_id)` to obtain an ordered list
-   of candidate file paths
+   of candidate file paths. If the hook raises `ValueError` (malformed
+   `item_id` for this source's format): log ERROR ("Malformed item_id
+   '{item_id}' for {fetcher_name} — format not recognized by
+   _construct_candidate_paths"), raise `CVENotInSource`
 4. For each `path` in the candidate list:
    a. Read file content via `show_file(repo_path, "HEAD", path)`
    b. If `show_file` raises `GitFileError`: log WARNING ("Blob
@@ -931,8 +942,16 @@ which is idempotent (no-op if data unchanged, update if changed).
 - `RuntimeError` — clone not available (step 2), or blob download
   failed for all candidate paths (step 5a). Both indicate the source
   is temporarily not queryable
-- `CVENotInSource` — item not found in any candidate path (step 5b)
+- `CVENotInSource` — item not found in any candidate path (step 5b),
+  or `item_id` format not recognized by this source (step 3). In the
+  latter case, an ERROR is logged before raising — the exception is
+  semantically correct (the item cannot exist in a source whose path
+  structure cannot accommodate its format) but the ERROR signals a
+  likely upstream data issue
 - Exceptions from `process_item()` propagate uncaught to the caller
+- Other exceptions from `_construct_candidate_paths()` (not
+  `ValueError`) propagate uncaught — these indicate hook
+  implementation bugs, not input format issues
 
 The two exception types serve different purposes for the caller
 (`trigger_on_demand_fetch()`):
@@ -956,10 +975,24 @@ The ordering is significant: the first match wins. If the same item
 could exist in multiple locations (e.g., `published/` vs. `rejected/`),
 place the most likely or authoritative path first.
 
+**Exception contract**: implementations MUST raise `ValueError` if
+`item_id` does not match the format expected by this source (e.g.,
+not parseable as `CVE-YYYY-NNNN`). Raw parsing exceptions
+(`IndexError`, `KeyError`, etc.) MUST NOT propagate — convert them
+to `ValueError` with a descriptive message. This allows the
+`fetch_single()` template to distinguish "unrecognizable input" (caught
+→ `CVENotInSource` + ERROR log) from genuine hook bugs
+(`AttributeError`, `TypeError`, etc. — propagate uncaught).
+
 ```python
 # Kernel example:
 def _construct_candidate_paths(self, cve_id: str) -> list[str]:
-    year = cve_id.split("-")[1]  # CVE-YYYY-NNNNN → YYYY
+    parts = cve_id.split("-")
+    if len(parts) < 3 or parts[0] != "CVE":
+        raise ValueError(
+            f"Unrecognizable item_id format for kernel source: {cve_id}"
+        )
+    year = parts[1]  # CVE-YYYY-NNNNN → YYYY
     return [
         f"cve/published/{year}/{cve_id}.json",
         f"cve/rejected/{year}/{cve_id}.json",
