@@ -695,10 +695,13 @@ above.
 5. Read HEAD SHA from the repository
 6. Read HEAD commit date via `get_commit_date(repo_path, "HEAD")`
 7. **SHA reachability check**:
-   a. If `cursor_sha` is NOT reachable in the local object store: log
-      WARNING ("Cursor SHA unreachable — applying recovery"), compute
-      recovery delta via
-      `_compute_recovery_delta(repo_path, head_sha, cursor_committed_at)`
+   a. If `cursor_sha` is NOT reachable in the local object store:
+      - If `cursor_committed_at` is `None`: log ERROR ("Cursor SHA
+        unreachable and committed_at absent — cannot compute recovery
+        boundary. Treating as first-run."), set delta to empty list
+      - Otherwise: log WARNING ("Cursor SHA unreachable — applying
+        recovery"), compute recovery delta via
+        `_compute_recovery_delta(repo_path, head_sha, cursor_committed_at)`
    b. If `cursor_sha` IS reachable: compute normal delta via
       `diff_names(repo_path, cursor_sha, head_sha)` with
       `delta_path_prefix` as path filter
@@ -901,10 +904,17 @@ Concrete subclasses inherit it automatically (no override needed).
    of candidate file paths
 4. For each `path` in the candidate list:
    a. Read file content via `show_file(repo_path, "HEAD", path)`
-   b. If content is not `None` (file found): return the result of
+   b. If `show_file` raises `GitFileError`: log WARNING ("Blob
+      download failed for {path} — skipping candidate"), record the
+      failure, continue to next candidate path
+   c. If content is not `None` (file found): return the result of
       `process_item(path, content, session)` (`PostIngestTasks | None`)
-5. If no candidate path produced content: raise
-    `CVENotInSource()`
+5. After all candidate paths exhausted:
+   a. If at least one candidate raised `GitFileError` (and none
+      returned content): raise `RuntimeError` ("Blob download failed
+      for item {item_id} — source temporarily not queryable")
+   b. Otherwise (all candidates returned `None`): raise
+      `CVENotInSource()`
 
 **Audit events**: none created directly. Side effects (DB mutations,
 audit events) are delegated entirely to `process_item()` — the
@@ -918,17 +928,20 @@ which is idempotent (no-op if data unchanged, update if changed).
 
 **Exceptions**:
 
-- `RuntimeError` — clone not available (step 2)
-- `CVENotInSource` — item not found in any candidate path (step 5)
+- `RuntimeError` — clone not available (step 2), or blob download
+  failed for all candidate paths (step 5a). Both indicate the source
+  is temporarily not queryable
+- `CVENotInSource` — item not found in any candidate path (step 5b)
 - Exceptions from `process_item()` propagate uncaught to the caller
 
 The two exception types serve different purposes for the caller
 (`trigger_on_demand_fetch()`):
 
 - **`RuntimeError`** — "source not queryable right now" (clone missing,
-  corrupt, or not yet created by the first periodic run). The dispatch
-  system logs a WARNING and tries the next fetcher. The clone will be
-  available after the next scheduled sync.
+  corrupt, not yet created by the first periodic run, or blob download
+  failed in a blobless clone). The dispatch system logs a WARNING and
+  tries the next fetcher. The clone will be available after the next
+  scheduled sync.
 - **`CVENotInSource`** — "item does not exist in this source"
   (authoritative negative). The dispatch system logs INFO and tries the
   next fetcher.

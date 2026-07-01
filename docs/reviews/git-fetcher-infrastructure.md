@@ -44,27 +44,11 @@ partial-cursor mechanism for deltas larger than one task window.
 
 ### GFI-GAP-03 — Recovery with a cursor that has `sha` but missing `committed_at` (Medium)
 
-**Category**: Boundary / Error path
-**Status**: OPEN
-
-If a cursor contains `sha` but no `committed_at` (earlier code path, or a
-manually-edited/partial cursor) and that `sha` later becomes unreachable,
-recovery is triggered and `_compute_recovery_delta` step 1 attempts "minus
-1 day" on `None`. The spec does not define this case — the implementer
-must guess (fall back to first-run treatment, or raise).
+**Status**: RESOLVED — Guard added in execute() step 7a: cursor_committed_at None triggers ERROR log and empty delta (first-run treatment) (2026-07-01)
 
 ### GFI-GAP-04 — Default `fetch_single()` does not handle `GitFileError` from `show_file()` (Medium)
 
-**Category**: Function completeness / Error path
-**Status**: OPEN
-
-In a blobless clone, an on-demand `fetch_single()` for a CVE whose blob is
-not local triggers a network download that can time out → `GitFileError`.
-Step 4 only branches on `None` vs. not-`None` content; it does not say what
-happens when `show_file` raises, and the exception is absent from the
-documented exception set. Two implementers could choose to (a) propagate,
-(b) treat as not-found and try the next candidate, or (c) map to
-`RuntimeError`. The caller behaves very differently per choice.
+**Status**: RESOLVED — GitFileError handling added to fetch_single() step 4: catch per-candidate, aggregate to RuntimeError if all fail (2026-07-01)
 
 ### GFI-GAP-05 — `_construct_candidate_paths()` exceptions on malformed `item_id` unspecified (Medium)
 
