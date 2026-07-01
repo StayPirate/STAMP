@@ -176,15 +176,18 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 
 ## Error Handling
 
-- **IBS unreachable / timeout**: skip the codestream with ERROR-level log,
-  retry on the next scheduled run.
-- **IBS returns error for a specific package diff**: log ERROR, do NOT
-  update the MD5 cache (the next run will re-attempt the diff), continue
-  with remaining packages.
-- **SMELT unreachable** (during Case B/C package resolution): log ERROR,
-  the package addition is skipped. The next run will not re-trigger it
-  (MD5 already cached), so the condition should be surfaced to operators
-  via monitoring.
+- **IBS unreachable / timeout**: skip the codestream with WARNING-level
+  log, `record_failed()`, retry on the next scheduled run. The
+  `items_failed` counter and `partial` run status surface the condition
+  on the fetcher dashboard.
+- **IBS returns error for a specific package diff**: log WARNING,
+  `record_failed()`, do NOT update the MD5 cache (the next run will
+  re-attempt the diff), continue with remaining packages.
+- **SMELT unreachable** (during Case B/C package resolution): log WARNING,
+  `record_failed()`, the package addition is skipped. The next run will
+  not re-trigger it (MD5 already cached). The `items_failed` counter and
+  `partial` run status surface the condition on the fetcher dashboard for
+  operator attention.
 - **Deduplication** (Case C): if multiple packages in the same run yield
   the same CVE-ID without a ticket, only one `create_ticket_from_detection`
   task is enqueued. Subsequent packages with the same CVE-ID in the same

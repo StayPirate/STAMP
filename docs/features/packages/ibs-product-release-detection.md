@@ -140,8 +140,10 @@ gracefully:
   silently. This means the repository exists but has had zero security
   updates published to it. This is normal for newly launched or niche
   products.
-- **Network errors / timeouts**: skip with ERROR-level log, retry on the
-  next scheduled run of `detect_ibs_product_releases`.
+- **Network errors / timeouts**: skip with WARNING-level log,
+  `record_failed()`, retry on the next scheduled run of
+  `detect_ibs_product_releases`. The `items_failed` counter and `partial`
+  run status surface the condition on the fetcher dashboard.
 
 ## Advisory ↔ Source Package Match
 

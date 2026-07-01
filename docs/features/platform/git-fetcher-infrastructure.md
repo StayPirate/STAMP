@@ -720,9 +720,11 @@ above.
        see "`SoftTimeLimitExceeded` handling convention" in
        `fetcher-infrastructure.md`).
     e. If any other exception is raised during steps 10a, 10c, or
-       `commit_and_dispatch()`: call `session.rollback()`, log WARNING
-       ("Failed to process {path}: {error}"), call `record_failed()`,
-       continue to next item
+       `commit_and_dispatch()`: call `session.rollback()`, extract
+       CVE-ID via `cve_id = self._extract_item_id(path)`, call
+       `await self._isolated_status_commit(cve_id, "failure")`, log
+       WARNING (`logger.warning("Failed to process item %s: %s",
+       cve_id, e)`), call `record_failed()`, continue to next item
 
     **Transaction boundaries**: each iteration of the processing loop
     operates in its own transaction boundary. `process_item()` returns
@@ -805,8 +807,8 @@ when upstream modifies them (git's change-tracking provides recovery).
 Persistent failures indicate code bugs requiring human intervention,
 not automated retry; the alternative (not advancing the cursor) creates
 an ever-growing reprocessing loop that is operationally worse. Failed
-items are identified in WARNING logs by file path (step 10e:
-`"Failed to process {path}: {error}"`), enabling operators to invoke
+items are identified in WARNING logs by CVE-ID (step 10e:
+`"Failed to process item %s: %s", cve_id, e`), enabling operators to invoke
 `fetch_single()` for targeted recovery. See also: rejected alternatives
 (threshold-based cursor, per-item retry tracking) in OP-9 analysis.
 
@@ -967,6 +969,7 @@ operations.
 | `_get_last_cursor_sha()` | Reads the `"sha"` field from the previous `FetcherRun.cursor` (via `BaseFetcher`). Returns `None` if no prior successful run exists |
 | `_get_last_cursor_committed_at()` | Reads the `"committed_at"` field from the previous `FetcherRun.cursor` (via `BaseFetcher`). Returns `None` if no prior successful run exists or if the field is absent |
 | `_repo_path()` | Returns `Path($GIT_CLONE_BASE_DIR / clone_dir_name)` |
+| `_extract_item_id(path)` | Extracts CVE-ID from a file path for status tracking and logging. Default: `Path(path).stem` (e.g., `cve/published/2024/CVE-2024-50055.json` → `CVE-2024-50055`). Override only if the repository uses non-standard naming |
 | `_clone_repo(path)` | Clones the repository with configured options (bare, filter, single-branch). Delegates to `git_operations.clone()` |
 | `_fetch_origin(path)` | Runs `git fetch origin`. Delegates to `git_operations.fetch_origin()` |
 | `_get_head_sha(path)` | Returns current HEAD SHA. Delegates to `git_operations.get_head_sha()` |
