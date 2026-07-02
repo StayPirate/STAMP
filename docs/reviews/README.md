@@ -61,6 +61,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| [system-settings](system-settings.md) | 3 | 1 | 🟢 | 🟢 | 1 | 5/8 | 2026-07-02 | |
+| | 1:🔴 1:🟠 1:🟡 | 1:🟡 |  |  | 1:🟡 |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/41 | 2026-06-03 | ⚠️ |
@@ -75,8 +77,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **🟢** | **1** | **2** | **🟢** | **5/837** |  |  |
-| | 2:🟠 |  | 1:🟠 | 2:🟠 |  |  |  |  |
+| **Total** | **5** | **1** | **1** | **2** | **1** | **10/845** |  |  |
+| | 1:🔴 3:🟠 1:🟡 | 1:🟡 | 1:🟠 | 2:🟠 | 1:🟡 |  |  |  |
 
 ### Disabled specs
 
@@ -91,7 +93,6 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 - package-bugowner
 - product-catalog
 - product-lifecycle-transitions
-- system-settings
 
 ## Legend
 

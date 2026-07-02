@@ -819,20 +819,20 @@
       }
     },
     "system-settings": {
-      "enabled": false,
+      "enabled": true,
       "abbr": "ADM",
       "cache": {
-        "last_review": "2026-05-06T00:00:00+0000",
+        "last_review": "2026-07-02T17:07:33+0200",
         "open": {
           "GAP": {
-            "H": 0,
-            "M": 0,
-            "L": 0
+            "H": 1,
+            "M": 1,
+            "L": 1
           },
           "COH": {
             "H": 0,
             "M": 0,
-            "L": 0
+            "L": 1
           },
           "DES": {
             "H": 0,
@@ -847,16 +847,11 @@
           "API": {
             "H": 0,
             "M": 0,
-            "L": 0
+            "L": 1
           }
         },
         "resolved": 3,
-        "not_reviewed": [
-          "GAP",
-          "COH",
-          "DES",
-          "SEC"
-        ]
+        "not_reviewed": []
       }
     },
     "ticket-audit-log": {
