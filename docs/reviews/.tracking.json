@@ -440,7 +440,7 @@
       "enabled": true,
       "abbr": "GFI",
       "cache": {
-        "last_review": "2026-06-25T00:00:00+0000",
+        "last_review": "2026-07-02T00:00:00+0000",
         "open": {
           "GAP": {
             "H": 0,
@@ -454,12 +454,12 @@
           },
           "DES": {
             "H": 0,
-            "M": 0,
+            "M": 2,
             "L": 0
           },
           "SEC": {
             "H": 0,
-            "M": 0,
+            "M": 1,
             "L": 0
           },
           "API": {
@@ -469,12 +469,7 @@
           }
         },
         "resolved": 12,
-        "not_reviewed": [
-          "COH",
-          "DES",
-          "SEC",
-          "API"
-        ]
+        "not_reviewed": []
       }
     },
     "git-product-release-detection": {
@@ -627,7 +622,7 @@
       "enabled": true,
       "abbr": "NET",
       "cache": {
-        "last_review": "2026-06-25T00:00:00+0000",
+        "last_review": "2026-07-02T00:00:00+0000",
         "open": {
           "GAP": {
             "H": 0,
@@ -641,12 +636,12 @@
           },
           "DES": {
             "H": 0,
-            "M": 0,
+            "M": 1,
             "L": 0
           },
           "SEC": {
             "H": 0,
-            "M": 0,
+            "M": 2,
             "L": 0
           },
           "API": {
@@ -656,12 +651,7 @@
           }
         },
         "resolved": 10,
-        "not_reviewed": [
-          "COH",
-          "DES",
-          "SEC",
-          "API"
-        ]
+        "not_reviewed": []
       }
     },
     "package-bugowner": {

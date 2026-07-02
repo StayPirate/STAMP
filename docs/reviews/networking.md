@@ -1,8 +1,8 @@
 # Review: networking
 
 **Spec**: `docs/features/platform/networking.md`
-**Last reviewed**: 2026-06-25
-**Reviewers**: Gap Analysis, Documentation
+**Last reviewed**: 2026-07-02
+**Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions, Documentation
 
 > Post-split review (fetcher-infrastructure split, Phase 4m). The document
 > was created by extracting the shared HTTP client + TLS trust store
@@ -10,8 +10,6 @@
 > was content-preserving; the gap findings below are pre-existing
 > ambiguities, not regressions introduced by the split, and are recorded
 > here for future hardening rather than fixed as part of the split exercise.
-> Coherence, Design, Security and API Conventions reviewers were not run in
-> this round.
 
 ---
 
@@ -59,15 +57,52 @@
 
 ---
 
+## Coherence
+
+No issues identified.
+
+---
+
+## Design
+
+### NET-DES-01 — Cert file existence check in readiness probe (Medium)
+
+**Category**: Operational Resilience
+**Status**: OPEN
+
+If a deployment ships without the SUSE CA certificate file (e.g., Dockerfile COPY directive accidentally removed during refactoring), the application starts normally, passes the `/health` liveness check, and begins receiving traffic. However, all fetchers connecting to SUSE internal services (IBS, SMELT, AIMAAS) and the IBSEventConsumer (RabbitMQ over AMQPS) fail with TLS verification errors. This could persist for hours until someone notices the fetcher dashboard showing all-failures. The `/ready` readiness endpoint should validate that `SUSE_CA_CERT_PATH` exists and is parseable as a valid PEM certificate. This would cause the orchestrator to reject the deployment immediately, surfacing the problem at deploy time rather than at runtime.
+
+---
+
+## Security
+
+### NET-SEC-01 — Explicit follow_redirects=False as factory default (Medium)
+
+**Category**: Credential Protection
+**Status**: OPEN
+
+The spec does not define a redirect-following policy for the HTTP client factory. The current behavior relies on httpx's default of not following redirects, which is safe but implicit. If a future contributor enables `follow_redirects=True` (e.g., because NVD or GitHub returns 301/302), authenticated requests carrying IBS HTTP Basic Auth credentials, NVD API keys, or GitHub tokens in the Authorization header would be forwarded to redirect targets — potentially leaking credentials to arbitrary servers. Making `follow_redirects=False` an explicit, documented factory parameter ensures this security property survives library version upgrades and code modifications. If specific consumers need redirect following in the future, they should opt in explicitly with credential-stripping on cross-origin redirects.
+
+### NET-SEC-02 — Response body size limit (max_content_length) (Medium)
+
+**Category**: Resource Exhaustion
+**Status**: OPEN
+
+The spec defines timeouts (10s connect, 30s read) but no maximum response body size. A malicious, compromised, or malfunctioning external service could send an unbounded response body (multi-GB), exhausting worker memory and causing an OOM kill. This affects all fetchers, especially those connecting to public services (NVD, GitHub, MITRE, OSV, Red Hat) where Sentinel does not control the server. The factory defaults table should include a `max_content_length` parameter (e.g., 100 MB as a generous default). The implementation should abort the response read if the Content-Length header exceeds this limit, or track bytes read during streaming and abort if the threshold is crossed. Individual fetchers can override this default downward for endpoints with known small responses.
+
+---
+
+## API Conventions
+
+No API endpoints defined in this spec.
+
+---
+
 ## Documentation
 
 ### NET-DOC-01 — Dangling reference to the moved "Shared HTTP Client" section (Medium)
 
-**Status**: RESOLVED — `fetcher-infrastructure.md` (BaseFetcher Base Class,
-item 5) pointed to a "Shared HTTP Client" section that no longer exists in
-that document after the split. Updated to reference the local "BaseFetcher
-HTTP Client Integration" section and `networking.md` ("Shared HTTP
-Client") for the full factory spec (2026-06-25)
+**Status**: RESOLVED — `fetcher-infrastructure.md` (BaseFetcher Base Class, item 5) pointed to a "Shared HTTP Client" section that no longer exists in that document after the split. Updated to reference the local "BaseFetcher HTTP Client Integration" section and `networking.md` ("Shared HTTP Client") for the full factory spec (2026-06-25)
 
 ### NET-DOC-02 — Factory signature omits the required `name` parameter (Low)
 
