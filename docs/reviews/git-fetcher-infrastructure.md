@@ -67,17 +67,11 @@ No issues identified.
 
 ### GFI-DES-01 — SHA format validation and end-of-options separator (Medium)
 
-**Category**: Defensive Coding
-**Status**: OPEN
-
-The spec does not mandate validation of cursor SHA format (regex `^[0-9a-f]{40}$`) before passing it to git commands, nor does it require the `--` (end-of-options) separator before positional arguments in git subprocess calls. A corrupted cursor SHA (from database corruption or bugs) that doesn't match the expected hex format could cause unnecessary clone deletion (misclassified as corruption) if git reports an error. Worse, if a SHA value starts with `-`, git would interpret it as a flag rather than a positional argument (argument injection). Adding format validation is trivial (one regex check) and prevents an unnecessary ~300MB re-clone on cursor data corruption. The `--` separator is standard practice for programmatic git usage and eliminates argument injection entirely.
+**Status**: RESOLVED — Added Module Invariants subsection to Function Catalog with SHA format validation rule (regex check in check_sha_reachable) and end-of-options separator rule; updated check_sha_reachable (step 0 validation), show_file, and clone commands to use `--`; updated all prose references (2026-07-02)
 
 ### GFI-DES-02 — LC_ALL=C for git subprocess invocations (Medium)
 
-**Category**: Correctness
-**Status**: OPEN
-
-The spec's error classification in `git_operations.py` relies on parsing stderr strings (e.g., "does not exist in", "path not found") to distinguish between file-not-found (returns `None`) and actual errors (raises `GitFileError`). However, the spec does not mandate that git subprocesses run with `LC_ALL=C` in their environment. If the system locale is non-English, git may output translated error messages that don't match the expected English patterns, causing misclassification. For example, `show_file` could raise `GitFileError` instead of returning `None` for a file that genuinely doesn't exist, leading to incorrect `record_failed()` metrics and misleading error logs. Setting `LC_ALL=C` is standard practice for programmatic git usage and has zero runtime cost.
+**Status**: RESOLVED — Added Rule 3 (Subprocess environment) to Module Invariants mandating LC_ALL=C, GIT_TERMINAL_PROMPT=0, TZ=UTC via _git_subprocess_env() for all git subprocess calls (2026-07-02)
 
 ---
 
@@ -85,10 +79,7 @@ The spec's error classification in `git_operations.py` relies on parsing stderr 
 
 ### GFI-SEC-01 — No file content size limit on show_file output (Medium)
 
-**Category**: Resource Exhaustion
-**Status**: OPEN
-
-The `show_file` function returns full file content as `bytes` with only a 30-second timeout constraint but no maximum content size. In a blobless clone, each file requires an on-demand blob download from the remote. A malicious upstream commit could include an extremely large file (e.g., multi-GB blob disguised with a CVE JSON filename pattern) that would exhaust worker memory when loaded. The spec mentions `MemoryError` re-raise in step 10d, but by the time Python raises `MemoryError`, the process may already be in an unrecoverable state. CVE JSON files are typically less than 100KB; anything exceeding 10MB is clearly anomalous and should be rejected. A size limit guard in `show_file` (abort read if output exceeds threshold) would provide defense-in-depth against malicious or corrupted upstream content.
+**Status**: RESOLVED — Accepted risk: trusted upstream sources (MITRE, kernel.org), 30s subprocess timeout, Celery OOM recovery, and cursor safety provide adequate protection for current threat model (2026-07-02)
 
 ---
 

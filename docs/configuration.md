@@ -156,6 +156,9 @@ the container or system level.
 | `HTTPS_PROXY` | string | (none) | Proxy URL for outgoing HTTPS connections. Respected by all HTTP clients | `docs/features/platform/networking.md` |
 | `HTTP_PROXY` | string | (none) | Proxy URL for outgoing HTTP connections | `docs/features/platform/networking.md` |
 | `NO_PROXY` | string | (none) | Comma-separated hosts that bypass the proxy | `docs/features/platform/networking.md` |
+| `LC_ALL` | string | (none) | Locale override. Set to `C` in `git_operations.py` subprocess calls (code-level guarantee). Recommended as `C` at container level for defense-in-depth | `docs/features/platform/git-fetcher-infrastructure.md` |
+| `GIT_TERMINAL_PROMPT` | string | (none) | Git prompt control. Set to `0` in `git_operations.py` subprocess calls (code-level guarantee). Prevents interactive prompts that would block async workers | `docs/features/platform/git-fetcher-infrastructure.md` |
+| `TZ` | string | (none) | Timezone. Set to `UTC` in `git_operations.py` subprocess calls and recommended at container level (see `docs/deployment.md`, Timezone and Locale Requirements) | `docs/features/platform/git-fetcher-infrastructure.md`, `docs/deployment.md` |
 
 ## Runtime Database Settings
 

@@ -243,7 +243,7 @@ Before the first production deployment:
   off-peak maintenance window). In-flight SSO logins are also affected
   (max 10 minutes of disruption)
 
-### Timezone Requirements
+### Timezone and Locale Requirements
 
 All Sentinel containers (API server, Celery worker, Celery Beat) MUST
 operate with UTC as the system timezone. This is enforced at two levels:
@@ -263,6 +263,25 @@ Some external data sources publish at specific UTC times (e.g., EPSS at
 13:31 UTC daily). A timezone misconfiguration causes fetchers to run at
 incorrect wall-clock times, potentially before upstream data is
 available.
+
+#### Locale for git worker containers
+
+Containers running the git worker (git-based CVE fetchers) SHOULD set
+`LC_ALL=C` in their environment as a secondary defense. The primary
+guarantee is code-level: `git_operations.py` injects `LC_ALL=C`,
+`GIT_TERMINAL_PROMPT=0`, and `TZ=UTC` into every git subprocess call
+(see `docs/features/platform/git-fetcher-infrastructure.md`, Module
+Invariants — Rule 3). The container-level setting serves as
+defense-in-depth in case a future code path invokes git outside the
+centralized module.
+
+Recommended container environment for git workers:
+
+```
+TZ=UTC
+LC_ALL=C
+GIT_TERMINAL_PROMPT=0
+```
 
 ---
 

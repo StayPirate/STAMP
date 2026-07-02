@@ -47,7 +47,7 @@ operations.
 The pattern:
 
 1. **Clone** (first run only — clone directory does not exist OR is not
-   a valid bare git repository): `git clone --bare --single-branch <url>`
+   a valid bare git repository): `git clone --bare --single-branch -- <url> <dest>`
    into `$GIT_CLONE_BASE_DIR/<subdirectory>/`. For sources that support
    Git partial clone (protocol v2 with `filter` capability), add
    `--filter=blob:none` to defer blob downloads. For sources that do not
@@ -69,7 +69,7 @@ The pattern:
    zero network access even in blobless clones. A file rename appears as
    a separate Delete (old path, excluded) + Add (new path, included);
    the new path is processed normally.
-4. **File content access**: `git show <ref>:<path>` reads a single
+4. **File content access**: `git show -- <ref>:<path>` reads a single
    file's content from the object store without creating a working tree.
    For blobless clones, this triggers an on-demand blob download for
    that specific file only.
@@ -226,7 +226,7 @@ These rules apply to ALL git-based fetchers sharing the same volume:
    sync task. `fetch_single()` MUST NOT run `git fetch` or any
    operation that modifies the object store or refs.
 2. **`fetch_single()` reads from the object store only**: uses
-   `git show <ref>:<path>` (via async subprocess) to read committed
+   `git show -- <ref>:<path>` (via async subprocess) to read committed
    objects. The Git object store is append-only with atomic file
    operations — concurrent reads during a `git fetch` are safe.
 3. **Stale reads are acceptable**: if `fetch_single()` reads HEAD just
@@ -254,7 +254,7 @@ These rules apply to ALL git-based fetchers sharing the same volume:
 2. Read the `cursor` from the last `FetcherRun` with
    `status IN ('success', 'partial')` for this fetcher in the database
 3. Check if the stored SHA exists in the new clone
-   (`git cat-file -t <sha>`)
+   (`git cat-file -t -- <sha>`)
 4. If reachable: normal delta processing from stored SHA to HEAD
 5. If not reachable (upstream force-push, branch deletion, or SHA
    garbage-collected): apply the date-based recovery strategy (see
@@ -279,7 +279,7 @@ retry exhaustion):
 ## Cursor SHA Unreachable
 
 When a git-based fetcher's stored cursor SHA is not reachable in the
-local clone (detected via `git cat-file -t <sha>` returning non-zero),
+local clone (detected via `git cat-file -t -- <sha>` returning non-zero),
 it applies a date-based recovery strategy using the `committed_at`
 field stored in the cursor. This situation occurs when:
 
@@ -401,7 +401,7 @@ timeouts and retry policy per operation category:
 | Clone | 20 minutes | 0 | Initial bare clone (~300 MB download) |
 | Fetch | 5 minutes | 0 | Incremental `git fetch origin` |
 | Read | 30 seconds | 3 (backoff: 2s, 4s, 8s) | `git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`, `git rev-list`, `git log` |
-| Show | 30 seconds | 0 | `git show <ref>:<path>` (per-file blob access) |
+| Show | 30 seconds | 0 | `git show -- <ref>:<path>` (per-file blob access) |
 
 **Read retry policy**: read-phase operations are retried up to 3 times
 (4 attempts total) with exponential backoff (2 seconds, 4 seconds, 8
@@ -518,6 +518,77 @@ The following sections define the complete public interface of
 `git_operations.py`. These are the functions that `BaseGitFetcher`
 delegates to and that any `BaseFetcher`-direct subclass may also call.
 
+### Module Invariants
+
+Three mandatory rules apply to all functions in this module:
+
+**Rule 1 — SHA Format Validation:**
+
+Applies ONLY to `check_sha_reachable` (the single entry point for
+database-sourced SHA values). Before invoking `git cat-file`, validate
+the `sha` parameter against regex `^[0-9a-f]{40}$`. If validation fails:
+log WARNING with the invalid value, return `False` immediately (do NOT
+invoke git, do NOT raise an exception). This triggers the natural
+date-based recovery flow (same as unreachable SHA) — no re-clone, cursor
+advances on next successful run.
+
+**Rule 2 — End-of-options separator (`--`):**
+
+Every git command constructed by this module that accepts positional
+arguments (SHA, ref, object specifiers) MUST insert `--` between
+options/flags and positional arguments to prevent argument injection.
+Applicable commands: `git cat-file -t -- <sha>`,
+`git show -- <ref>:<path>`, `git clone <flags> -- <url> <dest>`.
+
+Note: `--` is NOT applicable to commands where it has pathspec semantics
+rather than end-of-options semantics (`git log`, `git rev-list`,
+`git diff` revision arguments). For these commands, the defense against
+argument injection is SHA format validation at the entry point
+(`check_sha_reachable`).
+
+**Rule 3 — Subprocess environment:**
+
+Every function that invokes `asyncio.create_subprocess_exec` for a git
+command MUST pass `env=_git_subprocess_env()` to guarantee deterministic
+output regardless of the host locale or timezone configuration.
+
+The module defines:
+
+```python
+_GIT_ENV_OVERRIDES: Final[dict[str, str]] = {
+    "LC_ALL": "C",
+    "GIT_TERMINAL_PROMPT": "0",
+    "TZ": "UTC",
+}
+
+def _git_subprocess_env() -> dict[str, str]:
+    """Merge process environment with git-specific overrides."""
+    return {**os.environ, **_GIT_ENV_OVERRIDES}
+```
+
+Rationale for each variable:
+
+- `LC_ALL=C` — forces English output from git, ensuring that stderr
+  string parsing (e.g., "does not exist in", "not a valid object name")
+  works correctly regardless of container locale. Without this, error
+  classification in `show_file` and `check_sha_reachable` would break
+  on non-English locales.
+- `GIT_TERMINAL_PROMPT=0` — disables interactive prompts (credential
+  requests, pager) that would block the async worker indefinitely.
+- `TZ=UTC` — ensures timestamp output (e.g., `--format=%cI`) is
+  directly in UTC without requiring post-hoc conversion in Python.
+  Follows the project's "UTC everywhere" convention.
+
+The merge with `os.environ` is required because
+`asyncio.create_subprocess_exec(env=<dict>)` replaces (rather than
+extends) the inherited process environment. Without the merge, essential
+variables like `PATH` (needed to locate the `git` binary) and
+`HOME`/`XDG_CONFIG_HOME` would be absent.
+
+Adding or removing a git-specific environment variable requires
+changing only the `_GIT_ENV_OVERRIDES` constant — no per-function
+modifications needed.
+
 ### Clone Operations
 
 | Function | Signature | Returns | Timeout | Raises |
@@ -526,13 +597,18 @@ delegates to and that any `BaseFetcher`-direct subclass may also call.
 
 **Behavior**:
 
-1. Build the base command: `["git", "clone", url, str(dest)]`
-2. If `bare` is `True`: append `--bare`
-3. If `filter_spec` is not `None`: append `--filter=<filter_spec>`
-4. If `single_branch` is `True`: append `--single-branch`
-5. Execute the command via `asyncio.create_subprocess_exec` with the
+1. Build the command with all flags before positional arguments,
+   separated by `--`:
+   a. Start with `["git", "clone"]`
+   b. If `bare` is `True`: append `--bare`
+   c. If `filter_spec` is not `None`: append `--filter=<filter_spec>`
+   d. If `single_branch` is `True`: append `--single-branch`
+   e. Append `--` (end-of-options separator)
+   f. Append `url` and `str(dest)` as positional arguments
+   Result example: `["git", "clone", "--bare", "--filter=blob:none", "--single-branch", "--", url, str(dest)]`
+2. Execute the command via `asyncio.create_subprocess_exec` with the
    clone timeout (20 minutes)
-6. If the process exits with non-zero code: raise `GitFetchError` with
+3. If the process exits with non-zero code: raise `GitFetchError` with
    stderr content
 
 ### Fetch Operations
@@ -570,22 +646,25 @@ Semantics:
   (`git rev-parse HEAD`)
 - **`get_commit_date`**: returns the committer date of the specified ref
   as an ISO 8601 string normalized to UTC
-  (`git log -1 --format=%cI <ref>`, then converted to UTC; or
-  equivalently, executed with `TZ=UTC` environment to produce UTC
-  output directly). Follows the project's "UTC everywhere" convention
-  (`docs/conventions.md`, Timestamps & Timezones). Used to store
-  `committed_at` in the cursor for recovery boundary computation
+  (`git log -1 --format=%cI <ref>`). The subprocess environment includes
+  `TZ=UTC` (via Rule 3), so git produces UTC output directly — no
+  post-hoc conversion needed. Follows the project's "UTC everywhere"
+  convention (`docs/conventions.md`, Timestamps & Timezones). Used to
+  store `committed_at` in the cursor for recovery boundary computation
 - **`is_clone_valid`**: returns `True` if `repo_path` is a valid git
   repository (`git rev-parse --git-dir` succeeds). Returns `False` if
   the directory does not exist, is not a git repository, or the check
   fails for any reason. NEVER raises — used as a guard condition
 - **`check_sha_reachable`**: determines whether a given SHA exists in
   the local object store as a valid git object
-  (`git cat-file -t <sha>`).
+  (`git cat-file -t -- <sha>`).
 
   **Behavior**:
 
-  1. Execute `git cat-file -t <sha>` in the repository
+  0. Validate `sha` against `^[0-9a-f]{40}$`. If invalid: log WARNING
+     ("Invalid SHA format: {sha} — treating as unreachable"), return
+     `False`
+  1. Execute `git cat-file -t -- <sha>` in the repository
   2. If exit code is 0: return `True` (object exists and is valid)
   3. If exit code is 1 and stderr indicates "not a valid object name" or
      similar: return `False` (SHA not reachable — expected condition)
@@ -613,7 +692,7 @@ Semantics:
 
 **Behavior**:
 
-1. Execute `git show <ref>:<file_path>` in the repository
+1. Execute `git show -- <ref>:<file_path>` in the repository
 2. If exit code is 0: return stdout as `bytes` (file content)
 3. If exit code is 128 and stderr contains "does not exist in" or
    "path not found": return `None` (file does not exist at this ref —
