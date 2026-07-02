@@ -60,10 +60,15 @@ The pattern:
 2. **Fetch** (subsequent runs): `git fetch origin` updates refs and
    downloads new objects. This is incremental and typically completes in
    seconds.
-3. **Delta detection**: `git diff --name-only --diff-filter=AMCR
-   <old_sha>..<new_sha>` returns the list of Added, Modified, Copied,
-   and Renamed files. Deleted files are excluded — they do not represent
-   CVE data that needs processing.
+3. **Delta detection**: `git diff --name-only --no-renames
+   --diff-filter=AM <old_sha>..<new_sha>` returns the list of Added and
+   Modified files. Deleted files are excluded — they do not represent
+   CVE data that needs processing. Rename detection is explicitly
+   disabled (`--no-renames`) so that the diff operates exclusively on
+   local tree/commit objects — no blob content is needed, guaranteeing
+   zero network access even in blobless clones. A file rename appears as
+   a separate Delete (old path, excluded) + Add (new path, included);
+   the new path is processed normally.
 4. **File content access**: `git show <ref>:<path>` reads a single
    file's content from the object store without creating a working tree.
    For blobless clones, this triggers an on-demand blob download for
@@ -259,11 +264,19 @@ These rules apply to ALL git-based fetchers sharing the same volume:
    this is handled automatically by `execute()` — only
    `recovery_path_prefix` varies per fetcher
 
-**Corrupted clone** (git operations fail with corruption errors):
+**Corrupted clone** (read-phase git operations fail persistently after
+retry exhaustion):
 
-1. Log WARNING with the error details
-2. Delete the entire clone directory
-3. Re-clone (same as volume loss recovery)
+1. Read-phase operation fails; `git_operations` retries up to 3 times
+   with exponential backoff (2s, 4s, 8s)
+2. If failure persists: raise `GitCorruptionError`
+3. `execute()` catches the exception, logs WARNING with error details
+4. Delete the entire clone directory (via `_delete_if_exists()`)
+5. Raise `FetcherError` to terminate the current run (`status = failure`,
+   cursor not advanced)
+6. On the next scheduled run: First-Run Detection finds clone absent
+   with cursor present → re-clone + SHA reachability check → normal
+   recovery flow (same as volume loss)
 
 ## Cursor SHA Unreachable
 
@@ -291,8 +304,10 @@ field stored in the cursor. This situation occurs when:
    ("Recovery boundary not found — treating as first-run"), return
    empty delta. Cursor advances to HEAD
 4. Compute delta:
-   `git diff --name-only --diff-filter=AMCR <boundary_sha>..HEAD
-   -- '<recovery_path_prefix>'`
+   `git diff --name-only --no-renames --diff-filter=AM
+   <boundary_sha>..HEAD -- '<recovery_path_prefix>'`
+   (same `--no-renames` flag as normal delta — guarantees local-only
+   operation in blobless clones; see "Bare and Blobless Compatibility")
 5. Apply the fetcher's normal file filtering and per-item processing
    logic (MUST be idempotent — previously ingested items produce no
    observable side effects on re-processing)
@@ -381,13 +396,25 @@ shared internal helper. This decision is based on:
 
 The helper provides typed exceptions for phase-based error
 classification (see "Error Classification" below), with hardcoded
-timeouts per operation category:
+timeouts and retry policy per operation category:
 
-| Operation | Timeout | Examples |
-|---|---|---|
-| Clone | 20 minutes | Initial bare clone (~300 MB download) |
-| Fetch | 5 minutes | Incremental `git fetch origin` |
-| Read | 30 seconds | `git show`, `git log`, `git ls-tree`, `git rev-parse` |
+| Operation | Timeout | Retries | Examples |
+|---|---|---|---|
+| Clone | 20 minutes | 0 | Initial bare clone (~300 MB download) |
+| Fetch | 5 minutes | 0 | Incremental `git fetch origin` |
+| Read | 30 seconds | 3 (backoff: 2s, 4s, 8s) | `git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`, `git rev-list`, `git log` |
+| Show | 30 seconds | 0 | `git show <ref>:<path>` (per-file blob access) |
+
+**Read retry policy**: read-phase operations are retried up to 3 times
+(4 attempts total) with exponential backoff (2 seconds, 4 seconds, 8
+seconds) before raising `GitCorruptionError`. This absorbs transient
+I/O faults on networked storage (NFS, PVC with remote backend) without
+misclassifying them as repository corruption. The worst-case added
+latency per operation is ~14 seconds (negligible vs. the 30-second
+timeout and vastly cheaper than a false-positive re-clone of ~300 MB). Clone and Fetch are not retried because they already handle
+transient network errors through git's own retry logic. Show is not
+retried because per-file failures are already non-fatal (`GitFileError`
+→ `record_failed()`, continue to next item).
 
 ## Error Classification
 
@@ -405,22 +432,36 @@ class GitFileError(GitError): ...        # Per-file — continue processing
 | Phase | Failure condition | Exception | Fetcher action |
 |-------|-------------------|-----------|----------------|
 | `git clone` / `git fetch` | Any failure (network, auth, timeout) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
-| Read after successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`) | Any failure | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
-| `git show` during delta file processing | Any failure (timeout, missing blob) | `GitFileError` | `record_failed()` for that item. Continue to next file |
+| Read after successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`, `git rev-list`, `git log`) | Persistent failure after retry exhaustion (3 retries with exponential backoff) | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
+| `git show` during delta file processing | Any failure (timeout, missing blob, network error in blobless clone) | `GitFileError` | `record_failed()` for that item. Continue to next file |
 | Directory deletion (recovery/cleanup) | Filesystem rejection (permissions, read-only mount, busy handle) | `OSError` | Log ERROR with distinct message: path, errno, and guidance ("Manual intervention required — check filesystem permissions and mount state"). Raise `FetcherError`. Next cycle re-attempts (permanent until operator resolves filesystem issue) |
 
-**Design rationale**: classification is purely phase-based because a
-successful `git fetch` proves network connectivity. If a subsequent
-read operation fails, the only remaining explanation is local
-corruption. No stderr parsing or exit code mapping is needed.
+**Design rationale**: classification is phase-based. A successful
+`git fetch` proves network connectivity to the remote. A subsequent
+read-phase failure is therefore *presumed* to be local corruption —
+but the presumption accounts for transient I/O faults on networked
+storage (NFS, PVC with remote backend) by retrying before concluding
+corruption. If retries are exhausted and the failure persists, the
+conclusion is firm: the local object store is damaged, and the only
+reliable recovery is deletion + re-clone. No stderr parsing or exit
+code mapping is needed — the phase plus retry exhaustion is sufficient
+for classification.
+
+Note: `diff_names` uses `--no-renames`, ensuring it operates
+exclusively on local tree/commit objects (no blob content needed).
+This means read-phase failures in `diff_names` are genuinely
+storage-related, not network-related — reinforcing the corruption
+classification after retry exhaustion.
 
 **No anti-loop logic**: the Celery hard time limit (`time_limit =
 run_timeout`) guarantees each run's duration is bounded. The soft time
 limit (at 95% of `run_timeout`) provides early warning for clean
 shutdown. Step 10d ensures `SoftTimeLimitExceeded` propagates rather
 than being caught as a per-item error. Repeated failures (e.g.,
-corruption loop from faulty disk) produce visible `failure` records in
-the fetcher dashboard for operator intervention.
+persistent filesystem damage) produce visible `failure` records in
+the fetcher dashboard for operator intervention — but each cycle
+attempts self-healing (delete + re-clone) rather than looping on the
+same corrupt state.
 
 ## Implementation Location
 
@@ -507,6 +548,15 @@ Incremental — only new objects are transferred.
 
 ### Read Operations
 
+All read-phase functions apply the retry policy (3 retries, backoff
+2s/4s/8s) internally before raising `GitCorruptionError`. Callers
+observe a single function call that either succeeds or raises — the
+retry is transparent. Exempt functions: `is_clone_valid` (never
+raises). For `check_sha_reachable`, the retry applies only to the
+code path that raises `GitCorruptionError` (unexpected I/O failures);
+the `return False` path (SHA not found — exit code 1 with "not a valid
+object name") is a definitive negative response and is NOT retried.
+
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
 | `get_head_sha` | `async def get_head_sha(repo_path: Path) -> str` | 40-char hex SHA | Read (30 sec) | `GitCorruptionError` |
@@ -544,11 +594,13 @@ Semantics:
   4. If exit code indicates a different failure (I/O error, repository
      corruption): raise `GitCorruptionError`
 
-- **`diff_names`**: returns the list of added, modified, copied, and
-  renamed files between two commits
-  (`git diff --name-only --diff-filter=AMCR <from>..<to>`). If
-  `path_filter` is set, appends `-- '<path_filter>'` to restrict
-  results. Deleted files are excluded
+- **`diff_names`**: returns the list of added and modified files
+  between two commits
+  (`git diff --name-only --no-renames --diff-filter=AM <from>..<to>`).
+  Rename detection is disabled to guarantee zero network access in
+  blobless clones (renames appear as separate D+A pairs; the `A` is
+  captured by the filter). If `path_filter` is set, appends
+  `-- '<path_filter>'` to restrict results. Deleted files are excluded
 - **`rev_list_before`**: returns the most recent commit SHA on HEAD
   before the specified date
   (`git rev-list -1 --before="<before_date>" HEAD`). Returns `None` if
@@ -559,7 +611,7 @@ Semantics:
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
-| `show_file` | `async def show_file(repo_path: Path, ref: str, file_path: str) -> bytes \| None` | File content as `bytes`, or `None` if path does not exist | Read (30 sec) | `GitFileError` (for errors other than "path not found") |
+| `show_file` | `async def show_file(repo_path: Path, ref: str, file_path: str) -> bytes \| None` | File content as `bytes`, or `None` if path does not exist | Show (30 sec) | `GitFileError` (for errors other than "path not found") |
 
 **Behavior**:
 
@@ -595,7 +647,12 @@ plain bare clones and blobless bare clones (`--filter=blob:none`):
   `is_clone_valid`, `check_sha_reachable`, `diff_names`,
   `rev_list_before`): access only commit and tree objects, which are
   always present locally in both plain and blobless clones. No network
-  access required
+  access required. `diff_names` achieves this by disabling rename
+  detection (`--no-renames`): without this flag, git's default inexact
+  rename detection (enabled since git 2.9 via `diff.renames=true`)
+  would compare blob content to compute file similarity scores,
+  triggering on-demand blob downloads in blobless clones — defeating
+  the local-only guarantee
 - **On-demand operations** (`show_file`): access blob content. In
   blobless clones, this triggers an on-demand blob download from the
   remote for the specific file requested. This is the intended access
@@ -765,30 +822,55 @@ returns — see "Status determination precedence" in
 `fetcher-infrastructure.md`. Items skipped in step 10b (file not at HEAD) do not increment
 any counter and do not trigger the safety check.
 
-**Infrastructure errors**: exceptions from clone, fetch, HEAD read, or
-delta computation propagate naturally — `BaseFetcher.run()` catches them
-and records a failed run without advancing the cursor. The template
-method does NOT catch infrastructure-level exceptions. On the next
-scheduled run, the First-Run Detection truth table re-evaluates the
-clone state and applies appropriate recovery.
+**Infrastructure errors**: the template method catches all known
+infrastructure exceptions and wraps them in `FetcherError` with a
+sanitized message before propagating to `BaseFetcher.run()`. This
+ensures git-specific exceptions never leak beyond the
+`BaseGitFetcher` boundary:
+
+- **`GitFetchError`** (clone/fetch failures): `execute()` **catches**
+  this exception and raises `FetcherError("External git repository
+  unreachable — {sanitized reason}")`. The clone is intact — next
+  cycle retries.
+- **`GitCorruptionError`** (read-phase failures after retry
+  exhaustion): `execute()` **catches** this exception, deletes the
+  clone directory via `_delete_if_exists()`, then raises `FetcherError`
+  to fail the run. This ensures self-healing: the next cycle finds the
+  clone absent, re-clones, and applies recovery. Without this explicit
+  deletion, a partial corruption (e.g., corrupt pack file that still
+  passes `git rev-parse --git-dir`) would loop indefinitely without
+  repair. If `_delete_if_exists()` raises `OSError`: log ERROR
+  ("Cannot delete clone directory at {repo_path}: {e}. Manual
+  intervention required — check filesystem permissions and mount
+  state."), propagate as `FetcherError` (deletion failure is a distinct
+  problem requiring operator intervention).
+
+On the next scheduled run, the First-Run Detection truth table
+re-evaluates the clone state and applies appropriate recovery
+(row "Cursor exists + Clone absent" → re-clone + SHA reachability
+check).
 
 **Error Handling Strategy**:
 
 Infrastructure failures and their outcomes:
 
-| Infrastructure failure | Exception | BaseFetcher behavior |
-|------------------------|-----------|---------------------|
-| Clone fails (network) | `GitFetchError` | `status = failure`, cursor not advanced |
-| Fetch fails (network) | `GitFetchError` | `status = failure`, cursor not advanced |
-| HEAD unreadable (corruption) | `GitCorruptionError` | `status = failure`, cursor not advanced |
-| Delta computation fails | `GitCorruptionError` | `status = failure`, cursor not advanced |
-| Directory deletion fails (filesystem) | `OSError` | `status = failure`, cursor not advanced. Distinct from `GitCorruptionError`: requires operator filesystem intervention (permissions, mount state), not a git-level issue |
+| Infrastructure failure | Exception | `execute()` action | BaseFetcher behavior |
+|------------------------|-----------|--------------------|---------------------|
+| Clone fails (network) | `GitFetchError` | Catch → raise `FetcherError` (clone intact) | `status = failure`, cursor not advanced |
+| Fetch fails (network) | `GitFetchError` | Catch → raise `FetcherError` (clone intact) | `status = failure`, cursor not advanced |
+| HEAD unreadable (corruption after retries) | `GitCorruptionError` | Delete clone → raise `FetcherError` | `status = failure`, cursor not advanced |
+| Delta computation fails (corruption after retries) | `GitCorruptionError` | Delete clone → raise `FetcherError` | `status = failure`, cursor not advanced |
+| Directory deletion fails (filesystem) | `OSError` | Log ERROR → raise `FetcherError` | `status = failure`, cursor not advanced. Requires operator filesystem intervention |
 
-On the next scheduled run, the First-Run Detection truth table
-re-evaluates the clone state and applies the appropriate recovery
-(row "Cursor exists + Clone invalid" → re-clone).
+**Clone availability window**: between the corruption-triggered
+deletion and the next scheduled run's re-clone, `fetch_single()` will
+find the clone absent and degrade gracefully (raises `RuntimeError` →
+dispatch system tries the next fetcher). This window lasts at most one
+scheduling interval (typically hours). The trade-off is accepted:
+immediate self-healing of corruption outweighs temporary
+`fetch_single()` unavailability for one source.
 
-The **all-items-failed safety check** is now handled by
+The **all-items-failed safety check** is handled by
 `BaseFetcher.run()` (see "Status determination precedence" in
 `fetcher-infrastructure.md`). If all items fail (e.g., network drops after fetch
 in a blobless clone, making every `show_file()` fail), `run()` sets
@@ -957,10 +1039,18 @@ The two exception types serve different purposes for the caller
 (`trigger_on_demand_fetch()`):
 
 - **`RuntimeError`** — "source not queryable right now" (clone missing,
-  corrupt, not yet created by the first periodic run, or blob download
-  failed in a blobless clone). The dispatch system logs a WARNING and
-  tries the next fetcher. The clone will be available after the next
-  scheduled sync.
+  not yet created by the first periodic run, deleted after corruption
+  detection, or blob download failed in a blobless clone). The dispatch
+  system logs a WARNING and tries the next fetcher. The clone will be
+  available after the next scheduled sync re-clones it.
+
+  **Degradation window**: after a corruption-triggered deletion (see
+  "Error Handling Strategy"), the clone is absent until the next
+  scheduled periodic run re-creates it. During this window (at most one
+  scheduling interval — typically hours), all `fetch_single()` calls for
+  this source degrade to `RuntimeError`. This is an accepted trade-off:
+  other CVE sources remain available via the dispatch fan-out, and the
+  specific item can be retried after the next sync restores the clone.
 - **`CVENotInSource`** — "item does not exist in this source"
   (authoritative negative). The dispatch system logs INFO and tries the
   next fetcher.

@@ -64,15 +64,7 @@ partial-cursor mechanism for deltas larger than one task window.
 
 ### GFI-GAP-08 — Transient read errors forced into the "corruption" class (Low)
 
-**Category**: Error path
-**Status**: OPEN
-
-The premise "a successful `git fetch` proves connectivity; a subsequent
-read failure can only be local corruption" omits transient storage faults.
-On networked storage (NFS/PVC), a transient I/O hiccup during `git
-diff`/`git rev-parse` is classified as `GitCorruptionError` → deletes a
-healthy clone and triggers a full re-clone. No retry-before-delete is
-specified.
+**Status**: RESOLVED — Spec updated: added --no-renames to eliminate blobless network calls in diff, added bounded retry (2 retries, 1s/2s backoff) before GitCorruptionError, resolved table/template inconsistency (execute() now catches GitCorruptionError and deletes clone explicitly), documented fetch_single() degradation window (2026-07-02)
 
 ### GFI-GAP-09 — First-run enumeration inconsistency (Low)
 
