@@ -73,8 +73,6 @@ The pattern:
    file's content from the object store without creating a working tree.
    For blobless clones, this triggers an on-demand blob download for
    that specific file only.
-5. **First-run file enumeration**: `git ls-tree -r --name-only HEAD`
-   lists all files in the repository without checkout.
 
 No `git merge`, `git checkout`, or working tree manipulation is
 performed at any point.
@@ -947,6 +945,13 @@ The hook is responsible for:
 Raises any exception on failure → caught by `execute()`, logged,
 `record_failed()` called.
 
+**Order independence**: the iteration order in which `process_item()`
+is called within a single `execute()` run is undefined — it is
+determined by `git diff` output order (tree-traversal), which has no
+semantic significance. Implementations MUST be order-independent: the
+result of processing any single item must not depend on whether other
+items in the same delta have already been processed.
+
 **Phase 2 side effects**: hooks that call `cve_service.upsert_cve()`
 return `PostIngestTasks` containing the Phase 2 task arguments. The
 `BaseGitFetcher` template dispatches these tasks via
@@ -1194,6 +1199,14 @@ A non-CVE git-based fetcher inherits from `BaseFetcher` directly
 In these cases, `BaseCVEFetcher` (or `BaseFetcher`) +
 `git_operations.py` provides the same subprocess utilities without
 imposing a fixed execution order.
+
+**Note**: fetchers that need full tree enumeration (e.g., for initial
+population or full-scan strategies) can use
+`git ls-tree -r --name-only HEAD` on a bare clone to list all files in
+the repository without checkout. This operation is classified as a Read
+operation with a 30-second timeout and 3 retries per the timeout table.
+The `BaseGitFetcher` template method does not invoke `ls-tree` — it is
+available exclusively as a utility for non-template fetchers.
 
 
 ## Cross-references

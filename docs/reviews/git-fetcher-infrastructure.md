@@ -68,25 +68,11 @@ partial-cursor mechanism for deltas larger than one task window.
 
 ### GFI-GAP-09 — First-run enumeration inconsistency (Low)
 
-**Category**: Function completeness (clarity)
-**Status**: OPEN
-
-The Bare Clone Pattern says "First-run file enumeration: `git ls-tree -r
---name-only HEAD` lists all files", but `execute()` first-run branch
-records HEAD and processes nothing. The `ls-tree`/enumeration is never
-invoked by the template, leaving its stated purpose ambiguous (utility-only,
-or for non-template fetchers).
+**Status**: RESOLVED — Removed ls-tree from Bare Clone Pattern steps; moved as utility note to "When NOT to Use BaseGitFetcher" section (2026-07-02)
 
 ### GFI-GAP-10 — Per-item processing order unspecified (Low)
 
-**Category**: Boundary
-**Status**: OPEN
-
-Processing order equals raw `git diff` output order. The spec relies
-implicitly on `process_item` idempotency/order-independence but never
-states that order is insignificant — relevant if a future hook has
-ordering-sensitive side effects (obvious implicit resolution today, hence
-Low).
+**Status**: RESOLVED — Added explicit order-independence requirement to process_item() contract (2026-07-02)
 
 ---
 
