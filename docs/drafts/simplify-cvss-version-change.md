@@ -92,7 +92,7 @@ endpoint:
 | `acquire_recalc_slot()` | `SET cvss_recalc_active <timestamp> NX EX 900`. Returns normally on success. Raises `RecalcSlotUnavailableError` (503) if Redis is unreachable. Raises `RecalcAlreadyInProgressError` (409) if key exists |
 | `release_slot()` | `DEL cvss_recalc_active`. Called by the batch task on completion (success or failure) and by endpoint error paths after slot acquisition |
 | `enqueue_recalc_batch(version)` | Enqueues the Celery task with the explicit version as argument. On failure: calls `release_slot()` and raises |
-| Celery task `recalc_active_tickets(version)` | Iterates `active_tickets_with_cve()`, calls `recalculate_cvss_chain(t, default_cvss_version=version)` in independent transactions, logs failures per ticket, calls `release_slot()` on completion, logs metrics (total/success/failed) |
+| Celery task `recalc_active_tickets(version)` | Iterates `active_tickets_with_cve()`, calls `recalculate_cvss_chain(t, default_cvss_version=version)` in independent transactions, logs failures per ticket, calls `release_slot()` on completion, logs metrics (total/success/failed). `time_limit=900` (hard timeout matching slot TTL — ensures the task cannot outlive its slot) |
 
 ### Slot Cooldown (flip-flop prevention)
 
@@ -137,7 +137,7 @@ the manual re-run endpoint.
 ### Re-run Endpoint Flow
 
 ```
-POST /api/v1/admin/settings/default_cvss_version/recalculate
+POST /api/v1/admin/settings/default-cvss-version/recalculate
 
 1. Read current V from DB
 2. acquire_recalc_slot()                     → 503 if Redis down | 409 if in progress
@@ -186,6 +186,9 @@ Properties:
   scope).
 - **Duration**: seconds to minutes for typical active ticket counts
   (each call is a few queries + short transaction).
+- **Hard timeout**: `time_limit=900` (Celery hard timeout). Matches the
+  slot TTL — ensures the task is terminated before its slot can expire,
+  preventing concurrent batches with conflicting version arguments.
 - **No distributed lock**: per-ticket `FOR UPDATE` serializes concurrent
   mutations; idempotency makes concurrent batches a no-op.
 
@@ -233,11 +236,12 @@ The following specification elements are **deleted**:
 
 ### What is added
 
-1. `POST /api/v1/admin/settings/default_cvss_version/recalculate`
+1. `POST /api/v1/admin/settings/default-cvss-version/recalculate`
    endpoint (manual re-run)
 2. Shared helper functions: `acquire_recalc_slot()`, `release_slot()`,
    `enqueue_recalc_batch(version)`
-3. Celery task `recalc_active_tickets(version)` (simplified batch)
+3. Celery task `recalc_active_tickets(version)` (simplified batch,
+   `time_limit=900` matching slot TTL)
 4. Redis key `cvss_recalc_active` (slot/cooldown, fixed 900-second TTL)
 
 ---
@@ -325,7 +329,9 @@ calls `ticket_mutations.recalculate_cvss_chain()` for each ticket in an
 independent database transaction. Failures on individual tickets are
 logged and skipped. On completion (or failure), the task releases the
 slot (`DEL cvss_recalc_active`) and logs metrics (total, succeeded,
-failed).
+failed). The task has a hard timeout (`time_limit=900`) matching the
+slot TTL — this ensures the task is terminated before its slot can
+expire, preventing concurrent batches with conflicting versions.
 
 The slot key has a fixed TTL of 900 seconds (internal constant). In
 normal operation the task completes in seconds/minutes and releases the
@@ -435,7 +441,7 @@ Values of `recalculation_scheduled`:
 - `false` — either (a) no-op (value unchanged, no batch needed), or
   (b) value changed but enqueue failed (transient broker failure after
   slot acquisition — admin should use
-  `POST /api/v1/admin/settings/default_cvss_version/recalculate` to
+  `POST /api/v1/admin/settings/default-cvss-version/recalculate` to
   trigger the batch manually)
 ```
 
@@ -472,7 +478,7 @@ Events" section (i.e., before the line
 ### Trigger CVSS Recalculation
 
 ```
-POST /api/v1/admin/settings/default_cvss_version/recalculate
+POST /api/v1/admin/settings/default-cvss-version/recalculate
 ```
 
 Manually triggers a CVSS recalculation batch for all active tickets
@@ -625,18 +631,21 @@ The task:
    cvss_recalc_active`) and logs completion metrics (total tickets
    processed, successes, failures) to structured application logs
 
+The task has a hard timeout (`time_limit=900`) matching the slot TTL.
+This ensures the task is terminated before its slot can expire,
+preventing concurrent batches with conflicting version arguments.
+
 A dedicated endpoint
-(`POST /api/v1/admin/settings/default_cvss_version/recalculate`) allows
+(`POST /api/v1/admin/settings/default-cvss-version/recalculate`) allows
 the admin to manually re-trigger the batch for recovery after partial
 failures. It uses the same slot acquisition and enqueue logic. See
 `docs/features/platform/system-settings.md` (Trigger CVSS
 Recalculation).
 
 **Idempotency**: `recalculate_cvss_chain()` is idempotent —
-re-processing tickets already updated produces the same result. If
-multiple batches run concurrently (e.g., slot expired during a slow
-batch), per-ticket `FOR UPDATE` locks serialize mutations and
-idempotency ensures correct convergence.
+re-processing tickets already updated produces the same result.
+Per-ticket `FOR UPDATE` locks serialize concurrent mutations on the
+same ticket (e.g., batch running alongside a normal CVSS sync).
 ```
 
 ---
@@ -659,6 +668,23 @@ idempotency ensures correct convergence.
 | Admin: default CVSS version change | `recalculate_cvss_chain()` | Celery task `recalc_active_tickets(version)` iterates active tickets with CVE; passes version explicitly. See `docs/features/platform/system-settings.md` |
 ```
 
+#### Step 3.2 — Remove stale "read-after-lock pattern" reference
+
+**Location**: line 635 in the `recalculate_cvss_chain()` parameter table
+(the `default_cvss_version` parameter description).
+
+**Remove**:
+
+```markdown
+| `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly to ensure all tickets in a batch use the same version (read-after-lock pattern). Other callers should typically omit this parameter |
+```
+
+**Replace with**:
+
+```markdown
+| `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly (passed as a task argument from the triggering endpoint) to ensure all tickets in a batch use the same version. Other callers should typically omit this parameter |
+```
+
 ---
 
 ### Step 4 — `docs/features/identity/rbac.md`
@@ -671,7 +697,7 @@ Map (after line 474 — the `GET /api/v1/admin/settings/audit-log` row).
 **Insert** the following row immediately after the audit-log row:
 
 ```markdown
-| POST | `/api/v1/admin/settings/default_cvss_version/recalculate` | `manage_settings` | [system-settings](../platform/system-settings.md#trigger-cvss-recalculation) |
+| POST | `/api/v1/admin/settings/default-cvss-version/recalculate` | `manage_settings` | [system-settings](../platform/system-settings.md#trigger-cvss-recalculation) |
 ```
 
 #### Step 4.2 — Fix audit-log endpoint anchor
@@ -750,7 +776,7 @@ The PATCH endpoint commits the setting change and `SettingAuditEvent` in one dat
 ### ADM-GAP-01 — Task enqueue failure behavior unspecified (High)
 
 **Category**: Error and failure paths
-**Status**: RESOLVED — The simplified design uses commit-first ordering with a recalculation slot (Redis SET NX) as a liveness probe before the commit. If Redis is unreachable, the PATCH returns 503 and nothing is committed. If the enqueue fails after commit (transient broker failure in the micro-window), the PATCH returns 200 with `recalculation_scheduled: false` and the admin uses the dedicated re-run endpoint (`POST /api/v1/admin/settings/default_cvss_version/recalculate`) to trigger the batch manually. (2026-07-03)
+**Status**: RESOLVED — The simplified design uses commit-first ordering with a recalculation slot (Redis SET NX) as a liveness probe before the commit. If Redis is unreachable, the PATCH returns 503 and nothing is committed. If the enqueue fails after commit (transient broker failure in the micro-window), the PATCH returns 200 with `recalculation_scheduled: false` and the admin uses the dedicated re-run endpoint (`POST /api/v1/admin/settings/default-cvss-version/recalculate`) to trigger the batch manually. (2026-07-03)
 ```
 
 #### Step 6.2 — Resolve ADM-GAP-02
