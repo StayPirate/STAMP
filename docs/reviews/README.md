@@ -51,8 +51,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/21 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [networking](networking.md) | 🟢 | 🟢 | 🟢 | 2 | 🟢 | 2/13 | 2026-07-02 | |
-| |  |  |  | 2:🟠 |  |  |  |  |
+| [networking](networking.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-02 | |
+|  |  |  |  |  |  |  |  |  |
 | [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-22 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [package-service](package-service.md) | 2 | 🟢 | 🟢 | 🟢 | 🟢 | 2/30 | 2026-06-03 | ⚠️ |
@@ -77,8 +77,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **5** | **1** | **🟢** | **2** | **1** | **9/845** |  |  |
-| | 1:🔴 3:🟠 1:🟡 | 1:🟡 |  | 2:🟠 | 1:🟡 |  |  |  |
+| **Total** | **5** | **1** | **🟢** | **🟢** | **1** | **7/845** |  |  |
+| | 1:🔴 3:🟠 1:🟡 | 1:🟡 |  |  | 1:🟡 |  |  |  |
 
 ### Disabled specs
 

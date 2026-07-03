@@ -75,17 +75,11 @@ No issues identified.
 
 ### NET-SEC-01 — Explicit follow_redirects=False as factory default (Medium)
 
-**Category**: Credential Protection
-**Status**: OPEN
-
-The spec does not define a redirect-following policy for the HTTP client factory. The current behavior relies on httpx's default of not following redirects, which is safe but implicit. If a future contributor enables `follow_redirects=True` (e.g., because NVD or GitHub returns 301/302), authenticated requests carrying IBS HTTP Basic Auth credentials, NVD API keys, or GitHub tokens in the Authorization header would be forwarded to redirect targets — potentially leaking credentials to arbitrary servers. Making `follow_redirects=False` an explicit, documented factory parameter ensures this security property survives library version upgrades and code modifications. If specific consumers need redirect following in the future, they should opt in explicitly with credential-stripping on cross-origin redirects.
+**Status**: RESOLVED — Added explicit `follow_redirects=False` as factory default in Default Configuration table, WARNING-level log on override in "Override Safety" subsection, and dedicated "Redirect Policy" subsection documenting security rationale and opt-in mechanism (2026-07-03)
 
 ### NET-SEC-02 — Response body size limit (max_content_length) (Medium)
 
-**Category**: Resource Exhaustion
-**Status**: OPEN
-
-The spec defines timeouts (10s connect, 30s read) but no maximum response body size. A malicious, compromised, or malfunctioning external service could send an unbounded response body (multi-GB), exhausting worker memory and causing an OOM kill. This affects all fetchers, especially those connecting to public services (NVD, GitHub, MITRE, OSV, Red Hat) where Sentinel does not control the server. The factory defaults table should include a `max_content_length` parameter (e.g., 100 MB as a generous default). The implementation should abort the response read if the Content-Length header exceeds this limit, or track bytes read during streaming and abort if the threshold is crossed. Individual fetchers can override this default downward for endpoints with known small responses.
+**Status**: RESOLVED — Won't fix: risk accepted. The threat model relies on developer-curated endpoints (NVD, GitHub, CISA, SMELT, IBS, AIMAAS) with low compromise likelihood. Implicit protections (30s read timeout, container memory limits, Celery run_timeout) provide sufficient defense-in-depth for this risk level. (2026-07-03)
 
 ---
 

@@ -51,7 +51,7 @@ def create_http_client(name: str, **overrides) -> httpx.AsyncClient:
 
 #### Override Safety
 
-Two settings receive special protection in the factory:
+Three settings receive special protection in the factory:
 
 - **User-Agent**: always built from the standard template using the
   `name` parameter. Not overridable via `http_client_options` or
@@ -64,6 +64,15 @@ Two settings receive special protection in the factory:
   client creation time, including the caller's `name` for
   traceability. Example log: `"TLS verify overridden by
   'sync_nvd_cves' — verify=False"`.
+- **Redirect following**: overridable via `http_client_options`, but
+  every override that sets `follow_redirects=True` emits a
+  WARNING-level log at client creation time, including the caller's
+  `name` for traceability. Example log: `"Redirect following enabled
+  by 'sync_example' — credentials may be forwarded to redirect
+  targets"`. Rationale: outbound requests may carry credentials (IBS
+  HTTP Basic Auth, NVD API key, GitHub token) in the Authorization
+  header; automatic redirect following could forward these to
+  untrusted hosts.
 
 ### Default Configuration
 
@@ -80,6 +89,7 @@ Two settings receive special protection in the factory:
 | Accept-Encoding | `gzip, deflate` (httpx built-in) | — |
 | TLS | Combined trust store (system CAs + SUSE CA), verify enabled | `http_client_options` / `**overrides` (emits WARNING — see "Override Safety") |
 | Transport retry | See "Transport-Level Retry" below | `http_client_options` |
+| Redirect following | False (no redirects followed) | `http_client_options` (emits WARNING — see "Override Safety") |
 | Proxy | Standard env vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) | System-level |
 
 Connection pool note: all current consumers make sequential requests
@@ -225,6 +235,43 @@ set at the container or host level.
 If the deployment uses a TLS-intercepting proxy, the proxy's CA
 certificate must be present in the system CA bundle (standard procedure,
 no Sentinel-specific configuration needed).
+
+#### Redirect Policy
+
+The shared HTTP client does not follow redirects by default
+(`follow_redirects=False`). This is an explicit security decision, not
+merely inherited from httpx defaults.
+
+**Security rationale**: outbound requests from Sentinel frequently carry
+sensitive credentials in the `Authorization` header — IBS HTTP Basic
+Auth, NVD API keys, GitHub tokens. If the client automatically follows
+redirects (301, 302, 307, 308), these credentials would be forwarded to
+the redirect target, which may be an untrusted host. A compromised or
+misconfigured upstream service could redirect authenticated requests to
+an attacker-controlled server, leaking credentials silently.
+
+**Opt-in mechanism**: consumers that genuinely require redirect following
+(e.g., a future endpoint that returns stable 301 redirects) must opt in
+explicitly via `http_client_options`:
+
+```python
+http_client_options = {"follow_redirects": True}
+```
+
+This override triggers a WARNING-level log at client creation time (see
+"Override Safety" above) to ensure visibility in production logs.
+
+**Recommendation**: consumers enabling redirect following should
+implement Authorization header stripping on cross-origin redirects
+(i.e., remove the `Authorization` header when the redirect target's
+origin differs from the original request origin). This limits credential
+exposure to same-origin redirects, which are lower risk.
+
+**Current status**: no existing fetcher or non-fetcher component
+requires redirect following. All external endpoints used by Sentinel
+(NVD, MITRE, GitHub, CISA, Red Hat, OSV, FIRST.org, IBS, SMELT, AIMAAS)
+respond directly with 200 when accessed with HTTPS and the correct
+domain — none require following redirects for normal operation.
 
 ### Non-Fetcher Components
 
