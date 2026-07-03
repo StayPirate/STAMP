@@ -468,13 +468,14 @@ This resolves ADM-API-01 (generic heading producing ambiguous anchor
 #### Step 1.4 — Add re-run endpoint section
 
 **Location**: insert a new section **after** the "Update System
-Settings" section and **before** the renamed "List Settings Audit
-Events" section (i.e., before the line
-`### List Settings Audit Events`).
+Settings" section (after `**`Capability: manage_settings`**` on line
+159) and **before** `## Data Model` (line 161). This places the new
+endpoint under `## API Endpoints`, alongside the existing GET and PATCH
+endpoints.
 
 **Insert**:
 
-```markdown
+````markdown
 ### Trigger CVSS Recalculation
 
 ```
@@ -524,7 +525,7 @@ changed since the last run, the batch produces no mutations or audit
 events (guaranteed by `recalculate_cvss_chain()` idempotency).
 
 **`Capability: manage_settings`**
-```
+````
 
 ---
 
@@ -978,16 +979,17 @@ sub-row).
 **Replace with**:
 
 ```markdown
-| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/850** |  |  |
+| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/845** |  |  |
 | | 2:🟠 |  |  |  |  |  |  |  |
 ```
 
 Note: the total changes from 7 open to 2 open (5 resolved from
-system-settings). The 2 remaining open findings are in
-`package-service.md` (2 GAP Medium). Total findings count increases from
-845 to 850 because resolved count increments (+5). The severity sub-row
-loses the High (🔴), 2 of the 3 Medium (🟠), and all Low (🟡) indicators
-from system-settings — only the 2 Medium from package-service remain.
+system-settings). The denominator (845) is unchanged — resolving
+findings moves them from open to resolved but does not change the total
+count. The 2 remaining open findings are in `package-service.md`
+(2 GAP Medium). The severity sub-row loses the High (🔴), 2 of the
+3 Medium (🟠), and all Low (🟡) indicators from system-settings — only
+the 2 Medium from package-service remain.
 
 ---
 
