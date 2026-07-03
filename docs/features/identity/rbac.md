@@ -487,6 +487,13 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/admin/role-mappings/preview` | `manage_role_mappings` | [ad-integration](ad-integration.md#preview-role-mapping) |
 | DELETE | `/api/v1/admin/role-mappings/{id}` | `manage_role_mappings` | [ad-integration](ad-integration.md#delete-role-mapping) |
 
+### Infrastructure
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/health` | Public | [health-endpoints](../platform/health-endpoints.md#liveness--get-health) |
+| GET | `/ready` | Public | [health-endpoints](../platform/health-endpoints.md#readiness--get-ready) |
+
 **Notes**:
 - "Public" = no authentication required
 - "Authenticated" = any logged-in user regardless of role

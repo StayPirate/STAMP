@@ -67,10 +67,7 @@ No issues identified.
 
 ### NET-DES-01 — Cert file existence check in readiness probe (Medium)
 
-**Category**: Operational Resilience
-**Status**: OPEN
-
-If a deployment ships without the SUSE CA certificate file (e.g., Dockerfile COPY directive accidentally removed during refactoring), the application starts normally, passes the `/health` liveness check, and begins receiving traffic. However, all fetchers connecting to SUSE internal services (IBS, SMELT, AIMAAS) and the IBSEventConsumer (RabbitMQ over AMQPS) fail with TLS verification errors. This could persist for hours until someone notices the fetcher dashboard showing all-failures. The `/ready` readiness endpoint should validate that `SUSE_CA_CERT_PATH` exists and is parseable as a valid PEM certificate. This would cause the orchestrator to reject the deployment immediately, surfacing the problem at deploy time rather than at runtime.
+**Status**: RESOLVED — Won't fix: the SUSE CA certificate is a dependency of Celery workers/consumers, not of the API server process. Blocking API readiness for a worker-only prerequisite creates excessive coupling. The existing fetcher dashboard already surfaces certificate-related failures with adequate visibility. (2026-07-03)
 
 ---
 

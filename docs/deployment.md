@@ -350,13 +350,23 @@ procedures, and worker affinity configuration.
 
 ## Health Checks
 
+See `docs/features/platform/health-endpoints.md` for the authoritative
+endpoint specification (response schemas, failure semantics, design
+decisions).
+
 | Endpoint | Purpose | Checks |
 |----------|---------|--------|
-| `GET /health` | Liveness | API process is running, can serve HTTP |
-| `GET /ready` | Readiness | PostgreSQL reachable, Redis reachable |
+| `GET /health` | Liveness | API process running |
+| `GET /ready` | Readiness | PostgreSQL + Redis reachable |
 
-Configure your orchestrator (Docker healthcheck, Kubernetes probes) to
-use these endpoints for automated health monitoring.
+Configure your orchestrator to use these endpoints:
+
+- **Docker**: `healthcheck` directive in compose file or Dockerfile
+- **Kubernetes**: `livenessProbe` → `/health`, `readinessProbe` → `/ready`
+
+The orchestrator MUST set `timeoutSeconds` (Kubernetes) or `timeout`
+(Docker) to at least 5 seconds to accommodate the internal check
+timeouts (2s per dependency, two checks sequential).
 
 ---
 

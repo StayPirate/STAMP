@@ -424,7 +424,9 @@ administrator has no way to verify the mapping is correctly loaded or
 how many entries it contains.
 
 **Context**: Sentinel currently has no system info or diagnostics
-surface beyond the minimal `/health` liveness endpoint. The fetcher
+surface beyond the minimal `/health` liveness endpoint (now formally
+specified in `docs/features/platform/health-endpoints.md` alongside
+the `/ready` readiness endpoint). The fetcher
 dashboard monitors `BaseFetcher` subclasses with execution lifecycle
 (runs, metrics, schedules), but infrastructure components that are not
 fetchers — such as in-memory static data, connection pools, or loaded

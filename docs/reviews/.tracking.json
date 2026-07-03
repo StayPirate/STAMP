@@ -482,6 +482,11 @@
       "abbr": "GTRD",
       "cache": null
     },
+    "health-endpoints": {
+      "enabled": false,
+      "abbr": "HEP",
+      "cache": null
+    },
     "ibs-integration": {
       "enabled": false,
       "abbr": "IBSI",
@@ -636,7 +641,7 @@
           },
           "DES": {
             "H": 0,
-            "M": 1,
+            "M": 0,
             "L": 0
           },
           "SEC": {
@@ -650,7 +655,7 @@
             "L": 0
           }
         },
-        "resolved": 10,
+        "resolved": 11,
         "not_reviewed": []
       }
     },

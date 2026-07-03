@@ -420,6 +420,10 @@ running and able to serve HTTP requests without requiring downstream services.
 dependencies, such as PostgreSQL and Redis, before the API receives traffic in
 an orchestrated deployment.
 
+For the full endpoint specification (response schemas, checks performed,
+failure behavior, orchestrator configuration), see
+`docs/features/platform/health-endpoints.md`.
+
 ## Environments
 
 - **Development**: `docker-compose.yml` provides PostgreSQL + Redis locally
