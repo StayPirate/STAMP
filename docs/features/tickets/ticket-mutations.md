@@ -632,7 +632,7 @@ triggered by a default CVSS version change (see
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to recalculate |
-| `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly to ensure all tickets in a batch use the same version (read-after-lock pattern). Other callers should typically omit this parameter |
+| `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly (passed as a task argument from the triggering endpoint) to ensure all tickets in a batch use the same version. Other callers should typically omit this parameter |
 | `acting_user_id` | `UUID \| None` | No | Who triggered the recalculation (typically `None` for system-initiated batch operations) |
 
 **Behavior**:
@@ -989,7 +989,7 @@ individual endpoints.
 | CVE API mutation endpoints | `upsert_cvss_assessment()`, `delete_cvss_assessment()` | VA-initiated CVSS operations via `/api/v1/cves/{cve_id}/cvss/...` |
 | CVE fetchers (via `cve_service.upsert_cve()`) | `upsert_cvss_assessment()` | Background CVE ingestion (Phase 1) |
 | NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
-| Admin: default CVSS version change | `recalculate_cvss_chain()` | Batch re-evaluation triggered by default CVSS version config change |
+| Admin: default CVSS version change | `recalculate_cvss_chain()` | Celery task `recalc_active_tickets(version)` iterates active tickets with CVE; passes version explicitly. See `docs/features/platform/system-settings.md` |
 | CVE association (`ticket_service.associate_cve`) | `recalculate_cvss_chain()` | Recalculates severity and eligibility after CVE is linked to a manual ticket |
 | Ticket reactivation (un-ignore, un-duplicate) | `_reenter_gate_zone()` → `reconcile_ticket_status()` | Catch-up (CVSS recalculation + fetcher enqueue) is handled internally by `reconcile_ticket_status()` step 4 |
 | Post-regression from Resolved | `reconcile_ticket_status()` | Catch-up is handled internally by `reconcile_ticket_status()` step 4 when it detects a backward transition from Resolved |

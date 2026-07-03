@@ -717,58 +717,54 @@ the severity, eligibility, and ticket state adjustments are committed
 together.
 
 **Exception — batch recalculation on default version change**: when the
-Admin changes the default CVSS version (see `docs/features/platform/system-settings.md`),
-the chain must run for all active tickets. This batch operation is
-executed as an asynchronous Celery task to avoid blocking the API
-response. The task:
+Admin changes the default CVSS version (see
+`docs/features/platform/system-settings.md`), the chain must run for all
+active tickets with a CVE. This batch operation is executed as an
+asynchronous Celery task (`recalc_active_tickets`) to avoid blocking the
+API response.
 
-1. Acquires a Redis distributed lock (key: `sentinel:batch_cvss_recalc`)
-   before starting, storing the current timestamp as the lock's value. 
-   Lock TTL is set to 1 hour as a safety net for worker crashes. 
-   To maintain lock liveness without extending the TTL, the task updates the 
-   lock key with a fresh heartbeat timestamp every 60 seconds within its 
-   ticket-processing loop (using conditional `SET sentinel:batch_cvss_recalc <timestamp> XX`).
-   If the lock is already held, the task retries with exponential backoff 
-   and jitter, up to 10 attempts. If still locked after all retries, the task 
-   reads the lock value and compares it to the current time:
-   - If the timestamp is recent (less than 3 minutes ago), the task fails 
-     and logs: `"Batch recalculation still in progress. Retry will occur at next version change."`
-   - If the timestamp is stale (3 minutes or older), the task fails and 
-     logs: `"Lock likely orphaned from worker crash. TTL will expire in approximately N minutes. No action required."`
-2. After acquiring the lock, reads the current `default_cvss_version`
-   from the database. This **read-after-lock** pattern ensures the task
-   always uses the latest version, even if multiple version changes
-   occurred while waiting for the lock.
-3. Iterates over all active tickets (New, Analysis, Analyzed)
-4. For each ticket, calls
+The PATCH endpoint acquires a **recalculation slot** (Redis key
+`cvss_recalc_active`, `SET NX EX 900`) before committing the setting
+change. This slot serves as a Redis liveness probe, a flip-flop guard
+(409 if a batch is already running), and a crash-recovery safety net
+(900-second TTL auto-expires if the worker crashes). See
+`docs/features/platform/system-settings.md` (Impact of changing the
+default version) for the full commit-first endpoint flow.
+
+The task:
+
+1. Iterates all active tickets with a CVE (status: New, Analysis,
+   Analyzed; `cve_id IS NOT NULL`)
+2. For each ticket, calls
    `ticket_mutations.recalculate_cvss_chain()` — a dedicated entry
    point that recalculates derived data without modifying any
    `CVECVSSAssessment` record (see
    `docs/features/tickets/ticket-mutations.md`). The task passes
-   `default_cvss_version` explicitly to every
-   `recalculate_cvss_chain()` call (overriding the internal read) to
-   ensure all tickets in the batch use the same version.
-5. Each ticket is processed in an **independent database transaction**
+   `default_cvss_version` explicitly (received as a task argument from
+   the endpoint) to ensure all tickets in the batch use the same version
+3. Each ticket is processed in an **independent database transaction**
    (isolation: a failure on one ticket does not roll back others)
-6. On error for a single ticket, the task logs the error with the
+4. On error for a single ticket, the task logs the error with the
    ticket ID and continues with the remaining tickets
-7. On completion, the task releases the lock and logs completion
-   metrics (total tickets processed, successes, failures) to
-   structured application logs (standard Python `logging` module)
+5. On completion (or failure), calls `release_slot()` (`DEL
+   cvss_recalc_active`) and logs completion metrics (total tickets
+   processed, successes, failures) to structured application logs
 
-**Admin feedback**: when the Admin changes the default CVSS version in
-the UI, the frontend displays a confirmation dialog showing the count of
-active tickets that will be recalculated (derived from data already
-available in the frontend — no dedicated preview endpoint is required).
-After confirmation, the batch task executes asynchronously. Completion
-metrics are available in application logs only — no dedicated result
-storage or audit trail enrichment is provided for the batch outcome.
+The task has a hard timeout (`time_limit=900`) matching the slot TTL.
+This ensures the task is terminated before its slot can expire,
+preventing concurrent batches with conflicting version arguments.
+
+A dedicated endpoint
+(`POST /api/v1/admin/settings/default-cvss-version/recalculate`) allows
+the admin to manually re-trigger the batch for recovery after partial
+failures. It uses the same slot acquisition and enqueue logic. See
+`docs/features/platform/system-settings.md` (Trigger CVSS
+Recalculation).
 
 **Idempotency**: `recalculate_cvss_chain()` is idempotent —
-re-processing tickets already updated produces the same result. If
-multiple default version changes occur in rapid succession, the lock
-serializes the batch tasks and the read-after-lock pattern ensures
-only the latest version is used.
+re-processing tickets already updated produces the same result.
+Per-ticket `FOR UPDATE` locks serialize concurrent mutations on the
+same ticket (e.g., batch running alongside a normal CVSS sync).
 
 ## Ticket Reactivation: CVSS Catch-Up
 

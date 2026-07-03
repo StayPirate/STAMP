@@ -11,23 +11,17 @@
 ### ADM-GAP-01 — Task enqueue failure behavior unspecified (High)
 
 **Category**: Error and failure paths
-**Status**: OPEN
-
-The PATCH endpoint commits the setting change and `SettingAuditEvent` in one database transaction, then enqueues the batch recalculation Celery task. If the Redis broker is unavailable at enqueue time, the spec does not define whether: (a) the setting change is rolled back, (b) the setting persists and the API returns a 503 indicating partial success, or (c) the failure is silently swallowed. If the setting commits without the batch task, all active tickets retain severity and eligibility derived from the old CVSS version until something else triggers recalculation — an inconsistent state with no documented recovery path.
+**Status**: RESOLVED — The simplified design uses commit-first ordering with a recalculation slot (Redis SET NX) as a liveness probe before the commit. If Redis is unreachable, the PATCH returns 503 and nothing is committed. If the enqueue fails after commit (transient broker failure in the micro-window), the PATCH returns 200 with `recalculation_scheduled: false` and the admin uses the dedicated re-run endpoint (`POST /api/v1/admin/settings/default-cvss-version/recalculate`) to trigger the batch manually. (2026-07-03)
 
 ### ADM-GAP-02 — No-op behavior when setting value is unchanged (Medium)
 
 **Category**: Idempotency
-**Status**: OPEN
-
-The spec states "Triggers recalculation for all active tickets as a background task" unconditionally. When an admin PATCHes `{"default_cvss_version": "3.1"}` and the current value is already `"3.1"`, the spec does not specify whether: (a) the batch task is triggered (expensive no-op), (b) a `SettingAuditEvent` is created with `old_value == new_value`, or (c) the operation short-circuits. The audit-trail-infrastructure spec's cross-cutting rule ("no audit event for idempotent no-ops") implies option (c), but system-settings.md contradicts this by stating the trigger unconditionally. One clarifying sentence would eliminate the ambiguity.
+**Status**: RESOLVED — The PATCH endpoint now includes an explicit no-op check (step 2): if the current value equals the new value, the endpoint returns 200 immediately with no audit event and no batch task. This is consistent with the audit-trail-infrastructure cross-cutting rule for idempotent no-ops. (2026-07-03)
 
 ### ADM-GAP-03 — PATCH success HTTP status code not explicitly stated (Low)
 
 **Category**: Boundary conditions
-**Status**: OPEN
-
-The PATCH endpoint specifies error codes (403, 422) but does not explicitly state the success HTTP status code. Other specs in the project (e.g., ticket-mutations, package-service) consistently declare success codes. An implementer could choose 200 (standard PATCH-with-body), 202 (async side effects), or 204 (no body). The response description ("the updated settings object") implies 200, but stating it explicitly maintains consistency with other endpoint definitions in the project.
+**Status**: RESOLVED — The PATCH response now explicitly states "Response (200 OK)" with the full response schema including the `recalculation_scheduled` field. (2026-07-03)
 
 ---
 
@@ -36,9 +30,7 @@ The PATCH endpoint specifies error codes (403, 422) but does not explicitly stat
 ### ADM-COH-01 — Configuration reference attribution for default_cvss_version (Low)
 
 **Category**: Cross-reference consistency
-**Status**: OPEN
-
-In `docs/configuration.md`, the "Defined in" column for `default_cvss_version` points to `docs/features/tickets/cvss-scoring.md`. However, the authoritative definition of this runtime setting — its properties table, allowed values, bootstrap mechanism, CRUD API, and audit log — lives in `docs/features/platform/system-settings.md`. The `cvss-scoring.md` spec itself defers to system-settings.md in its cross-references. Since `configuration.md` states "Each setting is defined authoritatively in the feature specification linked in the 'Defined in' column", the link should point to `system-settings.md`.
+**Status**: RESOLVED — Updated the "Defined in" column for `default_cvss_version` in `docs/configuration.md` to point to `docs/features/platform/system-settings.md`. (2026-07-03)
 
 ---
 
@@ -59,9 +51,7 @@ _No issues identified._
 ### ADM-API-01 — Non-descriptive endpoint heading for audit-log endpoint (Low)
 
 **Category**: Endpoint Permission Map completeness
-**Status**: OPEN
-
-The audit-log endpoint's definition heading is `### API` (producing anchor `#api`), which is excessively generic. The RBAC Endpoint Permission Map links to `[system-settings](../platform/system-settings.md#api)` — technically resolves but provides poor readability and could become ambiguous if more API sections are added. Other specs use descriptive headings like `### List Fetcher Runs` or `### Get Settings Audit Log`.
+**Status**: RESOLVED — Heading renamed from `### API` to `### List Settings Audit Events` (anchor: `#list-settings-audit-events`). RBAC Endpoint Permission Map link updated accordingly. (2026-07-03)
 
 ### ADM-API-02 — PATCH mutation pattern for CVSS version change with massive side effects (High)
 

@@ -167,7 +167,7 @@ managed via the Admin API (`PATCH /api/v1/admin/settings`).
 
 | Setting | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `default_cvss_version` | string | `"3.1"` | System-wide CVSS version for severity and eligibility. Allowed: `"3.1"`, `"4.0"` | `docs/features/tickets/cvss-scoring.md` |
+| `default_cvss_version` | string | `"3.1"` | System-wide CVSS version for severity and eligibility. Allowed: `"3.1"`, `"4.0"` | `docs/features/platform/system-settings.md` |
 
 ## Notes for Operators
 

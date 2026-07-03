@@ -162,6 +162,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | AD role mapping CRUD | `manage_role_mappings` |
 | Preview role mapping | `manage_role_mappings` |
 | View/update system settings | `manage_settings` |
+| Trigger CVSS recalculation | `manage_settings` |
 | View settings audit log | `manage_settings` |
 | Trigger manual fetcher run | `manage_fetchers` |
 | Enable/disable fetchers | `manage_fetchers` |
@@ -471,7 +472,8 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/admin/settings` | `manage_settings` | [system-settings](../platform/system-settings.md#get-system-settings) |
 | PATCH | `/api/v1/admin/settings` | `manage_settings` | [system-settings](../platform/system-settings.md#update-system-settings) |
-| GET | `/api/v1/admin/settings/audit-log` | `manage_settings` | [system-settings](../platform/system-settings.md#api) |
+| GET | `/api/v1/admin/settings/audit-log` | `manage_settings` | [system-settings](../platform/system-settings.md#list-settings-audit-events) |
+| POST | `/api/v1/admin/settings/default-cvss-version/recalculate` | `manage_settings` | [system-settings](../platform/system-settings.md#trigger-cvss-recalculation) |
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | `manage_users` | [authentication](authentication.md#get-apiv1adminapi-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [authentication](authentication.md#post-apiv1adminapi-keyskey_idrevoke) |
