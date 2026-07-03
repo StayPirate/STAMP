@@ -47,6 +47,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-02 | |
 |  |  |  |  |  |  |  |  |  |
+| [health-endpoints](health-endpoints.md) | 2 | 🟢 | 2 | 🟢 | 🟢 | 4/4 | 2026-07-03 | |
+| | 2:🟠 |  | 2:🟠 |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/16 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/21 | 2026-05-07 | ⚠️ |
@@ -77,14 +79,13 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/845** |  |  |
-| | 2:🟠 |  |  |  |  |  |  |  |
+| **Total** | **4** | **🟢** | **2** | **🟢** | **🟢** | **6/849** |  |  |
+| | 4:🟠 |  | 2:🟠 |  |  |  |  |  |
 
 ### Disabled specs
 
 - git-product-release-detection
 - git-track-release-detection
-- health-endpoints
 - ibs-integration
 - ibs-product-release-detection
 - ibs-rabbitmq-integration
