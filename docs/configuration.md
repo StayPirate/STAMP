@@ -27,6 +27,14 @@ explicitly in staging/production.
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
 | `CELERY_RESULT_BACKEND` | string | `redis://localhost:6379/2` | Celery result backend URL | `docs/architecture.md` |
 
+All application-level Redis operations (session caching, login lockout,
+deduplication, distributed locking) use `REDIS_URL`. Celery broker and
+result backend are configured separately and managed by the Celery
+framework — application code never accesses these databases directly.
+Different database numbers (`/0`, `/1`, `/2`) ensure namespace isolation
+within a single Redis instance; in production, these URLs may point to
+separate instances without code changes.
+
 ## Celery Worker Configuration
 
 These settings control the Celery worker and Beat scheduler behavior.

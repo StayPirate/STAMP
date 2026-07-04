@@ -48,12 +48,22 @@ checking connectivity to required runtime dependencies. If this endpoint
 returns 503, the orchestrator should remove the instance from the load
 balancer rotation but NOT restart it.
 
-**Checks performed** (sequentially, each with 2-second timeout):
+**Checks performed** (concurrently via `asyncio.gather`, each with
+2-second timeout):
 
 | Check | Operation | Failure condition |
 |-------|-----------|-------------------|
 | PostgreSQL | `SELECT 1` | Connection refused, timeout, or query error |
-| Redis | `PING` | Connection refused or timeout |
+| Redis (per unique instance) | `PING` | Connection refused, timeout, or command error |
+
+**Redis instance discovery**: the readiness check extracts `host:port`
+from all three Redis configuration URLs (`REDIS_URL`,
+`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`), deduplicates by
+`host:port`, and PINGs each unique instance in parallel. In the standard
+single-instance deployment (all URLs point to the same host), this
+results in a single PING. In split deployments (URLs pointing to
+different Redis instances), each unique instance is verified
+independently.
 
 **Response** (200 OK — all checks pass):
 
@@ -66,6 +76,11 @@ balancer rotation but NOT restart it.
   }
 }
 ```
+
+When multiple unique Redis instances are discovered, the `redis` check
+reports `"ok"` only if ALL instances respond successfully. If any
+instance fails, the check reports the worst result (`"unreachable"` or
+`"timeout"`).
 
 **Response** (503 Service Unavailable — at least one check fails):
 
@@ -90,7 +105,13 @@ balancer rotation but NOT restart it.
 **`Access: Public`**
 
 **Error responses**: None. This endpoint returns either 200 or 503 with
-the JSON body above. It never returns 4xx.
+the JSON body above. It never returns 4xx. If any check raises an
+unexpected exception (beyond the documented failure conditions), the
+handler catches it, logs the exception at ERROR level, and reports that
+check as `"unreachable"` in the response body, returning 503. This
+endpoint never produces a 500 response — all exceptions are caught
+internally, guaranteeing that orchestrators always receive the structured
+probe response format.
 
 ## Orchestrator Configuration
 
@@ -99,7 +120,7 @@ timeouts:
 
 | Setting | Recommended value | Rationale |
 |---------|-------------------|-----------|
-| `timeoutSeconds` (K8s) / timeout (Docker) | >= 5s | Two sequential checks, each up to 2s = 4s worst case |
+| `timeoutSeconds` (K8s) / timeout (Docker) | >= 5s | Concurrent checks, each up to 2s = 2s worst case; >= 5s provides comfortable margin for network overhead (service mesh, cross-AZ routing) |
 | `periodSeconds` / interval | 10-30s | Standard probe frequency |
 | `failureThreshold` / retries | 3 | Avoid flapping on transient issues |
 
@@ -117,7 +138,10 @@ timeouts:
   enqueue background tasks. Operations that trigger tasks (ticket creation
   triggers CVE fetch, on-demand fetcher runs) appear to succeed but
   produce no follow-up processing. This constitutes a degraded state that
-  the orchestrator should be aware of.
+  the orchestrator should be aware of. The check discovers Redis instances
+  dynamically from the configured URLs (`REDIS_URL`, `CELERY_BROKER_URL`,
+  `CELERY_RESULT_BACKEND`) so that split deployments are automatically
+  covered without spec or code changes.
 
 - **SUSE CA certificate NOT included**: the CA is a dependency of Celery
   workers and the IBS RabbitMQ consumer, not of the API server process.
@@ -138,8 +162,10 @@ timeouts:
 
 - **2-second timeout per check**: balances detecting genuinely slow
   services (not just unreachable ones) against keeping probe response time
-  within orchestrator timeout limits. Under normal operation, both checks
-  complete in sub-millisecond time.
+  within orchestrator timeout limits. Checks run concurrently, so the
+  worst-case endpoint response time is 2 seconds (the maximum of both
+  checks), not the sum. Under normal operation, both checks complete in
+  sub-millisecond time.
 
 ## Security Considerations
 
