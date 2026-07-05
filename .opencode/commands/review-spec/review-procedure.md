@@ -102,6 +102,55 @@ distinct concerns** (e.g., one about the error message format, another
 about the error's security implications) are NOT equivalent and must
 both be kept.
 
+## Quality filter
+
+After cross-agent deduplication, the assembly agent performs a critical
+evaluation of each remaining new OPEN finding. The purpose is to
+eliminate findings that are not genuine problems — noise that would
+clutter the review file without driving meaningful spec improvements.
+
+### Discard criteria
+
+A finding MUST be discarded if it matches **any** of the following:
+
+1. **Not a real problem**: the finding describes a scenario that is
+   already handled (implicitly or explicitly) by the spec, or raises a
+   concern that does not apply given the actual system constraints and
+   context
+2. **Over-documentation**: the finding's resolution would amount to
+   adding information that is obvious, trivially derivable from context,
+   or whose absence causes no ambiguity for a competent implementer.
+   Examples:
+   - Suggesting explicit documentation of behavior that is a direct and
+     obvious consequence of an already-stated rule
+   - Requesting specification of edge cases that have a single
+     reasonable resolution and no realistic risk of misimplementation
+   - Proposing the addition of cross-references to related specs when
+     the relationship is already evident from the document structure
+3. **Speculative concern**: the finding raises a theoretical risk that
+   has no plausible path to manifesting given the system's architecture,
+   deployment model, or usage patterns
+
+### Evaluation standard
+
+The assembly agent evaluates each finding from the perspective of a
+senior engineer who has read the full spec and its context. The question
+is: "Would a competent implementer actually get this wrong or be blocked
+by the absence of what the finding requests?" If the answer is no, the
+finding is noise.
+
+### Return format for discarded findings
+
+For each discarded finding, the assembly agent includes in its return
+value:
+
+- Finding ID (section prefix + number, as it would have been assigned)
+- Finding title
+- Severity (as reported by the reviewer)
+- Discard reason: one concise sentence explaining why it was discarded
+
+These are reported in the summary but NOT written to the review file.
+
 ## Full review (all 5 reviewers)
 
 Launch **5 Task agents in parallel** (one per reviewer, all in a single
@@ -110,29 +159,37 @@ Task agent (subagent type `general`) to assemble results:
 
 1. Read the existing review file (`docs/reviews/<name>.md`) if
    present — needed for cross-agent deduplication
-2. Perform **cross-agent deduplication** (see section above): for each
+2. Read the target spec (`docs/features/**/<name>.md`) and all specs
+   it references — needed for the quality filter
+3. Perform **cross-agent deduplication** (see section above): for each
    new OPEN finding from any reviewer, check if a semantically
    equivalent RESOLVED finding exists in a **different** section of the
    existing review file. If so, auto-resolve the new finding with the
    compact format:
    `**Status**: RESOLVED — Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
-3. Assemble and write (or overwrite) `docs/reviews/<name>.md`
-   using the (possibly deduplicated) findings from all 5 reviewers (see
+4. Perform **quality filter** (see section above): for each new OPEN
+   finding that survived deduplication, critically evaluate whether it
+   represents a genuine problem. Discard findings that fail the filter
+5. Assemble and write (or overwrite) `docs/reviews/<name>.md`
+   using the filtered findings from all 5 reviewers (see
    `.opencode/commands/review-spec/review-file-format.md` for the file
-   structure). All RESOLVED findings MUST use the compact format
-4. Use the `abbr` field from `.tracking.json` for finding IDs
-5. Update `docs/reviews/README.md` (see
+   structure). All RESOLVED findings MUST use the compact format.
+   Discarded findings are NOT written to the review file
+6. Use the `abbr` field from `.tracking.json` for finding IDs
+7. Update `docs/reviews/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
-6. Recalculate and update the `cache` field for this spec in
+8. Recalculate and update the `cache` field for this spec in
    `.tracking.json`. Set `cache.last_review` to the current ISO 8601
    timestamp with timezone (e.g., `2026-05-06T14:30:00+0200`) — NOT
    just `YYYY-MM-DD`
-7. Return: summary (findings per section, per severity, total open,
-   total resolved, cross-agent duplicates auto-resolved)
+9. Return: summary (findings per section, per severity, total open,
+   total resolved, cross-agent duplicates auto-resolved, quality-filtered
+   count + per-finding reasons)
 
 Pass to the assembly subagent: the 5 sets of structured findings +
 spec name + abbreviation + today's date + path to the spec file (for
-the header). Do NOT pass raw spec content.
+the header and quality filter context). Do NOT pass raw spec content —
+the subagent reads the spec itself.
 
 IMPORTANT: the subagent must generate the ISO 8601 timestamp at
 execution time (e.g., via `date '+%Y-%m-%dT%H:%M:%S%z'`) for
@@ -149,31 +206,37 @@ agent (subagent type `general`) to process ALL reviewed specs in a
 single session:
 
 1. For each reviewed spec, read the existing review file (if any)
-2. Perform **cross-agent deduplication** (see section above): for each
+2. For each reviewed spec, read the target spec and all specs it
+   references — needed for the quality filter
+3. Perform **cross-agent deduplication** (see section above): for each
    new OPEN finding, check if a semantically equivalent RESOLVED
    finding exists in any **other** section of the existing review file.
    If so, auto-resolve the new finding with the compact format:
    `**Status**: RESOLVED — Cross-agent duplicate of <ORIGINAL_ID> (<YYYY-MM-DD>)`
-3. Replace **only** the section corresponding to the executed reviewer
-   with the (possibly deduplicated) findings; preserve all other
-   sections untouched. All RESOLVED findings MUST use the compact
-   format
-4. If no review file exists, create it with the standard skeleton and
+4. Perform **quality filter** (see section above): for each new OPEN
+   finding that survived deduplication, critically evaluate whether it
+   represents a genuine problem. Discard findings that fail the filter
+5. Replace **only** the section corresponding to the executed reviewer
+   with the filtered findings; preserve all other sections untouched.
+   All RESOLVED findings MUST use the compact format. Discarded
+   findings are NOT written to the review file
+6. If no review file exists, create it with the standard skeleton and
    populate the reviewed section (see
    `.opencode/commands/review-spec/review-file-format.md`)
-5. Update file headers (last reviewed date, reviewers list)
-6. Use the `abbr` field from `.tracking.json` for finding IDs
-7. Update `docs/reviews/README.md` (see
+7. Update file headers (last reviewed date, reviewers list)
+8. Use the `abbr` field from `.tracking.json` for finding IDs
+9. Update `docs/reviews/README.md` (see
    `.opencode/commands/review-spec/readme-layout.md`)
-8. Recalculate and update the `cache` field for each reviewed spec in
-   `.tracking.json`. Set `cache.last_review` to the current ISO 8601
-   timestamp with timezone — NOT just `YYYY-MM-DD`
-9. Return: per-spec summary (findings count, severities, cross-agent
-   duplicates auto-resolved)
+10. Recalculate and update the `cache` field for each reviewed spec in
+    `.tracking.json`. Set `cache.last_review` to the current ISO 8601
+    timestamp with timezone — NOT just `YYYY-MM-DD`
+11. Return: per-spec summary (findings count, severities, cross-agent
+    duplicates auto-resolved, quality-filtered count + per-finding
+    reasons)
 
 Pass to the subagent: all findings grouped by spec + spec names +
-abbreviations + reviewer name + today's date. Do NOT pass raw spec
-content.
+abbreviations + reviewer name + today's date + paths to the spec files.
+Do NOT pass raw spec content — the subagent reads the specs itself.
 
 IMPORTANT: the subagent must generate the ISO 8601 timestamp at
 execution time (e.g., via `date '+%Y-%m-%dT%H:%M:%S%z'`) for

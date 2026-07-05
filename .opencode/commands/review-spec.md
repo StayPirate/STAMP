@@ -573,11 +573,13 @@ review"). Launch 5 reviewer Task agents in parallel per spec.
 
 After reviewers return, use Task tool (`general`) to assemble results.
 Instruct it to read:
+- `.opencode/commands/review-spec/review-procedure.md`
 - `.opencode/commands/review-spec/review-file-format.md`
 - `.opencode/commands/review-spec/readme-layout.md`
 
 **4b.3.** Final report: specs reviewed, total findings by severity,
-which specs have High-severity findings.
+which specs have High-severity findings, and quality-filtered findings
+(count + per-finding discard reasons).
 
 ---
 
@@ -611,11 +613,13 @@ reviewer"). If ALL, launch one Task agent per spec in parallel.
 
 After reviewer(s) return, use Task tool (`general`) to write/update
 files. Instruct it to read:
+- `.opencode/commands/review-spec/review-procedure.md`
 - `.opencode/commands/review-spec/review-file-format.md`
 - `.opencode/commands/review-spec/readme-layout.md`
 
 **4c.4.** Final report: reviewer executed, specs processed, findings
-by severity, High-severity specs.
+by severity, High-severity specs, and quality-filtered findings
+(count + per-finding discard reasons).
 
 ---
 
