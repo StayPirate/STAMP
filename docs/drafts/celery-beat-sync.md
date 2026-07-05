@@ -42,7 +42,6 @@ be applied.
 | # | Summary | Severity | Options |
 |---|---------|----------|---------|
 | OP-4 | Beat startup with empty `FetcherConfig` (fresh deployment) | High | (a) Beat treats missing record as "enabled with `default_schedule`" and writes a redbeat entry using code defaults — self-heals when worker creates the DB record later. (b) Beat skips fetchers without a `FetcherConfig` record and relies on a restart after workers initialize. (c) Beat creates `FetcherConfig` records itself (breaks worker-only-writes invariant). |
-| OP-5 | Step 4 (deregistered cleanup) should filter by task name | Medium | (a) Only process entries whose `task` field is `"run_fetcher"` — future non-fetcher periodic entries are left untouched. (b) Keep current behavior (process all entries) and document that no non-fetcher entries may exist in redbeat. |
 | OP-6 | `due_at` behavior when entries are overwritten during reconciliation | Medium | (a) `due_at` is recalculated fresh from the cron schedule (overdue runs during Beat downtime are NOT retroactively triggered). (b) If an existing entry's `due_at` is in the past, preserve it so Beat fires immediately on next tick (catch-up for missed runs). (c) Delegate to redbeat's native behavior (document which it is). |
 | OP-7 | Invalid cron expression encountered during reconciliation | Medium | (a) Skip the invalid entry, log WARNING, continue with remaining fetchers (resilient). (b) Fail-fast for the single entry, mark the fetcher as needing operator intervention. (c) Fall back to `default_schedule` if `schedule_override` is unparseable. |
 | OP-8 | Manual trigger `apply_async()` missing time limits | Minor | (a) Add a Step to update `fetcher-operations.md` trigger endpoint (lines 473-475) to pass `time_limit`/`soft_time_limit` in `apply_async()` options — aligns with the "MUST be passed per-invocation" statement. (b) Consider this out-of-scope for the Beat sync draft (pre-existing gap) and track separately. |
@@ -70,16 +69,6 @@ is not manually restarted after workers have initialized.
   startup ordering or accept a Beat restart.
 - Option (c) violates the clean separation documented in "Who Writes
   to Redbeat" and "Multi-Process Coordination".
-
-### OP-5: Step 4 Task Name Filter
-
-**Context**: the `redbeat::schedule` sorted set may contain entries
-created by future non-fetcher periodic tasks. Current step 4 processes
-ALL entries, attempting to extract `fetcher_name` from kwargs.
-
-**Impact**: if a future non-fetcher entry lacks `fetcher_name` in
-kwargs, step 4 would either crash (KeyError) or incorrectly evaluate
-the entry against the registry.
 
 ### OP-6: `due_at` on Reconciliation Overwrite
 
@@ -168,13 +157,22 @@ vs. application cache (split deployment per `docs/configuration.md`),
 redbeat follows the broker instance — which is correct, since redbeat is
 part of the Celery subsystem.
 
+**Internal key patterns (informational)**: redbeat stores entry data
+under `{key_prefix}{entry_name}` keys and internal structures (schedule
+index, distributed lock) under `{key_prefix}:{structure_name}` keys
+(e.g., `redbeat::schedule`, `redbeat::lock`). These patterns are
+library-internal — Sentinel code MUST interact with entries exclusively
+via the `RedBeatSchedulerEntry` Python API, never by constructing Redis
+keys directly. The patterns are documented here only for operational
+debugging (inspecting Redis with `redis-cli`).
+
 ### Redbeat Entry Structure
 
 Each registered and enabled fetcher has one redbeat entry:
 
 | Property | Value |
 |----------|-------|
-| Entry key | `redbeat:{fetcher_name}` (e.g., `redbeat:sync_nvd_cves`) — this is the Redis key (prefix + name). The redbeat API's `from_key()` accepts this value. |
+| Entry identifier | `fetcher_name` (e.g., `sync_nvd_cves`) — entries are created and accessed via the `RedBeatSchedulerEntry` API using the fetcher name. The underlying Redis key format is managed by the library. |
 | Task | `run_fetcher` |
 | Schedule | Cron from effective schedule (override or default) |
 | Args | `[]` |
@@ -237,13 +235,18 @@ This happens **before** Beat begins firing any tasks.
    - No-op if no entry exists
 
 4. **Remove entries for deregistered fetchers**: enumerate all scheduled
-   entry names from redbeat's internal schedule list (the `redbeat::schedule`
-   sorted set, which contains only task entry names — not internal keys
-   like `redbeat::lock`). For each entry whose `fetcher_name` (extracted
-   from the entry's kwargs) is NOT present in `FETCHER_REGISTRY`:
+   entries via the redbeat scheduler API. For each entry whose
+   `fetcher_name` (extracted from the entry's kwargs) is NOT present in
+   `FETCHER_REGISTRY`:
    - Delete the entry
    - Log at INFO level: `"Removed redbeat entry for deregistered fetcher
      '%s'", fetcher_name`
+
+   **Assumption**: this step assumes that all entries in the redbeat
+   schedule are fetcher entries (created by this reconciliation or by
+   runtime propagation). If Sentinel introduces non-fetcher periodic
+   tasks managed via redbeat in the future, this step must be revised to
+   avoid interference with those entries.
 
 5. **Log reconciliation summary**: after all entries are processed, log
    at INFO level:
@@ -379,9 +382,9 @@ calculated by the API endpoint at request time:
 1. For each registered and enabled fetcher: read the redbeat entry's
    `due_at` attribute (the timestamp of the next scheduled execution,
    maintained by redbeat automatically)
-2. Access pattern: the API endpoint uses the
-   `redbeat.RedBeatSchedulerEntry.from_key()` method to read the entry.
-   This is a single Redis GET per fetcher — no key scan.
+2. Access pattern: the API endpoint reads the redbeat entry by fetcher
+   name via the `RedBeatSchedulerEntry` API. This is an O(1) read per
+   fetcher — no full schedule scan.
 3. If the entry does not exist in Redis (Beat not started, Redis flushed,
    or entry lost): `next_run_at = null`
 4. If the fetcher is disabled: `next_run_at = null` (no entry exists —
@@ -766,6 +769,34 @@ in "Celery Worker Configuration")
 > `docs/features/platform/fetcher-infrastructure.md` (Celery Beat Schedule
 > Synchronization) for the full synchronization mechanism between
 > PostgreSQL (source of truth) and redbeat (execution layer).
+
+### Step 5a: Add Redis Key Conventions to `conventions.md`
+
+**File**: `docs/conventions.md`
+**Location**: in the "Python (Backend)" section, after "Testing
+Conventions" (end of the backend subsections)
+**Action**: insert the following subsection:
+
+> ### Redis Key Conventions
+>
+> Redis keys in Sentinel fall into two categories with different
+> documentation rules:
+>
+> **Application-owned keys**: keys whose format is defined by Sentinel
+> (e.g., `login_attempts:{username}`, `session_liveness:{session_id}`,
+> `fetch_pending:{cve_id}:{source}`). These are accessed via the Redis
+> client directly. The spec that owns the key MUST document the exact
+> format, TTL, and value contract — the format IS the specification.
+>
+> **Library-managed keys**: keys whose format is defined by a third-party
+> library (e.g., `celery-redbeat` schedule entries). Sentinel code MUST
+> interact with these exclusively via the library's public API — never by
+> constructing Redis keys directly. Specifications MUST describe behavior
+> in terms of the library API (e.g., "create an entry via
+> `RedBeatSchedulerEntry`"), not in terms of internal key formats (e.g.,
+> "write to `redbeat:{name}`"). Internal key patterns may be documented
+> as informational notes for operational debugging, clearly marked as
+> library-internal.
 
 ### Step 6: Update Beat troubleshooting in `deployment.md`
 
