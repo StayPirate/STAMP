@@ -33,6 +33,92 @@ a prescriptive action plan for applying the changes to the existing specs.
 
 ---
 
+## Open Points (Pending Resolution)
+
+The following points were identified by the spec-coherence-reviewer and
+spec-gap-analyzer. Each requires a design decision before the draft can
+be applied.
+
+| # | Summary | Severity | Options |
+|---|---------|----------|---------|
+| OP-4 | Beat startup with empty `FetcherConfig` (fresh deployment) | High | (a) Beat treats missing record as "enabled with `default_schedule`" and writes a redbeat entry using code defaults — self-heals when worker creates the DB record later. (b) Beat skips fetchers without a `FetcherConfig` record and relies on a restart after workers initialize. (c) Beat creates `FetcherConfig` records itself (breaks worker-only-writes invariant). |
+| OP-5 | Step 4 (deregistered cleanup) should filter by task name | Medium | (a) Only process entries whose `task` field is `"run_fetcher"` — future non-fetcher periodic entries are left untouched. (b) Keep current behavior (process all entries) and document that no non-fetcher entries may exist in redbeat. |
+| OP-6 | `due_at` behavior when entries are overwritten during reconciliation | Medium | (a) `due_at` is recalculated fresh from the cron schedule (overdue runs during Beat downtime are NOT retroactively triggered). (b) If an existing entry's `due_at` is in the past, preserve it so Beat fires immediately on next tick (catch-up for missed runs). (c) Delegate to redbeat's native behavior (document which it is). |
+| OP-7 | Invalid cron expression encountered during reconciliation | Medium | (a) Skip the invalid entry, log WARNING, continue with remaining fetchers (resilient). (b) Fail-fast for the single entry, mark the fetcher as needing operator intervention. (c) Fall back to `default_schedule` if `schedule_override` is unparseable. |
+| OP-8 | Manual trigger `apply_async()` missing time limits | Minor | (a) Add a Step to update `fetcher-operations.md` trigger endpoint (lines 473-475) to pass `time_limit`/`soft_time_limit` in `apply_async()` options — aligns with the "MUST be passed per-invocation" statement. (b) Consider this out-of-scope for the Beat sync draft (pre-existing gap) and track separately. |
+
+### OP-4: Beat Startup with Empty FetcherConfig
+
+**Context**: `FetcherConfig` records are created exclusively by workers
+on startup (`INSERT ... ON CONFLICT DO NOTHING`). In a fresh deployment
+or parallel Kubernetes restart, Beat may start before any worker,
+finding zero records in `FetcherConfig`. Reconciliation step 2 requires
+`enabled = true` in `FetcherConfig` — condition unsatisfiable → empty
+schedule → no fetchers run until Beat is restarted.
+
+**Impact**: on first deployment, hours of missed data ingestion if Beat
+is not manually restarted after workers have initialized.
+
+**Considerations**:
+- Option (a) means Beat can always produce a working schedule from the
+  code registry alone. The eventual `FetcherConfig` creation by the
+  worker (with identical defaults) causes no divergence. If an admin
+  changes config via PATCH before the worker creates the record, the
+  PATCH would 404 (no `FetcherConfig` exists) — this is already the
+  documented behavior.
+- Option (b) is simpler (no new logic) but requires operators to ensure
+  startup ordering or accept a Beat restart.
+- Option (c) violates the clean separation documented in "Who Writes
+  to Redbeat" and "Multi-Process Coordination".
+
+### OP-5: Step 4 Task Name Filter
+
+**Context**: the `redbeat::schedule` sorted set may contain entries
+created by future non-fetcher periodic tasks. Current step 4 processes
+ALL entries, attempting to extract `fetcher_name` from kwargs.
+
+**Impact**: if a future non-fetcher entry lacks `fetcher_name` in
+kwargs, step 4 would either crash (KeyError) or incorrectly evaluate
+the entry against the registry.
+
+### OP-6: `due_at` on Reconciliation Overwrite
+
+**Context**: when Beat restarts after a crash, overwritten entries may
+have had a `due_at` in the past (i.e., the task was supposed to fire
+during downtime). The choice between "recalculate" and "preserve"
+determines whether missed runs are fired immediately or skipped.
+
+**Impact**: determines operator expectations about data freshness after
+Beat recovery. Both approaches are valid — "recalculate" avoids
+thundering-herd (all fetchers fire simultaneously after recovery),
+"preserve" avoids data gaps.
+
+### OP-7: Invalid Cron During Reconciliation
+
+**Context**: an operator or migration may corrupt `schedule_override`
+in PostgreSQL (bypassing PATCH validation). One invalid record should
+not prevent all other fetchers from being scheduled.
+
+**Impact**: fail-fast means a single corrupted row blocks the entire
+system. Skip-and-continue means the corrupted fetcher is silently
+unscheduled (only visible via dashboard or logs).
+
+### OP-8: Manual Trigger Time Limits
+
+**Context**: the spec states "limits MUST be passed per-invocation via
+`apply_async()` options." This is fully specified for Beat-scheduled
+runs (via redbeat Options). For manual triggers (via the API trigger
+endpoint), `fetcher-operations.md` (lines 473-475) shows
+`apply_async()` without time limit options. This is a pre-existing gap
+that becomes a visible contradiction after this draft is applied.
+
+**Impact**: manual-triggered fetchers would run without Celery-level
+time limits (only stale run detection provides a safety net). The
+`run_timeout` enforcement documented in `FetcherConfig` implies ALL
+invocations are bounded.
+
+---
+
 ## Specification Content
 
 The following is the complete text of the new section to be inserted in
@@ -74,7 +160,7 @@ Redbeat uses the following configuration:
 |---------|-------|--------|
 | `redbeat_redis_url` | Not configured explicitly | Defaults to `CELERY_BROKER_URL` (redbeat's standard behavior). A separate variable is unnecessary because Sentinel already configures the Celery broker as Redis. |
 | `redbeat_key_prefix` | `redbeat:` | Default. All redbeat entries are stored under this prefix. |
-| Scheduler class | `redbeat.RedBeatSchedulerEntry` | Configured in the Celery app settings (`beat_scheduler`), not via CLI flag. |
+| Scheduler class | `redbeat.RedBeatScheduler` | Configured in the Celery app settings (`beat_scheduler`), not via CLI flag. |
 
 No separate environment variable for `redbeat_redis_url` is required or
 supported. If a deployment uses a different Redis instance for the broker
@@ -88,7 +174,7 @@ Each registered and enabled fetcher has one redbeat entry:
 
 | Property | Value |
 |----------|-------|
-| Entry name | `redbeat:{fetcher_name}` (e.g., `redbeat:sync_nvd_cves`) |
+| Entry key | `redbeat:{fetcher_name}` (e.g., `redbeat:sync_nvd_cves`) — this is the Redis key (prefix + name). The redbeat API's `from_key()` accepts this value. |
 | Task | `run_fetcher` |
 | Schedule | Cron from effective schedule (override or default) |
 | Args | `[]` |
@@ -491,6 +577,45 @@ Control")
 Schedule Synchronization` through to the end of `### Startup
 Validation`)
 
+### Step 1a: Fix existing "Celery Integration" paragraph
+
+**File**: `docs/features/platform/fetcher-infrastructure.md`
+**Location**: lines 1340-1344 (paragraph about Beat schedule in "Celery
+Integration")
+**Current text**:
+
+```
+The Celery Beat schedule is built dynamically from the registry at worker
+startup, using each fetcher's effective schedule (config override or
+default). When an admin modifies a fetcher's schedule via the API, the
+Beat schedule MUST be updated accordingly (using `celery-redbeat` or
+equivalent dynamic scheduler).
+```
+
+**Replace with**:
+
+```
+The Celery Beat schedule is built dynamically from the registry at Beat
+startup, using each fetcher's effective schedule (config override or
+default). When an admin modifies a fetcher's schedule via the API, the
+Beat schedule MUST be updated accordingly. See "Celery Beat Schedule
+Synchronization" below for the full mechanism.
+```
+
+**Additionally**, fix the typo at line 1348:
+
+**Current text**:
+
+```
+`default_schedule` and `FetcherConfig.schedule` are interpreted as UTC.
+```
+
+**Replace with**:
+
+```
+`default_schedule` and `FetcherConfig.schedule_override` are interpreted as UTC.
+```
+
 ### Step 2: Update the "Celery Integration" section header comment
 
 **File**: `docs/features/platform/fetcher-infrastructure.md`
@@ -582,6 +707,48 @@ implementation mechanism (redbeat entry removal/creation).
   above).
 ```
 
+### Step 4b: Update Dependencies section in `fetcher-infrastructure.md`
+
+**File**: `docs/features/platform/fetcher-infrastructure.md`
+**Location**: line 1724 (Dependencies section)
+**Current text**:
+
+```
+- Celery Beat with dynamic schedule support (`celery-redbeat` or
+  equivalent)
+```
+
+**Replace with**:
+
+```
+- Celery Beat with `celery-redbeat` dynamic scheduler
+```
+
+### Step 4c: Add `next_run_at` cross-reference in `fetcher-operations.md`
+
+**File**: `docs/features/platform/fetcher-operations.md`
+**Location**: line 232-235 (`next_run_at` field description in List
+Fetchers response)
+**Current text**:
+
+```
+- `next_run_at`: calculated from the effective schedule and the Celery
+  Beat state. `null` if the fetcher is disabled, deregistered, or the
+  Celery Beat schedule state is unavailable (e.g., Redis flushed, Beat
+  not yet started).
+```
+
+**Replace with**:
+
+```
+- `next_run_at`: calculated from the effective schedule and the Celery
+  Beat state. `null` if the fetcher is disabled, deregistered, or the
+  Celery Beat schedule state is unavailable (e.g., Redis flushed, Beat
+  not yet started). See `docs/features/platform/fetcher-infrastructure.md`
+  (Celery Beat Schedule Synchronization — `next_run_at` Calculation) for
+  the computation mechanism.
+```
+
 ### Step 5: Add redbeat note in `configuration.md`
 
 **File**: `docs/configuration.md`
@@ -593,7 +760,7 @@ in "Celery Worker Configuration")
 > uses the same Redis instance as the Celery broker (`CELERY_BROKER_URL`)
 > by default. No separate `redbeat_redis_url` environment variable is
 > needed or supported. The scheduler class is configured in the Celery
-> application settings (`beat_scheduler = 'redbeat.RedBeatSchedulerEntry'`).
+> application settings (`beat_scheduler = 'redbeat.RedBeatScheduler'`).
 > Redbeat stores schedule entries under the `redbeat:` key prefix in the
 > broker database. See
 > `docs/features/platform/fetcher-infrastructure.md` (Celery Beat Schedule
