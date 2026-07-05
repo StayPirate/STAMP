@@ -89,7 +89,9 @@ coordination across multiple maintained distribution versions.
 ### Task Queue (Celery)
 
 - **Broker**: Redis
-- **Result backend**: Redis
+- **Result backend**: disabled (`task_ignore_result = True`) — task
+  outcomes are tracked in PostgreSQL (`FetcherRun`), not in Redis. See
+  `docs/features/platform/fetcher-infrastructure.md` for rationale.
 - **Periodic tasks**: Celery Beat with dynamic scheduling (`celery-redbeat`)
 - **Workers**: Separate worker processes for CVE ingestion, OBS interaction,
   and impact analysis

@@ -120,7 +120,6 @@ JWT_SECRET_KEY=local-development-secret-minimum-32-characters
 # Redis (defaults work with dev-env.sh)
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/1
-CELERY_RESULT_BACKEND=redis://localhost:6379/2
 
 # SSO (optional for local — omit to disable SSO)
 SSO_ISSUER_URL=https://id.suse.com
@@ -366,7 +365,7 @@ Configure your orchestrator to use these endpoints:
 
 The orchestrator MUST set `timeoutSeconds` (Kubernetes) or `timeout`
 (Docker) to at least 5 seconds to accommodate the internal check
-timeouts (2s per dependency, two checks sequential).
+timeouts (2s per dependency, checks concurrent; 5s provides margin for network overhead).
 
 ---
 

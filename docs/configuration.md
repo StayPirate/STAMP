@@ -25,15 +25,15 @@ explicitly in staging/production.
 |---------|------|---------|-------------|------------|
 | `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | `docs/architecture.md` |
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
-| `CELERY_RESULT_BACKEND` | string | `redis://localhost:6379/2` | Celery result backend URL | `docs/architecture.md` |
 
 All application-level Redis operations (session caching, login lockout,
-deduplication, distributed locking) use `REDIS_URL`. Celery broker and
-result backend are configured separately and managed by the Celery
-framework — application code never accesses these databases directly.
-Different database numbers (`/0`, `/1`, `/2`) ensure namespace isolation
-within a single Redis instance; in production, these URLs may point to
-separate instances without code changes.
+deduplication, distributed locking) use `REDIS_URL`. The Celery broker
+is configured separately and managed by the Celery framework —
+application code never accesses this database directly. Sentinel does
+not configure a Celery result backend (see Celery Worker Configuration
+below). Different database numbers (`/0`, `/1`) ensure namespace
+isolation within a single Redis instance; in production, these URLs may
+point to separate instances without code changes.
 
 ## Celery Worker Configuration
 
@@ -50,6 +50,11 @@ startup that these settings are `UTC` and `true` respectively. If either
 is overridden to a non-UTC value, the worker MUST refuse to start and
 log an error: `"FATAL: Celery timezone must be UTC. Current value:
 {value}. All fetcher schedules assume UTC — see docs/conventions.md."`
+
+Additionally, `task_ignore_result = True` is a fixed Celery application
+setting — task return values are never stored. Task outcomes are tracked
+in PostgreSQL (`FetcherRun`). See
+`docs/features/platform/fetcher-infrastructure.md` (Result handling).
 
 ## SSO Configuration
 

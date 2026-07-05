@@ -155,7 +155,7 @@ record fails (e.g., database connection error), the task MUST:
 
 No `FetcherRun` record is produced (since the database is unreachable).
 Visibility of this failure is provided by: application logs (CRITICAL level)
-and the Celery result backend (task marked as FAILED). Recovery happens at
+and Celery worker logs (task failure traceback). Recovery happens at
 the next scheduled cycle — no explicit Celery retry is configured for
 top-level fetcher tasks.
 
@@ -172,8 +172,8 @@ one. Two failure modes apply:
    (`ERROR: Fetcher '{name}' aborted — FetcherRun '{run_id}' not found`)
    and raise an appropriate exception (e.g., `ValueError`) without retry.
 
-In both cases, visibility is provided by: application logs and the Celery
-result backend (task marked as FAILED). No explicit Celery retry is configured.
+In both cases, visibility is provided by: application logs and Celery
+worker logs (task failure traceback). No explicit Celery retry is configured.
 
 ## Abstract Interface
 
@@ -1349,6 +1349,15 @@ equivalent dynamic scheduler).
 The worker validates these settings at startup and refuses to start if
 they are overridden. See `docs/conventions.md` (Timestamps & Timezones)
 and `docs/configuration.md` (Celery Worker Configuration).
+
+**Result handling**: the Celery application is configured with
+`task_ignore_result = True` and **no result backend**. Task return
+values are never stored or read — all fetcher tasks return `None`,
+and execution state (status, item counts, error message, timing) is
+persisted in the `FetcherRun` table, the authoritative source for
+task outcomes. `celery-redbeat` stores its dynamic schedule under the
+broker URL (`redbeat:` key prefix) and has no dependency on a result
+backend.
 
 ## Concurrency Control
 

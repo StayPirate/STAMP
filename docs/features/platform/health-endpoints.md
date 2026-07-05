@@ -57,12 +57,11 @@ balancer rotation but NOT restart it.
 | Redis (per unique instance) | `PING` | Connection refused, timeout, or command error |
 
 **Redis instance discovery**: the readiness check extracts `host:port`
-from all three Redis configuration URLs (`REDIS_URL`,
-`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`), deduplicates by
-`host:port`, and PINGs each unique instance in parallel. In the standard
-single-instance deployment (all URLs point to the same host), this
-results in a single PING. In split deployments (URLs pointing to
-different Redis instances), each unique instance is verified
+from both Redis configuration URLs (`REDIS_URL`, `CELERY_BROKER_URL`),
+deduplicates by `host:port`, and PINGs each unique instance in parallel.
+In the standard single-instance deployment (both URLs point to the same
+host), this results in a single PING. In split deployments (URLs
+pointing to different Redis instances), each unique instance is verified
 independently.
 
 **Response** (200 OK — all checks pass):
@@ -139,9 +138,9 @@ timeouts:
   triggers CVE fetch, on-demand fetcher runs) appear to succeed but
   produce no follow-up processing. This constitutes a degraded state that
   the orchestrator should be aware of. The check discovers Redis instances
-  dynamically from the configured URLs (`REDIS_URL`, `CELERY_BROKER_URL`,
-  `CELERY_RESULT_BACKEND`) so that split deployments are automatically
-  covered without spec or code changes.
+  dynamically from the configured URLs (`REDIS_URL`, `CELERY_BROKER_URL`)
+  so that split deployments are automatically covered without spec or code
+  changes.
 
 - **SUSE CA certificate NOT included**: the CA is a dependency of Celery
   workers and the IBS RabbitMQ consumer, not of the API server process.
