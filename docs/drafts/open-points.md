@@ -16,6 +16,9 @@ Architectural decisions pending resolution before implementation begins.
 | OP-12 | Fetcher Metrics Granularity | Fetcher Infrastructure | Open |
 | OP-13 | CWE Accumulation | Fetcher Infrastructure | Open |
 | OP-15 | IBSEventConsumer Admin Restart Endpoint | Platform | Open |
+| OP-16 | CPE Mapping Fail-Fast Asymmetry | Cross-Process Startup | Open |
+| OP-17 | IBS RabbitMQ Consumer Startup Gaps | Cross-Process Startup | Open |
+| OP-18 | Cross-Process Startup Ordering | Cross-Process Startup | Open |
 | OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
 | OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
 | OP-9 | Remove FetcherRunWeeklyAggregate | — | Resolved |
@@ -544,6 +547,167 @@ Design considerations to evaluate:
 **Decision needed**: (a) signaling mechanism, (b) scope (consumer only
 vs. all singletons), (c) capability assignment, (d) priority relative
 to other open points.
+
+---
+
+## Open — Cross-Process Startup
+
+### OP-16. CPE Mapping Fail-Fast Asymmetry (Validation in API, Consumption in Worker)
+
+**Origin**: gap analysis of process startup responsibilities during
+Celery Beat sync specification work.
+
+**Context**: the CPE-to-package mapping (`cpe-package-mapping.json`) is
+a critical static data file that maps CPE vendor:product pairs to SUSE
+package names. The spec (`cpe-package-mapping.md:243-252`) mandates a
+**fail-fast guard at boot**:
+
+> "the FastAPI `lifespan` event MUST call `resolve_cpe_packages()` once
+> with a dummy CPE string... This ensures a broken mapping file is
+> detected at boot time"
+
+However, this guard runs only in the **FastAPI API server** (lifespan
+event). The actual consumers of the mapping are **Celery worker** tasks:
+- `resolve_ticket_packages` (Phase 2 of CVE ingestion)
+- `fetch_single_cve` (on-demand single-CVE fetch)
+
+Workers load the mapping **lazily** on first use via
+`functools.lru_cache(maxsize=1)` (`cpe-package-mapping.md:236-241`). A
+broken/missing JSON file would be detected at API boot (fail-fast), but
+in the worker it surfaces only at the **first CVE ingestion task**
+runtime — potentially hours after deploy.
+
+`cve-service.md:432-441` acknowledges this asymmetry but frames it as
+"the lifespan event validates the file, so a runtime exception indicates
+a programming bug." This reasoning is valid only if the worker reads the
+**same** file that the API validated — true in same-image deployments,
+but not explicitly guaranteed.
+
+**Impact**: in a correctly-configured deployment (same image, same
+volume), the risk is minimal. In edge cases (misconfigured volume mount,
+stale file in worker image), a corrupted mapping could be undetected
+until the first ingestion task fails.
+
+**Options to evaluate**:
+- (a) Accept the current asymmetry as documented (low-risk edge case)
+- (b) Add a worker-level boot validation (e.g., a Celery
+  `worker_init` signal handler that calls `resolve_cpe_packages()`)
+- (c) Move from lazy-load to eager-load in all processes (import-time
+  or startup-event, not `lru_cache`)
+
+**Decision needed**: whether the asymmetry is an acceptable design
+trade-off or requires worker-side mitigation.
+
+---
+
+### OP-17. IBS RabbitMQ Consumer Startup Specification Gaps
+
+**Origin**: gap analysis of process startup responsibilities during
+Celery Beat sync specification work.
+
+**Context**: `IBSEventConsumer` (`ibs-rabbitmq-integration.md`) is a
+singleton long-running process. Its specification covers the connection
+lifecycle, message processing, and reconnection strategy in detail, but
+leaves several **startup** behaviors unspecified:
+
+1. **Celery app sharing**: the spec says it "runs as a dedicated Celery
+   worker process (or standalone process)" (`:130-133`). The "or
+   standalone" phrasing makes ambiguous whether it loads the Celery app
+   at all. This matters because:
+   - If it loads the Celery app: does it execute the timezone validation
+     (`CELERY_TIMEZONE=UTC`)? The spec assigns that only to "workers."
+   - It MUST reach the Celery broker (Redis) to enqueue
+     `create_ticket_from_detection` — but is that via a full Celery app
+     or a minimal AMQP client?
+
+2. **`IBS_RABBITMQ_ENABLED=false` behavior**: `configuration.md:109`
+   defines this setting, but the spec never states what the **process**
+   does when disabled. Options: exit immediately with code 0? Start and
+   idle? Not start at all (orchestrator responsibility)?
+
+3. **DB/Redis connectivity at startup**: the consumer needs PostgreSQL
+   (builds the monitored codestream set on startup, `:164-177`) and
+   Redis (enqueue tasks + heartbeat). But unlike Beat's OP-1 (fail-fast
+   on DB unreachable), the consumer has **no** specified startup
+   connectivity check:
+   - RabbitMQ unreachable → retry with backoff (specified, `:293`)
+   - PostgreSQL unreachable at startup → **unspecified**
+   - Redis unreachable at startup → **unspecified**
+
+4. **Fetcher module imports**: the consumer enqueues
+   `create_ticket_from_detection` and calls `package_service`. Whether
+   it needs `FETCHER_REGISTRY` populated is unclear — it probably
+   doesn't (it doesn't schedule or list fetchers), but this is never
+   stated explicitly.
+
+**Impact**: these are specification completeness gaps. A correct
+implementation requires autonomous design decisions on each point —
+which violates the project's "Function Specification Completeness"
+convention (`conventions.md`).
+
+**Decision needed**: resolve each sub-point with the appropriate
+behavior. This may belong in a dedicated revision of
+`ibs-rabbitmq-integration.md` rather than as a standalone OP.
+
+---
+
+### OP-18. Cross-Process Startup Ordering Not Specified
+
+**Origin**: gap analysis of process startup responsibilities during
+Celery Beat sync specification work.
+
+**Context**: `deployment.md:287-306` mandates that database migrations
+are "a separate operational step" that precedes other processes. However,
+**no specification defines the full startup ordering contract** —
+specifically:
+
+1. **Migration before everything**: `deployment.md` states migrations
+   must not run in API startup, but it does not prescribe the ordering
+   between worker, Beat, API, and consumer startup after migrations.
+2. **Worker before Beat** (OP-4 dependency): if OP-4 resolves to option
+   (b) (Beat requires `FetcherConfig` records to exist), workers must
+   start before Beat. If OP-4 resolves to option (a) or (c'), no
+   ordering is required.
+3. **Who seeds `system_settings`**: the Alembic data migration is the
+   primary mechanism (`system-settings.md:88-94`); the FastAPI lifespan
+   is defense-in-depth. Both use `ON CONFLICT DO NOTHING`. But if a
+   worker calls `get_default_cvss_version()` before either the migration
+   or the API server has run, it would fail (the function raises if the
+   setting is absent, `system-settings.md:116-119`).
+
+The **current implicit ordering** is:
+
+```
+Alembic migration (must be first)
+    │
+    ├──→ API server (lifespan seeds system_settings as defense)
+    ├──→ Celery worker (auto-creates FetcherConfig)
+    ├──→ Celery Beat (reconciles redbeat from FetcherConfig)
+    └──→ IBS consumer (builds codestream set from DB)
+```
+
+After migrations, the remaining processes can start in any order — but
+this is an **emergent property** of the current design decisions, not an
+explicit specification. If any of those design decisions changes (e.g.,
+OP-4 → option b), the ordering becomes constrained.
+
+**Impact**: in containerized environments (Docker Compose, Kubernetes),
+all services typically start concurrently (with migration as an init
+container or one-shot service). The spec should state whether
+post-migration startup is order-independent (current design intent) or
+has constraints, so that deployment manifests can be written correctly.
+
+**Options to evaluate**:
+- (a) Document the current "order-independent after migrations"
+  property as an explicit architectural invariant, with rationale for
+  each process
+- (b) Accept implicit ordering and document it only if/when a
+  constraint is introduced (YAGNI approach)
+
+**Decision needed**: whether to formalize the startup ordering contract
+or leave it implicit. Related to: OP-4 resolution (which may introduce
+a Beat→worker ordering dependency), OP-14 in the celery-beat-sync draft
+(Beat with unmigrated schema).
 
 ---
 

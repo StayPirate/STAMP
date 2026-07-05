@@ -35,16 +35,42 @@ a prescriptive action plan for applying the changes to the existing specs.
 
 ## Open Points (Pending Resolution)
 
-The following points were identified by the spec-coherence-reviewer and
-spec-gap-analyzer. Each requires a design decision before the draft can
-be applied.
+The following points were identified by the spec-coherence-reviewer,
+spec-gap-analyzer, and manual analysis. Each requires a design decision
+before the draft can be applied.
+
+### Dependency Graph
+
+```
+OP-9 (Beat module import) ─── prerequisite for ──→ entire draft
+    │
+    └── resolved by ──→ OP-10 (discovery mechanism)
+                             │
+                             └── also covers ──→ _CVE_SOURCE_TYPE_MAP
+
+OP-4 (empty FetcherConfig)
+    ├── depends on ──→ OP-9
+    ├── if option (a) chosen ──→ depends on OP-11 (run_timeout constant)
+    └── future extension ──→ OP-12 (default_enabled)
+
+OP-13 (timezone validation) ─── independent, high priority
+OP-14 (schema not migrated) ─── extends OP-1 (PG unreachable)
+
+OP-6, OP-7, OP-8 are independent of each other and of OP-9/10/11/12/13/14
+```
 
 | # | Summary | Severity | Options |
 |---|---------|----------|---------|
-| OP-4 | Beat startup with empty `FetcherConfig` (fresh deployment) | High | (a) Beat treats missing record as "enabled with `default_schedule`" and writes a redbeat entry using code defaults — self-heals when worker creates the DB record later. (b) Beat skips fetchers without a `FetcherConfig` record and relies on a restart after workers initialize. (c) Beat creates `FetcherConfig` records itself (breaks worker-only-writes invariant). |
+| OP-4 | Beat startup with empty `FetcherConfig` (fresh deployment) | High | (a) Beat treats missing record as "enabled with `default_schedule`" and writes a redbeat entry using code defaults — self-heals when worker creates the DB record later. (b) Beat skips fetchers without a `FetcherConfig` record and relies on a restart after workers initialize. (c) Beat creates `FetcherConfig` records itself (breaks worker-only-writes invariant). (c') Shared idempotent bootstrap routine executed by both workers and Beat at startup — ensures DB record always exists before reconciliation. |
 | OP-6 | `due_at` behavior when entries are overwritten during reconciliation | Medium | (a) `due_at` is recalculated fresh from the cron schedule (overdue runs during Beat downtime are NOT retroactively triggered). (b) If an existing entry's `due_at` is in the past, preserve it so Beat fires immediately on next tick (catch-up for missed runs). (c) Delegate to redbeat's native behavior (document which it is). |
 | OP-7 | Invalid cron expression encountered during reconciliation | Medium | (a) Skip the invalid entry, log WARNING, continue with remaining fetchers (resilient). (b) Fail-fast for the single entry, mark the fetcher as needing operator intervention. (c) Fall back to `default_schedule` if `schedule_override` is unparseable. |
 | OP-8 | Manual trigger `apply_async()` missing time limits | Minor | (a) Add a Step to update `fetcher-operations.md` trigger endpoint (lines 473-475) to pass `time_limit`/`soft_time_limit` in `apply_async()` options — aligns with the "MUST be passed per-invocation" statement. (b) Consider this out-of-scope for the Beat sync draft (pre-existing gap) and track separately. |
+| OP-9 | Beat process does not import fetcher modules (`FETCHER_REGISTRY` empty) | Critical | Prerequisite for the entire draft — without module imports, reconciliation iterates an empty registry. See detailed section below. |
+| OP-10 | No shared discovery mechanism for fetcher module imports | Medium | (a) Central import module — a single Python file imports all fetcher modules; all entrypoints (worker, API, Beat) import that one file. (b) Package scan — `pkgutil.walk_packages` over domain directories; zero per-fetcher maintenance. See detailed section below. |
+| OP-11 | `run_timeout` default not available as a code constant | Low | Only relevant if OP-4 resolves to option (a). See detailed section below. |
+| OP-12 | No `default_enabled` class attribute for fetchers that should start disabled | Low | Forward-looking gap — current design always creates `FetcherConfig` with `enabled=true`. See detailed section below. |
+| OP-13 | Celery timezone validation not specified for Beat | High | Beat interprets all cron schedules — if timezone is wrong, every fetcher fires at the wrong time. Current spec assigns validation only to "the worker". See detailed section below. |
+| OP-14 | Beat behavior when `FetcherConfig` table does not exist (schema not migrated) | Low | Extends OP-1 (PG unreachable): PG reachable but schema missing is a distinct error class. See detailed section below. |
 
 ### OP-4: Beat Startup with Empty FetcherConfig
 
@@ -58,17 +84,37 @@ schedule → no fetchers run until Beat is restarted.
 **Impact**: on first deployment, hours of missed data ingestion if Beat
 is not manually restarted after workers have initialized.
 
+**Dependency**: OP-9 (Beat module import) is a prerequisite for ALL
+options here — if `FETCHER_REGISTRY` is empty, reconciliation produces
+an empty schedule regardless of whether `FetcherConfig` records exist.
+
 **Considerations**:
 - Option (a) means Beat can always produce a working schedule from the
   code registry alone. The eventual `FetcherConfig` creation by the
   worker (with identical defaults) causes no divergence. If an admin
   changes config via PATCH before the worker creates the record, the
   PATCH would 404 (no `FetcherConfig` exists) — this is already the
-  documented behavior.
+  documented behavior. The "record mancante → enabled with defaults"
+  resolution already exists in the spec: `fetcher-operations.md:840-842`
+  (CLI `fetcher list` column) and `fetcher-operations.md:563` (GET
+  config endpoint `effective_schedule`). Option (a) reuses this existing
+  convention in the reconciliation loop. Requires OP-11 (run_timeout as
+  code constant) to be resolved first.
 - Option (b) is simpler (no new logic) but requires operators to ensure
   startup ordering or accept a Beat restart.
 - Option (c) violates the clean separation documented in "Who Writes
   to Redbeat" and "Multi-Process Coordination".
+- Option (c') extracts the auto-creation logic into a shared idempotent
+  routine (same `INSERT ... ON CONFLICT DO NOTHING`) called by both
+  workers and Beat at startup. Beat runs this routine BEFORE
+  reconciliation, so records always exist when needed. The "worker-only-
+  writes" characterization in the draft is actually inaccurate — the API
+  server already writes to `FetcherConfig` via PATCH. The real invariant
+  is "idempotent bootstrap creates with defaults; only PATCH modifies
+  existing records." Option (c') maintains this invariant. Unlike option
+  (c) in its original framing, this does not "break" any separation —
+  it shares an existing routine. This option ensures GET and PATCH
+  endpoints work immediately after Beat startup (no 404 window).
 
 ### OP-6: `due_at` on Reconciliation Overwrite
 
@@ -105,6 +151,403 @@ that becomes a visible contradiction after this draft is applied.
 time limits (only stale run detection provides a safety net). The
 `run_timeout` enforcement documented in `FetcherConfig` implies ALL
 invocations are bounded.
+
+### OP-9: Beat Process Does Not Import Fetcher Modules
+
+**Severity**: Critical (prerequisite for the entire draft)
+
+**Context**: `FETCHER_REGISTRY` is a module-level dictionary
+(`backend/app/services/base_fetcher.py`) populated at **import time** by
+`BaseFetcher.__init_subclass__`. It is NOT populated by any runtime
+registration call — it only gets entries when Python imports the module
+containing a concrete `BaseFetcher` subclass.
+
+The current spec (`cve-fetcher-infrastructure.md:675-681`) explicitly
+requires two processes to import all fetcher modules:
+
+1. **Celery workers**: "Celery workers import all task modules during
+   startup, so the map is complete before any consumer reads it."
+2. **FastAPI API server**: "The FastAPI application MUST also import all
+   fetcher modules at startup (e.g., via an explicit import in
+   `app/main.py` or a startup event)"
+
+**Beat is not mentioned.** The Celery Beat process is a separate OS
+process from both workers and the API server. It loads the Celery app
+configuration and its `autodiscover_tasks()` (if used) imports **task
+modules** (e.g., `app/tasks/fetchers.py` which defines the generic
+`run_fetcher` task), but this does NOT automatically import the
+**fetcher class modules** scattered across domain directories:
+
+- `backend/app/services/tickets/` (CVE/CVSS fetchers)
+- `backend/app/services/packages/` (product/package fetchers)
+- `backend/app/services/identity/` (AD sync)
+- `backend/app/services/platform/` (platform fetchers)
+- `backend/app/services/integrations/` (integration fetchers)
+
+(per `fetcher-infrastructure.md:1280-1287`, Domain Placement)
+
+**Impact**: without these imports, Beat's `FETCHER_REGISTRY` is an empty
+dict `{}`. The reconciliation loop (`for name, cls in
+FETCHER_REGISTRY.items()`) iterates zero times. Step 4 (remove
+deregistered entries) would remove ALL existing redbeat entries (since no
+fetcher name matches an empty registry). The result is **worse than doing
+nothing** — it actively destroys a working schedule.
+
+**This blocks the entire draft**, not just OP-4. Without Beat importing
+fetcher modules, reconciliation cannot function at all.
+
+**Resolution required**: add an explicit requirement that Beat imports
+all fetcher modules at startup, using the same mechanism as worker and
+API server. The mechanism itself is specified in OP-10.
+
+**Spec locations to update**:
+- `fetcher-infrastructure.md`, Registry section (~line 1289): add Beat to
+  the list of processes that depend on the registry
+- `fetcher-infrastructure.md`, Celery Integration section (~line 1340):
+  the corrected paragraph (Step 1a of the Action Plan) should reference
+  the shared import mechanism
+- `cve-fetcher-infrastructure.md:675-681`: extend the existing statement
+  to include Beat alongside workers and the API server
+- The new "Celery Beat Schedule Synchronization" section (Startup
+  Reconciliation, step 1 "Read state"): add an explicit precondition
+  that `FETCHER_REGISTRY` is fully populated before reconciliation begins
+
+### OP-10: No Shared Discovery Mechanism for Fetcher Module Imports
+
+**Severity**: Medium (maintenance fragility across 3+ entrypoints)
+
+**Context**: the spec currently says fetcher modules must be imported by
+workers, the API server, and (per OP-9) Beat. The only guidance for HOW
+is `cve-fetcher-infrastructure.md:678-679`:
+
+> "e.g., via an explicit import in `app/main.py` or a startup event"
+
+This implies each entrypoint independently lists the imports. With 3
+entrypoints (worker, API, Beat) and fetcher classes spread across 5+
+domain directories, there are two failure modes:
+
+1. **Forgotten import**: a new fetcher is added to a domain directory but
+   not imported by one of the entrypoints → the fetcher is invisible to
+   that process (e.g., Beat doesn't schedule it, or the API can't serve
+   its config)
+2. **Stale import**: a fetcher is removed from the codebase but the
+   import line remains in one entrypoint → import error on startup
+
+Both are silent bugs that only manifest at runtime.
+
+**Impact**: not a correctness bug in isolation, but a maintenance hazard
+that grows linearly with the number of fetchers and entrypoints. The
+project already has a per-fetcher manual step (updating the Fetcher
+Registry table in `data-sources.md` — `fetcher-infrastructure.md:1273-
+1276`), so one more manual step is precedented, but 3 places to update
+is fragile.
+
+**Options**:
+
+**(a) Central import module** (explicit, DRY):
+
+A single module (e.g., `backend/app/services/fetcher_discovery.py`)
+contains all fetcher imports:
+
+```python
+# fetcher_discovery.py — single source of truth for fetcher imports.
+# Import this module to populate FETCHER_REGISTRY.
+import app.services.tickets.sync_nvd_cves  # noqa: F401
+import app.services.tickets.sync_redhat_cves  # noqa: F401
+import app.services.packages.detect_ibs_track_releases  # noqa: F401
+# ... one line per fetcher
+```
+
+All entrypoints (worker, API, Beat) do:
+```python
+import app.services.fetcher_discovery  # noqa: F401
+```
+
+- **Adding a fetcher**: 1 line in `fetcher_discovery.py`
+- **Removing a fetcher**: -1 line in `fetcher_discovery.py`
+- **Entrypoints**: never change
+
+Pros: explicit (aligns with `conventions.md` "prefer explicit over
+implicit"), trivial to understand, no edge cases.
+Cons: one manual step per fetcher (but single location).
+
+**(b) Package scan** (implicit, zero-maintenance):
+
+A function scans domain directories at startup:
+
+```python
+def discover_fetchers():
+    """Import all fetcher modules from domain directories."""
+    import pkgutil
+    import importlib
+    domain_packages = [
+        "app.services.tickets",
+        "app.services.packages",
+        "app.services.identity",
+        "app.services.platform",
+        "app.services.integrations",
+    ]
+    for pkg_name in domain_packages:
+        pkg = importlib.import_module(pkg_name)
+        for importer, name, ispkg in pkgutil.walk_packages(
+            pkg.__path__, prefix=pkg.__name__ + "."
+        ):
+            importlib.import_module(name)
+```
+
+- **Adding a fetcher**: create the file (nothing else)
+- **Removing a fetcher**: delete the file (nothing else)
+- **Entrypoints**: never change
+
+Pros: zero per-fetcher maintenance.
+Cons: implicit ("magic"), imports ALL modules in domain directories
+(including non-fetcher helpers, utilities, pure service modules that
+happen to live alongside fetchers), error in any module blocks all
+imports, harder to debug import failures.
+
+**Recommendation noted during analysis**: option (a) was preferred for
+alignment with `conventions.md` ("prefer explicit over implicit") and
+simplicity. The "one import line per fetcher" cost is analogous to the
+already-mandated Fetcher Registry table update in `data-sources.md`.
+
+**Scope note**: this mechanism belongs in the **Registry section** of
+`fetcher-infrastructure.md` (it's a cross-cutting concern for all
+processes, not specific to Beat sync). The Beat sync section references
+it as "Beat calls the shared discovery mechanism." This is a small scope
+extension for the draft but fixes a pre-existing gap (worker + API
+already need this but have no specified mechanism).
+
+**Multi-registry note**: the same module-import mechanism populates
+**two** independent registries:
+
+1. `FETCHER_REGISTRY` (`base_fetcher.py`) — populated by
+   `BaseFetcher.__init_subclass__`
+2. `_CVE_SOURCE_TYPE_MAP` (`base_cve_fetcher.py`) — populated by
+   `BaseCVEFetcher.__init_subclass__`
+   (`cve-fetcher-infrastructure.md:172-190`)
+
+Both are populated as a side effect of importing the same set of fetcher
+class modules. Whichever option is chosen for OP-10, it MUST be
+documented that the discovery mechanism populates both registries (and
+any future import-time registries added to the fetcher hierarchy). The
+`_CVE_SOURCE_TYPE_MAP` is consumed by the API server (sources endpoint,
+refetch endpoint, on-demand fetch loop) and by workers (batch
+`execute()`). Beat does not currently consume it, but the discovery
+mechanism runs the same imports for all processes regardless — both
+registries are populated as a natural consequence.
+
+### OP-11: `run_timeout` Default Not Available as Code Constant
+
+**Severity**: Low (conditional on OP-4 resolution)
+
+**Context**: the `run_timeout` column has a database default of 3600:
+
+> `run_timeout | INTEGER | NOT NULL, DEFAULT 3600`
+> (`fetcher-infrastructure.md:1550`)
+
+And the prose says:
+
+> "The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
+> record is auto-created for a newly registered fetcher."
+> (`fetcher-infrastructure.md:1579-1580`)
+
+However, 3600 is NOT defined as a **class attribute** or **code
+constant** in `BaseFetcher`. It only exists as a DB column default and
+prose documentation.
+
+**Impact**: if OP-4 resolves to option (a) (Beat uses code defaults for
+missing `FetcherConfig` records), Beat needs to compute `time_limit` and
+`soft_time_limit` for the redbeat entry without reading from the DB. It
+needs access to the `run_timeout` default as a Python value.
+
+If OP-4 resolves to option (c') (shared bootstrap ensures records always
+exist), this point is moot — Beat always reads `run_timeout` from the
+DB.
+
+**Resolution** (if needed): define a class-level constant in
+`BaseFetcher`:
+
+```python
+class BaseFetcher:
+    ...
+    default_run_timeout: int = 3600  # seconds
+```
+
+This mirrors the pattern of `default_schedule` and
+`default_request_delay` which are already class attributes. The DB
+column DEFAULT and the auto-creation logic both reference this constant,
+keeping the value in one place.
+
+**Spec locations to update** (if resolved):
+- `fetcher-infrastructure.md`, Abstract Interface section (~line 182):
+  add `default_run_timeout` to the class attribute list
+- `fetcher-infrastructure.md`, FetcherConfig section (~line 1550): note
+  that the DB default mirrors the class constant
+
+### OP-12: No `default_enabled` Class Attribute
+
+**Severity**: Low (YAGNI — no current use case)
+
+**Context**: all `FetcherConfig` records are auto-created with
+`enabled = true` (the DB column default). The spec has no mechanism to
+declare a fetcher that should start **disabled** (e.g., an experimental
+fetcher deployed to production but only activated manually at a chosen
+moment).
+
+The "missing record = enabled" convention is established in two places:
+- `fetcher-operations.md:840-842`: CLI `fetcher list` enabled column
+  defaults to `yes` when no `FetcherConfig` exists
+- DB schema: `enabled BOOLEAN NOT NULL DEFAULT true`
+
+This means the ONLY way to have a fetcher start disabled is:
+1. Deploy the code (auto-creation sets `enabled = true`)
+2. Immediately PATCH `enabled = false` before the first Beat tick fires
+   the task
+
+This is a **race condition** (Beat might fire the task between worker
+auto-creation and the admin's PATCH).
+
+**Impact**: currently no fetcher needs this behavior. This is a
+forward-looking design concern — the current spec does not preclude
+adding the capability later, but both OP-4 options (a) and (c') should
+be aware of this when choosing their resolution:
+
+- **If (a)**: the "missing record → enabled" resolver would need to be
+  extended to check a `default_enabled` class attribute. The change is
+  additive and backward-compatible (existing fetchers that don't declare
+  `default_enabled` inherit `True`).
+- **If (c')**: the shared bootstrap routine would read `default_enabled`
+  and use it in the INSERT statement instead of hardcoding `true`. Same
+  additive change.
+
+**Decision**: defer (YAGNI). Neither option for OP-4 is precluded. If
+the need arises, a `default_enabled: bool = True` class attribute can
+be added following the same pattern as `default_schedule` and
+`default_request_delay`. Note this as a future extension point in the
+spec when resolving OP-4.
+
+### OP-13: Celery Timezone Validation Not Specified for Beat
+
+**Severity**: High (correctness of all scheduled executions depends on
+this)
+
+**Context**: the correctness of the entire Beat schedule
+synchronization rests on the assumption that Beat interprets cron
+expressions in UTC. The spec mandates `CELERY_TIMEZONE = "UTC"` and
+`CELERY_ENABLE_UTC = True`, and assigns **enforcement** exclusively to
+the worker process:
+
+- `configuration.md:48-52`: *"the application MUST validate at Celery
+  **worker** startup that these settings are `UTC` and `true`
+  respectively. If either is overridden... the **worker** MUST refuse
+  to start"*
+- `fetcher-infrastructure.md:1349`: *"The **worker** validates these
+  settings at startup and refuses to start if they are overridden."*
+- `conventions.md:143-146`: *"the **worker** validates them at startup
+  and refuses to start if they are incorrect"*
+
+The draft's "Startup Validation" section (line 847-850) asserts *"Beat
+inherits the same validation (it loads the same Celery app
+configuration)"* — but this is an **assumption**, not a specification.
+Loading the same config does NOT guarantee the validation hook executes.
+
+**Technical detail**: if the timezone validation is implemented as a
+Celery `worker_init` signal handler (the standard pattern for
+worker-specific startup hooks), Beat does **not** emit that signal — it
+emits `beat_init` instead. An implementation following the spec
+literally would validate timezone only in workers, leaving Beat
+unguarded.
+
+**Impact**: if an operator sets `CELERY_TIMEZONE=Europe/Rome`:
+- Workers refuse to start (correct — spec-mandated)
+- Beat starts normally (no validation) and interprets all cron
+  expressions in `Europe/Rome` timezone
+- Every fetcher fires 1-2 hours off from its intended UTC schedule
+- The mismatch is **silent** — no error, no warning, no dashboard
+  indicator. The only symptom is that `last_run` timestamps in the
+  dashboard drift vs. the expected schedule
+
+**Options**:
+
+**(a) Extend the spec to require Beat-specific validation**: Beat MUST
+perform the same `CELERY_TIMEZONE`/`CELERY_ENABLE_UTC` validation at
+startup (using the `beat_init` signal or equivalent Beat startup hook)
+and refuse to start if the values are incorrect. This is the natural
+choice — minimal spec change, closes the gap definitively.
+
+**(b) Declare validation as an app-level contract**: reframe the spec
+to say "any process loading the Celery app MUST validate these
+settings", removing the "worker" qualifier. This covers Beat, workers,
+and any future Celery-based process in one statement.
+
+**Recommendation noted during analysis**: option (b) is more robust
+long-term (covers the IBS RabbitMQ consumer too, if it shares the
+Celery app). Option (a) is narrower but sufficient for this draft.
+
+**Spec locations to update** (once resolved):
+- `configuration.md:48-52`: change "worker startup" to "Celery process
+  startup" (or list worker + Beat explicitly)
+- `fetcher-infrastructure.md:1349`: same adjustment
+- `conventions.md:143-146`: same adjustment
+- Draft section "Startup Validation" (line 847-850): replace the
+  assumption with a normative requirement
+- `deployment.md:250-253`: already says "all containers MUST operate
+  with UTC" — update enforcement statement to match
+
+### OP-14: Beat Behavior When `FetcherConfig` Table Does Not Exist
+
+**Severity**: Low (operational edge case — deployment ordering will be
+specified before implementation)
+
+**Context**: OP-1 (resolved) specifies that Beat fail-fast when
+PostgreSQL is **unreachable** (`OperationalError` / connection refused).
+But there is a distinct failure mode: PostgreSQL is reachable, the
+connection succeeds, but the `FetcherConfig` table **does not exist**
+because the Alembic migration job has not yet run.
+
+At the database driver level, this produces a different error class
+(e.g., `ProgrammingError: relation "fetcher_config" does not exist`)
+than a connection failure. The draft's reconciliation step 1 ("Read
+state from PostgreSQL: query all `FetcherConfig` records") does not
+specify which error classes trigger the fail-fast behavior.
+
+**Impact**: in a correctly-ordered deployment (migrations run before
+processes start), this situation never occurs. `deployment.md:287-306`
+already mandates "Database migrations are a separate operational step"
+that precedes API/worker/Beat startup. However:
+
+- In development environments (e.g., `docker-compose up` where all
+  services start simultaneously), the race is possible
+- The spec should be explicit about error handling regardless of
+  whether the happy path avoids the scenario
+- Since no code exists yet, the implementation will follow whatever
+  the spec says — better to specify it now than discover ambiguity
+  during implementation
+
+**Options**:
+
+**(a) Subsume under OP-1's fail-fast**: any PostgreSQL error during
+reconciliation step 1 (connection error, query error, schema missing)
+triggers the same fail-fast behavior. The CRITICAL log message format
+accommodates any `{error}` string. No spec change needed — just clarify
+that "PostgreSQL unreachable" in the draft text means "query cannot
+complete successfully" (any DB-level error), not narrowly "connection
+refused".
+
+**(b) Distinguish the error classes**: fail-fast on connection errors
+(transient, orchestrator restart will help), but emit a distinct message
+for schema errors (persistent until migration runs — operator action
+needed, not just restart):
+`"CRITICAL: Celery Beat startup failed — FetcherConfig table does not
+exist. Run Alembic migrations before starting Beat: {error}"`
+
+**Recommendation noted during analysis**: option (a) is sufficient. The
+existing fail-fast text ("cannot read FetcherConfig from PostgreSQL:
+{error}") naturally covers both cases — the `{error}` will contain the
+specific exception message. The operator will see "relation does not
+exist" and understand that migrations need to run. Option (b) adds
+clarity but also adds a code branch for a scenario that correct
+deployment ordering eliminates.
 
 ---
 
