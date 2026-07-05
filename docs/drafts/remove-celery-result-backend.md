@@ -209,13 +209,10 @@ All application-level Redis operations (session caching, login lockout,
 deduplication, distributed locking) use `REDIS_URL`. The Celery broker
 is configured separately and managed by the Celery framework —
 application code never accesses this database directly. Sentinel does
-not configure a Celery result backend; task outcomes are tracked in
-PostgreSQL (`FetcherRun`) and the Celery app sets
-`task_ignore_result = True` (see
-`docs/features/platform/fetcher-infrastructure.md`). Different database
-numbers (`/0`, `/1`) ensure namespace isolation within a single Redis
-instance; in production, these URLs may point to separate instances
-without code changes.
+not configure a Celery result backend (see Celery Worker Configuration
+below). Different database numbers (`/0`, `/1`) ensure namespace
+isolation within a single Redis instance; in production, these URLs may
+point to separate instances without code changes.
 ```
 
 **3c.** After line 52 (end of "Startup validation" paragraph), insert:
