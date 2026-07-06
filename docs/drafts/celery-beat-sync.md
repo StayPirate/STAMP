@@ -793,7 +793,7 @@ This happens **before** Beat begins firing any tasks.
 **Preconditions** (satisfied before reconciliation begins):
 - `FETCHER_REGISTRY` is populated (via `import app.services.fetcher_discovery`)
 - `FetcherConfig` records exist for all registered fetchers (via
-  `bootstrap_fetcher_configs()` — see "Who Writes Where" above)
+  `bootstrap_fetcher_configs()` — see "Who Writes Where" below)
 
 Steps:
 
@@ -893,19 +893,22 @@ The PATCH endpoint handler:
 1. Updates `FetcherConfig` in PostgreSQL (within a transaction)
 2. Commits the PostgreSQL transaction
 3. Propagates to redbeat (if any propagation-requiring field changed):
-   - If `schedule_override` changed: update the redbeat entry's schedule
-     with the new effective cron expression
-   - If `run_timeout` changed: update the redbeat entry's Options with
-     the new `time_limit` and `soft_time_limit` values (or clear Options
-     if the new value is 0)
-   - If `enabled` changed to `false`: delete the redbeat entry
+   - If `enabled` changed to `false`: delete the redbeat entry. Any
+     other field changes in the same PATCH are moot (a disabled fetcher
+     has no entry) — skip remaining propagation steps
    - If `enabled` changed to `true`: create the redbeat entry with the
-     effective schedule and time limit options
+     effective schedule and time limit options (incorporating any
+     `schedule_override` or `run_timeout` changes from the same PATCH)
+   - If `schedule_override` changed (without `enabled` change): update
+     the redbeat entry's schedule with the new effective cron expression
+   - If `run_timeout` changed (without `enabled` change): update the
+     redbeat entry's Options with the new `time_limit` and
+     `soft_time_limit` values (or clear Options if the new value is 0)
    - Uses the `redbeat.RedBeatSchedulerEntry` API to write/delete the
      entry
-   - If multiple propagation-requiring fields changed in the same PATCH,
-     a single redbeat write reflects all changes atomically (one
-     entry upsert)
+   - If multiple non-enable propagation-requiring fields changed in the
+     same PATCH, a single redbeat write reflects all changes atomically
+     (one entry upsert)
 
 The PostgreSQL commit happens BEFORE the redbeat write. This ensures that
 even if the redbeat write fails, the source of truth (PostgreSQL) is
