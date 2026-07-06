@@ -468,7 +468,7 @@ def run_catch_up(fetcher_name: str, ticket_id: str) -> None:
                     except Exception:
                         logger.warning("Failed to close HTTP client for %s", fetcher_name)
                     fetcher._http_client = None
-    async_run(_run())
+    asyncio.run(_run())
 ```
 
 The `finally` block implements the HTTP client ownership rule (see
