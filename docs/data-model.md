@@ -1402,8 +1402,9 @@ timeline queries at any date range efficiently.
 
 ### FetcherConfig
 
-Per-fetcher configuration managed by admins. Auto-created on worker
-startup if not present.
+Per-fetcher configuration managed by admins. Auto-created at process
+startup by `bootstrap_fetcher_configs()` if not present (runs in worker,
+Beat, and API server).
 
 | Column            | Type        | Constraints        | Description                        |
 |-------------------|-------------|--------------------|------------------------------------|

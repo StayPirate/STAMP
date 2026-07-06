@@ -142,9 +142,9 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
   schedules are expressed in UTC. The Celery application MUST be
   configured with `timezone = "UTC"` and `enable_utc = True` (the
   Celery 4+ defaults). These settings MUST NOT be overridden in any
-  environment — the worker validates them at startup and refuses to
-  start if they are incorrect (see `docs/configuration.md`, Celery
-  Worker Configuration)
+  environment — the Celery app factory validates them at module import
+  time and refuses to start any process if they are incorrect (see
+  `docs/configuration.md`, Celery Worker Configuration)
 - **API responses**: all datetime values are serialized in UTC with the
   `Z` suffix (e.g., `2025-03-15T10:30:00Z`)
 - **API inputs**: datetime filter parameters (e.g., `from_date`,
@@ -357,6 +357,27 @@ canonical application of this rule.
   - Valid username → returns same expected result
   - Non-existent UUID → 404
   - Non-existent username → 404
+
+### Redis Key Conventions
+
+Redis keys in Sentinel fall into two categories with different
+documentation rules:
+
+**Application-owned keys**: keys whose format is defined by Sentinel
+(e.g., `login_attempts:{username}`, `session_liveness:{session_id}`,
+`fetch_pending:{cve_id}:{source}`). These are accessed via the Redis
+client directly. The spec that owns the key MUST document the exact
+format, TTL, and value contract — the format IS the specification.
+
+**Library-managed keys**: keys whose format is defined by a third-party
+library (e.g., `celery-redbeat` schedule entries). Sentinel code MUST
+interact with these exclusively via the library's public API — never by
+constructing Redis keys directly. Specifications MUST describe behavior
+in terms of the library API (e.g., "create an entry via
+`RedBeatSchedulerEntry`"), not in terms of internal key formats (e.g.,
+"write to `redbeat:{name}`"). Internal key patterns may be documented
+as informational notes for operational debugging, clearly marked as
+library-internal.
 
 ## TypeScript (Frontend)
 

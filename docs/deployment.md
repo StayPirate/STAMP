@@ -99,10 +99,12 @@ cd backend && alembic upgrade head
 cd backend && uvicorn app.main:app --reload --port 8000
 
 # Start Celery worker (separate terminal)
-cd backend && celery -A app.tasks.celery_app worker --loglevel=info
+cd backend && celery -A app.celery_app worker --loglevel=info
 
 # Start Celery Beat scheduler (separate terminal)
-cd backend && celery -A app.tasks.celery_app beat --loglevel=info
+cd backend && celery -A app.celery_app beat --loglevel=info
+# Note: the redbeat scheduler class is configured in the Celery app
+# settings (beat_scheduler). No --scheduler CLI flag is needed.
 
 # Start the frontend dev server (separate terminal)
 cd frontend && npm install && npm run dev
@@ -248,8 +250,10 @@ All Sentinel containers (API server, Celery worker, Celery Beat) MUST
 operate with UTC as the system timezone. This is enforced at two levels:
 
 1. **Celery configuration**: the application sets `timezone = "UTC"` and
-   `enable_utc = True` in the Celery config. The worker validates these
-   at startup and refuses to start if overridden (see
+   `enable_utc = True` in the Celery config. The Celery app factory
+   validates these at module import time and raises a `RuntimeError` if
+   overridden — this prevents any Celery-based process (worker, Beat,
+   consumer) from starting with incorrect timezone configuration (see
    `docs/configuration.md`, Celery Worker Configuration)
 
 2. **Container timezone**: set `TZ=UTC` in the container environment (or
@@ -397,3 +401,10 @@ timeouts (2s per dependency, checks concurrent; 5s provides margin for network o
 2. Check that Celery Beat is running (scheduler)
 3. Check that at least one Celery worker is running
 4. Check worker logs for task exceptions
+5. Check Beat logs for the reconciliation summary message ("Beat
+   schedule reconciliation complete: ..."). If absent, reconciliation
+   failed — check for PostgreSQL connectivity errors above it
+6. If Beat exits repeatedly with "cannot read FetcherConfig from
+   PostgreSQL", ensure the database is reachable before Beat can start
+   successfully (Beat fails fast when PostgreSQL is unavailable at
+   startup)

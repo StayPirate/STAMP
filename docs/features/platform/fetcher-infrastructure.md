@@ -6,10 +6,11 @@ This document defines the mandatory infrastructure that all data fetchers
 in Sentinel must use. Fetchers are background tasks that periodically
 pull data from external sources (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS)
 and update the local database. It covers the generic `BaseFetcher`
-abstract base class: the fetcher registry, Celery integration,
-concurrency control, the per-ticket `catch_up()` mechanism, custom
-settings schema, error message sanitization, BaseFetcher HTTP client
-integration, data model, and data retention.
+abstract base class: the fetcher registry, fetcher discovery, Celery
+integration, Beat schedule synchronization, concurrency control, the
+per-ticket `catch_up()` mechanism, custom settings schema, error message
+sanitization, BaseFetcher HTTP client integration, data model, and data
+retention.
 
 The fetcher infrastructure is documented across several complementary
 specifications — see the Related Specifications section below for the
@@ -33,7 +34,7 @@ fetcher infrastructure is documented across five complementary specs:
 
 | Spec | Content |
 |---|---|
-| **This document** | BaseFetcher base class, naming, error sanitization, custom settings, catch_up mechanism (generic), BaseFetcher HTTP client integration (lazy property, overrides, lifecycle), registry, Celery, concurrency, stale run detection, data model, retention, deregistered lifecycle, doc requirements |
+| **This document** | BaseFetcher base class, naming, error sanitization, custom settings, catch_up mechanism (generic), BaseFetcher HTTP client integration (lazy property, overrides, lifecycle), registry, fetcher discovery, Celery, Beat schedule synchronization, concurrency, stale run detection, data model, retention, deregistered lifecycle, doc requirements |
 | `cve-fetcher-infrastructure.md` | BaseCVEFetcher class, on-demand fetch_single, CVE source type identity, CVE catch_up default, CVE conventions |
 | `git-fetcher-infrastructure.md` | BaseGitFetcher class, git_operations.py, clone/delta infrastructure |
 | `networking.md` | Shared HTTP client factory, transport retry, TLS trust store (cross-cutting) |
@@ -1272,8 +1273,16 @@ incremental fetch strategy or the NVD Source API caching mechanism.
 
 ### Registry Maintenance
 
-When defining a new fetcher, the Fetcher Registry table in
-`docs/data-sources.md` MUST be updated with a row for the new fetcher.
+When defining a new fetcher:
+
+1. The Fetcher Registry table in `docs/data-sources.md` MUST be updated
+   with a row for the new fetcher.
+2. An import line for the fetcher's module MUST be added to
+   `backend/app/services/fetcher_discovery.py` (see "Fetcher Discovery
+   (Module Import)" below).
+
+When removing a fetcher, both entries (registry table row and discovery
+module import line) MUST be removed.
 
 ### Domain Placement
 
@@ -1310,6 +1319,73 @@ A fetcher class that is imported but should NOT be registered (e.g., an
 intermediate abstract subclass) can set `abstract = True` as a class
 attribute to opt out of registration.
 
+### Fetcher Discovery (Module Import)
+
+`FETCHER_REGISTRY` and `_CVE_SOURCE_TYPE_MAP` are module-level
+dictionaries populated at **import time** by
+`BaseFetcher.__init_subclass__` and `BaseCVEFetcher.__init_subclass__`
+respectively. A registry entry exists only after the module defining the
+concrete fetcher class has been imported **in the current process**.
+Module-level state is per-process — it is NOT shared across the worker,
+API server, and Beat processes.
+
+Every process that consumes either registry MUST import all fetcher
+modules at startup:
+
+- **Celery workers**: instantiate and execute fetchers
+- **FastAPI API server**: list fetchers, serve config, validate
+  `Settings` schemas, run on-demand refetch
+- **Celery Beat**: build the redbeat schedule from
+  `default_schedule`/`FetcherConfig` (see "Celery Beat Schedule
+  Synchronization")
+
+To guarantee all three processes import an identical set of modules with
+a single maintenance point, imports are centralized in a **discovery
+module**:
+
+```python
+# backend/app/services/fetcher_discovery.py
+# Single source of truth for fetcher module imports.
+# Importing this module populates FETCHER_REGISTRY and
+# _CVE_SOURCE_TYPE_MAP.
+import app.services.tickets.sync_nvd_cves  # noqa: F401
+import app.services.packages.sync_smelt_products  # noqa: F401
+# ... one line per concrete fetcher
+```
+
+Each entrypoint imports the discovery module once at startup:
+
+```python
+import app.services.fetcher_discovery  # noqa: F401
+```
+
+Importing `fetcher_discovery` triggers all fetcher module imports as a
+side effect, populating **both** registries.
+
+**Registration is not persistence**: the registries map fetcher names to
+Python class objects, which cannot be serialized to Redis or PostgreSQL.
+A process that uses a fetcher (instantiate, execute, read
+`default_schedule`, validate `Settings`) MUST have the module imported.
+Persisting fetcher metadata would not remove this requirement and would
+duplicate code-defined defaults. Mutable per-fetcher state lives in
+`FetcherConfig` (PostgreSQL); code identity lives in the registries
+(in-process).
+
+**Adding a fetcher**: add one import line to `fetcher_discovery.py`.
+**Removing a fetcher**: delete its import line. Entrypoints never change.
+
+**Drift protection**: a test MUST verify that `fetcher_discovery.py`
+imports every concrete `BaseFetcher` subclass present in the domain
+directories. The test scans the domain packages (`app.services.tickets`,
+`app.services.packages`, `app.services.identity`,
+`app.services.platform`, `app.services.integrations`) using
+`pkgutil.walk_packages`, collects every concrete `BaseFetcher` subclass
+found, and asserts each is present in `FETCHER_REGISTRY` after importing
+`fetcher_discovery`. If a fetcher module exists without a corresponding
+import line, the test fails naming the missing fetcher. The package scan
+is confined to the test suite — production code uses only the explicit
+imports.
+
 ## Celery Integration
 
 Each registered fetcher corresponds to a Celery task in
@@ -1337,18 +1413,20 @@ def run_fetcher(self, fetcher_name: str, triggered_by: str = "schedule",
     ...
 ```
 
-The Celery Beat schedule is built dynamically from the registry at worker
+The Celery Beat schedule is built dynamically from the registry at Beat
 startup, using each fetcher's effective schedule (config override or
 default). When an admin modifies a fetcher's schedule via the API, the
-Beat schedule MUST be updated accordingly (using `celery-redbeat` or
-equivalent dynamic scheduler).
+Beat schedule MUST be updated accordingly. See "Celery Beat Schedule
+Synchronization" below for the full mechanism.
 
 **Timezone enforcement**: the Celery application is configured with
 `timezone = "UTC"` and `enable_utc = True`. All cron expressions in
-`default_schedule` and `FetcherConfig.schedule` are interpreted as UTC.
-The worker validates these settings at startup and refuses to start if
-they are overridden. See `docs/conventions.md` (Timestamps & Timezones)
-and `docs/configuration.md` (Celery Worker Configuration).
+`default_schedule` and `FetcherConfig.schedule_override` are interpreted
+as UTC. The Celery app factory validates these settings at module import
+time and raises a `RuntimeError` if they are overridden — this prevents
+any Celery-based process (worker, Beat, consumer) from starting with
+incorrect timezone configuration. See `docs/conventions.md` (Timestamps
+& Timezones) and `docs/configuration.md` (Celery Worker Configuration).
 
 **Result handling**: the Celery application is configured with
 `task_ignore_result = True` and **no result backend**. Task return
@@ -1358,6 +1436,577 @@ persisted in the `FetcherRun` table, the authoritative source for
 task outcomes. `celery-redbeat` stores its dynamic schedule under the
 broker URL (`redbeat:` key prefix) and has no dependency on a result
 backend.
+
+## Celery Beat Schedule Synchronization
+
+PostgreSQL (`FetcherConfig`) is the source of truth for fetcher schedules.
+Redis (redbeat) is the execution layer — it holds the entries that Celery
+Beat actually fires. This section specifies the synchronization mechanism
+that ensures redbeat always reflects the state defined in PostgreSQL.
+
+### Architecture: PostgreSQL-master, Redbeat-slave
+
+The synchronization follows a strict one-directional pattern:
+
+```
+PostgreSQL (FetcherConfig + FETCHER_REGISTRY)
+         │
+         ▼ writes (never reads from redbeat to update PostgreSQL)
+Redis (redbeat entries)
+```
+
+- **PostgreSQL** owns the schedule definition:
+  `FetcherConfig.schedule_override` (if set) or
+  `BaseFetcher.default_schedule` (fallback from the code registry)
+- **Redbeat** is a derived cache that can be reconstructed entirely from
+  PostgreSQL + the in-memory `FETCHER_REGISTRY`
+- The system MUST never read redbeat entries to determine what the
+  "correct" schedule is — only PostgreSQL is authoritative
+
+### Redbeat Configuration
+
+Redbeat uses the following configuration:
+
+| Setting | Value | Source |
+|---------|-------|--------|
+| `redbeat_redis_url` | Not configured explicitly | Defaults to `CELERY_BROKER_URL` (redbeat's standard behavior). A separate variable is unnecessary because Sentinel already configures the Celery broker as Redis. |
+| `redbeat_key_prefix` | `redbeat:` | Default. All redbeat entries are stored under this prefix. |
+| Scheduler class | `redbeat.RedBeatScheduler` | Configured in the Celery app settings (`beat_scheduler`), not via CLI flag. |
+
+No separate environment variable for `redbeat_redis_url` is required or
+supported. If a deployment uses a different Redis instance for the broker
+vs. application cache (split deployment per `docs/configuration.md`),
+redbeat follows the broker instance — which is correct, since redbeat is
+part of the Celery subsystem.
+
+**Internal key patterns (informational)**: redbeat stores entry data
+under `{key_prefix}{entry_name}` keys and internal structures (schedule
+index, distributed lock) under `{key_prefix}:{structure_name}` keys
+(e.g., `redbeat::schedule`, `redbeat::lock`). These patterns are
+library-internal — Sentinel code MUST interact with entries exclusively
+via the `RedBeatSchedulerEntry` Python API, never by constructing Redis
+keys directly. The patterns are documented here only for operational
+debugging (inspecting Redis with `redis-cli`).
+
+### Redbeat Entry Structure
+
+Each registered and enabled fetcher has one redbeat entry:
+
+| Property | Value |
+|----------|-------|
+| Entry identifier | `fetcher_name` (e.g., `sync_nvd_cves`) — entries are created and accessed via the `RedBeatSchedulerEntry` API using the fetcher name. The underlying Redis key format is managed by the library. |
+| Task | `run_fetcher` |
+| Schedule | Cron from effective schedule (override or default) |
+| Args | `[]` |
+| Kwargs | `{"fetcher_name": "<name>", "triggered_by": "schedule"}` |
+| Options | See "Options field" below |
+| Enabled | `true` (entry only exists when fetcher is enabled) |
+
+**Options field**: the Options dict passed to `apply_async()` is built
+from `FetcherConfig` and fetcher class attributes:
+
+| Key | Value | Condition |
+|-----|-------|-----------|
+| `time_limit` | `run_timeout` | `run_timeout > 0` |
+| `soft_time_limit` | `max(1, floor(run_timeout * 0.95))` | `run_timeout > 0` |
+| `queue` | fetcher's `queue` class attribute | `queue is not None` |
+
+If `run_timeout = 0` AND `queue is None`, Options is `{}`.
+If `run_timeout = 0` but `queue` is set, Options is `{"queue": "<queue>"}`.
+The `queue` attribute is a code-defined routing decision (class
+attribute, not configurable via `FetcherConfig`) — it does not require
+redbeat propagation on PATCH.
+
+### Time Limits and Queue Routing: Stored in Redbeat Entry Options
+
+Celery's `time_limit`, `soft_time_limit`, and `queue` are enforced by
+the worker at task dispatch time — they cannot be applied from within
+the task after execution begins. Since `run_fetcher` is a generic task
+shared by all fetchers (each with a potentially different `run_timeout`
+and optional queue), these options MUST be passed per-invocation via
+`apply_async()` options.
+
+When Beat fires a scheduled task, it uses the `options` stored in the
+redbeat entry. Therefore:
+
+- If `FetcherConfig.run_timeout > 0`: the redbeat entry's Options
+  include `time_limit` and `soft_time_limit` (see Options field table
+  above). Beat passes these to `apply_async()`, and the worker enforces
+  them.
+- If `FetcherConfig.run_timeout = 0`: no time limits are included. The
+  task runs without a time ceiling.
+- If the fetcher class defines `queue` (non-None): the Options include
+  `"queue": "<queue>"`. Beat passes this to `apply_async()`, routing the
+  task to the correct worker pool.
+
+This means that a PATCH to `run_timeout` requires a redbeat entry update
+(see "Which Changes Require Redbeat Propagation" below). The change takes
+effect on the next scheduled execution after the entry is updated. The
+`queue` attribute is code-defined (class attribute) and does not change
+via PATCH — it is set once at reconciliation time and remains stable.
+
+**Soft time limit formula**: `max(1, floor(run_timeout * 0.95))` — same
+formula defined in the `FetcherConfig` section (prevents Celery from
+interpreting `soft_time_limit = 0` as "disabled" for very small
+`run_timeout` values).
+
+### Startup Reconciliation
+
+When Celery Beat starts (or restarts after a crash), it performs a full
+reconciliation of the redbeat schedule against the current system state.
+This happens **before** Beat begins firing any tasks.
+
+#### Startup Sequence
+
+**Preconditions** (satisfied before reconciliation begins):
+- `FETCHER_REGISTRY` is populated (via `import app.services.fetcher_discovery`)
+- `FetcherConfig` records exist for all registered fetchers (via
+  `bootstrap_fetcher_configs()` — see "Who Writes Where" below)
+- Every fetcher in `FETCHER_REGISTRY` has a valid, non-None
+  `default_schedule` (5-field cron expression) — this is guaranteed by
+  the `BaseFetcher` abstract interface contract
+  (`fetcher-infrastructure.md`, Abstract Interface)
+
+Steps:
+
+1. **Read state from PostgreSQL**: query all `FetcherConfig` records.
+   For each registered fetcher, compute the effective schedule
+   (`schedule_override` if set, else `default_schedule` from the class
+   attribute in `FETCHER_REGISTRY`).
+
+2. **Write entries for enabled registered fetchers**: for each fetcher
+   that is (a) present in `FETCHER_REGISTRY` AND (b) has `enabled = true`
+   in `FetcherConfig`:
+   - Create or unconditionally overwrite the redbeat entry with the
+     computed effective schedule and time limit options (derived from
+     `run_timeout` per the formula in "Time Limits" above)
+   - This is an idempotent upsert — existing entries are updated, missing
+     entries are created
+   - The overwrite computes `due_at` from the cron schedule relative to
+     the current time. Runs missed during Beat downtime are not
+     retroactively triggered — data recovery is handled at the
+     application level by each fetcher's `catch_up()` mechanism
+   - If `schedule_override` cannot be parsed as a valid 5-field cron
+     expression, the parsing exception propagates uncaught and prevents
+     Beat from completing startup (same fail-fast semantics as a
+     PostgreSQL failure). This can only occur if `schedule_override` is
+     corrupted via direct database manipulation — the PATCH endpoint
+     validates cron syntax before persisting
+
+3. **Remove entries for disabled fetchers**: for each fetcher that is
+   present in `FETCHER_REGISTRY` but has `enabled = false`:
+   - Delete the redbeat entry if it exists
+   - No-op if no entry exists
+
+4. **Remove entries for deregistered fetchers**: enumerate all scheduled
+   entries via the redbeat scheduler API. For each entry whose
+   `fetcher_name` (extracted from the entry's kwargs) is NOT present in
+   `FETCHER_REGISTRY`:
+   - Delete the entry
+   - Log at INFO level: `"Removed redbeat entry for deregistered fetcher
+     '%s'", fetcher_name`
+
+   **Assumption**: this step assumes that all entries in the redbeat
+   schedule are fetcher entries (created by this reconciliation or by
+   runtime propagation). If Sentinel introduces non-fetcher periodic
+   tasks managed via redbeat in the future, this step must be revised to
+   avoid interference with those entries.
+
+5. **Log reconciliation summary**: after all entries are processed, log
+   at INFO level:
+   `"Beat schedule reconciliation complete: %d entries written, %d
+   disabled removed, %d deregistered removed", written, disabled_removed,
+   deregistered_removed`
+
+6. **Begin normal Beat operation**: after reconciliation completes, Beat
+   begins its normal tick loop (firing tasks per their schedules)
+
+#### Startup Failure: PostgreSQL Unreachable
+
+If PostgreSQL is unreachable during startup reconciliation:
+
+- Beat MUST NOT start with stale redbeat entries. Using outdated schedules
+  is dangerous: a disabled fetcher might still have an entry from before
+  the disable, or a schedule change might not be reflected.
+- Beat logs a CRITICAL error:
+  `"CRITICAL: Celery Beat startup failed — cannot read FetcherConfig from
+  PostgreSQL: {error}. Redbeat schedule not reconciled. Beat will not
+  start."`
+- Beat exits with a non-zero exit code
+- The orchestrator (Docker/Kubernetes) will restart Beat according to its
+  restart policy. On the next attempt, if PostgreSQL is reachable,
+  reconciliation succeeds normally.
+
+**Rationale**: Beat is a singleton process. If it starts with stale data,
+there is no fallback mechanism to correct the schedule until the next
+restart. Failing fast ensures that the system is either correct or stopped
+— never silently wrong.
+
+**Error classes covered**: this fail-fast applies to any database-level
+error during step 1: connection failures, authentication errors, missing
+schema (migrations not yet applied), or query errors. The `{error}`
+placeholder contains the specific exception message for operator
+diagnosis.
+
+#### Startup Failure: Redis Error During Reconciliation
+
+If Redis becomes unreachable or returns an error during steps 2–4
+(after PostgreSQL was read successfully in step 1), the reconciliation
+is **incomplete** — some entries may have been written/deleted while
+others remain stale. A partially-reconciled schedule is dangerous:
+disabled fetchers might still have entries, deregistered fetchers might
+still fire.
+
+To prevent this, the entire reconciliation procedure (steps 2–4) MUST
+be wrapped in error handling with **fail-on-first-error** semantics: if
+any individual Redis write or delete operation fails, reconciliation
+aborts immediately without attempting remaining operations. Behavior:
+
+- Beat logs a CRITICAL error:
+  `"CRITICAL: Celery Beat reconciliation failed — Redis error during
+  schedule sync: {error}. Partial reconciliation may have occurred.
+  Beat will not start."`
+- Beat exits with a non-zero exit code
+- The orchestrator restarts Beat. On the next attempt, the full
+  reconciliation runs from scratch (step 2 unconditionally overwrites,
+  so partial state from the failed attempt is corrected)
+
+**Rationale**: this is the same fail-fast philosophy as the PostgreSQL
+failure case. A partially-reconciled schedule is worse than no schedule
+(disabled fetchers firing, deregistered fetchers consuming resources).
+The unconditional-overwrite semantics of step 2 ensure that a
+subsequent successful reconciliation always produces a correct state,
+regardless of what was left behind by a failed attempt.
+
+#### Startup: Redis (redbeat) Unreachable
+
+This is equivalent to Beat being unable to start at all — Beat requires
+Redis for its core operation (storing schedule state). Celery Beat's own
+startup logic handles this: if the broker is unreachable, Beat cannot
+initialize the scheduler and exits with an error. No special handling is
+needed beyond Celery's built-in behavior.
+
+### Runtime Propagation
+
+When an admin modifies a fetcher's configuration via
+`PATCH /api/v1/fetchers/{name}/config`, changes that affect the Beat
+schedule are propagated to redbeat **synchronously** within the same HTTP
+request.
+
+#### Which Changes Require Redbeat Propagation
+
+| Change | Propagation |
+|--------|-------------|
+| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron |
+| `enabled` changed to `false` | Remove the redbeat entry |
+| `enabled` changed to `true` | Create the redbeat entry with effective schedule and time limit options |
+| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`). If new value is 0, remove time limit keys (Options retains `queue` if present). |
+| `request_delay` changed | No propagation needed (read from DB at execution time) |
+| `custom_settings` changed | No propagation needed (read from DB at execution time) |
+
+#### Propagation Mechanism
+
+The PATCH endpoint handler:
+
+1. Updates `FetcherConfig` in PostgreSQL (within a transaction)
+2. Commits the PostgreSQL transaction
+3. Propagates to redbeat (if any propagation-requiring field changed):
+   - If `enabled` changed to `false`: delete the redbeat entry. Any
+     other field changes in the same PATCH are moot (a disabled fetcher
+     has no entry) — skip remaining propagation steps
+   - If `enabled` changed to `true`: create the redbeat entry with the
+     effective schedule and time limit options (incorporating any
+     `schedule_override` or `run_timeout` changes from the same PATCH)
+   - If `schedule_override` changed (without `enabled` change): update
+     the redbeat entry's schedule with the new effective cron expression
+   - If `run_timeout` changed (without `enabled` change): update the
+     redbeat entry's Options with the new `time_limit` and
+     `soft_time_limit` values (or clear Options if the new value is 0)
+   - Uses the `redbeat.RedBeatSchedulerEntry` API to write/delete the
+     entry
+   - If multiple non-enable propagation-requiring fields changed in the
+     same PATCH, a single redbeat write reflects all changes atomically
+     (one entry upsert)
+   - **Upsert semantics**: all redbeat writes (create and update cases)
+     use `RedBeatSchedulerEntry.save()`, which has create-if-missing
+     semantics. If the entry does not yet exist in Redis (e.g., Beat has
+     not restarted since a new fetcher was deployed), the PATCH
+     propagation creates it. This avoids a gap where a PATCH succeeds in
+     PostgreSQL but has no effect on scheduling because Beat hasn't
+     reconciled yet
+
+The PostgreSQL commit happens BEFORE the redbeat write. This ensures that
+even if the redbeat write fails, the source of truth (PostgreSQL) is
+correct, and the system self-heals at the next Beat restart.
+
+#### Propagation Failure: Redis Unreachable
+
+If the redbeat write fails (Redis unreachable, timeout, or write error):
+
+1. The PostgreSQL change is ALREADY committed (the source of truth is
+   updated)
+2. The PATCH endpoint returns **200 OK** to the caller (the configuration
+   change was saved successfully)
+3. A WARNING-level log is emitted:
+   `"WARNING: FetcherConfig for '%s' updated in PostgreSQL but redbeat
+   propagation failed: %s. Schedule will be corrected at next Beat
+   restart.", fetcher_name, error`
+4. **No retry mechanism** — the reconciliation at next Beat startup will
+   correct the redbeat state
+
+**Rationale**: the alternative (rolling back the PostgreSQL change on
+Redis failure) would make the configuration system fragile — a brief
+Redis blip would prevent all fetcher configuration changes. The eventual
+consistency model is safe because:
+
+- If a schedule change failed to propagate: the fetcher runs on the old
+  schedule until Beat restarts. This is a minor timing deviation, not
+  data corruption.
+- If a `run_timeout` change failed to propagate: the fetcher runs with
+  the old time limits until Beat restarts. If the new limit is shorter
+  (admin reduced it), the old limit is still a valid ceiling. If the new
+  limit is longer (admin increased it), the task might time out
+  prematurely once — recoverable on the next scheduled run after Beat
+  restart.
+- If an enable→disable failed to propagate: the fetcher's `run()` method
+  checks `FetcherConfig.enabled` at execution time. Even if Beat fires
+  the task, `run()` skips it (the enabled check is the safety net
+  documented in the "Enabled check" section). The next Beat restart
+  removes the entry.
+- If a disable→enable failed to propagate: the fetcher simply doesn't
+  run until Beat restarts. No data corruption.
+
+#### Enable/Disable: Entry Lifecycle
+
+| Action | Effect on redbeat |
+|--------|-------------------|
+| `enabled` → `false` | **Remove** the redbeat entry entirely. This prevents Beat from firing the task at all (no log noise, no wasted task dispatch). The `enabled` check in `BaseFetcher.run()` is a safety net for the race window between disable and an already-enqueued task. |
+| `enabled` → `true` | **Create** a new redbeat entry with the effective schedule. The entry is immediately active on the next Beat tick. |
+| Fetcher disabled at startup | Entry is NOT created during reconciliation (step 3 removes it if it exists from a previous state) |
+
+### `next_run_at` Calculation
+
+The `next_run_at` field in the `GET /api/v1/fetchers` response is
+calculated by the API endpoint at request time:
+
+1. For each registered and enabled fetcher: read the redbeat entry's
+   `due_at` attribute (the timestamp of the next scheduled execution,
+   maintained by redbeat automatically)
+2. Access pattern: the API endpoint reads the redbeat entry by fetcher
+   name via the `RedBeatSchedulerEntry` API. This is an O(1) read per
+   fetcher — no full schedule scan.
+3. If the entry does not exist in Redis (Beat not started, Redis flushed,
+   or entry lost): `next_run_at = null`
+4. If the fetcher is disabled: `next_run_at = null` (no entry exists —
+   see "Enable/Disable: Entry Lifecycle")
+5. If the fetcher is deregistered: `next_run_at = null` (no entry exists)
+
+**Disambiguation**: both "Beat not started" and "fetcher disabled" produce
+`null`. This is intentional — both cases mean "this fetcher will not run
+on a schedule." The API consumer does not need to distinguish these cases:
+a disabled fetcher's `enabled` field is `false`, which provides the
+distinction for UI display purposes.
+
+**API endpoint failure handling**: if Redis is unreachable when calculating
+`next_run_at` for the fetcher list:
+
+- Individual fetcher `next_run_at` values are set to `null`
+- The endpoint does NOT return an error — the rest of the response
+  (fetcher metadata, last_run, etc.) is still valid from PostgreSQL
+- A WARNING-level log is emitted:
+  `"WARNING: Cannot read redbeat schedule state from Redis: %s.
+  next_run_at will be null for all fetchers.", error`
+
+### Reconciliation and Divergence Recovery
+
+#### Reconciliation is Startup-Only
+
+Reconciliation (full overwrite of redbeat from PostgreSQL) occurs
+exclusively at Beat startup. There is no periodic reconciliation task
+during normal operation.
+
+**Rationale**: during normal operation, the only legitimate source of
+redbeat changes is the PATCH endpoint (which updates both PostgreSQL and
+redbeat). A periodic reconciliation would add complexity (timing, locking,
+performance impact of scanning all entries) for a failure mode (drift
+during normal operation) that cannot occur without either:
+
+- An external actor directly modifying Redis (operator error) — handled
+  by restart-based reconciliation (entry is silently overwritten)
+- A Redis flush — requires manual Beat restart for recovery (see "Redis
+  Flush Recovery" below)
+- A Redis failure during PATCH propagation — self-heals at next restart
+
+All three are extraordinary operational events where the minor
+inconvenience of a manual restart is preferable to the continuous
+overhead of periodic reconciliation.
+
+**Operational consequence — new fetcher deployment**: adding a new
+fetcher to the codebase requires a Beat restart for scheduling to
+activate. Workers and the API server will recognize the new fetcher
+immediately (after their own restart), but Beat's `FETCHER_REGISTRY`
+and reconciliation only update at startup. Until Beat restarts, the new
+fetcher can be triggered manually via the API but will not run on
+schedule. This is an expected operational constraint of the startup-only
+reconciliation design.
+
+#### Redis Flush Recovery
+
+If Redis is flushed (all keys lost, including redbeat entries):
+
+1. All fetcher schedules stop firing immediately (entries are gone)
+2. Beat continues running but with an empty schedule — it does not
+   crash (Redis is still reachable, there is simply nothing to fire)
+3. **Detection**: the admin observes the anomaly in the fetcher
+   dashboard — all `next_run_at` values are `null` and `last_run`
+   timestamps grow stale
+4. **Recovery**: restart the Beat process (kill the container or
+   restart the service). On startup, the full reconciliation recreates
+   all entries from PostgreSQL
+
+There is no automatic self-healing for this scenario without a Beat
+restart. This is acceptable because a Redis flush is an extraordinary
+operational event (not a transient failure), and the dashboard provides
+clear visibility into the anomaly.
+
+**Operational note**: a Redis flush also affects `REDIS_URL` data
+(session liveness cache, login lockout counters, deduplication locks,
+distributed locks). Specific impacts:
+
+- **Session liveness cache**: no functional impact — sessions are stored
+  in PostgreSQL. Redis cache misses cause a temporary increase in
+  database load (~60 seconds while caches warm up). No users are logged
+  out.
+- **Deduplication locks** (`fetch_pending:*`): tasks already enqueued
+  may be duplicated if re-triggered before execution. This is a minor
+  efficiency concern — the tasks are idempotent (upsert semantics).
+- **Login lockout counters**: brute-force rate limiting resets
+  temporarily.
+- **`/ready` endpoint**: continues to return 200 (Redis is reachable).
+  The flush is not detectable via health checks — only via the dashboard
+  anomaly (stale `last_run` timestamps, `null` `next_run_at`).
+
+#### Direct Redis Manipulation
+
+Modifying redbeat entries directly in Redis (via `redis-cli`, RedisInsight,
+or any path that bypasses the API) is **undefined behavior**:
+
+- The change will be effective immediately (Beat reads entries from Redis)
+- The change will be **silently overwritten** at the next Beat restart
+  (startup reconciliation unconditionally overwrites from PostgreSQL)
+- No error, no warning, no audit trail
+- PostgreSQL remains unchanged — the API will show the "old" schedule
+  until the admin changes it via PATCH
+
+The spec does not attempt to detect or prevent direct Redis manipulation.
+The self-healing nature of startup reconciliation makes this safe (no
+permanent damage), though operationally confusing if done intentionally.
+
+### Multi-Process Coordination
+
+#### Who Writes Where
+
+**Redbeat** (Redis schedule entries) — only two components write:
+
+1. **Celery Beat process** (singleton): writes during startup
+   reconciliation
+2. **API server process** (potentially multiple replicas): writes during
+   PATCH endpoint handling (runtime propagation)
+
+**FetcherConfig** (PostgreSQL) — two types of writes:
+
+1. **Bootstrap** (all processes: worker, Beat, API server):
+   `bootstrap_fetcher_configs()` in
+   `backend/app/services/fetcher_bootstrap.py`. Idempotent
+   `INSERT ON CONFLICT DO NOTHING` at startup. Creates records with
+   defaults for newly registered fetchers. Never modifies existing
+   records. The function is async; sync callers (worker, Beat) use
+   `asyncio.run()`.
+2. **PATCH endpoint** (API server only): modifies existing records
+   (schedule, enabled, run_timeout, custom_settings).
+
+**Celery workers** do NOT write to redbeat. They only:
+
+- Run the bootstrap (shared with Beat and API)
+- Read `FetcherConfig` during task execution
+
+#### Concurrency Between Beat and API
+
+Beat startup reconciliation and API PATCH propagation can theoretically
+race (Beat is restarting while an admin is changing a schedule). This is
+safe because:
+
+1. Both operations write the same authoritative source (PostgreSQL state)
+   to redbeat
+2. The worst case is a momentary stale overwrite: Beat writes the
+   schedule from the pre-PATCH PostgreSQL state, then the PATCH writes
+   the updated schedule (or vice versa). Since both read from PostgreSQL
+   (which is serialized by row-level locking), the final state is always
+   correct — the last writer wins, and both writers use the committed
+   PostgreSQL state at their point in time
+3. If Beat reconciliation reads the pre-PATCH state and writes it AFTER
+   the PATCH has already written the post-PATCH state to redbeat: the
+   entry is momentarily stale. The PATCH's redbeat write was
+   "undone" by Beat's reconciliation. This is acceptable because it
+   can only happen during the narrow window of Beat startup + concurrent
+   PATCH, and the entry reflects a valid (though stale by one change)
+   PostgreSQL state. The stale entry persists until the admin re-issues
+   the PATCH or Beat restarts again. This is an operationally negligible
+   scenario (Beat startup takes < 1 second; a concurrent PATCH during
+   that exact window is rare). If it occurs, the admin observes the
+   old schedule in the API (since `next_run_at` is calculated from the
+   redbeat entry) and can re-issue the PATCH
+4. No locking between Beat startup and API writes is required
+
+#### Multiple API Replicas
+
+Multiple API replicas can issue concurrent PATCH requests for different
+fetchers without coordination (they write different redbeat keys). For
+concurrent PATCH requests on the **same** fetcher:
+
+- PostgreSQL serializes the `FetcherConfig` updates (standard row-level
+  locking)
+- The redbeat write for the same entry is a simple key SET — the last
+  writer wins, which is correct since it reflects the latest committed
+  PostgreSQL state
+
+#### Redbeat Distributed Lock
+
+Redbeat uses its own distributed lock (`redbeat::lock`) to ensure only
+one Beat process is active at a time. This is a redbeat-internal mechanism
+— Sentinel does not need to manage it. If a second Beat process starts,
+redbeat's lock prevents it from taking over until the first one dies or
+releases the lock.
+
+### Startup Validation
+
+Timezone enforcement (`CELERY_TIMEZONE = UTC`, `CELERY_ENABLE_UTC = True`)
+is validated at the **Celery app factory** level — the module that
+constructs the `Celery()` application object
+(`backend/app/celery_app.py`). The validation occurs at module import
+time: after the app is configured, the factory checks
+`app.conf.timezone == "UTC"` and `app.conf.enable_utc is True`. If
+either condition fails, the factory raises a `RuntimeError`:
+
+```
+"FATAL: Celery timezone must be UTC. Current value: timezone={timezone},
+enable_utc={enable_utc}. All fetcher schedules assume UTC — see
+docs/conventions.md."
+```
+
+Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
+MUST import the Celery app object to function, the validation is
+inherited automatically — no per-process signal handlers
+(`worker_init`, `beat_init`) are needed. The exception prevents any
+process from completing initialization.
+
+Additionally, the Beat startup reconciliation implicitly validates:
+
+- PostgreSQL connectivity (reads `FetcherConfig`)
+- Redis/redbeat connectivity (writes entries)
+- `FETCHER_REGISTRY` population (via `import app.services.fetcher_discovery`
+  at process startup — see "Fetcher Discovery (Module Import)" in the
+  Registry section)
 
 ## Concurrency Control
 
@@ -1536,11 +2185,33 @@ the dashboard charts.
 ### FetcherConfig
 
 Per-fetcher configuration, managed by admins. A record is created
-automatically when a fetcher is first registered (on worker startup) if
-one does not already exist. The auto-creation MUST use an idempotent
-operation (`INSERT ... ON CONFLICT DO NOTHING` on the PK `fetcher_name`)
-to guarantee safety when multiple workers start concurrently (common in
-Kubernetes multi-replica deployments).
+automatically at process startup by `bootstrap_fetcher_configs()`
+(`backend/app/services/fetcher_bootstrap.py`) — a shared idempotent
+routine that runs in every Celery-based process (worker, Beat, API
+server) before role-specific logic begins. The routine executes a batch
+`INSERT ... ON CONFLICT DO NOTHING` (on the PK `fetcher_name`) for
+every fetcher in `FETCHER_REGISTRY`, guaranteeing safety when multiple
+processes start concurrently (common in Kubernetes multi-replica
+deployments).
+
+The bootstrap routine:
+- **Location**: `backend/app/services/fetcher_bootstrap.py`
+- **Signature**: `async def bootstrap_fetcher_configs(db: AsyncSession) -> None`
+- **Sync callers**: worker and Beat startup use
+  `asyncio.run(bootstrap_fetcher_configs(session))` since they operate
+  outside an async event loop. The API server calls it with `await`
+  during the FastAPI startup event.
+- Runs AFTER `import app.services.fetcher_discovery` (which populates
+  `FETCHER_REGISTRY`)
+- Runs BEFORE role-specific startup (Beat: reconciliation; API: serving
+  requests; worker: consuming tasks)
+- Creates records with column defaults (`enabled = true`,
+  `run_timeout = 3600`, `request_delay` from `default_request_delay`,
+  `custom_settings = '{}'`)
+- Never modifies existing records (`DO NOTHING` on conflict)
+- Is concurrency-safe: multiple processes running it simultaneously
+  produce no conflicts — the first insert succeeds, concurrent
+  duplicates are no-ops
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
@@ -1556,7 +2227,9 @@ Kubernetes multi-replica deployments).
 - `FetcherConfig` uses `fetcher_name` as the PK (VARCHAR, not UUID) since
   fetcher names are unique identifiers defined in code.
 - The `schedule_override` uses standard cron syntax (5-field). When set,
-  the Celery Beat schedule for this fetcher MUST be updated dynamically.
+  the redbeat schedule entry for this fetcher MUST be updated dynamically
+  (see "Celery Beat Schedule Synchronization — Runtime Propagation"
+  above).
 - `run_timeout` serves three purposes:
   1. **Celery hard time limit** (`time_limit`): when > 0, the Celery
      task's `time_limit` is set to `run_timeout`. If the task exceeds
@@ -1668,7 +2341,8 @@ No application-level coordination is required.
 
 When a fetcher class is removed from the codebase (or renamed), its
 entry disappears from the in-memory `FETCHER_REGISTRY` at the next
-worker restart. However, its `FetcherConfig` record and all associated
+process restart (worker, Beat, or API server — all import the discovery
+module). However, its `FetcherConfig` record and all associated
 `FetcherRun` and `FetcherAuditEvent` records remain in the database.
 The FK constraints (`ON DELETE RESTRICT`) on the two dependent tables
 prevent accidental deletion of the `FetcherConfig` row while dependent
@@ -1721,8 +2395,7 @@ conditions, checks, and output format.
 
 ## Dependencies
 
-- Celery Beat with dynamic schedule support (`celery-redbeat` or
-  equivalent)
+- Celery Beat with `celery-redbeat` dynamic scheduler
 
 ## Audit Trail
 

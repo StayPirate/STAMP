@@ -45,16 +45,35 @@ The timezone settings are **fixed** — they MUST NOT be overridden.
 | `CELERY_TIMEZONE` | string | `UTC` | Timezone for Celery Beat cron interpretation. MUST remain `UTC` — all fetcher schedules are expressed in UTC. Overriding this value causes all scheduled fetchers to run at incorrect times | `docs/conventions.md` |
 | `CELERY_ENABLE_UTC` | bool | `true` | Forces Celery internal message timestamps to UTC. MUST remain `true` | `docs/conventions.md` |
 
-**Startup validation**: the application MUST validate at Celery worker
-startup that these settings are `UTC` and `true` respectively. If either
-is overridden to a non-UTC value, the worker MUST refuse to start and
-log an error: `"FATAL: Celery timezone must be UTC. Current value:
-{value}. All fetcher schedules assume UTC — see docs/conventions.md."`
+**Startup validation**: the Celery app factory
+(`backend/app/celery_app.py`) MUST validate these settings at module
+import time — immediately after the `Celery()` application object is
+configured. If `app.conf.timezone != "UTC"` or
+`app.conf.enable_utc is not True`, the factory MUST raise a
+`RuntimeError` with message: `"FATAL: Celery timezone must be UTC.
+Current value: timezone={timezone}, enable_utc={enable_utc}. All fetcher
+schedules assume UTC — see docs/conventions.md."`
+
+Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
+imports the app object, this validation covers all processes
+automatically — no per-process signal handlers are needed. The exception
+prevents any process from completing initialization.
 
 Additionally, `task_ignore_result = True` is a fixed Celery application
 setting — task return values are never stored. Task outcomes are tracked
 in PostgreSQL (`FetcherRun`). See
 `docs/features/platform/fetcher-infrastructure.md` (Result handling).
+
+**Redbeat scheduler**: `celery-redbeat` (the dynamic Beat scheduler)
+uses the same Redis instance as the Celery broker (`CELERY_BROKER_URL`)
+by default. No separate `redbeat_redis_url` environment variable is
+needed or supported. The scheduler class is configured in the Celery
+application settings (`beat_scheduler = 'redbeat.RedBeatScheduler'`).
+Redbeat stores schedule entries under the `redbeat:` key prefix in the
+broker database. See
+`docs/features/platform/fetcher-infrastructure.md` (Celery Beat Schedule
+Synchronization) for the full synchronization mechanism between
+PostgreSQL (source of truth) and redbeat (execution layer).
 
 ## SSO Configuration
 

@@ -232,7 +232,9 @@ provides the distinction.
 - `next_run_at`: calculated from the effective schedule and the Celery
   Beat state. `null` if the fetcher is disabled, deregistered, or the
   Celery Beat schedule state is unavailable (e.g., Redis flushed, Beat
-  not yet started).
+  not yet started). See `docs/features/platform/fetcher-infrastructure.md`
+  (Celery Beat Schedule Synchronization — `next_run_at` Calculation) for
+  the computation mechanism.
 - `last_run`: the most recent `FetcherRun` record, or `null` if never
   run. Does NOT include `error_traceback` (requires `manage_fetchers`,
   available on the detail endpoint). Note: for deregistered fetchers that have no
@@ -314,7 +316,7 @@ run first). Follows the project-wide default sorting convention.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 
 ### Get Fetcher Run Detail
 
@@ -343,7 +345,7 @@ Users with `manage_fetchers` capability see additional fields (`error_detail`,
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name, or run not found |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database), or the specified run was not found |
 
 **Failure drill-down**: for CVE fetchers (where `cve_source_type` is
 defined in the fetcher registry response), the run detail view can link
@@ -432,7 +434,7 @@ time-series and must be in chronological order for chart rendering.
 | Status | Code | Condition |
 |---|---|---|
 | 400 | `DATE_RANGE_TOO_WIDE` | Requested interval between `from_date` and `to_date` exceeds 1825 days |
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 
 ### Trigger Fetcher
 
@@ -457,7 +459,7 @@ Enqueues a manual run of the specified fetcher.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be triggered. |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
 | 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `run_timeout > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
@@ -472,9 +474,17 @@ Enqueues a manual run of the specified fetcher.
   ensures the `run_id` is available in the API response
 - Passes `run_id` to the Celery task via `run_fetcher.apply_async(kwargs=
   {"fetcher_name": name, "triggered_by": "manual", "user_id": str(user.id),
-  "run_id": str(run.id)})`. The task forwards it to
-  `fetcher.run(run_id=run_id, ...)`, which updates the existing record
-  instead of creating a new one
+  "run_id": str(run.id)}, time_limit=time_limit,
+  soft_time_limit=soft_time_limit, queue=queue)` where `time_limit` and
+  `soft_time_limit` are read from `FetcherConfig.run_timeout` using the
+  same formula as the redbeat entry (see
+  `docs/features/platform/fetcher-infrastructure.md`, "Celery Beat
+  Schedule Synchronization — Time Limits and Queue Routing"). If
+  `run_timeout = 0`, no time limits are passed. `queue` is read from the
+  fetcher's class attribute (`FETCHER_REGISTRY[name].queue`); if `None`,
+  no queue option is passed (task goes to default queue). The task
+  forwards `run_id` to `fetcher.run(run_id=run_id, ...)`, which updates
+  the existing record instead of creating a new one
 
 **Enqueue failure handling**: after creating the `FetcherRun` record, the
 endpoint calls `apply_async` on the Celery broker. If enqueue succeeds,
@@ -578,7 +588,7 @@ ranges are unavailable).
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 
 ### Update Fetcher Config
 
@@ -656,8 +666,12 @@ include the fields to change.
 - If `enabled` changed to `false` and the fetcher is currently running:
   the current run is allowed to complete. The next scheduled run will not
   start.
-- If `schedule_override` changed: the Celery Beat schedule for this
-  fetcher MUST be updated dynamically
+- If `schedule_override`, `run_timeout`, or `enabled` changed: the
+  redbeat schedule entry for this fetcher MUST be updated accordingly
+  (see `docs/features/platform/fetcher-infrastructure.md`, "Celery Beat
+  Schedule Synchronization — Runtime Propagation" for the full
+  propagation mechanism, which fields trigger updates, and failure
+  semantics)
 
 **`Capability: manage_fetchers`**
 
@@ -665,7 +679,7 @@ include the fields to change.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be configured. |
 | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` (not declared in the fetcher's schema) |
 | 422 | `FETCHER_SETTING_INVALID` | Value in `custom_settings` fails type, range, or choices validation |
@@ -743,7 +757,7 @@ entry first). Follows the project-wide default sorting convention.
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 
 ## Access Control
 
