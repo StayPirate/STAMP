@@ -1,9 +1,10 @@
 # Draft: Celery Beat Schedule Synchronization Specification
 
-**Status**: Draft — all open points resolved, ready for application
+**Status**: Draft — all open points resolved, action plan verified, ready
+for execution
 **Date**: 2026-07-06
 **Scope**: New section in `fetcher-infrastructure.md` + minor coherence
-updates to 4 other documents
+updates to 6 other documents (7 files total)
 
 ---
 
@@ -1228,19 +1229,11 @@ Beat schedule MUST be updated accordingly. See "Celery Beat Schedule
 Synchronization" below for the full mechanism.
 ```
 
-**Additionally**, fix the typo at line 1348:
-
-**Current text**:
-
-```
-`default_schedule` and `FetcherConfig.schedule` are interpreted as UTC.
-```
-
-**Replace with**:
-
-```
-`default_schedule` and `FetcherConfig.schedule_override` are interpreted as UTC.
-```
+**Note**: the typo at line 1348 (`FetcherConfig.schedule` instead of
+`FetcherConfig.schedule_override`) is NOT fixed here — it is corrected
+by Step 5c, which replaces the entire timezone enforcement paragraph
+(including this line). Fixing it separately here would cause Step 5c's
+"Current text" match to fail.
 
 ### Step 1b: Insert "Fetcher Discovery" subsection in Registry section
 
@@ -1669,16 +1662,29 @@ The bootstrap routine:
   duplicates are no-ops
 ```
 
-### Step 5f: Remove "exclusively by workers" from OP-4 context (if still present)
+### Step 5f: Verify no stale "worker-only" references remain
 
 **File**: `docs/features/platform/fetcher-infrastructure.md`
-**Location**: any remaining reference to "FetcherConfig records are
-created exclusively by workers" or "on worker startup"
-**Action**: verify after Step 5e that no stale references remain. The
-`request_delay` note at line 1592-1598 says "initialized from the
+**Action**: after Step 5e, search the file for the phrases "on worker
+startup", "exclusively by workers", and "worker startup" (case-
+insensitive). Verify that NO remaining occurrence incorrectly attributes
+FetcherConfig creation or registry population exclusively to workers.
+
+**Expected result**: no matches remain. The following occurrences have
+already been corrected by prior steps:
+- Lines 1538-1543 (corrected by Step 5e)
+- Lines 1669-1671 (corrected by Step 5f-bis)
+
+The `request_delay` note at lines 1592-1598 ("initialized from the
 fetcher's `default_request_delay` class attribute ... at auto-creation
-time" — this is still correct (the bootstrap routine uses the class
-attribute). No change needed there.
+time") does NOT reference workers and requires no change — "auto-
+creation time" is still accurate (the bootstrap routine uses the class
+attribute regardless of which process runs it).
+
+**If any stale reference is found**: replace "worker startup" with
+"process startup" or "worker restart" with "process restart" following
+the same pattern as Step 5f-bis. As of this draft's analysis, no
+additional changes are needed beyond Steps 5e and 5f-bis.
 
 ### Step 5f-bis: Update "Deregistered Fetcher Lifecycle" wording
 
@@ -1714,17 +1720,38 @@ registry — the text must reflect that Beat's registry is relevant too.
 
 **Part A — Generic condition** (lines 317, 435, 460, 581, 668, 746):
 
-**Current condition text**:
+This exact table row appears **6 times** in the file (once per endpoint
+error table). All 6 occurrences are identical:
+
+```
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+```
+
+Use a single replace-all operation on the full table row to replace all
+6 occurrences at once.
+
+**Current condition text** (the Condition cell content):
 
 ```
 No `FetcherConfig` record exists for this fetcher name
 ```
 
-**Replace with**:
+**Replace with** (the Condition cell content):
 
 ```
-No fetcher with this name exists (not in the registry and no
-`FetcherConfig` record in the database)
+No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database)
+```
+
+**Full row form** — for replace-all, match the complete table row:
+
+Current:
+```
+| 404 | `FETCHER_NOT_FOUND` | No `FetcherConfig` record exists for this fetcher name |
+```
+
+Replace with:
+```
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 ```
 
 **Part B — Run Detail endpoint** (line 346 only):
@@ -1863,10 +1890,122 @@ troubleshooting, currently item 4)
 > # settings (beat_scheduler). No --scheduler CLI flag is needed.
 > ```
 
-### Step 8: Run reviewers on affected specs
+### Step 8: Verification pass — validate all changes were applied
 
-After applying steps 1-7, invoke the following reviewers to verify
-correctness:
+Before running the reviewers, perform a systematic verification that all
+prior steps were applied correctly. This step exists because the draft
+will be deleted in Step 10 and the prescriptive plan will no longer be
+available for reference.
+
+**Verification checklist for `docs/features/platform/fetcher-infrastructure.md`**:
+
+1. The "### Fetcher Discovery (Module Import)" subsection exists in the
+   Registry section (between the `abstract = True` paragraph and
+   `## Celery Integration`)
+2. The "## Celery Beat Schedule Synchronization" section exists between
+   the "Result handling" paragraph (end of "## Celery Integration") and
+   "## Concurrency Control"
+3. The "### Registry Maintenance" subsection contains two numbered items
+   (Fetcher Registry table + discovery module import line) and a
+   "When removing a fetcher" paragraph
+4. The Celery Integration paragraph (first paragraph after the
+   `run_fetcher` code block) says "at Beat startup" (not "at worker
+   startup") and references "See 'Celery Beat Schedule Synchronization'
+   below"
+5. The "**Timezone enforcement**" paragraph references the "Celery app
+   factory" and "module import time" (not "the worker validates") and
+   uses `FetcherConfig.schedule_override` (not `FetcherConfig.schedule`)
+6. The FetcherConfig auto-creation paragraph (immediately after the
+   `### FetcherConfig` heading) references
+   `bootstrap_fetcher_configs()` and mentions "every Celery-based
+   process (worker, Beat, API server)" (not "worker startup")
+7. The `schedule_override` note (in FetcherConfig Notes) references
+   "Celery Beat Schedule Synchronization — Runtime Propagation"
+8. The "## Dependencies" section says `- Celery Beat with
+   \`celery-redbeat\` dynamic scheduler` (without "or equivalent")
+9. The "## Deregistered Fetcher Lifecycle" first paragraph says "at the
+   next process restart (worker, Beat, or API server — all import the
+   discovery module)" (not "at the next worker restart")
+10. The Related Specifications table row for "**This document**" includes
+    both "fetcher discovery" and "Beat schedule synchronization"
+11. The "## Purpose" paragraph includes both "fetcher discovery" and
+    "Beat schedule synchronization"
+
+**Verification checklist for `docs/features/platform/cve-fetcher-infrastructure.md`**:
+
+12. The paragraph at the former location of lines 675-681 references
+    the "shared discovery module" (`import app.services.fetcher_discovery`)
+    and lists all three processes (workers, API server, and Celery Beat)
+
+**Verification checklist for `docs/features/platform/fetcher-operations.md`**:
+
+13. The `next_run_at` field description (in List Fetchers response)
+    includes a cross-reference to
+    `docs/features/platform/fetcher-infrastructure.md` (Celery Beat
+    Schedule Synchronization — `next_run_at` Calculation)
+14. All 6 FETCHER_NOT_FOUND conditions (in error tables for: List Runs,
+    Run Detail, Timeline, Trigger, Get Config, PATCH Config, Audit Log)
+    say "No fetcher with this name exists (not in the registry and no
+    `FetcherConfig` record in the database)" — NOT the old phrasing
+15. The Run Detail endpoint error table includes the suffix ", or the
+    specified run was not found"
+16. The PATCH side effects section contains a bullet that references
+    `schedule_override`, `run_timeout`, and `enabled` together (not just
+    `schedule_override` alone) and cross-references the "Runtime
+    Propagation" section in fetcher-infrastructure.md
+17. The Trigger endpoint `apply_async` call includes `time_limit`,
+    `soft_time_limit`, and `queue` parameters with the cross-reference
+    to the Beat sync section
+
+**Verification checklist for `docs/configuration.md`**:
+
+18. The startup validation paragraph references the "Celery app factory
+    (`backend/app/celery_app.py`)" and "module import time" (not
+    "Celery worker startup")
+19. A "**Redbeat scheduler**" paragraph exists after the
+    `task_ignore_result` paragraph, mentioning `CELERY_BROKER_URL` and
+    `beat_scheduler = 'redbeat.RedBeatScheduler'`
+
+**Verification checklist for `docs/conventions.md`**:
+
+20. The timezone sentence (in "Timestamps & Timezones", Backend bullet)
+    says "the Celery app factory validates them at module import time"
+    (not "the worker validates them at startup")
+21. A "### Redis Key Conventions" subsection exists between the Python
+    "### Testing Conventions" section and "## TypeScript (Frontend)"
+
+**Verification checklist for `docs/deployment.md`**:
+
+22. The Celery worker command uses `-A app.celery_app` (not
+    `-A app.tasks.celery_app`)
+23. The Celery beat command uses `-A app.celery_app` (not
+    `-A app.tasks.celery_app`)
+24. A bash comment about the redbeat scheduler class exists after the
+    beat command
+25. The timezone section (item 1 under "Timezone and Locale
+    Requirements") references the "Celery app factory" and "module
+    import time" (not "The worker validates these at startup")
+26. Two new troubleshooting items (5 and 6) exist at the end of
+    "Celery Tasks Not Running", mentioning "reconciliation summary
+    message" and "cannot read FetcherConfig from PostgreSQL"
+
+**Verification checklist for `docs/data-model.md`**:
+
+27. The FetcherConfig description says "Auto-created at process startup
+    by `bootstrap_fetcher_configs()`" (not "Auto-created on worker
+    startup")
+
+**Procedure**: for each item above, read the relevant section and verify
+the described content is present. If any item fails, re-apply the
+corresponding step from the action plan. If a step's "Current text" no
+longer matches (because a prior step already modified it), use the
+actual current content of the file as the match target and apply the
+intended semantic replacement.
+
+### Step 9: Run reviewers on affected specs
+
+After applying steps 1-7 and verifying step 8, invoke the following
+reviewers to verify correctness:
 
 1. **`@spec-coherence-reviewer`** on
    `docs/features/platform/fetcher-infrastructure.md` — verify both new
@@ -1889,7 +2028,7 @@ correctness:
    content is correctly placed (Fetcher Discovery in the Registry section,
    Beat sync after Celery Integration — not misplaced or over-generalized)
 
-### Step 9: Delete this draft
+### Step 10: Delete this draft
 
 After all reviewers pass and any findings are resolved:
 
