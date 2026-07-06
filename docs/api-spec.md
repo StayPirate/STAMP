@@ -143,7 +143,7 @@ Error codes are grouped by prefix:
 | Prefix | Domain | Examples |
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR`, `VALIDATION_FIELD_REQUIRED` |
-| `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED` |
+| `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED`, `AUTH_LOGOUT_NOT_APPLICABLE` |
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_CYCLE_DETECTED`, `TICKET_DUPLICATE_CHAIN_DEPTH`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE` |
 | `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND` |
@@ -341,8 +341,42 @@ Notes:
   populated with field-level details
 - The 403 response detail is always `"Insufficient permissions"` — it
   MUST NOT disclose which capability was required
-- Endpoint error tables should only list responses that are specific to
-  that endpoint's logic (e.g., 404, 409, 403 for capability requirements)
+
+#### What belongs in an endpoint error table
+
+An error row belongs in a per-endpoint table **if and only if** its
+condition conveys information specific to that endpoint that is not
+already stated by the Global Responses table above or the Scoped
+Responses section below.
+
+**Include**: errors with endpoint-specific codes (e.g., `TICKET_CVE_CONFLICT`),
+errors from service exceptions with domain semantics (e.g.,
+`PACKAGE_ALREADY_EXCLUDED`), and errors with a different error code from
+the global one for the same status (e.g., `AUTH_SESSION_REQUIRED` instead
+of generic `AUTH_INSUFFICIENT_PERMISSION`).
+
+**Exclude**: generic `401 AUTH_NOT_AUTHENTICATED`, generic `403
+AUTH_INSUFFICIENT_PERMISSION`, generic `422 VALIDATION_ERROR` (Pydantic
+schema failures), and `500 INTERNAL_ERROR`. These are global and provide
+no endpoint-specific information.
+
+**Conditional authorization**: when an endpoint has authorization logic
+beyond the base `require_capability()` guard (e.g., a secondary
+capability required only for specific input values), document the
+condition in the **Behavior** section or capability declaration — not as
+a 403 row in the error table. The HTTP response is still the generic
+`AUTH_INSUFFICIENT_PERMISSION` (the consumer cannot distinguish it).
+
+**Pydantic-level validation**: constraints enforceable via Pydantic
+schema definitions (type, enum membership, string length, regex, cross-field
+exclusivity, required fields) produce the global `422 VALIDATION_ERROR`
+automatically. Do not add a separate row for these. Only
+domain-specific validation with a **dedicated error code** (e.g.,
+`CVSS_INVALID_VECTOR`, `FETCHER_SETTING_INVALID`) warrants a table row.
+
+**Reference line**: each endpoint section should include a brief note
+indicating which global and scoped responses apply. Example:
+`Global responses per api-spec.md apply. Scoped: TICKET_NOT_FOUND, TICKET_NOT_MUTABLE.`
 
 ### Scoped Responses
 
@@ -405,9 +439,9 @@ All denial cases from this dependency return the same
 
 **Post-accessibility service-layer errors**: mutation endpoints under
 `/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE`
-from `ensure_ticket_operable()` at the service layer. See the
-per-endpoint error tables in `docs/features/tickets/cvss-scoring.md`
-for details
+from `ensure_ticket_operable()` at the service layer. This applies
+only when the CVE has an associated ticket in a manual-zone status
+(see Manual-Zone Mutability Guard below)
 
 Unauthenticated callers (`current_user=None`): step 2a always denies
 access when the ticket is confidential — unauthenticated users can never

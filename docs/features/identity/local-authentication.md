@@ -28,7 +28,7 @@ authenticate exclusively via SSO — see
 
 ## Login Endpoint
 
-### `POST /api/v1/auth/login`
+### Login
 
 Authenticates a local user with username and password, creates a
 session, and returns a JWT.
@@ -202,7 +202,7 @@ admin UI specification.
 For AD users, the "Reset password" action is not available (greyed out
 or hidden).
 
-### `POST /api/v1/admin/users/{user}/password`
+### Admin Password Reset
 
 API endpoint for admin password reset (used by the admin UI). The full
 endpoint specification (request/response schema, error codes) is defined

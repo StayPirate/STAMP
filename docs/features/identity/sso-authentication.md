@@ -135,7 +135,7 @@ without the additional code interception protection.
 When the user clicks "Login with SUSE SSO" on the login page, the
 frontend calls:
 
-#### `GET /api/v1/auth/sso/authorize`
+#### SSO Authorize
 
 **Authentication**: none (public endpoint).
 
@@ -198,7 +198,7 @@ callback URL with an authorization `code` and `state` parameter.
 
 ### Step 3: Callback processing
 
-#### `POST /api/v1/auth/sso/callback`
+#### SSO Callback
 
 **Authentication**: none (public endpoint).
 
@@ -440,7 +440,7 @@ This is a deliberate design decision:
 
 ## Authentication Providers Endpoint
 
-#### `GET /api/v1/auth/providers`
+#### List Auth Providers
 
 **Authentication**: none (public endpoint).
 

@@ -121,10 +121,7 @@ A missing setting means migrations have not been applied correctly.
 ## API Endpoints
 
 All endpoints in this section require the `manage_settings` capability.
-Global responses
-(401, 422) apply per `api-spec.md` "Global Responses" section. 403
-(`AUTH_INSUFFICIENT_PERMISSION`) is returned for authenticated users
-without the required capability.
+Global responses per `api-spec.md` apply to all endpoints in this section.
 
 ### Get System Settings
 
@@ -143,12 +140,6 @@ Response:
 ```
 
 **`Capability: manage_settings`**
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 
 ### Update System Settings
 
@@ -180,9 +171,7 @@ the response. This is a documented deviation from the
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 409 | `RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (setting change blocked until current batch completes) |
-| 422 | `VALIDATION_ERROR` | Invalid setting value (e.g., unsupported CVSS version) |
 | 503 | `REDIS_UNAVAILABLE` | Redis broker is unreachable (setting change requires broker availability) |
 
 Response (200 OK): the settings object in the standard
@@ -248,7 +237,6 @@ No setting change is made. No `SettingAuditEvent` is created.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have `manage_settings` capability |
 | 409 | `RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (slot occupied) |
 | 503 | `REDIS_UNAVAILABLE` | Redis is unreachable (slot acquisition failed) |
 | 503 | `CELERY_ENQUEUE_FAILED` | Task could not be enqueued (slot released) |
@@ -334,12 +322,6 @@ always displayed in reverse chronological order).
   }
 }
 ```
-
-**Error responses**:
-
-| Status | Code | Condition |
-|---|---|---|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 
 ### Data Retention
 

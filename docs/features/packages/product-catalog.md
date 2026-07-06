@@ -204,11 +204,7 @@ List all products synced from SMELT. Paginated.
 
 **`Access: Public`**
 
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | Invalid query parameter value (e.g., non-integer `page`, unknown `lifecycle_phase` value) |
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
 
 ---
 

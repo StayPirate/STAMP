@@ -872,7 +872,7 @@ requests.
 Both endpoints return unpaginated lists (expected volume is small — fewer
 than 20 records per ticket, similar to ticket references).
 
-### `GET /api/v1/tickets/{ticket_id}/submission-requests`
+### List Submission Requests
 
 List all submission requests correlated to the ticket via the
 `SubmissionRequestTrack` join table.
@@ -925,14 +925,9 @@ List all submission requests correlated to the ticket via the
 | `created_at`       | datetime (UTC)    | Record creation timestamp                        |
 | `updated_at`       | datetime (UTC)    | Record update timestamp                          |
 
-**Error responses**:
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
-| Status | Code | Condition                                              |
-|--------|------|--------------------------------------------------------|
-| 404    | `TICKET_NOT_FOUND` | Ticket not found                                       |
-| 422    | `VALIDATION_ERROR` | Invalid `state` value                                  |
-
-### `GET /api/v1/tickets/{ticket_id}/release-requests`
+### List Release Requests
 
 List all release requests associated with the ticket. Derived via the
 SR correlation: find SRs correlated to the ticket, collect their
@@ -984,12 +979,7 @@ SR correlation: find SRs correlated to the ticket, collect their
 | `created_at`       | datetime (UTC) | Record creation timestamp                        |
 | `updated_at`       | datetime (UTC) | Record update timestamp                          |
 
-**Error responses**:
-
-| Status | Code | Condition                                              |
-|--------|------|--------------------------------------------------------|
-| 404    | `TICKET_NOT_FOUND` | Ticket not found                                       |
-| 422    | `VALIDATION_ERROR` | Invalid `state` or `incident_number` value             |
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
 ## Background Tasks
 

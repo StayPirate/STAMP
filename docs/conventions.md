@@ -620,10 +620,10 @@ deterministic and mechanically verifiable.
 ### API Cross-references
 
 Feature specs that define API endpoints MUST include `docs/api-spec.md` in
-their Cross-references section. Endpoint-specific error tables document only
-errors unique to the endpoint logic; errors handled globally (Pydantic
-validation, authentication, authorization, etc.) are defined in `api-spec.md`
-and must not be repeated per-endpoint.
+their Cross-references section. The rules governing what appears in
+per-endpoint error tables (global responses, scoped responses, Pydantic
+validation) are defined in `docs/api-spec.md` (section "What belongs in
+an endpoint error table") and are not restated here.
 
 ### Fetcher Documentation
 
@@ -925,12 +925,10 @@ MUST log a warning (indicates a missing specific handler).
 
 #### Endpoint error tables (post-standardization)
 
-Endpoint-level error tables in feature specs (e.g., `tickets.md`,
-`user-management.md`) MUST NOT repeat the HTTP status code for service
-exceptions. They reference the exception class name and error code for
-traceability — the authoritative HTTP mapping lives in the service spec.
+Endpoint-level error tables in feature specs document errors specific to
+the endpoint's logic. They reference the error code and condition for
+traceability — the authoritative HTTP status mapping for service
+exceptions lives in the owning service spec's exception table.
 
-Endpoint error tables retain their own HTTP status column only for
-errors that do NOT originate from a service exception (e.g.,
-framework-level 401/403 from auth dependencies, 404 from path parameter
-resolution).
+Global and scoped responses (defined in `api-spec.md`) are never
+included as table rows — they are covered by a reference line.

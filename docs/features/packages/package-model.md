@@ -1186,14 +1186,13 @@ added, all counts will be zero in the `created` fields.
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
-| 422 | `VALIDATION_ERROR` | Missing or empty `package_name`, exceeds 255 characters, or contains invalid characters |
 | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
 | 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
 
@@ -1233,12 +1232,12 @@ gate and Analyzed gate).
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package is already soft-deleted |
 
@@ -1270,12 +1269,12 @@ record only — child records are not modified. Creates a single
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Package is not directly soft-deleted |
 | 422 | `PACKAGE_RESTORE_BLOCKED` | Package has no active tracks with active products. Restore at least one track (with active products) first. |
@@ -1338,12 +1337,12 @@ their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Track is already soft-deleted |
 
@@ -1374,12 +1373,12 @@ only — products under it are not modified. Creates a single
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Track is not directly soft-deleted |
 | 422 | `PACKAGE_RESTORE_BLOCKED` | Track has no active products. Restore at least one product first. |
@@ -1444,12 +1443,12 @@ their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Product is already soft-deleted |
 
@@ -1478,12 +1477,12 @@ single `TicketAuditEvent`.
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Product not found on this track |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Product is not directly soft-deleted |
 
@@ -1550,14 +1549,13 @@ the UI tree without a separate fetch.
 **`Capability: manage_packages`** | **`†admin_ticket_ops`** (Hard
 Conditional Check: required only when `status = FIXED`)
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability, or caller attempts `status = FIXED` without `admin_ticket_ops` |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or track not found on this ticket |
-| 422 | `VALIDATION_ERROR` | Invalid status value |
 
 ---
 
@@ -1628,14 +1626,13 @@ changing an override value, and resetting an override.
 
 **`Capability: manage_packages`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
-| 404 | `TICKET_NOT_FOUND` | Ticket with given ID does not exist |
 | 404 | `RESOURCE_NOT_FOUND` | Package or product not found on this ticket |
-| 422 | `VALIDATION_ERROR` | `eligible` field not provided |
 
 ---
 
@@ -1673,13 +1670,7 @@ a standalone endpoint for clients that only need package data.
 The response body is a `PackageDetail[]` array — the same schema used in
 `TicketDetail.packages`.
 
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 404 | `TICKET_NOT_FOUND` | Ticket does not exist |
-
-(Global errors from `api-spec.md` apply but are not repeated.)
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
 ---
 
@@ -1777,11 +1768,7 @@ for the package within this ticket. Counts only active tracks
 
 #### Error Responses
 
-| Status | Code | Condition |
-|--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | Both `search` and `name` provided; `per_page` > 100 |
-
-(Global errors from `api-spec.md` apply but are not repeated.)
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
 
 ---
 

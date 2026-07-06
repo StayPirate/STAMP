@@ -115,7 +115,7 @@ always the resolved canonical target (a non-Duplicated ticket).
 
 ## API Endpoints
 
-### GET /api/v1/my/packages/pending
+### Pending Packages
 
 Returns pending fixes for the authenticated user.
 
@@ -156,7 +156,7 @@ Returns pending fixes for the authenticated user.
 | reference | string | Target codestream name |
 | analyzed_at | datetime | When the ticket entered `Analyzed` status (consumers compute "Waiting" from this) |
 
-### GET /api/v1/my/packages/in-progress
+### In-Progress Packages
 
 Returns in-progress submissions for the authenticated user.
 
@@ -204,7 +204,7 @@ details, using the standard `{"data": [...], "meta": {"total", "page", "per_page
 | submission_chain.rr | object \| null | Release request: `number` (int), `state` (string) |
 | first_sr_created_at | datetime | When the first SR was created (consumers compute "Since") |
 
-### GET /api/v1/my/packages/completed
+### Completed Packages
 
 Returns completed releases for the authenticated user.
 
@@ -250,7 +250,7 @@ and release date, using the standard `{"data": [...], "meta": {"total", "page", 
 | submission_chain | object | Full submission chain (all elements in accepted/final state) |
 | released_at | datetime | When the fix was released |
 
-### GET /api/v1/my/packages/ticket/{ticket_id}
+### Package Details for Ticket
 
 Returns all three sections (pending, in-progress, completed) for a
 specific ticket, filtered to the authenticated user's packages.

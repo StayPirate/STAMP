@@ -522,7 +522,7 @@ the `manage_users` capability.
 These endpoints are publicly accessible (read-only) and do not require
 authentication.
 
-#### `GET /api/v1/users`
+#### List Users
 
 User search and autocomplete. Returns a paginated list of users.
 
@@ -544,13 +544,9 @@ Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as
 `GET /api/v1/users/{user}` (see below).
 
-**Error responses**:
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
 
-| Status | Code | Condition |
-|--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | `search` parameter shorter than 2 characters |
-
-#### `GET /api/v1/users/{user}`
+#### Get User
 
 Returns full user profile. Response uses the standard single-resource
 envelope:
@@ -609,7 +605,7 @@ business rules and service-layer contracts that these endpoints invoke.
 All endpoints below require the `manage_users` capability unless
 otherwise stated.
 
-#### `PATCH /api/v1/admin/users/{user}`
+#### Update User (Admin)
 
 Update a user's profile fields. Only local users (`ad_object_guid IS NULL`)
 can be modified — AD users have their identity fields managed by
@@ -650,7 +646,7 @@ in `docs/features/identity/user-service.md`).
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
 response schema).
 
-#### `POST /api/v1/admin/users/{user}/roles`
+#### Set User Roles
 
 Add or remove manual roles for a user.
 
@@ -699,7 +695,7 @@ wrapped in the standard `{"data": ...}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
 response schema).
 
-#### `POST /api/v1/admin/users/{user}/password`
+#### Reset User Password
 
 Reset the password for a local user. This endpoint operates on both
 active and inactive local users (see Inactive User Management Principle
@@ -742,7 +738,7 @@ inactive user prepares credentials for reactivation.
 }
 ```
 
-#### `POST /api/v1/admin/users/{user}/deactivate`
+#### Deactivate User
 
 Deactivate a user account. Triggers significant side effects (API key
 revocation, session invalidation, ticket unassignment).
@@ -777,7 +773,7 @@ deactivation).
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
 response schema).
 
-#### `POST /api/v1/admin/users/{user}/reactivate`
+#### Reactivate User
 
 Reactivate a previously deactivated user account.
 
@@ -803,7 +799,7 @@ Reactivate a previously deactivated user account.
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
 response schema).
 
-#### `GET /api/v1/admin/users/{user}/deactivation-impact`
+#### Get Deactivation Impact
 
 Returns a preview of the side effects that would occur if the user were
 deactivated. Used by the frontend to display a confirmation dialog before
@@ -880,7 +876,7 @@ preview.
 
 **Authorization**: requires `admin` role.
 
-#### `POST /api/v1/admin/users/{user}/unlock`
+#### Unlock User
 
 Clear the login lockout counter for a user.
 

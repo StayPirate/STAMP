@@ -599,11 +599,13 @@ revoked). If volume becomes a concern in the future, an operational
 
 ## API Endpoints
 
-### `GET /api/v1/users/me`
+### Get Current User
 
 Returns the currently authenticated user's profile.
 
-**Authentication**: required (JWT or API key).
+**`Access: Authenticated`**
+
+Global responses per `api-spec.md` apply.
 
 **Response** (200):
 
@@ -620,9 +622,11 @@ Returns the currently authenticated user's profile.
 }
 ```
 
-### `POST /api/v1/auth/logout`
+### Logout
 
 Invalidates the current session.
+
+Global responses per `api-spec.md` do not apply (custom authentication handling — see below).
 
 **Authentication**: this endpoint does NOT use the standard
 `get_current_user` middleware (which would reject requests with an
@@ -659,11 +663,13 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
    `Set-Cookie: sentinel_session=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
 5. Return HTTP 204
 
-### `GET /api/v1/api-keys`
+### List My API Keys
 
 Lists all API keys for the current user.
 
-**Authentication**: required.
+**`Access: Authenticated`**
+
+Global responses per `api-spec.md` apply.
 
 **Pagination**: not paginated. A user's API keys are naturally bounded
 (expected <20 per user). The full list is always returned.
@@ -690,9 +696,11 @@ returned in creation order, newest first).
 }
 ```
 
-### `POST /api/v1/api-keys`
+### Create API Key
 
 Creates a new API key for the current user.
+
+Global responses per `api-spec.md` apply.
 
 **Authentication**: required (JWT session only). API-key-authenticated
 requests receive HTTP 403 (see Authentication restriction below).
@@ -761,15 +769,18 @@ this response. It is never returned again by any other endpoint.
 |--------|------|-----------|
 | 403 | `AUTH_SESSION_REQUIRED` | Request authenticated via API key instead of session |
 | 409 | `AUTH_API_KEY_NAME_CONFLICT` | Non-revoked key with the same name exists |
+| 422 | `AUTH_API_KEY_NAME_INVALID` | Key name contains invalid characters or exceeds length limits |
 | 400 | `AUTH_API_KEY_INVALID_EXPIRY` | `expires_at` is in the past |
 
-### `POST /api/v1/api-keys/{key_id}/revoke`
+### Revoke My API Key
 
 Revokes an API key belonging to the current user. The key record is
 preserved in the database (not deleted) and remains visible in list
 endpoints with `revoked_at` populated.
 
-**Authentication**: required.
+**`Access: Authenticated`**
+
+Global responses per `api-spec.md` apply.
 
 **Behavior**:
 
@@ -806,11 +817,13 @@ endpoints with `revoked_at` populated.
 |--------|------|-----------|
 | 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found or belongs to a different user |
 
-### `GET /api/v1/admin/api-keys`
+### List All API Keys (Admin)
 
 Lists API keys across all users.
 
 **`Capability: manage_users`**
+
+Global responses per `api-spec.md` apply.
 
 **Query parameters**:
 
@@ -819,7 +832,7 @@ Lists API keys across all users.
 | `owner`    | string | Filter by key owner; accepts UUID or username. Returns empty result set if user not found. (optional) |
 | `status`   | string | `active`, `revoked`, or `expired` — single value only (optional) |
 | `page`     | int    | Page number (default 1)             |
-| `per_page` | int    | Items per page (default 50, max 100)  |
+| `per_page` | int    | Items per page (default 20, max 100)  |
 | `sort_by`  | string | Field to sort by: `created_at`, `last_used_at` (default: `created_at`) |
 | `sort_order`| string | `asc` or `desc` (default: `desc`)  |
 
@@ -844,12 +857,12 @@ Lists API keys across all users.
   "meta": {
     "total": 42,
     "page": 1,
-    "per_page": 50
+    "per_page": 20
   }
 }
 ```
 
-### `POST /api/v1/admin/api-keys/{key_id}/revoke`
+### Revoke API Key (Admin)
 
 Revokes any user's API key. The key record is preserved in the database
 (not deleted) and remains visible in list endpoints with `revoked_at`
@@ -893,9 +906,10 @@ using it are rejected.
 
 **Error responses**:
 
+Global responses per `api-spec.md` apply.
+
 | Status | Code | Condition |
 |--------|------|-----------|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
 | 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found |
 
 ## Use Cases: Bots and AI Agents
@@ -1039,6 +1053,7 @@ attributed to the agent's own identity.
 
 ## Cross-references
 
+- `docs/api-spec.md` — API conventions, global responses, scoped responses
 - `docs/features/identity/api-key-service.md` — centralized API key
   lifecycle service (create, revoke, bulk-revoke)
 - `docs/features/identity/local-authentication.md` — local login endpoint and

@@ -1260,6 +1260,8 @@ Query parameters:
 Response: paginated `TicketSummary` array in standard
 `{"data": [...], "meta": {...}}` envelope (200 OK).
 
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
+
 ### Get Ticket
 
 ```
@@ -1280,9 +1282,7 @@ package (type, name, email, and group members when applicable — see
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
-
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
 ### Create Ticket
 
@@ -1324,11 +1324,13 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (201 Created).
 
-Error responses:
+Global responses per `api-spec.md` apply.
 
-- 409 with code `TICKET_CVE_CONFLICT`: CVE is already associated with
-  another ticket. Response body includes `existing_ticket_id` (UUID) to
-  allow the frontend to link to the existing ticket
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket. Response includes `existing_ticket_id` (UUID) |
 
 ### Associate CVE
 
@@ -1357,16 +1359,14 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
-- 400 with code `TICKET_CVE_ALREADY_SET`: ticket already has a CVE
-  associated
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_CVE_CONFLICT`: CVE is already associated with
-  another ticket. Response body includes `existing_ticket_id` (UUID) to
-  allow the frontend to link to the existing ticket
-- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `TICKET_CVE_ALREADY_SET` | Ticket already has a CVE associated |
+| 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket. Response includes `existing_ticket_id` (UUID) |
 
 ### Set Severity Override
 
@@ -1393,13 +1393,13 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
-- 409 with code `TICKET_SEVERITY_DERIVED`: ticket has an associated CVE
-  (severity is derived from CVSS, not manually settable)
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 409 | `TICKET_SEVERITY_DERIVED` | Ticket has an associated CVE (severity is derived from CVSS) |
 
 ### Assign Ticket
 
@@ -1442,15 +1442,15 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
-- 400 with code `TICKET_ASSIGNEE_NOT_VA`: target user does not hold the
-  Vulnerability Analyst role
-- 409 with code `TICKET_ASSIGNEE_INACTIVE`: target user is inactive
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 404 with code `USER_NOT_FOUND`: target user not found
-- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status (use the dedicated reopen or revert-duplicate endpoints instead)
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `TICKET_ASSIGNEE_NOT_VA` | Target user does not hold the Vulnerability Analyst role |
+| 404 | `USER_NOT_FOUND` | Target user not found |
+| 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive |
 
 ### Ignore Ticket
 
@@ -1471,13 +1471,13 @@ No request body is required.
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status (ticket is in Ignored or Duplicated status)
-- 409 with code `TICKET_INVALID_TRANSITION`: current status does not
-  allow transition to Ignored (ticket is in Analyzed or Resolved status)
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 409 | `TICKET_INVALID_TRANSITION` | Current status does not allow transition to Ignored |
 
 ### Mark Ticket as Duplicate
 
@@ -1508,17 +1508,16 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
-- 400 with code `TICKET_SELF_DUPLICATE`: resolved target is the same
-  ticket (self-reference after chain resolution)
-- 404 with code `TICKET_NOT_FOUND`: ticket or target ticket not found
-- 409 with code `TICKET_NOT_MUTABLE`: ticket is in Ignored or Duplicated
-  status
-- 409 with code `TICKET_DUPLICATE_CYCLE_DETECTED`: duplicate resolution
-  would create a cycle in the chain
-- 409 with code `TICKET_DUPLICATE_CHAIN_DEPTH`: chain depth exceeded
-  (indicates data corruption requiring manual intervention)
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 400 | `TICKET_SELF_DUPLICATE` | Resolved target is the same ticket (self-reference after chain resolution) |
+| 404 | `TICKET_NOT_FOUND` | Target ticket (`duplicate_of_id`) does not exist |
+| 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
+| 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Chain depth exceeded (data corruption) |
 
 ### Reopen Ticket
 
@@ -1543,11 +1542,13 @@ No request body is required.
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
 
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Ignored
-  status
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 409 | `TICKET_INVALID_TRANSITION` | Ticket is not in Ignored status |
 
 This endpoint is **not** subject to `ensure_ticket_operable`
 (it is the dedicated exit from the Ignored manual-zone status).
@@ -1572,11 +1573,13 @@ status reconciliation.
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Error responses:
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
 
-- 404 with code `TICKET_NOT_FOUND`: ticket not found
-- 409 with code `TICKET_INVALID_TRANSITION`: ticket is not in Duplicated
-  status
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 409 | `TICKET_INVALID_TRANSITION` | Ticket is not in Duplicated status |
 
 ### Set Confidentiality
 
@@ -1597,11 +1600,7 @@ service-layer contract (locking, audit events).
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-| Status | Code | Condition |
-|--------|------|-----------|
-| 200    | -    | Success (or already in requested state) |
-| 404    | `TICKET_NOT_FOUND` | Ticket not found |
-| 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 ### Access Grant Management
 
@@ -1642,11 +1641,13 @@ List all users with explicit access grants for a confidential ticket.
   *Note: Unpaginated because explicit access grants per ticket are a
   bounded dataset (typically a handful of users).*
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
+
+**Error responses**:
+
 | Status | Code | Condition |
 |--------|------|-----------|
-| 200    | -    | Success |
-| 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
-| 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+| 409 | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
 
 #### Grant Access
 
@@ -1670,14 +1671,14 @@ Grant explicit access to a user on a confidential ticket.
 - **Audit**: Creates `TicketAuditEvent` with
   `event_type = access_grant_added`.
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
+**Error responses**:
+
 | Status | Code | Condition |
 |--------|------|-----------|
-| 201    | -    | Grant created |
-| 200    | -    | Grant already exists (idempotent success) |
-| 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
-| 404    | `USER_NOT_FOUND` | Target user not found |
-| 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
-| 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+| 404 | `USER_NOT_FOUND` | Target user not found |
+| 409 | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
 
 #### Revoke Access
 
@@ -1696,13 +1697,14 @@ username.
 - **Audit**: Creates `TicketAuditEvent` with
   `event_type = access_grant_removed`.
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
+**Error responses**:
+
 | Status | Code | Condition |
 |--------|------|-----------|
-| 204    | -    | Grant revoked (or did not exist — idempotent success) |
-| 404    | `TICKET_NOT_FOUND` | Ticket not found (or confidential and caller is not authorized) |
-| 404    | `USER_NOT_FOUND` | Target user not found |
-| 409    | `TICKET_NOT_MUTABLE` | Ticket is in Ignored or Duplicated status |
-| 409    | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+| 404 | `USER_NOT_FOUND` | Target user not found |
+| 409 | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
 
 ## Data Model
 

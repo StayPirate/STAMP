@@ -159,11 +159,7 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
 }
 ```
 
-**Error responses**:
-
-| Status | Code | Condition |
-|---|---|---|
-| 403 | `AUTH_INSUFFICIENT_PERMISSION` | Caller does not have required capability |
+Global responses per `api-spec.md` apply.
 
 ### List My Identity Audit Events
 
@@ -241,11 +237,7 @@ are considered non-sensitive organizational metadata — they are
 meaningful only within the AD administrative context and do not
 constitute personal data or security-critical information.
 
-**Error responses**:
-
-| Status | Code | Condition |
-|---|---|---|
-| 401 | `AUTH_NOT_AUTHENTICATED` | Caller is not authenticated |
+Global responses per `api-spec.md` apply.
 
 ## Service Contract
 

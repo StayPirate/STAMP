@@ -531,12 +531,14 @@ Example response when no CVSS assessments are available (absent severity):
 
 ```json
 {
-  "cve_id": "CVE-2025-12345",
-  "assessments": [],
-  "severity": null,
-  "eligibility": {
-    "score": 10.0,
-    "source": "fallback"
+  "data": {
+    "assessments": [],
+    "default_cvss_version": "3.1",
+    "severity": null,
+    "eligibility": {
+      "score": 10.0,
+      "source": "fallback"
+    }
   }
 }
 ```
@@ -587,16 +589,16 @@ appropriate per the "Mutation Patterns" convention in `api-spec.md`. The
 differentiated response codes (201 for creation, 200 for update) make the
 upsert behavior explicit to clients.
 
+Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
-| 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
 | 422 | `CVSS_INVALID_VECTOR` | Vector string is malformed or unparseable |
 
-The `409` error applies only when the CVE has an associated ticket. CVEs
-without an associated ticket are always mutable.
+The `TICKET_NOT_MUTABLE` scoped response applies only when the CVE has an
+associated ticket. CVEs without an associated ticket are always mutable.
 
 **`Capability: manage_cvss`**
 
@@ -616,16 +618,16 @@ requirements.
 
 Response: 204 No Content.
 
+Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 404 | `CVE_NOT_FOUND` | CVE not found or inaccessible (see `docs/api-spec.md`, CVE Accessibility Check) |
 | 404 | `CVSS_ASSESSMENT_NOT_FOUND` | No SUSE assessment exists for the specified version |
-| 409 | `TICKET_NOT_MUTABLE` | Associated ticket is in Ignored or Duplicated status |
 
-The `409` error applies only when the CVE has an associated ticket. CVEs
-without an associated ticket are always mutable.
+The `TICKET_NOT_MUTABLE` scoped response applies only when the CVE has an
+associated ticket. CVEs without an associated ticket are always mutable.
 
 **`Capability: manage_cvss`**
 

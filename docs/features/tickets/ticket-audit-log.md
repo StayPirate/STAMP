@@ -197,11 +197,7 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
   searching for product names, track names, statuses, or any contextual data
   across all event fields.
 
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 404    | `TICKET_NOT_FOUND` | Ticket not found |
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
 
 **`Access: Authenticated`**
 

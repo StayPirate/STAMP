@@ -727,11 +727,12 @@ preparation for future members.
   metacharacters `*`, `(`, `)`, `\`, NUL per RFC 4515) MUST be rejected
   with 422 / `ROLE_MAPPING_INVALID_GROUP_CN`
 
+Global responses per `api-spec.md` apply.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 422 | `VALIDATION_ERROR` | Invalid request body (missing or empty `ad_group_cn`, unrecognized `role`) |
 | 422 | `ROLE_MAPPING_INVALID_GROUP_CN` | `ad_group_cn` contains characters invalid for an AD group CN |
 | 503 | `AD_UNAVAILABLE` | AD is unreachable or the connection timed out (10–15 s timeout) |
 

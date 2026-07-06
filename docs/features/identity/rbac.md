@@ -345,28 +345,28 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| POST | `/api/v1/auth/login` | Public | [local-authentication](local-authentication.md#post-apiv1authlogin) |
-| GET | `/api/v1/auth/sso/authorize` | Public | [sso-authentication](sso-authentication.md#get-apiv1authssoauthorize) |
-| POST | `/api/v1/auth/sso/callback` | Public | [sso-authentication](sso-authentication.md#post-apiv1authssocallback) |
-| GET | `/api/v1/auth/providers` | Public | [sso-authentication](sso-authentication.md#get-apiv1authproviders) |
-| POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md#post-apiv1authlogout) |
+| POST | `/api/v1/auth/login` | Public | [local-authentication](local-authentication.md#login) |
+| GET | `/api/v1/auth/sso/authorize` | Public | [sso-authentication](sso-authentication.md#sso-authorize) |
+| POST | `/api/v1/auth/sso/callback` | Public | [sso-authentication](sso-authentication.md#sso-callback) |
+| GET | `/api/v1/auth/providers` | Public | [sso-authentication](sso-authentication.md#list-auth-providers) |
+| POST | `/api/v1/auth/logout` | Authenticated | [authentication](authentication.md#logout) |
 
 ### Users
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md#get-apiv1usersme) |
+| GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md#get-current-user) |
 | GET | `/api/v1/users/me/audit-log` | Authenticated | [identity-audit-log](identity-audit-log.md#list-my-identity-audit-events) |
-| GET | `/api/v1/users` | Public | [user-management](user-management.md#get-apiv1users) |
-| GET | `/api/v1/users/{user}` | Public | [user-management](user-management.md#get-apiv1usersuser) |
+| GET | `/api/v1/users` | Public | [user-management](user-management.md#list-users) |
+| GET | `/api/v1/users/{user}` | Public | [user-management](user-management.md#get-user) |
 
 ### API Keys
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md#get-apiv1api-keys) |
-| POST | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md#post-apiv1api-keys) |
-| POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md#post-apiv1api-keyskey_idrevoke) |
+| GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md#list-my-api-keys) |
+| POST | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md#create-api-key) |
+| POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md#revoke-my-api-key) |
 
 ### Tickets
 
@@ -424,11 +424,11 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/cves` | Public | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
 | GET | `/api/v1/cves/{cve_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
-| GET | `/api/v1/cves/{cve_id}/sources` | Public | [cve-service](../tickets/cve-service.md#cve-source-status-get-apiv1cvescve_idsources) |
+| GET | `/api/v1/cves/{cve_id}/sources` | Public | [cve-service](../tickets/cve-service.md#cve-source-status) |
 | POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
-| POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#post-apiv1cvescve_idrefetch) |
-| GET | `/api/v1/cve-sources` | Public | [cve-service](../tickets/cve-service.md#global-cve-source-listing-get-apiv1cve-sources) |
+| POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#re-fetch-cve-data) |
+| GET | `/api/v1/cve-sources` | Public | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
 
 ### Ticket Events
 
@@ -440,8 +440,8 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#get-apiv1ticketsticket_idsubmission-requests) |
-| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#get-apiv1ticketsticket_idrelease-requests) |
+| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-submission-requests) |
+| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-release-requests) |
 
 ### Fetchers
 
@@ -461,10 +461,10 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/my/packages/pending` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagespending) |
-| GET | `/api/v1/my/packages/in-progress` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagesin-progress) |
-| GET | `/api/v1/my/packages/completed` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagescompleted) |
-| GET | `/api/v1/my/packages/ticket/{ticket_id}` | Authenticated | [maintainer](../packages/maintainer.md#get-apiv1mypackagesticketticket_id) |
+| GET | `/api/v1/my/packages/pending` | Authenticated | [maintainer](../packages/maintainer.md#pending-packages) |
+| GET | `/api/v1/my/packages/in-progress` | Authenticated | [maintainer](../packages/maintainer.md#in-progress-packages) |
+| GET | `/api/v1/my/packages/completed` | Authenticated | [maintainer](../packages/maintainer.md#completed-packages) |
+| GET | `/api/v1/my/packages/ticket/{ticket_id}` | Authenticated | [maintainer](../packages/maintainer.md#package-details-for-ticket) |
 
 ### Administration
 
@@ -475,15 +475,15 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/admin/settings/audit-log` | `manage_settings` | [system-settings](../platform/system-settings.md#list-settings-audit-events) |
 | POST | `/api/v1/admin/settings/default-cvss-version/recalculate` | `manage_settings` | [system-settings](../platform/system-settings.md#trigger-cvss-recalculation) |
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
-| GET | `/api/v1/admin/api-keys` | `manage_users` | [authentication](authentication.md#get-apiv1adminapi-keys) |
-| POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [authentication](authentication.md#post-apiv1adminapi-keyskey_idrevoke) |
-| PATCH | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#patch-apiv1adminusersuser) |
-| POST | `/api/v1/admin/users/{user}/roles` | `manage_users` | [user-management](user-management.md#post-apiv1adminusersuserroles) |
-| POST | `/api/v1/admin/users/{user}/password` | `manage_users` | [user-management](user-management.md#post-apiv1adminusersuserpassword) |
-| POST | `/api/v1/admin/users/{user}/deactivate` | `manage_users` | [user-management](user-management.md#post-apiv1adminusersuserdeactivate) |
-| POST | `/api/v1/admin/users/{user}/reactivate` | `manage_users` | [user-management](user-management.md#post-apiv1adminusersuserreactivate) |
-| GET | `/api/v1/admin/users/{user}/deactivation-impact` | `manage_users` | [user-management](user-management.md#get-apiv1adminusersuserdeactivation-impact) |
-| POST | `/api/v1/admin/users/{user}/unlock` | `manage_users` | [user-management](user-management.md#post-apiv1adminusersuserunlock) |
+| GET | `/api/v1/admin/api-keys` | `manage_users` | [authentication](authentication.md#list-all-api-keys-admin) |
+| POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [authentication](authentication.md#revoke-api-key-admin) |
+| PATCH | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#update-user-admin) |
+| POST | `/api/v1/admin/users/{user}/roles` | `manage_users` | [user-management](user-management.md#set-user-roles) |
+| POST | `/api/v1/admin/users/{user}/password` | `manage_users` | [user-management](user-management.md#reset-user-password) |
+| POST | `/api/v1/admin/users/{user}/deactivate` | `manage_users` | [user-management](user-management.md#deactivate-user) |
+| POST | `/api/v1/admin/users/{user}/reactivate` | `manage_users` | [user-management](user-management.md#reactivate-user) |
+| GET | `/api/v1/admin/users/{user}/deactivation-impact` | `manage_users` | [user-management](user-management.md#get-deactivation-impact) |
+| POST | `/api/v1/admin/users/{user}/unlock` | `manage_users` | [user-management](user-management.md#unlock-user) |
 | GET | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [ad-integration](ad-integration.md#list-role-mappings) |
 | POST | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [ad-integration](ad-integration.md#create-role-mapping) |
 | POST | `/api/v1/admin/role-mappings/preview` | `manage_role_mappings` | [ad-integration](ad-integration.md#preview-role-mapping) |

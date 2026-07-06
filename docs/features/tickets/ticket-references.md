@@ -652,12 +652,13 @@ Adds a manual reference to a ticket.
 
 **`Capability: manage_references`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
+
 **Error responses**:
 
 | Status | Code                | Condition                                     |
 |--------|---------------------|-----------------------------------------------|
 | 409    | `RESOURCE_CONFLICT` | URL already exists for this ticket             |
-| 422    | `VALIDATION_ERROR`  | URL fails RFC 3986 validation (via `HttpUrl`), exceeds length limit, blank title/description, or invalid type value |
 
 ### Update Reference
 
@@ -729,6 +730,8 @@ At least one field must be provided.
 
 **`Capability: manage_references`**
 
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
+
 **Error responses**:
 
 | Status | Code                    | Condition                                                |
@@ -736,9 +739,6 @@ At least one field must be provided.
 | 404    | `RESOURCE_NOT_FOUND`    | Reference does not exist on this ticket                  |
 | 409    | `RESOURCE_NOT_EDITABLE` | Reference is automatic (`source != "manual"`) — cannot be modified by users |
 | 409    | `RESOURCE_CONFLICT`     | URL already exists for this ticket (if URL was changed)  |
-| 422    | `VALIDATION_ERROR`      | URL fails RFC 3986 validation (via `HttpUrl`), exceeds length limit, blank title/description, or invalid type value |
-
-See `docs/api-spec.md` for global and scoped responses.
 
 ### Delete Reference
 

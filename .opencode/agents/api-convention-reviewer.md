@@ -67,6 +67,12 @@ API conventions so that implementation can proceed without design ambiguity.
 - Error responses mention both the HTTP status code AND the error code
 - Field-level validation errors reference `VALIDATION_ERROR` with the
   `errors` array
+- Endpoint error tables MUST NOT include global responses (generic 401,
+  403, 422, 500) or scoped responses already covered by the reference
+  line. See `api-spec.md` "What belongs in an endpoint error table" for
+  the exact rule
+- Each endpoint section should include a reference line indicating which
+  global and scoped responses apply
 
 ### Response envelope
 

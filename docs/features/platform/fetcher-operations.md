@@ -675,15 +675,16 @@ include the fields to change.
 
 **`Capability: manage_fetchers`**
 
+Global responses per `api-spec.md` apply.
+
 **Error responses**:
 
 | Status | Code | Condition |
 |---|---|---|
-| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
-| 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be configured. |
+| 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists |
+| 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed) |
 | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` (not declared in the fetcher's schema) |
 | 422 | `FETCHER_SETTING_INVALID` | Value in `custom_settings` fails type, range, or choices validation |
-| 422 | `VALIDATION_ERROR` | Invalid cron expression, run_timeout, or request_delay value |
 
 ### Get Fetcher Audit Log
 
