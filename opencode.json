@@ -3,5 +3,39 @@
   "instructions": [
     "docs/conventions.md",
     "docs/architecture.md"
-  ]
+  ],
+  "agent": {
+    "build": {
+      "disable": true
+    },
+    "spec": {
+      "description": "Writes and maintains feature specifications and declarative project configuration. Cannot modify implementation code.",
+      "mode": "primary",
+      "color": "warning",
+      "prompt": "{file:./.opencode/prompts/spec.md}",
+      "permission": {
+        "edit": {
+          "*": "deny",
+          "docs/**": "allow",
+          "AGENTS.md": "allow",
+          ".opencode/**": "allow",
+          "opencode.json": "allow"
+        },
+        "bash": "allow"
+      }
+    },
+    "code": {
+      "description": "Implements features from specifications. Signals spec gaps before making autonomous design decisions.",
+      "mode": "primary",
+      "color": "error",
+      "prompt": "{file:./.opencode/prompts/code.md}",
+      "permission": {
+        "edit": {
+          "*": "allow",
+          "docs/**": "ask"
+        },
+        "bash": "allow"
+      }
+    }
+  }
 }

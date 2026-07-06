@@ -6,11 +6,33 @@ for the Sentinel project. This README serves as a quick-reference catalog.
 For details on how agents are triggered automatically, see the Guardrails
 section in `AGENTS.md`.
 
-## Agents
+## Primary Agents
 
-All agents are defined in `.opencode/agents/`. Unless noted otherwise, agents
-are **read-only reviewers** that analyze code or specifications and report
-findings without modifying files.
+Primary agents are the main interaction modes, switchable with the Tab key.
+They are configured in `opencode.json`.
+
+| Agent | Scope | Permissions |
+|-------|-------|-------------|
+| **Plan** | Analysis and planning | Read-only (built-in) |
+| **Spec** | Specifications and declarative configuration | Edit: `docs/**`, `AGENTS.md`, `.opencode/**`, `opencode.json` |
+| **Code** | Implementation, tests, CI/CD, infrastructure | Edit: all files (`docs/**` requires confirmation) |
+
+- **Plan** — read-only mode for analysis, planning, and discussion without
+  making changes. Uses the OpenCode built-in Plan agent.
+- **Spec** — writes and maintains feature specifications, data model, API
+  spec, conventions, agent definitions, and all declarative project
+  configuration. Cannot modify implementation code. Prompt:
+  `.opencode/prompts/spec.md`
+- **Code** — implements features from specifications, writes tests, and
+  maintains all executable artifacts. Must signal spec gaps and obtain user
+  approval before making design decisions. Prompt:
+  `.opencode/prompts/code.md`
+
+## Subagents
+
+All subagents are defined in `.opencode/agents/`. Unless noted otherwise,
+subagents are **read-only reviewers** that analyze code or specifications
+and report findings without modifying files.
 
 | Agent | Type | Trigger | Purpose |
 |-------|------|---------|---------|
@@ -56,8 +78,11 @@ their description.
 
 ```
 .opencode/
-├── agents/           # Agent definitions (one .md file per agent)
+├── agents/           # Subagent definitions (one .md file per agent)
 ├── commands/         # Slash command definitions
+├── prompts/          # Primary agent prompt files
+│   ├── spec.md       # Spec agent instructions
+│   └── code.md       # Code agent instructions
 ├── skills/           # Multi-step workflow definitions
 ├── package.json      # Plugin dependency (@opencode-ai/plugin)
 └── README.md         # This file
