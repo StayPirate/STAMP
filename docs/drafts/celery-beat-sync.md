@@ -39,6 +39,7 @@ a prescriptive action plan for applying the changes to the existing specs.
 | OP-7 | Invalid cron expression during reconciliation | Fail-fast (uncaught exception) | `schedule_override` is validated by the PATCH endpoint; corruption requires direct DB manipulation (probability ~zero). No fallback mechanism needed — fail-fast is the clearest signal to the operator. |
 | OP-8 | Manual trigger `apply_async()` missing time limits | Fix: pass `time_limit`/`soft_time_limit` from `FetcherConfig.run_timeout` | All invocations (scheduled and manual) use the same `run_timeout` from the same source. No custom time limit parameter for the admin — keeps a single source of truth for time limits. |
 | OP-14 | Beat behavior when FetcherConfig table does not exist | Subsumed under OP-1 fail-fast | Any database-level error during reconciliation (connection, auth, schema missing) triggers the same fail-fast. The `{error}` placeholder provides operator diagnosis. Correct deployment ordering eliminates the scenario. |
+| OP-15 | Celery app module location | `backend/app/celery_app.py` (top-level app factory) | Architecturally analogous to `app/main.py` (FastAPI entry point). The Celery app is cross-cutting infrastructure consumed by 4 processes — not task-specific. Task definitions remain in `app/tasks/fetchers.py`. Avoids circular imports. |
 
 ---
 
@@ -436,7 +437,7 @@ this)
 
 **Resolution**: RESOLVED — option (b) with app factory mechanism. The
 timezone validation is reframed as an **app-level contract**: the Celery
-app factory (`backend/app/celery_app.py` or equivalent) validates
+app factory (`backend/app/celery_app.py`) validates
 `timezone == "UTC"` and `enable_utc is True` at module import time,
 raising a `RuntimeError` if either is incorrect. Since every Celery-based
 process (worker, Beat, IBS consumer) must import the Celery app object to
@@ -1653,6 +1654,86 @@ were never registered). The condition text is updated to reflect this —
 it is no longer about a "missing record for a known fetcher" but about
 a fully unknown identifier.
 
+### Step 5h: Coherence fixes for OP-4 and OP-13 across remaining docs
+
+Three documents reference stale information after Steps 5b-5e are
+applied. This step corrects them.
+
+**Part A — `docs/deployment.md` lines 102, 105 (Celery app module path)**
+
+The Celery app object belongs in `backend/app/celery_app.py` (top-level
+app factory, analogous to `app/main.py` for FastAPI). Task *definitions*
+remain in `backend/app/tasks/fetchers.py`. The CLI `-A` flag must
+reference the app factory module, not the tasks package.
+
+**Current text** (line 102):
+
+```
+cd backend && celery -A app.tasks.celery_app worker --loglevel=info
+```
+
+**Replace with**:
+
+```
+cd backend && celery -A app.celery_app worker --loglevel=info
+```
+
+**Current text** (line 105):
+
+```
+cd backend && celery -A app.tasks.celery_app beat --loglevel=info
+```
+
+**Replace with**:
+
+```
+cd backend && celery -A app.celery_app beat --loglevel=info
+```
+
+**Part B — `docs/deployment.md` lines 250-253 (timezone validation scope)**
+
+The timezone validation is now an app-factory concern (covers all Celery
+processes), not worker-specific.
+
+**Current text** (lines 250-253):
+
+```
+1. **Celery configuration**: the application sets `timezone = "UTC"` and
+   `enable_utc = True` in the Celery config. The worker validates these
+   at startup and refuses to start if overridden (see
+   `docs/configuration.md`, Celery Worker Configuration)
+```
+
+**Replace with**:
+
+```
+1. **Celery configuration**: the application sets `timezone = "UTC"` and
+   `enable_utc = True` in the Celery config. The Celery app factory
+   validates these at module import time and raises a `RuntimeError` if
+   overridden — this prevents any Celery-based process (worker, Beat,
+   consumer) from starting with incorrect timezone configuration (see
+   `docs/configuration.md`, Celery Worker Configuration)
+```
+
+**Part C — `docs/data-model.md` FetcherConfig description (~line 1405)**
+
+The auto-creation is no longer worker-specific.
+
+**Current text**:
+
+```
+Per-fetcher configuration managed by admins. Auto-created on worker
+startup if not present.
+```
+
+**Replace with**:
+
+```
+Per-fetcher configuration managed by admins. Auto-created at process
+startup by `bootstrap_fetcher_configs()` if not present (runs in worker,
+Beat, and API server).
+```
+
 ### Step 6: Update Beat troubleshooting in `deployment.md`
 
 **File**: `docs/deployment.md`
@@ -1725,10 +1806,11 @@ require additional changes:
 | `/ready` endpoint (health-endpoints.md) already covers redbeat Redis via CELERY_BROKER_URL PING | No change needed |
 | FetcherAuditEvent does not need a propagation-result field (eventual consistency model, transient failure, self-heals) | No change needed |
 | Concurrency Control section (`FOR UPDATE`) is unrelated to Beat sync (different mechanism, different store) | No change needed |
-| Timezone validation (configuration.md) — reframed as app-level contract (app factory, import-time). Steps 5b/5c/5d update three documents to remove "worker" qualifier. Beat and IBS consumer are now covered automatically | Steps 5b, 5c, 5d added |
-| FetcherConfig auto-creation — reframed from "workers only" to "shared bootstrap in all processes". Steps 5e/5f update `fetcher-infrastructure.md`. Draft spec "Who Writes Where" section already reflects the corrected invariant | Steps 5e, 5f added |
+| Timezone validation (configuration.md, conventions.md, fetcher-infrastructure.md, deployment.md) — reframed as app-level contract (app factory, import-time). Steps 5b/5c/5d update three documents to remove "worker" qualifier; Step 5h Part B updates deployment.md. Beat and IBS consumer are now covered automatically | Steps 5b, 5c, 5d, 5h-B added |
+| FetcherConfig auto-creation — reframed from "workers only" to "shared bootstrap in all processes". Steps 5e/5f update `fetcher-infrastructure.md`; Step 5h Part C updates `data-model.md`. Draft spec "Who Writes Where" section already reflects the corrected invariant | Steps 5e, 5f, 5h-C added |
 | Deregistered Fetcher Lifecycle section — already says "Celery Beat does not schedule it". New section explains the mechanism (entry removed at startup). Consistent | No change needed |
-| `data-model.md` FetcherConfig table — no schema changes needed (all information is already in the model) | No change needed |
+| `data-model.md` FetcherConfig table — no schema changes needed (columns unchanged). Descriptive text updated in Step 5h Part C to reflect shared bootstrap | Step 5h-C added |
+| Celery app module path — `backend/app/celery_app.py` is the prescribed location (app-level factory, analogous to `app/main.py`). Task definitions remain in `backend/app/tasks/fetchers.py`. `deployment.md` CLI commands updated in Step 5h Part A | Step 5h-A added |
 | Fetcher Discovery placement: in Registry section (cross-cutting concern for all processes), not in Beat sync section. Beat sync references it. `cve-fetcher-infrastructure.md` import requirement updated to reference the shared mechanism | No change needed |
 | `_CVE_SOURCE_TYPE_MAP` population: the discovery module import populates both registries as a natural side effect. Documented in the Fetcher Discovery subsection | No change needed |
 | Manual trigger time limits (`fetcher-operations.md`): pre-existing gap where `apply_async()` omitted `time_limit`/`soft_time_limit`. Step 4d fixes this by reading from `FetcherConfig.run_timeout` (same formula as redbeat entry). All invocations now consistently bounded | Step 4d added |
