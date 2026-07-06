@@ -1,9 +1,9 @@
 # Draft: Celery Beat Schedule Synchronization Specification
 
-**Status**: Draft — pending review before application to specs
-**Date**: 2026-07-05
+**Status**: Draft — all open points resolved, ready for application
+**Date**: 2026-07-06
 **Scope**: New section in `fetcher-infrastructure.md` + minor coherence
-updates to 3 other documents
+updates to 4 other documents
 
 ---
 
@@ -35,14 +35,17 @@ a prescriptive action plan for applying the changes to the existing specs.
 | OP-13 | Celery timezone validation scope | App-level contract (app factory validation, fail-fast) | Validation in the Celery app factory covers all processes (worker, Beat, consumer) automatically via import-time check. No per-process signal handlers needed. Fail-fast because wrong timezone produces silently incorrect results (all schedules fire at wrong times). |
 | OP-4 | Beat startup with empty FetcherConfig | Option (c') — shared idempotent bootstrap in all processes | `bootstrap_fetcher_configs()` routine (batch `INSERT ON CONFLICT DO NOTHING`) runs at startup in worker, Beat, and API server. Records always exist before any consumer needs them. Eliminates 404 window, removes OP-11 dependency, no startup ordering requirement. |
 | OP-11 | `run_timeout` default as code constant | Irrelevant (superseded by OP-4 choice) | OP-4 resolved with option (c') — Beat always reads `run_timeout` from FetcherConfig (record guaranteed to exist by bootstrap). No code constant needed. |
+| OP-6 | `due_at` behavior on reconciliation overwrite | Fresh recalculation (no catch-up) | Already the implicit behavior of "create or unconditionally overwrite." Avoids thundering herd on restart. Data recovery is handled at the application level by `catch_up()`, not by the scheduler. |
+| OP-7 | Invalid cron expression during reconciliation | Fail-fast (uncaught exception) | `schedule_override` is validated by the PATCH endpoint; corruption requires direct DB manipulation (probability ~zero). No fallback mechanism needed — fail-fast is the clearest signal to the operator. |
+| OP-8 | Manual trigger `apply_async()` missing time limits | Fix: pass `time_limit`/`soft_time_limit` from `FetcherConfig.run_timeout` | All invocations (scheduled and manual) use the same `run_timeout` from the same source. No custom time limit parameter for the admin — keeps a single source of truth for time limits. |
+| OP-14 | Beat behavior when FetcherConfig table does not exist | Subsumed under OP-1 fail-fast | Any database-level error during reconciliation (connection, auth, schema missing) triggers the same fail-fast. The `{error}` placeholder provides operator diagnosis. Correct deployment ordering eliminates the scenario. |
 
 ---
 
 ## Open Points (Pending Resolution)
 
-The following points were identified by the spec-coherence-reviewer,
-spec-gap-analyzer, and manual analysis. Each requires a design decision
-before the draft can be applied.
+All open points have been resolved. Only OP-12 remains as a deferred
+future extension (YAGNI).
 
 ### Dependency Graph
 
@@ -58,25 +61,23 @@ OP-4 (empty FetcherConfig) ─── RESOLVED (shared bootstrap in all processes
     ├── OP-11 (run_timeout constant) ──→ CLOSED (irrelevant, superseded)
     └── future extension ──→ OP-12 (default_enabled, deferred YAGNI)
 
+OP-6 (due_at on overwrite) ─── RESOLVED (fresh recalculation, implicit behavior)
+OP-7 (invalid cron) ─── RESOLVED (fail-fast, uncaught exception)
+OP-8 (manual trigger time limits) ─── RESOLVED (pass from FetcherConfig.run_timeout)
 OP-13 (timezone validation) ─── RESOLVED (app-level contract, fail-fast)
-OP-14 (schema not migrated) ─── extends OP-1 (PG unreachable)
-
-OP-6, OP-7, OP-8 are independent of each other and of OP-13/14
+OP-14 (schema not migrated) ─── RESOLVED (subsumed under OP-1)
 ```
 
-| # | Summary | Severity | Options |
-|---|---------|----------|---------|
-| OP-6 | `due_at` behavior when entries are overwritten during reconciliation | Medium | (a) `due_at` is recalculated fresh from the cron schedule (overdue runs during Beat downtime are NOT retroactively triggered). (b) If an existing entry's `due_at` is in the past, preserve it so Beat fires immediately on next tick (catch-up for missed runs). (c) Delegate to redbeat's native behavior (document which it is). |
-| OP-7 | Invalid cron expression encountered during reconciliation | Medium | (a) Skip the invalid entry, log WARNING, continue with remaining fetchers (resilient). (b) Fail-fast for the single entry, mark the fetcher as needing operator intervention. (c) Fall back to `default_schedule` if `schedule_override` is unparseable. |
-| OP-8 | Manual trigger `apply_async()` missing time limits | Minor | (a) Add a Step to update `fetcher-operations.md` trigger endpoint (lines 473-475) to pass `time_limit`/`soft_time_limit` in `apply_async()` options — aligns with the "MUST be passed per-invocation" statement. (b) Consider this out-of-scope for the Beat sync draft (pre-existing gap) and track separately. |
-| OP-12 | No `default_enabled` class attribute for fetchers that should start disabled | Low | Forward-looking gap — current design always creates `FetcherConfig` with `enabled=true`. See detailed section below. |
-| OP-14 | Beat behavior when `FetcherConfig` table does not exist (schema not migrated) | Low | Extends OP-1 (PG unreachable): PG reachable but schema missing is a distinct error class. See detailed section below. |
+| # | Summary | Severity | Resolution |
+|---|---------|----------|------------|
+| OP-12 | No `default_enabled` class attribute for fetchers that should start disabled | Low | Deferred (YAGNI) — no current use case. Neither OP-4 nor any other resolution is precluded. See detailed section below. |
 
 ### OP-4: Beat Startup with Empty FetcherConfig
 
 **Resolution**: RESOLVED — option (c') extended to all three processes
 (worker, Beat, API server). A shared idempotent routine
-`bootstrap_fetcher_configs()` executes a batch
+`bootstrap_fetcher_configs()` (`backend/app/services/fetcher_bootstrap.py`)
+executes a batch
 `INSERT INTO fetcher_config (...) VALUES (...) ON CONFLICT (fetcher_name) DO NOTHING`
 for every fetcher in `FETCHER_REGISTRY` at process startup. Each process
 runs this routine after importing `fetcher_discovery` (which populates
@@ -132,42 +133,6 @@ an empty schedule regardless of whether `FetcherConfig` records exist.
   (c) in its original framing, this does not "break" any separation —
   it shares an existing routine. This option ensures GET and PATCH
   endpoints work immediately after Beat startup (no 404 window).
-
-### OP-6: `due_at` on Reconciliation Overwrite
-
-**Context**: when Beat restarts after a crash, overwritten entries may
-have had a `due_at` in the past (i.e., the task was supposed to fire
-during downtime). The choice between "recalculate" and "preserve"
-determines whether missed runs are fired immediately or skipped.
-
-**Impact**: determines operator expectations about data freshness after
-Beat recovery. Both approaches are valid — "recalculate" avoids
-thundering-herd (all fetchers fire simultaneously after recovery),
-"preserve" avoids data gaps.
-
-### OP-7: Invalid Cron During Reconciliation
-
-**Context**: an operator or migration may corrupt `schedule_override`
-in PostgreSQL (bypassing PATCH validation). One invalid record should
-not prevent all other fetchers from being scheduled.
-
-**Impact**: fail-fast means a single corrupted row blocks the entire
-system. Skip-and-continue means the corrupted fetcher is silently
-unscheduled (only visible via dashboard or logs).
-
-### OP-8: Manual Trigger Time Limits
-
-**Context**: the spec states "limits MUST be passed per-invocation via
-`apply_async()` options." This is fully specified for Beat-scheduled
-runs (via redbeat Options). For manual triggers (via the API trigger
-endpoint), `fetcher-operations.md` (lines 473-475) shows
-`apply_async()` without time limit options. This is a pre-existing gap
-that becomes a visible contradiction after this draft is applied.
-
-**Impact**: manual-triggered fetchers would run without Celery-level
-time limits (only stale run detection provides a safety net). The
-`run_timeout` enforcement documented in `FetcherConfig` implies ALL
-invocations are bounded.
 
 ### OP-9: Beat Process Does Not Import Fetcher Modules
 
@@ -552,55 +517,12 @@ Celery app). Option (a) is narrower but sufficient for this draft.
 **Severity**: Low (operational edge case — deployment ordering will be
 specified before implementation)
 
-**Context**: OP-1 (resolved) specifies that Beat fail-fast when
-PostgreSQL is **unreachable** (`OperationalError` / connection refused).
-But there is a distinct failure mode: PostgreSQL is reachable, the
-connection succeeds, but the `FetcherConfig` table **does not exist**
-because the Alembic migration job has not yet run.
-
-At the database driver level, this produces a different error class
-(e.g., `ProgrammingError: relation "fetcher_config" does not exist`)
-than a connection failure. The draft's reconciliation step 1 ("Read
-state from PostgreSQL: query all `FetcherConfig` records") does not
-specify which error classes trigger the fail-fast behavior.
-
-**Impact**: in a correctly-ordered deployment (migrations run before
-processes start), this situation never occurs. `deployment.md:287-306`
-already mandates "Database migrations are a separate operational step"
-that precedes API/worker/Beat startup. However:
-
-- In development environments (e.g., `docker-compose up` where all
-  services start simultaneously), the race is possible
-- The spec should be explicit about error handling regardless of
-  whether the happy path avoids the scenario
-- Since no code exists yet, the implementation will follow whatever
-  the spec says — better to specify it now than discover ambiguity
-  during implementation
-
-**Options**:
-
-**(a) Subsume under OP-1's fail-fast**: any PostgreSQL error during
-reconciliation step 1 (connection error, query error, schema missing)
-triggers the same fail-fast behavior. The CRITICAL log message format
-accommodates any `{error}` string. No spec change needed — just clarify
-that "PostgreSQL unreachable" in the draft text means "query cannot
-complete successfully" (any DB-level error), not narrowly "connection
-refused".
-
-**(b) Distinguish the error classes**: fail-fast on connection errors
-(transient, orchestrator restart will help), but emit a distinct message
-for schema errors (persistent until migration runs — operator action
-needed, not just restart):
-`"CRITICAL: Celery Beat startup failed — FetcherConfig table does not
-exist. Run Alembic migrations before starting Beat: {error}"`
-
-**Recommendation noted during analysis**: option (a) is sufficient. The
-existing fail-fast text ("cannot read FetcherConfig from PostgreSQL:
-{error}") naturally covers both cases — the `{error}` will contain the
-specific exception message. The operator will see "relation does not
-exist" and understand that migrations need to run. Option (b) adds
-clarity but also adds a code branch for a scenario that correct
-deployment ordering eliminates.
+**Resolution**: RESOLVED — subsumed under OP-1's fail-fast. Any
+PostgreSQL error during reconciliation step 1 (connection error, query
+error, schema missing) triggers the same fail-fast behavior. The
+CRITICAL log message format accommodates any `{error}` string — the
+operator will see "relation does not exist" and understand that
+migrations need to run. No additional code branch needed.
 
 ---
 
@@ -810,6 +732,16 @@ Steps:
      `run_timeout` per the formula in "Time Limits" above)
    - This is an idempotent upsert — existing entries are updated, missing
      entries are created
+   - The overwrite computes `due_at` from the cron schedule relative to
+     the current time. Runs missed during Beat downtime are not
+     retroactively triggered — data recovery is handled at the
+     application level by each fetcher's `catch_up()` mechanism
+   - If `schedule_override` cannot be parsed as a valid 5-field cron
+     expression, the parsing exception propagates uncaught and prevents
+     Beat from completing startup (same fail-fast semantics as a
+     PostgreSQL failure). This can only occur if `schedule_override` is
+     corrupted via direct database manipulation — the PATCH endpoint
+     validates cron syntax before persisting
 
 3. **Remove entries for disabled fetchers**: for each fetcher that is
    present in `FETCHER_REGISTRY` but has `enabled = false`:
@@ -859,6 +791,12 @@ If PostgreSQL is unreachable during startup reconciliation:
 there is no fallback mechanism to correct the schedule until the next
 restart. Failing fast ensures that the system is either correct or stopped
 — never silently wrong.
+
+**Error classes covered**: this fail-fast applies to any database-level
+error during step 1: connection failures, authentication errors, missing
+schema (migrations not yet applied), or query errors. The `{error}`
+placeholder contains the specific exception message for operator
+diagnosis.
 
 #### Startup: Redis (redbeat) Unreachable
 
@@ -1081,10 +1019,13 @@ permanent damage), though operationally confusing if done intentionally.
 
 **FetcherConfig** (PostgreSQL) — two types of writes:
 
-1. **Bootstrap** (all processes: worker, Beat, API server): idempotent
+1. **Bootstrap** (all processes: worker, Beat, API server):
+   `bootstrap_fetcher_configs()` in
+   `backend/app/services/fetcher_bootstrap.py`. Idempotent
    `INSERT ON CONFLICT DO NOTHING` at startup. Creates records with
    defaults for newly registered fetchers. Never modifies existing
-   records.
+   records. The function is async; sync callers (worker, Beat) use
+   `asyncio.run()`.
 2. **PATCH endpoint** (API server only): modifies existing records
    (schedule, enabled, run_timeout, custom_settings).
 
@@ -1432,6 +1373,44 @@ Fetchers response)
   the computation mechanism.
 ```
 
+### Step 4d: Add time limits to manual trigger in `fetcher-operations.md`
+
+**File**: `docs/features/platform/fetcher-operations.md`
+**Location**: lines 473-477 (the `apply_async` call in the Trigger
+Fetcher endpoint side effects)
+**Current text**:
+
+```
+- Passes `run_id` to the Celery task via `run_fetcher.apply_async(kwargs=
+  {"fetcher_name": name, "triggered_by": "manual", "user_id": str(user.id),
+  "run_id": str(run.id)})`. The task forwards it to
+  `fetcher.run(run_id=run_id, ...)`, which updates the existing record
+  instead of creating a new one
+```
+
+**Replace with**:
+
+```
+- Passes `run_id` to the Celery task via `run_fetcher.apply_async(kwargs=
+  {"fetcher_name": name, "triggered_by": "manual", "user_id": str(user.id),
+  "run_id": str(run.id)}, time_limit=time_limit,
+  soft_time_limit=soft_time_limit)` where `time_limit` and
+  `soft_time_limit` are read from `FetcherConfig.run_timeout` using the
+  same formula as the redbeat entry (see
+  `docs/features/platform/fetcher-infrastructure.md`, "Celery Beat
+  Schedule Synchronization — Time Limits"). If `run_timeout = 0`, no
+  time limits are passed. The task forwards `run_id` to
+  `fetcher.run(run_id=run_id, ...)`, which updates the existing record
+  instead of creating a new one
+```
+
+**Rationale**: the spec states "limits MUST be passed per-invocation via
+`apply_async()` options" (`fetcher-infrastructure.md`, Time Limits
+section). This applies to ALL invocations — scheduled (via redbeat
+entry Options) and manual (via this endpoint). Using
+`FetcherConfig.run_timeout` as the single source of truth ensures
+consistent behavior regardless of trigger mechanism.
+
 ### Step 5: Add redbeat note in `configuration.md`
 
 **File**: `docs/configuration.md`
@@ -1587,15 +1566,22 @@ Kubernetes multi-replica deployments).
 
 ```
 Per-fetcher configuration, managed by admins. A record is created
-automatically at process startup by `bootstrap_fetcher_configs()` — a
-shared idempotent routine that runs in every Celery-based process
-(worker, Beat, API server) before role-specific logic begins. The
-routine executes a batch `INSERT ... ON CONFLICT DO NOTHING` (on the PK
-`fetcher_name`) for every fetcher in `FETCHER_REGISTRY`, guaranteeing
-safety when multiple processes start concurrently (common in Kubernetes
-multi-replica deployments).
+automatically at process startup by `bootstrap_fetcher_configs()`
+(`backend/app/services/fetcher_bootstrap.py`) — a shared idempotent
+routine that runs in every Celery-based process (worker, Beat, API
+server) before role-specific logic begins. The routine executes a batch
+`INSERT ... ON CONFLICT DO NOTHING` (on the PK `fetcher_name`) for
+every fetcher in `FETCHER_REGISTRY`, guaranteeing safety when multiple
+processes start concurrently (common in Kubernetes multi-replica
+deployments).
 
 The bootstrap routine:
+- **Location**: `backend/app/services/fetcher_bootstrap.py`
+- **Signature**: `async def bootstrap_fetcher_configs(db: AsyncSession) -> None`
+- **Sync callers**: worker and Beat startup use
+  `asyncio.run(bootstrap_fetcher_configs(session))` since they operate
+  outside an async event loop. The API server calls it with `await`
+  during the FastAPI startup event.
 - Runs AFTER `import app.services.fetcher_discovery` (which populates
   `FETCHER_REGISTRY`)
 - Runs BEFORE role-specific startup (Beat: reconciliation; API: serving
@@ -1623,9 +1609,9 @@ attribute). No change needed there.
 ### Step 5g: Update FETCHER_NOT_FOUND 404 condition in `fetcher-operations.md`
 
 **File**: `docs/features/platform/fetcher-operations.md`
-**Location**: all error tables that contain
-`| 404 | FETCHER_NOT_FOUND | No FetcherConfig record exists for this fetcher name |`
-(lines 317, 346, 435, 460, 581, 668, 746)
+
+**Part A — Generic condition** (lines 317, 435, 460, 581, 668, 746):
+
 **Current condition text**:
 
 ```
@@ -1637,6 +1623,26 @@ No `FetcherConfig` record exists for this fetcher name
 ```
 No fetcher with this name exists (not in the registry and no
 `FetcherConfig` record in the database)
+```
+
+**Part B — Run Detail endpoint** (line 346 only):
+
+This endpoint (`GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}`)
+returns 404 for two distinct reasons. The condition text must preserve
+both.
+
+**Current condition text**:
+
+```
+No `FetcherConfig` record exists for this fetcher name, or run not found
+```
+
+**Replace with**:
+
+```
+No fetcher with this name exists (not in the registry and no
+`FetcherConfig` record in the database), or the specified run was not
+found
 ```
 
 **Rationale**: with `bootstrap_fetcher_configs()` running in the API
@@ -1725,3 +1731,4 @@ require additional changes:
 | `data-model.md` FetcherConfig table — no schema changes needed (all information is already in the model) | No change needed |
 | Fetcher Discovery placement: in Registry section (cross-cutting concern for all processes), not in Beat sync section. Beat sync references it. `cve-fetcher-infrastructure.md` import requirement updated to reference the shared mechanism | No change needed |
 | `_CVE_SOURCE_TYPE_MAP` population: the discovery module import populates both registries as a natural side effect. Documented in the Fetcher Discovery subsection | No change needed |
+| Manual trigger time limits (`fetcher-operations.md`): pre-existing gap where `apply_async()` omitted `time_limit`/`soft_time_limit`. Step 4d fixes this by reading from `FetcherConfig.run_timeout` (same formula as redbeat entry). All invocations now consistently bounded | Step 4d added |
