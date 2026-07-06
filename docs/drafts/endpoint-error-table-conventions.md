@@ -2,7 +2,7 @@
 
 **Status**: Draft — pending review before application  
 **Scope**: Specification-only (no code, no migrations)  
-**Impact**: ~55 error table modifications across 14 feature specs + 2
+**Impact**: ~66 error table modifications across 15 feature specs + 2
 cross-cutting documents + 1 agent definition + ~30 header renames + ~29
 anchor updates in rbac.md
 
@@ -24,9 +24,9 @@ The result: **40% of specs repeat generic 403**, 60% correctly omit it.
 One spec (`package-model.md`) does both within the same file.
 
 Additionally, `api-spec.md` defines **Scoped Responses** (lines 347-460)
-with the same "not repeated" rule, but ~25 instances across 4 specs
-repeat `TICKET_NOT_FOUND` and `TICKET_NOT_MUTABLE` in per-endpoint
-tables.
+with the same "not repeated" rule, but ~37 instances across 7 specs
+repeat `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`, and `CVE_NOT_FOUND` in
+per-endpoint tables.
 
 ### Quantitative Summary
 
@@ -34,9 +34,9 @@ tables.
 |----------------|-------|-------|
 | Generic `403 AUTH_INSUFFICIENT_PERMISSION` repeated | 15 | 4 |
 | Generic `401 AUTH_NOT_AUTHENTICATED` repeated | 1 | 1 |
-| `422 VALIDATION_ERROR` for Pydantic-level constraints | 9 | 6 |
-| Scoped responses repeated per-endpoint | ~25 | 4 |
-| **Total** | **~50** | **12** |
+| `422 VALIDATION_ERROR` for Pydantic-level constraints | 13 | 8 |
+| Scoped responses repeated per-endpoint | ~37 | 7 |
+| **Total** | **~66** | **15** |
 
 ---
 
