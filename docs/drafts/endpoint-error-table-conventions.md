@@ -92,38 +92,29 @@ Each endpoint section (or API section preamble) includes a standardized
 **reference line** that makes global/scoped applicability explicit
 without repeating full table rows.
 
-Four canonical variants:
+Five canonical variants:
 
 **Variant A — Public endpoint (no 401/403):**
 ```
 Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
 ```
 
-**Variant B — Authenticated endpoint (401 applies, no capability):**
+**Variant B — Authenticated endpoint (401 + optional 403 apply):**
 ```
 Global responses per `api-spec.md` apply.
 ```
 
-**Variant C — Capability-protected endpoint (401 + 403 apply):**
-```
-Global responses per `api-spec.md` apply.
-```
-
-(Variants B and C use the same text because the Global Responses table
-already specifies that 403 only applies to capability-protected
-endpoints. No disambiguation needed.)
-
-**Variant D — Ticket-scoped endpoint (adds scoped responses):**
+**Variant C — Ticket-scoped endpoint (adds scoped responses):**
 ```
 Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 ```
 
-**Variant E — CVE-scoped endpoint (adds CVE scoped response):**
+**Variant D — CVE-scoped endpoint (adds CVE scoped response):**
 ```
 Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`.
 ```
 
-**Variant F — CVE-scoped with ticket mutability (adds both):**
+**Variant E — CVE-scoped with ticket mutability (adds both):**
 ```
 Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 ```
@@ -131,7 +122,7 @@ Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`, `TICKET_NOT_M
 **Placement**: the reference line appears immediately before the error
 table (or in place of a now-empty table). If a spec groups multiple
 endpoints under a single API section with a shared preamble that already
-states global applicability (as `system-settings.md:125-127` does), that
+states global applicability (as `system-settings.md:124-127` does), that
 preamble satisfies the requirement for all endpoints in the group.
 
 ### DD4 — Conditional Authorization in Prose
@@ -187,7 +178,7 @@ exist.
 ### DD6 — Scoped Responses Referenced by Code
 
 Scoped responses are listed by code in the reference line (DD3, Variants
-D/E/F) rather than as full table rows. This provides discoverability
+C/D/E) rather than as full table rows. This provides discoverability
 (the reader knows which scoped checks apply) without information
 duplication.
 
@@ -338,16 +329,13 @@ section:
 ```markdown
 #### Endpoint error tables (post-standardization)
 
-Endpoint-level error tables in feature specs (e.g., `tickets.md`,
-`user-management.md`) MUST NOT repeat the HTTP status code for service
-exceptions. They reference the exception class name and error code for
-traceability — the authoritative HTTP mapping lives in the service spec.
+Endpoint-level error tables in feature specs document errors specific to
+the endpoint's logic. They reference the error code and condition for
+traceability — the authoritative HTTP status mapping for service
+exceptions lives in the owning service spec's exception table.
 
-Endpoint error tables retain their own HTTP status column only for
-errors that do NOT originate from a service exception (e.g., 404 from
-path parameter resolution, domain-specific 422 with dedicated error
-codes). Global and scoped responses (defined in `api-spec.md`) are
-never included as table rows — they are covered by a reference line.
+Global and scoped responses (defined in `api-spec.md`) are never
+included as table rows — they are covered by a reference line.
 ```
 
 ---
@@ -453,7 +441,7 @@ Post-accessibility service-layer errors: mutation endpoints under
 `/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE`
 from `ensure_ticket_operable()` at the service layer. This applies
 only when the CVE has an associated ticket in a manual-zone status
-(see Manual-Zone Mutability Guard above)
+(see Manual-Zone Mutability Guard below)
 ```
 
 (The external reference to cvss-scoring.md is removed because the
@@ -512,16 +500,13 @@ resolution).
 ```
 #### Endpoint error tables (post-standardization)
 
-Endpoint-level error tables in feature specs (e.g., `tickets.md`,
-`user-management.md`) MUST NOT repeat the HTTP status code for service
-exceptions. They reference the exception class name and error code for
-traceability — the authoritative HTTP mapping lives in the service spec.
+Endpoint-level error tables in feature specs document errors specific to
+the endpoint's logic. They reference the error code and condition for
+traceability — the authoritative HTTP status mapping for service
+exceptions lives in the owning service spec's exception table.
 
-Endpoint error tables retain their own HTTP status column only for
-errors that do NOT originate from a service exception (e.g., 404 from
-path parameter resolution, domain-specific 422 with dedicated error
-codes). Global and scoped responses (defined in `api-spec.md`) are
-never included as table rows — they are covered by a reference line.
+Global and scoped responses (defined in `api-spec.md`) are never
+included as table rows — they are covered by a reference line.
 ```
 
 ---
@@ -817,10 +802,11 @@ Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
 
 ### 5.4 `docs/features/platform/system-settings.md`
 
-#### 5.4.1 Section preamble (line 125-127)
+#### 5.4.1 Section preamble (lines 124-127)
 
 **Before**:
 ```
+Global responses
 (401, 422) apply per `api-spec.md` "Global Responses" section. 403
 (`AUTH_INSUFFICIENT_PERMISSION`) is returned for authenticated users
 without the required capability.
@@ -1939,8 +1925,8 @@ Once all changes are applied and reviewers pass, delete
   across all 50+ modifications in section 5
 - [ ] DD2 (single-owner) is satisfied: conventions.md never re-states the
   rule, only references api-spec.md
-- [ ] DD3 (reference lines) uses the correct variant for each endpoint
-  based on its access level and resource scope
+- [ ] DD3 (reference lines) uses the correct variant (A/B/C/D/E) for
+  each endpoint based on its access level and resource scope
 - [ ] DD4 (conditional auth in prose) is applied to `package-model.md`
   line 1557 (the only case)
 - [ ] DD5 (Pydantic rows removed) correctly identifies all 13 rows as
