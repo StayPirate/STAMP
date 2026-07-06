@@ -1617,6 +1617,33 @@ fetcher's `default_request_delay` class attribute ... at auto-creation
 time" — this is still correct (the bootstrap routine uses the class
 attribute). No change needed there.
 
+### Step 5g: Update FETCHER_NOT_FOUND 404 condition in `fetcher-operations.md`
+
+**File**: `docs/features/platform/fetcher-operations.md`
+**Location**: all error tables that contain
+`| 404 | FETCHER_NOT_FOUND | No FetcherConfig record exists for this fetcher name |`
+(lines 317, 346, 435, 460, 581, 668, 746)
+**Current condition text**:
+
+```
+No `FetcherConfig` record exists for this fetcher name
+```
+
+**Replace with**:
+
+```
+No fetcher with this name exists (not in the registry and no
+`FetcherConfig` record in the database)
+```
+
+**Rationale**: with `bootstrap_fetcher_configs()` running in the API
+server at startup, a `FetcherConfig` record is guaranteed to exist for
+every **registered** fetcher before the API serves requests. The 404 can
+only occur for completely unknown names (typos, or fetcher names that
+were never registered). The condition text is updated to reflect this —
+it is no longer about a "missing record for a known fetcher" but about
+a fully unknown identifier.
+
 ### Step 6: Update Beat troubleshooting in `deployment.md`
 
 **File**: `docs/deployment.md`
