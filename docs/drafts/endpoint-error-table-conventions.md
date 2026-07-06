@@ -192,13 +192,21 @@ D/E/F) rather than as full table rows. This provides discoverability
 duplication.
 
 **Exception**: when an endpoint's error table cites a scoped response
-code with an **endpoint-specific condition variant** (e.g.,
-`CVE_NOT_FOUND` at `cvss-scoring.md:594` includes a parenthetical "see
-`docs/api-spec.md`, CVE Accessibility Check" and documents that 409
+code whose **Condition column** conveys a semantically distinct variant
+not captured by the Scoped Responses definition or by endpoint prose
+(e.g., a `TICKET_NOT_FOUND` row with condition "Ticket or *target*
+ticket not found" — dual-resolution semantics not covered by the
+single-entity scoped check), the code remains in the table because the
+condition text adds information beyond the scoped definition. The key
+test: does the row's "Condition" column say something that neither the
+Scoped Responses section nor the endpoint's surrounding prose already
+states?
+
+**Corollary**: if the endpoint-specific nuance is already captured in
+adjacent prose (e.g., `cvss-scoring.md:598-599` documents that
 `TICKET_NOT_MUTABLE` applies only when the CVE has an associated
-ticket), the code remains in the table because the condition text adds
-information beyond the scoped definition. The key test: does the row's
-"Condition" column say something the Scoped Responses section doesn't?
+ticket), a reference-line entry is sufficient — the table row adds no
+information the reader cannot already see.
 
 ### DD7 — `per_page` Default Alignment
 
@@ -427,6 +435,33 @@ indicating which global and scoped responses apply. Example:
 ```
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED`, `AUTH_LOGOUT_NOT_APPLICABLE` |
 ```
+
+#### 5.1.3 Fix stale cross-reference in CVE Accessibility Check (lines 406-410)
+
+**Before** (lines 406-410):
+```
+Post-accessibility service-layer errors: mutation endpoints under
+`/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE`
+from `ensure_ticket_operable()` at the service layer. See the
+per-endpoint error tables in `docs/features/tickets/cvss-scoring.md`
+for details
+```
+
+**After**:
+```
+Post-accessibility service-layer errors: mutation endpoints under
+`/api/v1/cves/{cve_id}/` may still surface `409 TICKET_NOT_MUTABLE`
+from `ensure_ticket_operable()` at the service layer. This applies
+only when the CVE has an associated ticket in a manual-zone status
+(see Manual-Zone Mutability Guard above)
+```
+
+(The external reference to cvss-scoring.md is removed because the
+error table there will no longer contain `TICKET_NOT_MUTABLE` as a
+row — it is listed in the reference line as a scoped response. The
+conditionality information is now self-contained in this paragraph
+with an internal cross-reference to the Mutability Guard section
+immediately above.)
 
 ---
 
@@ -1189,9 +1224,15 @@ Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NO
 | Status | Code | Condition |
 |--------|------|-----------|
 | 400 | `TICKET_SELF_DUPLICATE` | Resolved target is the same ticket (self-reference after chain resolution) |
+| 404 | `TICKET_NOT_FOUND` | Target ticket (`duplicate_of_id`) does not exist |
 | 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
 | 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Chain depth exceeded (data corruption) |
 ```
+
+Note: The `404 TICKET_NOT_FOUND` row is retained per DD6 exception —
+the scoped `require_accessible_ticket` only covers the source ticket
+(path parameter). The target ticket resolution from the request body
+is endpoint-specific (dual-resolution semantics).
 
 **Reopen Ticket** (lines 1546-1550):
 
@@ -1455,8 +1496,16 @@ Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
 
 #### 5.9.2 Update Reference error table (around line 739)
 
-Same transformation — remove the `422 VALIDATION_ERROR` row, keep only
-endpoint-specific errors. Add reference line with scoped responses.
+Remove the `422 VALIDATION_ERROR` row (line 739) — Pydantic-level
+validation. Keep the three endpoint-specific rows (`RESOURCE_NOT_FOUND`,
+`RESOURCE_NOT_EDITABLE`, `RESOURCE_CONFLICT`).
+
+The file already has a reference line at line 741: `See docs/api-spec.md
+for global and scoped responses.` — update it to the canonical format:
+
+```
+Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
+```
 
 ---
 
@@ -1802,8 +1851,9 @@ Execute in this sequence. Each step depends on the previous one.
 
 ### Step 1 — Update `api-spec.md` (source of truth)
 
-Apply changes 5.1.1 and 5.1.2. This establishes the canonical rule
-before any feature spec is modified.
+Apply changes 5.1.1, 5.1.2, and 5.1.3. This establishes the canonical
+rule and fixes stale cross-references before any feature spec is
+modified.
 
 ### Step 2 — Update `conventions.md` (references only)
 
@@ -1898,11 +1948,19 @@ Once all changes are applied and reviewers pass, delete
 - [ ] DD6 (scoped responses) correctly identifies which endpoints are
   exempt from `TICKET_NOT_MUTABLE` (reopen, revert-duplicate — they are
   the manual-zone exit operations)
+- [ ] DD6 (exception) — tickets.md "Mark as Duplicate" retains
+  `TICKET_NOT_FOUND` row with reworded condition for target ticket
+  (dual-resolution semantics not covered by scoped dependency)
+- [ ] DD6 (corollary) — cvss-scoring.md `TICKET_NOT_MUTABLE` removed
+  from table because conditionality is already in prose (line 598-599);
+  api-spec.md:406-410 updated to be self-contained (5.1.3)
 - [ ] DD7 (per_page) change is limited to the one non-conformant endpoint
 - [ ] DD8 (headers) — every renamed header has a corresponding anchor
   update in rbac.md section 6.9
 - [ ] No spec loses information: all endpoint-specific error codes remain
   in their tables; only generic/scoped rows are removed
+- [ ] ticket-references.md 5.9.2: existing reference line at line 741 is
+  updated to canonical format (not duplicated)
 - [ ] Cross-references: authentication.md gains api-spec.md in its
   cross-references
 - [ ] Error code registry: AUTH_LOGOUT_NOT_APPLICABLE is added to
