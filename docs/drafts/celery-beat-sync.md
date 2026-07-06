@@ -675,30 +675,51 @@ Each registered and enabled fetcher has one redbeat entry:
 | Schedule | Cron from effective schedule (override or default) |
 | Args | `[]` |
 | Kwargs | `{"fetcher_name": "<name>", "triggered_by": "schedule"}` |
-| Options | `{"time_limit": <run_timeout>, "soft_time_limit": <soft_limit>}` or `{}` if `run_timeout = 0` |
+| Options | See "Options field" below |
 | Enabled | `true` (entry only exists when fetcher is enabled) |
 
-### Time Limits: Stored in Redbeat Entry Options
+**Options field**: the Options dict passed to `apply_async()` is built
+from `FetcherConfig` and fetcher class attributes:
 
-Celery's `time_limit` and `soft_time_limit` are enforced by the worker
-at task dispatch time — they cannot be applied from within the task after
-execution begins. Since `run_fetcher` is a generic task shared by all
-fetchers (each with a potentially different `run_timeout`), the limits
-MUST be passed per-invocation via `apply_async()` options.
+| Key | Value | Condition |
+|-----|-------|-----------|
+| `time_limit` | `run_timeout` | `run_timeout > 0` |
+| `soft_time_limit` | `max(1, floor(run_timeout * 0.95))` | `run_timeout > 0` |
+| `queue` | fetcher's `queue` class attribute | `queue is not None` |
+
+If `run_timeout = 0` AND `queue is None`, Options is `{}`.
+If `run_timeout = 0` but `queue` is set, Options is `{"queue": "<queue>"}`.
+The `queue` attribute is a code-defined routing decision (class
+attribute, not configurable via `FetcherConfig`) — it does not require
+redbeat propagation on PATCH.
+
+### Time Limits and Queue Routing: Stored in Redbeat Entry Options
+
+Celery's `time_limit`, `soft_time_limit`, and `queue` are enforced by
+the worker at task dispatch time — they cannot be applied from within
+the task after execution begins. Since `run_fetcher` is a generic task
+shared by all fetchers (each with a potentially different `run_timeout`
+and optional queue), these options MUST be passed per-invocation via
+`apply_async()` options.
 
 When Beat fires a scheduled task, it uses the `options` stored in the
 redbeat entry. Therefore:
 
-- If `FetcherConfig.run_timeout > 0`: the redbeat entry stores
-  `{"time_limit": run_timeout, "soft_time_limit": max(1, floor(run_timeout * 0.95))}`
-  in its Options field. Beat passes these to `apply_async()`, and the
-  worker enforces them.
-- If `FetcherConfig.run_timeout = 0`: the Options field is `{}` (no time
-  limits). The task runs without a time ceiling.
+- If `FetcherConfig.run_timeout > 0`: the redbeat entry's Options
+  include `time_limit` and `soft_time_limit` (see Options field table
+  above). Beat passes these to `apply_async()`, and the worker enforces
+  them.
+- If `FetcherConfig.run_timeout = 0`: no time limits are included. The
+  task runs without a time ceiling.
+- If the fetcher class defines `queue` (non-None): the Options include
+  `"queue": "<queue>"`. Beat passes this to `apply_async()`, routing the
+  task to the correct worker pool.
 
 This means that a PATCH to `run_timeout` requires a redbeat entry update
 (see "Which Changes Require Redbeat Propagation" below). The change takes
-effect on the next scheduled execution after the entry is updated.
+effect on the next scheduled execution after the entry is updated. The
+`queue` attribute is code-defined (class attribute) and does not change
+via PATCH — it is set once at reconciliation time and remains stable.
 
 **Soft time limit formula**: `max(1, floor(run_timeout * 0.95))` — same
 formula defined in the `FetcherConfig` section (prevents Celery from
@@ -717,6 +738,10 @@ This happens **before** Beat begins firing any tasks.
 - `FETCHER_REGISTRY` is populated (via `import app.services.fetcher_discovery`)
 - `FetcherConfig` records exist for all registered fetchers (via
   `bootstrap_fetcher_configs()` — see "Who Writes Where" below)
+- Every fetcher in `FETCHER_REGISTRY` has a valid, non-None
+  `default_schedule` (5-field cron expression) — this is guaranteed by
+  the `BaseFetcher` abstract interface contract
+  (`fetcher-infrastructure.md`, Abstract Interface)
 
 Steps:
 
@@ -799,6 +824,36 @@ schema (migrations not yet applied), or query errors. The `{error}`
 placeholder contains the specific exception message for operator
 diagnosis.
 
+#### Startup Failure: Redis Error During Reconciliation
+
+If Redis becomes unreachable or returns an error during steps 2–4
+(after PostgreSQL was read successfully in step 1), the reconciliation
+is **incomplete** — some entries may have been written/deleted while
+others remain stale. A partially-reconciled schedule is dangerous:
+disabled fetchers might still have entries, deregistered fetchers might
+still fire.
+
+To prevent this, the entire reconciliation procedure (steps 2–4) MUST
+be wrapped in error handling with **fail-on-first-error** semantics: if
+any individual Redis write or delete operation fails, reconciliation
+aborts immediately without attempting remaining operations. Behavior:
+
+- Beat logs a CRITICAL error:
+  `"CRITICAL: Celery Beat reconciliation failed — Redis error during
+  schedule sync: {error}. Partial reconciliation may have occurred.
+  Beat will not start."`
+- Beat exits with a non-zero exit code
+- The orchestrator restarts Beat. On the next attempt, the full
+  reconciliation runs from scratch (step 2 unconditionally overwrites,
+  so partial state from the failed attempt is corrected)
+
+**Rationale**: this is the same fail-fast philosophy as the PostgreSQL
+failure case. A partially-reconciled schedule is worse than no schedule
+(disabled fetchers firing, deregistered fetchers consuming resources).
+The unconditional-overwrite semantics of step 2 ensure that a
+subsequent successful reconciliation always produces a correct state,
+regardless of what was left behind by a failed attempt.
+
 #### Startup: Redis (redbeat) Unreachable
 
 This is equivalent to Beat being unable to start at all — Beat requires
@@ -821,7 +876,7 @@ request.
 | `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron |
 | `enabled` changed to `false` | Remove the redbeat entry |
 | `enabled` changed to `true` | Create the redbeat entry with effective schedule and time limit options |
-| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`). If new value is 0, set Options to `{}`. |
+| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`). If new value is 0, remove time limit keys (Options retains `queue` if present). |
 | `request_delay` changed | No propagation needed (read from DB at execution time) |
 | `custom_settings` changed | No propagation needed (read from DB at execution time) |
 
@@ -848,6 +903,13 @@ The PATCH endpoint handler:
    - If multiple non-enable propagation-requiring fields changed in the
      same PATCH, a single redbeat write reflects all changes atomically
      (one entry upsert)
+   - **Upsert semantics**: all redbeat writes (create and update cases)
+     use `RedBeatSchedulerEntry.save()`, which has create-if-missing
+     semantics. If the entry does not yet exist in Redis (e.g., Beat has
+     not restarted since a new fetcher was deployed), the PATCH
+     propagation creates it. This avoids a gap where a PATCH succeeds in
+     PostgreSQL but has no effect on scheduling because Beat hasn't
+     reconciled yet
 
 The PostgreSQL commit happens BEFORE the redbeat write. This ensures that
 even if the redbeat write fails, the source of truth (PostgreSQL) is
@@ -954,6 +1016,15 @@ during normal operation) that cannot occur without either:
 All three are extraordinary operational events where the minor
 inconvenience of a manual restart is preferable to the continuous
 overhead of periodic reconciliation.
+
+**Operational consequence — new fetcher deployment**: adding a new
+fetcher to the codebase requires a Beat restart for scheduling to
+activate. Workers and the API server will recognize the new fetcher
+immediately (after their own restart), but Beat's `FETCHER_REGISTRY`
+and reconciliation only update at startup. Until Beat restarts, the new
+fetcher can be triggered manually via the API but will not run on
+schedule. This is an expected operational constraint of the startup-only
+reconciliation design.
 
 #### Redis Flush Recovery
 
@@ -1087,8 +1158,8 @@ releases the lock.
 
 Timezone enforcement (`CELERY_TIMEZONE = UTC`, `CELERY_ENABLE_UTC = True`)
 is validated at the **Celery app factory** level — the module that
-constructs the `Celery()` application object (e.g.,
-`backend/app/celery_app.py`). The validation occurs at module import
+constructs the `Celery()` application object
+(`backend/app/celery_app.py`). The validation occurs at module import
 time: after the app is configured, the factory checks
 `app.conf.timezone == "UTC"` and `app.conf.enable_utc is True`. If
 either condition fails, the factory raises a `RuntimeError`:
@@ -1395,21 +1466,23 @@ Fetcher endpoint side effects)
 - Passes `run_id` to the Celery task via `run_fetcher.apply_async(kwargs=
   {"fetcher_name": name, "triggered_by": "manual", "user_id": str(user.id),
   "run_id": str(run.id)}, time_limit=time_limit,
-  soft_time_limit=soft_time_limit)` where `time_limit` and
+  soft_time_limit=soft_time_limit, queue=queue)` where `time_limit` and
   `soft_time_limit` are read from `FetcherConfig.run_timeout` using the
   same formula as the redbeat entry (see
   `docs/features/platform/fetcher-infrastructure.md`, "Celery Beat
-  Schedule Synchronization — Time Limits"). If `run_timeout = 0`, no
-  time limits are passed. The task forwards `run_id` to
-  `fetcher.run(run_id=run_id, ...)`, which updates the existing record
-  instead of creating a new one
+  Schedule Synchronization — Time Limits and Queue Routing"). If
+  `run_timeout = 0`, no time limits are passed. `queue` is read from the
+  fetcher's class attribute (`FETCHER_REGISTRY[name].queue`); if `None`,
+  no queue option is passed (task goes to default queue). The task
+  forwards `run_id` to `fetcher.run(run_id=run_id, ...)`, which updates
+  the existing record instead of creating a new one
 ```
 
 **Rationale**: the spec states "limits MUST be passed per-invocation via
 `apply_async()` options" (`fetcher-infrastructure.md`, Time Limits
 section). This applies to ALL invocations — scheduled (via redbeat
 entry Options) and manual (via this endpoint). Using
-`FetcherConfig.run_timeout` as the single source of truth ensures
+`FetcherConfig.run_timeout` and the fetcher's `queue` attribute ensures
 consistent behavior regardless of trigger mechanism.
 
 ### Step 5: Add redbeat note in `configuration.md`
@@ -1606,6 +1679,34 @@ created exclusively by workers" or "on worker startup"
 fetcher's `default_request_delay` class attribute ... at auto-creation
 time" — this is still correct (the bootstrap routine uses the class
 attribute). No change needed there.
+
+### Step 5f-bis: Update "Deregistered Fetcher Lifecycle" wording
+
+**File**: `docs/features/platform/fetcher-infrastructure.md`
+**Location**: line 1669-1671 (paragraph about when the registry entry
+disappears)
+**Current text**:
+
+```
+When a fetcher class is removed from the codebase (or renamed), its
+entry disappears from the in-memory `FETCHER_REGISTRY` at the next
+worker restart.
+```
+
+**Replace with**:
+
+```
+When a fetcher class is removed from the codebase (or renamed), its
+entry disappears from the in-memory `FETCHER_REGISTRY` at the next
+process restart (worker, Beat, or API server — all import the discovery
+module).
+```
+
+**Rationale**: after the Fetcher Discovery mechanism establishes that
+all three processes import `fetcher_discovery`, the registry population
+is no longer worker-specific. Beat's reconciliation step 4 (remove
+deregistered entries) depends on the fetcher NOT being in Beat's
+registry — the text must reflect that Beat's registry is relevant too.
 
 ### Step 5g: Update FETCHER_NOT_FOUND 404 condition in `fetcher-operations.md`
 
@@ -1814,3 +1915,8 @@ require additional changes:
 | Fetcher Discovery placement: in Registry section (cross-cutting concern for all processes), not in Beat sync section. Beat sync references it. `cve-fetcher-infrastructure.md` import requirement updated to reference the shared mechanism | No change needed |
 | `_CVE_SOURCE_TYPE_MAP` population: the discovery module import populates both registries as a natural side effect. Documented in the Fetcher Discovery subsection | No change needed |
 | Manual trigger time limits (`fetcher-operations.md`): pre-existing gap where `apply_async()` omitted `time_limit`/`soft_time_limit`. Step 4d fixes this by reading from `FetcherConfig.run_timeout` (same formula as redbeat entry). All invocations now consistently bounded | Step 4d added |
+| Redis failure mid-reconciliation (partial write): reconciliation steps 2-4 wrapped in error handling; any Redis error triggers fail-fast (same as PostgreSQL failure). Prevents disabled/deregistered fetchers from remaining scheduled | Added to Startup Reconciliation section |
+| Queue routing in redbeat entry Options: fetchers with `queue` class attribute get `"queue"` in Options. Manual trigger also passes `queue`. `queue` is code-defined (not in FetcherConfig), no PATCH propagation needed | Added to Entry Structure + Step 4d |
+| PATCH propagation upsert semantics: all redbeat writes use `RedBeatSchedulerEntry.save()` (create-if-missing). Covers the case where a new fetcher is PATCH'd before Beat restarts | Added to Propagation Mechanism |
+| Deregistered Fetcher Lifecycle wording: "at the next worker restart" updated to "at the next process restart" since all three processes import the discovery module | Step 5f-bis added |
+| New fetcher deployment operational constraint: documented that Beat restart is required for scheduling activation (startup-only reconciliation design) | Added to Reconciliation is Startup-Only |
