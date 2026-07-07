@@ -210,7 +210,7 @@ container provides ample headroom for the Redis process overhead
 | D2 | `maxmemory 768mb`, `maxmemory-policy noeviction` | Prevents silent eviction of broker keys; transforms OOM from kernel crash into controlled error |
 | D3 | Container `requests.memory = limits.memory = 1Gi` (QoS Guaranteed) | Prevents pod eviction under node pressure; `maxmemory` anchors to this single value |
 | D4 | `beat_max_loop_interval = 60` (fixed in code, not env var) | Reduces lock stale expiry from 25 min to 5 min; negligible cost |
-| D5 | Beat fail-fast on lock loss: catch `LockNotOwnedError` + `RedisError` in tick, log CRITICAL, exit non-zero. Native propagation (raw traceback) is acceptable fallback — recovery works identically | Transforms raw traceback into actionable operator message; consistent with existing fail-fast patterns |
+| D5 | Beat fail-fast on lock loss: MUST exit non-zero; SHOULD catch `LockNotOwnedError` + `RedisError` in tick and log CRITICAL before exiting. Native propagation (raw traceback) satisfies the MUST — recovery works identically | Transforms raw traceback into actionable operator message; consistent with existing fail-fast patterns |
 | D6 | `retry_period` NOT configured for redbeat | Preserves native fail-fast; prevents Beat from reconnecting to empty Redis silently |
 | D7 | All application-owned Redis handlers catch `RedisError` (base) | Covers both ConnectionError and OOM ResponseError uniformly |
 | D8 | Lock MUST NOT be disabled | Lock is the recovery sentinel; disabling it creates silent failure |
@@ -249,23 +249,24 @@ exception is not caught by the scheduler's internal handlers and
 propagates to terminate the process.
 
 **Specified behavior**: when Beat detects lock loss at runtime (via
-`LockNotOwnedError` or `RedisError` during the lock extend), it MUST:
+`LockNotOwnedError` or `RedisError` during the lock extend):
 
-1. Log at CRITICAL level: `"CRITICAL: Celery Beat lost Redis lock —
-   Redis data may have been lost (restart or flush). Beat will exit for
-   orchestrator restart. Recovery: orchestrator restarts Beat →
-   reconciliation rebuilds schedule from PostgreSQL."`
-2. Exit with a non-zero exit code
+1. Beat MUST exit with a non-zero exit code (invariant — both
+   implementation paths guarantee this)
+2. Beat SHOULD log at CRITICAL level before exiting: `"CRITICAL: Celery
+   Beat lost Redis lock — Redis data may have been lost (restart or
+   flush). Beat will exit for orchestrator restart. Recovery:
+   orchestrator restarts Beat → reconciliation rebuilds schedule from
+   PostgreSQL."`
 
 **Implementation note**: the native behavior of redbeat + celery beat
 already terminates the process when `LockNotOwnedError` propagates
-uncaught (verified from upstream sources — see §2.4 of this draft).
-The implementation SHOULD wrap the scheduler's `tick()` to catch
-`LockNotOwnedError` and `RedisError`, produce the CRITICAL log message
-above, and call `sys.exit(1)` — transforming a raw traceback into an
-actionable operator message. If wrapping is not feasible, the native
-propagation (raw traceback + non-zero exit) is acceptable as a
-fallback: the recovery mechanism works identically in both cases.
+uncaught. The implementation SHOULD wrap the scheduler's `tick()` to
+catch `LockNotOwnedError` and `RedisError`, produce the CRITICAL log
+message above, and call `sys.exit(1)` — transforming a raw traceback
+into an actionable operator message. If wrapping is not feasible, the
+native propagation (raw traceback + non-zero exit) satisfies the MUST
+requirement: the recovery mechanism works identically in both cases.
 
 The orchestrator restarts Beat according to its restart policy
 (Kubernetes: CrashLoopBackOff with exponential backoff up to 300s).
@@ -370,17 +371,41 @@ fixed application-level value (not an environment variable):
 | Worst-case tick latency | 60s | Determines lock sentinel detection speed |
 ```
 
-#### 1d. Add lock configuration constraint
+#### 1d. Rewrite lock purpose paragraph and add configuration constraint
 
 **Location**: in the "Redbeat Distributed Lock" subsection (around line
-1973), append:
+1973).
+
+**Action 1 — replace** the existing paragraph at lines 1975-1979:
+
+```
+This is a redbeat-internal mechanism — Sentinel does not need to manage
+it. If a second Beat process starts, redbeat's lock prevents it from
+taking over until the first one dies or releases the lock.
+```
+
+with:
+
+```markdown
+The redbeat distributed lock serves two purposes in Sentinel:
+
+1. **Singleton enforcement** (redbeat-internal): if a second Beat
+   process starts, the lock prevents it from taking over scheduling
+   until the first one dies or releases the lock.
+2. **Runtime recovery sentinel** (Sentinel-specific): the lock extend
+   operation at the start of every `tick()` detects Redis data loss.
+   When the lock key is absent, `LockNotOwnedError` terminates Beat,
+   enabling automatic orchestrator recovery (see "Runtime: Redis Data
+   Loss" above).
+```
+
+**Action 2 — append** after the rewritten paragraph:
 
 ```markdown
 **Configuration constraint**: Sentinel MUST NOT disable the redbeat
-distributed lock. The lock serves as the runtime recovery sentinel —
-without it, Beat cannot detect Redis data loss and would continue
-running with an empty schedule (silent failure). The following
-configurations are prohibited:
+distributed lock. Without it, Beat cannot detect Redis data loss and
+would continue running with an empty schedule (silent failure). The
+following configurations are prohibited:
 
 - Setting `redbeat_lock_key` to `None` or empty string
 - Setting `redbeat_lock_timeout` to `None` or `0`
@@ -686,10 +711,14 @@ Loss).
 
 ### Step 5: Update individual feature specs (alignment)
 
-These are minor alignment edits to ensure consistency with the new
-`RedisError` convention. Each spec already describes the correct
-degradation behavior in prose — these edits add the explicit exception
-class reference for implementer clarity.
+Steps 5a and 5b are minor alignment edits — each spec already describes
+the correct degradation behavior in prose; these edits add the explicit
+`RedisError` exception class reference for implementer clarity.
+
+Step 5c introduces **new behavioral specification** (Redis unavailability
+handling for the IBS consumer) that is not documented today. It also
+requires updating the Consumer States table to reflect the expanded
+meaning of `unreachable`.
 
 #### 5a. `docs/features/identity/authentication.md`
 
@@ -714,7 +743,7 @@ exception class.
 **Location**: in the "Redis Heartbeat" subsection (around line 312),
 after the "TTL behavior" bullet (line 334-337).
 
-**Action**: add a new bullet documenting the Redis unavailability
+**Action 1 — add a new bullet** documenting the Redis unavailability
 degradation behavior:
 
 ```markdown
@@ -726,6 +755,19 @@ degradation behavior:
   prerequisite for operation. The API will report the consumer as
   `unreachable` (missing key) until Redis becomes available and the
   next heartbeat write succeeds.
+```
+
+**Action 2 — update the Consumer States table** (around line 354).
+Replace the `unreachable` row:
+
+```
+| `unreachable` | Redis key expired — consumer process is presumed dead | Key absent |
+```
+
+with:
+
+```markdown
+| `unreachable` | Redis key absent — consumer process is down, or consumer is alive but unable to write heartbeat (Redis unreachable from consumer) | Key absent |
 ```
 
 ---
