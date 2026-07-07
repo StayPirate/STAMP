@@ -22,15 +22,15 @@ calls. When some items succeed and others fail, the run ends as
 spec's Error Handling section incorrectly states "all per-CVE failures
 are local" — this is factually false for blobless clones.
 
-The kernel fetcher already uses `clone_filter = None` (full bare clone)
+The kernel fetcher already uses `clone_filter = None` (plain bare clone)
 because `git.kernel.org` does not support the `filter` capability.
-With a full bare clone, `show_file()` reads from the local object store
+With a plain bare clone, `show_file()` reads from the local object store
 with zero network I/O — making processing a deterministic function of
 local state.
 
 ## Decision
 
-Switch the MITRE fetcher from blobless to full bare clone:
+Switch the MITRE fetcher from blobless to plain bare clone:
 
 - `clone_filter = None` (plain bare clone, all blobs local)
 - Retain `clone_filter` as an optional `BaseGitFetcher` parameter
@@ -40,7 +40,7 @@ Switch the MITRE fetcher from blobless to full bare clone:
 
 ## Tradeoff Summary
 
-| Aspect | Blobless (current) | Full bare (proposed) |
+| Aspect | Blobless (current) | Plain bare (proposed) |
 |--------|-------------------|---------------------|
 | Disk | ~300 MB | ~2.3 GB |
 | Processing network I/O | Per-item on-demand | Zero (all local) |
@@ -58,9 +58,9 @@ and spec simplicity are more valuable than disk savings.
 ### Prerequisites
 
 - No code implementation exists — all changes are specification updates
-- The MITRE cvelistV5 repository full bare clone is approximately
+- The MITRE cvelistV5 repository plain bare clone is approximately
   2.3 GB (measured via GitHub API: repository size 2,338.8 MB)
-- The kernel vulns.git full bare clone is approximately 91 MB
+- The kernel vulns.git plain bare clone is approximately 91 MB
   (unchanged)
 - Combined volume usage: ~2.4 GB (up from ~400 MB)
 
@@ -79,7 +79,7 @@ Change the `clone_filter` row (currently line ~35):
 
 **After:**
 ```
-| `clone_filter` | `None` (full bare clone — all blobs local after fetch) |
+| `clone_filter` | `None` (plain bare clone — all blobs local after fetch) |
 ```
 
 #### 1b. Disk space estimate
@@ -93,7 +93,7 @@ Change the disk estimate section (currently line ~316):
 
 **After:**
 ```
-**Disk space estimate**: ~2.3 GB (`cvelistV5` full bare clone) + ~91 MB (`vulns.git` full bare clone) = ~2.4 GB total. Provision per the 4 GB minimum specified in git-fetcher-infrastructure.md (Volume Requirements) to allow headroom for git pack files, transient operations, and future growth.
+**Disk space estimate**: ~2.3 GB (`cvelistV5` plain bare clone) + ~91 MB (`vulns.git` plain bare clone) = ~2.4 GB total. Provision per the 8 GB minimum specified in git-fetcher-infrastructure.md (Volume Requirements) to allow headroom for git repack operations, transient objects during fetch, and future growth.
 ```
 
 #### 1c. Error Handling — Abort threshold section
@@ -104,7 +104,7 @@ The current text (lines ~343-347) states:
 > errors, upsert failures). There is no abort threshold — a single
 > parse failure should not halt processing of the remaining delta.
 
-This statement is **now correct** with the full clone design (no
+This statement is **now correct** with the plain bare clone design (no
 on-demand network I/O during processing). However, the section should
 be expanded slightly for completeness:
 
@@ -126,7 +126,7 @@ Search the file for any remaining mentions of "blobless", "blob:none",
 appropriate full-clone equivalents. Known instances:
 
 - If the Capacity line in a volume section references "blobless",
-  update to reflect full bare clone sizing.
+  update to reflect plain bare clone sizing.
 
 ---
 
@@ -143,7 +143,7 @@ Combined with `cvelistV5` (~300 MB blobless), total git volume usage is ~400 MB.
 
 **After:**
 ```
-Combined with `cvelistV5` (~2.3 GB full bare clone), total git volume usage is ~2.4 GB.
+Combined with `cvelistV5` (~2.3 GB plain bare clone), total git volume usage is ~2.4 GB.
 ```
 
 #### 2b. clone_filter row (if present)
@@ -194,20 +194,44 @@ Domain defaults (bare=True, filter=None, single-branch=True) live on BaseGitFetc
 
 #### 3c. Clone step — "Bare Clone Pattern" section (lines ~42-55)
 
-Remove the optional blobless clause. Currently contains:
+Remove the optional blobless clause in step 1 (lines 51-54). Currently
+contains (within the step 1 list item):
 
 > For sources that support Git partial clone (protocol v2 with `filter`
 > capability), add `--filter=blob:none` to defer blob downloads. For
 > sources that do not support filtering (e.g., `git.kernel.org`), use a
 > plain bare clone.
 
-**Replace with:**
+**Replace with** (maintaining list-item indentation):
 ```
 All git-based fetchers use plain bare clones. The `clone_filter`
 attribute is available for sources that require deferred blob downloads
 (partial clone), but no current fetcher uses it. All blobs are
 downloaded during `git clone` and `git fetch`, making subsequent
 `show_file()` calls purely local.
+```
+
+Note: this text lives inside list item 1 (indented continuation). The
+resulting step 1 reads: `git clone --bare --single-branch -- <url>
+<dest>` into `$GIT_CLONE_BASE_DIR/...`. [replacement text]. **Validity
+check**: ...
+
+#### 3c-bis. Delta detection — blobless rationale (line ~69)
+
+In the same "Bare Clone Pattern" section, step 3 (Delta detection,
+lines 63-71), the text currently says:
+
+> Rename detection is explicitly disabled (`--no-renames`) so that the
+> diff operates exclusively on local tree/commit objects — no blob
+> content is needed, guaranteeing zero network access even in blobless
+> clones.
+
+**Replace with:**
+```
+Rename detection is explicitly disabled (`--no-renames`) so that the
+diff operates exclusively on local tree/commit objects — no blob
+content comparison is needed, ensuring deterministic output regardless
+of clone type.
 ```
 
 #### 3d. File content access (lines ~72-78)
@@ -232,7 +256,24 @@ Keep it — it's general and still valid.
 
 #### 3e. `show_file()` function documentation (lines ~700-706)
 
-Remove the blobless-specific paragraph. Currently:
+Two changes in the `show_file()` section:
+
+**3e-i. Step 4 condition (line ~700):**
+
+Currently:
+> 4. If exit code indicates a different failure (network error in blobless
+>    clone, corrupt object, timeout): raise `GitFileError` with stderr
+>    content
+
+**Replace with:**
+```
+4. If exit code indicates a different failure (corrupt object, timeout):
+   raise `GitFileError` with stderr content
+```
+
+**3e-ii. Post-behavior paragraph (lines ~704-706):**
+
+Currently:
 > In blobless clones, step 1 triggers an on-demand blob download from
 > the remote — requires network access. If the remote is unreachable,
 > step 4 fires.
@@ -275,6 +316,21 @@ operationally required. No current fetcher uses this mode. If enabled,
 `show_file()` would trigger on-demand blob downloads requiring network
 access during processing — introducing per-item network failure risk.
 This mode is retained for future extensibility only.
+```
+
+#### 3f-bis. Recovery section cross-reference (line ~308)
+
+Step 3f renames "Bare and Blobless Compatibility" to "Bare Clone
+Compatibility". Line 308 (Recovery section, step 4) references the old
+section name. Currently:
+
+> (same `--no-renames` flag as normal delta — guarantees local-only
+> operation in blobless clones; see "Bare and Blobless Compatibility")
+
+**Replace with:**
+```
+(same `--no-renames` flag as normal delta — guarantees local-only
+operation; see "Bare Clone Compatibility")
 ```
 
 #### 3g. Error classification table (line ~434)
@@ -376,16 +432,18 @@ Currently the primary rationale is:
 > libgit2 cannot open repositories with the extensions.partialclone
 > extension — Unusable with blobless clones.
 
-Since blobless is no longer used, rewrite the rationale:
+Since blobless is no longer used, rewrite the rationale to frame the
+elimination as forward-looking while preserving issue traceability:
 
 **Replace with:**
 ```
-pygit2 (libgit2 bindings): eliminated — libgit2 has limited support
-for bare repositories and lacks features required by the template
-(e.g., `git show` equivalent, `--filter` passthrough for future
-extensibility). Additionally, libgit2 cannot open repositories with
-the `extensions.partialclone` extension, blocking future use of
-partial clones.
+pygit2 (libgit2 bindings): eliminated — libgit2 cannot open
+repositories with the `extensions.partialclone` extension
+(libgit2/libgit2#5564, open since Jun 2020; #6880 confirms the
+error persists in v1.7.2, Sep 2024). While no current fetcher uses
+partial clones, this blocks future extensibility. Additionally,
+libgit2 lacks a direct `git show` equivalent for bare repository
+blob access, requiring workaround code
 ```
 
 The GitPython elimination (RCE/security) remains unchanged — it's
@@ -400,24 +458,43 @@ independent.
 
 **After:**
 ```
-| Capacity | 4 GB minimum (current usage ~2.4 GB; provides headroom for growth, git repack operations, and transient objects during fetch) |
+| Capacity | 8 GB minimum (current usage ~2.4 GB; provides headroom for git repack operations — which temporarily require old + new pack coexistence (~4.7 GB peak) — plus future growth at ~150 MB/year) |
 ```
 
-#### 3p. Clone timeout reference (line ~401)
+#### 3p. Clone timeout — value and reference (line ~401)
+
+The Clone row in the timeout table must be updated for both the
+increased timeout (20→30 min) and the larger download size:
 
 **Before:**
 ```
-Initial bare clone (~300 MB download)
+| Clone | 20 minutes | 0 | Initial bare clone (~300 MB download) |
 ```
 
 **After:**
 ```
-Initial bare clone (~2.3 GB download for cvelistV5)
+| Clone | 30 minutes | 0 | Initial bare clone (~2.3 GB download for cvelistV5) |
 ```
 
-Consider whether the clone timeout (currently likely 600s or similar)
-needs adjustment for a larger download. If the timeout is documented,
-verify it accommodates ~2.3 GB at reasonable bandwidth.
+**Rationale**: 30 minutes accommodates 2.3 GB at ≥1.3 MB/s sustained
+throughput. This is adequate for all realistic deployments (typical
+GitHub CDN throughput is 50-100 MB/s; even restrictive corporate proxies
+deliver >5 MB/s). The cost of the extra 10 minutes is negligible — it
+only adds detection latency in the rare scenario where `git clone`
+hangs without producing an error (git's own TCP/HTTP timeouts fire
+first in all normal network failure scenarios).
+
+Also update the `clone()` function step 2 reference (line ~610):
+
+**Before:**
+```
+   clone timeout (20 minutes)
+```
+
+**After:**
+```
+   clone timeout (30 minutes)
+```
 
 #### 3q. Re-clone cost reference (line ~412)
 
@@ -472,7 +549,7 @@ Update the minimum capacity:
 
 **After:**
 ```
-| Minimum capacity | 4 GB |
+| Minimum capacity | 8 GB |
 ```
 
 If there's a note about "~400 MB current usage" or "blobless", update
@@ -500,7 +577,7 @@ Mark CSMT-DES-01 as RESOLVED using compact format:
 ```
 ### CSMT-DES-01 — Blobless clone network failures incorrectly characterized as 'local' in abort threshold rationale (Medium)
 
-**Status**: RESOLVED — Design changed: MITRE fetcher switched from blobless to full bare clone; show_file() is now purely local I/O, making the "all failures are local" statement correct (2026-07-07)
+**Status**: RESOLVED — Design changed: MITRE fetcher switched from blobless to plain bare clone; show_file() is now purely local I/O, making the "all failures are local" statement correct (2026-07-07)
 ```
 
 Remove the `**Category**` line and description body.
@@ -530,13 +607,19 @@ blobless and remain OPEN. No action needed for this draft.
 After all changes, perform a full-text search across the modified files
 for any remaining occurrences of:
 - "blob:none" (should only appear in the "retained for extensibility"
-  note in git-fetcher-infrastructure.md)
+  note in git-fetcher-infrastructure.md, section "Bare Clone
+  Compatibility")
 - "blobless" (same — only in the extensibility note)
 - "~300 MB" referencing cvelistV5 (should be updated to ~2.3 GB)
 - "~400 MB" referencing total git volume (should be ~2.4 GB)
-- "1 GB minimum" referencing volume capacity (should be 4 GB)
+- "1 GB minimum" referencing volume capacity (should be 8 GB)
+- "20 minutes" referencing clone timeout (should be 30 minutes)
 - "on-demand blob download" outside the extensibility note (should be
   removed)
+- "Bare and Blobless Compatibility" (old section name — should be
+  replaced by "Bare Clone Compatibility" everywhere)
+- "full bare clone" (should be "plain bare clone" — standardized
+  terminology)
 
 ---
 
@@ -574,8 +657,8 @@ rm docs/drafts/remove-blobless-mitre.md
 |------|-----------------|
 | `docs/features/tickets/cve-sync-mitre.md` | `clone_filter`, disk estimate, abort threshold text |
 | `docs/features/tickets/cve-sync-kernel.md` | Cross-reference to MITRE disk size |
-| `docs/features/platform/git-fetcher-infrastructure.md` | Default value, ~15 sections updated/simplified |
-| `docs/deployment.md` | Volume capacity minimum |
+| `docs/features/platform/git-fetcher-infrastructure.md` | Default value, clone timeout 20→30 min, volume 1→8 GB, ~20 sections updated/simplified |
+| `docs/deployment.md` | Volume capacity minimum 1→8 GB |
 | `docs/reviews/cve-sync-mitre.md` | CSMT-DES-01 resolved |
 | `docs/reviews/.tracking.json` | DES M count decremented |
 | `docs/reviews/README.md` | Counts updated |
@@ -584,8 +667,8 @@ rm docs/drafts/remove-blobless-mitre.md
 
 | Risk | Mitigation |
 |------|-----------|
-| Initial clone takes longer (~2.3 GB vs ~300 MB) | One-time cost; `clone_timeout` may need adjustment. Recovery from volume loss is infrequent (volume is persistent, backed by recoverable-cache pattern). |
-| Disk growth over time (new CVEs add blobs) | 4 GB minimum provides ~60% headroom. `git gc` repacks periodically. Growth rate: ~30k CVEs/year × ~5 KB avg = ~150 MB/year. |
+| Initial clone takes longer (~2.3 GB vs ~300 MB) | One-time cost; clone timeout increased to 30 minutes (adequate for ≥1.3 MB/s sustained). Recovery from volume loss is infrequent (volume is persistent, backed by recoverable-cache pattern). |
+| Disk growth over time (new CVEs add blobs) | 8 GB minimum provides ~70% headroom over peak repack usage (~4.7 GB). `git gc` repacks periodically. Growth rate: ~30k CVEs/year × ~5 KB avg = ~150 MB/year. |
 | Future fetcher needs blobless | `clone_filter` parameter retained (default None). Re-enabling requires only setting the attribute and re-adding operational documentation for that fetcher. |
 | `git fetch` downloads more data per run | In practice, incremental fetches download only new/modified blobs in the delta (typically 1-144 files × ~5 KB = negligible). The bulk cost is the initial clone, not incremental fetches. |
 
