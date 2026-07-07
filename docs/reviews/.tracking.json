@@ -270,12 +270,34 @@
     "cve-sync-kev": {
       "enabled": true,
       "abbr": "CSKV",
-      "cache": null
+      "cache": {
+        "last_review": "2026-07-07T14:46:30+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 0, "L": 0 },
+          "COH": { "H": 0, "M": 0, "L": 0 },
+          "DES": { "H": 0, "M": 0, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 0,
+        "not_reviewed": []
+      }
     },
     "cve-sync-mitre": {
       "enabled": true,
       "abbr": "CSMT",
-      "cache": null
+      "cache": {
+        "last_review": "2026-07-07T15:02:50+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 3, "L": 0 },
+          "COH": { "H": 0, "M": 1, "L": 2 },
+          "DES": { "H": 0, "M": 3, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 0,
+        "not_reviewed": []
+      }
     },
     "cve-sync-nvd": {
       "enabled": true,
