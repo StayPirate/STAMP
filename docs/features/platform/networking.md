@@ -232,6 +232,12 @@ and `NO_PROXY` environment variables for proxy configuration. No
 application-level proxy settings exist. These are system-level variables
 set at the container or host level.
 
+Since fetchers execute within Celery worker processes (separate containers
+from the API server), these variables must be present in the worker
+container environment — not only in the API container. httpx reads them
+from `os.environ` at client instantiation time; no application-level
+forwarding is needed.
+
 If the deployment uses a TLS-intercepting proxy, the proxy's CA
 certificate must be present in the system CA bundle (standard procedure,
 no Sentinel-specific configuration needed).
