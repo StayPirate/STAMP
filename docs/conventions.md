@@ -379,6 +379,52 @@ in terms of the library API (e.g., "create an entry via
 as informational notes for operational debugging, clearly marked as
 library-internal.
 
+### Redis Error Handling
+
+All application-owned Redis operations (operations that access
+`REDIS_URL` directly, as opposed to library-managed broker operations)
+MUST catch **`RedisError`** (the base class from `redis.exceptions`),
+not narrower subclasses like `ConnectionError` or `TimeoutError`.
+
+**Rationale**: under `noeviction` memory policy, when Redis reaches
+`maxmemory`, write commands return an OOM error. The Python client
+raises `redis.exceptions.ResponseError` — a subclass of `RedisError`
+but NOT of `ConnectionError`. Catching only `ConnectionError` would
+leave OOM errors unhandled (resulting in HTTP 500 responses).
+
+By catching `RedisError`, all Redis failure modes (connection loss,
+timeout, OOM rejection, protocol errors) trigger the same graceful
+degradation path already specified per feature:
+
+| Feature | Degradation on `RedisError` |
+|---------|----------------------------|
+| Session liveness (`session_liveness:*`) | Fall back to direct PostgreSQL query |
+| Login lockout (`login_attempts:*`) | Fail-open (login proceeds without rate limiting) |
+| Fetch deduplication (`fetch_pending:*`) | Unconditional enqueue (idempotent) |
+| CVSS recalculation lock (`cvss_recalc_active`) | Return 503 `REDIS_UNAVAILABLE` |
+| IBS consumer heartbeat | Log WARNING, continue operating |
+
+**Scope**: this convention applies to application code that directly
+calls the Redis client. It does NOT apply to:
+
+- Celery broker operations (managed by the Celery framework; errors
+  surface as task publish failures with Celery's own retry logic)
+- Redbeat operations (managed by the library; errors in `tick()` are
+  handled by the Beat fail-fast mechanism — see
+  `docs/features/platform/fetcher-infrastructure.md`, "Runtime: Redis
+  Data Loss")
+
+**Pattern**:
+
+```python
+try:
+    redis.set(f"fetch_pending:{cve_id}:{source}", "1", nx=True, ex=600)
+except RedisError:
+    # Degrade gracefully per feature spec
+    logger.warning("Redis unavailable for dedup lock: %s", exc)
+    # proceed without deduplication (idempotent downstream)
+```
+
 ## TypeScript (Frontend)
 
 ### Style

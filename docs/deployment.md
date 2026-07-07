@@ -351,6 +351,143 @@ procedures, and worker affinity configuration.
 
 ---
 
+## Redis Durability, Memory, and Persistence
+
+Sentinel uses Redis in two roles, addressed by two configuration URLs
+(see `docs/configuration.md`):
+
+- **Application cache/coordination** (`REDIS_URL`, db 0): session
+  liveness cache, login lockout counters, on-demand fetch deduplication
+  locks, CVSS recalculation lock, IBS consumer heartbeat.
+- **Celery broker + scheduler** (`CELERY_BROKER_URL`, db 1): task queue
+  and `celery-redbeat` schedule entries (including the distributed lock
+  used as recovery sentinel).
+
+### Persistence is Disabled by Design
+
+Redis persistence (RDB and AOF) MUST be disabled in all environments:
+
+```
+save ""
+appendonly no
+```
+
+**Rationale**:
+
+1. **No durable data lives solely in Redis.** PostgreSQL is the source
+   of truth for all persistent state (sessions, schedules, task
+   outcomes, mutation serialization). Every Redis key is either
+   TTL-bounded and self-healing, or fully reconstructible from
+   PostgreSQL via Beat's startup reconciliation.
+
+2. **The Beat lock sentinel provides automatic recovery.** When Redis
+   loses data (restart or flush), Beat detects the missing lock within
+   ≤60 seconds, terminates, and the orchestrator restarts it. The
+   reconciliation rebuilds the full schedule from PostgreSQL. No manual
+   intervention is required. See
+   `docs/features/platform/fetcher-infrastructure.md` (Runtime: Redis
+   Data Loss) for the mechanism.
+
+3. **Persistence would undermine the lock sentinel.** If RDB restored
+   the `redbeat::lock` key after a Redis restart (the snapshot is recent
+   enough that the lock has not expired — the lock TTL is 300s, typically
+   still valid within a restart window), Beat's `lock.extend()` would
+   succeed, the sentinel would NOT fire, and Beat would continue running
+   with the schedule from the snapshot — bypassing the clean crash →
+   reconciliation recovery path. Expired keys are correctly discarded at
+   RDB reload, so this concerns non-expired keys specifically. Volatile
+   Redis guarantees the lock is always absent after data loss, ensuring
+   the sentinel always fires.
+
+4. **Task queue loss is acceptable.** Queued tasks that are lost during
+   a Redis restart are recovered by the next periodic fetcher execution
+   (scheduled intervals range from 6 hours to 24 hours). On-demand
+   fetches can be re-triggered via the API. The `FetcherRun` table in
+   PostgreSQL tracks outcomes — no Celery result backend is used.
+
+### Memory Configuration
+
+Redis MUST be configured with explicit memory limits and the
+`noeviction` policy to prevent silent data loss through eviction:
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `maxmemory` | `768mb` | Internal memory ceiling (~75% of container limit). When reached, Redis refuses new writes rather than evicting existing keys |
+| `maxmemory-policy` | `noeviction` | Write commands return OOM error; read commands continue. Preserves all existing data (queued tasks, schedule entries, locks) |
+
+**Container resource limits** (Kubernetes QoS Guaranteed):
+
+| Resource | Value | Purpose |
+|----------|-------|---------|
+| `requests.memory` | `1Gi` | Minimum guaranteed memory (scheduler placement) |
+| `limits.memory` | `1Gi` | Maximum allowed memory (kernel OOM-kill threshold) |
+
+Setting `requests == limits` achieves QoS class "Guaranteed": the pod
+is never evicted under node memory pressure. This is appropriate for
+Redis as a broker/coordination service.
+
+**Why `maxmemory` must be lower than `limits.memory`**: the container
+memory limit is enforced by the kernel — exceeding it causes immediate
+process termination (OOM-kill). The Redis `maxmemory` setting is an
+*internal* threshold that triggers the `noeviction` policy *before* the
+kernel intervenes. The ~25% gap (768 MB vs 1024 MB) provides headroom
+for Redis process overhead: allocator fragmentation, client connection
+buffers, internal data structures, and Lua script execution memory.
+
+**Behavior when `noeviction` triggers**: Redis returns
+`OOM command not allowed when used memory > 'maxmemory'` on write
+commands. Read commands continue normally. Application code handles this
+as a `RedisError` with graceful degradation (see `docs/conventions.md`,
+Redis Error Handling). For the Celery broker, OOM indicates a capacity
+issue — operators should investigate queue backlog growth (e.g., workers
+not consuming tasks).
+
+**If the orchestrator imposes a memory limit lower than `maxmemory`**:
+the kernel OOM-kills Redis *before* the `noeviction` policy activates.
+The `maxmemory` becomes ineffective. Always ensure: `maxmemory` <
+container `limits.memory`.
+
+**Memory sizing rationale**: Sentinel's Redis footprint is small.
+Application keys (db 0) total < 10 MB even with thousands of active
+sessions. Redbeat entries are negligible (~1 KB × ~12 fetchers). The
+primary variable is the Celery task queue backlog (db 1): under normal
+operation nearly empty (workers consume in real-time); under stress
+(first-run with thousands of CVEs, or workers down) may grow to
+~100-150 MB. The 768 MB `maxmemory` provides >5× headroom over
+realistic peak usage.
+
+### Monitoring Scheduler Liveness (Recommended)
+
+The lock sentinel mechanism ensures automatic recovery in all standard
+failure modes. As defense-in-depth for edge cases (lock accidentally
+disabled, Redis manipulated selectively), operators SHOULD configure
+external monitoring on scheduler activity.
+
+**Recommended signal** (cause-agnostic — detects any cause of stalled
+ingestion):
+
+> Alert when at least one fetcher with `enabled = true` has a
+> `last_run.finished_at` older than 2× its configured schedule interval,
+> or has never run (`last_run = null`).
+
+This signal is derivable from `GET /api/v1/fetchers` without any code
+changes to Sentinel. It detects not only empty schedules but also dead
+workers, database unavailability, or any other cause of stalled
+processing.
+
+**Why not `/health` or `/ready`**: these endpoints report API server
+instance health for the load balancer. Returning non-200 for a Beat
+problem would incorrectly remove healthy API instances from rotation.
+Beat is a separate process — its liveness is the orchestrator's
+responsibility, not the API server's.
+
+**When the schedule is legitimately empty**: if an operator disables all
+fetchers, the schedule is empty by design. The monitoring signal above
+correctly handles this: with no enabled fetchers, the condition "at
+least one enabled fetcher with stale last_run" is false → no alert.
+
+---
+
 ## Health Checks
 
 See `docs/features/platform/health-endpoints.md` for the authoritative

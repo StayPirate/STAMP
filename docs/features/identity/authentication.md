@@ -204,7 +204,8 @@ This ensures that only positive (active) state is ever cached, a cache miss
 always triggers a database verification, and a revoked session never pollutes
 the cache.
 
-**Redis unavailability**: if Redis is unreachable, the session liveness
+**Redis unavailability**: if Redis is unreachable (any `RedisError` —
+including connection failures and OOM rejections), the session liveness
 check falls back to a direct database query. This is functionally
 correct but increases database load (one extra query per authenticated
 request). The Redis connection failure is logged as a WARNING on first

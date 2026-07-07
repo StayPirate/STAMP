@@ -35,6 +35,12 @@ below). Different database numbers (`/0`, `/1`) ensure namespace
 isolation within a single Redis instance; in production, these URLs may
 point to separate instances without code changes.
 
+**Persistence and memory**: Redis persistence (RDB/AOF) is disabled by
+design — all Redis state is volatile and reconstructible. See
+`docs/deployment.md` (Redis Durability, Memory, and Persistence) for
+the full operational requirements including `maxmemory`, `noeviction`
+policy, and container resource limits.
+
 ## Celery Worker Configuration
 
 These settings control the Celery worker and Beat scheduler behavior.
@@ -74,6 +80,27 @@ broker database. See
 `docs/features/platform/fetcher-infrastructure.md` (Celery Beat Schedule
 Synchronization) for the full synchronization mechanism between
 PostgreSQL (source of truth) and redbeat (execution layer).
+
+**Beat tick interval**: `beat_max_loop_interval = 60` is a fixed
+application-level setting (not an environment variable). It controls the
+maximum time Beat sleeps between scheduler ticks. This value determines:
+
+- The worst-case latency for detecting Redis data loss (≤60s)
+- The derived `lock_timeout` for the redbeat distributed lock (300s =
+  `max_interval × 5`), which bounds how long a stale lock persists
+  after a Beat crash before a replacement can start
+
+This setting MUST NOT be exposed as an environment variable. It is a
+system-level tuning constant with no deployment-specific variance.
+
+**`retry_period` (redbeat)**: NOT configured. When unset (the default),
+Redis operations raise immediately on failure without internal retries.
+This preserves the fail-fast behavior that enables automatic recovery
+via the lock sentinel mechanism. Setting `retry_period` to any value
+would allow Beat to silently reconnect to empty Redis after a restart,
+bypassing the lock sentinel detection. See
+`docs/features/platform/fetcher-infrastructure.md` (Runtime: Redis Data
+Loss).
 
 ## SSO Configuration
 

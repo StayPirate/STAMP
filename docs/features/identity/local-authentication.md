@@ -288,7 +288,8 @@ attempts per username using a Redis counter.
   reset the TTL. The lockout expires naturally after
   `LOGIN_LOCKOUT_MINUTES` from the last actual failed password
   verification, even under sustained attack.
-- **Redis unavailability**: if Redis is unreachable, the login endpoint
+- **Redis unavailability**: if Redis is unreachable (any `RedisError` —
+  including connection failures and OOM rejections), the login endpoint
   operates in **fail-open** mode — login proceeds without rate limiting.
   This prioritizes availability over brute-force protection. The
   rationale: Sentinel is an internal tool on a trusted network; a

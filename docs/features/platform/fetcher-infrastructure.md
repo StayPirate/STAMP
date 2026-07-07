@@ -1479,6 +1479,21 @@ vs. application cache (split deployment per `docs/configuration.md`),
 redbeat follows the broker instance — which is correct, since redbeat is
 part of the Celery subsystem.
 
+Additionally, the following Celery Beat setting is configured as a
+fixed application-level value (not an environment variable):
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `beat_max_loop_interval` | `60` | Controls the maximum sleep duration between scheduler ticks. Reduces worst-case lock sentinel detection latency from 300s (default) to 60s, and — critically — reduces `lock_timeout` (derived as `max_interval * 5`) from 1500s to 300s. This means a replacement Beat instance can acquire the lock within ≤5 minutes of a crash, rather than ≤25 minutes with the default. The tick frequency increase (1/min vs 1/5min when idle) has negligible Redis overhead (one lock extend + one sorted set range query per tick). This value MUST NOT be configurable via environment variable — it is a system-level tuning with no deployment-specific variance. |
+
+**Derived values** (from `beat_max_loop_interval = 60`):
+
+| Derived setting | Value | Calculation |
+|-----------------|-------|-------------|
+| `lock_timeout` | 300s | `max_interval * 5` (redbeat default derivation) |
+| `lock.acquire(sleep=...)` | 60s | `max_interval` (retry interval when lock is held) |
+| Worst-case tick latency | 60s | Determines lock sentinel detection speed |
+
 **Internal key patterns (informational)**: redbeat stores entry data
 under `{key_prefix}{entry_name}` keys and internal structures (schedule
 index, distributed lock) under `{key_prefix}:{structure_name}` keys
@@ -1566,6 +1581,18 @@ This happens **before** Beat begins firing any tasks.
   `default_schedule` (5-field cron expression) — this is guaranteed by
   the `BaseFetcher` abstract interface contract
   (`fetcher-infrastructure.md`, Abstract Interface)
+- The redbeat distributed lock has been acquired (see below)
+
+**Lock acquisition** (first step of Beat startup): before reconciliation
+begins, redbeat acquires the distributed lock (`redbeat::lock`) via
+`lock.acquire(blocking=True, sleep=max_interval)`. If the lock is held
+by a stale instance (e.g., previous Beat crashed without releasing it),
+the new Beat retries every `max_interval` (60 seconds) until the lock
+expires (after `lock_timeout` = 300s from the last successful extend).
+In the common recovery case (Redis data loss → lock absent), acquisition
+is immediate. In a non-data-loss crash (Beat OOM-killed, Redis intact),
+the worst-case wait before the new Beat starts scheduling is
+`lock_timeout` = 300s (≤5 minutes).
 
 Steps:
 
@@ -1833,13 +1860,13 @@ during normal operation) that cannot occur without either:
 
 - An external actor directly modifying Redis (operator error) — handled
   by restart-based reconciliation (entry is silently overwritten)
-- A Redis flush — requires manual Beat restart for recovery (see "Redis
-  Flush Recovery" below)
+- A Redis flush — triggers automatic Beat crash via lock sentinel and
+  orchestrator restart (see "Redis Flush Recovery" below)
 - A Redis failure during PATCH propagation — self-heals at next restart
 
-All three are extraordinary operational events where the minor
-inconvenience of a manual restart is preferable to the continuous
-overhead of periodic reconciliation.
+All three are extraordinary operational events where restart-based
+recovery (automatic for Redis flush, immediate for the others) is
+preferable to the continuous overhead of periodic reconciliation.
 
 **Operational consequence — new fetcher deployment**: adding a new
 fetcher to the codebase requires a Beat restart for scheduling to
@@ -1850,24 +1877,89 @@ fetcher can be triggered manually via the API but will not run on
 schedule. This is an expected operational constraint of the startup-only
 reconciliation design.
 
+#### Runtime: Redis Data Loss (Restart or Flush)
+
+If Redis loses its data while Beat is running — whether due to a Redis
+process restart, a `FLUSHALL` command, or any event that clears the
+keyspace — Beat automatically detects the loss and terminates, enabling
+orchestrator-driven recovery.
+
+**Detection mechanism — lock sentinel**: the first operation in every
+`tick()` cycle is `self.lock.extend(lock_timeout)`. When the
+`redbeat::lock` key is absent (data loss), the extend Lua script
+returns `0` and the Redis client raises `LockNotOwnedError`. This
+exception is not caught by the scheduler's internal handlers and
+propagates to terminate the process.
+
+**Specified behavior**: when Beat detects lock loss at runtime (via
+`LockNotOwnedError` or `RedisError` during the lock extend):
+
+1. Beat MUST exit with a non-zero exit code (invariant — both
+   implementation paths guarantee this)
+2. Beat SHOULD log at CRITICAL level before exiting: `"CRITICAL: Celery
+   Beat lost Redis lock — lock extend failed (possible causes: Redis
+   data loss, connection failure, or OOM rejection). Beat will exit for
+   orchestrator restart. Recovery: orchestrator restarts Beat →
+   reconciliation rebuilds schedule from PostgreSQL."`
+
+**Implementation note**: the native behavior of redbeat + celery beat
+already terminates the process when `LockNotOwnedError` propagates
+uncaught. The implementation SHOULD wrap the scheduler's `tick()` to
+catch `LockNotOwnedError` and `RedisError`, produce the CRITICAL log
+message above, and call `sys.exit(1)` — transforming a raw traceback
+into an actionable operator message. If wrapping is not feasible, the
+native propagation (raw traceback + non-zero exit) satisfies the MUST
+requirement: the recovery mechanism works identically in both cases.
+
+The orchestrator restarts Beat according to its restart policy
+(Kubernetes: CrashLoopBackOff with exponential backoff up to 300s).
+On restart, the standard startup reconciliation rebuilds the full
+schedule from PostgreSQL. No manual intervention is required.
+
+**Detection latency**: the lock extend occurs once per tick. The
+worst-case time between Redis data loss and Beat termination equals
+`beat_max_loop_interval` (60 seconds). If Beat is sleeping when Redis
+loses data, it will not detect the loss until it wakes for the next
+tick.
+
+**Prerequisite — lock must remain enabled**: the lock sentinel mechanism
+requires the redbeat distributed lock to be active (the default
+configuration). Disabling the lock (`redbeat_lock_key = None` or
+`redbeat_lock_timeout = None`) removes the sentinel and creates a
+silent failure mode where Beat continues running with an empty schedule
+after data loss. Sentinel MUST NOT disable the redbeat lock.
+
+**`retry_period` must not be configured**: the `redbeat_redis_options`
+setting `retry_period` MUST NOT be set. When unset (the default), Redis
+operations that fail raise immediately without internal retries,
+enabling the fail-fast behavior. If `retry_period` were set to a
+positive value, redbeat would retry internally — and if Redis returned
+during the retry window in a clean state, Beat would reconnect to an
+empty schedule without triggering the lock sentinel (the lock might be
+re-acquired transparently during retry). This would reintroduce the
+silent failure mode.
+
+**Relationship to startup failures**: this runtime behavior complements
+the startup fail-fast mechanisms (PostgreSQL unreachable, Redis error
+during reconciliation). The same principle applies: Beat is either
+correct or stopped — never silently wrong.
+
 #### Redis Flush Recovery
 
-If Redis is flushed (all keys lost, including redbeat entries):
+If Redis is flushed (`FLUSHALL`) or restarted without persistence while
+Beat is running:
 
-1. All fetcher schedules stop firing immediately (entries are gone)
-2. Beat continues running but with an empty schedule — it does not
-   crash (Redis is still reachable, there is simply nothing to fire)
-3. **Detection**: the admin observes the anomaly in the fetcher
-   dashboard — all `next_run_at` values are `null` and `last_run`
-   timestamps grow stale
-4. **Recovery**: restart the Beat process (kill the container or
-   restart the service). On startup, the full reconciliation recreates
-   all entries from PostgreSQL
+1. All fetcher schedules and the distributed lock are lost immediately
+2. At the next tick (within `beat_max_loop_interval`, ≤60s), Beat
+   detects the lock loss via the sentinel mechanism (see "Runtime: Redis
+   Data Loss" above)
+3. Beat logs CRITICAL and exits with non-zero exit code
+4. The orchestrator restarts Beat
+5. On startup, the full reconciliation recreates all schedule entries
+   from PostgreSQL
 
-There is no automatic self-healing for this scenario without a Beat
-restart. This is acceptable because a Redis flush is an extraordinary
-operational event (not a transient failure), and the dashboard provides
-clear visibility into the anomaly.
+**Recovery is automatic** — no manual intervention is required. The
+orchestrator's restart policy handles the process lifecycle.
 
 **Operational note**: a Redis flush also affects `REDIS_URL` data
 (session liveness cache, login lockout counters, deduplication locks,
@@ -1882,9 +1974,9 @@ distributed locks). Specific impacts:
   efficiency concern — the tasks are idempotent (upsert semantics).
 - **Login lockout counters**: brute-force rate limiting resets
   temporarily.
-- **`/ready` endpoint**: continues to return 200 (Redis is reachable).
-  The flush is not detectable via health checks — only via the dashboard
-  anomaly (stale `last_run` timestamps, `null` `next_run_at`).
+- **`/ready` endpoint**: continues to return 200 (Redis is reachable
+  after flush/restart). The flush itself is not detectable via health
+  checks — detection is handled by the lock sentinel mechanism.
 
 #### Direct Redis Manipulation
 
@@ -1973,10 +2065,30 @@ concurrent PATCH requests on the **same** fetcher:
 #### Redbeat Distributed Lock
 
 Redbeat uses its own distributed lock (`redbeat::lock`) to ensure only
-one Beat process is active at a time. This is a redbeat-internal mechanism
-— Sentinel does not need to manage it. If a second Beat process starts,
-redbeat's lock prevents it from taking over until the first one dies or
-releases the lock.
+one Beat process is active at a time.
+
+The redbeat distributed lock serves two purposes in Sentinel:
+
+1. **Singleton enforcement** (redbeat-internal): if a second Beat
+   process starts, the lock prevents it from taking over scheduling
+   until the first one dies or releases the lock.
+2. **Runtime recovery sentinel** (Sentinel-specific): the lock extend
+   operation at the start of every `tick()` detects Redis data loss.
+   When the lock key is absent, `LockNotOwnedError` terminates Beat,
+   enabling automatic orchestrator recovery (see "Runtime: Redis Data
+   Loss" above).
+
+**Configuration constraint**: Sentinel MUST NOT disable the redbeat
+distributed lock. Without it, Beat cannot detect Redis data loss and
+would continue running with an empty schedule (silent failure). The
+following configurations are prohibited:
+
+- Setting `redbeat_lock_key` to `None` or empty string
+- Setting `redbeat_lock_timeout` to `None` or `0`
+
+These constraints are satisfied by the default redbeat configuration
+(lock enabled, key = `redbeat::lock`, timeout derived from
+`max_interval * 5`).
 
 ### Startup Validation
 
@@ -1993,6 +2105,24 @@ either condition fails, the factory raises a `RuntimeError`:
 enable_utc={enable_utc}. All fetcher schedules assume UTC — see
 docs/conventions.md."
 ```
+
+**Lock sentinel enforcement**: the Celery app factory MUST also validate
+that the redbeat distributed lock is enabled. Specifically, after app
+configuration is complete, it checks that `redbeat_lock_key` is not
+`None` and not empty, and that `redbeat_lock_timeout` is not `None` and
+not `0`. If either condition fails, the factory raises a `RuntimeError`:
+
+```
+"FATAL: Redbeat distributed lock must be enabled. Current value:
+redbeat_lock_key={lock_key}, redbeat_lock_timeout={lock_timeout}. The
+lock is required for automatic recovery from Redis data loss — see
+docs/features/platform/fetcher-infrastructure.md (Runtime: Redis Data
+Loss)."
+```
+
+This validation is satisfied by the default redbeat configuration (key =
+`redbeat::lock`, timeout derived from `max_interval * 5` = 300s). It
+fires only if an operator explicitly overrides the defaults.
 
 Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
 MUST import the Celery app object to function, the validation is
