@@ -146,7 +146,21 @@ Combined with `cvelistV5` (~300 MB blobless), total git volume usage is ~400 MB.
 Combined with `cvelistV5` (~2.3 GB plain bare clone), total git volume usage is ~2.4 GB.
 ```
 
-#### 2b. clone_filter row (if present)
+#### 2b. Terminology — "full bare clone" (line 314)
+
+**Before:**
+```
+**Disk space estimate**: ~91 MB (`vulns.git` full bare clone — all
+blobs local, no partial clone filtering).
+```
+
+**After:**
+```
+**Disk space estimate**: ~91 MB (`vulns.git` plain bare clone — all
+blobs local).
+```
+
+#### 2c. clone_filter row (if present)
 
 The kernel already has `clone_filter = None`. Verify the description
 note. Currently:
@@ -496,6 +510,20 @@ Also update the `clone()` function step 2 reference (line ~610):
    clone timeout (30 minutes)
 ```
 
+#### 3p-bis. Clone Operations function table — timeout (line ~596)
+
+The function signature table also embeds the timeout value:
+
+**Before:**
+```
+| `clone` | `async def clone(url: str, dest: Path, *, bare: bool = False, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (20 min) | `GitFetchError` |
+```
+
+**After:**
+```
+| `clone` | `async def clone(url: str, dest: Path, *, bare: bool = False, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (30 min) | `GitFetchError` |
+```
+
 #### 3q. Re-clone cost reference (line ~412)
 
 **Before:**
@@ -562,6 +590,26 @@ clone/fetch") remains correct — network is still needed for clone/fetch.
 The difference is that per-item processing no longer needs the network.
 No change needed here.
 
+#### 4c. Kernel entry — remove blobless framing (line ~201)
+
+The kernel entry's parenthetical currently frames the absence of
+`--filter=blob:none` as a server limitation, implying other fetchers
+use it. After this change, no fetcher uses blobless — the framing is
+misleading.
+
+**Before:**
+```
+bare clone + fetch (NO `--filter=blob:none` — server does not
+advertise the `filter` capability)
+```
+
+**After:**
+```
+bare clone + fetch (plain bare clone; `git.kernel.org` does not
+support partial clone, but all fetchers use plain bare clones
+regardless)
+```
+
 ---
 
 ### Step 5: Resolve CSMT-DES-01 finding
@@ -613,7 +661,8 @@ for any remaining occurrences of:
 - "~300 MB" referencing cvelistV5 (should be updated to ~2.3 GB)
 - "~400 MB" referencing total git volume (should be ~2.4 GB)
 - "1 GB minimum" referencing volume capacity (should be 8 GB)
-- "20 minutes" referencing clone timeout (should be 30 minutes)
+- "20 minutes" or "20 min" referencing clone timeout (should be 30
+  minutes / 30 min)
 - "on-demand blob download" outside the extensibility note (should be
   removed)
 - "Bare and Blobless Compatibility" (old section name — should be
@@ -656,8 +705,9 @@ rm docs/drafts/remove-blobless-mitre.md
 | File | Nature of change |
 |------|-----------------|
 | `docs/features/tickets/cve-sync-mitre.md` | `clone_filter`, disk estimate, abort threshold text |
-| `docs/features/tickets/cve-sync-kernel.md` | Cross-reference to MITRE disk size |
+| `docs/features/tickets/cve-sync-kernel.md` | Cross-reference to MITRE disk size, "full bare clone" → "plain bare clone" |
 | `docs/features/platform/git-fetcher-infrastructure.md` | Default value, clone timeout 20→30 min, volume 1→8 GB, ~20 sections updated/simplified |
+| `docs/data-sources.md` | Kernel entry: remove blobless framing from parenthetical |
 | `docs/deployment.md` | Volume capacity minimum 1→8 GB |
 | `docs/reviews/cve-sync-mitre.md` | CSMT-DES-01 resolved |
 | `docs/reviews/.tracking.json` | DES M count decremented |
@@ -677,6 +727,5 @@ rm docs/drafts/remove-blobless-mitre.md
 - `docs/architecture.md` — no blobless-specific content; unchanged
 - `docs/configuration.md` — `GIT_CLONE_BASE_DIR` description is generic; unchanged
 - `docs/data-model.md` — no blobless references; unchanged
-- `docs/data-sources.md` — MITRE entry says "bare clone + fetch" (already correct); unchanged
 - `docs/features/platform/cve-fetcher-infrastructure.md` — no blobless-specific content; unchanged
 - Other fetcher specs (NVD, Red Hat, GHSA, KEV, EPSS, OSV) — API-based, not git-based; unchanged
