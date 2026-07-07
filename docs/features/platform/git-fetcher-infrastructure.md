@@ -48,10 +48,11 @@ The pattern:
 
 1. **Clone** (first run only — clone directory does not exist OR is not
    a valid bare git repository): `git clone --bare --single-branch -- <url> <dest>`
-   into `$GIT_CLONE_BASE_DIR/<subdirectory>/`. For sources that support
-   Git partial clone (protocol v2 with `filter` capability), add
-   `--filter=blob:none` to defer blob downloads. For sources that do not
-   support filtering (e.g., `git.kernel.org`), use a plain bare clone.
+   into `$GIT_CLONE_BASE_DIR/<subdirectory>/`. All git-based fetchers use
+   plain bare clones. The `clone_filter` attribute is available for
+   sources that require deferred blob downloads (partial clone), but no
+   current fetcher uses it. All blobs are downloaded during `git clone`
+   and `git fetch`, making subsequent `show_file()` calls purely local.
    **Validity check**: before deciding "first run vs. subsequent run",
    verify the directory is a valid bare git repository via
    `git rev-parse --git-dir`. If the directory exists but the check
@@ -62,17 +63,17 @@ The pattern:
    seconds.
 3. **Delta detection**: `git diff --name-only --no-renames
    --diff-filter=AM <old_sha>..<new_sha>` returns the list of Added and
-   Modified files. Deleted files are excluded — they do not represent
+   Modified files.    Deleted files are excluded — they do not represent
    CVE data that needs processing. Rename detection is explicitly
    disabled (`--no-renames`) so that the diff operates exclusively on
-   local tree/commit objects — no blob content is needed, guaranteeing
-   zero network access even in blobless clones. A file rename appears as
+   local tree/commit objects — no blob content comparison is needed,
+   ensuring deterministic output regardless of clone type. A file rename appears as
    a separate Delete (old path, excluded) + Add (new path, included);
    the new path is processed normally.
 4. **File content access**: `git show -- <ref>:<path>` reads a single
    file's content from the object store without creating a working tree.
-   For blobless clones, this triggers an on-demand blob download for
-   that specific file only.
+   All blobs are present locally after `git fetch`, so this operation
+   requires no network access.
 
 No `git merge`, `git checkout`, or working tree manipulation is
 performed at any point.
@@ -184,7 +185,7 @@ automatically (see Recovery below).
 | Property | Value |
 |----------|-------|
 | Persistence | Required across container restarts |
-| Capacity | 1 GB minimum (current usage ~400 MB; provides headroom for growth and transient git operations) |
+| Capacity | 8 GB minimum (current usage ~2.4 GB; provides headroom for git repack operations — which temporarily require old + new pack coexistence (~4.7 GB peak) — plus future growth at ~150 MB/year) |
 | Access mode | ReadWriteOnce (single worker pod) |
 | Filesystem | Any POSIX-compliant filesystem |
 | Backup | Not required (recoverable from upstream repos) |
@@ -305,7 +306,7 @@ field stored in the cursor. This situation occurs when:
    `git diff --name-only --no-renames --diff-filter=AM
    <boundary_sha>..HEAD -- '<recovery_path_prefix>'`
    (same `--no-renames` flag as normal delta — guarantees local-only
-   operation in blobless clones; see "Bare and Blobless Compatibility")
+   operation; see "Bare Clone Compatibility")
 5. Apply the fetcher's normal file filtering and per-item processing
    logic (MUST be idempotent — previously ingested items produce no
    observable side effects on re-processing)
@@ -338,10 +339,11 @@ declare `recovery_path_prefix` as a class attribute. See
 ### Operational: large delta convergence
 
 After an extended outage (weeks or longer), the recovery delta may
-contain thousands of files. In a blobless clone, each file requires an
-on-demand blob download. If the delta cannot be fully processed within
-`run_timeout`, the soft time limit fires, the run ends as `failure`,
-and the cursor does not advance.
+contain thousands of files. Since all blobs are present locally after
+`git fetch`, processing speed is bounded only by database throughput
+and `process_item()` complexity — not network latency. If the delta
+cannot be fully processed within `run_timeout`, the soft time limit
+fires, the run ends as `failure`, and the cursor does not advance.
 
 On the next scheduled execution, the same delta is recomputed. Items
 already processed produce idempotent upserts (no observable side
@@ -371,7 +373,7 @@ container image of the worker that consumes the `git` queue.
 
 | Dependency | Minimum version | Reason |
 |---|---|---|
-| `git` | 2.25 | First stable release with partial clone (`--filter`) support. Required for blobless clones of cvelistV5 |
+| `git` | 2.25 | Minimum version for protocol v2, improved bare-clone performance, and `--filter` support (retained for future extensibility) |
 
 The `python:3.12-slim` base image does not include git — it must be
 added explicitly to the container image.
@@ -383,7 +385,10 @@ shared internal helper. This decision is based on:
 - `pygit2` (libgit2 bindings): **eliminated** — libgit2 cannot open
   repositories with the `extensions.partialclone` extension
   (libgit2/libgit2#5564, open since Jun 2020; #6880 confirms the
-  error persists in v1.7.2, Sep 2024). Unusable with blobless clones
+  error persists in v1.7.2, Sep 2024). While no current fetcher uses
+  partial clones, this blocks future extensibility. Additionally,
+  libgit2 lacks a direct `git show` equivalent for bare repository
+  blob access, requiring workaround code
 - `GitPython`: **eliminated** — 8 security advisories including 5
   High-severity RCE/command-injection vulnerabilities published
   April–May 2026 affecting all platforms. Unacceptable for a security
@@ -398,7 +403,7 @@ timeouts and retry policy per operation category:
 
 | Operation | Timeout | Retries | Examples |
 |---|---|---|---|
-| Clone | 20 minutes | 0 | Initial bare clone (~300 MB download) |
+| Clone | 30 minutes | 0 | Initial bare clone (~2.3 GB download for cvelistV5) |
 | Fetch | 5 minutes | 0 | Incremental `git fetch origin` |
 | Read | 30 seconds | 3 (backoff: 2s, 4s, 8s) | `git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`, `git rev-list`, `git log` |
 | Show | 30 seconds | 0 | `git show -- <ref>:<path>` (per-file blob access) |
@@ -409,7 +414,7 @@ seconds) before raising `GitCorruptionError`. This absorbs transient
 I/O faults on networked storage (NFS, PVC with remote backend) without
 misclassifying them as repository corruption. The worst-case added
 latency per operation is ~14 seconds (negligible vs. the 30-second
-timeout and vastly cheaper than a false-positive re-clone of ~300 MB). Clone and Fetch are not retried because they already handle
+timeout and vastly cheaper than a false-positive re-clone of ~2.3 GB). Clone and Fetch are not retried because they already handle
 transient network errors through git's own retry logic. Show is not
 retried because per-file failures are already non-fatal (`GitFileError`
 → `record_failed()`, continue to next item).
@@ -431,7 +436,7 @@ class GitFileError(GitError): ...        # Per-file — continue processing
 |-------|-------------------|-----------|----------------|
 | `git clone` / `git fetch` | Any failure (network, auth, timeout) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
 | Read after successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git cat-file -t`, `git rev-list`, `git log`) | Persistent failure after retry exhaustion (3 retries with exponential backoff) | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
-| `git show` during delta file processing | Any failure (timeout, missing blob, network error in blobless clone) | `GitFileError` | `record_failed()` for that item. Continue to next file |
+| `git show` during delta file processing | Any failure (timeout, corrupt/missing blob in local store) | `GitFileError` | `record_failed()` for that item. Continue to next file |
 | Directory deletion (recovery/cleanup) | Filesystem rejection (permissions, read-only mount, busy handle) | `OSError` | Log ERROR with distinct message: path, errno, and guidance ("Manual intervention required — check filesystem permissions and mount state"). Raise `FetcherError`. Next cycle re-attempts (permanent until operator resolves filesystem issue) |
 
 **Design rationale**: classification is phase-based. A successful
@@ -502,12 +507,13 @@ blocks.
 The utility module is **policy-free** — it executes git commands with
 the parameters it receives. It does not apply domain-specific defaults.
 
-- **Domain defaults** (bare=True, filter=blob:none, single-branch=True)
+- **Domain defaults** (bare=True, filter=None, single-branch=True)
   live on `BaseGitFetcher` class attributes
 - **`BaseGitFetcher` methods** read `self.*` attributes and pass them as
   explicit parameters to `git_operations` functions
 - **Concrete subclasses** override class attributes to change behavior
-  (e.g., kernel sets `clone_filter = None`)
+  (e.g., a future fetcher might set `clone_filter = "blob:none"` for a
+  source requiring deferred blob downloads)
 
 This separation ensures `git_operations.py` remains general-purpose and
 independently usable.
@@ -593,7 +599,7 @@ modifications needed.
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
-| `clone` | `async def clone(url: str, dest: Path, *, bare: bool = False, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (20 min) | `GitFetchError` |
+| `clone` | `async def clone(url: str, dest: Path, *, bare: bool = False, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (30 min) | `GitFetchError` |
 
 **Behavior**:
 
@@ -605,9 +611,10 @@ modifications needed.
    d. If `single_branch` is `True`: append `--single-branch`
    e. Append `--` (end-of-options separator)
    f. Append `url` and `str(dest)` as positional arguments
-   Result example: `["git", "clone", "--bare", "--filter=blob:none", "--single-branch", "--", url, str(dest)]`
+   Result example: `["git", "clone", "--bare", "--single-branch", "--", url, str(dest)]`
+   (if `filter_spec` is set: `["git", "clone", "--bare", "--filter=<value>", "--single-branch", "--", url, str(dest)]`)
 2. Execute the command via `asyncio.create_subprocess_exec` with the
-   clone timeout (20 minutes)
+   clone timeout (30 minutes)
 3. If the process exits with non-zero code: raise `GitFetchError` with
    stderr content
 
@@ -674,9 +681,10 @@ Semantics:
 - **`diff_names`**: returns the list of added and modified files
   between two commits
   (`git diff --name-only --no-renames --diff-filter=AM <from>..<to>`).
-  Rename detection is disabled to guarantee zero network access in
-  blobless clones (renames appear as separate D+A pairs; the `A` is
-  captured by the filter). If `path_filter` is set, appends
+  Rename detection is disabled (`--no-renames`) to ensure deterministic
+  diff output and avoid expensive blob-content similarity computation on
+  large repositories. Renames appear as separate delete + add pairs; the
+  `A` is captured by the filter. If `path_filter` is set, appends
   `-- '<path_filter>'` to restrict results. Deleted files are excluded
 - **`rev_list_before`**: returns the most recent commit SHA on HEAD
   before the specified date
@@ -697,13 +705,12 @@ Semantics:
 3. If exit code is 128 and stderr contains "does not exist in" or
    "path not found": return `None` (file does not exist at this ref —
    expected condition, not an error)
-4. If exit code indicates a different failure (network error in blobless
-   clone, corrupt object, timeout): raise `GitFileError` with stderr
-   content
+4. If exit code indicates a different failure (corrupt object, timeout):
+   raise `GitFileError` with stderr content
 
-In blobless clones, step 1 triggers an on-demand blob download from the
-remote — requires network access. If the remote is unreachable, step 4
-fires.
+In a plain bare clone, blob content is already present in the local
+object store. Network access is not required. If the blob is
+unexpectedly absent (corrupt pack file), step 4 fires.
 
 ### Filesystem Operations
 
@@ -715,36 +722,31 @@ Semantics: recursively deletes the directory at `path` if it exists.
 No-op if the path does not exist. This is NOT a git operation — it is
 included in the module for co-location with clone lifecycle management.
 
-### Bare and Blobless Compatibility
+### Bare Clone Compatibility
 
-All git operations in the function catalog are compatible with both
-plain bare clones and blobless bare clones (`--filter=blob:none`):
+All git operations in the function catalog are designed for bare
+repositories (no working tree). Every operation accesses the git object
+store directly:
 
-- **Local-only operations** (`get_head_sha`, `get_commit_date`,
+- **Commit/tree operations** (`get_head_sha`, `get_commit_date`,
   `is_clone_valid`, `check_sha_reachable`, `diff_names`,
-  `rev_list_before`): access only commit and tree objects, which are
-  always present locally in both plain and blobless clones. No network
-  access required. `diff_names` achieves this by disabling rename
-  detection (`--no-renames`): without this flag, git's default inexact
-  rename detection (enabled since git 2.9 via `diff.renames=true`)
-  would compare blob content to compute file similarity scores,
-  triggering on-demand blob downloads in blobless clones — defeating
-  the local-only guarantee
-- **On-demand operations** (`show_file`): access blob content. In
-  blobless clones, this triggers an on-demand blob download from the
-  remote for the specific file requested. This is the intended access
-  pattern — blobs are fetched individually rather than bulk-downloaded
-  during clone or fetch
-- **`check_sha_reachable` on commit SHAs**: `BaseGitFetcher` uses this
-  exclusively on commit SHAs (the cursor). Commit objects are always
-  present locally, even in blobless clones. The function would also
-  work on tree SHAs (present locally) but NOT reliably on blob SHAs
-  (may be absent in blobless clones)
+  `rev_list_before`): read commit and tree objects only.
+- **Blob operations** (`show_file`): read file content from the local
+  object store via `git show`. All blobs are present locally after
+  the initial clone and subsequent fetches.
 
-No special handling is needed per clone type — the git binary
-transparently handles both modes. The only operational difference is
-that `show_file` requires network access in blobless clones (and may
-raise `GitFileError` if the remote is unreachable at that moment).
+The `--no-renames` flag on `diff_names` ensures diffs operate
+exclusively on tree objects without comparing blob content. This
+avoids expensive similarity computation on large repositories and
+produces deterministic output (renames appear as separate delete + add
+pairs).
+
+Note: the `clone_filter` class attribute supports partial clones
+(`--filter=blob:none`) for sources where deferred blob downloads are
+operationally required. No current fetcher uses this mode. If enabled,
+`show_file()` would trigger on-demand blob downloads requiring network
+access during processing — introducing per-item network failure risk.
+This mode is retained for future extensibility only.
 
 ## BaseGitFetcher Class
 
@@ -779,7 +781,7 @@ automatically.
 | `repo_url` | `str` | (required) | Git remote URL |
 | `clone_dir_name` | `str` | (required) | Directory name under `$GIT_CLONE_BASE_DIR` |
 | `clone_bare` | `bool` | `True` | Whether to use `--bare` |
-| `clone_filter` | `str \| None` | `"blob:none"` | Value for `--filter=`. `None` = no filter (plain bare clone) |
+| `clone_filter` | `str \| None` | `None` | Git `--filter=` value. `None` = plain bare clone (recommended). Set to `"blob:none"` only if the source requires deferred blob downloads for operational reasons. No current fetcher uses a non-None value |
 | `clone_single_branch` | `bool` | `True` | Whether to use `--single-branch` |
 | `recovery_path_prefix` | `str` | (required) | Path prefix for recovery delta (`-- '<prefix>'`) |
 | `delta_path_prefix` | `str` | (required) | Path prefix for normal delta detection |
@@ -949,8 +951,9 @@ immediate self-healing of corruption outweighs temporary
 
 The **all-items-failed safety check** is handled by
 `BaseFetcher.run()` (see "Status determination precedence" in
-`fetcher-infrastructure.md`). If all items fail (e.g., network drops after fetch
-in a blobless clone, making every `show_file()` fail), `run()` sets
+`fetcher-infrastructure.md`). If all items fail (e.g., local storage
+failure making every `show_file()` fail, or database connection loss
+causing every `process_item()` to raise), `run()` sets
 `status = failure` directly after `execute()` returns. Since the cursor
 is only persisted on `success` or `partial`, the previous cursor is
 preserved and the next run retries the same delta. This applies to all
@@ -1081,15 +1084,15 @@ Concrete subclasses inherit it automatically (no override needed).
    _construct_candidate_paths"), raise `CVENotInSource`
 4. For each `path` in the candidate list:
    a. Read file content via `show_file(repo_path, "HEAD", path)`
-   b. If `show_file` raises `GitFileError`: log WARNING ("Blob
-      download failed for {path} — skipping candidate"), record the
+   b. If `show_file` raises `GitFileError`: log WARNING ("File read
+      failed for {path} — skipping candidate"), record the
       failure, continue to next candidate path
    c. If content is not `None` (file found): return the result of
       `process_item(path, content, session)` (`PostIngestTasks | None`)
 5. After all candidate paths exhausted:
    a. If at least one candidate raised `GitFileError` (and none
-      returned content): raise `RuntimeError` ("Blob download failed
-      for item {item_id} — source temporarily not queryable")
+      returned content): raise `RuntimeError` ("File read failed for
+      all candidate paths for item {item_id}")
    b. Otherwise (all candidates returned `None`): raise
       `CVENotInSource()`
 
@@ -1105,9 +1108,9 @@ which is idempotent (no-op if data unchanged, update if changed).
 
 **Exceptions**:
 
-- `RuntimeError` — clone not available (step 2), or blob download
-  failed for all candidate paths (step 5a). Both indicate the source
-  is temporarily not queryable
+- `RuntimeError` — clone not available (step 2), or file read failed
+  for all candidate paths (step 5a). Both indicate the source is
+  temporarily not queryable
 - `CVENotInSource` — item not found in any candidate path (step 5b),
   or `item_id` format not recognized by this source (step 3). In the
   latter case, an ERROR is logged before raising — the exception is
@@ -1124,7 +1127,7 @@ The two exception types serve different purposes for the caller
 
 - **`RuntimeError`** — "source not queryable right now" (clone missing,
   not yet created by the first periodic run, deleted after corruption
-  detection, or blob download failed in a blobless clone). The dispatch
+  detection, or local object store failure). The dispatch
   system logs a WARNING and tries the next fetcher. The clone will be
   available after the next scheduled sync re-clones it.
 

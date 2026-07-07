@@ -198,8 +198,9 @@ backport verification.
   `https://git.kernel.org/pub/scm/linux/security/vulns.git/`. Each CVE is
   a JSON file in CVE Record 5.1.1 format (published) or 5.0 format
   (rejected), organized by year. No authentication required. Sync via
-  bare clone + fetch (NO `--filter=blob:none` — server does not
-  advertise the `filter` capability)
+  bare clone + fetch (plain bare clone; `git.kernel.org` does not
+  support partial clone, but all fetchers use plain bare clones
+  regardless)
 - **Integration status**: **Specified**
 - **Documentation**: https://docs.kernel.org/process/cve.html
 

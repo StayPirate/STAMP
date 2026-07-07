@@ -337,7 +337,7 @@ stores bare clones of external git repositories used by CVE fetchers.
 
 | Property | Value |
 |----------|-------|
-| Minimum capacity | 1 GB |
+| Minimum capacity | 8 GB |
 | Access mode | ReadWriteOnce (single worker) |
 | Backup | Not required — recoverable cache (fetchers re-clone if lost) |
 
