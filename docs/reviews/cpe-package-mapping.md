@@ -10,7 +10,7 @@
 
 ### CPM-GAP-01 — Escaped colon in lookup key produces ambiguous key format (Medium)
 
-**Status**: RESOLVED — Spec semplificata: rimosso replace-split-restore, aggiunto early-detection + skip per CPE con escaped colons; rimossa entry malformata dal file di mapping (2026-06-01)
+**Status**: RESOLVED — Spec simplified: removed replace-split-restore, added early-detection + skip for CPEs with escaped colons; removed malformed entry from the mapping file (2026-06-01)
 
 ### CPM-GAP-02 — Hot-reload behavior after deployment (Medium)
 
