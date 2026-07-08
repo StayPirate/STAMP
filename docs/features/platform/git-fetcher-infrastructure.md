@@ -973,7 +973,7 @@ mechanism — no additional logic is needed:
 | All items fail | `failure` | No (`BaseFetcher.run()` safety check) |
 | Infrastructure error | `failure` | No (propagates) |
 
-**Design note — cursor advancement on `partial` (OP-9, commit `a7e2632`):**
+**Design note — cursor advancement on `partial` (commit `a7e2632`):**
 advancing the cursor on `partial` runs is an intentional trade-off.
 Failed items are not automatically retried — they reappear naturally
 when upstream modifies them (git's change-tracking provides recovery).
@@ -983,7 +983,7 @@ an ever-growing reprocessing loop that is operationally worse. Failed
 items are identified in WARNING logs by CVE-ID (step 10e:
 `"Failed to process item %s: %s", cve_id, e`), enabling operators to invoke
 `fetch_single()` for targeted recovery. See also: rejected alternatives
-(threshold-based cursor, per-item retry tracking) in OP-9 analysis.
+(threshold-based cursor, per-item retry tracking) were rejected during initial design.
 
 ## Hook Methods (Override Points)
 
