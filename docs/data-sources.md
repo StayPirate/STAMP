@@ -87,7 +87,7 @@ MITRE a valuable source for early awareness of new vulnerabilities.
 - **Documentation**: https://www.cve.org/,
   https://cveawg.mitre.org/api-docs/openapi.json
 
-> See [cve-sync-mitre.md](features/platform/cve-sync-mitre.md) for the full
+> See [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md) for the full
 > fetcher specification.
 
 ### Red Hat Security Data

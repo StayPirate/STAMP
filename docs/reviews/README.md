@@ -29,8 +29,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cve-sync-kev](cve-sync-kev.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/0 | 2026-07-07 | |
 |  |  |  |  |  |  |  |  |  |
-| [cve-sync-mitre](cve-sync-mitre.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1/9 | 2026-07-07 | |
-| |  | 1:🟡 |  |  |  |  |  |  |
+| [cve-sync-mitre](cve-sync-mitre.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/9 | 2026-07-07 | |
+|  |  |  |  |  |  |  |  |  |
 | cve-sync-nvd | — | — | — | — | — | —/— | — | |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-osv | — | — | — | — | — | —/— | — | |
@@ -79,8 +79,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **1** | **🟢** | **🟢** | **🟢** | **3/858** |  |  |
-| | 2:🟠 | 1:🟡 |  |  |  |  |  |  |
+| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/858** |  |  |
+| | 2:🟠 |  |  |  |  |  |  |  |
 
 ### Disabled specs
 
