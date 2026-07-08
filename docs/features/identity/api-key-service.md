@@ -163,12 +163,18 @@ Idempotent No-ops).
 **Returns**: `ApiKey` record
 
 **Note**: ownership validation (does the key belong to the calling user?)
-is NOT performed by the service. This is an endpoint-level concern:
+is NOT performed by the service. Each caller handles authorization at its
+own boundary:
 
 - The self-revoke endpoint checks `key.user_id == current_user.id`
   before calling the service (returns 404 if mismatch)
-- The admin revoke endpoint skips the ownership check
-- The CLI and `deactivate_user()` use `revoke_all_user_keys()` instead
+- The admin revoke endpoint skips the ownership check (requires
+  `manage_users` capability)
+- `sentinel api-key revoke` skips the ownership check (system action
+  requiring shell access; `acting_user_id=None`)
+- `deactivate_user()` does not call `revoke_key()` — it uses
+  `revoke_all_user_keys()` directly (ownership is N/A; operates on all
+  keys of the target user)
 
 ### `revoke_all_user_keys()`
 

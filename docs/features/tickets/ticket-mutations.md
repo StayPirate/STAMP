@@ -1002,6 +1002,8 @@ Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
   `reconcile_ticket_status()`, `recalculate_cvss_chain()`,
   `auto_assign_actor()`, `ensure_ticket_operable()`,
   `resolve_canonical_target()`)
+- `docs/features/platform/system-settings.md` — default CVSS version
+  change triggering batch `recalculate_cvss_chain()` via Celery task
 - `docs/features/platform/fetcher-infrastructure.md` — `catch_up()`
   per-ticket catch-up method contract
 - `docs/api-spec.md` — general API conventions
