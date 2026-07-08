@@ -59,7 +59,7 @@ table, demonstrating the pattern is already applied non-uniformly.
 
 ### OP-A: Audit of Context-column facts before removal
 
-**Status**: Open
+**Status**: Resolved (2026-07-08)
 
 **Question**: Do any facts in the Context columns of the 3-column
 tables (`ticket-mutations.md`, `package-service.md`,
@@ -67,25 +67,28 @@ tables (`ticket-mutations.md`, `package-service.md`,
 their authoritative source? If so, those facts must be relocated
 before removal.
 
-**Known high-value facts to verify**:
+**Conclusion**: all Context-column facts in the 3-column tables are
+already documented at their authoritative sources. No orphaned facts
+were found — no relocation is required before proceeding to Step 2.
 
-| Fact | Table | Authoritative source to verify |
-|------|-------|-------------------------------|
-| "User self-revoke (with ownership check in handler)" | api-key-service | `authentication.md` Revoke My API Key endpoint |
-| "Admin revoke (no ownership check)" | api-key-service | `authentication.md` Revoke API Key (Admin) endpoint |
-| "CLI revoke (`acting_user_id=None`)" | api-key-service | `authentication.md` or `cli-reference.md` |
-| "Deactivation side effect (`acting_user_id=None`)" | api-key-service | `authentication.md` deactivation flow |
-| "Celery task `recalc_active_tickets(version)`" | ticket-mutations | `system-settings.md` default_cvss_version change |
-| "Catch-up handled internally by `reconcile_ticket_status()` step 4" | ticket-mutations | `ticket-mutations.md` own reconcile spec |
-| "Package-centric callers now call `package_service` directly" | ticket-mutations | `package-service.md` |
+**Verification of high-value facts**:
 
-**Resolution criteria**: for each fact, confirm it is already present
-at the authoritative source. If any fact is orphaned (only exists in
-the Callers table), relocate it to the appropriate spec section before
-proceeding to Step 3 of the plan.
+| Fact | Table | Authoritative source | Verified |
+|------|-------|---------------------|----------|
+| "User self-revoke (with ownership check in handler)" | api-key-service | `api-key-service.md:165-168` (Note under `revoke_key()`), `authentication.md:790` | ✓ |
+| "Admin revoke (no ownership check)" | api-key-service | `api-key-service.md:170`, `authentication.md:881` | ✓ |
+| "CLI revoke (`acting_user_id=None`)" | api-key-service | `authentication.md:551-554`, `api-key-service.md:49` | ✓ |
+| "Deactivation side effect (`acting_user_id=None`)" | api-key-service | `user-service.md:579`, `authentication.md:273`, `api-key-service.md:40` | ✓ |
+| "Celery task `recalc_active_tickets(version)`" | ticket-mutations | `system-settings.md:51,63-65` | ✓ |
+| "Catch-up handled internally by `reconcile_ticket_status()` step 4" | ticket-mutations | `ticket-mutations.md:196` (self-contained in reconcile spec), `cvss-scoring.md:794` | ✓ |
+| "Package-centric callers now call `package_service` directly" | ticket-mutations | `ticket-mutations.md:85` (Module Dependencies table), `package-service.md` structure | ✓ |
 
-**Blocking**: Steps 2-6 of the action plan cannot proceed until this
-OP is resolved.
+Remaining Context-column entries (e.g., "VA-initiated operations",
+"Background CVE ingestion", "Real-time track release detection") are
+generic category labels whose meaning is self-evident and not
+information requiring an authoritative source.
+
+**Blocking**: resolved — Steps 2-6 are unblocked.
 
 ---
 
@@ -136,13 +139,17 @@ correctly positioned.
 ### Step 3: Remove Callers section from `docs/features/tickets/ticket-service.md`
 
 **Delete** the entire `## Callers` section (heading + table +
-supplementary note-table, starting at line 764). This includes:
+supplementary note-table + trailing paragraph, starting at line 764).
+This includes:
 
 - The main 3-row table (API endpoint handlers, CVE service,
   IBS track release detection)
 - The supplementary "Note — ticket endpoints that route to
   `ticket_mutations` directly" table (3 rows: PATCH severity,
   POST reopen, POST revert-duplicate)
+- Trailing paragraph: *"These endpoints bypass `ticket_service`
+  entirely — their handlers call `ticket_mutations` functions directly.
+  See the Scope Boundary section above for the architectural rationale."*
 
 Verify the adjacent sections remain correctly connected.
 
@@ -196,13 +203,14 @@ Remove the `**Category**` line and description body.
 **File**: `docs/reviews/.tracking.json`
 
 Update the cache for `cve-sync-mitre`:
-- COH Medium: 1 → 0
-- resolved: increment by 1
-- Recalculate total open count
+- COH Low: 2 → 1
+- resolved: 7 → 8
+- Total open: 2 → 1
 
 **File**: `docs/reviews/README.md`
 
-Update the cve-sync-mitre row to reflect the new counts.
+Update the cve-sync-mitre row: open `2/9` → `1/9`, COH column
+`2` → `1` (severity indicator `2:🟡` → `1:🟡`).
 
 ### Step 8: Verify no per-function `**Callers**:` mini-tables are affected
 
