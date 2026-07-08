@@ -224,16 +224,6 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 † Shared exception — inherits from `ServiceError`, not from
 `ApiKeyServiceError`. Handlers must catch it explicitly.
 
-## Callers
-
-| Caller | Operation | Context |
-|--------|-----------|---------|
-| `POST /api/v1/api-keys` | `create_key()` | User self-service key creation |
-| `POST /api/v1/api-keys/{key_id}/revoke` | `revoke_key()` | User self-revoke (with ownership check in handler) |
-| `POST /api/v1/admin/api-keys/{key_id}/revoke` | `revoke_key()` | Admin revoke (no ownership check) |
-| `sentinel api-key revoke` | `revoke_key()` | CLI revoke (`acting_user_id=None`) |
-| `user_service.deactivate_user()` | `revoke_all_user_keys()` | Deactivation side effect (`acting_user_id=None`) |
-
 ## Cross-references
 
 - `docs/features/identity/authentication.md` — API key data model, key

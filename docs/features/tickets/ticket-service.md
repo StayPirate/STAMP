@@ -761,26 +761,6 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 † Shared exception — inherits from `ServiceError`, not from
 `TicketServiceError`. Handlers must catch it explicitly.
 
-## Callers
-
-| Caller | Operations used |
-|--------|----------------|
-| API endpoint handlers (`api/v1/tickets.py`) | All 9 operations + `execute_duplicate_flattening` |
-| CVE service (`services/cve_service.py`) | `create_ticket` (source=`cve_ingestion`) |
-| IBS track release detection (`tasks/detect_ibs_track_releases.py`) | `create_ticket` (source=`release_detection`, Case C) |
-
-**Note — ticket endpoints that route to `ticket_mutations` directly**:
-
-| Endpoint | Function | Why not `ticket_service` |
-|----------|----------|--------------------------|
-| `PATCH .../severity` | `ticket_mutations.set_severity_override()` | Gate-relevant mutation |
-| `POST .../reopen` | `ticket_mutations.reopen_from_ignored()` | Manual-zone exit |
-| `POST .../revert-duplicate` | `ticket_mutations.revert_duplicate()` | Manual-zone exit |
-
-These endpoints bypass `ticket_service` entirely — their handlers call
-`ticket_mutations` functions directly. See the Scope Boundary section
-above for the architectural rationale.
-
 ## Dependency Summary
 
 ```

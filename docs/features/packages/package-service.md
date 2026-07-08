@@ -932,23 +932,6 @@ products) have `deleted_at IS NULL`. Restoring a record whose ancestor
 is still excluded would leave it effectively excluded with no observable
 effect.
 
-## Callers
-
-The callers table is scoped to operation categories rather than
-individual endpoints.
-
-| Caller Category | Operations Used | Context |
-|-----------------|-----------------|---------|
-| Package API mutation endpoints | `set_track_status()`, `set_product_eligibility()`, soft-delete/restore functions | VA-initiated operations |
-| Package API read endpoints | `get_ticket_packages()`, `search_packages()` | Public read access |
-| Ticket detail endpoint | `get_ticket_packages()` | Populates `packages` field in `TicketDetail` |
-| IBS track release detection | `set_track_status()` | Automated track release (sets FIXED) |
-| IBS product release detection | `set_product_released_at()` | Automated product release |
-| `add_package_to_ticket` | `add_package_records()` | Package addition flow (internal) |
-| Product lifecycle transitions | `set_product_eligibility()`, `soft_delete_ticket_package_product()` | AIMAAS threshold changes |
-| IBS RabbitMQ consumer (`package.commit`) | `set_track_status()` | Real-time track release detection (sets FIXED) |
-| IBS submission tracking | `set_track_delivery_status()` | SR/RR state changes (sets delivery_status) |
-
 ## Architectural Test Requirement
 
 A parametrized integration test MUST be implemented to verify that the

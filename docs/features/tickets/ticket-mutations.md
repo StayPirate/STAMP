@@ -978,27 +978,6 @@ Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
 `PackageNotFoundError`) are defined in `package_service` — see
 `docs/features/packages/package-service.md`.
 
-## Callers
-
-The callers table is scoped to operation categories rather than
-individual endpoints.
-
-| Caller Category | Operations Used | Context |
-|-----------------|-----------------|---------|
-| Ticket API mutation endpoints | `set_severity_override()`, manual-zone exits | VA-initiated ticket operations |
-| CVE API mutation endpoints | `upsert_cvss_assessment()`, `delete_cvss_assessment()` | VA-initiated CVSS operations via `/api/v1/cves/{cve_id}/cvss/...` |
-| CVE fetchers (via `cve_service.upsert_cve()`) | `upsert_cvss_assessment()` | Background CVE ingestion (Phase 1) |
-| NVD rejection handling | `reopen_from_ignored()` | CVE rejection revert |
-| Admin: default CVSS version change | `recalculate_cvss_chain()` | Celery task `recalc_active_tickets(version)` iterates active tickets with CVE; passes version explicitly. See `docs/features/platform/system-settings.md` |
-| CVE association (`ticket_service.associate_cve`) | `recalculate_cvss_chain()` | Recalculates severity and eligibility after CVE is linked to a manual ticket |
-| Ticket reactivation (un-ignore, un-duplicate) | `_reenter_gate_zone()` → `reconcile_ticket_status()` | Catch-up (CVSS recalculation + fetcher enqueue) is handled internally by `reconcile_ticket_status()` step 4 |
-| Post-regression from Resolved | `reconcile_ticket_status()` | Catch-up is handled internally by `reconcile_ticket_status()` step 4 when it detects a backward transition from Resolved |
-| `package_service` | `reconcile_ticket_status()`, `auto_assign_actor()` | Called after every package mutation |
-
-Package-centric callers (IBS release detection, product lifecycle
-transitions, `add_package_to_ticket`) now call `package_service`
-directly — see `docs/features/packages/package-service.md`.
-
 ## Cross-references
 
 - `docs/features/packages/package-service.md` — package-centric
