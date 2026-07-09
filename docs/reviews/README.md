@@ -17,45 +17,45 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-06-01 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | |
+| [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| cve-record-parser | — | — | — | — | — | —/— | — | |
+| cve-record-parser | — | — | — | — | — | —/— | — | — |
 |  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| cve-sync-epss | — | — | — | — | — | —/— | — | |
+| cve-sync-epss | — | — | — | — | — | —/— | — | — |
 |  |  |  |  |  |  |  |  |  |
-| cve-sync-ghsa | — | — | — | — | — | —/— | — | |
+| cve-sync-ghsa | — | — | — | — | — | —/— | — | — |
 |  |  |  |  |  |  |  |  |  |
-| [cve-sync-kernel](cve-sync-kernel.md) | 2 | 3 | 1 | 🟢 | 🟢 | 6/6 | 2026-07-08 | |
-| | 2:🟠 | 1:🟠 2:🟡 | 1:🟠 |  |  |  |  |  |
-| [cve-sync-kev](cve-sync-kev.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/0 | 2026-07-07 | |
+| [cve-sync-kernel](cve-sync-kernel.md) | 3 | 4 | 2 | 🟢 | 🟢 | 9/9 | 2026-07-09 | ⚠️ |
+| | 3:🟠 | 1:🟠 3:🟡 | 2:🟠 |  |  |  |  |  |
+| [cve-sync-kev](cve-sync-kev.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/0 | 2026-07-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [cve-sync-mitre](cve-sync-mitre.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/9 | 2026-07-07 | |
+| [cve-sync-mitre](cve-sync-mitre.md) | 1 | 2 | 2 | 🟢 | 🟢 | 5/14 | 2026-07-09 | ⚠️ |
+| | 1:🟠 | 2:🟡 | 2:🟠 |  |  |  |  |  |
+| cve-sync-nvd | — | — | — | — | — | —/— | — | — |
 |  |  |  |  |  |  |  |  |  |
-| cve-sync-nvd | — | — | — | — | — | —/— | — | |
+| cve-sync-osv | — | — | — | — | — | —/— | — | — |
 |  |  |  |  |  |  |  |  |  |
-| cve-sync-osv | — | — | — | — | — | —/— | — | |
+| cve-sync-redhat | — | — | — | — | — | —/— | — | — |
 |  |  |  |  |  |  |  |  |  |
-| cve-sync-redhat | — | — | — | — | — | —/— | — | |
-|  |  |  |  |  |  |  |  |  |
-| [cve-tracking](cve-tracking.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/22 | 2026-06-24 | |
+| [cve-tracking](cve-tracking.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/22 | 2026-06-24 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/31 | 2026-06-29 | |
+| [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/31 | 2026-06-29 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-02 | |
+| [git-fetcher-infrastructure](git-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-02 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [health-endpoints](health-endpoints.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/4 | 2026-07-03 | |
+| [health-endpoints](health-endpoints.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/4 | 2026-07-03 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [identity-audit-log](identity-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/16 | 2026-05-16 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [local-authentication](local-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/21 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [networking](networking.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-02 | |
+| [networking](networking.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-02 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [package-model](package-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-22 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -65,7 +65,7 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-07 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [system-settings](system-settings.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/8 | 2026-07-03 | |
+| [system-settings](system-settings.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/8 | 2026-07-03 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -81,8 +81,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **4** | **3** | **1** | **🟢** | **🟢** | **8/864** |  |  |
-| | 4:🟠 | 1:🟠 2:🟡 | 1:🟠 |  |  |  |  |  |
+| **Total** | **6** | **6** | **4** | **🟢** | **🟢** | **16/864** |  |  |
+| | 6:🟠 | 1:🟠 5:🟡 | 4:🟠 |  |  |  |  |  |
 
 ### Disabled specs
 
