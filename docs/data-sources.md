@@ -204,7 +204,7 @@ backport verification.
 - **Integration status**: **Specified**
 - **Documentation**: https://docs.kernel.org/process/cve.html
 
-> See [cve-sync-kernel.md](features/platform/cve-sync-kernel.md) for the
+> See [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md) for the
 > full fetcher specification.
 
 **Access note — Anubis bot protection**: the `git.kernel.org` web
