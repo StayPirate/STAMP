@@ -233,9 +233,11 @@ after CVE upsert and ticket creation for new CVEs). The fetcher calls
 source reference and upstream references), `upsert_references()` applies a
 lightweight validation gate:
 
-1. Length ≤ 2048 characters
-2. No control characters (U+0000–U+001F, U+007F)
-3. Scheme must be `http` or `https`
+1. Value must be a non-empty string (`None`, non-string types, or empty
+   string `""` → skip)
+2. Length ≤ 2048 characters
+3. No control characters (U+0000–U+001F, U+007F)
+4. Scheme must be `http` or `https`
 
 URLs failing any criterion are skipped (not inserted or updated), the
 violation is logged at WARNING level with the CVE ID and source for
