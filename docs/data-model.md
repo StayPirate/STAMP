@@ -116,7 +116,7 @@ erDiagram
         UUID cve_id FK "NOT NULL"
         VARCHAR_100 source_container "NOT NULL"
         VARCHAR_255 vendor "nullable"
-        VARCHAR_255 product "nullable"
+        TEXT product "nullable"
     }
     CVECWE {
         UUID id PK
@@ -615,14 +615,14 @@ the general affected version model. See
 | cve_id | UUID | FK(cve.id) ON DELETE CASCADE, NOT NULL | Parent CVE |
 | source_container | VARCHAR(100) | NOT NULL | Provenance: `"cna"`, `"adp:CISA-ADP"`, etc. Scope key for delete-and-reinsert — see fetcher contract in `docs/features/tickets/cve-service.md` (Child Table Deduplication). Both MITRE and kernel fetchers write `"cna"` (same CNA data) |
 | vendor | VARCHAR(255) | nullable | Vendor name (e.g., "Linux", "Siemens") |
-| product | VARCHAR(255) | nullable | Product name (e.g., "Linux", "SCALANCE XC-300") |
+| product | TEXT | nullable | Product name (e.g., "Linux", "SCALANCE XC-300"). TEXT because some CNAs list entire product families in this field |
 | package_url | TEXT | nullable | PURL identifier (CVE 5.2.0+). Useful for identifying vendored dependencies (npm, PyPI, Go) inside SUSE RPMs |
 | collection_url | TEXT | nullable | Package registry URL (npm, PyPI, etc.). Pre-PURL mechanism, still used by many CNAs |
 | package_name | VARCHAR(255) | nullable | Package name in the registry. Paired with `collection_url` |
 | repo | TEXT | nullable | Source code repository URL |
-| version | VARCHAR(255) | nullable | Single version or range start |
-| version_type | VARCHAR(20) | nullable | `"semver"` / `"git"` / `"custom"` / `"rpm"` / ... |
-| version_end | VARCHAR(255) | nullable | Range end (`lessThan` or `lessThanOrEqual`) |
+| version | TEXT | nullable | Single version or range start. TEXT because some CNAs list model numbers or multi-range values |
+| version_type | VARCHAR(50) | nullable | `"semver"` / `"git"` / `"custom"` / `"original_commit_for_fix"` / `"rpm"` / ... |
+| version_end | TEXT | nullable | Range end (`lessThan` or `lessThanOrEqual`). TEXT for same reason as `version` |
 | version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
 | program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
 | cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Used for best-effort package resolution in Phase 2 (see `docs/features/tickets/cve-service.md`), alongside NVD CPE applicability statements passed via `cpe_matches`. Both feed the same `resolve_cpe_packages()` function |
