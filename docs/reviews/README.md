@@ -19,6 +19,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | |
 |  |  |  |  |  |  |  |  |  |
+| cve-record-parser | — | — | — | — | — | —/— | — | |
+|  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | cve-sync-epss | — | — | — | — | — | —/— | — | |

@@ -216,6 +216,11 @@
         "not_reviewed": []
       }
     },
+    "cve-record-parser": {
+      "enabled": true,
+      "abbr": "CRP",
+      "cache": null
+    },
     "cve-service": {
       "enabled": true,
       "abbr": "CVES",
@@ -268,11 +273,31 @@
       "cache": {
         "last_review": "2026-07-08T15:46:57+0200",
         "open": {
-          "GAP": { "H": 0, "M": 2, "L": 0 },
-          "COH": { "H": 0, "M": 1, "L": 2 },
-          "DES": { "H": 0, "M": 1, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
+          "GAP": {
+            "H": 0,
+            "M": 2,
+            "L": 0
+          },
+          "COH": {
+            "H": 0,
+            "M": 1,
+            "L": 2
+          },
+          "DES": {
+            "H": 0,
+            "M": 1,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
         },
         "resolved": 0,
         "not_reviewed": []
@@ -284,11 +309,31 @@
       "cache": {
         "last_review": "2026-07-07T14:46:30+0200",
         "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
+          "GAP": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
         },
         "resolved": 0,
         "not_reviewed": []
@@ -300,11 +345,31 @@
       "cache": {
         "last_review": "2026-07-07T15:02:50+0200",
         "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
+          "GAP": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
         },
         "resolved": 9,
         "not_reviewed": []
@@ -521,11 +586,31 @@
       "cache": {
         "last_review": "2026-07-03T21:04:01+0200",
         "open": {
-          "GAP": { "H": 0, "M": 0, "L": 0 },
-          "COH": { "H": 0, "M": 0, "L": 0 },
-          "DES": { "H": 0, "M": 0, "L": 0 },
-          "SEC": { "H": 0, "M": 0, "L": 0 },
-          "API": { "H": 0, "M": 0, "L": 0 }
+          "GAP": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
         },
         "resolved": 4,
         "not_reviewed": []
@@ -790,11 +875,6 @@
       "abbr": "PLT",
       "cache": null
     },
-    "README": {
-      "enabled": false,
-      "abbr": "REA",
-      "cache": null
-    },
     "rbac": {
       "enabled": true,
       "abbr": "RBAC",
@@ -830,6 +910,11 @@
         "resolved": 43,
         "not_reviewed": []
       }
+    },
+    "README": {
+      "enabled": false,
+      "abbr": "REA",
+      "cache": null
     },
     "sso-authentication": {
       "enabled": true,
