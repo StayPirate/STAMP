@@ -20,7 +20,7 @@ implementations are near-identical in intent but diverge in:
 
 1. **Code completeness**: Red Hat describes the counter in prose (error
    handling table, lines 346-357) but does NOT implement it in the
-   `execute()` pseudocode (lines 270-287). An implementer reading only
+   `execute()` pseudocode (lines 270-290). An implementer reading only
    the code would produce a fetcher without abort logic. Additionally,
    EPSS places its threshold check (`if consecutive_failures >= 3`)
    outside the `except` blocks (at loop-body indentation level, line
@@ -93,10 +93,14 @@ API reachable?"**
 - If NO HTTP response was received after transport-level retry
   exhaustion (connection error, timeout, DNS failure): the API is
   unreachable → **increment** the counter
-- HTTP 5xx is included in "increment" because 4 consecutive 5xx
-  responses (after 4 transport-level attempts each = 16 total failed
-  requests) signal a server in persistent fault state — functionally
-  equivalent to unreachability for the purpose of this counter
+- HTTP 5xx is included in "increment" because a single 5xx at the
+  fetcher level means the transport layer already attempted 4 HTTP
+  requests (1 original + 3 retries with 1s/2s/4s backoff) and all
+  returned 5xx — the server is in persistent fault state, functionally
+  equivalent to unreachability for the purpose of this counter. Note:
+  Celery task-level retries (used by the on-demand `fetch_single_cve`
+  path) do NOT apply within the batch `execute()` loop — each loop
+  iteration is a single transport-level sequence with no task retry
 
 ### Classification function
 
@@ -499,7 +503,9 @@ Classification") for the classification function specification.
 ```
 
 **Change 3c**: Update the `execute()` error handling table (lines
-298-310). Replace with:
+298-310). Preserve the section heading ("**`execute()` — periodic
+batch**") and the intro line ("Error handling is **per-CVE**, not
+per-run:") — replace only the table rows (lines 302-310) with:
 
 | Condition | Action |
 |-----------|--------|
@@ -547,12 +553,18 @@ the `ValidationError` row to include `JSONDecodeError`:
 
 Insert this row after the existing `ValidationError` row.
 
-**Change 3g**: Add a cross-reference to the infrastructure failure
-classification in the Cross-references section (if not already present):
+**Change 3g**: Update the existing networking.md cross-reference in
+the Cross-references section. The current entry (line 395) reads:
 
 ```markdown
-- `docs/features/platform/networking.md` — Infrastructure Failure
-  Classification (`is_infrastructure_failure()`)
+- `docs/features/platform/networking.md` — shared HTTP client
+```
+
+Replace with:
+
+```markdown
+- `docs/features/platform/networking.md` — shared HTTP client,
+  Infrastructure Failure Classification (`is_infrastructure_failure()`)
 ```
 
 ### Step 4: Align Red Hat spec to template
@@ -604,7 +616,9 @@ async def execute(self, session: AsyncSession) -> None:
 ```
 
 **Change 4b**: Update the `execute()` error handling table (lines
-332-346). Replace with:
+332-346). Preserve the section heading ("**`execute()` — periodic
+batch**") and the intro line ("Error handling is **per-CVE**, not
+per-run:") — replace only the table rows (lines 336-346) with:
 
 | Condition | Action |
 |-----------|--------|
@@ -722,7 +736,9 @@ Classification") for the classification function specification.
 ```
 
 **Change 5c**: Update the `execute()` error handling table (lines
-373-380). Replace with:
+373-380). Preserve the section heading ("**`execute()` — periodic
+batch**") and the intro line ("Error handling is **per-CVE**, not
+per-run:") — replace only the table rows (lines 373-380) with:
 
 | Condition | Action |
 |-----------|--------|
