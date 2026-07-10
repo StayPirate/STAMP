@@ -618,7 +618,7 @@ the general affected version model. See
 | product | TEXT | nullable | Product name (e.g., "Linux", "SCALANCE XC-300"). TEXT because some CNAs list entire product families in this field |
 | package_url | TEXT | nullable | PURL identifier (CVE 5.2.0+). Useful for identifying vendored dependencies (npm, PyPI, Go) inside SUSE RPMs |
 | collection_url | TEXT | nullable | Package registry URL (npm, PyPI, etc.). Pre-PURL mechanism, still used by many CNAs |
-| package_name | VARCHAR(255) | nullable | Package name in the registry. Paired with `collection_url` |
+| package_name | VARCHAR(255) | nullable | Source package name. From CNA `packageName` field — may be an RPM source package name (Red Hat, SUSE, Fedora CNAs), a registry package name paired with `collection_url`, or a vendor-specific identifier |
 | repo | TEXT | nullable | Source code repository URL |
 | version | TEXT | nullable | Single version or range start. TEXT because some CNAs list model numbers or multi-range values |
 | version_type | VARCHAR(50) | nullable | `"semver"` / `"git"` / `"custom"` / `"original_commit_for_fix"` / `"rpm"` / ... |
@@ -627,6 +627,8 @@ the general affected version model. See
 | program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only) |
 | cpe | VARCHAR(255) | nullable | CNA/ADP-provided CPE from `affected[]` array. Used for best-effort package resolution in Phase 2 (see `docs/features/tickets/cve-service.md`), alongside NVD CPE applicability statements passed via `cpe_matches`. Both feed the same `resolve_cpe_packages()` function |
 | ecosystem | VARCHAR(50) | nullable | OSV/OSSF ecosystem identifier (e.g., `"PyPI"`, `"npm"`, `"Go"`, `"crates.io"`, `"Maven"`). Populated by `sync_osv_advisories` (canonical values from OSV schema) and `sync_ghsa_advisories` (normalized from GitHub names). NULL for fetchers without ecosystem concept (NVD, MITRE, Red Hat, Kernel) |
+| status | VARCHAR(20) | nullable | Version-level vulnerability status from `versions[].status`. Known values: `"affected"`, `"unaffected"`, `"unknown"`. NULL for entries created without `versions[]` (parser step 4). Stored as-is without validation |
+| default_status | VARCHAR(20) | nullable | Entry-level baseline status from `affected[].defaultStatus`. Same value set as `status`. NULL when absent from source JSON (semantically equivalent to `"unknown"` per CVE 5.x schema). Shared by all version entries from the same parent `affected[]` entry |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 
 Records are replaced (delete-and-reinsert per `(cve_id,
@@ -648,15 +650,18 @@ semantics — the entire set is replaced per source on each sync.
 ```sql
 UNIQUE (cve_id, source_container, vendor, product,
         COALESCE(version_type, ''), COALESCE(version, ''),
-        COALESCE(version_end, ''))
+        COALESCE(version_end, ''), COALESCE(package_name, ''))
 ```
 
-Note: `ecosystem` is intentionally excluded from the unique constraint.
-The same package in different ecosystems from different sources is valid
-(e.g., `"jinja2"` from OSV with `ecosystem = "PyPI"` and from GHSA with
+Note: `ecosystem`, `status`, and `default_status` are intentionally
+excluded from the unique constraint. `ecosystem`: the same package in
+different ecosystems from different sources is valid (e.g., `"jinja2"`
+from OSV with `ecosystem = "PyPI"` and from GHSA with
 `ecosystem = "PyPI"` share a `source_container` and are replaced
-together). Different `source_container` values independently own their
-own set of rows.
+together). `status` and `default_status`: these are informational
+properties of the entry, not identity — two entries differing only in
+status would be semantically contradictory. Different
+`source_container` values independently own their own set of rows.
 
 ### CVECWE
 
