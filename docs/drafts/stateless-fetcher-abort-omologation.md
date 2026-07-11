@@ -112,38 +112,58 @@ existing `create_http_client()` factory)
 **Specification**:
 
 ```
-is_infrastructure_failure(exception) → bool
+is_infrastructure_failure(exception: Exception) → bool
 
 Returns True if the exception indicates the external API is unreachable
 or persistently failing (infrastructure failure). Returns False for all
 other exceptions (data-quality errors, business-logic errors, parse
 errors), which indicate the API responded but the response was unusable.
 
-Classification rules:
-  - Connection error (any variant): True
-  - Timeout (connect, read, write, pool): True
-  - HTTP status error with status_code >= 500: True
-  - All other exceptions: False
+Implementation (whitelist approach):
+
+  INFRA_FAILURE_TYPES = (
+      httpx.NetworkError,         # ConnectError, ReadError, WriteError, CloseError
+      httpx.TimeoutException,     # ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
+      httpx.ProxyError,           # Proxy tunnel establishment failed
+      httpx.RemoteProtocolError,  # Server sent malformed HTTP response
+  )
+
+  def is_infrastructure_failure(exc: Exception) -> bool:
+      if isinstance(exc, httpx.HTTPStatusError):
+          return exc.response.status_code >= 500
+      return isinstance(exc, INFRA_FAILURE_TYPES)
+
+Design choice — whitelist over blacklist: the function enumerates
+exception types that ARE infrastructure failures, rather than catching
+all TransportError and excluding non-infra subclasses. This means
+unknown future httpx exception types default to False (conservative —
+does not abort), with the all-items-failed safety check as fallback.
+Using parent classes (NetworkError, TimeoutException) ensures that new
+subclasses within those families are automatically covered.
 
 This function operates on post-transport-retry exceptions only. By the
 time an exception reaches this function, the transport layer has already
-exhausted its retry budget (4 attempts with 1s/2s/4s backoff for 5xx
-and connection/timeout errors).
+exhausted its retry budget.
 ```
 
-**Behavioral notes**:
+**Classification table** (exhaustive for httpx 0.28+):
 
-- HTTP 429 post-transport → returns `False` (the server responded; rate
-  limiting proves reachability)
-- `JSONDecodeError` → returns `False` (HTTP 200 was received; body
-  corruption is a data-quality issue)
-- `ValidationError` (Pydantic) → returns `False` (HTTP 200 with valid
-  JSON but non-conforming schema)
-- Database errors (`OperationalError`) → returns `False` (not an
-  external API failure; handled by the all-items-failed safety check in
-  `BaseFetcher.run()`)
-- Programming bugs (`AttributeError`, `KeyError`, etc.) → returns
-  `False` (not infrastructure; sporadic bugs should not trigger abort)
+| Exception class | Returns | Rationale |
+|---|---|---|
+| `httpx.NetworkError` (and subclasses: `ConnectError`, `ReadError`, `WriteError`, `CloseError`) | `True` | No usable HTTP response received — connection failed or dropped |
+| `httpx.TimeoutException` (and subclasses: `ConnectTimeout`, `ReadTimeout`, `WriteTimeout`, `PoolTimeout`) | `True` | No usable HTTP response received within time budget |
+| `httpx.ProxyError` | `True` | Proxy tunnel failed — request never reached target server |
+| `httpx.RemoteProtocolError` | `True` | Server sent malformed HTTP — no parseable response available |
+| `httpx.HTTPStatusError` with `status_code >= 500` | `True` | Server in persistent fault state (post-transport-retry exhaustion) |
+| `httpx.HTTPStatusError` with `status_code < 500` | `False` | Server responded with client error (4xx) — proves reachability |
+| `httpx.DecodingError` | `False` | HTTP response received (headers/status OK), body encoding corrupted — data-quality issue |
+| `httpx.TooManyRedirects` | `False` | Server responded with 3xx redirects — redirect loop proves reachability |
+| `httpx.LocalProtocolError` | `False` | Client-side programming error (malformed request) — not an external API issue |
+| `httpx.UnsupportedProtocol` | `False` | Programming error (invalid URL scheme) — not a runtime API issue |
+| `JSONDecodeError` | `False` | HTTP 200 received — body corruption is a data-quality issue |
+| `ValidationError` (Pydantic) | `False` | HTTP 200 with valid JSON — schema mismatch is data-quality |
+| Database errors (`OperationalError`) | `False` | Not an external API failure — handled by all-items-failed safety check |
+| All other non-httpx exceptions | `False` | Not related to external API communication |
 
 ### Updated session lifecycle template
 
@@ -182,8 +202,8 @@ async def execute(self, session: AsyncSession) -> None:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
                     raise FetcherError(
-                        f"{self.description} unreachable"
-                        f" — 3 consecutive failures"
+                        f"{self.name}: source unreachable"
+                        f" — aborted after 3 consecutive failures"
                     )
             else:
                 consecutive_failures = 0  # API responded — data error
@@ -248,8 +268,9 @@ specification of the abort pattern:
 > - **Increment** after infrastructure failures only: exceptions where
 >   `is_infrastructure_failure()` returns `True` (connection error,
 >   timeout, HTTP 5xx — all post-transport-retry exhaustion)
-> - **Abort** when the counter reaches 3: raise `FetcherError` with a
->   sanitized message identifying the API and the threshold
+> - **Abort** when the counter reaches 3: raise `FetcherError` with
+>   message `f"{self.name}: source unreachable — aborted after 3
+>   consecutive failures"`
 >
 > The classification is universal — all stateless per-CVE fetchers use
 > `is_infrastructure_failure()` without per-fetcher customization. The
@@ -278,11 +299,12 @@ specification of the abort pattern:
 
 - No new base class or intermediate subclass
 - No new abstract method, hook, or override point on `BaseCVEFetcher`
+- No new class attribute (e.g., `api_display_name`) — the abort message
+  uses `self.name` (an existing required attribute on all fetchers)
 - No `abort_threshold` attribute on any base class (the threshold 3 is
   part of the template, not a configurable parameter)
-- No external dependency (the classification function is ~5 lines of
-  standard Python using httpx exception types already imported by the
-  HTTP client module)
+- No external dependency (the classification function uses httpx
+  exception types already imported by the HTTP client module)
 
 ## Spec changes — detailed plan
 
@@ -304,6 +326,7 @@ specification of the abort pattern:
 | CSEP-COH-01 | cve-sync-epss | HTTP 429 contradiction resolved: 429 resets counter (prose was correct, table was wrong) |
 | CSEP-COH-02 | cve-sync-epss | Separate fix: update README.md status label |
 | CSEP-COH-03 | cve-sync-epss | Separate fix: correct cross-reference path in data-sources.md |
+| (internal) | cve-sync-osv | "do NOT increment" (table, line 379) vs "resets the counter to zero" (prose, line 386) for completeness guard — resolved: both now say "reset" (Steps 5b/5c) |
 
 Note: CSEP-COH-02 and CSEP-COH-03 are unrelated to the abort pattern
 but should be fixed in the same session since we are modifying the EPSS
@@ -336,23 +359,53 @@ template 1).
 
 **Signature**: `is_infrastructure_failure(exception: Exception) → bool`
 
-**Classification rules**:
+**Implementation** (whitelist approach):
 
-| Condition | Returns | Rationale |
-|-----------|---------|-----------|
-| Connection error (any variant) | `True` | No HTTP response received |
-| Timeout (connect, read, write, pool) | `True` | No HTTP response received |
-| HTTP status error with status >= 500 | `True` | Server persistently failing (post-transport-retry) |
-| HTTP status error with status 429 | `False` | Server responded — rate limiting proves reachability |
-| HTTP status error with other 4xx | `False` | Server responded — client error |
+```python
+INFRA_FAILURE_TYPES = (
+    httpx.NetworkError,         # ConnectError, ReadError, WriteError, CloseError
+    httpx.TimeoutException,     # ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
+    httpx.ProxyError,           # Proxy tunnel establishment failed
+    httpx.RemoteProtocolError,  # Server sent malformed HTTP response
+)
+
+def is_infrastructure_failure(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, INFRA_FAILURE_TYPES)
+```
+
+**Design choice — whitelist over blacklist**: the function enumerates
+exception types that ARE infrastructure failures, rather than catching
+all `TransportError` and excluding non-infra subclasses. This means
+unknown future httpx exception types default to `False` (conservative
+— does not abort), with the all-items-failed safety check as fallback.
+Using parent classes (`NetworkError`, `TimeoutException`) ensures that
+new subclasses within those families are automatically covered.
+
+**Classification table** (exhaustive for httpx 0.28+):
+
+| Exception class | Returns | Rationale |
+|---|---|---|
+| `httpx.NetworkError` (and subclasses: `ConnectError`, `ReadError`, `WriteError`, `CloseError`) | `True` | No usable HTTP response received — connection failed or dropped |
+| `httpx.TimeoutException` (and subclasses: `ConnectTimeout`, `ReadTimeout`, `WriteTimeout`, `PoolTimeout`) | `True` | No usable HTTP response received within time budget |
+| `httpx.ProxyError` | `True` | Proxy tunnel failed — request never reached target server |
+| `httpx.RemoteProtocolError` | `True` | Server sent malformed HTTP — no parseable response available |
+| `httpx.HTTPStatusError` with `status_code >= 500` | `True` | Server in persistent fault state (post-transport-retry exhaustion) |
+| `httpx.HTTPStatusError` with `status_code < 500` | `False` | Server responded with client error (4xx) — proves reachability |
+| `httpx.DecodingError` | `False` | HTTP response received (headers/status OK), body encoding corrupted — data-quality |
+| `httpx.TooManyRedirects` | `False` | Server responded with 3xx redirects — redirect loop proves reachability |
+| `httpx.LocalProtocolError` | `False` | Client-side programming error — not an external API issue |
+| `httpx.UnsupportedProtocol` | `False` | Programming error (invalid URL scheme) — not a runtime issue |
 | `JSONDecodeError` | `False` | HTTP 200 received — body corruption is data-quality |
 | `ValidationError` (Pydantic) | `False` | HTTP 200 received — schema mismatch is data-quality |
-| Any other exception | `False` | Not an external API infrastructure issue |
+| Any other non-httpx exception | `False` | Not related to external API communication |
 
 **Post-transport context**: this function operates on exceptions that
-have already exhausted transport-level retry. A `True` result means
-the transport layer attempted 4 requests (with 1s/2s/4s backoff) and
-all failed — the API is conclusively unreachable or failing.
+have already exhausted transport-level retry. A `True` result for
+`NetworkError`/`TimeoutException` means the transport layer attempted
+up to 4 requests (with 1s/2s/4s backoff) and all failed. A `True`
+result for `HTTPStatusError >= 500` means 4 attempts all returned 5xx.
 
 **Consumers**: stateless per-CVE fetchers (`sync_epss_scores`,
 `sync_redhat_cves`, `sync_osv_advisories`). Not used by paginated,
@@ -394,10 +447,20 @@ would be an infrastructure failure caught by the generic handler).
 
 **Change 2c**: Replace the current one-sentence abort delegation at
 lines 792-796 with the full "Consecutive failure abort" prose
-specification from the Design section of this draft. Keep the preceding
-paragraph (lines 785-791 about log level rationale) and the following
-paragraph (lines 798-onwards about distinction from on-demand path)
-unchanged.
+specification from the Design section of this draft. **Preserve** the
+general principle as an introductory sentence before the detailed
+specification:
+
+> A batch must never abort entirely due to a single CVE failure.
+
+This sentence is the cross-cutting principle (applies to all fetcher
+types, not just stateless per-CVE). The detailed consecutive failure
+abort specification follows immediately after as the stateless-fetcher
+specialization of this principle.
+
+Keep the preceding paragraph (lines 785-791 about log level rationale)
+and the following paragraph (lines 798-onwards about distinction from
+on-demand path) unchanged.
 
 **Change 2d**: In the "Batch Error Handling" section, after the
 numbered list (steps 1-3) at lines 762-774, add a reference to the
@@ -462,8 +525,8 @@ async def execute(self, session: AsyncSession) -> None:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
                     raise FetcherError(
-                        "EPSS API unreachable"
-                        " — 3 consecutive failures"
+                        f"{self.name}: source unreachable"
+                        " — aborted after 3 consecutive failures"
                     )
             else:
                 consecutive_failures = 0  # API responded — data error
@@ -495,7 +558,8 @@ skip (`CVENotInSource`), or any exception where
 `ValidationError`, `JSONDecodeError`, etc.).
 
 If the counter reaches 3, abort the entire run with `FetcherError`:
-`"EPSS API unreachable — 3 consecutive failures"`.
+`f"{self.name}: source unreachable — aborted after 3 consecutive
+failures"`.
 
 See `cve-fetcher-infrastructure.md` (session lifecycle template 1) for
 the canonical pattern and `networking.md` ("Infrastructure Failure
@@ -543,7 +607,7 @@ the `ValidationError` row to include `JSONDecodeError`:
 |---|---|
 | Connection error | `"Failed to connect to FIRST.org EPSS API"` |
 | HTTP 5xx | `"FIRST.org EPSS API returned HTTP {status_code}"` |
-| Persistent infra failure | `"EPSS API unreachable — 3 consecutive failures"` |
+| Persistent infra failure | `f"{self.name}: source unreachable — aborted after 3 consecutive failures"` |
 | Data-quality error (`ValidationError` / `JSONDecodeError`) | `"EPSS API returned invalid data for {cve_id}"` |
 
 **Change 3f**: In the `fetch_single()` error handling table (lines
@@ -604,8 +668,8 @@ async def execute(self, session: AsyncSession) -> None:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
                     raise FetcherError(
-                        "Red Hat Security Data API unreachable"
-                        " — 3 consecutive failures"
+                        f"{self.name}: source unreachable"
+                        " — aborted after 3 consecutive failures"
                     )
             else:
                 consecutive_failures = 0  # API responded — data error
@@ -706,8 +770,8 @@ async def execute(self, session: AsyncSession) -> None:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
                     raise FetcherError(
-                        "OSV API unreachable"
-                        " — 3 consecutive failures"
+                        f"{self.name}: source unreachable"
+                        " — aborted after 3 consecutive failures"
                     )
             else:
                 consecutive_failures = 0  # API responded — data error
@@ -843,13 +907,15 @@ Before applying this plan, verify these cross-cutting consistency
 requirements:
 
 - [ ] The `is_infrastructure_failure()` classification in networking.md
-  matches the counter semantics described in
-  cve-fetcher-infrastructure.md
+  uses the whitelist approach with `INFRA_FAILURE_TYPES =
+  (NetworkError, TimeoutException, ProxyError, RemoteProtocolError)` +
+  `HTTPStatusError >= 500`, matching the Design section of this draft
 - [ ] All three fetcher specs reference the same classification function
   and describe the same counter behavior
-- [ ] The sanitized `FetcherError` messages in each fetcher spec match
-  the pattern `"{API display name} unreachable — 3 consecutive
-  failures"`
+- [ ] The `FetcherError` abort message in all three fetcher specs and
+  in the template uses `f"{self.name}: source unreachable — aborted
+  after 3 consecutive failures"` (automatic via `self.name`, no
+  per-fetcher customization)
 - [ ] The execute() code blocks in all three fetcher specs follow the
   same structural pattern (same branch order, same comments, same
   counter logic)
@@ -874,3 +940,6 @@ requirements:
 - [ ] The scope snapshot docstring ("Scope snapshot: the in-scope
   CVE-ID set is queried once at the start of execute()...") appears in
   all three fetcher `execute()` methods
+- [ ] The general principle "A batch must never abort entirely due to a
+  single CVE failure" is preserved as an introductory sentence before
+  the detailed abort specification in cve-fetcher-infrastructure.md
