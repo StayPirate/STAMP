@@ -692,6 +692,14 @@ it stores the exception message in `error_message` (public) and
 `__cause__` is `None` (no chained exception), `error_detail` is set to
 `NULL`.
 
+**Chaining requirement**: all `FetcherError` raises that wrap a caught
+exception MUST use `from e` to preserve the diagnostic chain. Without
+chaining, `error_detail` is `NULL` and operators lose visibility into
+the underlying failure cause. The only exception is `FetcherError`
+raised without a caught exception (e.g., pre-flight configuration
+guards like "token not configured") — these have no `__cause__` by
+nature and are correct without chaining.
+
 ### BaseFetcher fallback
 
 When `execute()` raises an exception that is NOT a `FetcherError` (i.e.,

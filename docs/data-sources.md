@@ -66,7 +66,7 @@ configurations, and references to advisories and patches.
 - **Integration status**: **Specified**
 - **Documentation**: https://nvd.nist.gov/developers
 
-> See [cve-sync-nvd.md](features/platform/cve-sync-nvd.md) for the full
+> See [cve-sync-nvd.md](features/tickets/cve-sync-nvd.md) for the full
 > fetcher specification.
 
 ### MITRE CVE Services
@@ -107,7 +107,7 @@ provide a useful secondary perspective when evaluating vulnerabilities.
 - **Documentation**:
   https://docs.redhat.com/en/documentation/red_hat_security_data_api/1.0/html-single/red_hat_security_data_api/index
 
-> See [cve-sync-redhat.md](features/platform/cve-sync-redhat.md) for the
+> See [cve-sync-redhat.md](features/tickets/cve-sync-redhat.md) for the
 > full fetcher specification.
 
 ### CISA KEV (Known Exploited Vulnerabilities)
@@ -129,7 +129,7 @@ vulnerability is being actively used by threat actors.
 - **Documentation**:
   https://www.cisa.gov/known-exploited-vulnerabilities-catalog
 
-> See [cve-sync-kev.md](features/platform/cve-sync-kev.md) for the full
+> See [cve-sync-kev.md](features/tickets/cve-sync-kev.md) for the full
 > fetcher specification.
 
 ### EPSS (Exploit Prediction Scoring System)
@@ -151,7 +151,7 @@ CVSS measures severity, EPSS measures likelihood of exploitation.
 - **Documentation**: https://www.first.org/epss/,
   https://www.first.org/epss/api
 
-> See [cve-sync-epss.md](features/platform/cve-sync-epss.md) for the full
+> See [cve-sync-epss.md](features/tickets/cve-sync-epss.md) for the full
 > fetcher specification.
 
 ### GHSA (GitHub Security Advisories)
@@ -177,7 +177,7 @@ information relevant for Vulnerability Analysts.
 - **Documentation**:
   https://docs.github.com/en/code-security/security-advisories/working-with-global-security-advisories-from-the-github-advisory-database
 
-> See [cve-sync-ghsa.md](features/platform/cve-sync-ghsa.md) for the full
+> See [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md) for the full
 > fetcher specification.
 
 ### Linux Kernel CVE Feed
@@ -278,7 +278,7 @@ additional metadata from ecosystem-specific advisory databases.
 - **Documentation**: https://osv.dev/,
   https://google.github.io/osv.dev/api/
 
-> See [cve-sync-osv.md](features/platform/cve-sync-osv.md) for the full
+> See [cve-sync-osv.md](features/tickets/cve-sync-osv.md) for the full
 > fetcher specification.
 
 ---

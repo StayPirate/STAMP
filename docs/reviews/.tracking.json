@@ -292,17 +292,17 @@
       "enabled": true,
       "abbr": "CSEP",
       "cache": {
-        "last_review": "2026-07-10T00:00:00+0000",
+        "last_review": "2026-07-11T00:00:00+0000",
         "open": {
           "GAP": {
             "H": 0,
-            "M": 1,
+            "M": 0,
             "L": 0
           },
           "COH": {
             "H": 0,
-            "M": 1,
-            "L": 2
+            "M": 0,
+            "L": 0
           },
           "DES": {
             "H": 0,
@@ -320,7 +320,7 @@
             "L": 0
           }
         },
-        "resolved": 0,
+        "resolved": 4,
         "not_reviewed": []
       }
     },

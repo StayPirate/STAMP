@@ -15,8 +15,8 @@ cve-sync-kernel.md      Linux Kernel CNA fetcher specification
 cve-sync-ghsa.md        GitHub Advisory DB fetcher specification
 cve-sync-osv.md         OSV enrichment fetcher specification
 cve-sync-redhat.md      Red Hat Security Data fetcher specification
-cve-sync-kev.md         CISA KEV fetcher (planned)
-cve-sync-epss.md        EPSS fetcher (planned)
+cve-sync-kev.md         CISA KEV fetcher specification
+cve-sync-epss.md        EPSS fetcher specification
 cvss-scoring.md         Multi-provider CVSS assessments, severity resolution
 ticket-audit-log.md     TicketAuditEvent audit trail, event type contract
 ticket-references.md    External links on tickets (auto-classified by type, manual with manage_references capability)

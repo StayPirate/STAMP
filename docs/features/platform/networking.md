@@ -156,11 +156,18 @@ otherwise, the generic status-code row applies.
 | Condition | Retry | Backoff |
 |-----------|-------|---------|
 | 5xx (any method) | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
-| Connection error, timeout (idempotent methods only†) | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
+| Connection error, timeout, proxy error, remote protocol error (idempotent methods only†) | 4 attempts (1 original + 3 retries) | 1s / 2s / 4s (fixed) |
 | 429/503 with `Retry-After` ≤ 120s | 1 retry | Wait the indicated value |
 | 429/503 with `Retry-After` > 120s | No retry | Error propagated immediately |
 | 429 without `Retry-After` | No retry at transport | Fetcher decides |
 | 4xx (non-429) | No retry | Client error — retrying is pointless |
+
+**Proxy and protocol errors**: `ProxyError` (proxy rejected the
+CONNECT tunnel — request never reached the target) and
+`RemoteProtocolError` (server sent unparseable HTTP — no usable
+response available) are retried with the same policy as connection
+errors. Both represent inability to obtain a usable HTTP response
+from the target server.
 
 **Path exclusivity**: if a response enters the Retry-After guided path,
 the guided retry is the final attempt. The two retry paths are mutually
@@ -217,6 +224,70 @@ described above replaces it entirely, providing unified backoff,
 Retry-After support, method safety enforcement, and observability. Do
 not enable `retries` on the transport — this would cause multiplicative
 retry behavior (N httpx retries x M custom retries per attempt).
+
+#### Infrastructure Failure Classification
+
+The `is_infrastructure_failure()` function classifies post-transport
+exceptions as either infrastructure failures (API unreachable) or
+data-quality errors (API responded but data is unusable). It is used
+by stateless per-CVE fetchers to drive the consecutive failure abort
+counter (see `cve-fetcher-infrastructure.md`, session lifecycle
+template 1).
+
+**Location**: `backend/app/services/http_client.py`
+
+**Signature**: `is_infrastructure_failure(exception: Exception) → bool`
+
+**Implementation** (whitelist approach):
+
+```python
+INFRA_FAILURE_TYPES = (
+    httpx.NetworkError,         # ConnectError, ReadError, WriteError, CloseError
+    httpx.TimeoutException,     # ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
+    httpx.ProxyError,           # Proxy tunnel establishment failed
+    httpx.RemoteProtocolError,  # Server sent malformed HTTP response
+)
+
+def is_infrastructure_failure(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, INFRA_FAILURE_TYPES)
+```
+
+**Design choice — whitelist over blacklist**: the function enumerates
+exception types that ARE infrastructure failures, rather than catching
+all `TransportError` and excluding non-infra subclasses. This means
+unknown future httpx exception types default to `False` (conservative
+— does not abort), with the all-items-failed safety check as fallback.
+Using parent classes (`NetworkError`, `TimeoutException`) ensures that
+new subclasses within those families are automatically covered.
+
+**Classification table** (exhaustive for httpx 0.28+):
+
+| Exception class | Returns | Rationale |
+|---|---|---|
+| `httpx.NetworkError` (and subclasses: `ConnectError`, `ReadError`, `WriteError`, `CloseError`) | `True` | No usable HTTP response received — connection failed or dropped |
+| `httpx.TimeoutException` (and subclasses: `ConnectTimeout`, `ReadTimeout`, `WriteTimeout`, `PoolTimeout`) | `True` | No usable HTTP response received within time budget |
+| `httpx.ProxyError` | `True` | Proxy tunnel failed — request never reached target server |
+| `httpx.RemoteProtocolError` | `True` | Server sent malformed HTTP — no parseable response available |
+| `httpx.HTTPStatusError` with `status_code >= 500` | `True` | Server in persistent fault state (post-transport-retry exhaustion) |
+| `httpx.HTTPStatusError` with `status_code < 500` | `False` | Server responded with client error (4xx) — proves reachability |
+| `httpx.DecodingError` | `False` | HTTP response received (headers/status OK), body encoding corrupted — data-quality |
+| `httpx.TooManyRedirects` | `False` | Server responded with 3xx redirects — redirect loop proves reachability |
+| `httpx.LocalProtocolError` | `False` | Client-side programming error — not an external API issue |
+| `httpx.UnsupportedProtocol` | `False` | Programming error (invalid URL scheme) — not a runtime issue |
+| `JSONDecodeError` | `False` | HTTP 200 received — body corruption is data-quality |
+| `ValidationError` (Pydantic) | `False` | HTTP 200 received — schema mismatch is data-quality |
+| Any other non-httpx exception | `False` | Not related to external API communication |
+
+**Post-transport context**: this function operates on exceptions that
+have already exhausted transport-level retry. A `True` result means
+the transport layer attempted up to 4 requests (with 1s/2s/4s backoff)
+and all failed — the target API is unreachable or persistently failing.
+
+**Consumers**: stateless per-CVE fetchers (`sync_epss_scores`,
+`sync_redhat_cves`, `sync_osv_advisories`). Not used by paginated,
+git-based, or catalog fetchers.
 
 #### HTTP Response Compression
 
