@@ -97,7 +97,7 @@ products. Since Red Hat Enterprise Linux and SUSE Linux Enterprise share a
 common upstream heritage for many packages, Red Hat's severity assessments
 provide a useful secondary perspective when evaluating vulnerabilities.
 
-- **Relevant data**: CVSS v2.0 and v3.1 base scores and scoring vectors,
+- **Relevant data**: CVSS v2.0 and v3.x base scores and scoring vectors,
   CWE identifiers, reference URLs, and source package names for CVEs
   affecting Red Hat products
 - **Access**: REST API at
