@@ -143,7 +143,7 @@ subclasses within those families are automatically covered.
 
 This function operates on post-transport-retry exceptions only. By the
 time an exception reaches this function, the transport layer has already
-exhausted its retry budget.
+exhausted its retry budget (4 attempts for all True-classified types).
 ```
 
 **Classification table** (exhaustive for httpx 0.28+):
@@ -204,7 +204,7 @@ async def execute(self, session: AsyncSession) -> None:
                     raise FetcherError(
                         f"{self.name}: source unreachable"
                         f" — aborted after 3 consecutive failures"
-                    )
+                    ) from e
             else:
                 consecutive_failures = 0  # API responded — data error
         await asyncio.sleep(self.config.request_delay)
@@ -217,7 +217,8 @@ async def execute(self, session: AsyncSession) -> None:
 3. Added `is_infrastructure_failure(e)` classification in the `except
    Exception` block
 4. Added counter reset on data-quality exceptions (`else` branch)
-5. Added abort via `FetcherError` at threshold 3
+5. Added abort via `FetcherError` at threshold 3 (with `from e` for
+   diagnostic context — populates `error_detail` in `FetcherRun`)
 6. Counter resets on success (line: `consecutive_failures = 0`)
 7. Counter resets on `CVENotInSource` (with comment)
 
@@ -267,10 +268,12 @@ specification of the abort pattern:
 >   with bad data, HTTP 429 rate limit, parse error, etc.)
 > - **Increment** after infrastructure failures only: exceptions where
 >   `is_infrastructure_failure()` returns `True` (connection error,
->   timeout, HTTP 5xx — all post-transport-retry exhaustion)
+>   timeout, proxy error, protocol error, HTTP 5xx — all
+>   post-transport-retry exhaustion)
 > - **Abort** when the counter reaches 3: raise `FetcherError` with
 >   message `f"{self.name}: source unreachable — aborted after 3
->   consecutive failures"`
+>   consecutive failures"`, chaining the triggering exception (`from e`)
+>   to populate `error_detail` in the `FetcherRun` record
 >
 > The classification is universal — all stateless per-CVE fetchers use
 > `is_infrastructure_failure()` without per-fetcher customization. The
@@ -279,10 +282,11 @@ specification of the abort pattern:
 >
 > **Transport-level retry context**: errors reaching the fetcher have
 > already exhausted transport-level retry (4 attempts with 1s/2s/4s
-> backoff for 5xx and connection/timeout; 1 guided retry for 429/503
-> with Retry-After ≤ 120s). A single infrastructure failure at the
-> fetcher level represents 4 failed HTTP attempts. Three consecutive
-> infrastructure failures represent 12 failed HTTP attempts total.
+> backoff for connection errors, timeouts, proxy errors, protocol
+> errors, and HTTP 5xx; 1 guided retry for 429/503 with Retry-After
+> ≤ 120s). A single infrastructure failure at the fetcher level
+> represents 4 failed HTTP attempts. Three consecutive infrastructure
+> failures represent 12 failed HTTP attempts total.
 >
 > **Interaction with other mechanisms**:
 >
@@ -312,11 +316,12 @@ specification of the abort pattern:
 
 | File | Type of change |
 |------|----------------|
+| `docs/features/platform/fetcher-infrastructure.md` | Add explicit `from e` chaining requirement |
 | `docs/features/platform/cve-fetcher-infrastructure.md` | Template update + abort pattern documentation |
-| `docs/features/platform/networking.md` | Add classification function specification |
+| `docs/features/platform/networking.md` | Transport retry extension + classification function |
 | `docs/features/tickets/cve-sync-epss.md` | Align to template; resolves 3 findings |
-| `docs/features/tickets/cve-sync-redhat.md` | Align to template; add counter to code |
-| `docs/features/tickets/cve-sync-osv.md` | Align to template; resolve prose/code inconsistency |
+| `docs/features/tickets/cve-sync-redhat.md` | Align to template; add counter to code; add pre-table note; update sanitized messages |
+| `docs/features/tickets/cve-sync-osv.md` | Align to template; resolve prose/code inconsistency; add pre-table note; update sanitized messages |
 
 ### Findings resolved by this change
 
@@ -336,11 +341,37 @@ spec.
 
 ## Action Plan
 
-### Step 1: Add `is_infrastructure_failure()` to networking.md
+### Step 1: Update networking.md (transport retry + classification function)
 
 **File**: `docs/features/platform/networking.md`
 
-**Location**: after the "Transport-Level Retry" section (which ends
+**Change 1a**: Extend the Transport-Level Retry table (line 159) to
+include `ProxyError` and `RemoteProtocolError`. Currently, only
+`NetworkError` and `TimeoutException` subclasses are retried for
+connection/timeout failures. The two additional types are semantically
+equivalent for retry purposes:
+
+- `ProxyError`: proxy rejected the CONNECT tunnel — request never
+  reached the target server (functionally equivalent to ConnectError)
+- `RemoteProtocolError`: server sent malformed HTTP after transport
+  retry exhaustion — functionally equivalent to an unreachable server
+
+Update the table row:
+
+| Before | After |
+|--------|-------|
+| `Connection error, timeout (idempotent methods only†)` | `Connection error, timeout, proxy error, remote protocol error (idempotent methods only†)` |
+
+Add a clarification note below the table:
+
+> **Proxy and protocol errors**: `ProxyError` (proxy rejected the
+> CONNECT tunnel — request never reached the target) and
+> `RemoteProtocolError` (server sent unparseable HTTP — no usable
+> response available) are retried with the same policy as connection
+> errors. Both represent inability to obtain a usable HTTP response
+> from the target server.
+
+**Change 1b**: After the "Transport-Level Retry" section (which ends
 around line 220), add a new subsection.
 
 **Add**:
@@ -402,17 +433,38 @@ new subclasses within those families are automatically covered.
 | Any other non-httpx exception | `False` | Not related to external API communication |
 
 **Post-transport context**: this function operates on exceptions that
-have already exhausted transport-level retry. A `True` result for
-`NetworkError`/`TimeoutException` means the transport layer attempted
-up to 4 requests (with 1s/2s/4s backoff) and all failed. A `True`
-result for `HTTPStatusError >= 500` means 4 attempts all returned 5xx.
+have already exhausted transport-level retry. A `True` result means
+the transport layer attempted up to 4 requests (with 1s/2s/4s backoff)
+and all failed — the target API is unreachable or persistently failing.
 
 **Consumers**: stateless per-CVE fetchers (`sync_epss_scores`,
 `sync_redhat_cves`, `sync_osv_advisories`). Not used by paginated,
 git-based, or catalog fetchers.
 ```
 
-### Step 2: Update session lifecycle template in cve-fetcher-infrastructure.md
+### Step 2: Add explicit `from e` chaining rule to fetcher-infrastructure.md
+
+**File**: `docs/features/platform/fetcher-infrastructure.md`
+
+**Location**: after line 693 (after the paragraph explaining
+`__cause__` and `error_detail`), add the following rule:
+
+```markdown
+**Chaining requirement**: all `FetcherError` raises that wrap a caught
+exception MUST use `from e` to preserve the diagnostic chain. Without
+chaining, `error_detail` is `NULL` and operators lose visibility into
+the underlying failure cause. The only exception is `FetcherError`
+raised without a caught exception (e.g., pre-flight configuration
+guards like "token not configured") — these have no `__cause__` by
+nature and are correct without chaining.
+```
+
+This formalizes the pattern already shown in the code example (lines
+682-684) as an explicit rule. All fetcher specs (KEV, NVD, GHSA, EPSS,
+Red Hat, OSV, git fetchers) are bound by this rule without needing
+per-spec repetition.
+
+### Step 3: Update session lifecycle template in cve-fetcher-infrastructure.md
 
 **File**: `docs/features/platform/cve-fetcher-infrastructure.md`
 
@@ -433,9 +485,9 @@ patterns and do not include the consecutive failure counter.
 
 **Transport-level retry context**: errors reaching the fetcher have
 already exhausted transport-level retry (4 attempts with 1s/2s/4s
-backoff for 5xx and connection/timeout errors; 1 guided retry for
-429/503 with Retry-After ≤ 120s). The error handling in the template
-documents post-transport behavior only.
+backoff for connection errors, timeouts, proxy errors, protocol errors,
+and HTTP 5xx; 1 guided retry for 429/503 with Retry-After ≤ 120s). The
+error handling in the template documents post-transport behavior only.
 
 **Source-specific exception branches**: individual fetcher specs MAY
 add exception branches between `CVENotInSource` and the generic
@@ -475,7 +527,7 @@ Classification"). Fetchers do not implement this classification
 individually.
 ```
 
-### Step 3: Align EPSS spec to template
+### Step 4: Align EPSS spec to template
 
 **File**: `docs/features/tickets/cve-sync-epss.md`
 
@@ -527,7 +579,7 @@ async def execute(self, session: AsyncSession) -> None:
                     raise FetcherError(
                         f"{self.name}: source unreachable"
                         " — aborted after 3 consecutive failures"
-                    )
+                    ) from e
             else:
                 consecutive_failures = 0  # API responded — data error
         # Staleness check: diagnostic only, never affects metrics or abort
@@ -551,15 +603,15 @@ async def execute(self, session: AsyncSession) -> None:
 
 A counter tracks consecutive infrastructure failures — exceptions
 where `is_infrastructure_failure()` returns `True` (connection error,
-timeout, HTTP 5xx — all post-transport-retry). The counter resets to
-zero after any evidence of API reachability: successful fetch, clean
-skip (`CVENotInSource`), or any exception where
-`is_infrastructure_failure()` returns `False` (HTTP 429, parse error,
-`ValidationError`, `JSONDecodeError`, etc.).
+timeout, proxy error, protocol error, HTTP 5xx — all
+post-transport-retry). The counter resets to zero after any evidence
+of API reachability: successful fetch, clean skip (`CVENotInSource`),
+or any exception where `is_infrastructure_failure()` returns `False`
+(HTTP 429, parse error, `ValidationError`, `JSONDecodeError`, etc.).
 
 If the counter reaches 3, abort the entire run with `FetcherError`:
 `f"{self.name}: source unreachable — aborted after 3 consecutive
-failures"`.
+failures"` (chained with `from e` for diagnostic context).
 
 See `cve-fetcher-infrastructure.md` (session lifecycle template 1) for
 the canonical pattern and `networking.md` ("Infrastructure Failure
@@ -581,33 +633,44 @@ per-run:") — replace only the table rows (lines 302-310) with:
 | Network timeout / DNS / connection error | `record_failed`, increment failure counter |
 | 3 consecutive infrastructure failures | Abort entire run with `FetcherError` |
 
-**Change 3d**: Update the post-table prose (lines 312-327). Replace
-lines 312-317 with:
+**Change 3d**: Update the post-table prose (lines 312-322). Replace
+lines 312-322 with:
 
 ```markdown
 The consecutive failure counter uses `is_infrastructure_failure()` to
 classify exceptions. Only infrastructure failures (connection error,
-timeout, HTTP 5xx post-transport-retry) increment the counter. All
-other exceptions — including HTTP 429, `JSONDecodeError`,
-`ValidationError`, and any other error where the API demonstrably
-responded — reset the counter to zero.
+timeout, proxy error, protocol error, HTTP 5xx — all post-transport-
+retry) increment the counter. All other exceptions — including HTTP
+429, `JSONDecodeError`, `ValidationError`, and any other error where
+the API demonstrably responded — reset the counter to zero.
 
 Transport-level retry context: errors reaching the fetcher have already
 exhausted transport-level retry (4 attempts with 1s/2s/4s backoff for
-5xx and connection/timeout; 1 guided retry for 429/503 with
-Retry-After ≤ 120s). A single infrastructure failure at the fetcher
-level represents 4 failed HTTP attempts. Three consecutive failures
-represent 12 failed attempts total.
+connection errors, timeouts, proxy errors, protocol errors, and HTTP
+5xx; 1 guided retry for 429/503 with Retry-After ≤ 120s). A single
+infrastructure failure at the fetcher level represents 4 failed HTTP
+attempts. Three consecutive failures represent 12 failed attempts
+total.
+
+The batch run **never aborts on a single CVE failure** — it continues
+to the next CVE after recording the failure. The only abort condition
+is persistent infrastructure failure (3 consecutive errors where
+`is_infrastructure_failure()` returns `True`).
+
+See `cve-fetcher-infrastructure.md` (session lifecycle template 1) for
+the canonical pattern and `networking.md` ("Infrastructure Failure
+Classification") for the classification function specification.
 ```
 
 **Change 3e**: In the sanitized messages table (lines 329-337), update
-the `ValidationError` row to include `JSONDecodeError`:
+the `ValidationError` row to include `JSONDecodeError` and the abort
+message to show the expanded value:
 
 | Failure mode | `FetcherError` message |
 |---|---|
 | Connection error | `"Failed to connect to FIRST.org EPSS API"` |
 | HTTP 5xx | `"FIRST.org EPSS API returned HTTP {status_code}"` |
-| Persistent infra failure | `f"{self.name}: source unreachable — aborted after 3 consecutive failures"` |
+| Persistent infra failure | `"sync_epss_scores: source unreachable — aborted after 3 consecutive failures"` |
 | Data-quality error (`ValidationError` / `JSONDecodeError`) | `"EPSS API returned invalid data for {cve_id}"` |
 
 **Change 3f**: In the `fetch_single()` error handling table (lines
@@ -631,7 +694,7 @@ Replace with:
   Infrastructure Failure Classification (`is_infrastructure_failure()`)
 ```
 
-### Step 4: Align Red Hat spec to template
+### Step 5: Align Red Hat spec to template
 
 **File**: `docs/features/tickets/cve-sync-redhat.md`
 
@@ -670,7 +733,7 @@ async def execute(self, session: AsyncSession) -> None:
                     raise FetcherError(
                         f"{self.name}: source unreachable"
                         " — aborted after 3 consecutive failures"
-                    )
+                    ) from e
             else:
                 consecutive_failures = 0  # API responded — data error
         await asyncio.sleep(self.config.request_delay)
@@ -701,15 +764,16 @@ per-run:") — replace only the table rows (lines 336-346) with:
 ```markdown
 The consecutive failure counter uses `is_infrastructure_failure()` to
 classify exceptions. Only infrastructure failures (connection error,
-timeout, HTTP 5xx post-transport-retry) increment the counter. All
-other exceptions — including HTTP 429, `JSONDecodeError`, invalid CVSS
-vectors (partial extraction), and any other error where the API
-demonstrably responded — reset the counter to zero.
+timeout, proxy error, protocol error, HTTP 5xx — all post-transport-
+retry) increment the counter. All other exceptions — including HTTP
+429, `JSONDecodeError`, invalid CVSS vectors (partial extraction), and
+any other error where the API demonstrably responded — reset the
+counter to zero.
 
 Transport-level retry context: errors reaching the fetcher have already
 exhausted transport-level retry (4 attempts with 1s/2s/4s backoff for
-5xx and connection/timeout; 1 guided retry for 429/503 with
-Retry-After ≤ 120s).
+connection errors, timeouts, proxy errors, protocol errors, and HTTP
+5xx; 1 guided retry for 429/503 with Retry-After ≤ 120s).
 
 The batch run **never aborts on a single CVE failure** — it continues
 to the next CVE after recording the failure. The only abort condition
@@ -733,7 +797,32 @@ change needed if already correct.
 **Change 4e**: Add cross-reference to networking.md (Infrastructure
 Failure Classification) in the Cross-references section.
 
-### Step 5: Align OSV spec to template
+**Change 4f**: Update the "Persistent infra failure" row in the
+sanitized messages table (line 366). Replace:
+
+```
+| Persistent infra failure | `"Red Hat Security Data API unreachable — 3 consecutive failures"` |
+```
+
+With:
+
+```
+| Persistent infra failure | `"sync_redhat_cves: source unreachable — aborted after 3 consecutive failures"` |
+```
+
+**Change 4g**: Add a transport-level retry context note immediately
+after the `### Error Handling` heading (line 297), before the
+`fetch_single()` error table:
+
+```markdown
+**Transport-level retry note**: the shared HTTP client infrastructure
+provides automatic transport-level retry (4 attempts on 5xx with
+1s/2s/4s backoff, 1 guided retry on 429 with Retry-After). The error
+tables below document post-transport behavior only — errors reaching
+the fetcher have already exhausted transport retries.
+```
+
+### Step 6: Align OSV spec to template
 
 **File**: `docs/features/tickets/cve-sync-osv.md`
 
@@ -772,7 +861,7 @@ async def execute(self, session: AsyncSession) -> None:
                     raise FetcherError(
                         f"{self.name}: source unreachable"
                         " — aborted after 3 consecutive failures"
-                    )
+                    ) from e
             else:
                 consecutive_failures = 0  # API responded — data error
         await asyncio.sleep(self.config.request_delay)
@@ -787,12 +876,12 @@ async def execute(self, session: AsyncSession) -> None:
 ```markdown
 **Abort threshold semantics**: the consecutive failure counter uses
 `is_infrastructure_failure()` to classify exceptions. Only Phase 1
-infrastructure failures (connection error, timeout, HTTP 5xx
-post-transport-retry) increment the counter. All other exceptions
-reset the counter — including HTTP 200 with parse errors, HTTP 404
-(CVENotInSource), and completeness guard failures (Phase 2/3 issues
-with successful Phase 1). Any CVE where Phase 1 returns any HTTP
-response resets the counter to zero.
+infrastructure failures (connection error, timeout, proxy error,
+protocol error, HTTP 5xx — all post-transport-retry) increment the
+counter. All other exceptions reset the counter — including HTTP 200
+with parse errors, HTTP 404 (CVENotInSource), and completeness guard
+failures (Phase 2/3 issues with successful Phase 1). Any CVE where
+Phase 1 returns any HTTP response resets the counter to zero.
 
 See `cve-fetcher-infrastructure.md` (session lifecycle template 1) for
 the canonical pattern and `networking.md` ("Infrastructure Failure
@@ -817,7 +906,32 @@ per-run:") — replace only the table rows (lines 373-380) with:
 **Change 5d**: Add cross-reference to networking.md (Infrastructure
 Failure Classification) in the Cross-references section.
 
-### Step 6: Fix CSEP-COH-02 (README status label)
+**Change 5e**: Update the "Persistent infra failure" row in the
+sanitized messages table (line 400). Replace:
+
+```
+| Persistent infra failure | `"OSV API unreachable — 3 consecutive failures"` |
+```
+
+With:
+
+```
+| Persistent infra failure | `"sync_osv_advisories: source unreachable — aborted after 3 consecutive failures"` |
+```
+
+**Change 5f**: Add a transport-level retry context note immediately
+after the `### Error Handling` heading (line 353), before the
+`fetch_single()` error table:
+
+```markdown
+**Transport-level retry note**: the shared HTTP client infrastructure
+provides automatic transport-level retry (4 attempts on 5xx with
+1s/2s/4s backoff, 1 guided retry on 429 with Retry-After). The error
+tables below document post-transport behavior only — errors reaching
+the fetcher have already exhausted transport retries.
+```
+
+### Step 7: Fix CSEP-COH-02 (README status label)
 
 **File**: `docs/features/tickets/README.md`
 
@@ -826,7 +940,7 @@ Change the EPSS entry from "EPSS fetcher (planned)" to "EPSS fetcher"
 that README). Verify by reading the current file and matching the
 format of other entries marked as complete.
 
-### Step 7: Fix broken cross-reference paths in data-sources.md
+### Step 8: Fix broken cross-reference paths in data-sources.md
 
 **File**: `docs/data-sources.md`
 
@@ -851,7 +965,7 @@ links:
 This resolves CSEP-COH-03 (which identified only the EPSS link) and
 fixes the same issue for the other 5 fetcher specs.
 
-### Step 8: Update review findings
+### Step 9: Update review findings
 
 After all spec changes are applied, mark the following findings as
 RESOLVED in `docs/reviews/cve-sync-epss.md`:
@@ -871,13 +985,14 @@ zero, resolved count increases by 4).
 
 Update `docs/reviews/README.md` accordingly.
 
-### Step 9: Run reviewers on affected specs
+### Step 10: Run reviewers on affected specs
 
 Execute the following reviewers to verify the changes were applied
 correctly and without introducing new issues:
 
 | Spec | Reviewers to run |
 |------|-----------------|
+| `fetcher-infrastructure` | `spec-coherence-reviewer` |
 | `cve-fetcher-infrastructure` | `spec-gap-analyzer`, `spec-coherence-reviewer` |
 | `networking` | `spec-gap-analyzer`, `spec-coherence-reviewer` |
 | `cve-sync-epss` | `spec-gap-analyzer`, `spec-coherence-reviewer` |
@@ -894,7 +1009,7 @@ Rationale:
 If reviewers identify issues, resolve them before considering the
 change complete.
 
-### Step 10: Delete this draft
+### Step 11: Delete this draft
 
 Once all changes are applied, reviewed, and verified, delete this file:
 `docs/drafts/stateless-fetcher-abort-omologation.md`
@@ -914,8 +1029,8 @@ requirements:
   and describe the same counter behavior
 - [ ] The `FetcherError` abort message in all three fetcher specs and
   in the template uses `f"{self.name}: source unreachable — aborted
-  after 3 consecutive failures"` (automatic via `self.name`, no
-  per-fetcher customization)
+  after 3 consecutive failures"` with `from e` chaining (automatic via
+  `self.name`, no per-fetcher customization)
 - [ ] The execute() code blocks in all three fetcher specs follow the
   same structural pattern (same branch order, same comments, same
   counter logic)
@@ -934,6 +1049,9 @@ requirements:
   docstring (addresses Motivation item 7)
 - [ ] Red Hat and OSV specs now include the transport-level retry
   context note in their post-table prose (addresses Motivation item 6)
+- [ ] Red Hat and OSV specs now include the transport-level retry
+  pre-table note before the error handling tables (same text as EPSS
+  lines 280-284), addressing Motivation item 6 fully
 - [ ] All four CSEP findings are marked RESOLVED in
   `docs/reviews/cve-sync-epss.md` with compact format, and
   `.tracking.json` cache is updated (open counts = 0)
@@ -943,3 +1061,16 @@ requirements:
 - [ ] The general principle "A batch must never abort entirely due to a
   single CVE failure" is preserved as an introductory sentence before
   the detailed abort specification in cve-fetcher-infrastructure.md
+- [ ] The transport retry table in networking.md includes `ProxyError`
+  and `RemoteProtocolError` alongside connection errors and timeouts
+- [ ] The explicit `from e` chaining requirement is documented in
+  `fetcher-infrastructure.md` (Error Message Sanitization section)
+- [ ] The sanitized messages tables in all three fetcher specs show
+  the expanded abort message value (`"sync_epss_scores: ..."`,
+  `"sync_redhat_cves: ..."`, `"sync_osv_advisories: ..."`) — not
+  the f-string template
+- [ ] The EPSS post-table prose (lines 312-322) is fully replaced
+  including the "never aborts" paragraph — no residual text with old
+  terminology ("suggesting the network or API is down entirely")
+- [ ] The open point about `record_failed()` ambiguity is present in
+  `cve-sync-osv.md` (Open Points section)
