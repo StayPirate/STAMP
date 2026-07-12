@@ -450,7 +450,7 @@
         "open": {
           "GAP": {
             "H": 0,
-            "M": 4,
+            "M": 3,
             "L": 0
           },
           "COH": {
@@ -474,7 +474,7 @@
             "L": 0
           }
         },
-        "resolved": 3,
+        "resolved": 4,
         "not_reviewed": []
       }
     },

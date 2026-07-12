@@ -289,6 +289,83 @@ and all failed — the target API is unreachable or persistently failing.
 `sync_redhat_cves`, `sync_osv_advisories`). Not used by paginated,
 git-based, or catalog fetchers.
 
+#### Celery Retry Classification
+
+The `is_retryable_condition()` function classifies post-transport
+exceptions to decide whether a Celery task wrapper should retry or fail
+immediately. It is used by task wrappers that invoke fetcher operations
+as standalone Celery tasks (not inside `execute()` batch loops).
+
+**Location**: `backend/app/services/http_client.py`
+
+**Signature**: `is_retryable_condition(exception: Exception) → bool`
+
+**Implementation**:
+
+```python
+def is_retryable_condition(exc: Exception) -> bool:
+    """Classify whether a post-transport exception is worth retrying.
+
+    Used by Celery task wrappers (fetch_single_cve, run_catch_up,
+    correlate_submission_request) to decide self.retry() vs immediate
+    failure.
+
+    Returns True for transient conditions where a subsequent attempt
+    may succeed: infrastructure failures (network, timeout, proxy,
+    protocol errors, HTTP 5xx) and rate limiting (HTTP 429).
+
+    Returns False for permanent conditions where retrying would hit
+    the same error: HTTP 4xx (except 429), parsing errors on HTTP 200,
+    and any non-httpx exception.
+
+    Post-transport context: exceptions reaching this function have
+    already exhausted transport-level retry (4 attempts with
+    1s/2s/4s backoff). A True result means the transport layer
+    attempted up to 4 requests and all failed — the condition is
+    persistent at the transport level but may be transient at the
+    Celery task level (minutes/hours timescale vs seconds timescale).
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status >= 500 or status == 429
+    return isinstance(exc, INFRA_FAILURE_TYPES)
+```
+
+**Relationship with `is_infrastructure_failure()`**:
+
+`is_retryable_condition()` is a **superset** of
+`is_infrastructure_failure()`:
+
+```
+is_infrastructure_failure(e) == True  →  is_retryable_condition(e) == True  (always)
+is_retryable_condition(e) == True  →  is_infrastructure_failure(e) == True  (EXCEPT HTTP 429)
+```
+
+| Condition | `is_infrastructure_failure()` | `is_retryable_condition()` |
+|---|---|---|
+| Network error / timeout / proxy | `True` (API unreachable) | `True` (transient) |
+| HTTP 5xx | `True` (API error) | `True` (transient) |
+| HTTP 429 | **`False`** (API reachable, rate-limited) | **`True`** (transient — will clear after backoff) |
+| HTTP 403 / other 4xx | `False` | `False` |
+| `JSONDecodeError` / `ValidationError` | `False` | `False` |
+| Any non-httpx exception | `False` | `False` |
+
+The two functions answer different questions:
+
+- `is_infrastructure_failure()`: "Is the external API unreachable?" —
+  drives the consecutive failure abort counter in `execute()` batch
+  loops
+- `is_retryable_condition()`: "Is there a reasonable chance the next
+  attempt will succeed?" — drives Celery task retry decisions
+
+Neither function is implemented in terms of the other. They share the
+`INFRA_FAILURE_TYPES` tuple but apply independent logic for HTTP status
+codes.
+
+**Consumers**: `fetch_single_cve`, `run_catch_up`,
+`correlate_submission_request` (Celery task wrappers for on-demand and
+catch-up operations).
+
 #### HTTP Response Compression
 
 The HTTP client sends `Accept-Encoding: gzip, deflate` by default (httpx
@@ -463,7 +540,12 @@ by each component and documented in its respective spec.
 ## Cross-references
 
 - `docs/features/platform/fetcher-infrastructure.md` — BaseFetcher HTTP
-  integration (lazy property, overrides)
+  integration (lazy property, overrides), `run_catch_up` retry policy
+- `docs/features/platform/cve-fetcher-infrastructure.md` — `fetch_single`
+  retry policy, batch error handling
+- `docs/features/tickets/cve-service.md` — `fetch_single_cve` orchestrator
+- `docs/features/packages/ibs-submission-tracking.md` —
+  `correlate_submission_request` retry policy
 - `docs/features/integrations/ibs-integration.md` — IBSClient usage
 - `docs/features/identity/ad-integration.md` — LDAP TLS configuration
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — AMQP TLS

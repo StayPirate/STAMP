@@ -445,8 +445,8 @@ test suites that dynamically register fetcher classes clean
 A single generic Celery task wraps all `catch_up()` invocations:
 
 ```python
-@celery_app.task
-def run_catch_up(fetcher_name: str, ticket_id: str) -> None:
+@celery_app.task(bind=True, max_retries=3)
+def run_catch_up(self, fetcher_name: str, ticket_id: str) -> None:
     """Generic catch-up task — replaces per-fetcher tasks."""
     fetcher_cls = FETCHER_REGISTRY.get(fetcher_name)
     if fetcher_cls is None:
@@ -462,6 +462,12 @@ def run_catch_up(fetcher_name: str, ticket_id: str) -> None:
         async with get_async_session() as session:
             try:
                 await fetcher.catch_up(ticket_id, session)
+            except (NotImplementedError, CVENotInSource, ValueError):
+                return  # Contract violations and defensive catches — non-retryable, silent return
+            except Exception as e:
+                if is_retryable_condition(e):
+                    raise  # propagate to outer scope for self.retry()
+                raise  # non-retryable — task fails permanently
             finally:
                 if fetcher._http_client is not None:
                     try:
@@ -469,8 +475,19 @@ def run_catch_up(fetcher_name: str, ticket_id: str) -> None:
                     except Exception:
                         logger.warning("Failed to close HTTP client for %s", fetcher_name)
                     fetcher._http_client = None
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except (NotImplementedError, CVENotInSource, ValueError):
+        return  # already handled inside _run — defensive outer catch
+    except Exception as e:
+        if is_retryable_condition(e):
+            self.retry(exc=e, countdown=5 * 2 ** self.request.retries)
+        raise  # non-retryable — task fails permanently
 ```
+
+`run_catch_up` is a Celery `bind=True` task. `self.retry(exc=e,
+countdown=...)` raises a `Retry` exception internally, re-enqueuing the
+task with the specified backoff delay.
 
 The `finally` block implements the HTTP client ownership rule (see
 "`fetch_single()` and `catch_up()` Lifecycle" below): the outermost
@@ -485,7 +502,9 @@ removed the fetcher between enqueue and execution), the task logs an
 error and returns without retry.
 
 **Non-retryable exceptions**: `NotImplementedError`, `CVENotInSource`,
-and `ValueError` are in the non-retryable exception set.
+and `ValueError` are caught explicitly before the
+`is_retryable_condition()` check because they represent contract
+violations and defensive catches (not HTTP errors).
 `NotImplementedError` indicates a programming error (incorrect invocation
 on a fetcher without a real `catch_up()` implementation). `CVENotInSource`
 is caught internally by the default `BaseCVEFetcher.catch_up()` and should
@@ -493,6 +512,16 @@ never propagate — if it does, it indicates a custom override that forgot
 to catch it. `ValueError` indicates a malformed `ticket_id` parameter
 (not a valid UUID) — a contract violation by the caller, not a transient
 failure.
+
+**Retry classification**: after the explicit non-retryable exceptions
+are handled, the remaining exceptions are classified by
+`is_retryable_condition(exc)` — retries transient HTTP conditions
+(network errors, HTTP 5xx, timeout, HTTP 429); fails immediately for
+permanent conditions (HTTP 4xx except 429, parsing errors, non-httpx
+exceptions). See `docs/features/platform/networking.md`, "Celery Retry
+Classification". Retry parameters: 3 retries with exponential backoff
+(5s → 10s → 20s), matching `fetch_single_cve` (see
+`cve-fetcher-infrastructure.md`, "Retry Policy for `fetch_single`").
 
 ### Interface contract
 
@@ -530,24 +559,29 @@ execution. The following additional rules apply:
     items in a single transaction, violating the per-item commit
     requirement
 - **Error handling**:
-  - **Retry policy**: the `run_catch_up` Celery task wrapper applies
-    the same retry policy as `fetch_single_cve` (3 retries with
-    exponential backoff). Reserved for infrastructure failure
-    (external service completely unreachable)
+  - **Retry policy**: the `run_catch_up` Celery task wrapper uses
+     `is_retryable_condition(exc)` for retry classification (3 retries
+     with exponential backoff 5s → 10s → 20s). Retries transient HTTP
+     conditions (network errors, HTTP 5xx, timeout, HTTP 429); fails
+     immediately for permanent conditions (HTTP 4xx except 429, parsing
+     errors, non-httpx exceptions). See
+     `docs/features/platform/networking.md`, "Celery Retry
+     Classification"
   - **CVE fetchers** (default `catch_up()`): the default
     `catch_up()` implementation MUST catch `CVENotInSource` internally
     and treat it as a no-op (the CVE is not in this source — nothing
     to catch up on). `CVENotInSource` MUST NOT propagate to the
     `run_catch_up` wrapper. Transient errors (network, HTTP 5xx)
     propagate to the wrapper for retry
-  - **Post-exhaustion (CVE fetchers)**: after all retries are
-    exhausted, the task fails with no `CVESource` status write.
-    `run_catch_up` receives only `(fetcher_name, ticket_id)` — it
-    lacks direct `cve_id` access. Re-querying the ticket in an error
-    handler adds complexity disproportionate to the benefit: retry
-    exhaustion indicates infrastructure instability (a rare condition),
-    and the next periodic `execute()` run (within 24h) overwrites the
-    status with the correct value
+  - **Post-exhaustion (CVE fetchers)**: when the task fails (whether
+     from retry exhaustion or immediate non-retryable failure), no
+     `CVESource` status write occurs.
+     `run_catch_up` receives only `(fetcher_name, ticket_id)` — it
+     lacks direct `cve_id` access. Re-querying the ticket in an error
+     handler adds complexity disproportionate to the benefit: retry
+     exhaustion indicates infrastructure instability (a rare condition),
+     and the next periodic `execute()` run (within 24h) overwrites the
+     status with the correct value
   - **Non-CVE fetchers** (custom `catch_up()` override): MUST use
     per-item error handling — if one item (track, product, package)
     fails, continue with the remaining items rather than aborting the

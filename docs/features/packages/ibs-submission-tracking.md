@@ -491,24 +491,52 @@ updates:
 
 #### Celery Task: `correlate_submission_request`
 
+```python
+@celery_app.task(bind=True, max_retries=3)
+def correlate_submission_request(self, submission_id):
+    try:
+        # Pipeline steps 1-5
+        # 1. Call IBS diff API for the request (see Data Sources above)
+        # 2. Extract CVE-IDs from the diff response (filter for
+        #    state="added" and tracker="cve" only)
+        # 3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
+        # 4. For each CVE-ID:
+        #    a. Find the ticket with that CVE
+        #    b. Find the TicketPackageTrack for (ticket, codestream, package)
+        #    c. Create SubmissionRequestTrack join record (idempotent:
+        #       skip if unique constraint already satisfied)
+        # 5. If no correlations EXIST for this SR (total count of join
+        #    records in the database = 0, not just those created in this
+        #    run) -> delete the SubmissionRequest (silent discard).
+        #    Note: unknown CVE-IDs are intentionally skipped — no
+        #    ticket/CVE creation. If a ticket for that CVE is created
+        #    later, discover_submissions_for_ticket_package (Pipeline 3)
+        #    will retroactively discover this SR via IBS query.
+        ...
+    except Exception as e:
+        if is_retryable_condition(e):
+            self.retry(exc=e, countdown=5 * 2 ** self.request.retries)
+        raise  # Non-retryable: task fails permanently
 ```
-1. Call IBS diff API for the request (see Data Sources above)
-2. Extract CVE-IDs from the diff response (filter for `state="added"` and
-      `tracker="cve"` only — see IBS Diff API section in Data Sources)
-3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
-4. For each CVE-ID:
-   a. Find the ticket with that CVE
-    b. Find the TicketPackageTrack for (ticket, codestream, package)
-   c. Create SubmissionRequestTrack join record (idempotent:
-      skip if unique constraint already satisfied)
-5. If no correlations EXIST for this SR (total count of join records
-   in the database = 0, not just those created in this run) -> delete
-   the SubmissionRequest (silent discard).
-   Note: unknown CVE-IDs are intentionally skipped — no ticket/CVE
-   creation. If a ticket for that CVE is created later,
-   `discover_submissions_for_ticket_package` (Pipeline 3) will
-   retroactively discover this SR via IBS query.
-```
+
+The `is_retryable_condition()` check wraps the entire task. In practice,
+only step 1 (IBS diff API call) can raise httpx exceptions (retryable);
+steps 2-5 (local parsing and DB operations) raise non-httpx exceptions
+that `is_retryable_condition()` classifies as non-retryable.
+
+**Retry parameters**: 3 retries with exponential backoff (5s → 10s →
+20s), matching `fetch_single_cve` and `run_catch_up` (see
+`docs/features/platform/cve-fetcher-infrastructure.md`, "Retry Policy
+for `fetch_single`"). After max retries, the SR remains without
+correlations. Recovery is limited — see Open Question 4 below for the
+known gap. The SR will eventually be reconciled when it transitions to a
+final state in IBS (Pipeline 2 Step 2), or if the same package is added
+to another ticket (Pipeline 3).
+
+**Behavioral change from catch-all retry**: HTTP 4xx (except 429) is
+now classified as non-retryable by `is_retryable_condition()`. This
+aligns `correlate_submission_request` with `fetch_single_cve` behavior
+and eliminates wasted retry attempts on permanent errors like HTTP 403.
 
 #### On `request.create` (type = maintenance_release) — New RR
 
@@ -1039,8 +1067,8 @@ dashboard presence.
 
 | Scenario                                                     | Behavior                                                                                     |
 |--------------------------------------------------------------|----------------------------------------------------------------------------------------------|
-| IBS diff API unreachable / timeout (`correlate_submission_request`) | Celery retry with standard backoff. After max retries, SR remains without correlations — catch-up fetcher will retry on next run. |
-| IBS diff API returns 4xx/5xx                                 | Same as above.                                                                               |
+| IBS diff API unreachable / timeout / HTTP 5xx / 429 (`correlate_submission_request`) | `is_retryable_condition()` returns `True` — Celery retry (3 retries, 5s → 10s → 20s backoff). After max retries, SR remains without correlations — recovery limited (see Open Question 4). |
+| IBS diff API returns HTTP 4xx (except 429) (`correlate_submission_request`) | `is_retryable_condition()` returns `False` — task fails immediately (non-retryable). SR remains without correlations. |
 | IBS REST API unreachable (`SyncIbsRequests`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
 | RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
 | SR/RR references a codestream not tracked in any active ticket  | Silent skip (not relevant to Sentinel).                                                         |
@@ -1215,4 +1243,6 @@ implementation.
   architecture, connection management, routing key bindings
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` base
   class contract, custom settings
+- `docs/features/platform/networking.md` — `is_retryable_condition()` Celery
+  retry classification
 
