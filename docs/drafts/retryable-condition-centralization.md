@@ -12,21 +12,21 @@ Three Celery task wrappers in Sentinel independently classify exceptions to deci
 |---|---|---|
 | `fetch_single_cve` | Enumerated HTTP conditions inline | Whitelist: "network, 5xx, timeout, 429 = retry; catch-all = non-retryable" |
 | `run_catch_up` | Explicit non-retryable exception set | Blacklist: "retry everything EXCEPT `NotImplementedError`, `CVENotInSource`, `ValueError`" |
-| `correlate_submission_request` | Implicit ("IBS API unreachable / timeout") | Undefined — relies on informal description |
+| `correlate_submission_request` | Informal: "unreachable / timeout" and "4xx/5xx" in error table | Catch-all: retries all HTTP errors (including permanent 4xx) |
 
 ### Inconsistency
 
-`run_catch_up` claims to use "the same retry policy as `fetch_single_cve`" but its blacklist mechanism produces different results:
+`run_catch_up` claims to use "the same retry policy as `fetch_single_cve`" but its blacklist mechanism produces different results. `correlate_submission_request` has a similar over-retry problem with its informal catch-all approach:
 
-| Condition | `fetch_single_cve` (retry?) | `run_catch_up` (retry?) |
-|---|---|---|
-| Network error / 5xx / timeout | Yes | Yes |
-| HTTP 429 | Yes | Yes |
-| HTTP 403 | **No** (catch-all) | **Yes** (not in blacklist) |
-| `JSONDecodeError` on HTTP 200 | **No** (catch-all) | **Yes** (not in blacklist) |
-| `ValidationError` on HTTP 200 | **No** (catch-all) | **Yes** (not in blacklist) |
+| Condition | `fetch_single_cve` (retry?) | `run_catch_up` (retry?) | `correlate_submission_request` (retry?) |
+|---|---|---|---|
+| Network error / 5xx / timeout | Yes | Yes | Yes |
+| HTTP 429 | Yes | Yes | **Yes** (4xx catch-all) |
+| HTTP 403 | **No** (catch-all) | **Yes** (not in blacklist) | **Yes** (4xx catch-all) |
+| `JSONDecodeError` on HTTP 200 | **No** (catch-all) | **Yes** (not in blacklist) | **Unspecified** |
+| `ValidationError` on HTTP 200 | **No** (catch-all) | **Yes** (not in blacklist) | **Unspecified** |
 
-`run_catch_up` wastes up to 3 retry attempts on permanent errors (HTTP 403, parse failures) that `fetch_single_cve` correctly classifies as non-retryable.
+`run_catch_up` and `correlate_submission_request` both waste retry attempts on permanent errors (HTTP 403, other 4xx) that `fetch_single_cve` correctly classifies as non-retryable. `correlate_submission_request` additionally has unspecified behavior for non-HTTP errors (parsing failures).
 
 ## Proposed Solution
 
@@ -95,7 +95,7 @@ After this change, `is_retryable_condition()` will have exactly three consumers:
 
 1. **`fetch_single_cve`** — replaces inline condition enumeration
 2. **`run_catch_up`** — replaces the inconsistent blacklist approach
-3. **`correlate_submission_request`** — replaces the implicit "API unreachable / timeout" description
+3. **`correlate_submission_request`** — replaces the informal catch-all retry (all HTTP errors retried)
 
 No other task wrappers or decision points need this function:
 - `execute()` abort counter — continues using `is_infrastructure_failure()` (different question)
@@ -139,14 +139,14 @@ Do NOT modify the existing `is_infrastructure_failure()` section — it remains 
 
 ### Step 3: Update `docs/features/platform/fetcher-infrastructure.md`
 
-**3a.** In the `run_catch_up` section (around line 487): replace the current non-retryable exception set mechanism with the `is_retryable_condition()` approach. The retry decision becomes:
+**3a.** In the `run_catch_up` section (around line 487): replace the current non-retryable exception set mechanism with the `is_retryable_condition()` approach. The task decorator changes from `@celery_app.task` to `@celery_app.task(bind=True)` — this fixes a pre-existing inconsistency where the spec's "Retry interaction" section (line 1185) already claims `self.retry()` usage, but the code block lacks the required `bind=True`. The retry decision becomes:
 
 ```python
 except (NotImplementedError, CVENotInSource, ValueError):
     return  # Contract violations — non-retryable, silent return
 except Exception as e:
     if is_retryable_condition(e):
-        raise self.retry(exc=e, countdown=backoff)
+        self.retry(exc=e, countdown=backoff)
     raise  # Catch-all: non-retryable, task fails
 ```
 
@@ -154,11 +154,15 @@ The explicit non-retryable set (`NotImplementedError`, `CVENotInSource`, `ValueE
 
 **3b.** Update the statement "applies the same retry policy as `fetch_single_cve`" to reference `is_retryable_condition()` as the shared classification mechanism, making the claim verifiable.
 
-**3c.** In the `run_catch_up` section, add a note explaining the `self.retry()` pattern: "`run_catch_up` is a Celery `bind=True` task. `self.retry(exc=e, countdown=...)` is Celery's built-in method that raises a `Retry` exception, re-enqueuing the task with the specified backoff delay. The `raise` is required because `self.retry()` returns the exception rather than raising it directly."
+**3c.** In the `run_catch_up` section, add a note: "`run_catch_up` is a Celery `bind=True` task. `self.retry(exc=e, countdown=...)` raises a `Retry` exception internally, re-enqueuing the task with the specified backoff delay."
 
 ### Step 4: Update `docs/features/packages/ibs-submission-tracking.md`
 
-In the `correlate_submission_request` error handling section: replace the implicit "IBS API unreachable / timeout" retry description with a reference to `is_retryable_condition()`. State that the retry decision uses the same centralized classification as `fetch_single_cve` and `run_catch_up`.
+In the `correlate_submission_request` error handling section: replace the informal "IBS API unreachable / timeout" and "4xx/5xx" retry rows with a reference to `is_retryable_condition()`. State that the retry decision uses the same centralized classification as `fetch_single_cve` and `run_catch_up`.
+
+**Behavioral change**: the current spec retries all HTTP errors (both "unreachable / timeout" and "4xx/5xx" rows in the error table). With `is_retryable_condition()`, HTTP 4xx (except 429) becomes non-retryable — this aligns `correlate_submission_request` with `fetch_single_cve` behavior and eliminates wasted retry attempts on permanent errors like HTTP 403. The current catch-all retry behavior was likely a first-draft simplification rather than an intentional design choice (the spec has not been reviewed yet).
+
+**Retry parameters**: 3 retries with exponential backoff (5s → 10s → 20s), matching `fetch_single_cve` and `run_catch_up` (see `docs/features/platform/cve-fetcher-infrastructure.md`, "Retry Policy for `fetch_single`"). After max retries, the SR remains without correlations — the catch-up fetcher (`SyncIbsRequests`) will retry on its next run.
 
 ### Step 5: Update `docs/features/tickets/cve-sync-osv.md` (resolve CSOV-GAP-02)
 
