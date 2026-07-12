@@ -108,7 +108,9 @@ No other task wrappers or decision points need this function:
 
 The OSV fetcher spec (`cve-sync-osv.md`) has an unresolved Open Point about the completeness guard signaling mechanism. The guard triggers when all Phase 2/3 sub-requests fail with infrastructure errors, but the spec does not specify what `fetch_single()` does after the guard triggers — return `None` or raise an exception.
 
-This change enables the correct resolution: `fetch_single()` raises a `CompletenessGuardError` (non-retryable). Because `is_retryable_condition(CompletenessGuardError())` returns `False` (it is not an httpx exception), all three wrappers automatically handle it correctly:
+This change enables the correct resolution: `fetch_single()` raises a `CompletenessGuardError` (non-retryable). `CompletenessGuardError` inherits from `Exception` directly (not from `FetcherError`) and is defined in `backend/app/services/base_cve_fetcher.py` alongside `CVENotInSource`. It is a per-CVE condition, not a whole-run failure — inheriting from `FetcherError` would incorrectly trigger the run-level error message sanitization path in `BaseFetcher.run()`.
+
+Because `is_retryable_condition(CompletenessGuardError())` returns `False` (it is not an httpx exception), all three wrappers automatically handle it correctly:
 - `fetch_single_cve`: catch-all — non-retryable — writes "failure" status — no retry
 - `run_catch_up` (after fix): `is_retryable_condition()` returns `False` — no retry
 - `execute()`: `except Exception` handler — `_isolated_status_commit("failure")` — `record_failed()` — `is_infrastructure_failure()` returns `False` — reset consecutive failures
@@ -137,76 +139,103 @@ Do NOT modify the existing `is_infrastructure_failure()` section — it remains 
 
 **2c.** In the "Metric placement" note: add a sentence clarifying that `fetch_single()` MUST NOT call `record_failed()` when it intends to raise an exception — the caller (`execute()` exception handler) is responsible for metric recording on the failure path. This prevents double-counting.
 
-### Step 3: Update `docs/features/platform/fetcher-infrastructure.md`
+**2d.** In the "`CVENotInSource` Signal" section: add an explicit positive inheritance statement. The current spec says "`CVENotInSource` does NOT inherit from `FetcherError`" but does not state what it inherits from. Add: "`CVENotInSource` inherits from `Exception` directly." This aligns with the same convention used for `CompletenessGuardError` (step 5b) — both are per-CVE signal classes in `base_cve_fetcher.py` that inherit from `Exception`, not from `FetcherError`.
 
-**3a.** In the `run_catch_up` section (around line 487): replace the current non-retryable exception set mechanism with the `is_retryable_condition()` approach. The task decorator changes from `@celery_app.task` to `@celery_app.task(bind=True)` — this fixes a pre-existing inconsistency where the spec's "Retry interaction" section (line 1185) already claims `self.retry()` usage, but the code block lacks the required `bind=True`. The retry decision becomes:
+### Step 3: Update `docs/features/tickets/cve-service.md`
+
+In the `fetch_single_cve` orchestrator section (around line 988): replace the inline enumeration of retryable/non-retryable conditions with a reference to `is_retryable_condition()`. The current text lists specific conditions inline ("Raises retryable exception (network, HTTP 5xx, timeout, 429)" / "Raises non-retryable exception (HTTP 403, other 4xx, parsing error)"). After this change, the authoritative classification lives in `networking.md` — the orchestrator section should reference `is_retryable_condition()` instead of restating the condition list, to prevent drift.
+
+### Step 4: Update `docs/features/platform/fetcher-infrastructure.md`
+
+**4a.** In the `run_catch_up` section (around line 487): replace the current non-retryable exception set mechanism with the `is_retryable_condition()` approach. The task decorator changes from `@celery_app.task` to `@celery_app.task(bind=True)` — this fixes a pre-existing inconsistency where the spec's "Retry interaction" section (line 1185) already claims `self.retry()` usage, but the code block lacks the required `bind=True`. The retry decision becomes:
 
 ```python
 except (NotImplementedError, CVENotInSource, ValueError):
     return  # Contract violations — non-retryable, silent return
 except Exception as e:
     if is_retryable_condition(e):
-        self.retry(exc=e, countdown=backoff)
+        # Backoff: same policy as fetch_single_cve
+        # (see cve-fetcher-infrastructure.md, "Retry Policy for fetch_single")
+        self.retry(exc=e, countdown=...)
     raise  # Catch-all: non-retryable, task fails
 ```
 
 The explicit non-retryable set (`NotImplementedError`, `CVENotInSource`, `ValueError`) remains — these are caught BEFORE the `is_retryable_condition()` check because they represent contract violations, not HTTP errors. The difference from the current spec is that AFTER these are handled, the remaining exceptions are classified by `is_retryable_condition()` instead of being retried unconditionally.
 
-**3b.** Update the statement "applies the same retry policy as `fetch_single_cve`" to reference `is_retryable_condition()` as the shared classification mechanism, making the claim verifiable.
+**4b.** Update the statement "applies the same retry policy as `fetch_single_cve`" to reference `is_retryable_condition()` as the shared classification mechanism, making the claim verifiable.
 
-**3c.** In the `run_catch_up` section, add a note: "`run_catch_up` is a Celery `bind=True` task. `self.retry(exc=e, countdown=...)` raises a `Retry` exception internally, re-enqueuing the task with the specified backoff delay."
+**4c.** In the `run_catch_up` section, add a note: "`run_catch_up` is a Celery `bind=True` task. `self.retry(exc=e, countdown=...)` raises a `Retry` exception internally, re-enqueuing the task with the specified backoff delay."
 
-### Step 4: Update `docs/features/packages/ibs-submission-tracking.md`
+### Step 5: Update `docs/features/packages/ibs-submission-tracking.md`
 
-In the `correlate_submission_request` error handling section: replace the informal "IBS API unreachable / timeout" and "4xx/5xx" retry rows with a reference to `is_retryable_condition()`. State that the retry decision uses the same centralized classification as `fetch_single_cve` and `run_catch_up`.
+**5a.** In the `correlate_submission_request` error handling section: replace the informal "IBS API unreachable / timeout" and "4xx/5xx" retry rows with a reference to `is_retryable_condition()`. The task decorator must be `@celery_app.task(bind=True, max_retries=3)` — `bind=True` is required for `self.retry()`. The error handling structure wraps the entire pipeline:
 
-**Behavioral change**: the current spec retries all HTTP errors (both "unreachable / timeout" and "4xx/5xx" rows in the error table). With `is_retryable_condition()`, HTTP 4xx (except 429) becomes non-retryable — this aligns `correlate_submission_request` with `fetch_single_cve` behavior and eliminates wasted retry attempts on permanent errors like HTTP 403. The current catch-all retry behavior was likely a first-draft simplification rather than an intentional design choice (the spec has not been reviewed yet).
+```python
+@celery_app.task(bind=True, max_retries=3)
+def correlate_submission_request(self, submission_id):
+    try:
+        # Pipeline steps 1-5
+        # (see "Celery Task: correlate_submission_request" above)
+        ...
+    except Exception as e:
+        if is_retryable_condition(e):
+            # Backoff: same policy as fetch_single_cve
+            # (see cve-fetcher-infrastructure.md, "Retry Policy for fetch_single")
+            self.retry(exc=e, countdown=...)
+        raise  # Non-retryable: task fails, catch-up fetcher recovers
+```
 
-**Retry parameters**: 3 retries with exponential backoff (5s → 10s → 20s), matching `fetch_single_cve` and `run_catch_up` (see `docs/features/platform/cve-fetcher-infrastructure.md`, "Retry Policy for `fetch_single`"). After max retries, the SR remains without correlations — the catch-up fetcher (`SyncIbsRequests`) will retry on its next run.
+The `is_retryable_condition()` check wraps the entire task. In practice, only step 1 (IBS diff API call) can raise httpx exceptions (retryable); steps 2-5 (local parsing and DB operations) raise non-httpx exceptions that `is_retryable_condition()` classifies as non-retryable.
 
-### Step 5: Update `docs/features/tickets/cve-sync-osv.md` (resolve CSOV-GAP-02)
+**5b. Behavioral change**: the current spec retries all HTTP errors (both "unreachable / timeout" and "4xx/5xx" rows in the error table). With `is_retryable_condition()`, HTTP 4xx (except 429) becomes non-retryable — this aligns `correlate_submission_request` with `fetch_single_cve` behavior and eliminates wasted retry attempts on permanent errors like HTTP 403. The current catch-all retry behavior was likely a first-draft simplification rather than an intentional design choice (the spec has not been reviewed yet).
 
-**5a.** In the Algorithm section, step 11 (completeness guard): change "skip `upsert_cve()`, call `record_failed()`" to "skip `upsert_cve()`, raise `CompletenessGuardError` (non-retryable)". Remove the reference to `record_failed()` — the caller handles metric recording.
+**5c. Retry parameters**: 3 retries with exponential backoff (5s → 10s → 20s), matching `fetch_single_cve` and `run_catch_up` (see `docs/features/platform/cve-fetcher-infrastructure.md`, "Retry Policy for `fetch_single`"). After max retries, the SR remains without correlations — the catch-up fetcher (`SyncIbsRequests`) will retry on its next run.
 
-**5b.** Add `CompletenessGuardError` to the spec's exception definitions (or a "Service Exceptions" section if one exists). Define it as:
-- Inherits from `Exception` (or an appropriate base)
+### Step 6: Update `docs/features/tickets/cve-sync-osv.md` (resolve CSOV-GAP-02)
+
+**6a.** In the Algorithm section, step 11 (completeness guard): change "skip `upsert_cve()`, call `record_failed()`" to "skip `upsert_cve()`, raise `CompletenessGuardError` (non-retryable)". Remove the reference to `record_failed()` — the caller handles metric recording.
+
+**6b.** Add `CompletenessGuardError` to the spec's exception definitions (or a "Service Exceptions" section if one exists). Define it as:
+- Inherits from `Exception` directly — not from `FetcherError` (per-CVE condition, not whole-run failure; same convention as `CVENotInSource`)
+- Defined in `backend/app/services/base_cve_fetcher.py` alongside `CVENotInSource`
 - Non-retryable (not an httpx exception — `is_retryable_condition()` returns `False`)
 - Raised when: the completeness guard triggers (all Phase 2/3 sub-requests failed with infrastructure errors)
 
-**5c.** In the `fetch_single()` error handling table: update the completeness guard row from "Skip upsert, `record_failed()` — completeness guard" to "Skip upsert, raise `CompletenessGuardError` — non-retryable".
+**6c.** In the `fetch_single()` error handling table: update the completeness guard row from "Skip upsert, `record_failed()` — completeness guard" to "Skip upsert, raise `CompletenessGuardError` — non-retryable".
 
-**5d.** Remove the Open Point about "Completeness guard and `record_failed()` call site ambiguity" (lines 527-540). The ambiguity is resolved: `fetch_single()` raises, the caller handles rollback + status commit + metric.
+**6d.** Remove the Open Point about "Completeness guard and `record_failed()` call site ambiguity" (lines 527-540). The ambiguity is resolved: `fetch_single()` raises, the caller handles rollback + status commit + metric.
 
-**5e.** Update the `execute()` pseudocode if it contains any guard-specific handling. The `except Exception` handler already handles all non-`CVENotInSource` exceptions uniformly — `CompletenessGuardError` falls into this path naturally.
+**6e.** Update the `execute()` pseudocode if it contains any guard-specific handling. The `except Exception` handler already handles all non-`CVENotInSource` exceptions uniformly — `CompletenessGuardError` falls into this path naturally.
 
-### Step 6: Update review tracking (resolve CSOV-GAP-02)
+### Step 7: Update review tracking (resolve CSOV-GAP-02)
 
-**6a.** In `docs/reviews/cve-sync-osv.md`: mark CSOV-GAP-02 as RESOLVED with compact format:
+**7a.** In `docs/reviews/cve-sync-osv.md`: mark CSOV-GAP-02 as RESOLVED with compact format:
 `**Status**: RESOLVED — Fixed: completeness guard raises CompletenessGuardError; record_failed() responsibility moved to execute() caller; Open Point removed (YYYY-MM-DD)`
 
-**6b.** Update `docs/reviews/.tracking.json`: decrement GAP Medium count by 1 for cve-sync-osv, increment resolved by 1.
+**7b.** Update `docs/reviews/.tracking.json`: decrement GAP Medium count by 1 for cve-sync-osv, increment resolved by 1.
 
-**6c.** Update `docs/reviews/README.md` to reflect new counts.
+**7c.** Update `docs/reviews/README.md` to reflect new counts.
 
-### Step 7: Run reviewers on affected specs
+### Step 8: Run reviewers on affected specs
 
-Launch the following reviewers on the specs modified in steps 1-5:
+Launch the following reviewers on the specs modified in steps 1-6:
 
 | Spec | Reviewers | Rationale |
 |---|---|---|
 | `networking` | `spec-gap-analyzer`, `spec-coherence-reviewer` | New function added; verify completeness and coherence with existing `is_infrastructure_failure()` |
 | `cve-fetcher-infrastructure` | `spec-gap-analyzer`, `spec-coherence-reviewer` | Retry policy and metric placement rules changed |
 | `fetcher-infrastructure` | `spec-gap-analyzer`, `spec-coherence-reviewer` | `run_catch_up` mechanism changed |
-| `ibs-submission-tracking` | `spec-coherence-reviewer` | Retry reference updated |
+| `cve-service` | `spec-coherence-reviewer` | Inline retry enumeration replaced with reference |
+| `ibs-submission-tracking` | `spec-coherence-reviewer` | Retry behavior changed, error handling restructured |
 | `cve-sync-osv` | `spec-gap-analyzer`, `spec-coherence-reviewer` | Completeness guard signaling changed, Open Point removed |
 
 Also launch `docs-placement-reviewer` on `networking.md` (new pattern added — verify it belongs there and not in a cross-cutting location).
 
 Address any findings rated "Needs revision" before proceeding.
 
-### Step 8: Delete this draft
+### Step 9: Delete this draft
 
-Once all changes from steps 1-7 are applied and reviewers pass, delete `docs/drafts/retryable-condition-centralization.md`.
+Once all changes from steps 1-8 are applied and reviewers pass, delete `docs/drafts/retryable-condition-centralization.md`.
 
 ## Cross-references
 
@@ -215,5 +244,5 @@ Once all changes from steps 1-7 are applied and reviewers pass, delete `docs/dra
 - `docs/features/platform/fetcher-infrastructure.md` — run_catch_up, run_fetcher
 - `docs/features/packages/ibs-submission-tracking.md` — correlate_submission_request
 - `docs/features/tickets/cve-sync-osv.md` — Completeness guard, Open Points
-- `docs/features/tickets/cve-service.md` — fetch_single_cve orchestrator (referenced but not modified — its inline implementation aligns with step 2a)
-- `docs/conventions.md` — Celery `bind=True` task pattern (`self.retry()` is Celery's built-in retry mechanism)
+- `docs/features/tickets/cve-service.md` — fetch_single_cve orchestrator (inline retry enumeration updated in step 3)
+
