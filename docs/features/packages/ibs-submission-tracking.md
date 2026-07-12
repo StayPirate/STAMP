@@ -1175,6 +1175,32 @@ from the database using the `incident_number`.
 **Action**: verify empirically during implementation by running a
 manual test query against IBS for a known incident with an active RR.
 
+### 4. Recovery of Uncorrelated Submission Requests
+
+If `correlate_submission_request` fails permanently (non-retryable error
+after max retries exhausted), the `SubmissionRequest` record remains in
+the database with `state = open` and zero `SubmissionRequestTrack` join
+records. Pipeline 2 (`SyncIbsRequests`) does NOT re-correlate it:
+
+- Step 1, sub-step 2c: skipped (SR already present in table)
+- Step 1, sub-step 2d: skipped (state is `open`, not `declined`)
+- Step 2 reconcile: excluded (SR is still in `new`/`review` in IBS, so
+  it was seen in Step 1)
+
+Pipeline 3 (`discover_submissions_for_ticket_package`) handles this case
+(re-enqueues correlation for SRs with zero join records), but only runs
+when a new package is added to a ticket — not periodically.
+
+**Impact**: an uncorrelated SR is a cosmetic gap (VA lacks visibility
+into the submission), not a correctness issue (no status transitions
+depend on SR correlation). The SR will eventually be reconciled by
+Pipeline 2 Step 2 when it transitions to a final state in IBS.
+
+**Potential fix**: add a branch in Pipeline 2 Step 1: "If ALREADY present
+with state `open` and zero `SubmissionRequestTrack` join records →
+re-enqueue `correlate_submission_request`." To be evaluated during
+implementation.
+
 ## Cross-references
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
