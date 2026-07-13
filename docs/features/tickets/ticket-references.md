@@ -205,8 +205,14 @@ class SyncMitreCves(BaseGitFetcher):  # inherits BaseCVEFetcher via BaseGitFetch
   `TicketReference` with the URL built from the pattern (replacing
   `{cve_id}` with the actual CVE ID).
 - When `source_reference_url_pattern` is `None`, the fetcher does not
-  create a self-referencing `TicketReference` (but still creates
-  references from the CVE data if available).
+  use the automatic `{cve_id}` template mechanism to build the source
+  URL. It may still create a source `TicketReference` by passing a
+  manually constructed `source_url` to `upsert_references()` — for
+  example, `sync_ghsa_advisories` uses the advisory's `html_url`
+  (which contains the GHSA-ID, not the CVE-ID) and `sync_kernel_cves`
+  constructs the URL from the git file path. If the fetcher passes
+  `source_url=None`, no source reference is created (but upstream
+  references from CVE data are still processed).
 - The pattern uses `{cve_id}` as the only placeholder, formatted with
   the CVE identifier (e.g., `CVE-2026-3317`).
 
@@ -224,8 +230,10 @@ after CVE upsert and ticket creation for new CVEs). The fetcher calls
 `reference_service.upsert_references()` (see Service Layer) with:
 
 - `source`: the fetcher name (e.g., `"sync_nvd_cves"`)
-- `source_url`: the source reference URL built from
-  `source_reference_url_pattern` (or `None`)
+- `source_url`: the source reference URL — built from
+  `source_reference_url_pattern` when the pattern is defined, or
+  manually constructed by the fetcher when the URL is not derivable
+  from the CVE-ID alone, or `None` if no source reference applies
 - `upstream_references`: the normalized list of references from the CVE
   data
 
@@ -470,9 +478,11 @@ async def upsert_references(
 ```
 
 - `source`: the fetcher name (e.g., `"sync_nvd_cves"`)
-- `source_url`: the fetcher's human-readable CVE page URL, pre-built
-  from `source_reference_url_pattern` by the caller, or `None` if the
-  fetcher does not define a pattern
+- `source_url`: the fetcher's human-readable CVE page URL, either
+  pre-built from `source_reference_url_pattern` or manually
+  constructed by the fetcher when the source URL is not derivable
+  from the CVE-ID (e.g., GHSA advisory URLs use the GHSA-ID). `None`
+  if the fetcher does not produce a source reference for this CVE
 - `upstream_references`: normalized list of references extracted from the
   CVE data by the fetcher, typed as:
 
