@@ -128,6 +128,33 @@ affected:
 - IBS incident lifecycle: "incident closed" (IBS domain)
 - Status transition verbs: "Reopen" (action, not state category)
 
+### Ecosystem Naming
+
+Sentinel uses the [OSSF OSV Schema](https://ossf.github.io/osv-schema/)
+ecosystem enumeration as its canonical standard for the
+`CVEAffectedVersion.ecosystem` column. Examples of canonical identifiers:
+`"PyPI"`, `"npm"`, `"Go"`, `"crates.io"`, `"Maven"`, `"NuGet"`,
+`"RubyGems"`, `"Packagist"`, `"Pub"`, `"Hex"`, `"GitHub Actions"`,
+`"SwiftURL"`.
+
+Rules:
+
+- Fetchers whose upstream source uses OSSF canonical ecosystem identifiers
+  natively (e.g., `sync_osv_advisories`) store the values as-is — no
+  normalization required
+- Fetchers whose upstream source uses non-canonical names (e.g.,
+  `sync_ghsa_advisories` receives GitHub's `"pip"` instead of `"PyPI"`)
+  MUST normalize to OSSF canonical values before storage. The specific
+  mapping is documented in the owning fetcher spec
+- Fetchers whose upstream source has no ecosystem concept (NVD, MITRE, Red
+  Hat, Kernel) set the field to NULL
+- The authoritative list of defined ecosystems is maintained by the OSSF at
+  the schema URL above. New ecosystems added by the OSSF are automatically
+  valid — Sentinel does not maintain a local copy of the enumeration
+
+See `docs/data-model.md` (`CVEAffectedVersion.ecosystem`) for the column
+definition and constraints.
+
 ### Timestamps & Timezones
 
 Sentinel follows the **"UTC everywhere, local display"** convention:
