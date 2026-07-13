@@ -49,20 +49,20 @@ Under the new policy:
 
 **Cost accepted**: the processing window/delta grows while `partial`
 persists. This is bounded by operational intervention (expected within
-days) and, for temporal fetchers, by existing stale-cursor guards
-(NVD: 120 days, GHSA: 30 days) which act as ultimate backstops. For
-git fetchers, the soft time limit prevents unbounded execution. The
-cost of idempotent reprocessing (API calls + DB no-ops) is low relative
-to the cost of silent CVE data loss in a security platform.
+days) and, for temporal fetchers, by per-fetcher stale-cursor guards
+which act as ultimate backstops. For git fetchers, the soft time limit
+prevents unbounded execution. The cost of idempotent reprocessing (API
+calls + DB no-ops) is low relative to the cost of silent CVE data loss
+in a security platform.
 
 ## Affected Specifications
 
 | File | Type of change |
 |------|----------------|
 | `docs/features/platform/fetcher-infrastructure.md` | Canonical rule definition (consolidation target) |
-| `docs/features/platform/git-fetcher-infrastructure.md` | Rule references + design note rewrite |
-| `docs/features/tickets/cve-sync-nvd.md` | Rule references + paragraph rewrite |
-| `docs/features/tickets/cve-sync-ghsa.md` | Rule references + paragraph adjustments |
+| `docs/features/platform/git-fetcher-infrastructure.md` | Rule references + design note rewrite + convergence section rewrite |
+| `docs/features/tickets/cve-sync-nvd.md` | Rule references + paragraph rewrite + first-run section |
+| `docs/features/tickets/cve-sync-ghsa.md` | Rule references + paragraph adjustments + first-run section |
 | `docs/data-model.md` | Column description update |
 | `docs/reviews/git-fetcher-infrastructure.md` | Historical annotation |
 
@@ -140,10 +140,10 @@ their cursor derivation/query statements.
 
      **Bounding**: the processing window/delta grows while `partial`
      persists. Practical bounds: (1) operational intervention within
-     days; (2) for temporal fetchers, existing stale-cursor guards
-     (NVD: 120 days, GHSA: 30 days) reset the cursor as an ultimate
-     backstop; (3) for git fetchers, the soft time limit prevents
-     unbounded execution (a delta that cannot converge within
+     days; (2) for temporal fetchers, per-fetcher stale-cursor guards
+     reset the cursor as an ultimate backstop (see individual fetcher
+     specs for thresholds); (3) for git fetchers, the soft time limit
+     prevents unbounded execution (a delta that cannot converge within
      `run_timeout` becomes a `failure`).
 
      See `docs/features/platform/git-fetcher-infrastructure.md` (Cursor
@@ -422,6 +422,89 @@ than steady-state operational convenience.
 
 ---
 
+### Step 8b. Update `git-fetcher-infrastructure.md` — Large delta convergence section
+
+**File**: `docs/features/platform/git-fetcher-infrastructure.md`
+**Location**: Lines 339-367
+
+**Current text** (lines 339-367):
+
+```
+### Operational: large delta convergence
+
+After an extended outage (weeks or longer), the recovery delta may
+contain thousands of files. Since all blobs are present locally after
+`git fetch`, processing speed is bounded only by database throughput
+and `process_item()` complexity — not network latency. If the delta
+cannot be fully processed within `run_timeout`, the soft time limit
+fires, the run ends as `failure`, and the cursor does not advance.
+
+On the next scheduled execution, the same delta is recomputed. Items
+already processed produce idempotent upserts (no observable side
+effects). The loop processes items until the timeout fires again. This
+continues across successive runs until all items are processed —
+**convergence is guaranteed** through the combination of idempotent
+processing and stable cursor position.
+
+To accelerate recovery, an admin can temporarily increase `run_timeout`
+for the specific fetcher via FetcherConfig (e.g., from 3600 to 36000
+for a one-time large delta), then reset it after the recovery completes.
+The dashboard's `error_message` field includes the number of items
+processed before timeout, allowing the admin to estimate the required
+duration.
+
+This scenario is uncommon in normal operation:
+- First-run records HEAD without processing (no delta)
+- Recovery delta uses `cursor_committed_at - 1 day` as boundary (not
+  full repo history)
+- Only extended outages (weeks+) produce deltas exceeding 1 hour of
+  processing time
+```
+
+**Replace with**:
+
+```
+### Operational: large delta convergence
+
+After an extended outage (weeks or longer), the recovery delta may
+contain thousands of files. Since all blobs are present locally after
+`git fetch`, processing speed is bounded only by database throughput
+and `process_item()` complexity — not network latency. If the delta
+cannot be fully processed within `run_timeout`, the soft time limit
+fires, the run ends as `failure`, and the cursor does not advance.
+
+On the next scheduled execution, the same delta is recomputed. Items
+already processed produce idempotent upserts (no observable side
+effects). The loop processes items until the timeout fires again.
+
+**Convergence depends on all items being processable.** If all items
+can be parsed correctly (outage recovery scenario), convergence is
+guaranteed — each successive run makes forward progress until all items
+succeed and the cursor advances. To accelerate recovery, an admin can
+temporarily increase `run_timeout` for the specific fetcher via
+FetcherConfig (e.g., from 3600 to 36000 for a one-time large delta),
+then reset it after the recovery completes. The dashboard's
+`error_message` field includes the number of items processed before
+timeout, allowing the admin to estimate the required duration.
+
+If some items persistently fail (parsing bug scenario), the fetcher
+remains `partial` indefinitely — this is the intended behavior under
+the Cursor Advancement Rule. The persistent `partial` status on the
+dashboard signals that a code fix is required. Once the bug is fixed,
+the next run reprocesses and recovers the previously-failed items
+automatically. If the growing delta eventually exceeds `run_timeout`,
+the run escalates to `failure` (louder signal, forces investigation).
+
+This scenario is uncommon in normal operation:
+- First-run records HEAD without processing (no delta)
+- Recovery delta uses `cursor_committed_at - 1 day` as boundary (not
+  full repo history)
+- Only extended outages (weeks+) produce deltas exceeding 1 hour of
+  processing time
+```
+
+---
+
 ### Step 9. Update `cve-sync-nvd.md` — Algorithm (cursor derivation)
 
 **File**: `docs/features/tickets/cve-sync-nvd.md`
@@ -447,6 +530,27 @@ than steady-state operational convenience.
    such run exists → first run: terminate with `status = success`, zero
    records. The `started_at` of this run becomes the cursor for future
    runs. (See "First Run and >120-day Gap Handling" below)
+```
+
+---
+
+### Step 9b. Update `cve-sync-nvd.md` — First Run section
+
+**File**: `docs/features/tickets/cve-sync-nvd.md`
+**Location**: Lines 499-500
+
+**Current text**:
+
+```
+**First run** (no previous `FetcherRun` with `status IN ('success',
+'partial')` for `sync_nvd_cves`):
+```
+
+**Replace with**:
+
+```
+**First run** (no previous `FetcherRun` with `status = 'success'` for
+`sync_nvd_cves`):
 ```
 
 ---
@@ -494,17 +598,14 @@ This is appropriate because the NVD checkpoint is purely temporal
 fetchers whose checkpoint is a commit SHA.
 
 **`partial` status and cursor non-advancement**: a run with `status =
-partial` (some CVEs failed processing) does NOT advance the cursor.
-The next run reprocesses the same time window — already-processed CVEs
-produce idempotent no-ops, while previously-failed CVEs are retried.
-This ensures failed items are automatically recovered once the
-underlying issue is resolved, and the fetcher remains visibly degraded
-on the dashboard until then. Items that cannot be recovered
-automatically (permanent upstream malformation) are identifiable via
-`CVESource.status = 'failure'` records and recoverable on-demand via
-`fetch_single()`. The stale-cursor guard (120 days) acts as an
-ultimate backstop if `partial` persists beyond operational intervention
-time.
+partial` does NOT advance the cursor (see Cursor Advancement Rule in
+`fetcher-infrastructure.md`). The next run reprocesses the same time
+window — already-processed CVEs produce idempotent no-ops, while
+previously-failed CVEs are retried. Items that persist in failure
+across runs are identifiable via `CVESource.status = 'failure'` records
+and recoverable on-demand via `fetch_single()`. The stale-cursor guard
+(120 days) acts as an ultimate backstop if `partial` persists beyond
+operational intervention time.
 ```
 
 ---
@@ -535,6 +636,27 @@ time.
    terminate with `status = success`, zero records. The `started_at`
    of this run becomes the cursor for future runs. (See "First Run
    Behavior" below)
+```
+
+---
+
+### Step 11b. Update `cve-sync-ghsa.md` — First Run Behavior section
+
+**File**: `docs/features/tickets/cve-sync-ghsa.md`
+**Location**: Lines 199-200
+
+**Current text**:
+
+```
+On first run (no prior `FetcherRun` exists with `status IN ('success',
+'partial')`): the fetcher terminates immediately with
+```
+
+**Replace with**:
+
+```
+On first run (no prior `FetcherRun` exists with `status = 'success'`):
+the fetcher terminates immediately with
 ```
 
 ---
@@ -576,11 +698,11 @@ Derived cursor (NVD-style):
 - **No explicit cursor storage**: the cursor is derived from run
   history, not stored as a separate value
 
-This ensures that a failed or partial run (which does not advance the
-cursor) results in the next run re-processing the entire affected
-window — no data is permanently missed. Already-processed advisories
-produce idempotent no-ops; only previously-failed items are
-effectively retried.
+A failed or partial run does not advance the cursor — the next run
+re-processes the same window (see Cursor Advancement Rule in
+`fetcher-infrastructure.md`). The 15-minute overlap buffer and
+idempotent upserts ensure no data loss during reprocessing. The
+stale-cursor guard (30 days) acts as an ultimate backstop.
 ```
 
 ---
@@ -655,8 +777,9 @@ advancement, which remains true. This step is a verification-only check
 
 ### Step 16. Verification — run reviewers on affected specs
 
-After all edits from Steps 1-15 are applied, invoke the following
-reviewers in independent sessions to verify correctness:
+After all edits from Steps 1-15 (including 8b, 9b, 11b) are applied,
+invoke the following reviewers in independent sessions to verify
+correctness:
 
 1. **`@spec-coherence-reviewer`** — one session per affected spec:
    - `docs/features/platform/fetcher-infrastructure.md`
@@ -717,8 +840,15 @@ For derived-cursor fetchers (NVD, GHSA): the `started_at` query uses
   `last_successful_run.started_at`. This was already inconsistent with
   the cursor mechanism (which said `success|partial`). After this
   change, both align on `success`-only — the inconsistency is resolved.
-- **GHSA first-run / stale-cursor logic**: unchanged. Both terminate
-  with `status = success`, which correctly advances the cursor.
+- **NVD first-run section** (line 499): updated by Step 9b to align
+  with the canonical rule. Previously used `IN ('success', 'partial')`.
+- **GHSA first-run / stale-cursor logic**: updated by Step 11b. Both
+  first-run detection and stale-cursor guard terminate with
+  `status = success`, which correctly advances the cursor.
+- **Large delta convergence** (git-fetcher-infrastructure.md, line 339):
+  updated by Step 8b. Now distinguishes outage recovery (convergence
+  guaranteed) from parsing bug scenario (persistent `partial` is the
+  intended behavior).
 - **Status determination precedence**: unchanged. `partial` remains a
   valid status for runs where `items_failed > 0` and at least one item
   succeeded.
@@ -735,3 +865,7 @@ For derived-cursor fetchers (NVD, GHSA): the `started_at` query uses
 - **MITRE and kernel specs**: reference git-fetcher-infrastructure for
   cursor behavior. The updated references there cover them transitively.
   No direct edits needed in `cve-sync-mitre.md` or `cve-sync-kernel.md`.
+- **Placement consolidation**: individual fetcher specs (NVD, GHSA)
+  reference the canonical Cursor Advancement Rule for generic semantics
+  and state only fetcher-specific details locally (stale-cursor guard
+  thresholds, `CVESource.status = 'failure'` records, overlap buffers).
