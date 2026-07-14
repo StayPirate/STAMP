@@ -1308,7 +1308,12 @@ Request body:
 ```
 
 - `cve_id` (string, optional): CVE identifier string to associate with
-  the ticket. If the CVE is not in the database, a minimal CVE record
+  the ticket. If provided, it must match the canonical CVE-ID format
+  (`^CVE-[0-9]{4}-[0-9]{4,}$`, validated via
+  `core.identifiers.is_valid_cve_id`); on mismatch → 422
+  `CVE_INVALID_FORMAT`. Empty strings are rejected like any other
+  non-matching value — clients that intend "no CVE" must omit the field
+  or send `null`. If the CVE is not in the database, a minimal CVE record
   is created and on-demand fetch is triggered (see
   `docs/features/tickets/cve-service.md`, "On-Demand Fetch: fetch_single_cve")
 - `severity` (string, optional): initial severity override (critical,
@@ -1330,6 +1335,7 @@ Global responses per `api-spec.md` apply.
 
 | Status | Code | Condition |
 |--------|------|-----------|
+| 422 | `CVE_INVALID_FORMAT` | `cve_id` provided but does not match `^CVE-[0-9]{4}-[0-9]{4,}$` or exceeds 20 characters |
 | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket. Response includes `existing_ticket_id` (UUID) |
 
 ### Associate CVE
@@ -1354,7 +1360,10 @@ Request body:
 }
 ```
 
-- `cve_id` (string, required): CVE identifier string
+- `cve_id` (string, required): CVE identifier string. Must match the
+  canonical CVE-ID format (`^CVE-[0-9]{4}-[0-9]{4,}$`, validated via
+  `core.identifiers.is_valid_cve_id`); on mismatch → 422
+  `CVE_INVALID_FORMAT`
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -1365,6 +1374,7 @@ Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NO
 
 | Status | Code | Condition |
 |--------|------|-----------|
+| 422 | `CVE_INVALID_FORMAT` | `cve_id` does not match `^CVE-[0-9]{4}-[0-9]{4,}$` or exceeds 20 characters |
 | 400 | `TICKET_CVE_ALREADY_SET` | Ticket already has a CVE associated |
 | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket. Response includes `existing_ticket_id` (UUID) |
 

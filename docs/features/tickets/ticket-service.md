@@ -757,9 +757,11 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `SeverityDerivedError` † | 409 | `TICKET_SEVERITY_DERIVED` | Cannot manually set severity when it is auto-derived |
 | `TicketNotConfidentialError` | 409 | `TICKET_NOT_CONFIDENTIAL` | Operation requires a confidential ticket |
 | `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | Referenced user does not exist |
+| `CVEIdFormatError` † | 422 | `CVE_INVALID_FORMAT` | CVE-ID passed to `ensure_cve_exists()` does not match `^CVE-[0-9]{4}-[0-9]{4,}$` (defense-in-depth; fires only if caller omits pre-validation) |
 
-† Shared exception — inherits from `ServiceError`, not from
-`TicketServiceError`. Handlers must catch it explicitly.
+† Shared exception — inherits from `ServiceError` (or `CVEServiceError`
+for `CVEIdFormatError`), not from `TicketServiceError`. Handlers must
+catch it explicitly.
 
 ## Dependency Summary
 

@@ -196,9 +196,16 @@ For each `suse.obs.package.commit` event:
    POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}
    ```
 
-5. **Process CVE references**: for each CVE-ID in the diff response with
-   `state="added"` and `tracker="cve"`, apply the same match logic as the
-   periodic fetcher:
+5. **Process CVE references**: for each CVE-ID string in the diff
+   response with `state="added"` and `tracker="cve"`:
+
+   **Format validation**: validate via `is_valid_cve_id(cve_id)` (from
+   `core.identifiers`). If the value does not match, log WARNING ("IBS
+   event diff contains malformed CVE reference: {value} in package
+   {package_name}, project {project}") and skip this reference. Continue
+   with the next reference.
+
+   For valid CVE-IDs, apply the same match logic as the periodic fetcher:
      - **Case A** — ticket exists, package tracked in the codestream:
        set `TicketPackageTrack.status` to `FIXED` via
         `package_service` (only when current status is `AFFECTED` or

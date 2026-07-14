@@ -107,7 +107,12 @@ by the real-time `IBSEventConsumer` during downtime — see
    via the `IBSClient`. Extract references with `state="added"` and
    `tracker` equal to `cve` or `bnc`.
 
-6. **Process extracted CVEs**: for each CVE-ID found in the diff, apply
+6. **Process extracted CVEs**: for each CVE-ID string found in the diff,
+   validate format via `is_valid_cve_id(cve_id)` (from
+   `core.identifiers`). If the value does not match, log WARNING ("IBS
+   diff contains malformed CVE reference: {value} in package
+   {package_name}") and skip this reference (do not process it as a
+   CVE-ID). Continue with the next reference. For valid CVE-IDs, apply
    the match logic described in
    [Codestream Match Outcomes](#codestream-match-outcomes) below.
 
