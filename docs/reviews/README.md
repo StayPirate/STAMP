@@ -23,6 +23,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cve-service](cve-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/39 | 2026-06-05 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| cve-source-failure-retry | — | — | — | — | — | —/— | — | — |
+|  |  |  |  |  |  |  |  |  |
 | [cve-sync-epss](cve-sync-epss.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/4 | 2026-07-11 |  |
 |  |  |  |  |  |  |  |  |  |
 | [cve-sync-ghsa](cve-sync-ghsa.md) | 🟢 | 🟢 | 🟢 | 2 | 🟢 | 2/5 | 2026-07-13 | ⚠️ |

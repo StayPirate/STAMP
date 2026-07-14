@@ -288,6 +288,11 @@
         "not_reviewed": []
       }
     },
+    "cve-source-failure-retry": {
+      "enabled": true,
+      "abbr": "CSFR",
+      "cache": null
+    },
     "cve-sync-epss": {
       "enabled": true,
       "abbr": "CSEP",

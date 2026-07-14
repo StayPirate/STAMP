@@ -21,7 +21,7 @@
 
 ### GFI-GAP-02 — `partial` runs advance the cursor and abandon failed items (Medium)
 
-**Status**: RESOLVED — Documented as intentional trade-off per OP-9 design decision (commit `a7e2632`). Failed items are identified in WARNING logs by file path; `fetch_single()` provides manual recovery. Design note added to Status Determination section. (2026-06-30)
+**Status**: RESOLVED (2026-07-13) — Cursor advancement on `partial` remains unchanged (intentional trade-off per OP-9). Recovery is now provided by the `evaluate_failed_cve_sources` task, which queries CVESource failure records within a 30-day window and dispatches retry via `trigger_on_demand_fetch()`. Failed items are no longer "abandoned" — they are systematically retried while their tickets remain active. See `docs/features/platform/cve-source-failure-retry.md`.
 
 ### GFI-GAP-03 — Recovery with a cursor that has `sha` but missing `committed_at` (Medium)
 

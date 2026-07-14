@@ -455,10 +455,19 @@ See `docs/features/tickets/cve-service.md`.
 | source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (VARCHAR, Python Enum, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
 | status      | ENUM          | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). Uses PostgreSQL ENUM type `CVESourceFetchStatus`. No default — always written explicitly by the caller |
 | fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
+| first_failed_at | TIMESTAMPTZ | nullable                          | Timestamp when the current failure streak began. Set to now() on the first transition to failure status (when first_failed_at is currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. Used by evaluate_failed_cve_sources to determine retry eligibility (within 30 days) and stalled status (beyond 30 days). See docs/features/platform/cve-source-failure-retry.md |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record update timestamp            |
 
 **Unique constraint**: (cve_id, source)
+
+**Derived predicate — "stalled"**: a CVESource record is considered
+stalled when `status = 'failure' AND first_failed_at < now() - 30 days`.
+This is a query predicate used by the `evaluate_failed_cve_sources` retry
+task (exclusion from retry window) and the `?stalled` filter on
+`GET /api/v1/cve-sources`. It is not stored as a column, ENUM value, or
+API status field value. Stalled items have exceeded the automated retry
+window and require operator investigation.
 
 ### CVESourceFetchStatus Enum
 
