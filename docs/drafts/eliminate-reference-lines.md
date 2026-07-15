@@ -44,7 +44,7 @@ The information conveyed by reference lines is deterministic:
 | Access level | Applicable global responses |
 |---|---|
 | `Access: Public` | `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
-| `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
+| `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 | `Capability: <any>` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 
 **Scoped responses** (derived from path and HTTP method):
@@ -53,7 +53,8 @@ The information conveyed by reference lines is deterministic:
 |---|---|
 | `/api/v1/tickets/{ticket_id}/**` | `404 TICKET_NOT_FOUND` |
 | `/api/v1/cves/{cve_id}/**` | `404 CVE_NOT_FOUND` |
-| Mutation (POST/PATCH/DELETE) under the above routers, when the resource has an associated ticket | + `409 TICKET_NOT_MUTABLE` |
+| Mutation (POST/PATCH/DELETE) under `/api/v1/tickets/{ticket_id}/**` | + `409 TICKET_NOT_MUTABLE` |
+| Mutation (POST/PATCH/DELETE) under `/api/v1/cves/{cve_id}/**` | + `409 TICKET_NOT_MUTABLE` (only when CVE has associated ticket) |
 | Any other path | None |
 
 **Known deviations**:
@@ -69,7 +70,7 @@ The information conveyed by reference lines is deterministic:
   - `POST .../reopen` and `POST .../revert-duplicate` — manage
     manual-zone exit lifecycle (already documented in `api-spec.md`,
     Manual-Zone Mutability Guard exceptions)
-  - `POST /api/v1/cves/{cve_id}/fetch` — async dispatch endpoint, does
+  - `POST /api/v1/cves/{cve_id}/refetch` — async dispatch endpoint, does
     not mutate ticket state (requires a per-endpoint annotation — see
     Step 2b)
 
@@ -157,7 +158,7 @@ The derivation tables below are the single normative source of truth.
 | Access level | Applicable global responses |
 |---|---|
 | `Access: Public` | `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
-| `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
+| `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 | `Capability: <any>` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 
 #### Scoped Response Derivation
@@ -166,7 +167,8 @@ The derivation tables below are the single normative source of truth.
 |---|---|
 | `/api/v1/tickets/{ticket_id}/**` | `404 TICKET_NOT_FOUND` |
 | `/api/v1/cves/{cve_id}/**` | `404 CVE_NOT_FOUND` |
-| Mutation (POST/PATCH/DELETE) on ticket or CVE with associated ticket | + `409 TICKET_NOT_MUTABLE` |
+| Mutation (POST/PATCH/DELETE) under `/api/v1/tickets/{ticket_id}/**` | + `409 TICKET_NOT_MUTABLE` |
+| Mutation (POST/PATCH/DELETE) under `/api/v1/cves/{cve_id}/**` | + `409 TICKET_NOT_MUTABLE` (only when CVE has associated ticket) |
 | Any other path | None |
 
 Note: `TICKET_NOT_MUTABLE` applies only to mutation endpoints
@@ -198,6 +200,27 @@ a sibling of `### Global Responses` and `### Scoped Responses`. This is
 correct because the derivation covers both — it cannot be a sub-section
 of either one. The `####` sub-headings inside it are consistent with
 the `####` sub-headings used inside `### Scoped Responses`.
+
+#### Step 1c: Update stale reference in `docs/conventions.md`
+
+**File**: `docs/conventions.md`
+**Location**: lines 1006-1007 (last two lines of the file, inside
+"Endpoint error tables (post-standardization)")
+
+Replace this text:
+
+```markdown
+Global and scoped responses (defined in `api-spec.md`) are never
+included as table rows — they are covered by a reference line.
+```
+
+With:
+
+```markdown
+Global and scoped responses (defined in `api-spec.md`) are never
+included as table rows — they are derivable from the endpoint's access
+level and path (see Response Applicability Derivation in `api-spec.md`).
+```
 
 ### Step 2: Remove reference lines from feature specs
 
@@ -231,6 +254,21 @@ Remove 14 reference lines at these locations:
 
 Each line stands alone between blank lines. Remove the line and collapse
 to a single blank line separator.
+
+**Add deviation annotation for `revert-duplicate`**: after removing the
+reference line at line 1585, insert the following text immediately after
+the error responses table (separated by a blank line), mirroring the
+placement of the equivalent annotation in the `reopen` endpoint:
+
+```markdown
+This endpoint is **not** subject to `ensure_ticket_operable` (it is the
+dedicated exit from the Duplicated manual-zone status).
+```
+
+This annotation is required because the endpoint is a POST under a
+scoped router (`/api/v1/tickets/{ticket_id}/`), and the derivation tables
+would otherwise imply `TICKET_NOT_MUTABLE` applies. The sibling endpoint
+`POST .../reopen` already has an equivalent annotation (line 1562-1563).
 
 ---
 
@@ -512,7 +550,7 @@ derivation tables. Known combinations that must work:
 | `Access: Public` | `/api/v1/cves/{cve_id}/sources` | 422, 500 + `CVE_NOT_FOUND` |
 | `Capability: create_ticket` | `/api/v1/tickets` | 401, 403, 422, 500 |
 | `Capability: triage_ticket` | `/api/v1/tickets/{ticket_id}/severity` | 401, 403, 422, 500 + `TICKET_NOT_FOUND` + `TICKET_NOT_MUTABLE` |
-| `Access: Authenticated` | `/api/v1/users/me` | 401, 403, 422, 500 |
+| `Access: Authenticated` | `/api/v1/users/me` | 401, 422, 500 |
 | `Capability: manage_cvss` | `/api/v1/cves/{cve_id}/cvss/suse` (POST) | 401, 403, 422, 500 + `CVE_NOT_FOUND` + `TICKET_NOT_MUTABLE` |
 | `Access: Public` | `/api/v1/packages` | 422, 500 |
 | `Capability: manage_settings` | `/api/v1/admin/settings` | 401, 403, 422, 500 |
@@ -560,8 +598,9 @@ has served its purpose.
 | File | Removals | Special handling |
 |------|----------|-----------------|
 | `docs/api-spec.md` | 3 lines replaced + 1 section inserted | Reading contract replaces reference line paragraph; new `### Response Applicability Derivation` section with derivation tables |
-| `docs/features/tickets/tickets.md` | 14 lines | — |
-| `docs/features/tickets/cve-tracking.md` | 1 line | Add deviation annotation for fetch endpoint (not subject to `ensure_ticket_operable()`) |
+| `docs/conventions.md` | 2 lines replaced | Stale "reference line" mention updated to reference derivation tables |
+| `docs/features/tickets/tickets.md` | 14 lines | Add deviation annotation for revert-duplicate endpoint (not subject to `ensure_ticket_operable()`) |
+| `docs/features/tickets/cve-tracking.md` | 1 line | Add deviation annotation for refetch endpoint (not subject to `ensure_ticket_operable()`) |
 | `docs/features/tickets/cvss-scoring.md` | 3 lines | — |
 | `docs/features/tickets/ticket-audit-log.md` | 1 line | — |
 | `docs/features/tickets/ticket-references.md` | 4 occurrences | L595-596: remove entire error-responses block |
@@ -576,6 +615,7 @@ has served its purpose.
 | `docs/features/platform/system-settings.md` | 1 line | Section-level declaration |
 | `docs/features/platform/fetcher-operations.md` | 1 line | — |
 
-**Total**: ~53 reference lines removed, 1 genuine exception preserved
-(logout), 1 deviation annotation added (fetch), 1 new derivation
-convention added to `api-spec.md`.
+**Total**: 51 reference lines removed, 1 genuine exception preserved
+(logout), 2 deviation annotations added (refetch, revert-duplicate),
+1 new derivation convention added to `api-spec.md`, 1 stale reference
+updated in `conventions.md`.
