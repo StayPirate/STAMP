@@ -462,7 +462,7 @@ Enqueues a manual run of the specified fetcher.
 | 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record in the database) |
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be triggered. |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
-| 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale and `run_timeout > 0`, it is marked as `failure` and the new run proceeds (returns 202). |
+| 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale, it is marked as `failure` and the new run proceeds (returns 202). |
 | 503 | `CELERY_ENQUEUE_FAILED` | Task broker unavailable — run record marked as failed |
 
 **`Capability: manage_fetchers`**
@@ -479,8 +479,7 @@ Enqueues a manual run of the specified fetcher.
   `soft_time_limit` are read from `FetcherConfig.run_timeout` using the
   same formula as the redbeat entry (see
   `docs/features/platform/fetcher-infrastructure.md`, "Celery Beat
-  Schedule Synchronization — Time Limits and Queue Routing"). If
-  `run_timeout = 0`, no time limits are passed. `queue` is read from the
+  Schedule Synchronization — Time Limits and Queue Routing"). `queue` is read from the
   fetcher's class attribute (`FETCHER_REGISTRY[name].queue`); if `None`,
   no queue option is passed (task goes to default queue). The task
   forwards `run_id` to `fetcher.run(run_id=run_id, ...)`, which updates
@@ -616,10 +615,9 @@ include the fields to change.
 **Validation rules**:
 - `schedule_override`: must be a valid 5-field cron expression, or `null`
   to revert to the default schedule
-- `run_timeout`: must be a non-negative integer. 0 disables all
-  Celery time limits (soft and hard) and stale run detection (stuck
-  runs will never be forcibly terminated and will require manual
-  resolution via the CLI). Default: 3600 (1 hour)
+- `run_timeout`: must be an integer between 60 and 604800 (1 minute
+  to 7 days). Controls Celery hard/soft time limits and the stale run
+  detection threshold. Default: 3600 (1 hour)
 - `request_delay`: must be a float >= 0 and <= 300
 
 **Validation rules for `custom_settings`**:
@@ -841,12 +839,11 @@ is unavailable).
 
 1. If a `FetcherRun` with `status = running` exists for the fetcher:
    show `running ({elapsed} elapsed)` where elapsed is calculated from
-   `started_at`. If `run_timeout > 0` and the elapsed time exceeds
-   `run_timeout + 60` (the stale threshold), append `(stale?)` —
-   e.g., `running (1h 2m elapsed, stale?)`. This indicates the
-   process was terminated by the hard limit and the orphaned record
-   has not yet been cleaned up by stale detection.
-   If `run_timeout = 0`, the `(stale?)` hint is never shown.
+   `started_at`. If the elapsed time exceeds `run_timeout + 60` (the
+   stale threshold), append `(stale?)` — e.g.,
+   `running (1h 2m elapsed, stale?)`. This indicates the process was
+   terminated by the hard limit and the orphaned record has not yet
+   been cleaned up by stale detection.
 2. If no running record exists but completed runs exist: show the status
    of the most recent `FetcherRun` with its duration — e.g.,
    `success (3m 12s)`, `failure`, `partial (1m 5s)`
@@ -940,12 +937,6 @@ Differences from the registered fetcher output:
 registered fetchers, also reads the `Settings` model from the
 fetcher registry. For deregistered fetchers, only DB-stored data is
 available.
-
-When `run_timeout` is 0, the command MUST emit a warning to stderr:
-
-```
-Warning: Execution timeout disabled — runs will never be forcibly terminated and stuck runs will require manual resolution.
-```
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any
 time.

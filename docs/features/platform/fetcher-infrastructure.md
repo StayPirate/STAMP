@@ -953,6 +953,11 @@ the invalid field.
    `participates_in_catch_up` resolves to `False`, emit
    `warnings.warn()` at import time (catches silent-exclusion bugs where
    a developer defines catch-up logic but forgets the flag)
+9. `default_request_delay` MUST be a non-negative float (`>= 0`).
+   Negative values are structurally invalid (delay cannot be negative).
+   The operational upper bound (currently 300) is enforced exclusively
+   by the PATCH endpoint's Pydantic validation, not at import time —
+   keeping the upper limit defined in a single location.
 
 CVE-specific validation (`cve_source_type` uniqueness, Enum membership)
 is handled by `BaseCVEFetcher.__init_subclass__` — see
@@ -1564,12 +1569,11 @@ from `FetcherConfig` and fetcher class attributes:
 
 | Key | Value | Condition |
 |-----|-------|-----------|
-| `time_limit` | `run_timeout` | `run_timeout > 0` |
-| `soft_time_limit` | `max(1, floor(run_timeout * 0.95))` | `run_timeout > 0` |
+| `time_limit` | `max(5, run_timeout)` | Always |
+| `soft_time_limit` | `max(1, floor(run_timeout * 0.95))` | Always |
 | `queue` | fetcher's `queue` class attribute | `queue is not None` |
 
-If `run_timeout = 0` AND `queue is None`, Options is `{}`.
-If `run_timeout = 0` but `queue` is set, Options is `{"queue": "<queue>"}`.
+If `queue is None`, Options contains only `time_limit` and `soft_time_limit`.
 The `queue` attribute is a code-defined routing decision (class
 attribute, not configurable via `FetcherConfig`) — it does not require
 redbeat propagation on PATCH.
@@ -1586,15 +1590,12 @@ and optional queue), these options MUST be passed per-invocation via
 When Beat fires a scheduled task, it uses the `options` stored in the
 redbeat entry. Therefore:
 
-- If `FetcherConfig.run_timeout > 0`: the redbeat entry's Options
-  include `time_limit` and `soft_time_limit` (see Options field table
-  above). Beat passes these to `apply_async()`, and the worker enforces
-  them.
-- If `FetcherConfig.run_timeout = 0`: no time limits are included. The
-  task runs without a time ceiling.
-- If the fetcher class defines `queue` (non-None): the Options include
-  `"queue": "<queue>"`. Beat passes this to `apply_async()`, routing the
-  task to the correct worker pool.
+- The redbeat entry's Options always include `time_limit` and
+  `soft_time_limit` (see Options field table above). Beat passes these
+  to `apply_async()`, and the worker enforces them.
+- If the fetcher class defines `queue` (non-None): the Options also
+  include `"queue": "<queue>"`. Beat passes this to `apply_async()`,
+  routing the task to the correct worker pool.
 
 This means that a PATCH to `run_timeout` requires a redbeat entry update
 (see "Which Changes Require Redbeat Propagation" below). The change takes
@@ -1602,10 +1603,18 @@ effect on the next scheduled execution after the entry is updated. The
 `queue` attribute is code-defined (class attribute) and does not change
 via PATCH — it is set once at reconciliation time and remains stable.
 
+**Hard time limit formula**: `max(5, run_timeout)` — the `max(5, ...)`
+is a safety net that prevents Celery from interpreting `time_limit = 0`
+as "disabled" if an out-of-range value reaches the formula (Celery's
+worker dispatch uses `time_limit or default` where `0` is falsy). With
+the minimum `run_timeout` of 60, the `max(5, ...)` never activates in
+practice.
+
 **Soft time limit formula**: `max(1, floor(run_timeout * 0.95))` — same
-formula defined in the `FetcherConfig` section (prevents Celery from
-interpreting `soft_time_limit = 0` as "disabled" for very small
-`run_timeout` values).
+formula defined in the `FetcherConfig` section. With the minimum
+`run_timeout` of 60, the soft limit is always >= 57 (the `max(1, ...)`
+never activates in practice). The gap between soft and hard limits (5%
+of `run_timeout`) provides a grace window for clean finalization.
 
 ### Startup Reconciliation
 
@@ -1769,7 +1778,7 @@ request.
 | `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron |
 | `enabled` changed to `false` | Remove the redbeat entry |
 | `enabled` changed to `true` | Create the redbeat entry with effective schedule and time limit options |
-| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`). If new value is 0, remove time limit keys (Options retains `queue` if present). |
+| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values. |
 | `request_delay` changed | No propagation needed (read from DB at execution time) |
 | `custom_settings` changed | No propagation needed (read from DB at execution time) |
 
@@ -1788,9 +1797,9 @@ The PATCH endpoint handler:
      `schedule_override` or `run_timeout` changes from the same PATCH)
    - If `schedule_override` changed (without `enabled` change): update
      the redbeat entry's schedule with the new effective cron expression
-   - If `run_timeout` changed (without `enabled` change): update the
-     redbeat entry's Options with the new `time_limit` and
-     `soft_time_limit` values (or clear Options if the new value is 0)
+    - If `run_timeout` changed (without `enabled` change): update the
+      redbeat entry's Options with the new `time_limit` and
+      `soft_time_limit` values
    - Uses the `redbeat.RedBeatSchedulerEntry` API to write/delete the
      entry
    - If multiple non-enable propagation-requiring fields changed in the
@@ -2220,7 +2229,6 @@ This applies to all trigger sources:
 | Admin triggers while another manual run is active | `manual` | `manual` | API returns **409 Conflict** |
 | Schedule fires while stale run exists | any | `schedule` | Stale run marked as `failure`, new run proceeds |
 | Admin triggers while stale run exists | any | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
-| Any trigger with stale run but `run_timeout = 0` | any | any | Time limits and stale detection disabled — treated as active run (409 or silent discard) |
 
 The distinction is:
 
@@ -2246,20 +2254,13 @@ that the hard time limit (`time_limit = run_timeout`) has had time to
 terminate the process before a new run is started — guaranteeing the
 single-instance invariant even if the soft time limit was not honored.
 The default `run_timeout` is 3600 (1 hour), yielding a stale threshold
-of 3660 seconds. If `run_timeout` is set to 0, stale detection is
-disabled for that fetcher — the run is never considered stale regardless
-of how long it has been running.
+of 3660 seconds. The minimum allowed `run_timeout` is 60 seconds
+(threshold: 120s); the maximum is 604800 seconds (7 days, threshold:
+604860s). Stale detection is always active for every fetcher.
 
 When a stale run is detected (by the Celery task or the API trigger
 endpoint), it is resolved by updating the stale `FetcherRun`
 record:
-
-**Operational risk of `run_timeout=0`**: disabling stale detection
-means a fetcher that gets stuck will block all future executions
-indefinitely, requiring manual intervention. When `run_timeout` is
-set to 0 via the API, the validation rules document the operational risk
-(see `docs/features/platform/fetcher-operations.md`, "Update Fetcher
-Config").
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
@@ -2390,8 +2391,8 @@ The bootstrap routine:
 | fetcher_name | VARCHAR(100) | PK | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled | BOOLEAN | NOT NULL, DEFAULT true | Whether the fetcher is active |
 | schedule_override | VARCHAR(50) | nullable | Cron expression to override the fetcher's `default_schedule`. NULL means use the default. |
-| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds (hard ceiling). The task is guaranteed to be terminated at this limit. Also used as the basis for the stale run detection threshold. 0 disables both time limits and stale detection. |
-| request_delay | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. 0 = no delay. CHECK (>= 0 AND <= 300). Applied by the fetcher via `asyncio.sleep(self.config.request_delay)`. |
+| run_timeout | INTEGER | NOT NULL, DEFAULT 3600 | Maximum execution time in seconds (hard ceiling). The task is guaranteed to be terminated at this limit. Also used as the basis for the stale run detection threshold. Valid range: 60–604800 (1 minute to 7 days; enforced by API validation). |
+| request_delay | FLOAT | NOT NULL, DEFAULT 0 | Minimum inter-request delay in seconds. 0 = no delay. Valid range: 0–300 (enforced by API validation). Applied by the fetcher via `asyncio.sleep(self.config.request_delay)`. |
 | custom_settings | JSONB | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see "Custom Settings Schema" above). |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Last modification timestamp |
 
@@ -2403,36 +2404,47 @@ The bootstrap routine:
   (see "Celery Beat Schedule Synchronization — Runtime Propagation"
   above).
 - `run_timeout` serves three purposes:
-  1. **Celery hard time limit** (`time_limit`): when > 0, the Celery
-     task's `time_limit` is set to `run_timeout`. If the task exceeds
-     this duration, the worker forcibly terminates the process
-     (SIGKILL). This is the absolute ceiling — the task is guaranteed
-     dead at this point.
-  2. **Celery soft time limit** (`soft_time_limit`): when > 0, set to
+  1. **Celery hard time limit** (`time_limit`): the Celery task's
+     `time_limit` is set to `max(5, run_timeout)`. If the task exceeds
+     this duration, the worker forcibly terminates the process (SIGKILL).
+     This is the absolute ceiling — the task is guaranteed dead at
+     this point. The `max(5, ...)` is a safety net: Celery treats
+     `time_limit=0` as "disabled" (Python truthiness), so a direct-DB
+     bypass with `run_timeout=0` would otherwise lose the hard-kill
+     backstop. With the minimum valid `run_timeout` of 60, the safety
+     net never activates in practice.
+  2. **Celery soft time limit** (`soft_time_limit`): set to
      `max(1, floor(run_timeout × 0.95))`. When reached, Celery raises
      `SoftTimeLimitExceeded` in the task context. This gives the task
      a grace window (5% of `run_timeout`) to finalize the `FetcherRun`
      record cleanly before the hard kill.
-  3. **Stale run detection threshold**: when > 0, a `FetcherRun`
-     record is considered stale if it has been in `running` status
-     for longer than `run_timeout + 60` seconds. The 60-second
-     margin accounts for clock skew in multi-node deployments (the
-     process is guaranteed dead at `run_timeout` by the hard limit).
-  When set to 0, all three mechanisms are disabled: Celery does not
-  enforce any time limit, stale detection treats the run as
-  indefinitely active, and no soft time limit exception is raised.
-  The default of 3600 seconds (1 hour) applies when a `FetcherConfig`
-  record is auto-created for a newly registered fetcher.
+  3. **Stale run detection threshold**: a `FetcherRun` record is
+     considered stale if it has been in `running` status for longer
+     than `run_timeout + 60` seconds. The 60-second margin accounts
+     for clock skew in multi-node deployments (the process is
+     guaranteed dead at `run_timeout` by the hard limit).
+  All three mechanisms are always active (API validation guarantees
+  `run_timeout >= 60`). The default of 3600 seconds (1 hour) applies
+  when a `FetcherConfig` record is auto-created for a newly registered
+  fetcher. The maximum allowed value is 604800 seconds (7 days),
+  providing ample headroom for long-running operations while ensuring
+  eventual recovery from stuck processes.
 
-  **Formula**: `soft_time_limit = max(1, floor(run_timeout × 0.95))`.
-  The `max(1, ...)` prevents Celery from interpreting
-  `soft_time_limit = 0` as "disabled" when `run_timeout` is very small
-  (e.g., `run_timeout = 1` would produce `floor(0.95) = 0` without the
-  `max(1, ...)`). The grace window is always 5% of `run_timeout` (e.g., 180s
-  for 3600s, 30s for 600s, 3s for 60s). For very small `run_timeout`
-  values (< 20), the grace window is minimal but the hard limit always
-  provides a backstop — the task is guaranteed dead at `run_timeout`
-  regardless of whether the soft signal achieves clean finalization.
+  **Formulas**:
+  - `time_limit = max(5, run_timeout)` — the `max(5, ...)` prevents
+    Celery from interpreting `time_limit = 0` as "disabled" if an
+    out-of-range value reaches the formula (Celery's worker dispatch
+    uses `time_limit or default` where `0` is falsy). The 5-second
+    minimum guarantees the SIGKILL backstop always fires, with enough
+    gap from the soft limit (minimum 1s) to avoid race conditions.
+  - `soft_time_limit = max(1, floor(run_timeout × 0.95))` — same
+    safety net for the soft limit. API validation enforces
+    `run_timeout >= 60`, yielding a minimum soft limit of 57 — both
+    `max(...)` safety nets never activate under normal operation.
+  The grace window is always 5% of `run_timeout` (e.g., 180s for 3600s,
+  30s for 600s, 3s for 60s). With the minimum valid `run_timeout` of
+  60s, the grace window is 3s — tight but sufficient for writing a
+  single `FetcherRun` status update, with the hard limit as backstop.
 - `request_delay` is initialized from the fetcher's
   `default_request_delay` class attribute (default: 0) at auto-creation
   time. This per-fetcher initial value is only used at first registration
