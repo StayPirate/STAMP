@@ -542,6 +542,8 @@ Example response when no CVSS assessments are available (absent severity):
 }
 ```
 
+Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `CVE_NOT_FOUND`.
+
 ### Set or Update SUSE CVSS Assessment
 
 ```
