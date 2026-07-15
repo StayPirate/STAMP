@@ -976,5 +976,7 @@ None at this time.
 
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
+- `docs/features/platform/audit-trail-infrastructure.md` — shared audit
+  trail query builder (`build_audit_query`, `actor` filter resolution)
 - `docs/features/tickets/cve-service.md` — Global CVE Source Listing
   endpoint (failure drill-down from fetcher runs)
