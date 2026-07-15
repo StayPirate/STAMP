@@ -63,7 +63,7 @@ The entire fetcher infrastructure is designed around the guarantee that:
   invariant).
 
 Making these guarantees **unconditional** (no special-case branch) reduces
-implementation complexity (~17 conditional branches across 4 documents),
+implementation complexity (~17 conditional branches across 3 documents),
 testing surface, and cognitive load for operators.
 
 ### 4. High ceiling achieves the same goal safely
@@ -106,9 +106,17 @@ numeric columns in the data model are handled.
 
 If an invalid value is written directly to the database (bypassing the API),
 the unconditional formula application provides a safe failure mode:
-- `run_timeout = 0` → `soft_time_limit = max(1, floor(0)) = 1` → task
-  dies after 1 second with a clear error message ("timed out after 0s")
-- `run_timeout < 0` → same behavior (formula produces 1)
+- `run_timeout = 0` → `soft_time_limit = max(1, floor(0)) = 1`,
+  `time_limit = max(5, 0) = 5`. The soft limit fires at 1s (raising
+  `SoftTimeLimitExceeded`), BaseFetcher marks the run as `failure`, and
+  the hard kill backstop fires at 5s if the handler itself gets stuck.
+  The task dies within 5 seconds with a clear error message ("timed out
+  after 0s"). Note: Celery treats `time_limit=0` identically to `None`
+  (disabled) due to Python truthiness in the `or` operator of the
+  worker dispatch code — hence `max(5, ...)` is required rather than
+  passing `0` directly
+- `run_timeout < 0` → same behavior (both formulas produce their minimum:
+  soft=1, hard=5)
 - `run_timeout` very large → task has a long timeout but stale detection
   still functions (threshold = value + 60s)
 
@@ -122,7 +130,10 @@ As part of this change, the existing `CHECK (>= 0 AND <= 300)` on
 no other numeric column in the data model uses a range CHECK. The
 valid range continues to be enforced by the PATCH endpoint's Pydantic
 validation. If bypassed, the failure mode is safe:
-- Negative value → `asyncio.sleep()` raises `ValueError` immediately
+- Negative value → `asyncio.sleep()` treats `delay <= 0` as immediate
+  return (no-op in CPython), meaning no inter-request throttling. Same
+  behavior as `request_delay=0`. Upstream rate limiting may apply but
+  no crash or exception occurs
 - Very large value → task sleeps excessively, hits soft time limit, fails
 
 ## Impact Analysis
@@ -205,7 +216,7 @@ If `run_timeout = 0` but `queue` is set, Options is `{"queue": "<queue>"}`.
 ```
 | Key | Value | Condition |
 |-----|-------|-----------|
-| `time_limit` | `run_timeout` | Always |
+| `time_limit` | `max(5, run_timeout)` | Always |
 | `soft_time_limit` | `max(1, floor(run_timeout * 0.95))` | Always |
 | `queue` | fetcher's `queue` class attribute | `queue is not None` |
 
@@ -239,7 +250,7 @@ If `queue is None`, Options contains only `time_limit` and `soft_time_limit`.
   routing the task to the correct worker pool.
 ```
 
-### Step 3b: Update `docs/features/platform/fetcher-infrastructure.md` — Soft time limit formula note
+### Step 3b: Update `docs/features/platform/fetcher-infrastructure.md` — Time limit formula notes
 
 **Location**: ~lines 1605-1608
 
@@ -253,10 +264,18 @@ interpreting `soft_time_limit = 0` as "disabled" for very small
 
 **Replace with**:
 ```
+**Hard time limit formula**: `max(5, run_timeout)` — the `max(5, ...)`
+is a safety net that prevents Celery from interpreting `time_limit = 0`
+as "disabled" if an out-of-range value reaches the formula (Celery's
+worker dispatch uses `time_limit or default` where `0` is falsy). With
+the minimum `run_timeout` of 60, the `max(5, ...)` never activates in
+practice.
+
 **Soft time limit formula**: `max(1, floor(run_timeout * 0.95))` — same
 formula defined in the `FetcherConfig` section. With the minimum
 `run_timeout` of 60, the soft limit is always >= 57 (the `max(1, ...)`
-never activates in practice).
+never activates in practice). The gap between soft and hard limits (5%
+of `run_timeout`) provides a grace window for clean finalization.
 ```
 
 ### Step 4: Update `docs/features/platform/fetcher-infrastructure.md` — Redbeat propagation table
@@ -401,10 +420,14 @@ removed/simplified.
 **Replace with**:
 ```
   1. **Celery hard time limit** (`time_limit`): the Celery task's
-     `time_limit` is set to `run_timeout`. If the task exceeds this
-     duration, the worker forcibly terminates the process (SIGKILL).
+     `time_limit` is set to `max(5, run_timeout)`. If the task exceeds
+     this duration, the worker forcibly terminates the process (SIGKILL).
      This is the absolute ceiling — the task is guaranteed dead at
-     this point.
+     this point. The `max(5, ...)` is a safety net: Celery treats
+     `time_limit=0` as "disabled" (Python truthiness), so a direct-DB
+     bypass with `run_timeout=0` would otherwise lose the hard-kill
+     backstop. With the minimum valid `run_timeout` of 60, the safety
+     net never activates in practice.
   2. **Celery soft time limit** (`soft_time_limit`): set to
      `max(1, floor(run_timeout × 0.95))`. When reached, Celery raises
      `SoftTimeLimitExceeded` in the task context. This gives the task
@@ -572,16 +595,21 @@ values only.
 
 **Replace with**:
 ```
-  **Formula**: `soft_time_limit = max(1, floor(run_timeout × 0.95))`.
-  The `max(1, ...)` is a safety net that prevents Celery from
-  interpreting `soft_time_limit = 0` as "disabled" if an out-of-range
-  value reaches the formula (API validation enforces `run_timeout >= 60`,
-  yielding a minimum soft limit of 57 — the `max(1, ...)` never activates
-  under normal operation). The grace window is always 5% of `run_timeout`
-  (e.g., 180s for 3600s, 30s for 600s, 3s for 60s). With the minimum
-  valid `run_timeout` of 60s, the grace window is 3s — tight but
-  sufficient for writing a single `FetcherRun` status update, with the
-  hard limit as backstop.
+  **Formulas**:
+  - `time_limit = max(5, run_timeout)` — the `max(5, ...)` prevents
+    Celery from interpreting `time_limit = 0` as "disabled" if an
+    out-of-range value reaches the formula (Celery's worker dispatch
+    uses `time_limit or default` where `0` is falsy). The 5-second
+    minimum guarantees the SIGKILL backstop always fires, with enough
+    gap from the soft limit (minimum 1s) to avoid race conditions.
+  - `soft_time_limit = max(1, floor(run_timeout × 0.95))` — same
+    safety net for the soft limit. API validation enforces
+    `run_timeout >= 60`, yielding a minimum soft limit of 57 — both
+    `max(...)` safety nets never activate under normal operation.
+  The grace window is always 5% of `run_timeout` (e.g., 180s for 3600s,
+  30s for 600s, 3s for 60s). With the minimum valid `run_timeout` of
+  60s, the grace window is 3s — tight but sufficient for writing a
+  single `FetcherRun` status update, with the hard limit as backstop.
 ```
 
 ### Step 18: Verify no other documents reference `run_timeout=0` or conditional `when > 0`
