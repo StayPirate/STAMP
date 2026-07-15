@@ -121,7 +121,6 @@ A missing setting means migrations have not been applied correctly.
 ## API Endpoints
 
 All endpoints in this section require the `manage_settings` capability.
-Global responses per `api-spec.md` apply to all endpoints in this section.
 
 ### Get System Settings
 

@@ -544,8 +544,6 @@ Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as
 `GET /api/v1/users/{user}` (see below).
 
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
-
 #### Get User
 
 Returns full user profile. Response uses the standard single-resource

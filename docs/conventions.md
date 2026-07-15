@@ -1004,4 +1004,5 @@ traceability — the authoritative HTTP status mapping for service
 exceptions lives in the owning service spec's exception table.
 
 Global and scoped responses (defined in `api-spec.md`) are never
-included as table rows — they are covered by a reference line.
+included as table rows — they are derivable from the endpoint's access
+level and path (see Response Applicability Derivation in `api-spec.md`).

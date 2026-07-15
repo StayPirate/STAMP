@@ -197,8 +197,6 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
   searching for product names, track names, statuses, or any contextual data
   across all event fields.
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
-
 **`Access: Authenticated`**
 
 Confidentiality filtering is enforced centrally — see `docs/api-spec.md`

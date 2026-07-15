@@ -727,8 +727,6 @@ preparation for future members.
   metacharacters `*`, `(`, `)`, `\`, NUL per RFC 4515) MUST be rejected
   with 422 / `ROLE_MAPPING_INVALID_GROUP_CN`
 
-Global responses per `api-spec.md` apply.
-
 **Error responses**:
 
 | Status | Code | Condition |

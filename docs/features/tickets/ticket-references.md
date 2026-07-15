@@ -592,9 +592,6 @@ out), the response returns `{"data": []}`.
 Soft-deleted ticket protection is enforced centrally — see
 `docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses)).
 
-**Error responses**: No endpoint-specific errors. See `docs/api-spec.md`
-for global and scoped responses.
-
 ### Add Reference
 
 ```
@@ -663,8 +660,6 @@ Adds a manual reference to a ticket.
   normalized URL
 
 **`Capability: manage_references`**
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
 
 **Error responses**:
 
@@ -742,8 +737,6 @@ At least one field must be provided.
 
 **`Capability: manage_references`**
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
-
 **Error responses**:
 
 | Status | Code                    | Condition                                                |
@@ -779,8 +772,6 @@ A valid reference belonging to a different ticket returns
 |--------|-------------------------|--------------------------------------------------|
 | 404    | `RESOURCE_NOT_FOUND`    | Reference does not exist on this ticket           |
 | 409    | `RESOURCE_NOT_EDITABLE` | Reference is automatic (`source != "manual"`) — cannot be deleted by users |
-
-See `docs/api-spec.md` for global and scoped responses.
 
 ## Ticket Event Logging
 

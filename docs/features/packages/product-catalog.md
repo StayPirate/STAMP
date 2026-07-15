@@ -204,8 +204,6 @@ List all products synced from SMELT. Paginated.
 
 **`Access: Public`**
 
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
-
 ---
 
 ## Background Tasks

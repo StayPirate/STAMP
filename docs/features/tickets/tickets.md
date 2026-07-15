@@ -1259,8 +1259,6 @@ Query parameters:
 Response: paginated `TicketSummary` array in standard
 `{"data": [...], "meta": {...}}` envelope (200 OK).
 
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
-
 ### Get Ticket
 
 ```
@@ -1280,8 +1278,6 @@ package (type, name, email, and group members when applicable — see
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
-
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
 ### Create Ticket
 
@@ -1328,8 +1324,6 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (201 Created).
 
-Global responses per `api-spec.md` apply.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1367,8 +1361,6 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1401,8 +1393,6 @@ Request body:
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 
@@ -1451,8 +1441,6 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1479,8 +1467,6 @@ No request body is required.
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 
@@ -1517,8 +1503,6 @@ Request body:
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1551,8 +1535,6 @@ No request body is required.
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1582,13 +1564,14 @@ status reconciliation.
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
-
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
 | 409 | `TICKET_INVALID_TRANSITION` | Ticket is not in Duplicated status |
+
+This endpoint is **not** subject to `ensure_ticket_operable` (it is the
+dedicated exit from the Duplicated manual-zone status).
 
 ### Set Confidentiality
 
@@ -1608,8 +1591,6 @@ service-layer contract (locking, audit events).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 ### Access Grant Management
 
@@ -1650,8 +1631,6 @@ List all users with explicit access grants for a confidential ticket.
   *Note: Unpaginated because explicit access grants per ticket are a
   bounded dataset (typically a handful of users).*
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1680,8 +1659,6 @@ Grant explicit access to a user on a confidential ticket.
 - **Audit**: Creates `TicketAuditEvent` with
   `event_type = access_grant_added`.
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1705,8 +1682,6 @@ username.
 - **Response**: 204 No Content.
 - **Audit**: Creates `TicketAuditEvent` with
   `event_type = access_grant_removed`.
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 

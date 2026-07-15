@@ -1186,8 +1186,6 @@ added, all counts will be zero in the `created` fields.
 
 **`Capability: manage_packages`**
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1232,8 +1230,6 @@ gate and Analyzed gate).
 
 **`Capability: manage_packages`**
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1268,8 +1264,6 @@ record only — child records are not modified. Creates a single
 ```
 
 **`Capability: manage_packages`**
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 
@@ -1337,8 +1331,6 @@ their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1372,8 +1364,6 @@ only — products under it are not modified. Creates a single
 ```
 
 **`Capability: manage_packages`**
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 
@@ -1443,8 +1433,6 @@ their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1476,8 +1464,6 @@ single `TicketAuditEvent`.
 ```
 
 **`Capability: manage_packages`**
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 
@@ -1548,8 +1534,6 @@ the UI tree without a separate fetch.
 
 **`Capability: manage_packages`** | **`†admin_ticket_ops`** (Hard
 Conditional Check: required only when `status = FIXED`)
-
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 
@@ -1626,8 +1610,6 @@ changing an override value, and resetting an override.
 
 **`Capability: manage_packages`**
 
-Global responses per `api-spec.md` apply. Scoped: `TICKET_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -1669,8 +1651,6 @@ a standalone endpoint for clients that only need package data.
 
 The response body is a `PackageDetail[]` array — the same schema used in
 `TicketDetail.packages`.
-
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
 ---
 
@@ -1765,10 +1745,6 @@ for the package within this ticket. Counts only active tracks
 | `not_affected` | integer | Tracks with status `NOT_AFFECTED` |
 | `wont_fix` | integer | Tracks with status `WONT_FIX` |
 | `analysis` | integer | Tracks with status `ANALYSIS` |
-
-#### Error Responses
-
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint).
 
 ---
 

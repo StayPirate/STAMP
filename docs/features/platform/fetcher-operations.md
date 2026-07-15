@@ -673,8 +673,6 @@ include the fields to change.
 
 **`Capability: manage_fetchers`**
 
-Global responses per `api-spec.md` apply.
-
 **Error responses**:
 
 | Status | Code | Condition |

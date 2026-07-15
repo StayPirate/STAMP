@@ -374,9 +374,12 @@ automatically. Do not add a separate row for these. Only
 domain-specific validation with a **dedicated error code** (e.g.,
 `CVSS_INVALID_VECTOR`, `FETCHER_SETTING_INVALID`) warrants a table row.
 
-**Reference line**: each endpoint section should include a brief note
-indicating which global and scoped responses apply. Example:
-`Global responses per api-spec.md apply. Scoped: TICKET_NOT_FOUND, TICKET_NOT_MUTABLE.`
+**Reading contract**: if an endpoint section has no error table, it
+produces only the responses derivable from its access level and path
+(see Response Applicability Derivation below). If it has an error table,
+the table lists only endpoint-specific errors — global and scoped
+responses are always implicit and derivable from context. Per-endpoint
+reference lines are not used.
 
 ### Scoped Responses
 
@@ -491,6 +494,54 @@ Read endpoints (GET) are never subject to this guard.
 
 See `docs/features/tickets/tickets.md` ([Mutability Guard](docs/features/tickets/tickets.md#mutability-guard))
 for the full specification.
+
+### Response Applicability Derivation
+
+Global and scoped responses are mechanically derivable from the
+endpoint's access level and path pattern. Per-endpoint reference lines
+are **not required** and MUST NOT be added to new or existing endpoints.
+The derivation tables below are the single normative source of truth.
+
+#### Global Response Derivation
+
+| Access level | Applicable global responses |
+|---|---|
+| `Access: Public` | `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
+| `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
+| `Capability: <any>` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
+
+#### Scoped Response Derivation
+
+| Path pattern | Scoped responses |
+|---|---|
+| `/api/v1/tickets/{ticket_id}/**` | `404 TICKET_NOT_FOUND` |
+| `/api/v1/cves/{cve_id}/**` | `404 CVE_NOT_FOUND` |
+| Mutation (POST/PATCH/DELETE) under `/api/v1/tickets/{ticket_id}/**` | + `409 TICKET_NOT_MUTABLE` |
+| Mutation (POST/PATCH/DELETE) under `/api/v1/cves/{cve_id}/**` | + `409 TICKET_NOT_MUTABLE` (only when CVE has associated ticket) |
+| Any other path | None |
+
+Note: `TICKET_NOT_MUTABLE` applies only to mutation endpoints
+(POST/PATCH/DELETE) under the scoped routers listed above. GET endpoints
+under the same routers receive only the `NOT_FOUND` scoped response.
+The mechanism behind `TICKET_NOT_MUTABLE` is `ensure_ticket_operable()`
+— see Manual-Zone Mutability Guard above. Endpoints excluded from
+`ensure_ticket_operable()` (manual-zone exit endpoints, async dispatch
+endpoints) are annotated per-endpoint and do not produce
+`TICKET_NOT_MUTABLE`.
+
+#### Genuine Exceptions
+
+If an endpoint **deviates** from the derivation rules above (e.g., an
+authenticated endpoint that does not use the standard authentication
+middleware, or an endpoint under a scoped router that bypasses the
+router dependency), annotate the deviation directly in the endpoint
+section. The annotation must explain HOW and WHY the endpoint deviates
+— it is not a formulaic reference line but a substantive explanation
+of non-standard behavior.
+
+Section-level declarations (e.g., "Global responses per api-spec.md
+apply to all endpoints in this section") are not necessary and MUST NOT
+be used — the derivation rules apply uniformly by access level and path.
 
 ### Versioning
 

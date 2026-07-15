@@ -542,8 +542,6 @@ Example response when no CVSS assessments are available (absent severity):
 }
 ```
 
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `CVE_NOT_FOUND`.
-
 ### Set or Update SUSE CVSS Assessment
 
 ```
@@ -590,8 +588,6 @@ appropriate per the "Mutation Patterns" convention in `api-spec.md`. The
 differentiated response codes (201 for creation, 200 for update) make the
 upsert behavior explicit to clients.
 
-Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -618,8 +614,6 @@ recalculation chain. The ticket may no longer meet the progression gate
 requirements.
 
 Response: 204 No Content.
-
-Global responses per `api-spec.md` apply. Scoped: `CVE_NOT_FOUND`, `TICKET_NOT_MUTABLE`.
 
 **Error responses**:
 

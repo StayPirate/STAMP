@@ -159,8 +159,6 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
 }
 ```
 
-Global responses per `api-spec.md` apply.
-
 ### List My Identity Audit Events
 
 ```
@@ -236,8 +234,6 @@ unredacted in the self-service response. This includes AD group CNs in
 are considered non-sensitive organizational metadata — they are
 meaningful only within the AD administrative context and do not
 constitute personal data or security-critical information.
-
-Global responses per `api-spec.md` apply.
 
 ## Service Contract
 

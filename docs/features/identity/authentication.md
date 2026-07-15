@@ -606,8 +606,6 @@ Returns the currently authenticated user's profile.
 
 **`Access: Authenticated`**
 
-Global responses per `api-spec.md` apply.
-
 **Response** (200):
 
 ```json
@@ -670,8 +668,6 @@ Lists all API keys for the current user.
 
 **`Access: Authenticated`**
 
-Global responses per `api-spec.md` apply.
-
 **Pagination**: not paginated. A user's API keys are naturally bounded
 (expected <20 per user). The full list is always returned.
 
@@ -700,8 +696,6 @@ returned in creation order, newest first).
 ### Create API Key
 
 Creates a new API key for the current user.
-
-Global responses per `api-spec.md` apply.
 
 **Authentication**: required (JWT session only). API-key-authenticated
 requests receive HTTP 403 (see Authentication restriction below).
@@ -781,8 +775,6 @@ endpoints with `revoked_at` populated.
 
 **`Access: Authenticated`**
 
-Global responses per `api-spec.md` apply.
-
 **Behavior**:
 
 1. Look up the key by `key_id` — if not found or belongs to a different
@@ -823,8 +815,6 @@ Global responses per `api-spec.md` apply.
 Lists API keys across all users.
 
 **`Capability: manage_users`**
-
-Global responses per `api-spec.md` apply.
 
 **Query parameters**:
 
@@ -906,8 +896,6 @@ using it are rejected.
 ```
 
 **Error responses**:
-
-Global responses per `api-spec.md` apply.
 
 | Status | Code | Condition |
 |--------|------|-----------|

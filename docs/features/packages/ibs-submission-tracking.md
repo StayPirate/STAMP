@@ -953,8 +953,6 @@ List all submission requests correlated to the ticket via the
 | `created_at`       | datetime (UTC)    | Record creation timestamp                        |
 | `updated_at`       | datetime (UTC)    | Record update timestamp                          |
 
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
-
 ### List Release Requests
 
 List all release requests associated with the ticket. Derived via the
@@ -1006,8 +1004,6 @@ SR correlation: find SRs correlated to the ticket, collect their
 | `incident_url`     | string         | Computed: `https://build.suse.de/project/show/SUSE:Maintenance:{incident_number}` |
 | `created_at`       | datetime (UTC) | Record creation timestamp                        |
 | `updated_at`       | datetime (UTC) | Record update timestamp                          |
-
-Global responses per `api-spec.md` apply (422, 500 only — public endpoint). Scoped: `TICKET_NOT_FOUND`.
 
 ## Background Tasks
 
