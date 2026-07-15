@@ -1078,7 +1078,6 @@ the canonical definition.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | UUID | CVE record primary key |
 | `cve_id` | string | CVE identifier (e.g., `CVE-2024-1234`) |
 | `title` | string \| null | Brief summary from CNA (max 256 chars). Null if not provided by the CNA |
 | `description` | string \| null | Vulnerability description |

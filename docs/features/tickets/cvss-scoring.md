@@ -452,9 +452,8 @@ GET /api/v1/cves/{cve_id}/cvss
 
 **Access: Public**
 
-The `{cve_id}` path parameter accepts either the CVE's UUID or the
-CVE-ID string (e.g., `CVE-2025-1234`). See `docs/api-spec.md` (CVE
-Identifier Resolution) for the dual-identifier resolution pattern.
+The `{cve_id}` path parameter accepts a CVE-ID string (e.g.,
+`CVE-2025-1234`). See `docs/api-spec.md` (CVE Identifier Resolution).
 
 Response: composite CVSS view for the CVE — the list of raw assessments
 alongside the computed severity and eligibility results, returned as a

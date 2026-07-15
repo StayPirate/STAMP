@@ -418,9 +418,8 @@ dependency (`require_accessible_cve`). This dependency is applied via
 
 The dependency evaluates conditions in this exact order:
 
-1. **Existence**: resolve the CVE by UUID or CVE-ID string (see CVE
-   Identifier Resolution below). If no CVE matches, return
-   `404 CVE_NOT_FOUND`
+1. **Existence**: resolve the CVE by CVE-ID string (see CVE Identifier
+   Resolution below). If no CVE matches, return `404 CVE_NOT_FOUND`
 2. **Associated ticket check**: if the CVE has an associated ticket:
    a. **Confidentiality**: if the ticket is confidential
       (`is_confidential=TRUE`) and the caller does not satisfy any
@@ -567,28 +566,25 @@ implementation pattern.
 
 ### CVE Identifier Resolution
 
-All parameters that identify a CVE in `/api/v1/cves/` endpoints —
-primarily the `{cve_id}` path parameter — accept either a UUID or a
-CVE-ID string. Resolution is automatic:
+The `{cve_id}` path parameter in `/api/v1/cves/` endpoints accepts
+a CVE-ID string (e.g., `CVE-2024-1234`). The CVE's internal UUID is
+never accepted as input and is not exposed in API responses.
 
-- If the value is a valid UUID (RFC 4122 format), lookup is by primary
-  key (`CVE.id`)
-- If the value matches the CVE-ID format (`CVE-\d{4}-\d{4,}`), lookup
-  is by the `CVE.cve_id` column (UNIQUE indexed)
+- If the value matches the CVE-ID format (see `CVE_ID_PATTERN` below),
+  lookup is by the `CVE.cve_id` column (UNIQUE indexed)
 - Otherwise, return `404 CVE_NOT_FOUND`
 
-The CVE-ID string is the natural identifier used across all security
-tooling (NVD, MITRE, advisories). Requiring UUID-only would force API
-consumers to perform a two-step lookup (search for CVE-ID in ticket
-list, extract UUID, then call the CVE endpoint). The dual resolution
-eliminates this friction.
+The CVE-ID string is the natural, globally unique identifier used
+across all security tooling (NVD, MITRE, advisories). Unlike User
+identifiers (where the username is mutable via AD sync, making the
+UUID necessary as a stable reference) and Ticket identifiers (where
+no external natural key exists), the CVE-ID is immutable and
+externally assigned — the internal UUID serves no external purpose.
 
-This follows the dual-identifier resolution pattern established by
-`resolve_user_identifier` (see User Identifier Resolution above).
-
-Implementation note: a reusable `resolve_cve_identifier` function in
-`backend/app/core/dependencies.py`, analogous to
-`resolve_user_identifier`.
+Implementation note: a reusable `resolve_cve_identifier` dependency
+in `backend/app/core/dependencies.py`. This dependency validates the
+CVE-ID format, performs the lookup, and returns `404 CVE_NOT_FOUND`
+on mismatch or absence.
 
 The CVE-ID format pattern used by this resolution function is the
 canonical `CVE_ID_PATTERN` defined in `backend/app/core/identifiers.py`
