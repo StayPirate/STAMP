@@ -223,6 +223,10 @@ Provider.
   and group existence at the provider? If not, Preview and
   group-existence validation must use locally-cached data from the last
   reconciliation sync
+- DELETE semantics: how does a provider DELETE map to Sentinel's user
+  lifecycle? Options: hard-delete (requires FK cascade analysis),
+  soft-delete (= deactivate_user), or new lifecycle status. To be
+  resolved when the SCIM contract is defined
 
 ## Bootstrap Sequence (External Provisioning)
 
@@ -234,6 +238,13 @@ Provider.
 5. Deactivate bootstrap account (recommended)]
 
 ## Future Evolution
+
+**Single-provider limitation**: the current data model supports exactly
+one external identity provider at a time. `User.external_id` has a
+single UNIQUE column, `RoleMapping.group_name` has no provider
+discriminator, and `UserRole.group_name` cannot distinguish which
+provider derived the role. Multi-provider support would require adding a
+`provider` discriminator column to User, UserRole, and RoleMapping.
 
 When this spec is enabled and finalized:
 1. Define the SCIM Service Provider endpoint contract
@@ -407,7 +418,9 @@ When this spec is enabled and finalized:
      now()`" → "`synced_at = now()`"
 
 9. **`update_user()` parameters** (lines 314-323): "`ad_synced_at`" →
-   "`synced_at`"
+   "`synced_at`"; `username` description: "(updated by LDAP sync when
+   sAMAccountName changes)" → "(updated by external sync when username
+   changes at provider)"
 
 10. **`update_user()` behavior** (lines 325-365):
     - Step 2: "`user.ad_object_guid IS NOT NULL`" → "`user.external_id
@@ -620,8 +633,16 @@ When this spec is enabled and finalized:
      "external_sync"`; `"mapping": "cn=SecurityTeam"` → `"mapping":
      "SecurityTeam"`
    - `role_mapping_created/deleted`: `"ad_group_cn"` → `"group_name"`
+   - `user_deactivated`: `"ad_sync_missing"` → `"external_sync_missing"`
    - Notes section (line 89): "the role change originates from AD
      sync" → "the role change originates from external sync"
+
+2c. **API response examples** (lines ~136-213): all JSON examples
+    containing AD-specific values must be updated:
+    - `"source": "ad_sync"` → `"source": "external_sync"`
+    - `"mapping": "cn=SecurityTeam"` → `"mapping": "SecurityTeam"`
+    - `"ad_group_cn"` → `"group_name"` (in any example JSON keys)
+    - Apply to all example response bodies in the section
 
 2b. **detail field transparency prose** (lines 230-236):
     - "AD group CNs" → "external group names" (all occurrences)
@@ -931,18 +952,70 @@ api-key-service.md             API key lifecycle management
    in the user provisioning flow, replace with a reference to
    identity-provisioning.md (deferred).
 
-### Step 14 — Remove LDAP from `docs/data-sources.md`
+### Step 14 — Update `docs/data-sources.md`
 
 **Changes**:
 
-1. **Catalog table** (lines 28-29): remove the two rows "SUSE Active
-   Directory" and "SUSE OpenLDAP".
+`data-sources.md` catalogs all known external data sources in SUSE's
+infrastructure, regardless of whether Sentinel integrates with them. The
+AD and OpenLDAP entries describe real SUSE resources and MUST be
+preserved. Only Sentinel-specific integration details (fetcher
+references, "Active" status, spec links) are modified. SUSEID
+(Authentik) is added as a new entry.
 
-2. **Delete the entire "Identity and Directory Services" section**
-   (lines 694-781) — covers both SUSE AD and SUSE OpenLDAP.
+1. **Summary table** (lines 28-29):
+   - SUSE Active Directory row: change Integration Status from `Active`
+     to `Not integrated` (Sentinel no longer uses AD as identity
+     provider)
+   - SUSE OpenLDAP row: unchanged (already `Not integrated`)
+   - Add new row: `| SUSEID (Authentik) | Internal | Centralized
+     identity provisioning via SCIM push | Planned |`
 
-3. **Fetcher Registry table** (line ~952): remove the
-   `sync_ldap_directory` row.
+2. **"SUSE Active Directory" section** (lines 698-748):
+   - Keep all technical documentation (attributes, access details, proxy
+     caching notes) — these describe SUSE infrastructure facts
+   - Replace the "Integration status" bullet (lines 734-738): remove
+     "**Active**. Sentinel syncs employee data daily via the
+     `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
+     `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient,
+     for role mapping). See `docs/features/identity/ad-integration.md`
+     for the full specification" → "**Not integrated**. Previously
+     considered as Sentinel's identity source via LDAP sync; the LDAP
+     endpoint at `pan.suse.de` is being decommissioned in favor of
+     SUSEID (see below). Documented here as a SUSE infrastructure
+     reference"
+   - Lines 716-720 (preference over OpenLDAP): keep unchanged — this is
+     a factual comparison of SUSE infrastructure, not Sentinel-specific
+
+3. **"SUSE OpenLDAP" section** (lines 750-781): no changes (already
+   "Not integrated", content describes SUSE infrastructure)
+
+4. **Add new section** after "SUSE OpenLDAP" and before the `---`
+   separator (line 783):
+
+   ```markdown
+   ### SUSEID (Authentik)
+
+   SUSE's centralized identity platform based on Authentik, replacing
+   direct AD/LDAP access for application integrations. SUSEID provides
+   identity provisioning via the SCIM 2.0 protocol (push-based), with
+   hourly full sync and near-real-time event delivery.
+
+   - **Relevant data**: User identity (stable UUID, username, email,
+     display name), active status, direct manager, group memberships
+   - **Access**: SCIM 2.0 push protocol — SUSEID pushes to application
+     endpoints (Sentinel would act as a SCIM Service Provider). Static
+     bearer token authentication (rotation mechanism TBD)
+   - **Integration status**: **Planned**. See
+     `docs/features/identity/identity-provisioning.md` for the deferred
+     specification and open questions
+   - **Documentation**: Internal — SCIM contract negotiation in progress
+     with the infrastructure team
+   ```
+
+5. **Fetcher Registry table** (line ~952): remove the
+   `sync_ldap_directory` row (the fetcher is being removed — SCIM is
+   push-based, not a BaseFetcher subclass)
 
 ### Step 15 — Remove LDAP from `docs/deployment.md`
 
