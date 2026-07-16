@@ -239,7 +239,7 @@ Response:
       { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "email": "..." },
       { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "email": "..." }
     ],
-    "affected_users_count": 22,
+    "affected_count": 22,
     "unknown_users": ["newemployee"]
   }
 }
@@ -251,7 +251,7 @@ the last sync). These users will receive the role at the next sync.
 
 **Zero-member group**: if the group exists at the provider but
 currently has zero members, the response is valid with
-`affected_users: []`, `unknown_users: []`, and `affected_users_count: 0`.
+`affected_users: []`, `unknown_users: []`, and `affected_count: 0`.
 This is not an error — an admin may create a role mapping for a group
 that is not yet populated, in preparation for future members.
 
@@ -1359,7 +1359,7 @@ references, "Active" status, spec links) are modified. SUSEID
 
 2. **Cascade/Chain/Flattening** (line 91): "manager chain (reporting
    hierarchy in `ad-integration.md`)" → "manager chain (reporting
-   hierarchy — see `docs/features/identity/identity-provisioning.md`)"
+   hierarchy in `docs/data-model.md`)"
 
 3. **PII rule** (line 26): remove "AD" from the list of external
    systems → "(IBS, SMELT, Bugzilla, NVD, etc.)"
@@ -1500,8 +1500,9 @@ repository-wide search, providing an additional safety net.
 - `--type ad` (residual CLI filter parameter)
 
 **Expected result**: zero matches in `docs/` and `.opencode/` (excluding
-`docs/reviews/*.md` review artifacts which are historical and
-untracked). The `backend/Dockerfile` comment (line 16) is addressed
+`docs/features/identity/ad-integration.md` which is pending deletion in
+Step 30, and `docs/reviews/*.md` review artifacts which are historical
+and untracked). The `backend/Dockerfile` comment (line 16) is addressed
 separately in Scope Exclusions. If any other matches remain, resolve
 them before proceeding.
 
