@@ -87,6 +87,39 @@ Rules:
 
 ## Execution Plan
 
+### Global Prose Substitution Rule
+
+In addition to the specific substitutions listed in each step, the
+following prose-level replacements MUST be applied to ALL content within
+each step's stated line range. These are systematic renames that do not
+change semantics:
+
+| Pattern (case-sensitive) | Replacement |
+|---|---|
+| "AD user" / "AD users" | "external user" / "external users" |
+| "AD-synced user(s)" | "externally-provisioned user(s)" |
+| "AD-derived" | "externally-derived" |
+| "AD group" / "AD groups" | "external group" / "external groups" |
+| "AD sync" (prose, with space) | "external sync" |
+| "Active Directory" | "the external identity provider" |
+| "AD attribute" | "provider attribute" |
+| "AD-specific" | "external-provider-specific" |
+| "AD Active Status Ownership" | "External Active Status Ownership" |
+| "AD User Data Ownership" | "External User Data Ownership" |
+| "AD derivation" | "External derivation" |
+
+Context-sensitive exceptions (NOT replaced by this rule):
+- `"ad_sync"` as a JSON value (e.g., `"source": "ad_sync"`) — handled
+  by specific step substitutions with the underscore form
+- "AD" in variable/class names (e.g., `ADUserFieldReadOnlyError`) —
+  handled by specific step substitutions
+- "AD" in column names (`ad_group_cn`, `ad_object_guid`) — handled by
+  specific step substitutions
+
+This rule ensures no prose-level AD references survive within any
+modified range. Step 28 (verification sweep) confirms completeness
+after execution.
+
 ### Step 1 — Create `docs/features/identity/identity-provisioning.md`
 
 **Action**: create new file.
@@ -137,7 +170,10 @@ remaining.]
 | `manager_id` | Manager's username/uid | Resolved to User FK |
 | Group memberships | Group names/displayNames | Used for role mapping derivation |
 
-## Role Mapping Management Endpoints (Deferred)
+## Role Mapping Management Endpoints
+
+These endpoints are part of the deferred external provisioning feature.
+They will be implemented when this specification is activated.
 
 [Generalized from ad-integration.md, with these changes:
 - "AD group CN" → "external group name"
@@ -147,19 +183,19 @@ remaining.]
 - All other semantics (immediate application, transaction model,
   self-admin guard, audit events) remain identical]
 
-### List Role Mappings (deferred)
+### List Role Mappings
 GET /api/v1/admin/role-mappings
 [Same contract as current, with group_name replacing ad_group_cn]
 
-### Preview Role Mapping (deferred)
+### Preview Role Mapping
 POST /api/v1/admin/role-mappings/preview
 [Requires live query to external provider — mechanism TBD with SCIM]
 
-### Create Role Mapping (deferred)
+### Create Role Mapping
 POST /api/v1/admin/role-mappings
 [Same contract, generalized; group existence check mechanism TBD]
 
-### Delete Role Mapping (deferred)
+### Delete Role Mapping
 DELETE /api/v1/admin/role-mappings/{id}
 [Same contract, no external query needed — uses local UserRole records]
 
@@ -180,6 +216,10 @@ Provider.
 - Group naming: original Okta group names preserved (confirmed)
 - Rate/concurrency: 2-4 workers, sequential-ish (low pressure)
 - Testing: staging SCIM provider in dry-run mode (offered by infra team)
+- Read API availability: is there a read API to query group membership
+  and group existence at the provider? If not, Preview and
+  group-existence validation must use locally-cached data from the last
+  reconciliation sync
 
 ## Bootstrap Sequence (External Provisioning)
 
@@ -246,6 +286,8 @@ When this spec is enabled and finalized:
    - Column `manager_id`: "(resolved from AD `manager` DN during
      sync)" → "(resolved from external provider's manager reference
      during sync)"
+   - Column `password_hash`: "NULL for AD users" → "NULL for external
+     users"
    - Check constraint: "`ad_object_guid`" → "`external_id`";
      description: "AD users cannot have a password, local users must
      have a password" → "External users cannot have a password, local
@@ -324,6 +366,9 @@ When this spec is enabled and finalized:
    - "`ad_synced_at`" → "`synced_at`"
    - All occurrences of "AD users" → "external users"
    - Cross-ref: `ad-integration.md` → `identity-provisioning.md`
+   - Apply Global Prose Rule to entire range (covers "AD group mapping
+     operations" at line 71, "AD-specific fields" at line 77, "Active
+     Directory" at line 79)
 
 5. **AD Active Status Ownership** (lines 81-105) → rename to
    **"External Active Status Ownership"**:
@@ -339,9 +384,17 @@ When this spec is enabled and finalized:
    "`external_id`"; "Active Directory object" → "external provider
    object"; "LDAP sync operations" → "external sync operations"
 
+6b. **`_unassign_tickets_on_va_role_loss`** (lines 200-239): apply
+    Global Prose Rule. Specific changes:
+    - Line 215: "`ad_group_cn`" → "`group_name`"
+    - Line 222: "AD-derived" → "externally-derived" (Global Rule)
+    - Line 238: "LDAP sync" → "external sync"
+
 7. **`create_user()` parameters** (lines 246-257): `ad_object_guid` →
    `external_id`; description: "AD `objectGUID`" → "External provider
-   stable UUID"
+   stable UUID"; line 255: "must be NULL for AD users" → "must be NULL
+   for external users"; line 256: "(role, ad_group_cn)" → "(role,
+   group_name)"
 
 8. **`create_user()` behavior** (lines 259-298):
    - Step 2: "`ad_object_guid`" → "`external_id`";
@@ -364,6 +417,9 @@ When this spec is enabled and finalized:
       "`ExternalUserFieldReadOnlyError`"; "AD-specific" → "external-
       provider-specific"
     - Step 4: "AD users"→"external users"
+    - Apply Global Prose Rule to entire range (covers "AD User Data
+      Ownership" reference at line 330, "AD users" at lines 329/332/342,
+      "AD attribute" at line 355)
 
 11. **`update_roles()` parameters and business rules** (lines 383-415):
     - Parameters (383-384): "Roles to add as (role, ad_group_cn)" →
@@ -371,7 +427,8 @@ When this spec is enabled and finalized:
     - Business rule 2 (398-401): "AD-derived role protection" →
       "External-derived role protection"; "`ad_group_cn != '_manual'`"
       → "`group_name != '_manual'`"; "`ADDerivedRoleError`" →
-      "`DerivedRoleError`"; "LDAP sync" → "external sync"
+      "`DerivedRoleError`"; "LDAP sync" → "external sync"; "AD-derived
+      roles" → "externally-derived roles"
     - Behavior (403, 410): "`(user_id, role, ad_group_cn)`" →
       "`(user_id, role, group_name)`"; "`(role, ad_group_cn)`" →
       "`(role, group_name)`"
@@ -393,7 +450,12 @@ When this spec is enabled and finalized:
 14. **`sync_role_mapping()` behavior** (lines 463-496): all "`role`
     and `ad_group_cn`" → "`role` and `group_name`"; "AD group members"
     → "group members"; "`ad_group_cn`" → "`group_name`" throughout;
-    `"source": "ad_sync"` → `"source": "external_sync"` (line 488)
+    `"source": "ad_sync"` → `"source": "external_sync"` (line 488);
+    apply Global Prose Rule (covers "AD-derived roles" at line 477,
+    "(AD sync)" in reason string at line 484)
+
+14b. **`sync_role_mapping()` IdentityAuditEvent prose** (line 505):
+     "AD sync, system action" → "external sync, system action"
 
 15. **`delete_role_mapping_roles()` parameters** (lines 516-519):
     "`ad_group_cn`" → "`group_name`"
@@ -405,24 +467,27 @@ When this spec is enabled and finalized:
     "`user.ad_object_guid IS NOT NULL`" → "`user.external_id IS NOT
     NULL`"; "`ADUserStatusReadOnlyError`" →
     "`ExternalUserStatusReadOnlyError`"; "directory sync" → "external
-    sync"
+    sync"; apply Global Prose Rule (covers "AD users" at line 570,
+    "AD Active Status Ownership" at line 571)
 
 18. **`deactivate_user()` IdentityAuditEvent** (line 607): "`NULL`
     for AD sync" → "`NULL` for external sync"
 
 19. **`reactivate_user()` preconditions** (lines 630-633): same
-    substitutions as deactivate.
+    substitutions as deactivate (including Global Prose Rule for "AD
+    users" and "AD Active Status Ownership" references).
 
 20. **`reset_password()` preconditions** (lines 668-671):
     "`ad_object_guid`" → "`external_id`"; "`ADUserPasswordError`" →
     "`ExternalUserPasswordError`"; "AD user" → "external user";
     "authenticate via id.suse.com" → "authenticate via SSO"
 
-21. **Concurrency Considerations** (lines 786-803): "LDAP sync" →
+21. **Concurrency Considerations** (lines 779-803): "LDAP sync" →
     "external sync"; "manual actions use `ad_group_cn = '_manual'`
     while LDAP sync uses the actual AD group CN" → "manual actions use
     `group_name = '_manual'` while external sync uses the actual group
-    name"
+    name"; apply Global Prose Rule (covers "AD-derived role" at line
+    801, "`ad_group_cn`" at lines 783-784)
 
 22. **Service Exceptions table** (lines 820-833):
     - `ADUserStatusReadOnlyError` → `ExternalUserStatusReadOnlyError`
@@ -456,12 +521,16 @@ When this spec is enabled and finalized:
 2. **Permission Matrix** (lines 162-163): "AD role mapping CRUD" →
    "Group-to-role mapping CRUD"; "Preview role mapping" → unchanged
 
+2b. **Confidential ticket scope** (line 220): "User.email (from AD
+    sync)" → "User.email (from external sync)"
+
 3. **Endpoint Permission Map — Administration section** (lines
    487-490):
    - Role-mapping endpoints: owning spec link changes from
      `[ad-integration](ad-integration.md#...)` →
-     `[identity-provisioning](identity-provisioning.md#...)` (with
-     appropriate anchor fragments)
+     `[identity-provisioning](identity-provisioning.md#...)` (anchors:
+     `#list-role-mappings`, `#preview-role-mapping`,
+     `#create-role-mapping`, `#delete-role-mapping`)
 
 4. **Notes after Endpoint Permission Map** (lines 505-507): "AD users
    are created by the LDAP directory sync (see
@@ -479,12 +548,22 @@ When this spec is enabled and finalized:
      via LDAP sync" → "External users cannot be manually deactivated or
      reactivated — their active status is controlled exclusively by the
      external identity provider via sync"
-   - Rule 9: entire admin bootstrap reference: "trigger the LDAP sync
-     (`POST /api/v1/fetchers/sync_ldap_directory/trigger`)" → "trigger
-     the external provisioning sync (see
-     `docs/features/identity/identity-provisioning.md` for the
-     bootstrap sequence when external provisioning is active)"; keep
-     the local-admin CLI part intact
+   - Rule 9: replace entire admin bootstrap rule with:
+     ```
+     9. Admin bootstrap:
+        - **Local-only phase** (current): create a local admin via
+          `sentinel manage-user create --username bootstrap-admin
+          --email bootstrap@localhost --role admin`. This is the only
+          bootstrap mechanism available when external provisioning is
+          not active.
+        - **With external provisioning** (future): after the initial
+          local admin is created, trigger the external provisioning
+          sync (see `docs/features/identity/identity-provisioning.md`,
+          Bootstrap Sequence), then optionally promote an external user
+          to admin via `sentinel manage-user update --username
+          <username> --add-role admin` and deactivate the bootstrap
+          account.
+     ```
 
 6. **Role Origins and Coexistence** (lines 678-711):
    - "AD-derived" → "Externally-derived"
@@ -492,6 +571,12 @@ When this spec is enabled and finalized:
    - "`ad_group_cn = '_manual'`" → "`group_name = '_manual'`"
    - "LDAP sync" → "external sync"
    - Cross-ref: `ad-integration.md` → `identity-provisioning.md`
+   - Apply Global Prose Rule to entire range (covers "AD groups" at
+     line 688, "AD group" at lines 700/703, "AD derivation" at line
+     702)
+
+6b. **Password Security** (line 644): "AD users do not have local
+    passwords" → "External users do not have local passwords"
 
 7. **Data Model section** (lines 650-658): "AD fields
    (ad_object_guid, manager_id, ad_synced_at)" → "External identity
@@ -521,17 +606,33 @@ When this spec is enabled and finalized:
    - `manager_changed`: "(AD sync)" → "(external sync)"
    - `email_changed/full_name_changed`: "(admin or AD sync)" →
      "(admin or external sync)"
+   - Also: column table at line 24: "NULL for system actions (AD sync)"
+     → "NULL for system actions (external sync)"
 
 2. **detail JSONB Schema Contract** (lines 70-101):
    - `role_added/removed`: `"source": "ad_sync"` → `"source":
      "external_sync"`; `"mapping": "cn=SecurityTeam"` → `"mapping":
      "SecurityTeam"`
    - `role_mapping_created/deleted`: `"ad_group_cn"` → `"group_name"`
+   - Notes section (line 89): "the role change originates from AD
+     sync" → "the role change originates from external sync"
+
+2b. **detail field transparency prose** (lines 230-236):
+    - "AD group CNs" → "external group names" (all occurrences)
+    - "AD sync events" → "external sync events"
+    - `"ad_sync"` → `"external_sync"` (example JSON value)
+    - `"cn=SecurityTeam"` → `"SecurityTeam"` (example JSON value)
+    - "within the AD administrative context" → "within the external
+      provider's administrative context"
 
 3. **Service Contract prose** (lines 259-270): "AD sync" → "external
-   sync" throughout
+   sync" throughout; line 270: "when the corresponding fields change
+   in Active Directory" → "when the corresponding fields change at the
+   external identity provider"
 
-4. **Cross-references** (line 301): `ad-integration.md` →
+4. **Cross-references** (lines 300-301): "AD sync operations that
+   produce identity audit events" → "External sync operations that
+   produce identity audit events"; `ad-integration.md` →
    `identity-provisioning.md`
 
 ### Step 7 — Generalize `docs/features/identity/user-management.md`
@@ -569,6 +670,10 @@ When this spec is enabled and finalized:
    - Error messages: "managed by Active Directory via LDAP sync" →
      "managed by an external identity provider"
    - "Cannot reactivate AD users" → "Cannot reactivate external users"
+   - Apply Global Prose Rule to entire range (covers: "AD User Data
+     Ownership" ref at line 122, "AD users" at lines 120/124/125,
+     "AD Active Status Ownership" ref at line 126, "AD-derived" at
+     lines 186/225/230, "AD group membership" at line 230)
 
 5. **`manage-user deactivate`** (lines 248-319):
    - "`ad_object_guid IS NOT NULL`" → "`external_id IS NOT NULL`"
@@ -604,13 +709,17 @@ When this spec is enabled and finalized:
     - Field notes: `source` derived `"ad"` → `"external"`; "AD
       `objectGUID`" → "External provider stable UUID"
     - `"ad_group_cn"` → `"group_name"`
+    - Field notes (lines 584-589): "from AD `manager` DN" → "from
+      external provider's manager reference"; "AD group mappings" →
+      "external group mappings"
 
 12. **Admin API endpoints**:
     - Update User (lines 607-641): "AD user" → "external user";
       "`ad_object_guid IS NOT NULL`" → "`external_id IS NOT NULL`";
       `USER_AD_FIELD_READONLY` → `USER_EXTERNAL_FIELD_READONLY`;
       "managed by Active Directory" → "managed by external identity
-      provider"
+      provider"; "AD User Data Ownership" → "External User Data
+      Ownership"
     - Set User Roles (lines 647-694): "`ad_group_cn != '_manual'`" →
       "`group_name != '_manual'`"; `USER_AD_ROLE_PROTECTED` →
       `USER_EXTERNAL_ROLE_PROTECTED`; "Cannot remove AD-derived role"
@@ -637,7 +746,8 @@ When this spec is enabled and finalized:
 14. **Business Rules** (lines 913-941): "`ad_object_guid = NULL`" →
     "`external_id = NULL`"; ref to `ad-integration.md` →
     `identity-provisioning.md`; "`ad_group_cn = '_manual'`" →
-    "`group_name = '_manual'`"
+    "`group_name = '_manual'`"; apply Global Prose Rule (covers
+    "AD-synced users" at line 916)
 
 15. **Cross-references** (line 1001): `ad-integration.md` →
     `identity-provisioning.md`
@@ -651,7 +761,9 @@ When this spec is enabled and finalized:
    external identity provider (see
    `docs/features/identity/identity-provisioning.md`)"; "`ad_object_guid
    IS NOT NULL`" → "`external_id IS NOT NULL`"; "`ad_object_guid =
-   NULL`" → "`external_id = NULL`"
+   NULL`" → "`external_id = NULL`"; apply Global Prose Rule (covers
+   "managed by Active Directory" at line 15, "AD-synced users" at
+   line 19)
 
 2. **Configuration table** (line 47): "matched against `username` for
    AD-synced users" → "matched against `username` for externally-
@@ -677,6 +789,8 @@ When this spec is enabled and finalized:
      lowercase"
    - "AD `sAMAccountName` is inherently case-insensitive" → "provider
      usernames may be case-insensitive"
+   - Apply Global Prose Rule (covers "AD-synced user" at line 371,
+     "(for AD users)" at line 397)
 
 5. **No auto-provisioning** (lines 399-413): "created by the LDAP sync
    process" → "created by the external provisioning process"; "managed
@@ -705,6 +819,13 @@ When this spec is enabled and finalized:
 2. **Login behavior step 8** (line 67): "`ad_object_guid IS NOT NULL`
    (AD user)" → "`external_id IS NOT NULL` (external user)"; "AD users
    cannot use local login" → "External users cannot use local login"
+
+2b. **Error responses and security prose** (lines 94, 107, 213):
+    - Line 94: "inactive user, AD user, no password set" → "inactive
+      user, external user, no password set"
+    - Line 107: "inactive user, AD user)" → "inactive user, external
+      user)"
+    - Line 213: "handles AD user check" → "handles external user check"
 
 3. **Password Storage** (lines 114-119): "NULL for AD users (who
    authenticate via id.suse.com and never have a local password)" →
@@ -1053,6 +1174,13 @@ repository-wide search, providing an additional safety net.
 - `objectGUID`
 - `MEMBEROF`
 - `anonymous bind`
+- `Active Directory` (prose reference)
+- `AD user` (with word boundary — prose reference)
+- `AD-derived` (prose reference)
+- `AD-synced` (prose reference)
+- `AD sync` (with space — prose reference, distinct from `ad_sync`)
+- `AD group` (with space — prose reference)
+- `AD attribute` (prose reference)
 
 **Expected result**: zero matches in `docs/` (excluding
 `docs/reviews/*.md` review artifacts which are historical and
