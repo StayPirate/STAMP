@@ -50,7 +50,7 @@ All AD-specific names are replaced with provider-neutral equivalents:
 | `ADUserFieldReadOnlyError` | `ExternalUserFieldReadOnlyError` | — |
 | `ADUserStatusReadOnlyError` | `ExternalUserStatusReadOnlyError` | — |
 | `ADUserPasswordError` | `ExternalUserPasswordError` | — |
-| `ADDerivedRoleError` | `DerivedRoleError` | Drops "AD" — applies to any external derivation |
+| `ADDerivedRoleError` | `ExternalDerivedRoleError` | — |
 | `USER_AD_STATUS_READONLY` | `USER_EXTERNAL_STATUS_READONLY` | Error code |
 | `USER_AD_ROLE_PROTECTED` | `USER_EXTERNAL_ROLE_PROTECTED` | Error code |
 | `USER_AD_FIELD_READONLY` | `USER_EXTERNAL_FIELD_READONLY` | Error code |
@@ -107,6 +107,9 @@ change semantics:
 | "AD Active Status Ownership" | "External Active Status Ownership" |
 | "AD User Data Ownership" | "External User Data Ownership" |
 | "AD derivation" | "External derivation" |
+| "LDAP sync" (prose, with space) | "external sync" |
+| "LDAP sync fetcher" | "external sync process" |
+| "directory sync" | "external sync" |
 
 Context-sensitive exceptions (NOT replaced by this rule):
 - `"ad_sync"` as a JSON value (e.g., `"source": "ad_sync"`) — handled
@@ -116,8 +119,8 @@ Context-sensitive exceptions (NOT replaced by this rule):
 - "AD" in column names (`ad_group_cn`, `ad_object_guid`) — handled by
   specific step substitutions
 
-This rule ensures no prose-level AD references survive within any
-modified range. Step 28 (verification sweep) confirms completeness
+This rule ensures no prose-level AD or LDAP references survive within
+any modified range. Step 28 (verification sweep) confirms completeness
 after execution.
 
 ### Step 1 — Create `docs/features/identity/identity-provisioning.md`
@@ -427,7 +430,7 @@ When this spec is enabled and finalized:
     - Business rule 2 (398-401): "AD-derived role protection" →
       "External-derived role protection"; "`ad_group_cn != '_manual'`"
       → "`group_name != '_manual'`"; "`ADDerivedRoleError`" →
-      "`DerivedRoleError`"; "LDAP sync" → "external sync"; "AD-derived
+      "`ExternalDerivedRoleError`"; "LDAP sync" → "external sync"; "AD-derived
       roles" → "externally-derived roles"
     - Behavior (403, 410): "`(user_id, role, ad_group_cn)`" →
       "`(user_id, role, group_name)`"; "`(role, ad_group_cn)`" →
@@ -439,7 +442,10 @@ When this spec is enabled and finalized:
     of AD group members" → "current set of group members"; "all bulk
     role operations triggered by AD group membership" → "all bulk role
     operations triggered by external group membership"; "called by
-    the LDAP sync fetcher" → "called by the external sync process";
+    the LDAP sync fetcher" → "called by the external sync process
+    when external provisioning is active (see
+    `identity-provisioning.md`). During the local-only phase, this
+    function has no automated caller";
     "User IDs currently in the AD group" → "User IDs currently in
     the group"
 
@@ -493,7 +499,7 @@ When this spec is enabled and finalized:
     - `ADUserStatusReadOnlyError` → `ExternalUserStatusReadOnlyError`
       | 409 | `USER_EXTERNAL_STATUS_READONLY` | "Cannot manually
       activate/deactivate an external user"
-    - `ADDerivedRoleError` → `DerivedRoleError` | 409 |
+    - `ADDerivedRoleError` → `ExternalDerivedRoleError` | 409 |
       `USER_EXTERNAL_ROLE_PROTECTED` | "Cannot manually modify
       externally-derived roles"
     - `ADUserFieldReadOnlyError` → `ExternalUserFieldReadOnlyError` |
@@ -535,7 +541,7 @@ When this spec is enabled and finalized:
 4. **Notes after Endpoint Permission Map** (lines 505-507): "AD users
    are created by the LDAP directory sync (see
    [ad-integration](ad-integration.md#ldap-sync-fetcher))" → "External
-   users are created by the external provisioning process (see
+   users are created by the external sync process (see
    [identity-provisioning](identity-provisioning.md)); local users are
    created by admins via CLI (see
    [user-management](user-management.md#cli-commands))"
@@ -656,7 +662,7 @@ When this spec is enabled and finalized:
    passwords, or create them manually."
    Lines 26-27: "bypassing the LDAP sync process. They are
    functionally identical to AD-synced users" → "bypassing the
-   external provisioning process. They are functionally identical to
+   external sync process. They are functionally identical to
    externally-provisioned users"
 
 3. **`manage-user create`** (line 93): `ad_object_guid = None` →
@@ -777,7 +783,7 @@ When this spec is enabled and finalized:
    - "`ad_object_guid IS NOT NULL`" → "`external_id IS NOT NULL`"
    - "The `sync_ldap_directory` fetcher imports users from SUSE Active
      Directory and stores their `sAMAccountName` as `username`" → "The
-     external provisioning process imports users and stores their
+     external sync process imports users and stores their
      provider username as `username`"
    - "`id.suse.com` uses the same AD as its identity source, so its
      `sub` claim corresponds to the `sAMAccountName`" → "`id.suse.com`
@@ -793,7 +799,7 @@ When this spec is enabled and finalized:
      "(for AD users)" at line 397)
 
 5. **No auto-provisioning** (lines 399-413): "created by the LDAP sync
-   process" → "created by the external provisioning process"; "managed
+   process" → "created by the external sync process"; "managed
    AD groups" → "external groups"; "LDAP sync as the single source of
    truth for AD user provisioning" → "external provisioning as the
    single source of truth for external user accounts"; cross-ref →
@@ -1181,6 +1187,7 @@ repository-wide search, providing an additional safety net.
 - `AD sync` (with space — prose reference, distinct from `ad_sync`)
 - `AD group` (with space — prose reference)
 - `AD attribute` (prose reference)
+- `#ad-` (stale markdown anchor fragments referencing renamed sections)
 
 **Expected result**: zero matches in `docs/` (excluding
 `docs/reviews/*.md` review artifacts which are historical and
