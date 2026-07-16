@@ -239,7 +239,7 @@ Response:
       { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "email": "..." },
       { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "email": "..." }
     ],
-    "affected_count": 22,
+    "affected_users_count": 22,
     "unknown_users": ["newemployee"]
   }
 }
@@ -251,7 +251,7 @@ the last sync). These users will receive the role at the next sync.
 
 **Zero-member group**: if the group exists at the provider but
 currently has zero members, the response is valid with
-`affected_users: []`, `unknown_users: []`, and `affected_count: 0`.
+`affected_users: []`, `unknown_users: []`, and `affected_users_count: 0`.
 This is not an error — an admin may create a role mapping for a group
 that is not yet populated, in preparation for future members.
 
@@ -477,15 +477,12 @@ When this spec is enabled and finalized:
 - docs/api-spec.md — PROVISIONING_UNAVAILABLE, ROLE_MAPPING_* error codes
 ```
 
-### Step 2 — Delete `docs/features/identity/ad-integration.md`
+### Step 2 — (moved to Step 30)
 
-**Action**: delete the file entirely.
-
-**Execution order**: this deletion MUST be executed AFTER all other
-specification modifications (Steps 3–27) are complete. During execution
-of those steps, `ad-integration.md` remains available as a reference for
-verifying the generalized content. The step number is preserved to avoid
-renumbering the plan.
+The deletion of `docs/features/identity/ad-integration.md` has been
+moved to Step 30, after the verification sweep and cross-check. During
+execution of Steps 3–27, `ad-integration.md` remains available as a
+reference for verifying the generalized content.
 
 ### Step 3 — Generalize `docs/data-model.md`
 
@@ -669,15 +666,17 @@ renumbering the plan.
       protection"
 
 12. **`sync_role_mapping()` preamble** (lines 445-455): "current set
-    of AD group members" → "current set of group members"; "all bulk
-    role operations triggered by AD group membership" → "all bulk role
-    operations triggered by external group membership"; "called by
-    the LDAP sync fetcher" → "called by the external sync process
-    when external provisioning is active (see
-    `identity-provisioning.md`). During the local-only phase, this
-    function has no automated caller";
-    "User IDs currently in the AD group" → "User IDs currently in
-    the group"
+     of AD group members" → "current set of group members"; "all bulk
+     role operations triggered by AD group membership" → "all bulk role
+     operations triggered by external group membership"; "called by
+     the LDAP sync fetcher (step 5) and by the `POST
+     /api/v1/admin/role-mappings` endpoint when a new mapping is
+     created" → "called by the external sync process and by the Create
+     Role Mapping endpoint when a new mapping is created (see
+     `identity-provisioning.md`). During the local-only phase, this
+     function has no callers";
+     "User IDs currently in the AD group" → "User IDs currently in
+     the group"
 
 13. **`sync_role_mapping()` parameters** (lines 456-461):
     "`ad_group_cn`" → "`group_name`"; description: "The AD group CN" →
@@ -806,6 +805,9 @@ renumbering the plan.
    - "`ad_group_cn = <group CN>`" → "`group_name = <group name>`"
    - "`ad_group_cn = '_manual'`" → "`group_name = '_manual'`"
    - "LDAP sync" → "external sync"
+   - "cannot be removed via UI or API" → "cannot be removed **per-user**
+     via UI or API (only via role mapping deletion or external sync
+     reconciliation)"
    - Cross-ref: `ad-integration.md` → `identity-provisioning.md`
    - Apply Global Prose Rule to entire range (covers "AD groups" at
      line 688, "AD group" at lines 700/703, "AD derivation" at line
@@ -1015,9 +1017,9 @@ renumbering the plan.
    "managed by Active Directory" at line 15, "AD-synced users" at
    line 19)
 
-2. **Configuration table** (line 47): "matched against `username` for
-   AD-synced users" → "matched against `username` for externally-
-   provisioned users"
+2. **`SSO_USER_CLAIM` description prose** (line 47): "matched against
+   `username` for AD-synced users" → "matched against `username` for
+   externally-provisioned users"
 
 3. **Callback behavior** (lines 271-273): "`ad_object_guid IS NOT
    NULL`" → "`external_id IS NOT NULL`"; "AD-synced user" → "externally
@@ -1150,9 +1152,9 @@ api-key-service.md             API key lifecycle management
      services (HTTP, AMQP). Combined with system CA bundle at runtime."
      (removes "LDAP," from the protocol list)
 
-2. **SSO section** (line 129): "matched against `username` for
-   AD-synced users" → "matched against `username` for externally-
-   provisioned users"
+2. **SSO table, `SSO_USER_CLAIM` row** (line 129): "matched against
+   `username` for AD-synced users" → "matched against `username` for
+   externally-provisioned users"
 
 ### Step 13 — Remove LDAP from `docs/architecture.md`
 
@@ -1296,7 +1298,7 @@ references, "Active" status, spec links) are modified. SUSEID
 1. **Source-component enum table** (line 294): remove the `ldap` row
    entirely.
 
-2. **Naming example table** (line 672): remove the
+2. **Fetchers without `catch_up()` table** (line 672): remove the
    `sync_ldap_directory` row.
 
 3. **Hostname example** (line 805): remove `pan.suse.de` from the list
@@ -1368,6 +1370,12 @@ references, "Active" status, spec links) are modified. SUSEID
 5. **Example Data table** (line 38): remove the "LDAP DNs" row (no
    longer relevant) OR replace with a generic "External IDs" row if
    needed as a placeholder pattern.
+
+6. **`.opencode/prompts/spec.md`** (line 92): "(AD/LDAP/SSO,
+   cascade/chain/flattening, ticket status categories, etc.)" →
+   "(External Identity/SSO, cascade/chain/flattening, ticket status
+   categories, etc.)" — this file references the terminology section by
+   name and must track the rename from point 1 above.
 
 ### Step 22 — Generalize `docs/features/packages/package-bugowner.md`
 
@@ -1471,6 +1479,7 @@ repository-wide search, providing an additional safety net.
 - `AD_UNAVAILABLE`
 - `ROLE_MAPPING_INVALID_GROUP_CN`
 - `ADUser` (as error class prefix)
+- `ADDerived` (as error class prefix — catches `ADDerivedRoleError`)
 - `USER_AD_`
 - `ad_sync` (JSON value in audit event detail)
 - `EMPLOYEESTATUS`
@@ -1485,17 +1494,56 @@ repository-wide search, providing an additional safety net.
 - `AD sync` (with space — prose reference, distinct from `ad_sync`)
 - `AD group` (with space — prose reference)
 - `AD attribute` (prose reference)
-- `#ad-` (stale markdown anchor fragments referencing renamed sections)
+- `ad-integration` (stale filename references and anchor fragments)
+- `cn=` (LDAP DN notation in JSON values, e.g., `"mapping": "cn=..."`)
+- `": "ad"` (residual `"source": "ad"` JSON values)
+- `--type ad` (residual CLI filter parameter)
 
-**Expected result**: zero matches in `docs/` (excluding
+**Expected result**: zero matches in `docs/` and `.opencode/` (excluding
 `docs/reviews/*.md` review artifacts which are historical and
-untracked). If any matches remain, resolve them before proceeding.
+untracked). The `backend/Dockerfile` comment (line 16) is addressed
+separately in Scope Exclusions. If any other matches remain, resolve
+them before proceeding.
 
 **Exception**: `docs/reviews/` artifacts are historical findings and do
 not need updating — they document past review results against the
 old spec. They are untracked by git and do not affect implementation.
 
-### Step 29 — Run reviewer agents
+### Step 29 — Cross-check plan execution
+
+**Action**: verify that every step of this plan was executed correctly
+and that nothing was missed.
+
+**Procedure**:
+
+1. List all files modified during execution (e.g., `git diff
+   --name-only`) and compare against the set of files targeted by
+   Steps 1, 3–27. Every file mentioned in the plan must appear in the
+   diff. Any file in the diff but NOT in the plan warrants
+   investigation (unintended edit)
+2. For each step in the plan, verify that the step's described action
+   was performed. Check at minimum:
+   - Step 1: `docs/features/identity/identity-provisioning.md` exists
+     with the specified content
+   - Steps 3–27: the target file was modified (present in the diff)
+   - Step 28: the verification sweep was run and produced zero matches
+     (or all matches were resolved)
+3. Verify that `docs/features/identity/ad-integration.md` still exists
+   at this point (not deleted prematurely — deletion is Step 30)
+4. If any step was missed or incompletely executed, resolve the gap
+   before proceeding to Step 30
+
+### Step 30 — Delete `docs/features/identity/ad-integration.md`
+
+**Action**: delete the file entirely.
+
+This deletion is performed after all other specification modifications
+(Steps 3–27), the verification sweep (Step 28), and the cross-check
+(Step 29) are complete. During execution of those steps,
+`ad-integration.md` remained available as a reference for verifying the
+generalized content.
+
+### Step 31 — Run reviewer agents
 
 Run the following reviewer agents on the relevant specs to verify the
 changes were applied correctly and without introducing problems:
@@ -1512,7 +1560,7 @@ changes were applied correctly and without introducing problems:
 Address any issues found by reviewers before considering the plan
 complete.
 
-### Step 30 — Delete this draft
+### Step 32 — Delete this draft
 
 **Action**: delete `docs/drafts/ldap-removal-plan.md`.
 
@@ -1527,6 +1575,10 @@ are the source of truth.
 - **`docs/reviews/*.md`** (review artifacts): historical, untracked by
   git, do not affect implementation. Not modified.
 - **Implementation code**: does not exist. No code changes.
+- **`backend/Dockerfile`** (line 16): comment mentions "LDAPS". After
+  this plan, reword to "Install SUSE internal CA certificate for HTTPS,
+  AMQP, and other internal TLS connections". This is a comment-only
+  change to be applied when this plan is executed.
 - **Database migrations**: do not exist. No migrations.
 - **CI/CD workflows**: no changes (spec-only modification).
 - **`docs/drafts/ideas.md`**: line 12 references "group-role mappings"
