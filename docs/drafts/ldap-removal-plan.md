@@ -55,6 +55,7 @@ All AD-specific names are replaced with provider-neutral equivalents:
 | `USER_AD_ROLE_PROTECTED` | `USER_EXTERNAL_ROLE_PROTECTED` | Error code |
 | `USER_AD_FIELD_READONLY` | `USER_EXTERNAL_FIELD_READONLY` | Error code |
 | `USER_AD_PASSWORD_FORBIDDEN` | `USER_EXTERNAL_PASSWORD_FORBIDDEN` | Error code |
+| `USER_AD_LOCKOUT` | removed | Orphaned code — no consumer in any feature spec (see Finding 2) |
 | `AD_UNAVAILABLE` | `PROVISIONING_UNAVAILABLE` | Resource-unavailable code (deferred) |
 | `ROLE_MAPPING_GROUP_NOT_FOUND` | unchanged | Still valid for any external group |
 | `ROLE_MAPPING_INVALID_GROUP_CN` | `ROLE_MAPPING_INVALID_GROUP_NAME` | Drops "CN" (LDAP term) |
@@ -364,47 +365,66 @@ When this spec is enabled and finalized:
       provider-specific"
     - Step 4: "AD users"→"external users"
 
-11. **`update_roles()` business rules** (line 399-401): "AD-derived
-    role protection" → "External-derived role protection";
-    "`ad_group_cn != '_manual'`" → "`group_name != '_manual'`";
-    "`ADDerivedRoleError`" → "`DerivedRoleError`"; "LDAP sync" →
-    "external sync"
+11. **`update_roles()` parameters and business rules** (lines 383-415):
+    - Parameters (383-384): "Roles to add as (role, ad_group_cn)" →
+      "Roles to add as (role, group_name)"; same for `remove`
+    - Business rule 2 (398-401): "AD-derived role protection" →
+      "External-derived role protection"; "`ad_group_cn != '_manual'`"
+      → "`group_name != '_manual'`"; "`ADDerivedRoleError`" →
+      "`DerivedRoleError`"; "LDAP sync" → "external sync"
+    - Behavior (403, 410): "`(user_id, role, ad_group_cn)`" →
+      "`(user_id, role, group_name)`"; "`(role, ad_group_cn)`" →
+      "`(role, group_name)`"
+    - Step 3 (415): "AD-derived protection" → "external-derived
+      protection"
 
-12. **`sync_role_mapping()` parameters** (lines 456-461):
+12. **`sync_role_mapping()` preamble** (lines 445-455): "current set
+    of AD group members" → "current set of group members"; "all bulk
+    role operations triggered by AD group membership" → "all bulk role
+    operations triggered by external group membership"; "called by
+    the LDAP sync fetcher" → "called by the external sync process";
+    "User IDs currently in the AD group" → "User IDs currently in
+    the group"
+
+13. **`sync_role_mapping()` parameters** (lines 456-461):
     "`ad_group_cn`" → "`group_name`"; description: "The AD group CN" →
     "The external group name"
 
-13. **`sync_role_mapping()` behavior** (lines 463-496): all "`role`
+14. **`sync_role_mapping()` behavior** (lines 463-496): all "`role`
     and `ad_group_cn`" → "`role` and `group_name`"; "AD group members"
-    → "group members"; "`ad_group_cn`" → "`group_name`" throughout
+    → "group members"; "`ad_group_cn`" → "`group_name`" throughout;
+    `"source": "ad_sync"` → `"source": "external_sync"` (line 488)
 
-14. **`delete_role_mapping_roles()` parameters** (lines 516-519):
+15. **`delete_role_mapping_roles()` parameters** (lines 516-519):
     "`ad_group_cn`" → "`group_name`"
 
-15. **`delete_role_mapping_roles()` behavior** (lines 523-541): all
+16. **`delete_role_mapping_roles()` behavior** (lines 523-541): all
     "`ad_group_cn`" → "`group_name`"
 
-16. **`deactivate_user()` preconditions** (lines 566-573):
+17. **`deactivate_user()` preconditions** (lines 566-573):
     "`user.ad_object_guid IS NOT NULL`" → "`user.external_id IS NOT
     NULL`"; "`ADUserStatusReadOnlyError`" →
     "`ExternalUserStatusReadOnlyError`"; "directory sync" → "external
     sync"
 
-17. **`reactivate_user()` preconditions** (lines 630-633): same
+18. **`deactivate_user()` IdentityAuditEvent** (line 607): "`NULL`
+    for AD sync" → "`NULL` for external sync"
+
+19. **`reactivate_user()` preconditions** (lines 630-633): same
     substitutions as deactivate.
 
-18. **`reset_password()` preconditions** (lines 668-671):
+20. **`reset_password()` preconditions** (lines 668-671):
     "`ad_object_guid`" → "`external_id`"; "`ADUserPasswordError`" →
     "`ExternalUserPasswordError`"; "AD user" → "external user";
     "authenticate via id.suse.com" → "authenticate via SSO"
 
-19. **Concurrency Considerations** (lines 786-803): "LDAP sync" →
+21. **Concurrency Considerations** (lines 786-803): "LDAP sync" →
     "external sync"; "manual actions use `ad_group_cn = '_manual'`
     while LDAP sync uses the actual AD group CN" → "manual actions use
     `group_name = '_manual'` while external sync uses the actual group
     name"
 
-20. **Service Exceptions table** (lines 820-833):
+22. **Service Exceptions table** (lines 820-833):
     - `ADUserStatusReadOnlyError` → `ExternalUserStatusReadOnlyError`
       | 409 | `USER_EXTERNAL_STATUS_READONLY` | "Cannot manually
       activate/deactivate an external user"
@@ -418,11 +438,11 @@ When this spec is enabled and finalized:
       `USER_EXTERNAL_PASSWORD_FORBIDDEN` | "Cannot set password for
       an external user"
 
-21. **System-internal exceptions** (line 839): "LDAP sync: logged as
+23. **System-internal exceptions** (line 839): "LDAP sync: logged as
     warning, user skipped" → "External sync: logged as warning, user
     skipped"
 
-22. **Relationship table** (line 847): `ad-integration.md` →
+24. **Relationship table** (line 847): `ad-integration.md` →
     `identity-provisioning.md`; "LDAP sync fetcher calls..." →
     "External sync process calls..."
 
@@ -522,7 +542,7 @@ When this spec is enabled and finalized:
    Directory via LDAP)" → "external users (provisioned from an external
    identity provider)"
 
-2. **Purpose prose** (lines 21-24): "AD users are provisioned and
+2. **Purpose prose** (lines 21-27): "AD users are provisioned and
    maintained by the LDAP sync process (see
    `docs/features/identity/ad-integration.md`). Administrators can
    modify their roles, but cannot deactivate/reactivate them (active
@@ -533,8 +553,15 @@ When this spec is enabled and finalized:
    can modify their roles, but cannot deactivate/reactivate them
    (active status is managed exclusively by external sync), set
    passwords, or create them manually."
+   Lines 26-27: "bypassing the LDAP sync process. They are
+   functionally identical to AD-synced users" → "bypassing the
+   external provisioning process. They are functionally identical to
+   externally-provisioned users"
 
-3. **`manage-user update`** (lines 117-236):
+3. **`manage-user create`** (line 93): `ad_object_guid = None` →
+   `external_id = None`
+
+4. **`manage-user update`** (lines 117-236):
    - "AD users have their identity fields managed exclusively by
      directory sync" → "External users have their identity fields
      managed exclusively by external sync"
@@ -543,62 +570,76 @@ When this spec is enabled and finalized:
      "managed by an external identity provider"
    - "Cannot reactivate AD users" → "Cannot reactivate external users"
 
-4. **`manage-user deactivate`** (lines 248-319):
+5. **`manage-user deactivate`** (lines 248-319):
    - "`ad_object_guid IS NOT NULL`" → "`external_id IS NOT NULL`"
    - "Cannot deactivate AD users" → "Cannot deactivate external users"
    - "This is consistent with LDAP sync deactivation behavior" →
      "This is consistent with external sync deactivation behavior"
 
-5. **`manage-user set-password`** (lines 321-363):
+6. **`manage-user set-password`** (lines 321-363):
    - "`ad_object_guid = NULL`" → "`external_id = NULL`"
    - "Cannot set password for AD user" → "Cannot set password for
      external user"
    - "AD users authenticate via id.suse.com" → "External users
      authenticate via SSO"
 
-6. **`manage-user unlock`** (lines 365-413):
+7. **`manage-user unlock`** (lines 365-413):
    - "`ad_object_guid IS NOT NULL`" → "`external_id IS NOT NULL`"
    - "AD user" → "external user"
    - "Local login lockout does not apply to SSO authentication" →
      unchanged (still correct)
 
-7. **`manage-user list`** (lines 415-462): `--type local|ad` → `--type
+8. **`manage-user list`** (lines 415-462): `--type local|ad` → `--type
    local|external`; TYPE column in output example: `ad` → `external`
 
-8. **`manage-user show`** (lines 464-511): "Type: local" unchanged,
+9. **`manage-user show`** (lines 464-511): "Type: local" unchanged,
    AD group CN references → "group name"
 
-9. **Public API endpoints — Get User response** (lines 547-589):
-   - `"source": "ad | local"` → `"source": "external | local"`
-   - `"ad_object_guid": "uuid | null"` → `"external_id": "uuid | null"`
-   - Field notes: `source` derived `"ad"` → `"external"`; "AD
-     `objectGUID`" → "External provider stable UUID"
-   - `"ad_group_cn"` → `"group_name"`
+10. **Public API endpoints — List Users** (line 534): `type` query
+    parameter values: `local`, `ad` → `local`, `external`
 
-10. **Admin API endpoints**:
+11. **Public API endpoints — Get User response** (lines 547-589):
+    - `"source": "ad | local"` → `"source": "external | local"`
+    - `"ad_object_guid": "uuid | null"` → `"external_id": "uuid | null"`
+    - Field notes: `source` derived `"ad"` → `"external"`; "AD
+      `objectGUID`" → "External provider stable UUID"
+    - `"ad_group_cn"` → `"group_name"`
+
+12. **Admin API endpoints**:
     - Update User (lines 607-641): "AD user" → "external user";
       "`ad_object_guid IS NOT NULL`" → "`external_id IS NOT NULL`";
       `USER_AD_FIELD_READONLY` → `USER_EXTERNAL_FIELD_READONLY`;
       "managed by Active Directory" → "managed by external identity
       provider"
+    - Set User Roles (lines 647-694): "`ad_group_cn != '_manual'`" →
+      "`group_name != '_manual'`"; `USER_AD_ROLE_PROTECTED` →
+      `USER_EXTERNAL_ROLE_PROTECTED`; "Cannot remove AD-derived role"
+      → "Cannot remove externally-derived role"; "AD group
+      '{ad_group_cn}'" → "external group '{group_name}'"; "via AD
+      derivation" → "via external derivation"; "`ad_group_cn =
+      '_manual'`" → "`group_name = '_manual'`"
+    - Reset User Password (lines 696-737): "AD user" → "external
+      user"; `USER_AD_PASSWORD_FORBIDDEN` →
+      `USER_EXTERNAL_PASSWORD_FORBIDDEN`; "Cannot set password for AD
+      user" → "Cannot set password for external user"
     - Deactivate User (lines 739-768): `USER_AD_STATUS_READONLY` →
       `USER_EXTERNAL_STATUS_READONLY`; "Cannot deactivate AD users" →
       "Cannot deactivate external users"
     - Reactivate User (lines 774-798): same substitution
     - Get Deactivation Impact (lines 800-873): same substitution
 
-11. **Interaction with LDAP Sync section** (lines 900-911) → rename to
+13. **Interaction with LDAP Sync section** (lines 900-911) → rename to
     **"Interaction with External Provisioning"**: "`ad_object_guid IS
     NOT NULL`" → "`external_id IS NOT NULL`"; "`ad_object_guid = NULL`"
     → "`external_id = NULL`"; "sync process" → "external sync process";
     "AD-derived roles" → "externally-derived roles"
 
-12. **Business Rules** (lines 913-941): "`ad_object_guid = NULL`" →
+14. **Business Rules** (lines 913-941): "`ad_object_guid = NULL`" →
     "`external_id = NULL`"; ref to `ad-integration.md` →
     `identity-provisioning.md`; "`ad_group_cn = '_manual'`" →
     "`group_name = '_manual'`"
 
-13. **Cross-references** (line 1001): `ad-integration.md` →
+15. **Cross-references** (line 1001): `ad-integration.md` →
     `identity-provisioning.md`
 
 ### Step 8 — Generalize `docs/features/identity/sso-authentication.md`
@@ -864,11 +905,21 @@ api-key-service.md             API key lifecycle management
    description: "Role mapping operations" → unchanged. Specific codes:
    `ROLE_MAPPING_INVALID_GROUP_CN` → `ROLE_MAPPING_INVALID_GROUP_NAME`
 
-2. **Resource-unavailable codes** (line 183): `AD_UNAVAILABLE | Active
+2. **Error Code Categories table** (line 155): `USER_*` row — rename
+   4 codes and remove 1 orphaned code:
+   - `USER_AD_STATUS_READONLY` → `USER_EXTERNAL_STATUS_READONLY`
+   - `USER_AD_FIELD_READONLY` → `USER_EXTERNAL_FIELD_READONLY`
+   - `USER_AD_PASSWORD_FORBIDDEN` → `USER_EXTERNAL_PASSWORD_FORBIDDEN`
+   - `USER_AD_ROLE_PROTECTED` → `USER_EXTERNAL_ROLE_PROTECTED`
+   - `USER_AD_LOCKOUT` → **remove entirely** (orphaned — registered in
+     commit 431b8ca as part of a batch expansion but never referenced by
+     any endpoint or service exception in any feature spec)
+
+3. **Resource-unavailable codes** (line 183): `AD_UNAVAILABLE | Active
    Directory (via LDAP)` → `PROVISIONING_UNAVAILABLE | External
    identity provider`
 
-3. **Username mutability rationale** (lines 593, 630): "via AD sync" →
+4. **Username mutability rationale** (lines 593, 630): "via AD sync" →
    "via external sync"
 
 ### Step 21 — Generalize `docs/conventions.md`
@@ -996,6 +1047,7 @@ repository-wide search, providing an additional safety net.
 - `ROLE_MAPPING_INVALID_GROUP_CN`
 - `ADUser` (as error class prefix)
 - `USER_AD_`
+- `ad_sync` (JSON value in audit event detail)
 - `EMPLOYEESTATUS`
 - `sAMAccountName`
 - `objectGUID`
