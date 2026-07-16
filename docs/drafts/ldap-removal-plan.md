@@ -167,7 +167,7 @@ remaining.]
 |---|---|---|
 | `external_id` | Provider's stable UUID | Immutable matching key |
 | `username` | Provider's username/uid | Updated on every sync if changed |
-| `full_name` | Display name (cn) | — |
+| `full_name` | Display name | — |
 | `email` | Primary email | Normalized to lowercase |
 | `active` | Active/inactive status | Drives deactivation side effects |
 | `manager_id` | Manager's username/uid | Resolved to User FK |
@@ -178,29 +178,240 @@ remaining.]
 These endpoints are part of the deferred external provisioning feature.
 They will be implemented when this specification is activated.
 
-[Generalized from ad-integration.md, with these changes:
-- "AD group CN" → "external group name"
-- "Queries AD live" → "queries the external provider" (mechanism TBD)
-- Validation: group_name characters valid for the provider
-- Error PROVISIONING_UNAVAILABLE replaces AD_UNAVAILABLE
-- All other semantics (immediate application, transaction model,
-  self-admin guard, audit events) remain identical]
-
 ### List Role Mappings
+
+```
 GET /api/v1/admin/role-mappings
-[Same contract as current, with group_name replacing ad_group_cn]
+```
+
+Admin only (`manage_role_mappings` capability). Returns all configured
+role mappings.
+
+**Pagination**: not paginated. The number of role mappings is naturally
+bounded (one per external group × role combination, expected <30
+entries). The full list is always returned.
+
+**Sorting**: results are returned in insertion order (`created_at`
+ascending). No client-side sorting parameters are supported (bounded
+dataset).
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "group_name": "SecurityTeam",
+      "role": "vulnerability_analyst",
+      "created_by": { "id": "uuid", "username": "admin1", "full_name": "...", "active": true },
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
+```
 
 ### Preview Role Mapping
+
+```
 POST /api/v1/admin/role-mappings/preview
-[Requires live query to external provider — mechanism TBD with SCIM]
+```
+
+Admin only. Queries the external provider to show which users would be
+affected by a proposed mapping. Does not persist anything. The query
+mechanism depends on the provider (SCIM read API or locally-cached
+data from the last reconciliation sync — see Open Questions).
+
+Request body:
+```json
+{
+  "group_name": "SecurityTeam",
+  "role": "vulnerability_analyst"
+}
+```
+
+Response:
+```json
+{
+  "data": {
+    "group_name": "SecurityTeam",
+    "role": "vulnerability_analyst",
+    "affected_users": [
+      { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "email": "..." },
+      { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "email": "..." }
+    ],
+    "affected_count": 22,
+    "unknown_users": ["newemployee"]
+  }
+}
+```
+
+The `unknown_users` field lists provider usernames found in the group
+but not yet present in the User table (e.g., users provisioned after
+the last sync). These users will receive the role at the next sync.
+
+**Zero-member group**: if the group exists at the provider but
+currently has zero members, the response is valid with
+`affected_users: []`, `unknown_users: []`, and `affected_count: 0`.
+This is not an error — an admin may create a role mapping for a group
+that is not yet populated, in preparation for future members.
+
+**Validation**: `group_name` MUST conform to the provider's group name
+character rules (to be defined when this spec is activated). The
+character set from the AD era (letters, numbers, spaces, hyphens,
+underscores, dots; 256-char max) serves as a reference starting point.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 422 | `ROLE_MAPPING_INVALID_GROUP_NAME` | `group_name` contains characters invalid for the provider |
+| 503 | `PROVISIONING_UNAVAILABLE` | External provider is unreachable or timed out |
 
 ### Create Role Mapping
+
+```
 POST /api/v1/admin/role-mappings
-[Same contract, generalized; group existence check mechanism TBD]
+```
+
+Admin only. Creates a new role mapping. **Roles are applied
+immediately** to all matching users (not deferred to the next sync).
+
+Request body:
+```json
+{
+  "group_name": "SecurityTeam",
+  "role": "vulnerability_analyst"
+}
+```
+
+**Validation**:
+- 422 / `ROLE_MAPPING_INVALID_GROUP_NAME` if `group_name` contains
+  characters invalid for the provider (character set TBD)
+- 422 / `VALIDATION_ERROR` if `group_name` exceeds 256 characters
+- 422 / `ROLE_MAPPING_GROUP_NOT_FOUND` if the group does not exist at
+  the provider (queries provider live to verify)
+- 409 / `RESOURCE_CONFLICT` if a mapping for the same (group_name,
+  role) already exists
+- 503 / `PROVISIONING_UNAVAILABLE` if the provider is unreachable
+
+Response (`201 Created`):
+```json
+{
+  "data": {
+    "id": "uuid",
+    "group_name": "SecurityTeam",
+    "role": "vulnerability_analyst",
+    "created_by": { "id": "uuid", "username": "admin1", "full_name": "Admin User", "active": true },
+    "created_at": "2026-05-06T12:00:00Z",
+    "affected_users_count": 22
+  }
+}
+```
+
+A single group may have multiple mappings (one per role). For example,
+group "SecurityTeam" can be mapped to both `admin` and
+`vulnerability_analyst` simultaneously. Each mapping operates
+independently — creating or deleting one does not affect the other.
+
+**Processing** (all steps within a **single database transaction**):
+1. Query the external provider for members of the specified group. If
+   the provider is unreachable, return 503 /
+   `PROVISIONING_UNAVAILABLE` — no records are created
+2. Create the `RoleMapping` record
+3. Call `user_service.sync_role_mapping(role, group_name,
+   member_user_ids, acting_user_id=acting_admin.id)` where
+   `member_user_ids` is the set of User IDs matching the group
+   members. The service creates `UserRole` records for each member
+   and returns `(added_count, removed_count)` (see
+   `docs/features/identity/user-service.md`). For a new mapping,
+   `removed_count` is always 0
+4. Create `IdentityAuditEvent` with
+   `event_type = role_mapping_created` via
+   `IdentityAuditLog.log_event()` — `user_id` = admin,
+   `target_user_id = NULL`,
+   `new_value` = `"{group_name} -> {role}"`,
+   `detail` = `{"group_name": "...", "role": "...", "affected_users": N}`
+5. Commit and return. `affected_users_count` = `added_count` (only
+   newly created UserRole records, not pre-existing ones)
 
 ### Delete Role Mapping
+
+```
 DELETE /api/v1/admin/role-mappings/{id}
-[Same contract, no external query needed — uses local UserRole records]
+```
+
+Admin only. Removes a role mapping and revokes the corresponding role
+from all affected users. Identifies affected users from local
+`UserRole` records matching the mapping's `group_name` and `role`.
+
+Returns **200** (not 204) because the deletion has side effects (role
+revocation from affected users) that the admin needs to confirm in the
+response.
+
+Response (**200**):
+```json
+{
+  "data": {
+    "mapping": { "group_name": "SecurityTeam", "role": "vulnerability_analyst" },
+    "affected_users_count": 22,
+    "message": "Removed the 'vulnerability_analyst' role from 22 users."
+  }
+}
+```
+
+**Processing** (steps 2–4 within a single database transaction):
+1. Look up the `RoleMapping` record by ID — return 404 if not found
+2. Call `user_service.delete_role_mapping_roles(role, group_name,
+   acting_user_id=acting_admin.id)`. The service removes all
+   `UserRole` records tagged with this mapping's `(role, group_name)`
+   and returns `affected_users_count`. If the acting admin would lose
+   their only source of admin role, the service raises
+   `SelfRoleRemovalError`
+3. Delete the `RoleMapping` record
+4. Create `IdentityAuditEvent` with
+   `event_type = role_mapping_deleted` via
+   `IdentityAuditLog.log_event()` — `user_id` = admin,
+   `target_user_id = NULL`,
+   `old_value` = `"{group_name} -> {role}"`,
+   `detail` = `{"group_name": "...", "role": "...", "affected_users": N}`
+5. Return 200 with impact summary
+
+Note: users who also have the same role via a different group mapping
+or with `group_name = '_manual'` will retain the role.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `RESOURCE_NOT_FOUND` | Role mapping not found |
+| 409 | `USER_SELF_ROLE_REMOVAL` | Deleting this mapping would remove the acting user's only source of admin role (via `user_service.delete_role_mapping_roles()`) |
+
+## Behavioral Rules
+
+1. **Role mapping application is immediate**: when an admin creates or
+   deletes a role mapping, the roles are applied/revoked immediately —
+   not deferred to the next sync cycle
+2. **No minimum admin count enforcement**: the system does NOT prevent
+   role mapping deletions that would remove admin access from all
+   users. This is a deliberate design decision — CLI recovery
+   (`sentinel manage-user update --username <user> --add-role admin`)
+   is always available and is a sufficient mitigation. Adding a minimum
+   count enforcement was evaluated and rejected for simplicity
+3. **Self-admin guard (Delete only)**: an admin cannot delete a role
+   mapping if that would remove their own only source of admin role
+   (enforced by `user_service.delete_role_mapping_roles()`)
+
+## Concurrency
+
+If an admin creates a role mapping while a provisioning sync is in
+progress, the sync may not process the new mapping in its current
+cycle. This does not cause inconsistency: the Create endpoint applies
+roles immediately to all matching users. The next sync cycle will
+reconcile any users missed (e.g., users provisioned between the Create
+and the next sync).
+
+No locking mechanism is needed between role mapping CRUD and the sync
+process.
 
 ## Provisioning Mechanism (Placeholder)
 
@@ -269,6 +480,12 @@ When this spec is enabled and finalized:
 ### Step 2 — Delete `docs/features/identity/ad-integration.md`
 
 **Action**: delete the file entirely.
+
+**Execution order**: this deletion MUST be executed AFTER all other
+specification modifications (Steps 3–27) are complete. During execution
+of those steps, `ad-integration.md` remains available as a reference for
+verifying the generalized content. The step number is preserved to avoid
+renumbering the plan.
 
 ### Step 3 — Generalize `docs/data-model.md`
 
@@ -774,7 +991,13 @@ When this spec is enabled and finalized:
     "`external_id = NULL`"; ref to `ad-integration.md` →
     `identity-provisioning.md`; "`ad_group_cn = '_manual'`" →
     "`group_name = '_manual'`"; apply Global Prose Rule (covers
-    "AD-synced users" at line 916)
+    "AD-synced users" at line 916).
+    Lines 931-932: remove the sentence "This is consistent with the
+    LDAP sync behavior (see
+    `docs/features/identity/ad-integration.md`, Business Rule 6)"
+    entirely — the admin lockout behavior during external sync is
+    documented in `identity-provisioning.md` (Behavioral Rules) and
+    does not need a cross-reference from this context.
 
 15. **Cross-references** (line 1001): `ad-integration.md` →
     `identity-provisioning.md`
@@ -916,18 +1139,20 @@ api-key-service.md             API key lifecycle management
 
 **Changes**:
 
-1. **Delete the "LDAP Directory Sync" section** (lines 160-173)
-   entirely (the `LDAP_URI` variable and the note about custom
-   settings).
+1. **Restructure the "LDAP Directory Sync" section** (lines 160-173):
+   - Delete the `LDAP_URI` row from the table
+   - Delete the note about custom settings (lines 167-173)
+   - Delete the "## LDAP Directory Sync" section header
+   - **Relocate** `SUSE_CA_CERT_PATH` to a new section "## TLS /
+     Security" positioned between "IBS RabbitMQ Consumer" and "SMELT /
+     AIMAAS". The description becomes: "Path to SUSE internal CA
+     certificate for TLS validation of all connections to *.suse.de
+     services (HTTP, AMQP). Combined with system CA bundle at runtime."
+     (removes "LDAP," from the protocol list)
 
 2. **SSO section** (line 129): "matched against `username` for
    AD-synced users" → "matched against `username` for externally-
    provisioned users"
-
-3. `SUSE_CA_CERT_PATH` description (line 165): remove "LDAP," from the
-   list — becomes "Path to SUSE internal CA certificate for TLS
-   validation of all connections to *.suse.de services (HTTP, AMQP).
-   Combined with system CA bundle at runtime."
 
 ### Step 13 — Remove LDAP from `docs/architecture.md`
 
