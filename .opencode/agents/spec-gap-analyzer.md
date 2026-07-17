@@ -234,7 +234,7 @@ same severity scale as other gaps.
   (covered by `@data-model-reviewer`)
 - **Security vulnerabilities**: auth, input validation, secrets handling
   (covered by `@security-reviewer`)
-- **API-UI parity**: whether the API matches UI capabilities (covered by
+- **API completeness**: whether the API exposes all spec-defined operations (covered by
   `@api-parity-reviewer`)
 - **Test coverage**: whether tests are adequate (covered by
   `@test-reviewer`)

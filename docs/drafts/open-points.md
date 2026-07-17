@@ -106,8 +106,8 @@ rate limiting because:
 - Centralized configuration — applies consistently across all endpoints
 - More efficient — requests are rejected before reaching the application
 - Avoids per-request Redis dependency for rate limit state
-- Aligns with Sentinel's architecture (nginx already planned for
-  frontend/API routing)
+- Aligns with Sentinel's architecture (nginx or reverse proxy already
+  planned for API routing)
 
 **Recommended limits** (starting point):
 
@@ -120,8 +120,8 @@ rate limiting because:
 **When to implement**: before staging/production deployment. Not needed
 for local development.
 
-**Decision needed**: which proxy to use (nginx is already in the stack
-for frontend serving — may be sufficient), and whether to add
+**Decision needed**: which proxy to use (nginx or a reverse proxy is
+already planned for API routing — may be sufficient), and whether to add
 application-level rate limiting as defense-in-depth or rely solely on
 the proxy.
 

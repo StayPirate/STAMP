@@ -19,7 +19,6 @@ For architectural decisions and portability constraints, see
 | PostgreSQL | 15+ | Primary database |
 | Redis | 7+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
-| Node.js | 20+ | Frontend build (development only) |
 | Python | 3.11+ | Backend runtime (development only) |
 
 ### Network Access (Staging/Production)
@@ -104,9 +103,6 @@ cd backend && celery -A app.celery_app worker --loglevel=info
 cd backend && celery -A app.celery_app beat --loglevel=info
 # Note: the redbeat scheduler class is configured in the Celery app
 # settings (beat_scheduler). No --scheduler CLI flag is needed.
-
-# Start the frontend dev server (separate terminal)
-cd frontend && npm install && npm run dev
 ```
 
 ### Local Environment Variables

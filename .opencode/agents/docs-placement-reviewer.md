@@ -31,9 +31,8 @@ benefit from consolidation. You do NOT write or modify files.
    - `docs/api-spec.md` — API envelope, errors, pagination, shared behaviors
    - `docs/data-model.md` — entities, relationships, constraints
    - `docs/architecture.md` — system design, integrations
-   - `docs/configuration.md` — env vars, configuration patterns
-   - `docs/ui-design-system.md` — UI/UX rules
-   Only read the ones that are relevant to the content under review (do NOT
+    - `docs/configuration.md` — env vars, configuration patterns
+    Only read the ones that are relevant to the content under review (do NOT
    read all of them mechanically)
 3. If the modified spec references other feature specs, read those to check
    for duplication or inconsistency

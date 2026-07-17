@@ -124,7 +124,7 @@ _No issues found._
 
 ### TRF-SEC-06 — No URL content sanitization beyond scheme check (Low)
 
-**Status**: RESOLVED — Accepted risk: frontend rendering security is a cross-cutting concern to be addressed in ui-design-system.md during UI implementation per Guardrail 21 placement rules (2026-05-31)
+**Status**: RESOLVED — Accepted risk: frontend rendering security is a cross-cutting concern to be addressed in the UI repository's design system during UI implementation (2026-05-31)
 
 ### TRF-SEC-07 — source field on automatic references is an unsanitized string (Low)
 

@@ -45,7 +45,7 @@ the implementation. You do NOT write or modify code or documentation.
 ### Feature specification coverage
 
 - Does every implemented feature (identifiable by service modules in
-  `backend/app/services/` or page components in `frontend/src/pages/`) have
+  `backend/app/services/`) have
   a corresponding specification in `docs/features/**/`?
 - Are feature specs up to date with the current implementation? Flag any
   behavior described in the spec that is not implemented, or implemented

@@ -14,7 +14,7 @@ case you encounter, you stop and escalate.
 
 You have write access to all project files. However:
 
-- **Implementation files** (`backend/`, `frontend/`, `.github/`, `Dockerfile`,
+- **Implementation files** (`backend/`, `.github/`, `Dockerfile`,
   `docker-compose.yml`, `alembic/`, config files) — edit freely
 - **Specification files** (`docs/**`) — edit ONLY after signaling a gap,
   proposing a fix, and receiving explicit user approval in the same
@@ -114,7 +114,6 @@ After implementation, evaluate and suggest relevant reviewers:
 - **New API endpoints** → suggest `@security-reviewer`, `@api-parity-reviewer`
 - **New models/migrations** → suggest `@data-model-reviewer`
 - **New tests** → suggest `@test-reviewer`
-- **New UI components** → suggest `@ui-reviewer`
 - **New/modified fetchers** → suggest `@fetcher-compliance-reviewer`
 - **Ticket mutations** → suggest `@ticket-integrity-reviewer`
 - **Identity mutations** → suggest `@identity-integrity-reviewer`

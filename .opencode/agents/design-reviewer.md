@@ -141,11 +141,9 @@ referenced by or closely related to the one under review.
   complete (covered by `@docs-reviewer`)
 - **Security vulnerabilities**: auth, input validation, secrets handling
   (covered by `@security-reviewer`)
-- **API-UI parity**: whether the API matches UI capabilities (covered by
+- **API completeness** (covered by
   `@api-parity-reviewer`)
 - **Test coverage**: whether tests are adequate (covered by `@test-reviewer`)
-- **UI consistency**: component usage and design system compliance (covered
-  by `@ui-reviewer`)
 
 ## Output
 

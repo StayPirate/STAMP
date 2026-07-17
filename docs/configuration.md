@@ -193,7 +193,7 @@ here.
 |---------|------|---------|-------------|------------|
 | `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | `docs/architecture.md` |
 | `DEBUG` | bool | `false` | Enable debug mode (never in production) | `docs/architecture.md` |
-| `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for the frontend | `docs/architecture.md` |
+| `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for API consumers | `docs/architecture.md` |
 
 ### Standard Environment Variables (Non-Sentinel)
 

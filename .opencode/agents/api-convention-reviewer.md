@@ -132,7 +132,7 @@ in any feature spec must have a corresponding row in this table.
 ## What NOT to check
 
 - Implementation correctness (that is for `pytest` and code review)
-- UI-API parity (that is for `@api-parity-reviewer`)
+- API completeness (that is for `@api-parity-reviewer`)
 - Inter-spec contradictions beyond API definitions (that is for
   `@spec-coherence-reviewer`)
 - Functional completeness of the spec (that is for `@spec-gap-analyzer`)

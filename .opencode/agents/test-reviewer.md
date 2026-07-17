@@ -8,7 +8,6 @@ permission:
   edit: deny
   bash:
     "cd backend && pytest *": allow
-    "cd frontend && npm test *": allow
     "*": deny
 ---
 
@@ -38,7 +37,6 @@ You review tests for completeness and quality. You do NOT write or modify code.
   `old_value`, `new_value`, and `user_id`? Missing `TicketAuditEvent` assertions
   for ticket-mutating operations MUST be flagged as a coverage gap. See
   `docs/features/tickets/ticket-audit-log.md` for the event type contract.
-- Frontend: are components tested for rendering, user interaction, and edge cases?
 
 ## Output
 

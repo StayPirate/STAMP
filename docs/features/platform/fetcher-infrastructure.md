@@ -14,7 +14,7 @@ retention.
 
 The fetcher infrastructure is documented across several complementary
 specifications — see the Related Specifications section below for the
-full map. For the monitoring dashboard (API endpoints, frontend pages,
+full map. For the monitoring dashboard (API endpoints,
 CLI diagnostics) that consumes this infrastructure, see
 `docs/features/platform/fetcher-operations.md`.
 
@@ -1354,7 +1354,7 @@ is used by:
 
 - The API endpoints to list all known fetchers
 - The Celery Beat schedule to register periodic tasks
-- The dashboard frontend (indirectly, via the list endpoint)
+- The dashboard (indirectly, via the list endpoint)
 - The on-demand single-CVE fetch system to discover fetchers that
   implement `fetch_single`
 - The custom settings validation layer (schema lookup for PATCH

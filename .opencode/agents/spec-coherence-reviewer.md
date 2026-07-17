@@ -151,7 +151,7 @@ the spec under review.
 - Documentation completeness or coverage (covered by `@docs-reviewer`)
 - Spec-to-code alignment (covered by `@docs-reviewer`)
 - Data model simplicity or schema design (covered by `@data-model-reviewer`)
-- API-UI parity (covered by `@api-parity-reviewer`)
+- API completeness (covered by `@api-parity-reviewer`)
 - Internal quality of a single spec (structure, formatting, clarity)
 
 ## Output

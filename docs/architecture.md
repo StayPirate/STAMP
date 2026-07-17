@@ -9,21 +9,21 @@ coordination across multiple maintained distribution versions.
 ## High-Level Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────────────────────┐
-│   React SPA     │────▶│         FastAPI Backend           │
-│  (TypeScript)   │     │                                  │
-└─────────────────┘     │  ┌─────────┐  ┌──────────────┐  │
-                        │  │ API v1  │  │   Services    │  │
-                        │  └────┬────┘  └──────┬───────┘  │
-                        │       │              │          │
-                        │  ┌────▼──────────────▼───────┐  │
-                        │  │      SQLAlchemy Models     │  │
-                        │  └────────────┬──────────────┘  │
-                        └───────────────┼──────────────────┘
-                                        │
-                        ┌───────────────▼──────────────────┐
-                        │          PostgreSQL               │
-                        └──────────────────────────────────┘
+┌──────────────────────────────────┐
+│         FastAPI Backend           │
+│                                  │
+│  ┌─────────┐  ┌──────────────┐  │
+│  │ API v1  │  │   Services    │  │
+│  └────┬────┘  └──────┬───────┘  │
+│       │              │          │
+│  ┌────▼──────────────▼───────┐  │
+│  │      SQLAlchemy Models     │  │
+│  └────────────┬──────────────┘  │
+└───────────────┼──────────────────┘
+                │
+┌───────────────▼──────────────────┐
+│          PostgreSQL               │
+└──────────────────────────────────┘
 
 ┌──────────────────┐     ┌──────────────────────────────────┐
 │   CVE Sources    │────▶│        Celery Workers            │
@@ -44,23 +44,14 @@ coordination across multiple maintained distribution versions.
 ┌──────────────────┐     ┌──────────────────────────────────┐
 │  IBS RabbitMQ    │────▶│      IBSEventConsumer            │
 │ (rabbit.suse.de) │     │                                  │
-└──────────────────┘                             │  Consumes suse.obs.package.commit│
-                        │  events for real-time track-level │
-                        │  release detection. Shares MD5    │
-                        │  cache with periodic fetcher.     │
-                        └──────────────────────────────────┘
+└──────────────────┘     │  Consumes suse.obs.package.commit│
+                         │  events for real-time track-level│
+                         │  release detection. Shares MD5   │
+                         │  cache with periodic fetcher.    │
+                         └──────────────────────────────────┘
 ```
 
 ## Components
-
-### Frontend (React SPA)
-
-- **Framework**: React with TypeScript
-- **Build tool**: Vite
-- **Component library**: shadcn/ui
-- **Routing**: React Router
-- **State management**: TBD (React Query for server state)
-- **Location**: `frontend/src/`
 
 ### Backend (FastAPI)
 
@@ -68,7 +59,7 @@ coordination across multiple maintained distribution versions.
 - **ORM**: SQLAlchemy 2.0 (async)
 - **Migrations**: Alembic
 - **Validation**: Pydantic v2
-- **Authentication**: TBD (JWT or session-based)
+- **Authentication**: JWT tokens in HttpOnly cookies (browser sessions) and API keys (programmatic access)
 - **Location**: `backend/app/`
 
 #### Backend Layers
@@ -298,12 +289,12 @@ The deployment target is not fixed at this stage. Sentinel must support:
 - Kubernetes as a future production-capable deployment target
 
 The application code must not depend on one runtime orchestrator. Runtime
-differences belong in deployment configuration, not in backend or frontend
+differences belong in deployment configuration, not in backend
 implementation code.
 
 ### Container Images
 
-Backend and frontend builds produce standard OCI-compatible images. Docker,
+Backend builds produce standard OCI-compatible images. Docker,
 Podman, and Kubernetes must consume the same images without environment-specific
 image variants.
 
@@ -338,8 +329,8 @@ replaceable external dependencies addressed by connection settings.
 ### Configuration And Secrets
 
 All runtime configuration must be provided through environment variables. This
-includes database and Redis connection strings, CORS settings, frontend API
-base configuration, authentication settings, and credentials or tokens for
+includes database and Redis connection strings, CORS settings, authentication
+settings, and credentials or tokens for
 external integrations.
 
 Docker/Podman deployments can provide these values through compose files or
@@ -367,22 +358,23 @@ leader election mechanism.
 Other long-running integration consumers must document whether they are safe to
 scale horizontally before more than one replica is deployed.
 
-### Frontend And API Routing
+### API Routing
 
-The frontend should use a stable API path, preferably `/api`, with routing to
-the backend handled by nginx, a reverse proxy, or a Kubernetes ingress. This
-keeps browser-facing configuration consistent across Docker/Podman and
-Kubernetes and avoids coupling the frontend bundle to an orchestrator-specific
-backend hostname.
+API endpoints are served under the `/api` path prefix. In production, a
+reverse proxy or ingress routes `/api` requests to the backend service.
+The API must remain independent of any specific client hosting strategy.
 
-The current frontend container may provide a default nginx upstream suitable for
-local Docker/Podman deployments, such as a backend service named `backend` on
-port `8000`. This is a deployment default, not an application contract.
-Kubernetes deployments should normally route `/api` at the ingress or reverse
-proxy layer before requests reach the static frontend container. If the
-frontend container is responsible for proxying API requests in a given
-environment, its nginx upstream configuration must be provided by deployment
-configuration, such as a mounted config file, without rebuilding the image.
+### Repository Scope
+
+This repository contains:
+- All product specifications (including future UI specs in `docs/features/`)
+- The backend implementation (FastAPI, Celery workers, migrations)
+- CI/CD pipelines for the backend
+
+The frontend implementation will be developed in a dedicated repository
+against the published OpenAPI contract once backend specifications are
+implemented and tested. UI specifications remain here as the single
+source of truth for product requirements.
 
 ### Clock Synchronization
 

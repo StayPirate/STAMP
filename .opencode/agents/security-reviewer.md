@@ -122,17 +122,6 @@ Do NOT report findings about them:
   DES, RC4)?
 - Is TLS enforced for all external service communications?
 
-### Frontend security
-
-- Is `dangerouslySetInnerHTML` used? If so, is the content properly sanitized?
-- Are user-provided URLs validated before use in links, redirects, or
-  `window.open()`?
-- Are authentication tokens stored in `localStorage` (insecure) instead of
-  `httpOnly` cookies?
-- Are API responses containing user-generated content escaped before rendering?
-- Are third-party scripts loaded from trusted sources with integrity checks
-  (SRI)?
-
 ### Dependency safety
 
 - Are there imports of known-insecure modules (`pickle`, `marshal`, `shelve`)

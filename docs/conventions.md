@@ -6,11 +6,9 @@
 - Follow the principle of least surprise: code should do what a reader expects
 - Prefer explicit over implicit
 - Keep functions short and focused on a single responsibility
-- **API-first**: the REST API is the primary interface of the platform. The
-  web UI is a consumer of the API. Every operation available through the UI
-  must be achievable through the API alone, with equivalent filtering,
-  pagination, and sorting capabilities. The API may expose additional
-  capabilities not present in the UI, but the reverse is a defect
+- **API-first**: the REST API is the primary interface of the platform.
+  Every operation must be achievable through the API alone, with
+  equivalent filtering, pagination, and sorting capabilities
 - **HTTP APIs over CLIs**: when integrating with external services (IBS/OBS,
   SMELT, AIMAAS, Bugzilla, etc.), Sentinel MUST use their HTTP/REST APIs
   directly. Command-line tools (`osc`, `secbox`, etc.) are available on the
@@ -177,10 +175,9 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
   Values with an explicit offset (e.g., `+02:00`) are accepted and
   converted to UTC before comparison. See `docs/api-spec.md` (Date
   Range Interpretation) for the detailed parsing rules
-- **Frontend**: the UI converts UTC timestamps from the API to the
-  user's local timezone at display time (using `Intl.DateTimeFormat` or
-  equivalent). When submitting datetime values to the API, the frontend
-  converts local time to UTC before sending
+- **API consumers**: convert UTC timestamps to local timezone at display
+  time. When submitting datetime values to the API, convert local time
+  to UTC before sending
 - **CLI**: timestamps in CLI output are displayed in UTC with an
   explicit "UTC" suffix (e.g., `2025-03-15 10:30:00 UTC`)
 
@@ -449,65 +446,6 @@ except RedisError:
     logger.warning("Redis unavailable for dedup lock: %s", exc)
     # proceed without deduplication (idempotent downstream)
 ```
-
-## TypeScript (Frontend)
-
-### Style
-
-- **Formatter**: Prettier (via ESLint)
-- **Linter**: ESLint with TypeScript plugin
-- **Line length**: 80 characters
-- **Quotes**: double quotes
-- **Semicolons**: required
-
-### Naming
-
-- **Files**: `PascalCase.tsx` for components, `camelCase.ts` for utilities
-- **Components**: `PascalCase`
-- **Functions/hooks**: `camelCase`
-- **Types/interfaces**: `PascalCase`
-- **Constants**: `UPPER_SNAKE_CASE`
-
-### React Conventions
-
-- Functional components only (no class components)
-- Use custom hooks for reusable logic
-- Keep components focused: one component, one file
-- Props interfaces defined in the same file as the component
-- Use React Query for server state management
-
-### Component Structure
-
-```typescript
-// 1. Imports
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-
-// 2. Types
-interface MyComponentProps {
-  title: string;
-  onAction: () => void;
-}
-
-// 3. Component
-export function MyComponent({ title, onAction }: MyComponentProps) {
-  // hooks first
-  const [state, setState] = useState(false);
-
-  // handlers
-  const handleClick = () => { ... };
-
-  // render
-  return ( ... );
-}
-```
-
-### Testing Conventions
-
-- Use Vitest as test runner
-- Use React Testing Library for component tests
-- Test user behavior, not implementation details
-- Co-locate tests with components when practical
 
 ## CLI Conventions
 

@@ -9,7 +9,6 @@ permission:
   edit:
     ".github/workflows/*": allow
     "backend/Dockerfile": allow
-    "frontend/Dockerfile": allow
     "docker-compose*.yml": allow
     "*": deny
   bash:
@@ -26,7 +25,7 @@ You are the CI/CD specialist for the Sentinel project.
 ## What you can modify
 
 - `.github/workflows/*.yml`
-- `backend/Dockerfile`, `frontend/Dockerfile`
+- `backend/Dockerfile`
 - `docker-compose*.yml`
 - `.dockerignore` files
 

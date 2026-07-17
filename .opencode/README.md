@@ -37,7 +37,7 @@ and report findings without modifying files.
 | Agent | Type | Trigger | Purpose |
 |-------|------|---------|---------|
 | `@api-convention-reviewer` | Reviewer | Guardrail 20 | Verifies API endpoint definitions in specs conform to project conventions |
-| `@api-parity-reviewer` | Reviewer | Guardrail 12 | Ensures the REST API provides at least the same operability as the web UI |
+| `@api-parity-reviewer` | Reviewer | Guardrail 12 | Verifies the REST API exposes all operations defined in feature specifications |
 | `@cicd` | Implementation | Guardrail 5 | CI/CD pipeline expert for GitHub Actions, Dockerfiles, and deployment configs |
 | `@data-model-reviewer` | Reviewer | Guardrail 8 | Reviews data model changes for simplicity, consistency, and conventions |
 | `@design-reviewer` | Reviewer | On-demand | Evaluates architectural decisions, complexity, and alternatives in feature specs |
@@ -50,7 +50,6 @@ and report findings without modifying files.
 | `@test-reviewer` | Reviewer | Guardrail 6 | Reviews test quality, coverage, and adherence to testing conventions |
 | `@identity-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies IdentityAuditEvent audit trail compliance and detail JSONB schema completeness for identity mutations |
 | `@ticket-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies TicketAuditEvent audit trail and ticket_mutations module compliance |
-| `@ui-reviewer` | Reviewer | Guardrail 7 | Reviews frontend components for UI consistency and design system compliance |
 
 ## Commands
 
@@ -61,7 +60,7 @@ Commands are defined in `.opencode/commands/` and invoked with `/command-name`.
 | `/check-spec` | Verify that implementation code conforms to its feature specification |
 | `/idea` | Add a new idea to the brainstorming list in `docs/drafts/ideas.md` |
 | `/review-spec` | Interactive spec review and finding resolution workflow |
-| `/run-tests` | Run the full test suite (backend + frontend tests and linting) |
+| `/run-tests` | Run the full test suite (backend tests and linting) |
 
 ## Skills
 

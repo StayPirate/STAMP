@@ -15,7 +15,7 @@ implementer can follow without making autonomous design decisions.
 You have write access to:
 
 - `docs/**` — feature specifications, data model, API spec, conventions,
-  architecture, configuration, data sources, UI design system, deployment
+  architecture, configuration, data sources, deployment
 - `AGENTS.md` — project instructions for OpenCode
 - `.opencode/**` — agent definitions, commands, skills, prompts
 - `opencode.json` — OpenCode project configuration

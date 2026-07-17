@@ -7,12 +7,14 @@ openSUSE-based Linux distributions. It handles CVE ingestion from multiple
 sources, determines impact on maintained distributions, and coordinates the
 preparation and release of security patches.
 
-**Stack**: FastAPI (Python) + React (TypeScript) + PostgreSQL + Celery + Redis
+**Stack**: FastAPI (Python) + PostgreSQL + Celery + Redis
+
+This repository contains backend implementation and all product specifications.
+The frontend will be developed in a dedicated repository.
 
 ## Architecture
 
 - **Backend**: FastAPI application in `backend/app/`
-- **Frontend**: React SPA (Vite + TypeScript + shadcn/ui) in `frontend/`
 - **Database**: PostgreSQL with Alembic migrations
 - **Task Queue**: Celery with Redis broker
 - **Build System Integration**: Open Build Service (OBS)
@@ -39,15 +41,13 @@ sentinel/
 │   ├── data-sources.md          # External data sources catalog
 │   ├── deployment.md            # Deployment guide
 │   ├── system-map.md            # System map
-│   ├── ui-design-system.md      # UI design system
 │   ├── drafts/                  # WIP feature specs (not yet approved)
 │   ├── features/                # Approved feature specifications
 │   │   ├── identity/            # Identity & access management
 │   │   ├── integrations/        # External system integrations
 │   │   ├── packages/            # Package tracking
 │   │   ├── platform/            # Platform infrastructure
-│   │   ├── tickets/             # Ticket management
-│   │   └── ui/                  # UI features
+│   │   └── tickets/             # Ticket management
 │   └── reviews/                 # Review findings (untracked)
 ├── .opencode/                   # OpenCode agents, skills, commands
 │   ├── agents/                  # Subagent definitions
@@ -70,19 +70,6 @@ sentinel/
 │   │   ├── tasks/               # Celery background tasks
 │   │   └── core/                # Auth, permissions, utilities
 │   └── tests/                   # Backend tests
-├── frontend/                    # React SPA
-│   ├── Dockerfile               # Frontend container image
-│   ├── package.json             # Node dependencies
-│   ├── vite.config.ts           # Vite build configuration
-│   ├── src/
-│   │   ├── api/                 # API client
-│   │   ├── assets/              # Static assets
-│   │   ├── components/          # React components
-│   │   │   └── ui/              # Reusable UI components (shadcn/ui)
-│   │   ├── pages/               # Page components
-│   │   ├── hooks/               # Custom React hooks
-│   │   └── types/               # TypeScript types
-│   └── tests/                   # Frontend tests
 └── .github/workflows/           # CI/CD pipelines
 ```
 
@@ -90,9 +77,6 @@ sentinel/
 
 - **Backend tests**: `cd backend && pytest`
 - **Backend lint**: `cd backend && ruff check . && ruff format --check .`
-- **Frontend tests**: `cd frontend && npm test`
-- **Frontend lint**: `cd frontend && npm run lint`
-- **Frontend build**: `cd frontend && npm run build`
 - **DB migrations**: `cd backend && alembic upgrade head`
 - **New migration**: `cd backend && alembic revision --autogenerate -m "description"`
 - **Local dev stack**: `./dev-env.sh up` (PostgreSQL + Redis, auto-detects Podman or Docker)
@@ -147,8 +131,7 @@ skip a request solely because the URL appears to be on an internal network.
 
 ### 1. Specs-first: NEVER implement without a specification
 
-CRITICAL: Before writing or modifying ANY implementation code (in `backend/` or
-`frontend/`), you MUST:
+CRITICAL: Before writing or modifying ANY implementation code (in `backend/`), you MUST:
 
 1. Verify that a specification exists in `docs/features/` for the feature
    involved
@@ -178,7 +161,6 @@ the location is correct according to this map:
 | External data sources      | `docs/data-sources.md`            |
 | Deployment guide           | `docs/deployment.md`              |
 | Code conventions           | `docs/conventions.md`             |
-| UI design system           | `docs/ui-design-system.md`        |
 | SQLAlchemy models          | `backend/app/models/`             |
 | Pydantic schemas           | `backend/app/schemas/`            |
 | API endpoints              | `backend/app/api/v1/`             |
@@ -188,14 +170,7 @@ the location is correct according to this map:
 | DB migrations              | `backend/alembic/versions/`       |
 | Utility scripts            | `backend/scripts/`                |
 | TLS certificates           | `certs/`                          |
-| Reusable UI components     | `frontend/src/components/ui/`     |
-| Page-specific components   | `frontend/src/components/`        |
-| Page components            | `frontend/src/pages/`             |
-| React hooks                | `frontend/src/hooks/`             |
-| TypeScript types           | `frontend/src/types/`             |
-| API client code            | `frontend/src/api/`               |
 | Backend tests              | `backend/tests/`                  |
-| Frontend tests             | `frontend/tests/`                 |
 | Draft documents            | `docs/drafts/`                    |
 | Review findings            | `docs/reviews/`                   |
 
@@ -231,7 +206,7 @@ content to a file, STOP and rewrite it in English before proceeding.
 
 ### 5. CI/CD awareness
 
-When modifying backend or frontend dependencies, build configuration, or Docker
+When modifying backend dependencies, build configuration, or Docker
 setup, verify that the CI pipeline (`.github/workflows/`) does not need
 corresponding updates. If it does, update the workflows in the same PR.
 
@@ -245,10 +220,8 @@ Before considering any implementation task complete:
 
 1. Write tests that cover the new/modified functionality
    - Backend: pytest tests in `backend/tests/` mirroring the `app/` structure
-   - Frontend: vitest tests co-located with components or in `frontend/tests/`
 2. Run the test suite and verify all tests pass
    - Backend: `cd backend && pytest`
-   - Frontend: `cd frontend && npm test`
 3. If tests fail, fix the code or tests until they pass
 4. After all tests pass, evaluate whether a test quality review is needed:
    - New feature or new module: invoke `@test-reviewer`
@@ -267,24 +240,10 @@ Test requirements:
 NEVER skip tests. If the user asks to skip tests, remind them that the project
 requires tests for all changes and suggest writing them.
 
-### 7. UI consistency
+### 7. [Reserved — UI consistency]
 
-CRITICAL: Before creating or modifying any frontend component:
-
-1. Read `docs/ui-design-system.md` to understand current UI conventions
-2. Check if a reusable component already exists in `frontend/src/components/ui/`
-   before creating a new one
-3. If a new UI pattern is needed that doesn't exist yet, create it as a reusable
-   component in `frontend/src/components/ui/`, not inline in a page
-4. Never use raw HTML elements for buttons, inputs, tables, modals, badges —
-   always use the project's component library
-5. Maintain consistent spacing, typography, and color usage as defined in the
-   design system spec
-6. After implementation, evaluate whether a UI consistency review is needed:
-   - New page or new major component: invoke `@ui-reviewer`
-   - New reusable component in `components/ui/`: invoke `@ui-reviewer`
-   - Minor text or data change to existing page: skip review
-   - When in doubt, invoke `@ui-reviewer`
+This guardrail will be reinstated when a frontend implementation exists.
+The UI will be developed in a dedicated repository.
 
 ### 8. Data model simplicity
 
@@ -347,14 +306,13 @@ a security review is needed:
    - The change is purely cosmetic (typo fixes, formatting, comments)
    - Only test files are modified
    - Only documentation is updated
-   - Frontend-only changes that do not handle auth tokens or user input
 3. If the reviewer identifies vulnerabilities rated as "Needs revision",
    address them before considering the task complete
 4. Issues rated as Critical or High severity MUST be fixed before merging
 
 The goal is to prevent security vulnerabilities from being introduced into
 the codebase. The `@security-reviewer` agent complements the automated
-security scanning in the CI pipeline (`bandit`, `pip-audit`, `npm audit`).
+security scanning in the CI pipeline (`bandit`, `pip-audit`).
 
 ### 11. Audit trail atomicity
 
@@ -413,34 +371,22 @@ Invoke `@identity-integrity-reviewer`:
 See `docs/features/identity/identity-audit-log.md` for the event type
 contract.
 
-### 12. API-UI parity
+### 12. API completeness
 
-The REST API is the primary interface of the platform. The web UI is a
-consumer of the API. Every operation available through the UI MUST be
-achievable through the API alone, with equivalent filtering, pagination,
-and sorting capabilities. The API may expose additional capabilities not
-present in the UI, but the reverse is a defect.
+The REST API is the primary interface of the platform. Every operation
+that could be needed by any consumer (web UI, CLI, scripts, third-party
+integrations) MUST be achievable through the API, with appropriate
+filtering, pagination, and sorting capabilities.
 
-After adding or modifying API endpoints or UI pages, evaluate whether an
-API-UI parity review is needed:
+When defining API endpoints in feature specifications, ensure that:
+- Every data view has an API endpoint (not just internal service access)
+- Every mutation has an API endpoint (not just CLI or background task)
+- Filtering and sorting capabilities match what a consumer would need
+- Pagination is available on all list endpoints
 
-1. Invoke `@api-parity-reviewer` when:
-   - New API endpoints are added or existing ones are modified
-   - New UI pages or interactive components are created or modified
-   - Feature specs are updated with new UI actions or API endpoints
-   - `docs/api-spec.md` is modified
-2. Skip the review when:
-   - The change is purely cosmetic (typo fixes, formatting, styling)
-   - Only test files or documentation prose is modified
-   - Only backend-internal changes (services, models) with no API surface
-     change
-3. If the reviewer identifies issues rated as "Needs revision" (core
-   operations available in UI but missing from API), address them before
-   considering the task complete
-4. Issues rated as High impact MUST be resolved before merging
-
-The goal is to ensure that API-only consumers (scripts, integrations,
-third-party tools) are never at a disadvantage compared to UI users.
+After adding or modifying API endpoints, evaluate whether a completeness
+review is needed. The `@api-parity-reviewer` agent verifies API
+completeness against specifications.
 
 ### 13. CVSS score resolution
 
@@ -718,7 +664,6 @@ Cross-cutting document mapping:
 | Entities, columns, relationships, DB constraints | `docs/data-model.md` |
 | External system integration (protocols, URLs, auth) | `docs/data-sources.md` / `docs/architecture.md` |
 | Configuration patterns, environment variables | `docs/configuration.md` |
-| Cross-cutting UI/UX rules | `docs/ui-design-system.md` |
 | Shared business behaviors owned by no single feature | Dedicated feature spec, referenced by others |
 
 **B) Intra-document test (within the same spec)**

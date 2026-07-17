@@ -25,10 +25,6 @@ services. See [architecture.md](architecture.md) for full details.
 
 ```mermaid
 flowchart TB
-    subgraph frontend["Frontend"]
-        SPA["React SPA<br/>(TypeScript, Vite, shadcn/ui)"]
-    end
-
     subgraph backend["Backend"]
         API["FastAPI API<br/>(api/v1/)"]
         SVC["Services<br/>(business logic)"]
@@ -59,7 +55,6 @@ flowchart TB
         RABBIT["IBS RabbitMQ<br/>(rabbit.suse.de)"]
     end
 
-    SPA -->|"REST API (HTTP)"| API
     MDL --> PG
     WORKER --> PG
     WORKER <--> RD
@@ -77,7 +72,6 @@ flowchart TB
     CONSUMER -->|"REST API"| IBS
     CONSUMER <--> RD
 
-    style frontend fill:#e0f2fe,stroke:#0284c7
     style backend fill:#fef3c7,stroke:#d97706
     style taskqueue fill:#fce7f3,stroke:#db2777
     style datastores fill:#d1fae5,stroke:#059669
