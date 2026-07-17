@@ -806,7 +806,6 @@ Output (human-readable table to stdout):
 
 ```
 Name                       Enabled   Last Run              Status                       Settings
-sync_ldap_directory        yes       2026-04-27 04:00 UTC  success (3m 12s)             2 custom
 sync_nvd_cves              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)     —
 sync_smelt_products        yes       2026-04-26 06:00 UTC  success (45s)                —
 detect_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —

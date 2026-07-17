@@ -89,7 +89,7 @@ Do not invoke reviewers autonomously — suggest them and let the user decide.
 
 - All content MUST be in English (Guardrail 4)
 - Use fictional placeholder data for examples (Guardrail 23)
-- Follow the terminology conventions in `docs/conventions.md` (AD/LDAP/SSO,
+- Follow the terminology conventions in `docs/conventions.md` (External Identity/SSO,
   cascade/chain/flattening, ticket status categories, etc.)
 - When adding cross-cutting information, apply the information placement
   self-check (Guardrail 21) and propose options to the user

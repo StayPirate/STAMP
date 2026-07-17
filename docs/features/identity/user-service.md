@@ -5,7 +5,7 @@
 Centralize all user lifecycle operations (creation, modification,
 deactivation, reactivation, role management) in a single service module
 to ensure consistent enforcement of business rules and side effects
-regardless of the entry point (API, CLI, LDAP sync, or future
+regardless of the entry point (API, CLI, external sync, or future
 integrations).
 
 Without this centralization, each entry point would need to independently
@@ -29,7 +29,7 @@ call the service via `asyncio.run()`.
 | Entry point         | Invocation pattern                                      |
 |---------------------|---------------------------------------------------------|
 | API endpoint        | `await user_service.create_user(session, ...)`          |
-| Celery task (LDAP)  | `asyncio.run(user_service.deactivate_user(session, ...))` |
+| Celery task (sync)  | `asyncio.run(user_service.deactivate_user(session, ...))` |
 | CLI command         | `asyncio.run(user_service.create_user(session, ...))`   |
 
 ### Acting user convention
@@ -38,7 +38,7 @@ All operations accept an `acting_user_id: UUID | None` parameter:
 
 - `UUID` — action performed by an authenticated user. Enables
   self-operation guards (self-deactivation, self-role-removal)
-- `None` — system action (LDAP sync, CLI, fetcher). Self-operation
+- `None` — system action (external sync, CLI, fetcher). Self-operation
   guards do not apply
 
 This distinction allows the service to enforce invariants for interactive
@@ -49,67 +49,67 @@ operation.
 the authenticated user (obtained via `Depends()`) as `acting_user_id`.
 Passing `None` from an API handler is a bug — it would silently bypass
 all self-operation guards. `None` is reserved exclusively for system
-entry points (LDAP sync, Celery tasks, CLI commands).
+entry points (external sync, Celery tasks, CLI commands).
 
-## AD User Data Ownership
+## External User Data Ownership
 
-For AD users (`ad_object_guid IS NOT NULL`), all identity fields
+For external users (`external_id IS NOT NULL`), all identity fields
 (`username`, `email`, `full_name`, `manager_id`,
-`ad_synced_at`) are managed exclusively by the LDAP sync fetcher. No
+`synced_at`) are managed exclusively by the external sync process. No
 human caller — whether via API or CLI — may modify these fields. The only
-legitimate consumer of `update_user()` for AD users is the sync process
+legitimate consumer of `update_user()` for external users is the sync process
 itself (`acting_user_id = None`).
 
 Fields managed by dedicated operations have their own ownership rules:
 
 - `active` — managed by `deactivate_user()` / `reactivate_user()`. For
-  AD users, this field is managed exclusively by LDAP sync — manual
-  deactivation/reactivation by admins is blocked (see AD Active Status
+  external users, this field is managed exclusively by external sync — manual
+  deactivation/reactivation by admins is blocked (see External Active Status
   Ownership below)
 - Roles — managed by `update_roles()` for per-user assignment,
     `sync_role_mapping()` and `delete_role_mapping_roles()` for
-    AD group mapping operations. Available to admins for manual roles
-    (`ad_group_cn = '_manual'`)
+    external group mapping operations. Available to admins for manual roles
+    (`group_name = '_manual'`)
 - `password_hash` — managed by `reset_password()`, which independently
-  blocks AD users via `ADUserPasswordError`
+  blocks external users via `ExternalUserPasswordError`
 
-Conversely, for local users (`ad_object_guid IS NULL`), the
-AD-specific fields (`manager_id`, `ad_synced_at`) are not
+Conversely, for local users (`external_id IS NULL`), the
+external-provider-specific fields (`manager_id`, `synced_at`) are not
 applicable and must not be set — they have no source of truth outside of
-Active Directory.
+the external identity provider.
 
-### AD Active Status Ownership
+### External Active Status Ownership
 
-For AD users, Active Directory `EMPLOYEESTATUS` is the sole source of
+For external users, the external identity provider is the sole source of
 truth for the `active` field. Manual deactivation or reactivation by
 admins (via API, CLI, or UI) is not permitted — these operations are
-reserved for the LDAP sync fetcher.
+reserved for the external sync process.
 
-**Rationale**: if an admin could manually deactivate an AD user, the
-next sync cycle would reactivate them (because AD still reports
-`EMPLOYEESTATUS = Active`). This creates a confusing loop where
+**Rationale**: if an admin could manually deactivate an external user, the
+next sync cycle would reactivate them (because the provider still reports
+the user as active). This creates a confusing loop where
 irreversible side effects (API key revocation, session invalidation,
 ticket unassignment) are triggered by the deactivation but never restored
 by the automatic reactivation. Blocking manual deactivation eliminates
 this inconsistency entirely.
 
 **Enforcement**: `deactivate_user()` and `reactivate_user()` check
-`user.ad_object_guid IS NOT NULL AND acting_user_id IS NOT NULL` and raise
-`ADUserStatusReadOnlyError` when both conditions are true. Since LDAP
+`user.external_id IS NOT NULL AND acting_user_id IS NOT NULL` and raise
+`ExternalUserStatusReadOnlyError` when both conditions are true. Since external
 sync always passes `acting_user_id = None`, its calls are unaffected.
 CLI commands add an additional pre-call guard for defense in depth
 (CLI also uses `acting_user_id = None`).
 
-**If an AD user must be blocked from Sentinel**: deactivate the
-employee in Active Directory. The next LDAP sync cycle will propagate
+**If an external user must be blocked from Sentinel**: deactivate the
+user at the external identity provider. The next external sync cycle will propagate
 the change to Sentinel with all associated side effects.
 
 ### Immutability Constraints
 
-Once set, `ad_object_guid` cannot be modified by any operation in this
+Once set, `external_id` cannot be modified by any operation in this
 service. This field is the stable identity anchor that links a Sentinel user
-to an Active Directory object. All LDAP sync operations match by
-`ad_object_guid` — if it were changed, the user would lose its AD
+to an external provider object. All external sync operations match by
+`external_id` — if it were changed, the user would lose its external
 association and historical audit trail.
 
 ## Inactive User Management Principle
@@ -212,14 +212,14 @@ row-level locking.
    Considerations)
 2. Query: does at least one `UserRole` record exist with
    `user_id = user_id` and `role = vulnerability_analyst` (any
-   `ad_group_cn`)?
+   `group_name`)?
 3. If yes → no-op, return. The user still holds the VA role from at
    least one origin
 4. If no → call `_unassign_active_tickets(db, user_id, reason)`
 
 **Design rationale**: the guard in step 2 ensures that removing one
 source of the VA role (e.g., manual) does not trigger unassignment when
-another source (e.g., AD-derived) still exists. The `FOR UPDATE` lock
+another source (e.g., externally-derived) still exists. The `FOR UPDATE` lock
 in step 1 prevents a race condition where two concurrent transactions
 (each removing one VA role source) both see the other source as still
 present and skip unassignment — leaving the user with no VA role but
@@ -235,7 +235,7 @@ user), the calling transaction waits. If PostgreSQL's `lock_timeout` or
 caller and rolls back the entire transaction — this is the intended
 behavior (atomicity). Callers operating on bounded user sets (role
 mappings are expected to have <100 members) accept this cost.
-Large-scale operations (LDAP sync) process each mapping independently
+Large-scale operations (external sync) process each mapping independently
 via per-service-call transactions, limiting the blast radius.
 
 ### `create_user()`
@@ -250,10 +250,10 @@ Creates a new User record with optional initial roles.
 | `email`          | `str`                       | Yes      | Unique email address                 |
 | `full_name`      | `str \| None`               | No       | Display name                         |
 | `active`         | `bool`                      | No       | Default: `True`                      |
-| `ad_object_guid` | `UUID \| None`            | No       | AD `objectGUID` (immutable). NULL for local users |
+| `external_id` | `UUID \| None`            | No       | External provider stable UUID (immutable). NULL for local users |
 | `manager_id`     | `UUID \| None`              | No       | FK to user.id of the direct line manager |
-| `password`       | `str \| None`               | No       | Plain-text password (hashed before storage). Required for local users, must be NULL for AD users |
-| `roles`          | `list[tuple[Role, str]]`    | No       | List of (role, ad_group_cn) pairs    |
+| `password`       | `str \| None`               | No       | Plain-text password (hashed before storage). Required for local users, must be NULL for external users |
+| `roles`          | `list[tuple[Role, str]]`    | No       | List of (role, group_name) pairs    |
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
 
 **Behavior**:
@@ -261,12 +261,12 @@ Creates a new User record with optional initial roles.
 1. Normalize `username` (trim whitespace, lowercase) and validate format
    per `docs/conventions.md` (Username Format). If invalid, raise
    `UsernameFormatError`
-2. Validate password/`ad_object_guid` mutual exclusivity: if
-   `ad_object_guid` is provided and `password` is also provided, raise
-   `ADUserPasswordError`. If `ad_object_guid` is NULL and `password` is not
+2. Validate password/`external_id` mutual exclusivity: if
+   `external_id` is provided and `password` is also provided, raise
+   `ExternalUserPasswordError`. If `external_id` is NULL and `password` is not
    provided, raise `PasswordValidationError`
 3. Validate uniqueness of `username` and `email` across all users
-   (including inactive). If `ad_object_guid` is provided, also validate
+   (including inactive). If `external_id` is provided, also validate
    its uniqueness — if already associated with another user, raise
    `UserConflictError`. If violated, raise `UserConflictError`
 
@@ -284,11 +284,11 @@ Creates a new User record with optional initial roles.
    `docs/features/identity/local-authentication.md` for hashing parameters)
 6. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
-   `ad_synced_at = now()` if `ad_object_guid` is set
-7. For each role in `roles`, create UserRole with specified `ad_group_cn`
+   `synced_at = now()` if `external_id` is set
+7. For each role in `roles`, create UserRole with specified `group_name`
    and `assigned_by = acting_user_id`. If the list contains duplicate
-   entries (same role + same `ad_group_cn`), deduplicate silently — only
-   one UserRole record is created per unique `(role, ad_group_cn)` pair.
+   entries (same role + same `group_name`), deduplicate silently — only
+   one UserRole record is created per unique `(role, group_name)` pair.
    This is consistent with the idempotency behavior of `update_roles()`.
    For each UserRole created, also create an `IdentityAuditEvent` with
    `event_type = role_added` via `IdentityAuditLog.log_event()` —
@@ -316,31 +316,31 @@ their own business rules.
 |------------------|-----------------------------|----------|--------------------------------------|
 | `user_id`        | `UUID`                      | Yes      | User to update                       |
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
-| `username`       | `str \| None`               | No       | New username (updated by LDAP sync when sAMAccountName changes) |
+| `username`       | `str \| None`               | No       | New username (updated by external sync when username changes at provider) |
 | `email`          | `str \| None`               | No       | New email (uniqueness validated)     |
 | `full_name`      | `str \| None`               | No       | New display name                     |
 | `manager_id`     | `UUID \| None`              | No       | New manager (FK to user.id)          |
-| `ad_synced_at` | `datetime \| None`          | No       | Sync timestamp                       |
+| `synced_at` | `datetime \| None`          | No       | Sync timestamp                       |
 
 **Behavior**:
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
-2. If `user.ad_object_guid IS NOT NULL` and `acting_user_id` is not None:
-   raise `ADUserFieldReadOnlyError`. Identity fields of AD users are
-   managed exclusively by directory sync (see AD User Data Ownership
+2. If `user.external_id IS NOT NULL` and `acting_user_id` is not None:
+   raise `ExternalUserFieldReadOnlyError`. Identity fields of external users are
+   managed exclusively by external sync (see External User Data Ownership
    above). The entire `update_user()` operation is blocked for human
-   callers on AD users — there is no identity field that an admin
+   callers on external users — there is no identity field that an admin
    should modify manually.
-3. If `user.ad_object_guid IS NULL` and `manager_id` or
-   `ad_synced_at` is provided (not `_MISSING`): raise
-   `ADUserFieldReadOnlyError`. These fields are AD-specific and have
+3. If `user.external_id IS NULL` and `manager_id` or
+   `synced_at` is provided (not `_MISSING`): raise
+   `ExternalUserFieldReadOnlyError`. These fields are external-provider-specific and have
    no source of truth for local users.
 4. **Username validation** (if `username` is provided): normalize and
    validate the format per the rules in `docs/conventions.md` (section
    "Username Format"). If invalid, raise `UsernameFormatError`. Verify
    uniqueness in the database (excluding the current user, including
-   inactive users). If violated, raise `UserConflictError`. For AD
-   users, this step is reached only by the sync fetcher (human callers
+   inactive users). If violated, raise `UserConflictError`. For external
+   users, this step is reached only by the sync process (human callers
    are already blocked at step 2).
 5. If `email` is provided, validate uniqueness. If violated, raise
    `UserConflictError`
@@ -352,7 +352,7 @@ their own business rules.
 
     This is necessary because nullable fields (`full_name`,
     `manager_id`) may need to be explicitly cleared — e.g.,
-   when LDAP sync discovers that an AD attribute has been removed. The
+   when external sync discovers that a provider attribute has been removed. The
    pattern follows Python's standard sentinel convention
    (`dataclasses.MISSING`).
 
@@ -380,8 +380,8 @@ Adds or removes roles for a user.
 | Parameter      | Type                        | Required | Description                          |
 |----------------|-----------------------------|----------|--------------------------------------|
 | `user_id`      | `UUID`                      | Yes      | User to update                       |
-| `add`          | `list[tuple[Role, str]]`    | No       | Roles to add as (role, ad_group_cn)  |
-| `remove`       | `list[tuple[Role, str]]`    | No       | Roles to remove as (role, ad_group_cn) |
+| `add`          | `list[tuple[Role, str]]`    | No       | Roles to add as (role, group_name)  |
+| `remove`       | `list[tuple[Role, str]]`    | No       | Roles to remove as (role, group_name) |
 | `acting_user_id` | `UUID \| None`            | No       | Who is performing the action         |
 
 **Business rules**:
@@ -395,24 +395,24 @@ Adds or removes roles for a user.
    For the implications of this guard on the "zero admins" scenario and
    the CLI recovery procedure, see `docs/features/identity/user-management.md`,
    Business Rule 2
-2. **AD-derived role protection**: when `acting_user_id` is set (user
-   action), cannot remove roles with `ad_group_cn != '_manual'`. Raise
-   `ADDerivedRoleError`. System actions are exempt (LDAP sync must be
-   able to remove AD-derived roles when group membership changes)
+2. **Externally-derived role protection**: when `acting_user_id` is set (user
+   action), cannot remove roles with `group_name != '_manual'`. Raise
+   `ExternalDerivedRoleError`. System actions are exempt (external sync must be
+   able to remove externally-derived roles when group membership changes)
 3. **Idempotency**: adding a role already present for the same
-   (user_id, role, ad_group_cn) combination is a no-op. Removing a role
+   (user_id, role, group_name) combination is a no-op. Removing a role
    not present is a no-op
 
 **Behavior**:
 
 1. Look up user by ID. If not found, raise `UserNotFoundError`
 2. Resolve inputs (set-based): deduplicate entries within each list
-   (treat as sets — each unique `(role, ad_group_cn)` tuple appears at
+   (treat as sets — each unique `(role, group_name)` tuple appears at
    most once). Then cancel entries that appear in both lists:
    `effective_add = add − remove`, `effective_remove = remove − add`.
    If both effective lists are empty after resolution, this is a no-op:
    return the user unchanged
-3. Validate business rules (self-removal guard, AD-derived protection)
+3. Validate business rules (self-removal guard, externally-derived protection)
    against the resolved effective lists
 4. For each entry in `effective_add`, create UserRole if not already
    present, with `assigned_by = acting_user_id`
@@ -443,26 +443,27 @@ change. See `docs/features/identity/identity-audit-log.md`.
 ### `sync_role_mapping()`
 
 Synchronizes `UserRole` records for a specific role mapping against the
-current set of AD group members. Creates missing records for users in
+current set of group members. Creates missing records for users in
 the group and removes records for users no longer in the group.
 
-This function centralizes all bulk role operations triggered by AD group
-membership. It is called by the LDAP sync fetcher (step 5) and by the
-`POST /api/v1/admin/role-mappings` endpoint when a new mapping is
-created.
+This function centralizes all bulk role operations triggered by external
+group membership. It is called by the external sync process and by the
+Create Role Mapping endpoint when a new mapping is created (see
+`identity-provisioning.md`). During the local-only phase, this function
+has no callers.
 
 **Parameters**:
 
 | Parameter                 | Type            | Required | Description                          |
 |---------------------------|-----------------|----------|--------------------------------------|
 | `role`                    | `Role`          | Yes      | The role to sync                     |
-| `ad_group_cn`             | `str`           | Yes      | The AD group CN that tags these roles |
-| `current_member_user_ids` | `set[UUID]`     | Yes      | User IDs currently in the AD group   |
+| `group_name`             | `str`           | Yes      | The external group name that tags these roles |
+| `current_member_user_ids` | `set[UUID]`     | Yes      | User IDs currently in the group   |
 | `acting_user_id`          | `UUID \| None`  | No       | Who is performing the action         |
 
 **Behavior**:
 
-1. Query all existing `UserRole` records where `role` and `ad_group_cn`
+1. Query all existing `UserRole` records where `role` and `group_name`
    match the provided values. Collect their `user_id` values as
    `existing_user_ids`
 2. Compute:
@@ -471,21 +472,21 @@ created.
 3. **Self-admin guard**: if `acting_user_id` is not None, `role` is
    `Admin`, and `acting_user_id` is in `to_remove`: check whether the
    acting user has any other `UserRole` granting `Admin` (from a
-   different `ad_group_cn` or from `_manual`). If not, reject with
+   different `group_name` or from `_manual`). If not, reject with
    `SelfRoleRemovalError`
 4. For each user in `to_add`, create `UserRole(user_id, role,
-   ad_group_cn)` with `assigned_by = NULL` (AD-derived roles are
+   group_name)` with `assigned_by = NULL` (externally-derived roles are
    system-assigned regardless of the initiator)
 5. Delete all `UserRole` records where `user_id` is in `to_remove`,
-   `role` matches, and `ad_group_cn` matches
+   `role` matches, and `group_name` matches
 6. VA role loss check: if `role` is `vulnerability_analyst` and
    `to_remove` is non-empty, call
    `_unassign_tickets_on_va_role_loss(db, user_id,
-   "vulnerability_analyst role removed (AD sync)")` for each user in
+   "vulnerability_analyst role removed (external sync)")` for each user in
    `to_remove`
 7. For each user in `to_add`, create `IdentityAuditEvent` with
    `event_type = role_added`, `user_id = NULL` (system), `detail`
-   including `{"source": "ad_sync", "mapping": "..."}`. For each user
+   including `{"source": "external_sync", "mapping": "..."}`. For each user
    in `to_remove`, `event_type = role_removed` with same detail. All
    events via `IdentityAuditLog.log_event()`.
 8. Return `(added_count, removed_count)`
@@ -493,7 +494,7 @@ created.
 **Idempotency**: calling this function twice with the same
 `current_member_user_ids` produces the same result — the second call
 finds nothing to add or remove. The UNIQUE constraint on
-`(user_id, role, ad_group_cn)` prevents duplicate records.
+`(user_id, role, group_name)` prevents duplicate records.
 
 **TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
 it causes any user to lose the role entirely (no remaining `UserRole`
@@ -502,7 +503,7 @@ ticket per affected user. See `_unassign_tickets_on_va_role_loss()`.
 Otherwise, none.
 
 **IdentityAuditEvent**: `role_added` / `role_removed` per effective
-change, with `user_id = NULL` (AD sync, system action). See
+change, with `user_id = NULL` (external sync, system action). See
 `docs/features/identity/identity-audit-log.md`.
 
 ### `delete_role_mapping_roles()`
@@ -516,17 +517,17 @@ Used when a role mapping is deleted via
 | Parameter        | Type            | Required | Description                          |
 |------------------|-----------------|----------|--------------------------------------|
 | `role`           | `Role`          | Yes      | The role to remove                   |
-| `ad_group_cn`    | `str`           | Yes      | The AD group CN that tags these roles |
+| `group_name`    | `str`           | Yes      | The external group name that tags these roles |
 | `acting_user_id` | `UUID \| None`  | No       | Who is performing the action         |
 
 **Behavior**:
 
-1. Query all `UserRole` records where `role` and `ad_group_cn` match.
+1. Query all `UserRole` records where `role` and `group_name` match.
    Collect their `user_id` values as `affected_user_ids`
 2. **Self-admin guard**: if `acting_user_id` is not None, `role` is
    `Admin`, and `acting_user_id` is in `affected_user_ids`: check
    whether the acting user has any other `UserRole` granting `Admin`
-   (from a different `ad_group_cn` or from `_manual`). If not, reject
+   (from a different `group_name` or from `_manual`). If not, reject
    the entire operation with `SelfRoleRemovalError`: "Cannot delete
    this role mapping because it is the sole source of your admin role.
    Assign admin via another mapping or manually before retrying."
@@ -565,10 +566,10 @@ Deactivates a user account and triggers all associated side effects.
 
 - User must be currently active. If already inactive, this is a no-op
   (returns the user unchanged)
-- **AD status guard**: if `user.ad_object_guid IS NOT NULL` AND
+- **External status guard**: if `user.external_id IS NOT NULL` AND
   `acting_user_id IS NOT NULL`, reject with
-  `ADUserStatusReadOnlyError`. Active status of AD users is managed
-  exclusively by directory sync (see AD Active Status Ownership above)
+  `ExternalUserStatusReadOnlyError`. Active status of external users is managed
+  exclusively by external sync (see External Active Status Ownership above)
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
@@ -604,7 +605,7 @@ already lost access. The admin can safely retry the deactivation
 without risk of leaving a deactivated user with valid credentials.
 
 **IdentityAuditEvent**: `user_deactivated` — `user_id` = admin (or
-`NULL` for AD sync), `target_user_id` = deactivated user, `detail`
+`NULL` for external sync), `target_user_id` = deactivated user, `detail`
 includes reason. API key revocations produce individual
 `api_key_revoked` events via `api_key_service`. See
 `docs/features/identity/identity-audit-log.md`.
@@ -627,10 +628,10 @@ Reactivates a previously deactivated user account.
 
 - User must be currently inactive. If already active, this is a no-op
   (returns the user unchanged)
-- **AD status guard**: if `user.ad_object_guid IS NOT NULL` AND
+- **External status guard**: if `user.external_id IS NOT NULL` AND
   `acting_user_id IS NOT NULL`, reject with
-  `ADUserStatusReadOnlyError`. Active status of AD users is managed
-  exclusively by directory sync (see AD Active Status Ownership above)
+  `ExternalUserStatusReadOnlyError`. Active status of external users is managed
+  exclusively by external sync (see External Active Status Ownership above)
 
 **Behavior**:
 
@@ -666,9 +667,9 @@ Resets the password for a local user and invalidates all active sessions.
 **Preconditions**:
 
 - User must exist. If not found, raise `UserNotFoundError`
-- User must be a local user (`ad_object_guid IS NULL`). If
-  `ad_object_guid` is set, raise `ADUserPasswordError`: "Cannot set
-  password for AD user. AD users authenticate via id.suse.com."
+- User must be a local user (`external_id IS NULL`). If
+  `external_id` is set, raise `ExternalUserPasswordError`: "Cannot set
+  password for external user. External users authenticate via SSO."
 
 **Behavior**:
 
@@ -763,7 +764,7 @@ less critical since they perform a single logical write.
 ### Concurrent deactivation from multiple entry points
 
 If two entry points call `deactivate_user()` for the same user
-concurrently (e.g., LDAP sync and admin API), the `active` precondition
+concurrently (e.g., external sync and admin API), the `active` precondition
 check and write MUST use row-level locking (`SELECT ... FOR UPDATE`) to
 prevent duplicate side effects. The first caller acquires the lock,
 performs the deactivation, and commits. The second caller acquires the
@@ -780,13 +781,13 @@ want to adjust a user's roles before reactivating them.
 
 `update_roles()` does not require row-level locking for the role
 INSERT/DELETE operations themselves. Each role is an independent tuple
-`(user_id, role, ad_group_cn)` managed via atomic INSERT/DELETE
+`(user_id, role, group_name)` managed via atomic INSERT/DELETE
 operations. Concurrency safety for role records is guaranteed by:
 
-1. **UNIQUE constraint** `(user_id, role, ad_group_cn)` — prevents
+1. **UNIQUE constraint** `(user_id, role, group_name)` — prevents
    duplicate records regardless of timing
-2. **Disjoint key spaces** — manual actions use `ad_group_cn = '_manual'`
-   while LDAP sync uses the actual AD group CN. These never operate on
+2. **Disjoint key spaces** — manual actions use `group_name = '_manual'`
+   while external sync uses the actual group name. These never operate on
    the same row
 3. **Idempotency** — adding a role already present is a no-op; removing
    a role not present is a no-op. Two concurrent identical operations
@@ -798,7 +799,7 @@ read-modify-write pattern (check remaining VA roles → conditionally
 unassign tickets). This is serialized by a `SELECT ... FOR UPDATE` lock
 on the `User` row inside the helper. Without this lock, two concurrent
 transactions removing the last two VA role sources (e.g., admin removing
-manual role + LDAP sync removing AD-derived role) could each see the
+manual role + external sync removing externally-derived role) could each see the
 other source as still present and skip unassignment, leaving the user
 with no VA role but tickets still assigned.
 
@@ -823,10 +824,10 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `UserConflictError` | 409 | `USER_ALREADY_EXISTS` | Username or email already in use |
 | `SelfRoleRemovalError` | 409 | `USER_SELF_ROLE_REMOVAL` | Admin attempting to remove their own admin role |
 | `SelfDeactivationError` | 409 | `USER_SELF_DEACTIVATION` | Admin attempting to deactivate themselves |
-| `ADUserStatusReadOnlyError` | 409 | `USER_AD_STATUS_READONLY` | Cannot manually activate/deactivate an AD user |
-| `ADDerivedRoleError` | 409 | `USER_AD_ROLE_PROTECTED` | Cannot manually modify AD-derived roles |
-| `ADUserFieldReadOnlyError` | 409 | `USER_AD_FIELD_READONLY` | Cannot modify AD-synced fields on an AD user |
-| `ADUserPasswordError` | 409 | `USER_AD_PASSWORD_FORBIDDEN` | Cannot set password for an AD user |
+| `ExternalUserStatusReadOnlyError` | 409 | `USER_EXTERNAL_STATUS_READONLY` | Cannot manually activate/deactivate an external user |
+| `ExternalDerivedRoleError` | 409 | `USER_EXTERNAL_ROLE_PROTECTED` | Cannot manually modify externally-derived roles |
+| `ExternalUserFieldReadOnlyError` | 409 | `USER_EXTERNAL_FIELD_READONLY` | Cannot modify synced fields on an external user |
+| `ExternalUserPasswordError` | 409 | `USER_EXTERNAL_PASSWORD_FORBIDDEN` | Cannot set password for an external user |
 | `PasswordValidationError` | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements |
 
 † Shared exception — inherits from `ServiceError`, not from
@@ -836,7 +837,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 
 | Exception | Raised when | Handling |
 |-----------|-------------|----------|
-| `UsernameFormatError` | Username does not match format rules | CLI: stderr message + exit 1; LDAP sync: logged as warning, user skipped |
+| `UsernameFormatError` | Username does not match format rules | CLI: stderr message + exit 1; External sync: logged as warning, user skipped |
 
 ## Relationship to Other Specifications
 
@@ -844,7 +845,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 |---|---|
 | `docs/features/identity/api-key-service.md` | Centralized API key lifecycle service. `deactivate_user` calls `api_key_service.revoke_all_user_keys()` as step 1 of the deactivation side effects |
 | `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
-| `docs/features/identity/ad-integration.md` | LDAP sync fetcher calls `create_user`, `update_user`, `sync_role_mapping`, `deactivate_user`, `reactivate_user`. Role mapping CRUD endpoints call `sync_role_mapping` and `delete_role_mapping_roles` |
+| `docs/features/identity/identity-provisioning.md` | External sync process calls `create_user`, `update_user`, `sync_role_mapping`, `deactivate_user`, `reactivate_user`. Role mapping CRUD endpoints call `sync_role_mapping` and `delete_role_mapping_roles` |
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |

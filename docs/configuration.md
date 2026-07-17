@@ -126,7 +126,7 @@ At startup, the application logs an INFO message indicating SSO status:
 | `SSO_CLIENT_ID` | string | — | OIDC client ID. Required for SSO. | `docs/features/identity/sso-authentication.md` |
 | `SSO_CLIENT_SECRET` | string | — | OIDC client secret. Required for SSO. | `docs/features/identity/sso-authentication.md` |
 | `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL. Required for SSO. | `docs/features/identity/sso-authentication.md` |
-| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `username` for AD-synced users). Only relevant when SSO is enabled. | `docs/features/identity/sso-authentication.md` |
+| `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `username` for externally-provisioned users). Only relevant when SSO is enabled. | `docs/features/identity/sso-authentication.md` |
 
 ## Authentication
 
@@ -157,20 +157,11 @@ At startup, the application logs an INFO message indicating SSO status:
 | `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 | `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 
-## LDAP Directory Sync
+## TLS / Security
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `LDAP_URI` | string | `ldaps://pan.suse.de:636` | LDAP server URI. Must use `ldaps://` scheme — plaintext `ldap://` is not supported (see security rationale in spec) | `docs/features/identity/ad-integration.md` |
-| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, LDAP, AMQP). Combined with system CA bundle at runtime. | `docs/features/platform/networking.md` |
-
-Note: operational parameters for the `sync_ldap_directory` fetcher
-(`max_deactivations`, `ldap_connect_timeout`, `ldap_operation_timeout`,
-`retry_max_attempts`) are configured via custom settings in the admin
-dashboard, not via environment variables. See
-`docs/features/identity/ad-integration.md` for details and
-`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
-Schema" for the configuration mechanism.
+| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, AMQP). Combined with system CA bundle at runtime. | `docs/features/platform/networking.md` |
 
 ## SMELT / AIMAAS
 

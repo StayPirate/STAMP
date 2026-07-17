@@ -149,10 +149,10 @@ Error codes are grouped by prefix:
 | `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE`, `RESOURCE_NOT_EDITABLE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
-| `ROLE_MAPPING_*` | Role mapping operations | `ROLE_MAPPING_GROUP_NOT_FOUND`, `ROLE_MAPPING_INVALID_GROUP_CN` |
+| `ROLE_MAPPING_*` | Role mapping operations | `ROLE_MAPPING_GROUP_NOT_FOUND`, `ROLE_MAPPING_INVALID_GROUP_NAME` |
 | `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING`, `FETCHER_DEREGISTERED`, `FETCHER_DISABLED`, `FETCHER_SETTING_UNKNOWN`, `FETCHER_SETTING_INVALID` |
 | `RECALC_*` | Batch recalculation operations | `RECALC_ALREADY_IN_PROGRESS` |
-| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_AD_STATUS_READONLY`, `USER_AD_FIELD_READONLY`, `USER_AD_PASSWORD_FORBIDDEN`, `USER_AD_ROLE_PROTECTED`, `USER_AD_LOCKOUT`, `USER_SELF_ROLE_REMOVAL`, `USER_SELF_DEACTIVATION`, `USER_PASSWORD_POLICY_VIOLATION` |
+| `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_EXTERNAL_STATUS_READONLY`, `USER_EXTERNAL_FIELD_READONLY`, `USER_EXTERNAL_PASSWORD_FORBIDDEN`, `USER_EXTERNAL_ROLE_PROTECTED`, `USER_SELF_ROLE_REMOVAL`, `USER_SELF_DEACTIVATION`, `USER_PASSWORD_POLICY_VIOLATION` |
 | `DATE_RANGE_*` | Date range filter validation | `DATE_RANGE_INVERTED`, `DATE_RANGE_TOO_WIDE` |
 
 Rules:
@@ -180,7 +180,7 @@ Examples:
 | Code | Dependency |
 |------|------------|
 | `REDIS_UNAVAILABLE` | Redis cache/session store |
-| `AD_UNAVAILABLE` | Active Directory (via LDAP) |
+| `PROVISIONING_UNAVAILABLE` | External identity provider |
 | `SMELT_UNAVAILABLE` | SMELT API |
 | `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
 | `CELERY_ENQUEUE_FAILED` | Celery task broker (task dispatch failed) |
@@ -590,7 +590,7 @@ Historical values, where relevant, are preserved in dedicated fields of
 the owning entity (e.g., `old_value` / `new_value` in audit events).
 The `id` (UUID) is the stable, immutable identifier; `username`,
 `full_name`, and `active` are display conveniences that may change over
-time (e.g., via AD sync or deactivation).
+time (e.g., via external sync or deactivation).
 
 Users are never physically deleted from the database — all foreign keys
 referencing the User table use `ON DELETE RESTRICT`. Deactivated users
@@ -627,7 +627,7 @@ never accepted as input and is not exposed in API responses.
 
 The CVE-ID string is the natural, globally unique identifier used
 across all security tooling (NVD, MITRE, advisories). Unlike User
-identifiers (where the username is mutable via AD sync, making the
+identifiers (where the username is mutable via external sync, making the
 UUID necessary as a stable reference) and Ticket identifiers (where
 no external natural key exists), the CVE-ID is immutable and
 externally assigned — the internal UUID serves no external purpose.

@@ -258,7 +258,7 @@ erDiagram
         VARCHAR_64 username UK "NOT NULL"
         VARCHAR_255 email UK "NOT NULL"
         BOOLEAN active "NOT NULL"
-        UUID ad_object_guid UK "nullable"
+        UUID external_id UK "nullable"
         UUID manager_id FK "nullable, self-ref"
         VARCHAR_72 password_hash "nullable"
     }
@@ -266,12 +266,12 @@ erDiagram
         UUID id PK
         UUID user_id FK "NOT NULL"
         ENUM role "NOT NULL"
-        VARCHAR_256 ad_group_cn "NOT NULL, DEFAULT _manual"
+        VARCHAR_256 group_name "NOT NULL, DEFAULT _manual"
         UUID assigned_by FK "nullable"
     }
     RoleMapping {
         UUID id PK
-        VARCHAR_256 ad_group_cn "NOT NULL"
+        VARCHAR_256 group_name "NOT NULL"
         ENUM role "NOT NULL"
         UUID created_by FK "NOT NULL"
     }
@@ -927,56 +927,58 @@ Delivery pipeline status, used by TicketPackageTrack.
 
 ### User
 
-Platform users with role-based access. Users are populated from SUSE
-Active Directory via the `sync_ldap_directory` fetcher (see
-`docs/features/identity/ad-integration.md`). Users can hold zero, one, or
-multiple roles via the UserRole junction table. Authenticated users with
-no roles have an effective scope of `non_confidential` and no
-capabilities; unlike unauthenticated users, they can access specific
-confidential tickets via `TicketAccessGrant` or bugowner matching.
+Platform users with role-based access. Users are populated from an
+external identity provider (see
+`docs/features/identity/identity-provisioning.md`) or created locally via
+CLI. Users can hold zero, one, or multiple roles via the UserRole
+junction table. Authenticated users with no roles have an effective scope
+of `non_confidential` and no capabilities; unlike unauthenticated users,
+they can access specific confidential tickets via `TicketAccessGrant` or
+bugowner matching.
 
 | Column           | Type        | Constraints              | Description                      |
 |------------------|-------------|--------------------------|----------------------------------|
 | id               | UUID        | PK                       | Internal identifier              |
-| username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username (from AD `sAMAccountName`). Updated by LDAP sync if `sAMAccountName` changes in AD |
-| email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (from AD `mail`; stored as lowercase)   |
-| full_name        | VARCHAR(255) |                          | Display name (from AD `cn`)      |
-| active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active (synced from AD `EMPLOYEESTATUS`) |
-| password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for AD users. See `docs/features/identity/local-authentication.md` |
-| ad_object_guid | UUID        | UNIQUE, nullable         | AD `objectGUID` (immutable after creation). Used as the stable matching key during LDAP sync. NULL for local users |
-| manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from AD `manager` DN during sync). Self-referencing foreign key |
-| ad_synced_at   | TIMESTAMPTZ   | nullable                 | When this record was last synced from AD |
+| username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username. Updated by external sync if changed at the provider |
+| email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
+| full_name        | VARCHAR(255) |                          | Display name                     |
+| active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active. For external users, synced from the identity provider |
+| password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
+| external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
+| manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
+| synced_at        | TIMESTAMPTZ   | nullable                 | When this record was last synced from the external provider |
 | last_login_at    | TIMESTAMPTZ   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
 | created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp        |
 | updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record update timestamp          |
 
 **Check constraint**: `chk_user_auth_exclusive` —
-`(ad_object_guid IS NOT NULL AND password_hash IS NULL) OR (ad_object_guid IS NULL AND password_hash IS NOT NULL)`
-— enforces mutual exclusivity: AD users cannot have a password, local
-users must have a password. See `docs/features/identity/user-management.md`
-(Business Rule 5) and `docs/features/identity/local-authentication.md`.
+`(external_id IS NOT NULL AND password_hash IS NULL) OR (external_id IS NULL AND password_hash IS NOT NULL)`
+— enforces mutual exclusivity: external users cannot have a password,
+local users must have a password. See
+`docs/features/identity/user-management.md` (Business Rule 5) and
+`docs/features/identity/local-authentication.md`.
 
 ### UserRole
 
 Junction table linking users to roles. A user may have zero, one, or
-multiple roles assigned. The `ad_group_cn` column tracks the origin of
-each role assignment: if it contains an AD group common name, the role
+multiple roles assigned. The `group_name` column tracks the origin of
+each role assignment: if it contains an external group name, the role
 was derived from that group's RoleMapping; if it contains the sentinel
 value `_manual`, the role was assigned directly by an admin or CLI.
-Roles with `ad_group_cn != '_manual'` are managed by the LDAP sync
+Roles with `group_name != '_manual'` are managed by the external sync
 process and cannot be removed via the API. See
-`docs/features/identity/ad-integration.md`.
+`docs/features/identity/identity-provisioning.md`.
 
 | Column       | Type        | Constraints                  | Description                      |
 |--------------|-------------|------------------------------|----------------------------------|
 | id           | UUID        | PK                           | Internal identifier              |
 | user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
 | role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst, Restricted Analyst |
-| ad_group_cn  | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | AD group CN that granted this role, or `_manual` for manual assignments |
-| assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (LDAP sync, CLI) |
+| group_name   | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | External group name that granted this role, or `_manual` for manual assignments |
+| assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (external sync, CLI) |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
 
-**Unique constraint**: (user_id, role, ad_group_cn)
+**Unique constraint**: (user_id, role, group_name)
 
 **Role enum values**:
 
@@ -990,30 +992,31 @@ The capability-to-role mapping and scope-to-role mapping are static
 definitions in code (not stored in the database). See
 `docs/features/identity/rbac.md` for the full authorization model.
 
-**ad_group_cn semantics**:
+**group_name semantics**:
 
 | Value       | Meaning                                                        |
 |-------------|----------------------------------------------------------------|
 | `_manual`   | Role assigned manually by an admin via API or CLI              |
-| Any other value | AD group common name — role derived from that group's RoleMapping rule |
+| Any other value | External group name — role derived from that group's RoleMapping rule |
 
 ### RoleMapping
 
-Stores the mapping rules between Active Directory groups and Sentinel roles.
-Configured by admins via the UI or API. When a mapping is created or
-deleted, roles are applied or revoked immediately. During the daily LDAP
-sync, existing mappings are re-evaluated against current AD group
-membership. See `docs/features/identity/ad-integration.md`.
+Stores the mapping rules between external identity provider groups and
+Sentinel roles. Configured by admins via the UI or API. When a mapping
+is created or deleted, roles are applied or revoked immediately. During
+external provisioning sync, existing mappings are re-evaluated against
+current group membership. See
+`docs/features/identity/identity-provisioning.md`.
 
 | Column       | Type        | Constraints                  | Description                        |
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
-| ad_group_cn  | VARCHAR(256) | NOT NULL                     | AD group common name (e.g., `O SUSE Security`) |
+| group_name   | VARCHAR(256) | NOT NULL                     | External group name (e.g., `SecurityTeam`) |
 | role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Restricted Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
-**Unique constraint**: (ad_group_cn, role)
+**Unique constraint**: (group_name, role)
 
 ### Session
 
@@ -1266,7 +1269,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType enum below |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync) |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (external sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
 | old_value | TEXT | nullable | Previous state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | new_value | TEXT | nullable | New state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
@@ -1277,20 +1280,20 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 
 | Value | Description |
 |---|---|
-| user_created | User account created (manual or AD sync) |
-| user_deactivated | User account deactivated (admin or AD sync) |
+| user_created | User account created (manual or external sync) |
+| user_deactivated | User account deactivated (admin or external sync) |
 | user_reactivated | User account reactivated by admin |
 | password_reset | Admin reset another user's password |
-| role_added | Role assigned to user (admin or AD sync) |
-| role_removed | Role removed from user (admin or AD sync) |
-| role_mapping_created | AD group-to-role mapping created by admin |
-| role_mapping_deleted | AD group-to-role mapping deleted by admin |
-| username_changed | Username changed by AD sync (sAMAccountName change) |
+| role_added | Role assigned to user (admin or external sync) |
+| role_removed | Role removed from user (admin or external sync) |
+| role_mapping_created | Group-to-role mapping created by admin |
+| role_mapping_deleted | Group-to-role mapping deleted by admin |
+| username_changed | Username changed by external sync (username change at provider) |
 | api_key_created | API key created by user or admin |
 | api_key_revoked | API key revoked by user, admin, or system |
-| email_changed | Email address updated (admin or AD sync) |
-| full_name_changed | Full name updated (admin or AD sync) |
-| manager_changed | Direct manager updated by AD sync |
+| email_changed | Email address updated (admin or external sync) |
+| full_name_changed | Full name updated (admin or external sync) |
+| manager_changed | Direct manager updated by external sync |
 
 See `docs/features/identity/identity-audit-log.md` for the full event
 type contract with field values.

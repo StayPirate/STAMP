@@ -291,7 +291,6 @@ a natural English compound noun: "sync NVD CVEs", "detect IBS releases".
 | `smelt` | SMELT |
 | `aimaas` | AIMAAS |
 | `ibs` | IBS (build.suse.de) |
-| `ldap` | SUSE Active Directory (LDAP protocol) |
 
 New sources follow the same rule: use the shortest unambiguous lowercase
 identifier for the external system.
@@ -360,7 +359,7 @@ async def catch_up(self, ticket_id: str, session: AsyncSession) -> None:
 
     Optional. Only applicable to fetchers whose execute() scope
     is filtered by ticket status. Global fetchers (product catalog,
-    AD sync, etc.) do not implement this.
+    lifecycle sync, etc.) do not implement this.
     """
     ...
 ```
@@ -669,7 +668,6 @@ on-demand discovery. The default `catch_up()` inherited from
 | `sync_smelt_products` | Syncs entire product catalog regardless of ticket state |
 | `sync_aimaas_lifecycle` | Syncs all product lifecycle dates |
 | `sync_aimaas_thresholds` | Syncs all CVSS thresholds |
-| `sync_ldap_directory` | Syncs all employee records |
 | `sync_cisa_kev` | Syncs entire KEV catalog (`supports_fetch_single = False` → `participates_in_catch_up` derived as `False`) |
 
 Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but is excluded from
@@ -802,8 +800,8 @@ and the timeout mechanism provides the actual time bound.
 
 Error messages MUST NOT contain:
 
-- Internal hostnames (e.g., `build.suse.de`, `pan.suse.de`,
-  `smelt.suse.de`)
+- Internal hostnames (e.g., `build.suse.de`,
+  `smelt.suse.de`, `rabbit.suse.de`)
 - IP addresses or port numbers
 - File system paths
 - Database or Redis connection strings
@@ -849,7 +847,7 @@ Operational parameters that:
 | Category | Examples | Reason |
 |----------|----------|--------|
 | Credentials | `IBS_USERNAME`, `IBS_PASSWORD`, `NVD_API_KEY` | Secrets — managed via env vars / Kubernetes Secrets |
-| Connection URIs | `LDAP_URI`, `IBS_API_URL` | Infrastructure — changes with deployment environment |
+| Connection URIs | `IBS_API_URL` | Infrastructure — changes with deployment environment |
 | TLS configuration | `SUSE_CA_CERT_PATH` | Infrastructure — tied to certificate management |
 
 ### Schema declaration

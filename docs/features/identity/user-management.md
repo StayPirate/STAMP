@@ -4,8 +4,8 @@
 
 Enable administrators to manage user accounts via the CLI and the
 administration panel in the web UI. This spec covers both local users
-(managed directly in Sentinel's database) and AD users (synced from
-SUSE Active Directory via LDAP).
+(managed directly in Sentinel's database) and external users (synced from
+the external identity provider).
 
 Local users serve three primary use cases:
 
@@ -18,13 +18,13 @@ Local users serve three primary use cases:
 3. **Environments without SSO**: deployments outside the SUSE corporate
    network where `id.suse.com` is not reachable
 
-AD users are provisioned and maintained by the LDAP sync process (see
-`docs/features/identity/ad-integration.md`). Administrators can modify their
+External users are provisioned and maintained by the external sync process (see
+`docs/features/identity/identity-provisioning.md`). Administrators can modify their
 roles, but cannot deactivate/reactivate them (active status is managed
-exclusively by directory sync), set passwords, or create them manually.
+exclusively by external sync), set passwords, or create them manually.
 
-Local users are created directly in the database, bypassing the LDAP
-sync process. They are functionally identical to AD-synced users for
+Local users are created directly in the database, bypassing the external
+sync process. They are functionally identical to externally-provisioned users for
 the purposes of authorization, ticket assignment, and API key
 management. The only difference is how they authenticate: local
 credentials instead of SSO (see
@@ -90,7 +90,7 @@ interactive terminal (password input).` and exits with code 1.
    exits with error:
    `"Error: Password must be at most 128 characters."`
 5. Delegates to `user_service.create_user()` with:
-   - `ad_object_guid = None` (local user)
+   - `external_id = None` (local user)
    - `active = True`
    - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
@@ -117,13 +117,13 @@ messages to stderr.
 ### `sentinel manage-user update`
 
 Updates an existing user account. Identity field modifications
-(`--email`, `--full-name`) are only permitted on local users — AD
-users have their identity fields managed exclusively by directory sync
-(see AD User Data Ownership in
+(`--email`, `--full-name`) are only permitted on local users — external
+users have their identity fields managed exclusively by external sync
+(see External User Data Ownership in
 `docs/features/identity/user-service.md`). Role changes are permitted on
-both local and AD users. Reactivation (`--reactivate`) is permitted on
-local users only — AD users have their active status managed
-exclusively by directory sync (see AD Active Status Ownership in
+both local and external users. Reactivation (`--reactivate`) is permitted on
+local users only — external users have their active status managed
+exclusively by external sync (see External Active Status Ownership in
 `docs/features/identity/user-service.md`). The command works regardless
 of whether the user is currently active or inactive (see Inactive User
 Management Principle in `docs/features/identity/user-service.md`).
@@ -154,15 +154,15 @@ sentinel manage-user update \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is an AD user (`ad_object_guid IS NOT NULL`) and `--email` or
+3. If the user is an external user (`external_id IS NOT NULL`) and `--email` or
    `--full-name` is provided, exits with error:
-   `"Error: User '{username}' is managed by Active Directory via LDAP sync. Identity
+   `"Error: User '{username}' is managed by an external identity provider. Identity
    fields cannot be modified manually."` (exit code 1). Role changes
-   are still permitted on AD users.
-4. If the user is an AD user (`ad_object_guid IS NOT NULL`) and
+   are still permitted on external users.
+4. If the user is an external user (`external_id IS NOT NULL`) and
    `--reactivate` is provided, exits with error:
-   `"Error: Cannot reactivate AD users."` (exit code 1).
-   Active status of AD users is managed exclusively by directory sync.
+   `"Error: Cannot reactivate external users."` (exit code 1).
+   Active status of external users is managed exclusively by external sync.
 5. If no modification flags are provided (`--email`, `--full-name`,
    `--add-role`, `--remove-role`, `--reactivate` are all absent), prints:
    `"No changes specified for user '{username}'."` and exits with code 0
@@ -183,7 +183,7 @@ sentinel manage-user update \
     `acting_user_id = None` and roles as `(role, '_manual')` pairs. The
     CLI does not pre-process or validate conflicts between add and remove
     lists — the service handles input resolution (deduplication,
-    cancellation of conflicting entries) and validation (AD-derived role
+    cancellation of conflicting entries) and validation (externally-derived role
     protection). The service never rejects input due to add/remove
     conflicts; it resolves them silently. Since `acting_user_id = None`,
     the self-removal guard does not apply (CLI is a system action)
@@ -222,12 +222,12 @@ Example output on partial failure:
 — Reactivation not attempted (aborted due to previous error)
 ```
 
-Example output when the service rejects a role change (AD-derived
+Example output when the service rejects a role change (externally-derived
 protection):
 
 ```
 ✓ Email updated to new@example.com
-✗ Role update failed: cannot remove role 'vulnerability_analyst' (derived from AD group membership)
+✗ Role update failed: cannot remove role 'vulnerability_analyst' (derived from external group membership)
 — Reactivation not attempted (aborted due to previous error)
 ```
 
@@ -265,9 +265,9 @@ sentinel manage-user deactivate \
 1. Normalize the username (trim whitespace, lowercase)
 2. Looks up the user by normalized username — if not found, exits with
    error: `"Error: User '{username}' not found."`
-3. If the user is an AD user (`ad_object_guid IS NOT NULL`), exits with
-   error: `"Error: Cannot deactivate AD users."` (exit code 1).
-   Active status of AD users is managed exclusively by directory sync.
+3. If the user is an external user (`external_id IS NOT NULL`), exits with
+   error: `"Error: Cannot deactivate external users."` (exit code 1).
+   Active status of external users is managed exclusively by external sync.
 4. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
 5. Queries the impact of deactivation:
@@ -302,7 +302,7 @@ sentinel manage-user deactivate \
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
 with TicketAuditEvent, ticket assignments, and UserRole audit data. This is
-consistent with LDAP sync deactivation behavior. For full database
+consistent with external sync deactivation behavior. For full database
 cleanup in development environments, reset the database directly.
 
 **Inactive user management principle**: see
@@ -337,11 +337,11 @@ code 1). This command cannot be used non-interactively — a TTY is
 required. If no TTY is detected, prints to stderr `Error: This command
 requires an interactive terminal (password input).` and exits with code 1.
 
-This command is only valid for local users (`ad_object_guid = NULL`). The
+This command is only valid for local users (`external_id = NULL`). The
 username is normalized (trim whitespace, lowercase) before lookup. If
-invoked on an AD user, exits with error:
-`"Error: Cannot set password for AD user '{username}'. AD users
-authenticate via id.suse.com."` (exit code 1)
+invoked on an external user, exits with error:
+`"Error: Cannot set password for external user '{username}'. External users
+authenticate via SSO."` (exit code 1)
 
 This command operates on both active and inactive local users. Setting a
 password on an inactive user prepares credentials for reactivation — the
@@ -356,7 +356,7 @@ On success, prints to stdout:
 new password interactively; the operation inherently changes state.
 
 **Exit codes**: 0 on success, 1 on validation error (user not found,
-AD user, passwords don't match, password policy violation), 2 on system
+external user, passwords don't match, password policy violation), 2 on system
 error (database unreachable).
 
 **Output channels**: confirmation message to stdout. All `"Error: ..."`
@@ -388,9 +388,9 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is inactive. Unlock has no practical
    effect until the user is reactivated."` — then continue (do not
    abort)
-4. If the user is an AD user (`ad_object_guid IS NOT NULL`), print a warning
+4. If the user is an external user (`external_id IS NOT NULL`), print a warning
    to stderr:
-   `"Warning: User '{username}' is an AD user. Local login lockout
+   `"Warning: User '{username}' is an external user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
    abort)
 5. Delegate to `asyncio.run(user_service.unlock_user(user_id,
@@ -420,7 +420,7 @@ Lists all users in the system with their key attributes.
 sentinel manage-user list \
   [--active | --inactive] \
   [--role <role>] ... \
-  [--type local|ad]
+  [--type local|external]
 ```
 
 **Parameters**:
@@ -430,7 +430,7 @@ sentinel manage-user list \
 | `--active`   | No       | No         | Show only active users                         |
 | `--inactive` | No       | No         | Show only inactive users                       |
 | `--role`     | No       | Yes        | Filter by role: `admin`, `vulnerability_analyst`, `restricted_analyst` |
-| `--type`     | No       | No         | Filter by type: `local` or `ad`                |
+| `--type`     | No       | No         | Filter by type: `local` or `external`          |
 
 `--active` and `--inactive` are mutually exclusive. If neither is
 provided, all users are shown regardless of status.
@@ -442,10 +442,10 @@ provided, all users are shown regardless of status.
 3. Print a table to stdout with columns:
 
 ```
-USERNAME        FULL NAME            EMAIL                    TYPE   STATUS    ROLES
-jdoe            John Doe             jdoe@example.com         local  active    admin, vulnerability_analyst
-bwilson          Bob Wilson           bob.wilson@suse.com      ad     active    vulnerability_analyst
-olduser         Old User             old@example.com          local  inactive  —
+USERNAME        FULL NAME            EMAIL                    TYPE       STATUS    ROLES
+jdoe            John Doe             jdoe@example.com         local      active    admin, vulnerability_analyst
+bwilson         Bob Wilson           bob.wilson@suse.com      external   active    vulnerability_analyst
+olduser         Old User             old@example.com          local      inactive  —
 ```
 
 Column alignment uses fixed-width spaces. The ROLES column shows a
@@ -496,8 +496,8 @@ Manager:      bwilson
 ```
 
 The ROLES field shows each role with its origin in parentheses:
-`manual` for roles assigned via CLI/API, or the AD group CN for roles
-derived from LDAP sync. If a role has both origins, show both:
+`manual` for roles assigned via CLI/API, or the external group name for roles
+derived from external sync. If a role has both origins, show both:
 `admin (manual, O SUSE Admins)`.
 
 If `Last login` is never, show `—`. If `Manager` is not set, show `—`.
@@ -531,7 +531,7 @@ Query parameters:
   `full_name`. Minimum 2 characters.
   Case-insensitive substring match (SQL `ILIKE '%query%'`)
 - `type` (enum, optional): filter by authentication type. Values:
-  `local`, `ad`
+  `local`, `external`
 - `active` (boolean, optional): filter by active status
 - `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`, `restricted_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
@@ -557,8 +557,8 @@ envelope:
     "email": "string",
     "full_name": "string",
     "active": true,
-    "source": "ad | local",
-    "ad_object_guid": "uuid | null",
+    "source": "external | local",
+    "external_id": "uuid | null",
     "manager": {
       "id": "uuid",
       "username": "string",
@@ -569,7 +569,7 @@ envelope:
     "roles": [
       {
         "role": "admin",
-        "ad_group_cn": "O SUSE Security",
+        "group_name": "O SUSE Security",
         "assigned_by": "uuid | null",
         "created_at": "ISO8601"
       }
@@ -581,12 +581,12 @@ envelope:
 ```
 
 Field notes:
-- `source`: derived field — `"ad"` if `ad_object_guid IS NOT NULL`,
+- `source`: derived field — `"external"` if `external_id IS NOT NULL`,
   otherwise `"local"`
-- `ad_object_guid`: AD `objectGUID` (immutable UUID). NULL for local users
-- `manager`: resolved manager object (from AD `manager` DN) or `null`
-- `roles`: array of all roles from both AD group mappings and manual
-  assignments. `ad_group_cn` is `'_manual'` for manually assigned roles
+- `external_id`: unique identifier from the external identity provider. NULL for local users
+- `manager`: resolved manager object or `null`
+- `roles`: array of all roles from both external group mappings and manual
+  assignments. `group_name` is `'_manual'` for manually assigned roles
 
 **Error responses**:
 
@@ -605,9 +605,9 @@ otherwise stated.
 
 #### Update User (Admin)
 
-Update a user's profile fields. Only local users (`ad_object_guid IS NULL`)
-can be modified — AD users have their identity fields managed by
-directory sync (see AD User Data Ownership in
+Update a user's profile fields. Only local users (`external_id IS NULL`)
+can be modified — external users have their identity fields managed by
+external sync (see External User Data Ownership in
 `docs/features/identity/user-service.md`). This endpoint operates on
 both active and inactive users (see Inactive User Management Principle
 in `docs/features/identity/user-service.md`).
@@ -629,9 +629,9 @@ in `docs/features/identity/user-service.md`).
    `VALIDATION_ERROR`: `"At least one field must be provided."`
 3. If `email` is provided, validate format — if invalid, return HTTP 422
    with code `VALIDATION_ERROR`: `"Invalid email format."`
-4. If the user is an AD user (`ad_object_guid IS NOT NULL`), return HTTP 409
-   with code `USER_AD_FIELD_READONLY`:
-   `"Cannot modify identity fields for AD users. These fields are managed by Active Directory."`
+4. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
+   with code `USER_EXTERNAL_FIELD_READONLY`:
+   `"Cannot modify identity fields for external users. These fields are managed by the external identity provider."`
 5. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
 6. If the service raises `UserConflictError` (duplicate email), return
@@ -666,10 +666,10 @@ Add or remove manual roles for a user.
    `(role, '_manual')` pairs
 
 **Validation rules**:
-- Cannot remove roles with `ad_group_cn != '_manual'` — returns HTTP 409
-  with code `USER_AD_ROLE_PROTECTED`:
-  `"Cannot remove AD-derived role '{role}'. This role is managed by the
-  AD group '{ad_group_cn}'."`
+- Cannot remove roles with `group_name != '_manual'` — returns HTTP 409
+  with code `USER_EXTERNAL_ROLE_PROTECTED`:
+  `"Cannot remove externally-derived role '{role}'. This role is managed by the
+  external group '{group_name}'."`
 - Cannot remove your own Admin role — returns HTTP 409 with code
   `USER_SELF_ROLE_REMOVAL`:
   `"Cannot remove your own Admin role."` (enforced by
@@ -680,11 +680,11 @@ Add or remove manual roles for a user.
 - Adding a role that the user already has as a manual assignment is a
    no-op (idempotent)
 - Removing a role the user does not have is a no-op (idempotent)
-- Adding a role that the user already holds via AD derivation creates a
+- Adding a role that the user already holds via external derivation creates a
   separate `_manual` record — both origins coexist independently. See
   `docs/features/identity/rbac.md` (Role Origins and Coexistence) for full
   semantics
-- Creates a `UserRole` record with `ad_group_cn = '_manual'` and
+- Creates a `UserRole` record with `group_name = '_manual'` and
   `assigned_by` set to the authenticated admin's user ID for each added
   role
 
@@ -713,7 +713,7 @@ inactive user prepares credentials for reactivation.
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
 2. Delegate to `user_service.reset_password(user_id, password,
-   acting_user_id=authenticated_admin.id)` — this handles AD user
+   acting_user_id=authenticated_admin.id)` — this handles external user
    check, validation, hashing, session invalidation, and audit event
    creation (see `docs/features/identity/user-service.md`)
 3. Return HTTP 200
@@ -722,7 +722,7 @@ inactive user prepares credentials for reactivation.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 409 | `USER_AD_PASSWORD_FORBIDDEN` | Cannot set password for AD user |
+| 409 | `USER_EXTERNAL_PASSWORD_FORBIDDEN` | Cannot set password for external user |
 | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
 | 404 | `USER_NOT_FOUND` | User not found |
 
@@ -759,9 +759,9 @@ revocation, session invalidation, ticket unassignment).
 - Self-deactivation is rejected by the service layer — returns HTTP 409
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
-- AD user deactivation is rejected by the service layer — returns
-  HTTP 409 with code `USER_AD_STATUS_READONLY`:
-  `"Cannot deactivate AD users."`
+- External user deactivation is rejected by the service layer — returns
+  HTTP 409 with code `USER_EXTERNAL_STATUS_READONLY`:
+  `"Cannot deactivate external users."`
 
 See `docs/features/identity/user-service.md` for the full side effect contract
 (API key revocation, session invalidation, ticket unassignment on
@@ -789,9 +789,9 @@ Reactivate a previously deactivated user account.
    `{"data": ...}` envelope
 
 **Constraints**:
-- AD user reactivation is rejected by the service layer — returns
-  HTTP 409 with code `USER_AD_STATUS_READONLY`:
-  `"Cannot reactivate AD users."`
+- External user reactivation is rejected by the service layer — returns
+  HTTP 409 with code `USER_EXTERNAL_STATUS_READONLY`:
+  `"Cannot reactivate external users."`
 
 **Response**: user profile in `{"data": {...}}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
@@ -815,11 +815,11 @@ proceeding with deactivation.
    consistent — if you cannot deactivate yourself, you cannot preview
    the impact either. This prevents a confusing UX where the preview
    succeeds but the subsequent action is rejected.
-3. If the user is an AD user (`ad_object_guid IS NOT NULL`), return HTTP 409
-   with code `USER_AD_STATUS_READONLY`:
-   `"Cannot deactivate AD users."`
+3. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
+   with code `USER_EXTERNAL_STATUS_READONLY`:
+   `"Cannot deactivate external users."`
    Rationale: same consistency principle as self-deactivation — if the
-   deactivation endpoint rejects AD users, the preview should too.
+   deactivation endpoint rejects external users, the preview should too.
 4. If the user is already inactive, return HTTP 200 with a no-impact
    response: all counts set to zero and `already_inactive` set to `true`.
    Rationale: the actual `POST .../deactivate` endpoint is idempotent and
@@ -897,23 +897,23 @@ with the same response without error.
 |--------|------|-----------|
 | 404 | `USER_NOT_FOUND` | User not found |
 
-## Interaction with LDAP Sync
+## Interaction with External Provisioning
 
-The `sync_ldap_directory` fetcher operates exclusively on users with
-`ad_object_guid IS NOT NULL`. Local users (`ad_object_guid = NULL`) are invisible to
+The external sync process operates exclusively on users with
+`external_id IS NOT NULL`. Local users (`external_id = NULL`) are invisible to
 the sync process:
 
 - They are never deactivated by the sync
-- They are never updated with AD data
-- They are never assigned AD-derived roles
+- They are never updated with data from the external provider
+- They are never assigned externally-derived roles
 
 This separation is inherent in the existing sync algorithm — no special
 handling is required.
 
 ## Business Rules
 
-1. **Local users are identified by `ad_object_guid = NULL`**: this is the
-   canonical way to distinguish local users from AD-synced users. No
+1. **Local users are identified by `external_id = NULL`**: this is the
+   canonical way to distinguish local users from externally-provisioned users. No
    additional flag or column is needed
 2. **No "last admin" enforcement**: the system does not enforce a
    minimum admin count. However, via UI/API it is practically impossible
@@ -928,12 +928,10 @@ handling is required.
    non-admin features remain operational). In these rare cases, a
    system administrator with shell access can restore admin access via:
    `sentinel manage-user update --username <user> --add-role admin`.
-   This is consistent with the LDAP sync behavior (see
-   `docs/features/identity/ad-integration.md`, Business Rule 6)
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
-   commands or admin UI have `ad_group_cn = '_manual'` and
+   commands or admin UI have `group_name = '_manual'` and
    `assigned_by = NULL` (CLI) or `assigned_by = admin_user_id` (UI)
 5. **Password required at creation**: local users must have a password
    set at creation time. There is no passwordless local user state.
@@ -998,6 +996,6 @@ handling is required.
 - `docs/features/identity/user-service.md` — service contract for create,
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
-- `docs/features/identity/ad-integration.md` — LDAP sync (manages AD users)
+- `docs/features/identity/identity-provisioning.md` — external sync (manages external users)
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

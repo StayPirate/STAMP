@@ -12,11 +12,11 @@ lifecycle, logout, error code namespace (`AUTH_*`)
 Provide single sign-on authentication for Sentinel using the SUSE
 corporate identity provider (`id.suse.com`) via the OpenID Connect
 (OIDC) protocol. This is the primary authentication method for SUSE
-employees whose accounts are managed by Active Directory and synced into
-Sentinel via the `sync_ldap_directory` fetcher.
+employees whose accounts are managed by the external identity provider and
+provisioned in Sentinel by an external identity provider (see `docs/features/identity/identity-provisioning.md`).
 
-SSO authentication is available only to users with `ad_object_guid IS NOT NULL`
-(AD-synced users). Local users (`ad_object_guid = NULL`) authenticate via
+SSO authentication is available only to users with `external_id IS NOT NULL`
+(externally-provisioned users). Local users (`external_id = NULL`) authenticate via
 the local login endpoint — see `docs/features/identity/local-authentication.md`.
 
 ## Configuration
@@ -44,7 +44,7 @@ SSO-capable and SSO-less environments without any code changes.
 
 `SSO_USER_CLAIM` specifies which claim from the OIDC ID token is used
 to identify the user (matched against the `username` field in the User
-table, with a guard that the user must be AD-synced). Defaults to `sub`.
+table, with a guard that the user must be externally-provisioned). Defaults to `sub`.
 
 `SSO_REDIRECT_URI` is the full URL (scheme + host + path) where the IdP
 redirects the browser after authentication. It MUST point to the
@@ -192,8 +192,8 @@ The frontend then redirects the browser to this URL.
 
 ### Step 2: IdP authentication
 
-The user authenticates at `id.suse.com` (credentials managed by SUSE
-AD). On success, the IdP redirects the browser back to Sentinel's
+The user authenticates at `id.suse.com` (credentials managed by the
+identity provider). On success, the IdP redirects the browser back to Sentinel's
 callback URL with an authorization `code` and `state` parameter.
 
 ### Step 3: Callback processing
@@ -269,8 +269,8 @@ callback URL with an authorization `code` and `state` parameter.
    only names, to aid debugging without leaking PII)
 6. Look up the user by matching `username` to the extracted claim value
    (lowercased — see Matching rules). Additionally verify that
-   `ad_object_guid IS NOT NULL` (i.e., the matched user is an
-   AD-synced user, not a local user)
+   `external_id IS NOT NULL` (i.e., the matched user is an
+   externally-provisioned user, not a local user)
 7. If user not found, return HTTP 401 with code `AUTH_SSO_USER_NOT_FOUND`:
    `"No Sentinel account found for this identity. Contact your
    administrator."`
@@ -368,16 +368,15 @@ Unlike the local login endpoint, SSO error messages can be specific
 The claim specified by `SSO_USER_CLAIM` (default: `sub`) from the IdP's
 ID token is matched against the `username` field in the `User` table,
 with the additional guard that the matched user must have
-`ad_object_guid IS NOT NULL` (i.e., be an AD-synced user).
+`external_id IS NOT NULL` (i.e., be an externally-provisioned user).
 
 With the default configuration (`sub`), this works because:
 
-- The `sync_ldap_directory` fetcher imports users from SUSE Active
-  Directory and stores their `sAMAccountName` as `username`
-- `id.suse.com` uses the same AD as its identity source, so its `sub`
-  claim corresponds to the `sAMAccountName`
+- The external sync process imports users and stores their provider username as `username`
+- `id.suse.com` uses the same identity source, so its `sub`
+  claim corresponds to the provider username
 
-If the IdP changes its `sub` format (e.g., from bare `sAMAccountName` to
+If the IdP changes its `sub` format (e.g., from bare username to
 a UUID or email-decorated form), the operator can update `SSO_USER_CLAIM`
 to point to a different claim (e.g., `preferred_username`) without code
 changes.
@@ -386,31 +385,31 @@ changes.
 
 1. The matching is **case-insensitive**: the claim value is normalized
    to lowercase before comparison with `username`. This ensures
-   consistency with the `sync_ldap_directory` fetcher, which stores
-   `sAMAccountName` normalized to lowercase (as required by the CLI
-   conventions). Since AD `sAMAccountName` is inherently
-   case-insensitive, this normalization prevents silent login failures
+   consistency with the external sync process, which stores
+   usernames normalized to lowercase (as required by the CLI
+   conventions). Since provider usernames may be case-insensitive,
+   this normalization prevents silent login failures
    if the IdP returns a differently-cased value (e.g., `JDoe` vs
    `jdoe`).
 2. Log the claim value at DEBUG level on every SSO login attempt
 3. Log a WARNING when the claim value does not match any `username`
-   (for AD users), including the unmatched value for diagnostic purposes
+   (for external users), including the unmatched value for diagnostic purposes
 
 ### No auto-provisioning
 
 If the `sub` claim does not match any `username` (with
-`ad_object_guid IS NOT NULL`) in the database, the login **fails**.
+`external_id IS NOT NULL`) in the database, the login **fails**.
 Sentinel does not auto-create user records during SSO login. The user
-must already exist in the database (created by the LDAP sync process).
+must already exist in the database (created by the external sync process).
 
 This is a deliberate design choice:
 
 - It prevents orphan accounts from users who are not in Sentinel's
-  managed AD groups
-- It ensures that role mappings (based on AD group membership) are
+  external groups
+- It ensures that role mappings (based on external group membership) are
   applied before the user can access the system
-- It keeps the LDAP sync as the single source of truth for AD user
-  provisioning
+- It keeps the external provisioning as the single source of truth for external user
+  accounts
 
 ## Logout
 
@@ -476,7 +475,7 @@ errors (500).
   password attempts) applies only to the local login endpoint. SSO login
   bypasses this counter because credentials are verified by the IdP, not
   by Sentinel — brute-force protection is the IdP's responsibility. The
-  only access control that applies to AD users is the `is_active` flag
+  only access control that applies to external users is the `is_active` flag
   (deactivated users cannot log in via any method).
 - **Authorization Code flow**: the client secret is never exposed to
   the browser. Token exchange happens server-side.
@@ -531,8 +530,8 @@ errors (500).
   (JWT format, session model, API keys, middleware)
 - `docs/features/identity/local-authentication.md` — local login (alternative
   provider)
-- `docs/features/identity/ad-integration.md` — LDAP sync that provisions SSO
-  user accounts
+- `docs/features/identity/identity-provisioning.md` — External provisioning
+  (deferred) for SSO user accounts
 - `docs/features/identity/user-service.md` — deactivation side effects
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

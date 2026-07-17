@@ -249,7 +249,7 @@ exist without its corresponding audit event.
   database level in all audit event models
 - `user_id` is set when the action was initiated by a human user
 - `user_id` is `NULL` when the action was initiated by the system (e.g.,
-  background task, AD sync, automated detection)
+  background task, external sync, automated detection)
 - Subclasses that only record human-initiated actions (e.g.,
   `SettingAuditLog`, `FetcherAuditLog`) MUST override `log_event()` to
   validate that `user_id` is provided, raising `ValueError` if it is
@@ -316,7 +316,7 @@ exist:
   (`GET /api/v1/users/me/audit-log`): **Authenticated**, scoped to
   `target_user_id = current_user.id`. Users can view events that affect
   their own account (role changes, password resets, API key operations,
-  field changes from AD sync). The actor field is anonymized to
+   field changes from external sync). The actor field is anonymized to
   `"system"`, `"self"`, or `"admin"` to prevent identification of the
   specific administrator. The full, unmasked audit log remains
   restricted to users with `manage_users` capability at

@@ -33,7 +33,7 @@ Endpoints are protected by a single capability via the
 | Capability | Operations Covered |
 |---|---|
 | `manage_users` | Update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
-| `manage_role_mappings` | AD role mapping CRUD, preview role mapping |
+| `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
 | `admin_ticket_ops` | Force track to FIXED status |
@@ -159,7 +159,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | View deactivation impact | `manage_users` |
 | View/revoke all API keys | `manage_users` |
 | View admin-scoped identity audit log | `manage_users` |
-| AD role mapping CRUD | `manage_role_mappings` |
+| Group-to-role mapping CRUD | `manage_role_mappings` |
 | Preview role mapping | `manage_role_mappings` |
 | View/update system settings | `manage_settings` |
 | Trigger CVSS recalculation | `manage_settings` |
@@ -217,7 +217,7 @@ A ticket is visible to a user if ANY of the following is true:
    a package associated with this ticket
 
 Email comparison for rules 4 and 5 is case-insensitive, guaranteed by
-normalized lowercase storage on both sides: User.email (from AD sync)
+normalized lowercase storage on both sides: User.email (from external sync)
 and bugowner emails (from IBS sync). A standard equality operator (`=`)
 is sufficient — no runtime ILIKE or lower() is needed.
 
@@ -484,10 +484,10 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/admin/users/{user}/reactivate` | `manage_users` | [user-management](user-management.md#reactivate-user) |
 | GET | `/api/v1/admin/users/{user}/deactivation-impact` | `manage_users` | [user-management](user-management.md#get-deactivation-impact) |
 | POST | `/api/v1/admin/users/{user}/unlock` | `manage_users` | [user-management](user-management.md#unlock-user) |
-| GET | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [ad-integration](ad-integration.md#list-role-mappings) |
-| POST | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [ad-integration](ad-integration.md#create-role-mapping) |
-| POST | `/api/v1/admin/role-mappings/preview` | `manage_role_mappings` | [ad-integration](ad-integration.md#preview-role-mapping) |
-| DELETE | `/api/v1/admin/role-mappings/{id}` | `manage_role_mappings` | [ad-integration](ad-integration.md#delete-role-mapping) |
+| GET | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#list-role-mappings) |
+| POST | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#create-role-mapping) |
+| POST | `/api/v1/admin/role-mappings/preview` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#preview-role-mapping) |
+| DELETE | `/api/v1/admin/role-mappings/{id}` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#delete-role-mapping) |
 
 ### Infrastructure
 
@@ -502,8 +502,8 @@ here with the required authorization level and a link to the owning spec.
 - Capability names (e.g., `create_ticket`, `manage_users`) = requires the
   specified capability; see Predefined Roles for which roles include each
   capability
-- User creation: AD users are created by the LDAP directory sync (see
-  [ad-integration](ad-integration.md#ldap-sync-fetcher)); local users are created by admins
+- User creation: External users are created by the external sync process (see
+  [identity-provisioning](identity-provisioning.md)); local users are created by admins
   via CLI (see [user-management](user-management.md#cli-commands))
 
 † Field-level capability — the endpoint has a base access level, but
@@ -516,7 +516,7 @@ here with the required authorization level and a link to the owning spec.
 
 1. An admin cannot remove their own Admin role. This is enforced by
    `user_service.update_roles()` for any entry point where
-   `acting_user_id` is set. System actions (LDAP sync, CLI) pass
+   `acting_user_id` is set. System actions (external sync, CLI) pass
    `acting_user_id = None` and are exempt. See
    `docs/features/identity/user-service.md`. This guard ensures that via
    UI/API, admins cannot accidentally eliminate all admin users — the
@@ -529,11 +529,11 @@ here with the required authorization level and a link to the owning spec.
 3. Users cannot deactivate their own account (enforced by
    `user_service.deactivate_user()` — see
    `docs/features/identity/user-service.md`)
-4. AD users cannot be manually deactivated or reactivated — their
-   active status is controlled exclusively by Active Directory via LDAP
-   sync (enforced by `user_service.deactivate_user()` and
+4. External users cannot be manually deactivated or reactivated — their
+   active status is controlled exclusively by the external identity
+   provider via sync (enforced by `user_service.deactivate_user()` and
    `user_service.reactivate_user()` — see
-   `docs/features/identity/user-service.md`, AD Active Status Ownership)
+   `docs/features/identity/user-service.md`, External Active Status Ownership)
 5. Deactivated users cannot authenticate. On deactivation, all API keys
    are revoked and all active sessions are invalidated (proactively,
    before marking the user inactive). Additionally, the middleware
@@ -550,13 +550,19 @@ here with the required authorization level and a link to the owning spec.
    confidential tickets via `TicketAccessGrant` or bugowner matching —
    unlike unauthenticated users, who see only non-confidential tickets
    with no per-ticket override mechanisms
-9. Admin bootstrap: create a local admin via
-   `sentinel manage-user create --username bootstrap-admin --email bootstrap@localhost --role admin`,
-   then use the API to trigger the LDAP sync
-   (`POST /api/v1/fetchers/sync_ldap_directory/trigger`), then promote
-   an AD user via
-   `sentinel manage-user update --username <username> --add-role admin`.
-   See `docs/features/identity/ad-integration.md`.
+9. Admin bootstrap:
+   - **Local-only phase** (current): create a local admin via
+     `sentinel manage-user create --username bootstrap-admin
+     --email bootstrap@localhost --role admin`. This is the only
+     bootstrap mechanism available when external provisioning is
+     not active.
+   - **With external provisioning** (future): after the initial
+     local admin is created, trigger the external provisioning
+     sync (see `docs/features/identity/identity-provisioning.md`,
+     Bootstrap Sequence), then optionally promote an external user
+     to admin via `sentinel manage-user update --username
+     <username> --add-role admin` and deactivate the bootstrap
+     account.
    For restricted analyst accounts, see Business Rule 14
 10. **Assignment target constraint**: only users holding the
     `vulnerability_analyst` role can be assigned as ticket owners. The
@@ -641,7 +647,7 @@ session management, API keys, and middleware behavior.
 ### Password Security
 
 Sentinel stores bcrypt password hashes (with SHA-256 pre-hash) for local
-users only. AD users do not have local passwords. See
+users only. External users do not have local passwords. See
 `docs/features/identity/local-authentication.md` for password policy and
 hashing parameters.
 
@@ -649,11 +655,11 @@ hashing parameters.
 
 See `docs/data-model.md`. Key tables:
 
-- **User**: username, email, active status, AD fields (ad_object_guid,
-  manager_id, ad_synced_at)
-- **UserRole**: junction table linking users to roles with `ad_group_cn`
-  (AD group name or `_manual` for manual assignments)
-- **RoleMapping**: maps AD group names to Sentinel roles
+- **User**: username, email, active status, external identity fields (external_id,
+  manager_id, synced_at)
+- **UserRole**: junction table linking users to roles with `group_name`
+  (external group name or `_manual` for manual assignments)
+- **RoleMapping**: maps external group names to Sentinel roles
 - **Role** enum: `Admin`, `Vulnerability Analyst`, `Restricted Analyst`
 
 The capability-to-role mapping and scope-to-role mapping are static
@@ -679,13 +685,13 @@ CLI `--role` parameter, and `RoleMapping` API payloads.
 
 A user can acquire a role from two independent sources (origins):
 
-- **Manual** (`ad_group_cn = '_manual'`): assigned by an admin via CLI
+- **Manual** (`group_name = '_manual'`): assigned by an admin via CLI
   or API. Can be removed by an admin at any time.
-- **AD-derived** (`ad_group_cn = <group CN>`): derived from AD group
-  membership during LDAP sync. Managed exclusively by the sync process
-  — cannot be removed via UI or API. See `docs/features/identity/ad-integration.md`.
+- **Externally-derived** (`group_name = <group name>`): derived from external group
+  membership during external sync. Managed exclusively by the sync process
+  — cannot be removed **per-user** via UI or API (only via role mapping deletion or external sync reconciliation). See `docs/features/identity/identity-provisioning.md`.
 
-AD groups can be mapped to `restricted_analyst` via `RoleMapping`. This
+External groups can be mapped to `restricted_analyst` via `RoleMapping`. This
 is a valid use case — for example, users who should perform ticket
 operations but must not access embargoed (confidential) data. The admin
 is responsible for ensuring the mapping is intentional.
@@ -694,27 +700,27 @@ is responsible for ensuring the mapping is intentional.
 
 1. The same role can be held by a user from multiple origins
    simultaneously. Each origin creates a distinct `UserRole` record
-   (unique constraint: `user_id, role, ad_group_cn`).
-2. **Manual assignment when role already exists via AD**: creates a new
-   `UserRole` record with `ad_group_cn = '_manual'`. The user now holds
-   the role from both sources. If the AD group is later revoked, only
-    the AD-derived record (identified by its `ad_group_cn` value) is removed — the manual assignment persists.
-3. **AD derivation when role already exists manually**: the LDAP sync
-   creates a new `UserRole` record with the AD group's `ad_group_cn`.
+   (unique constraint: `user_id, role, group_name`).
+2. **Manual assignment when role already exists via external sync**: creates a new
+   `UserRole` record with `group_name = '_manual'`. The user now holds
+   the role from both sources. If the external group is later revoked, only
+    the externally-derived record (identified by its `group_name` value) is removed — the manual assignment persists.
+3. **External derivation when role already exists manually**: the external sync
+   creates a new `UserRole` record with the external group's `group_name`.
    The user now holds the role from both sources. If the admin later
    removes the manual assignment, only the `_manual` record is removed
-   — the AD-derived assignment persists.
+   — the externally-derived assignment persists.
 4. A role is effectively held as long as **at least one** `UserRole`
    record exists for that `(user_id, role)` pair, regardless of origin.
-5. Removing a manual role never affects AD-derived records; removing an
-   AD-derived role (via sync) never affects manual records. The two
+5. Removing a manual role never affects externally-derived records; removing an
+   externally-derived role (via sync) never affects manual records. The two
    lifecycles are fully independent.
 
 ## Cross-references
 
 - `docs/features/tickets/tickets.md` — confidentiality rules, status transitions
 - `docs/features/tickets/ticket-mutations.md` — service-layer mutation contracts
-- `docs/features/identity/ad-integration.md` — AD sync, role mappings
+- `docs/features/identity/identity-provisioning.md` — external sync, role mappings
 - `docs/features/identity/user-service.md` — centralized user lifecycle operations
 - `docs/data-model.md` — Role enum, UserRole table
 - `docs/api-spec.md` — API authorization conventions

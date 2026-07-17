@@ -209,7 +209,7 @@ resolves the bugowner as follows:
    applies to `bugowner_email` in `PackageBugowner` records (person and
    group bugowners) and `email` in `PackageBugownerMember` records
    (group members). This guarantees case-insensitive matching with
-   `User.email` (also stored as lowercase from AD sync) without
+    `User.email` (also stored as lowercase) without
    requiring runtime `ILIKE` or `lower()` in queries.
 5. If the type is `person`:
    a. Query `GET /person/{userid}` to obtain the email

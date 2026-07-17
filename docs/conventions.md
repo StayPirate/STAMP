@@ -23,7 +23,7 @@
 All examples, API response samples, test fixtures, and documentation
 snippets MUST use fictional placeholder data. Never copy real personal
 identifiers — names, email addresses, usernames, Distinguished Names, or
-any other PII — from external systems (IBS, SMELT, AD, Bugzilla, NVD,
+any other PII — from external systems (IBS, SMELT, Bugzilla, NVD,
 etc.) into the repository.
 
 Approved placeholder patterns:
@@ -35,7 +35,7 @@ Approved placeholder patterns:
 | Emails        | `john.doe@suse.com`, `alice.smith@example.com`       |
 | Groups        | `pkg-maintainers`, `kernel-team`                     |
 | Group emails  | `pkg-maintainers@suse.de`                            |
-| LDAP DNs      | `CN=John Doe,OU=User accounts,DC=corp,DC=suse,DC=com` |
+| External IDs  | `ext-12345`, `00000000-0000-0000-0000-000000000001` |
 
 When documenting API response formats from external services, first
 sanitize the response by replacing all real identifiers with fictional
@@ -50,24 +50,22 @@ database. Any entry point that accepts a username for user creation MUST
 normalize it (trim whitespace, lowercase) and validate the format before
 storage.
 
-### Active Directory / LDAP / SSO Terminology
+### External Identity / SSO Terminology
 
-These three terms have distinct meanings in the Sentinel codebase and
+These terms have distinct meanings in the Sentinel codebase and
 documentation. They MUST NOT be used interchangeably:
 
 | Term | Scope | Usage |
 |------|-------|-------|
-| **AD** (Active Directory) | Data origin | Prefix for columns, error classes, error codes, and CLI/API values that identify data originating from Active Directory. Examples: `ad_object_guid`, `ad_synced_at`, `ADUserStatusReadOnlyError`, `USER_AD_STATUS_READONLY`, `--type ad`, `"source": "ad"` |
-| **LDAP** | Protocol / transport | Used only for the network protocol and infrastructure: environment variables (`LDAP_URI`), the fetcher name (`sync_ldap_directory`), and prose describing the connection layer ("LDAP sync", "LDAPS port 636"). Never as a user type or data-origin label |
-| **SSO** | Authentication method | Used only for the browser-based single sign-on flow (OIDC/OAuth2). Never as a user type — AD users authenticate via SSO, but their identity source is AD |
-| **directory** | Generic category only | Never used alone as a synonym for Active Directory. Acceptable only in generic phrasing like "directory sync" (shorthand for `sync_ldap_directory`) where context is unambiguous |
+| **External** | Data origin | Prefix for columns, error classes, error codes, and CLI/API values that identify data originating from an external identity provider. Examples: `external_id`, `synced_at`, `ExternalUserStatusReadOnlyError`, `USER_EXTERNAL_STATUS_READONLY`, `--type external`, `"source": "external"` |
+| **SSO** | Authentication method | Used only for the browser-based single sign-on flow (OIDC/OAuth2). Never as a user type — external users authenticate via SSO, but their identity source is the external provider |
+| **SCIM** | Provisioning protocol (future) | Used only when referring to the SCIM 2.0 protocol specifically (RFC 7642-7644). The generic term for the provisioning capability is "external provisioning" |
 
 Rules:
-- A user whose `ad_object_guid IS NOT NULL` is an "AD user" (not "LDAP
-  user", "SSO user", or "directory user")
-- A user whose `ad_object_guid IS NULL` is a "local user"
-- The `source` field in API responses returns `"ad"` or `"local"` (never
-  `"ldap"` or `"sso"`)
+- A user whose `external_id IS NOT NULL` is an "external user" (not
+  "LDAP user", "SSO user", or "directory user")
+- A user whose `external_id IS NULL` is a "local user"
+- The `source` field in API responses returns `"external"` or `"local"`
 
 ### Cascade / Chain / Flattening Terminology
 
@@ -85,10 +83,10 @@ Rules:
 - Do not use "cascade" for propagation/side-effect sequences
 - The term "chain" in this convention refers exclusively to mutation
   propagation. Pre-existing domain-specific uses of "chain" in other
-  contexts are unrelated and unaffected: "duplicate chain" (the
-  `duplicate_of_id` linked-list data structure), "submission chain"
-  (IBS SR/incident/RR pipeline in `maintainer.md`), "manager chain"
-  (reporting hierarchy in `ad-integration.md`), "certificate chain"
+   contexts are unrelated and unaffected: "duplicate chain" (the
+   `duplicate_of_id` linked-list data structure), "submission chain"
+   (IBS SR/incident/RR pipeline in `maintainer.md`), "manager chain"
+   (reporting hierarchy in `docs/data-model.md`), "certificate chain"
   (TLS)
 
 ### Ticket Status Category Terminology
@@ -343,7 +341,7 @@ The transaction that holds a `FOR UPDATE` lock MUST be kept as short
 as possible. Two categories of work are forbidden inside it:
 
 1. **No external service calls**: HTTP requests to external services
-   (IBS, SMELT, NVD, AIMAAS, AD, or any network I/O) MUST happen
+   (IBS, SMELT, NVD, AIMAAS, or any network I/O) MUST happen
    **before** the transaction that acquires the lock. The correct
    pattern is:
 

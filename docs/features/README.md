@@ -17,9 +17,9 @@ Index of all feature specification domains.
 ### Identity
 
 - [authentication.md](identity/authentication.md) — Session/JWT/API-key framework
-- [sso-authentication.md](identity/sso-authentication.md) — OIDC SSO login flow
+- [sso-authentication.md](identity/sso-authentication.md) — OIDC SSO login flow (deferred)
 - [local-authentication.md](identity/local-authentication.md) — Username/password login, lockout
-- [ad-integration.md](identity/ad-integration.md) — SUSE AD sync, role mapping
+- [identity-provisioning.md](identity/identity-provisioning.md) — External identity provisioning, role mapping (deferred)
 - [user-service.md](identity/user-service.md) — Service-layer contract for user mutations
 - [user-management.md](identity/user-management.md) — Admin CLI and API for user operations
 - [rbac.md](identity/rbac.md) — Role definitions and endpoint permission map

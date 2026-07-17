@@ -21,7 +21,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
 | event_type | ENUM | NOT NULL | See IdentityAuditEventType |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (AD sync) |
+| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (external sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events (which affect configuration, not a specific user) |
 | old_value | TEXT | nullable | Previous state (human-readable) |
 | new_value | TEXT | nullable | New state (human-readable) |
@@ -50,20 +50,20 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 
 | Value | Trigger | `user_id` | `target_user_id` | `old_value` | `new_value` | `detail` |
 |---|---|---|---|---|---|---|
-| `user_created` | User account created (manual or AD sync) | Creating admin for manual, `NULL` for AD sync | Created user | `NULL` | Username | `NULL` |
-| `user_deactivated` | Admin or AD sync deactivation | Admin for manual, `NULL` for AD sync | Deactivated user | `active` | `inactive` | Reason (e.g., `{"reason": "ad_sync_missing"}` or `{"reason": "admin_action"}`) |
+| `user_created` | User account created (manual or external sync) | Creating admin for manual, `NULL` for external sync | Created user | `NULL` | Username | `NULL` |
+| `user_deactivated` | Admin or external sync deactivation | Admin for manual, `NULL` for external sync | Deactivated user | `active` | `inactive` | Reason (e.g., `{"reason": "external_sync_missing"}` or `{"reason": "admin_action"}`) |
 | `user_reactivated` | Admin reactivation | Admin | Reactivated user | `inactive` | `active` | `NULL` |
 | `password_reset` | Admin resets another user's password | Admin | Target user | `NULL` | `NULL` | `NULL` |
-| `role_added` | Admin or AD sync adds role | Admin for manual, `NULL` for AD sync | Target user | `NULL` | Role name (e.g., `admin`) | For AD sync: `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
-| `role_removed` | Admin or AD sync removes role | Admin for manual, `NULL` for AD sync | Target user | Role name (e.g., `admin`) | `NULL` | For AD sync: `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
-| `role_mapping_created` | Admin creates AD group-to-role mapping | Admin | `NULL` | `NULL` | `"{ad_group} -> {role}"` | `{"ad_group_cn": "...", "role": "...", "affected_users": N}` |
-| `role_mapping_deleted` | Admin deletes AD group-to-role mapping | Admin | `NULL` | `"{ad_group} -> {role}"` | `NULL` | `{"ad_group_cn": "...", "role": "...", "affected_users": N}` |
-| `username_changed` | AD sync detects sAMAccountName change for existing user (matched via objectGUID) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
+| `role_added` | Admin or external sync adds role | Admin for manual, `NULL` for external sync | Target user | `NULL` | Role name (e.g., `admin`) | For external sync: `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `role_removed` | Admin or external sync removes role | Admin for manual, `NULL` for external sync | Target user | Role name (e.g., `admin`) | `NULL` | For external sync: `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `role_mapping_created` | Admin creates group-to-role mapping | Admin | `NULL` | `NULL` | `"{group_name} -> {role}"` | `{"group_name": "...", "role": "...", "affected_users": N}` |
+| `role_mapping_deleted` | Admin deletes group-to-role mapping | Admin | `NULL` | `"{group_name} -> {role}"` | `NULL` | `{"group_name": "...", "role": "...", "affected_users": N}` |
+| `username_changed` | External sync detects username change at provider for existing user (matched via external_id) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
 | `api_key_created` | User or admin creates API key | Acting user | Key owner | `NULL` | Key name/label | `{"key_id": "uuid"}` |
 | `api_key_revoked` | User, admin, or system revokes API key | Acting user or `NULL` (system) | Key owner | Key name/label | `NULL` | `{"key_id": "uuid", "reason": "user_deactivated"}` (reason only for bulk revocation during deactivation) |
-| `email_changed` | Email address updated (admin or AD sync) | Admin for manual, `NULL` for AD sync | Target user | Old email | New email | `NULL` |
-| `full_name_changed` | Full name updated (admin or AD sync) | Admin for manual, `NULL` for AD sync | Target user | Old full name | New full name | `NULL` |
-| `manager_changed` | Direct manager updated (AD sync) | `NULL` (system) | Target user | Old manager username (or `NULL`) | New manager username (or `NULL`) | `NULL` |
+| `email_changed` | Email address updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old email | New email | `NULL` |
+| `full_name_changed` | Full name updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old full name | New full name | `NULL` |
+| `manager_changed` | Direct manager updated (external sync) | `NULL` (system) | Target user | Old manager username (or `NULL`) | New manager username (or `NULL`) | `NULL` |
 
 ### detail JSONB Schema Contract
 
@@ -74,11 +74,11 @@ Event types not listed here MUST set `detail` to `NULL`.
 
 | Event Type | Required Keys | Optional Keys | Example |
 |---|---|---|---|
-| `user_deactivated` | `reason` (string) | — | `{"reason": "ad_sync_missing"}` |
-| `role_added` | — | `source` (string), `mapping` (string) | `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
-| `role_removed` | — | `source` (string), `mapping` (string) | `{"source": "ad_sync", "mapping": "cn=SecurityTeam"}` |
-| `role_mapping_created` | `ad_group_cn` (string), `role` (string), `affected_users` (int) | — | `{"ad_group_cn": "cn=SecurityTeam", "role": "admin", "affected_users": 5}` |
-| `role_mapping_deleted` | `ad_group_cn` (string), `role` (string), `affected_users` (int) | — | `{"ad_group_cn": "cn=SecurityTeam", "role": "admin", "affected_users": 3}` |
+| `user_deactivated` | `reason` (string) | — | `{"reason": "external_sync_missing"}` |
+| `role_added` | — | `source` (string), `mapping` (string) | `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `role_removed` | — | `source` (string), `mapping` (string) | `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `role_mapping_created` | `group_name` (string), `role` (string), `affected_users` (int) | — | `{"group_name": "SecurityTeam", "role": "admin", "affected_users": 5}` |
+| `role_mapping_deleted` | `group_name` (string), `role` (string), `affected_users` (int) | — | `{"group_name": "SecurityTeam", "role": "admin", "affected_users": 3}` |
 | `api_key_created` | `key_id` (UUID string) | — | `{"key_id": "550e8400-e29b-41d4-a716-446655440000"}` |
 | `api_key_revoked` | `key_id` (UUID string) | `reason` (string) | `{"key_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "user_deactivated"}` |
 
@@ -86,7 +86,7 @@ Event types not listed here MUST set `detail` to `NULL`.
 
 - `role_added` and `role_removed`: `detail` is `NULL` for manual admin
   actions. The optional keys (`source`, `mapping`) are present only when
-  the role change originates from AD sync. When `detail` is non-NULL,
+  the role change originates from external sync. When `detail` is non-NULL,
   both `source` and `mapping` MUST be present together
 - `api_key_revoked`: the `reason` key is present only for bulk
   revocations triggered by user deactivation. For individual manual
@@ -140,7 +140,7 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
       "event_type": "role_added",
       "old_value": null,
       "new_value": "admin",
-      "detail": {"source": "ad_sync", "mapping": "cn=SecurityTeam"},
+      "detail": {"source": "external_sync", "mapping": "SecurityTeam"},
       "created_at": "2026-05-13T10:30:00Z",
       "actor": null,
       "target_user": {
@@ -200,7 +200,7 @@ anonymized in the response (see below).
       "event_type": "role_added",
       "old_value": null,
       "new_value": "admin",
-      "detail": {"source": "ad_sync", "mapping": "cn=SecurityTeam"},
+      "detail": {"source": "external_sync", "mapping": "SecurityTeam"},
       "created_at": "2026-05-13T10:30:00Z",
       "actor": "system"
     }
@@ -228,11 +228,11 @@ themselves, by an administrator, or by an automated system process,
 without exposing the administrator's identity.
 
 **`detail` field transparency**: the `detail` JSONB field is returned
-unredacted in the self-service response. This includes AD group CNs in
-`detail.mapping` for AD sync events (e.g.,
-`{"source": "ad_sync", "mapping": "cn=SecurityTeam"}`). AD group CNs
+unredacted in the self-service response. This includes external group names in
+`detail.mapping` for external sync events (e.g.,
+`{"source": "external_sync", "mapping": "SecurityTeam"}`). External group names
 are considered non-sensitive organizational metadata — they are
-meaningful only within the AD administrative context and do not
+meaningful only within the external provider's administrative context and do not
 constitute personal data or security-critical information.
 
 ## Service Contract
@@ -261,13 +261,13 @@ produces one audit event per changed field. If a single `update_user()`
 call modifies both `email` and `full_name`, two events are created
 (`email_changed` + `full_name_changed`) in the same transaction.
 
-**AD sync coverage**: the `user_created` event type applies to ALL user
-creation regardless of source (manual admin creation AND AD sync). On
-initial AD sync this may produce hundreds of `user_created` events —
+**External sync coverage**: the `user_created` event type applies to ALL user
+creation regardless of source (manual admin creation AND external sync). On
+initial external sync this may produce hundreds of `user_created` events —
 this is intentional to maintain a complete, coherent history for every
 user. Field-change events (`email_changed`, `full_name_changed`,
-`manager_changed`, `username_changed`) are likewise produced by AD sync
-when the corresponding fields change in Active Directory.
+`manager_changed`, `username_changed`) are likewise produced by external sync
+when the corresponding fields change at the external identity provider.
 
 **Future fields**: if a new mutable field is added to the User table in
 the future, a corresponding `{field}_changed` event type MUST be added
@@ -297,7 +297,7 @@ Tests for any identity-mutating service MUST verify:
   produce identity audit events
 - `docs/features/identity/user-management.md` — admin password reset
   and audit trail summary references
-- `docs/features/identity/ad-integration.md` — AD sync operations that
+- `docs/features/identity/identity-provisioning.md` — External sync operations that
   produce identity audit events
 - `docs/features/identity/api-key-service.md` — centralized API key
   lifecycle service; produces `api_key_created` and `api_key_revoked`

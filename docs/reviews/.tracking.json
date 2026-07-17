@@ -1,40 +1,9 @@
 {
   "specs": {
-    "ad-integration": {
-      "enabled": true,
-      "abbr": "ADI",
-      "cache": {
-        "last_review": "2026-05-12T00:00:00+0000",
-        "open": {
-          "GAP": {
-            "H": 0,
-            "M": 0,
-            "L": 0
-          },
-          "COH": {
-            "H": 0,
-            "M": 0,
-            "L": 0
-          },
-          "DES": {
-            "H": 0,
-            "M": 0,
-            "L": 0
-          },
-          "SEC": {
-            "H": 0,
-            "M": 0,
-            "L": 0
-          },
-          "API": {
-            "H": 0,
-            "M": 0,
-            "L": 0
-          }
-        },
-        "resolved": 91,
-        "not_reviewed": []
-      }
+    "identity-provisioning": {
+      "enabled": false,
+      "abbr": "IDP",
+      "cache": null
     },
     "api-key-service": {
       "enabled": true,
@@ -1139,7 +1108,7 @@
       "cache": null
     },
     "sso-authentication": {
-      "enabled": true,
+      "enabled": false,
       "abbr": "SSOA",
       "cache": {
         "last_review": "2026-05-07T00:00:00+0000",

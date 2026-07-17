@@ -57,7 +57,6 @@ flowchart TB
         SMELT["SMELT<br/>(smelt.suse.de)"]
         AIMAAS["AIMAAS<br/>(aimaas.suse.de)"]
         RABBIT["IBS RabbitMQ<br/>(rabbit.suse.de)"]
-        LDAP["SUSE AD<br/>(pan.suse.de)"]
     end
 
     SPA -->|"REST API (HTTP)"| API
@@ -73,7 +72,6 @@ flowchart TB
     WORKER -->|"REST API"| IBS
     WORKER -->|"REST API"| SMELT
     WORKER -->|"REST API"| AIMAAS
-    WORKER -->|"LDAPS (port 636)"| LDAP
 
     CONSUMER -->|"AMQP"| RABBIT
     CONSUMER -->|"REST API"| IBS
@@ -230,7 +228,7 @@ erDiagram
         UUID id PK
         VARCHAR username UK
         VARCHAR email UK
-        UUID ad_object_guid "UNIQUE, nullable"
+        UUID external_id "UNIQUE, nullable"
         UUID manager_id FK "nullable"
     }
 
@@ -238,13 +236,13 @@ erDiagram
         UUID id PK
         UUID user_id FK
         ENUM role
-        VARCHAR ad_group_cn
+        VARCHAR group_name
         UUID assigned_by FK "nullable"
     }
 
     RoleMapping {
         UUID id PK
-        VARCHAR ad_group_cn
+        VARCHAR group_name
         ENUM role
         UUID created_by FK
     }
@@ -705,7 +703,7 @@ flowchart TD
     end
 
     subgraph identity["Identity and Access"]
-        ADI["ad-integration"]
+        IDP["identity-provisioning"]
         RBAC["rbac"]
     end
 
@@ -741,7 +739,7 @@ flowchart TD
     MAINT --> PKG
 
     %% Identity → Core
-    ADI --> RBAC
+    IDP --> RBAC
     RBAC --> TICKETS
 
     %% Platform → everything
@@ -786,7 +784,7 @@ other feature:
 | [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, bugowners |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
 | [package-bugowner](features/packages/package-bugowner.md) | Integration | IBS package maintainer cache |
-| [ad-integration](features/identity/ad-integration.md) | Identity | SUSE AD sync for user provisioning and roles |
+| [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (deferred to future phase) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [system-settings](features/platform/system-settings.md) | Platform | System settings (default CVSS version) |
 | [fetcher-infrastructure](features/platform/fetcher-infrastructure.md) | Platform | BaseFetcher base class, registry, data model |

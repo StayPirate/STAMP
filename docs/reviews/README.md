@@ -7,8 +7,6 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 
 | Spec | GAP | COH | DES | SEC | API | Open | Last Review | Stale |
 |------|-----|-----|-----|-----|-----|------|-------------|-------|
-| [ad-integration](ad-integration.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/91 | 2026-05-12 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
 | [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/18 | 2026-05-17 | ⚠️ |
@@ -83,7 +81,7 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/897** |  |  |
+| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/806** |  |  |
 | | 2:🟠 |  |  |  |  |  |  |  |
 
 ### Disabled specs
@@ -95,10 +93,12 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 - ibs-rabbitmq-integration
 - ibs-submission-tracking
 - ibs-track-release-detection
+- identity-provisioning
 - maintainer
 - package-bugowner
 - product-catalog
 - product-lifecycle-transitions
+- sso-authentication
 
 ## Legend
 

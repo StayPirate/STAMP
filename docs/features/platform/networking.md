@@ -4,8 +4,7 @@
 
 Cross-cutting HTTP client and TLS trust store infrastructure used by
 all Sentinel components that make outgoing network connections: fetchers
-(via BaseFetcher), IBSClient, `sync_ldap_directory` (LDAP), and
-IBSEventConsumer (AMQP).
+(via BaseFetcher), IBSClient, and IBSEventConsumer (AMQP).
 
 Scope boundary: this spec covers the shared HTTP client factory and TLS
 trust store configuration. Protocol-level reconnection logic, connection
@@ -443,8 +442,8 @@ client lifecycle independently of `BaseFetcher`:
 
 ## TLS Trust Store Configuration
 
-All outgoing TLS connections from Sentinel — HTTP (shared client), LDAP
-(`sync_ldap_directory`), AMQP (`IBSEventConsumer`) — use a combined
+All outgoing TLS connections from Sentinel — HTTP (shared client) and
+AMQP (`IBSEventConsumer`) — use a combined
 trust store that includes both the system CA bundle and the SUSE
 internal CA.
 
@@ -509,8 +508,7 @@ All protocols use `build_tls_context()` to construct their SSL context:
 def build_tls_context() -> ssl.SSLContext:
     """Build the combined TLS trust store (system CAs + SUSE CA).
 
-    Returns an ssl.SSLContext suitable for any protocol (HTTPS, LDAPS,
-    AMQPS).
+    Returns an ssl.SSLContext suitable for any protocol (HTTPS, AMQPS).
 
     Behavior:
     - SUSE_CA_CERT_PATH missing: log WARNING, return system-only context
@@ -520,7 +518,7 @@ def build_tls_context() -> ssl.SSLContext:
 ```
 
 `create_http_client()` calls `build_tls_context()` internally.
-Non-HTTP components (`sync_ldap_directory`, `IBSEventConsumer`) call it
+Non-HTTP components (`IBSEventConsumer`) call it
 directly and pass the returned context to their respective protocol
 libraries.
 
@@ -534,7 +532,6 @@ by each component and documented in its respective spec.
 | Protocol | Component | Trust Store Source |
 |----------|-----------|-------------------|
 | HTTPS | Shared HTTP client (all fetchers, IBSClient) | `build_tls_context()` via `create_http_client()` |
-| LDAPS | `sync_ldap_directory` fetcher | `build_tls_context()` passed to python-ldap |
 | AMQPS | `IBSEventConsumer` | `build_tls_context()` passed to aio-pika/aiormq |
 
 ## Cross-references
@@ -547,7 +544,6 @@ by each component and documented in its respective spec.
 - `docs/features/packages/ibs-submission-tracking.md` —
   `correlate_submission_request` retry policy
 - `docs/features/integrations/ibs-integration.md` — IBSClient usage
-- `docs/features/identity/ad-integration.md` — LDAP TLS configuration
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — AMQP TLS
   configuration
 - `docs/configuration.md` — environment variable index

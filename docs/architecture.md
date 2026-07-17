@@ -195,22 +195,15 @@ active source. See the data sources catalog for the full picture.
   package tracking at this time, but it may be evaluated in the future
 - See `docs/data-sources.md` for details on OBS and its RabbitMQ event bus
 
-#### SUSE Active Directory
+#### External Identity Provider
 
-- Internal AD at `pan.suse.de` for SUSE employee identity data
-- Sentinel syncs all active employees into its User table daily via the
-  `sync_ldap_directory` fetcher (BaseFetcher subclass)
-- Imported attributes: `sAMAccountName`, `cn`, `mail`, `manager` (DN),
-  `EMPLOYEESTATUS`, `MEMBEROF` (transient, not persisted)
-- AD group memberships (`MEMBEROF`) are used to derive Sentinel roles via
-  admin-configurable RoleMapping rules
-- Direct line manager (`manager` DN) is resolved and stored for
-  maintainer task management
-- Connection: anonymous bind on port 636 (LDAPS — TLS validated against
-  SUSE Trust Root CA committed at `certs/SUSE_Trust_Root.crt`). TLS is
-  required because `MEMBEROF` data drives role assignment including admin
-  privileges — see security rationale in `docs/features/identity/ad-integration.md`
-- See `docs/features/identity/ad-integration.md` for the full specification
+- External user provisioning is deferred to a future phase. See
+  `docs/features/identity/identity-provisioning.md` for the planned
+  approach (SCIM-based push from SUSEID)
+- In the current phase, only local user accounts are supported
+  (created via CLI)
+- See `docs/features/identity/user-management.md` for local user
+  management
 
 ## Data Flow
 

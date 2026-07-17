@@ -25,8 +25,9 @@ see `docs/architecture.md` and the relevant feature specifications in
 | OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
 | SMELT | Internal | Product catalog, package-codestream mapping | Active |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
-| SUSE Active Directory | Internal | Employee identity, line manager, groups | Active |
+| SUSE Active Directory | Internal | Employee identity, line manager, groups | Not integrated |
 | SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
+| SUSEID (Authentik) | Internal | Centralized identity provisioning via SCIM push | Planned |
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Specified |
 | EPSS | Public | Exploit probability scores | Specified |
@@ -706,8 +707,7 @@ perspective the distinction is mostly transparent — the proxy speaks
 standard LDAPv3 and relays AD responses including AD-specific attributes
 (`sAMAccountName`, `objectGUID`, `MEMBEROF`, etc.) — but it has
 implications for schema discovery, error diagnostics, caching behavior,
-and TLS termination (see `docs/features/identity/ad-integration.md`,
-Implementation Notes).
+and TLS termination.
 
 The directory contains records for all active SUSE employees with detailed
 profile information including organizational hierarchy, group memberships,
@@ -731,11 +731,10 @@ source for identity data in Sentinel over the OpenLDAP instance at
   `OU=User accounts,DC=corp,DC=suse,DC=com`. Approximately 913 active
   employee records (as of 2026). Security groups are located under
   `OU=Security Groups,OU=Groups,DC=corp,DC=suse,DC=com`
-- **Integration status**: **Active**. Sentinel syncs employee data daily via
-  the `sync_ldap_directory` fetcher. Data consumed: `sAMAccountName`,
-  `cn`, `mail`, `manager`, `EMPLOYEESTATUS`, `MEMBEROF` (transient, for
-  role mapping). See `docs/features/identity/ad-integration.md` for the full
-  specification
+- **Integration status**: **Not integrated**. Previously considered as
+  Sentinel's identity source via LDAP sync; the LDAP endpoint at
+  `pan.suse.de` is being decommissioned in favor of SUSEID (see below).
+  Documented here as a SUSE infrastructure reference
 - **Proxy caching**: the `pcache` overlay on `pan.suse.de` caches query
   results transparently. For the daily background sync this is harmless —
   staleness within a 24-hour window is acceptable. However, on-demand
@@ -779,6 +778,24 @@ Sentinel uses Active Directory instead.
   it provides the correct direct line manager relationship. The `.de`
   email alias available on OpenLDAP (`suseudbemailalias`) is not imported
 - **Documentation**: Internal — no public documentation available
+
+### SUSEID (Authentik)
+
+SUSE's centralized identity platform based on Authentik, replacing
+direct AD/LDAP access for application integrations. SUSEID provides
+identity provisioning via the SCIM 2.0 protocol (push-based), with
+hourly full sync and near-real-time event delivery.
+
+- **Relevant data**: User identity (stable UUID, username, email,
+  display name), active status, direct manager, group memberships
+- **Access**: SCIM 2.0 push protocol — SUSEID pushes to application
+  endpoints (Sentinel would act as a SCIM Service Provider). Static
+  bearer token authentication (rotation mechanism TBD)
+- **Integration status**: **Planned**. See
+  `docs/features/identity/identity-provisioning.md` for the deferred
+  specification and open questions
+- **Documentation**: Internal — SCIM contract negotiation in progress
+  with the infrastructure team
 
 ---
 
@@ -949,7 +966,6 @@ feature documentation (not its implementation status):
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |
 | `detect_ibs_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Partial |
 | `sync_ibs_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.request_delay` | Package bugowner cache maintenance (cleanup, update, repair) | [package-bugowner.md](features/packages/package-bugowner.md#fetcher-properties) | Partial |
-| `sync_ldap_directory` | SUSE Active Directory | Daily at 04:00 UTC | None (anonymous bind) | N/A (internal) | Employee identity, line manager, group memberships for role mapping | [ad-integration.md](features/identity/ad-integration.md#fetcher-sync_ldap_directory) | Partial |
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:00 UTC | N/A | N/A | Lifecycle phase evaluation and ticket re-evaluation for products in Reactive LTSS or EOL | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Partial |
 | `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |

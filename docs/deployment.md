@@ -29,7 +29,6 @@ Sentinel requires outbound access to:
 | Service | Host | Port | Purpose |
 |---------|------|------|---------|
 | SUSE IdP | `id.suse.com` | 443 | SSO authentication (OIDC) |
-| SUSE AD | `pan.suse.de` | 636 | LDAP directory sync |
 | IBS API | `api.suse.de` | 443 | Build service integration |
 | IBS RabbitMQ | `rabbit.suse.de` | 5671 | Real-time event consumption |
 | SMELT | `smelt.suse.de` | 443 | Product/package data |
@@ -164,7 +163,6 @@ cd backend && python -m sentinel manage-user create \
 | `SSO_REDIRECT_URI` | `https://sentinel-staging.suse.de/auth/callback` | Must match IdP registration |
 | `CORS_ORIGINS` | `https://sentinel-staging.suse.de` | |
 | `DEBUG` | `false` | Never enable debug in staging |
-| `LDAP_URI` | `ldaps://pan.suse.de:636` | Same AD for all environments |
 | `IBS_API_URL` | `https://api.suse.de` | |
 | `IBS_USERNAME` / `IBS_PASSWORD` | Service account credentials | |
 
@@ -188,8 +186,6 @@ cd backend && python -m sentinel manage-user create \
 ### Staging-Specific Notes
 
 - Staging is auto-deployed from the `master` branch
-- LDAP sync runs on the same schedule as production (daily) — staging
-  has real user data from AD
 - IBS/RabbitMQ integration is active — staging receives real events
 
 ---
@@ -226,7 +222,7 @@ Before the first production deployment:
 - [ ] PostgreSQL provisioned and accessible
 - [ ] Redis provisioned and accessible
 - [ ] IBS service account created (`IBS_USERNAME` / `IBS_PASSWORD`)
-- [ ] SUSE Trust Root CA installed in container for LDAP TLS validation
+- [ ] SUSE Trust Root CA installed in container for TLS validation of *.suse.de services
 - [ ] DNS configured for `sentinel.suse.de`
 - [ ] TLS certificate provisioned for `sentinel.suse.de`
 - [ ] Reverse proxy / ingress configured to route `/api` to backend
@@ -523,14 +519,7 @@ timeouts (2s per dependency, checks concurrent; 5s provides margin for network o
 4. Check logs for `"SSO callback: expected claim ... not found"` — the
    configured `SSO_USER_CLAIM` does not exist in the ID token
 5. Verify the user exists in the Sentinel database with a matching
-   `username` and `ad_object_guid IS NOT NULL` (run LDAP sync first)
-
-### LDAP Sync Not Working
-
-1. Verify `LDAP_URI` is correct and port 636 is reachable
-2. Verify the SUSE Trust Root CA is installed at the path specified by
-   `SUSE_CA_CERT_PATH`
-3. Check logs for TLS handshake errors
+   `username` and `external_id IS NOT NULL` (the user must be provisioned via external identity provider first — see `identity-provisioning.md`)
 
 ### Celery Tasks Not Running
 
