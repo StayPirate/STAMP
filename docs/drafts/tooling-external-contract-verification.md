@@ -51,7 +51,7 @@ change follows.
 
 #### 1.1 — Replace "Before Starting" subsection
 
-Replace the current "### Before Starting" content (lines 87–93) with:
+Replace the current "### Before Starting" content (lines 86–91) with:
 
 ```markdown
 ### Before Starting
@@ -78,22 +78,15 @@ Insert after "### After Implementation" (currently the last subsection of
 
 A slice is complete ONLY when ALL of the following are satisfied:
 
-1. **Tests pass**: `cd backend && pytest` exits 0 with no failures
-2. **Lint clean**: `cd backend && ruff check . && ruff format --check .`
-   exits 0
-3. **Coverage adequate**: new code has test coverage for happy path,
-   error paths, and permission enforcement
-4. **Reviewers executed**: invoke the relevant reviewers per the
-   "Reviewer Invocation" section below. If a reviewer flags "Needs
-   revision", address the issue before declaring done
-5. **External contracts verified** (if the slice integrates with an
-   external service): the contract verification protocol below has been
-   followed
-6. **No spec deviations**: implementation matches the specification
-   exactly. If deviations were needed, the Gap Protocol was followed and
-   the spec was updated with user approval
+1. **Guardrails met**: all applicable AGENTS.md Guardrails are satisfied
+   (tests pass and cover happy/error/permission paths per G6, lint clean,
+   reviewers invoked per G8–G17, no spec deviations per G1, Gap Protocol
+   followed if deviations were needed)
+2. **External contracts verified** (if the slice integrates with an
+   external service): the External Contract Verification protocol below
+   has been followed
 
-Do NOT inform the user that a slice is "done" until all six criteria are
+Do NOT inform the user that a slice is "done" until both criteria are
 met. If any criterion cannot be satisfied (e.g., a test environment is
 unavailable), explicitly state which criterion is unmet and why.
 ```
@@ -332,10 +325,11 @@ Delete `docs/drafts/tooling-external-contract-verification.md`.
 
 ## Decision Record
 
-- **Code agent prompt**: enhanced with Definition of Done (completion gate),
-  External Contract Verification (mandatory upstream verification protocol),
-  dependency-aware "Before Starting" section, and reviewer invocation entry
-  for external service integration
+- **Code agent prompt**: enhanced with Definition of Done (lightweight
+  completion gate referencing AGENTS.md Guardrails + external contract
+  criterion), External Contract Verification (mandatory upstream
+  verification protocol), dependency-aware "Before Starting" section, and
+  reviewer invocation entry for external service integration
 - **`@external-contract-verifier`**: new read-only subagent with limited
   bash access (curl, secbox osc, git clone). Does NOT modify files. Used
   on-demand during external service integration work
