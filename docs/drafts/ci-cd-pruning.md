@@ -41,10 +41,10 @@ backend jobs, `build-images.yml` backend image, `deploy-api-docs.yml`).
 
 | Path | Nature of change |
 |------|-----------------|
-| `.github/workflows/ci.yml` | Remove frontend jobs; reactivate triggers |
-| `.github/workflows/build-images.yml` | Remove frontend image job; reactivate triggers |
+| `.github/workflows/ci.yml` | Remove frontend jobs; reactivate triggers (incl. `workflow_dispatch`) |
+| `.github/workflows/build-images.yml` | Remove frontend image job; reactivate triggers as sequential with CI (`workflow_run`) |
 | `.github/workflows/deploy-api-docs.yml` | Reactivate triggers |
-| `docs/deployment.md` | Add note about deploy workflows being deferred |
+| `docs/deployment.md` | Rewrite staging auto-deploy bullet as deferred; add note to production |
 | `.opencode/agents/cicd.md` | Update pipeline chain (remove deleted workflow references) |
 | `AGENTS.md` | No change needed (deployment docs already reference `docs/deployment.md`) |
 
@@ -73,9 +73,14 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 ```
 
 Remove the NOTE comment about specification phase.
+
+`workflow_dispatch` allows manual trigger via the GitHub UI or
+`gh workflow run` CLI — useful for re-running CI on arbitrary branches
+or retrying after transient failures.
 
 3.2. **Remove frontend jobs**: Delete the following job blocks entirely:
 - `frontend-lint` (lines ~69–84)
@@ -88,24 +93,56 @@ Remove the NOTE comment about specification phase.
 
 ### Step 4 — Modify build-images.yml
 
-4.1. **Reactivate triggers**: Replace the current `on:` block (lines 1–9)
-with:
+4.1. **Reactivate triggers (sequential with CI)**: Replace the current
+`on:` block (lines 1–9) with:
 
 ```yaml
 name: Build Docker Images
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [master]
+    types: [completed]
+  push:
     tags: ["v*"]
+  workflow_dispatch:
 ```
 
 Remove the NOTE comment about specification phase.
 
-4.2. **Remove frontend image job**: Delete the entire `build-frontend` job
-block (lines ~48–79).
+This makes the image build sequential with CI:
 
-4.3. The remaining job is `build-backend`. It stays unchanged.
+- **Push to master**: CI runs first; when CI completes successfully,
+  `build-images.yml` starts automatically. If CI fails, the image is
+  not built
+- **Version tags (`v*`)**: build starts directly (tags are created from
+  master which has already passed CI)
+- **Manual dispatch**: build starts directly (operator decides
+  consciously)
+
+4.2. **Add CI success gate**: Add an `if` condition to the
+`build-backend` job so it only runs when CI passed (or when triggered
+by tag push / manual dispatch):
+
+```yaml
+jobs:
+  build-backend:
+    name: Build Backend Image
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+```
+
+This is necessary because `workflow_run` with `types: [completed]`
+fires on both CI success and CI failure. Without this condition, a
+failed CI run would still trigger an image build.
+
+4.3. **Remove frontend image job**: Delete the entire `build-frontend`
+job block (lines ~48–79).
+
+4.4. The remaining job is `build-backend`. Apart from the `if` condition
+added in 4.2, it stays unchanged.
 
 ### Step 5 — Modify deploy-api-docs.yml
 
@@ -132,15 +169,20 @@ functional for a backend-only project).
 
 ### Step 6 — Update docs/deployment.md
 
-6.1. In the **Staging Deployment** section (around line ~182), after
-"### Staging-Specific Notes", add a note:
+6.1. In the **Staging Deployment** section, under
+"### Staging-Specific Notes", replace:
 
-```markdown
-**Note**: the automated staging deployment workflow (`deploy-staging.yml`)
-has been deferred until the deployment target (Kubernetes, Docker Compose
-on VM, or cloud service) is decided. The current process is manual. When
-the target is known, a deployment workflow will be created via the `@cicd`
-agent.
+```
+- Staging is auto-deployed from the `master` branch
+```
+
+with:
+
+```
+- Staging auto-deployment from the `master` branch is deferred until
+  the deployment target (Kubernetes, Docker Compose on VM, or cloud
+  service) is decided. The current process is manual. When the target
+  is known, a deployment workflow will be created via the `@cicd` agent
 ```
 
 6.2. In the **Production Deployment** section (around line ~231), in
@@ -208,8 +250,11 @@ Delete `docs/drafts/ci-cd-pruning.md`.
 
 - **Deployment workflows**: deferred until infrastructure target is decided;
   will be created via `@cicd` agent at that time
-- **CI triggers**: reactivated on push to `master` and on pull requests
-- **Build triggers**: reactivated on push to `master` and on version tags
+- **CI triggers**: reactivated on push to `master`, on pull requests, and
+  via `workflow_dispatch` (manual)
+- **Build triggers**: sequential with CI via `workflow_run` (only builds
+  when CI passes); also triggered directly on version tags (`v*`) and via
+  `workflow_dispatch` (manual)
 - **API docs**: reactivated on push to `master` when backend code changes
 - **Versioning strategy**: confirmed as unified SemVer via git tags (`v*`);
   a single tag produces the backend image. Frontend image build is deferred
