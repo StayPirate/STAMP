@@ -1,18 +1,17 @@
-# Draft: Implementation Tooling — External Contract Verification and Implement-Slice Workflow
+# Draft: Implementation Tooling — External Contract Verification
 
 ## Summary
 
-Enhance the OpenCode tooling to support disciplined, phased implementation:
+Enhance the OpenCode tooling to support disciplined external service
+integration:
 
 1. **Refine the Code agent prompt** (`.opencode/prompts/code.md`): add
-   Definition of Done for each implementation slice, external service
-   contract verification protocol, and awareness of implementation layers
+   Definition of Done gate, External Contract Verification protocol,
+   dependency-aware "Before Starting" section, and reviewer entry for
+   external service integration
 2. **Create `@external-contract-verifier` subagent**: a read-only reviewer
-   that validates request/response shapes against live or documented
-   external service contracts
-3. **Create `implement-slice` skill**: a guided, repeatable workflow for
-   implementing one vertical slice of the system (from spec reading through
-   testing and review)
+   that validates request/response shapes against real upstream service
+   contracts
 
 ## Rationale
 
@@ -21,13 +20,10 @@ Enhance the OpenCode tooling to support disciplined, phased implementation:
    others. Field names, response structures, pagination patterns, and
    authentication methods must be verified against real service behavior —
    not assumed from documentation alone
-2. **Repeatable implementation workflow**: each implementation slice follows
-   the same sequence (read spec → plan → models → migration → service →
-   API → tests → reviewers → smoke test). Encoding this as a skill ensures
-   consistency and prevents steps from being skipped
-3. **Definition of Done prevents premature advancement**: without explicit
-   completion criteria, there is a risk of moving to the next slice with
-   untested or unreviewed code
+2. **Explicit completion gate**: without a consolidated Definition of Done,
+   the Code agent may declare a task complete with unrun reviewers, failing
+   lint, or unverified external contracts. The DoD is a checklist gate that
+   prevents premature advancement
 
 ## Scope of Changes
 
@@ -36,14 +32,13 @@ Enhance the OpenCode tooling to support disciplined, phased implementation:
 | Path | Purpose |
 |------|---------|
 | `.opencode/agents/external-contract-verifier.md` | New subagent definition |
-| `.opencode/skills/implement-slice/SKILL.md` | New skill definition |
 
 ### Files to MODIFY
 
 | Path | Nature of change |
 |------|-----------------|
-| `.opencode/prompts/code.md` | Add §Definition of Done, §External Contract Verification, §Implementation Layers |
-| `.opencode/README.md` | Add new subagent and skill to catalog |
+| `.opencode/prompts/code.md` | Add §Definition of Done, §External Contract Verification, expand §Before Starting, add reviewer entry |
+| `.opencode/README.md` | Add new subagent to catalog |
 
 ---
 
@@ -51,14 +46,32 @@ Enhance the OpenCode tooling to support disciplined, phased implementation:
 
 ### Step 1 — Refine .opencode/prompts/code.md
 
-Add three new sections to the Code agent prompt. Insert them AFTER the
-existing "Implementation Standards" section and BEFORE "Reviewer
-Invocation". The full content for each section follows.
+Add new sections and modify existing ones. The full content for each
+change follows.
 
-#### 1.1 — Add "Definition of Done" section
+#### 1.1 — Replace "Before Starting" subsection
+
+Replace the current "### Before Starting" content (lines 87–93) with:
+
+```markdown
+### Before Starting
+
+1. Read the relevant specification completely
+2. Identify all files that need to be created or modified
+3. Verify prerequisites: confirm that the direct dependencies of the
+   artifacts you will implement (the models and services they build on)
+   already exist and are tested. Identify these from the feature spec and
+   `docs/data-model.md`. If a prerequisite is missing, STOP and signal it
+   rather than implementing it ad-hoc
+4. Plan the implementation order (models → services → API → tests, or as
+   appropriate) and briefly confirm the intended artifacts with the user
+   before implementing
+```
+
+#### 1.2 — Add "Definition of Done" section
 
 Insert after "### After Implementation" (currently the last subsection of
-"Implementation Standards"):
+"Implementation Standards"), before "## Reviewer Invocation":
 
 ```markdown
 ## Definition of Done
@@ -85,7 +98,7 @@ met. If any criterion cannot be satisfied (e.g., a test environment is
 unavailable), explicitly state which criterion is unmet and why.
 ```
 
-#### 1.2 — Add "External Contract Verification" section
+#### 1.3 — Add "External Contract Verification" section
 
 Insert immediately after "Definition of Done":
 
@@ -94,72 +107,66 @@ Insert immediately after "Definition of Done":
 
 When implementing code that parses responses from or sends requests to an
 external service (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS, GitHub, CISA,
-FIRST/EPSS, OSV, git.kernel.org), follow this protocol:
+FIRST/EPSS, OSV, git.kernel.org), the request/response structures actually
+used in the code MUST be verified against the real upstream service during
+implementation — not assumed from documentation alone.
 
-### Before writing the parser/client
+### Identify the documented contract (starting point)
 
-1. **Identify the documented contract**: read `docs/data-sources.md` and
-   the relevant fetcher specification for the expected request/response
-   format
-2. **Obtain a real response sample**: for public APIs (NVD, Red Hat, CISA,
-   FIRST, OSV, GitHub), make a direct HTTP request to capture a real
-   response. For internal SUSE APIs (IBS, SMELT, AIMAAS), use `secbox`
-   for exploratory access ONLY (never in application code). For git-based
-   sources, perform a manual clone/fetch to observe the file format
-3. **Compare field names and structure**: verify that the real response
-   matches the documented contract in `data-sources.md`/fetcher spec. Pay
+1. **Read the owning fetcher specification** — this is the primary source
+   for documented response field mappings (e.g., `cve-sync-nvd.md` for NVD
+   field paths). `docs/data-sources.md` is secondary: it provides service
+   metadata only (URLs, authentication, rate limits) — NOT response
+   structures
+2. **Expect gaps**: the fetcher spec may be incomplete, ambiguous, or
+   outdated. Treat the spec as a starting point, not the final word on the
+   actual response format
+
+### Verify against the real upstream service (mandatory)
+
+3. **Obtain a real response sample**: for public APIs (NVD, Red Hat, CISA,
+   FIRST, OSV, GitHub), make a direct HTTP request. For SUSE internal HTTPS
+   services (SMELT at `smelt.suse.de/api`, AIMAAS at `aimaas.suse.de/api`),
+   use `curl` directly from the SUSE network. For IBS/OBS, use
+   `secbox osc api ...` (NEVER bare `osc`; exploratory only — never in
+   application code). For git-based sources, perform a manual clone/fetch to
+   observe the file format
+4. **Compare every field the code reads** against the real response. Pay
    attention to: field names (camelCase vs snake_case), nesting levels,
    pagination format, date formats, nullable fields, array vs object
-4. **If discrepancy found**: STOP. Do not guess. Signal the discrepancy
-   to the user with:
-   - The expected format (from spec)
-   - The actual format (from real response)
-   - A proposal for resolving the discrepancy (update spec, or adjust
-     implementation)
-5. **Sanitize and save as fixture**: replace all PII (Guardrail 23) with
+5. **If discrepancy found**: STOP. Do not guess. Signal the discrepancy to
+   the user with: the expected format (from spec), the actual format (from
+   real response), and a proposal for resolution (update spec, or adjust
+   implementation)
+6. **Sanitize and save as fixture**: replace all PII (Guardrail 23) with
    fictional data. Save the sanitized response as a test fixture in
    `backend/tests/fixtures/<service_name>/` for use in contract tests
 
 ### During implementation
 
-6. **Write contract tests first**: before writing the parser, write tests
-   that load the fixture and verify the parser produces the expected
-   output. This ensures the parser is tested against a known-good shape
-7. **Use typed response models**: where practical, define Pydantic models
-   or TypedDicts for external response structures. This makes field name
+7. **Write contract tests first**: before writing the parser, write tests
+   that load the fixture and verify the parser produces the expected output.
+   This ensures the parser is tested against a known-good shape
+8. **Use typed response models**: where practical, define Pydantic models or
+   TypedDicts for external response structures. This makes field name
    mismatches fail loudly at parse time
 
-### When in doubt
+### When the service cannot be reached
 
-8. If the specification is ambiguous about the external service's behavior
-   (e.g., optional fields, error response format, pagination edge cases),
-   invoke `@external-contract-verifier` to verify against the live service,
-   OR ask the user for guidance. Do NOT make assumptions about external
-   service behavior.
+9. If the service requires credentials not available or is unreachable from
+   the current network, state explicitly that verification was
+   documentation-only and flag the affected fields as unverified. Do NOT
+   make assumptions about external service behavior without verification.
 ```
 
-#### 1.3 — Add "Implementation Layers" section
+#### 1.4 — Add external contract reviewer to "Reviewer Invocation" section
 
-Insert immediately after "External Contract Verification":
+In the existing "## Reviewer Invocation" section of `code.md`, add the
+following bullet points after the `@docs-reviewer` entry:
 
 ```markdown
-## Implementation Layers
-
-Sentinel is built in dependency-ordered layers. When implementing a slice,
-be aware of what layer it belongs to and what prerequisites must exist:
-
-| Layer | Content | Prerequisites |
-|-------|---------|---------------|
-| 0 | Infrastructure (ORM base, Celery factory, test fixtures, health) | None |
-| 1 | Identity (User, RBAC, auth, CLI bootstrap) | Layer 0 |
-| 2 | Platform (settings, BaseFetcher, fetcher-operations, networking) | Layer 1 |
-| 3 | CVE + Ticket core (models, services, mutations, references) | Layers 1–2 |
-| 4 | CVE fetchers (BaseCVEFetcher, BaseGitFetcher, concrete fetchers) | Layer 3 |
-| 5 | Package resolution (package-service, package-model endpoints) | Layer 3 |
-
-Do NOT implement artifacts from a higher layer before its prerequisites
-are complete and tested. If you discover a missing prerequisite during
-implementation, STOP and signal it rather than implementing it ad-hoc.
+- **External service integration** → suggest `@external-contract-verifier`
+- **New external integration involving credentials, response parsing, or a new parser dependency** → also suggest `@security-reviewer`
 ```
 
 ### Step 2 — Create .opencode/agents/external-contract-verifier.md
@@ -170,10 +177,10 @@ Create the file with the following content:
 ---
 description: >
   Reviews external service integration code to verify that request/response
-  structures match the documented contracts in data-sources.md and feature
-  specs. Can optionally verify against live services. Use this agent when
-  implementing or modifying fetchers, HTTP clients, or parsers that interact
-  with external APIs. Read-only: does not modify files.
+  structures match real upstream contracts. Can optionally verify against
+  live services. Use this agent when implementing or modifying fetchers,
+  HTTP clients, or parsers that interact with external APIs. Read-only:
+  does not modify files.
 mode: subagent
 permission:
   edit: deny
@@ -189,35 +196,39 @@ permission:
 
 You verify that Sentinel's integration code correctly handles the
 request/response contracts of external services. You compare implementation
-code against: (1) the documented contract in `docs/data-sources.md` and
-feature specs, and (2) optionally, a live response from the actual service.
-You do NOT write or modify code.
+code against: (1) the owning fetcher specification (primary source for
+response field mappings), (2) `docs/data-sources.md` (secondary — service
+metadata: URLs, auth, rate limits), and (3) optionally, a live response
+from the actual service. You do NOT write or modify code.
 
 ## Before reviewing
 
-1. Read `docs/data-sources.md` to understand the catalog of external services,
-   their endpoints, authentication methods, and response formats
-2. Read the relevant fetcher specification (e.g.,
-   `docs/features/tickets/cve-sync-nvd.md` for NVD integration)
+1. Read the relevant fetcher specification to understand the documented
+   response field mappings and expected structure
+2. Read `docs/data-sources.md` for service metadata (endpoint URLs,
+   authentication methods, rate limits, pagination patterns)
 3. Read the implementation code being reviewed (parser, client, or fetcher)
 
 ## Verification methods
 
-### Method A — Documentation-only (default)
+### Method A — Documentation-only
 
 Compare the implementation's field access patterns (dictionary keys, JSON
-paths, attribute names) against the documented response structure in
-`data-sources.md` and the fetcher spec. Flag any field name that:
+paths, attribute names) against the documented response structure in the
+fetcher specification. Flag any field name that:
 - Does not appear in the documented structure
 - Uses different casing than documented
 - Accesses a path at the wrong nesting level
 - Assumes a field is always present when the spec marks it nullable/optional
 
-### Method B — Live verification (when requested or when documentation is ambiguous)
+### Method B — Live verification (preferred when accessible)
 
 Make a real request to the external service to capture the actual response
 structure. Use:
 - Direct `curl` for public APIs (NVD, Red Hat, CISA, FIRST, OSV, GitHub)
+- Direct `curl` for SUSE internal HTTPS services (SMELT at
+  `smelt.suse.de/api`, AIMAAS at `aimaas.suse.de/api`) — these are
+  reachable from the SUSE network without special tooling
 - `secbox osc api ...` for IBS/OBS (NEVER bare `osc`)
 - `git ls-remote` or `git clone --bare --depth=1` for git-based sources
 
@@ -227,6 +238,13 @@ implementation. Report any three-way discrepancy (doc vs live vs code).
 **Important**: when fetching live data, sanitize any PII before including
 response samples in the review output (Guardrail 23). Use fictional
 replacements for person names, email addresses, and userids.
+
+### When live verification is not possible
+
+If the service requires credentials not available, or is unreachable from
+the current environment, report: "Unable to verify live — documentation-only
+review performed. Fields marked as unverified: [list]." Proceed with
+Method A and flag the limitation.
 
 ## What to check
 
@@ -267,194 +285,46 @@ Provide a structured report:
   are stored — that is the domain of `@fetcher-compliance-reviewer`)
 - You do NOT make requests that would modify external state (no POST/PUT
   to external services)
-- If a service requires credentials you do not have access to, report
-  "unable to verify live — documentation-only review performed" and
-  proceed with Method A
+- If a service is unreachable, follow the "When live verification is not
+  possible" protocol above
 ```
 
-### Step 3 — Create .opencode/skills/implement-slice/SKILL.md
+### Step 3 — Update .opencode/README.md
 
-Create the file with the following content:
+In the **Subagents** table, add a new row in its alphabetical position —
+between the `@docs-reviewer` and `@fetcher-compliance-reviewer` rows.
+(The `@identity-integrity-reviewer` and `@ticket-integrity-reviewer` rows
+are already out of alphabetical order at the end of the table; leave them
+as-is — reordering is out of scope.)
 
 ```markdown
----
-name: implement-slice
-description: Guided workflow for implementing one vertical slice of the Sentinel backend. Ensures correct ordering (spec → models → migration → service → API → tests → reviewers) and enforces the Definition of Done.
----
-
-## Workflow: Implementing a Vertical Slice
-
-Follow these steps in order when implementing a single feature slice.
-A "slice" is a coherent unit of functionality defined by one or more
-feature specifications (e.g., "health endpoints", "BaseFetcher +
-FetcherRun model", "local authentication login endpoint").
-
-### Step 0: Identify the slice and its spec(s)
-
-1. Confirm with the user which slice is being implemented
-2. Read the relevant feature specification(s) COMPLETELY
-3. Identify the implementation layer (0–5) per the Code agent's
-   "Implementation Layers" table
-4. Verify that all prerequisite layers are already implemented and tested.
-   If not, STOP and inform the user: "This slice depends on [prerequisite]
-   which is not yet implemented."
-
-### Step 1: Plan the artifacts
-
-Before writing any code, produce a brief plan listing:
-
-- **Models** to create/modify (with table names and key columns)
-- **Alembic migration** needed (yes/no)
-- **Service modules** to create/modify
-- **API endpoints** to create/modify (method, path, access level)
-- **CLI commands** to create/modify (if any)
-- **Celery tasks** to create/modify (if any)
-- **Test files** to create (mirroring app/ structure)
-- **Config/env vars** introduced (if any)
-- **External service dependencies** (if any — triggers contract verification)
-
-Present this plan to the user for confirmation before proceeding.
-
-### Step 2: Database layer (models + migration)
-
-1. Create or modify SQLAlchemy models in `backend/app/models/`
-2. Follow conventions: UUID PKs, `created_at`/`updated_at` timestamps,
-   explicit `back_populates`, proper type hints
-3. Register models in `backend/app/models/__init__.py`
-4. Generate migration: `alembic revision --autogenerate -m "<description>"`
-5. Review the generated migration for correctness (autogenerate can miss
-   things or generate unwanted changes)
-6. Apply migration: `alembic upgrade head`
-7. Verify: `alembic current` shows the new head
-
-### Step 3: Service layer
-
-1. Create or modify service modules in `backend/app/services/`
-2. Follow the spec exactly — if the spec defines function signatures,
-   guards, exceptions, and audit events, implement them precisely
-3. If the service integrates with an external service, follow the
-   "External Contract Verification" protocol from the Code agent prompt
-4. Ensure audit events are created atomically in the same transaction
-   (Guardrail 11)
-5. Use centralized mutation modules where required (Guardrail 16)
-
-### Step 4: API layer (if the slice includes endpoints)
-
-1. Create or modify endpoint handlers in `backend/app/api/v1/`
-2. Keep handlers thin: validate → call service → return response
-3. Apply `require_capability()` per the spec's access level
-4. Create Pydantic request/response schemas in `backend/app/schemas/`
-5. Wire the router into the FastAPI app
-
-### Step 5: CLI layer (if the slice includes CLI commands)
-
-1. Create or modify Click commands
-2. Follow the CLI Output Contract (docs/conventions.md)
-3. Use synchronous DB sessions (not async)
-4. Ensure idempotency where specified
-
-### Step 6: Write tests
-
-1. **Unit tests** for pure functions (parsers, validators, resolvers)
-2. **Integration tests** for services (with real Postgres via test fixtures)
-3. **API tests** for endpoints (via httpx AsyncClient):
-   - Happy path
-   - Validation errors (bad input)
-   - Permission enforcement (missing capability → 403)
-   - Not found (invalid ID → 404)
-4. **Contract tests** for external service parsers (using saved fixtures)
-5. **CLI tests** if CLI commands were added
-
-Run the full test suite: `cd backend && pytest -v`
-
-### Step 7: Verify Definition of Done
-
-Check ALL six criteria from the Code agent's "Definition of Done":
-
-1. ☐ Tests pass (`pytest` exits 0)
-2. ☐ Lint clean (`ruff check . && ruff format --check .` exits 0)
-3. ☐ Coverage adequate (new code has tests for happy + error + permissions)
-4. ☐ Reviewers executed (see Step 8)
-5. ☐ External contracts verified (if applicable)
-6. ☐ No spec deviations (or Gap Protocol followed)
-
-### Step 8: Invoke reviewers
-
-Based on what was implemented, invoke the relevant reviewers:
-
-| Artifact type | Reviewer |
-|---------------|----------|
-| New/modified models or migrations | `@data-model-reviewer` |
-| New/modified API endpoints | `@security-reviewer` |
-| New/modified fetchers | `@fetcher-compliance-reviewer` |
-| Ticket mutations | `@ticket-integrity-reviewer` |
-| Identity mutations | `@identity-integrity-reviewer` |
-| New tests | `@test-reviewer` |
-| External service integration | `@external-contract-verifier` |
-
-If any reviewer flags "Needs revision", address the issue before
-proceeding to Step 9.
-
-### Step 9: Report completion
-
-Inform the user that the slice is complete, summarizing:
-- What was implemented (models, services, endpoints, commands)
-- Test count and coverage highlights
-- Any reviewer findings that were addressed
-- Any spec clarifications that were made (Gap Protocol)
-- What the next logical slice would be (based on the layer order)
+| `@external-contract-verifier` | Reviewer | On-demand | Verifies external service request/response structures match real upstream contracts |
 ```
 
-### Step 4 — Update .opencode/README.md
+### Step 4 — Verify coherence
 
-4.1. In the **Subagents** table, add a new row (maintain alphabetical order
-by agent name):
-
-```markdown
-| `@external-contract-verifier` | Reviewer | On-demand | Verifies external service request/response structures match documented contracts |
-```
-
-4.2. In the **Skills** table, add a new row:
-
-```markdown
-| `implement-slice` | Guided workflow for implementing one vertical backend slice with spec compliance and Definition of Done enforcement |
-```
-
-### Step 5 — Verify coherence
-
-5.1. Read the final `.opencode/prompts/code.md` and verify that:
+4.1. Read the final `.opencode/prompts/code.md` and verify that:
 - The new sections do not contradict existing sections
-- The "Implementation Layers" table is consistent with the dependency
-  analysis in the implementation plan discussion
 - The "External Contract Verification" protocol is consistent with
   Guardrails 14 (fetcher compliance) and 23 (no real PII)
 - The "Definition of Done" criteria reference sections that exist
+- The expanded "Before Starting" does not conflict with the existing
+  "Core Principle: Specs Are Your Source of Truth"
+- The qualified `@security-reviewer` entry in "Reviewer Invocation" is
+  consistent with Guardrail 10 triggers (new external integrations, new
+  dependencies that process user input) — neither broader nor narrower
 
-5.2. Read `@external-contract-verifier` agent and verify that:
+4.2. Read `@external-contract-verifier` agent and verify that:
 - The bash permissions allow only read-only external access (curl, secbox
   osc, git clone/ls-remote) — no write operations
 - The scope limitations clearly delineate this agent from
   `@fetcher-compliance-reviewer` (structure vs. behavior)
 - The PII sanitization reminder is present (Guardrail 23)
+- SMELT and AIMAAS are listed as curl-accessible (not secbox-only)
+- The agent trigger is "On-demand" (no Guardrail reference in its
+  description or in `AGENTS.md`)
 
-5.3. Read `implement-slice` skill and verify that:
-- The step order matches the dependency direction (models before services
-  before API before tests)
-- The reviewer table is consistent with the Guardrails in AGENTS.md
-- The "prerequisite check" in Step 0 prevents out-of-order implementation
-- The Definition of Done criteria match the Code agent prompt exactly
-
-### Step 6 — Run reviewers
-
-Invoke the following reviewers on the modified/created files:
-
-- `@docs-reviewer` on `.opencode/prompts/code.md` (verify documentation
-  completeness of the new protocol sections)
-- Manually verify that the `implement-slice` skill works by doing a
-  dry-run mental walkthrough against a concrete slice (e.g., "health
-  endpoints" — the simplest possible slice)
-
-### Step 7 — Delete this draft
+### Step 5 — Delete this draft
 
 Delete `docs/drafts/tooling-external-contract-verification.md`.
 
@@ -462,21 +332,55 @@ Delete `docs/drafts/tooling-external-contract-verification.md`.
 
 ## Decision Record
 
-- **Code agent prompt**: enhanced with Definition of Done, external contract
-  verification protocol, and layer awareness. These are operational rules
-  the agent enforces during implementation
+- **Code agent prompt**: enhanced with Definition of Done (completion gate),
+  External Contract Verification (mandatory upstream verification protocol),
+  dependency-aware "Before Starting" section, and reviewer invocation entry
+  for external service integration
 - **`@external-contract-verifier`**: new read-only subagent with limited
   bash access (curl, secbox osc, git clone). Does NOT modify files. Used
   on-demand during external service integration work
-- **`implement-slice` skill**: loaded automatically when implementing a
-  vertical slice. Provides the repeatable checklist that ensures nothing
-  is skipped
-- **No changes to `opencode.json`**: the new skill is auto-discovered from
-  `.opencode/skills/` and the new agent from `.opencode/agents/`; no manual
-  registration needed
-- **Relationship between §6 and §7**: the external contract verification
-  practice (§6) is realized both as a protocol in the Code agent prompt
-  (behavioral rule) and as the `@external-contract-verifier` subagent
-  (verification tool). The two work together: the Code agent follows the
-  protocol during implementation; the subagent is invoked for verification
-  when ambiguity exists
+- **No `implement-slice` skill**: the implementation workflow (models →
+  services → API → tests → reviewers) is already prescribed by `code.md`
+  "Implementation Standards". Adding a skill would create a parallel
+  instruction set that drifts from the prompt. The planning step (artifact
+  plan + user confirmation) and the completion gate (DoD) are folded
+  directly into `code.md` as always-on behavior
+- **No implementation layers table**: the build-order sequencing of features
+  (identity → platform → CVE → fetchers → packages) is a one-time roadmap
+  produced ephemerally in-session when the build starts — not a permanent
+  enforcement rule. Once the system is built, a static layer table becomes
+  stale and misleading. Dependency verification at implementation time uses
+  the feature spec and `docs/data-model.md` directly
+- **Source hierarchy for response structures**: fetcher specifications are
+  the primary documented source for response field mappings.
+  `docs/data-sources.md` is secondary (service metadata: URLs, auth, rate
+  limits). The real upstream service is the authoritative source — direct
+  verification during implementation is mandatory, not a fallback
+- **No changes to `opencode.json`**: the new agent is auto-discovered from
+  `.opencode/agents/`; no manual registration needed
+- **Relationship between protocol and agent**: the External Contract
+  Verification protocol (in `code.md`) is the behavioral rule the Code
+  agent follows during implementation; the `@external-contract-verifier`
+  subagent is the verification tool invoked when review is needed. The Code
+  agent follows the protocol; the subagent validates the result
+- **On-demand trigger, no Guardrail**: `@external-contract-verifier` is
+  deliberately NOT tied to a Guardrail. Rationale: (1) live verification
+  against external services is non-deterministic — unsuitable for a
+  hard completion gate that must be reliable; (2) the External Contract
+  Verification protocol is already always-on in `code.md`, making the
+  subagent a post-hoc double-check rather than the primary mechanism;
+  (3) the trigger scope ("code that touches an external service") is
+  ambiguous — unlike "new API endpoint" or "new model", it resists clean
+  delimitation, leading to over- or under-triggering; (4) the "soft"
+  trigger (entry in Reviewer Invocation) provides the right level of
+  coupling without gate fragility. Promotion to a dedicated Guardrail is
+  warranted only if external contract mismatches become a recurring source
+  of production bugs
+- **Qualified `@security-reviewer` trigger**: the reviewer invocation
+  entry for external integration suggests `@security-reviewer` only when
+  the integration involves credentials, response parsing, or a new parser
+  dependency — not for every external GET. This keeps the signal targeted
+  (no noise on trivial read-only public API calls) while remaining
+  consistent with Guardrail 10, which explicitly lists "new external
+  service integrations" and "new dependencies that process user input" as
+  security review triggers
