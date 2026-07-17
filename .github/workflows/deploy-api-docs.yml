@@ -1,15 +1,12 @@
 name: Deploy API Docs
 
-# NOTE: Automatic triggers disabled during specification phase.
-# Restore original triggers when implementation begins:
-#   push:
-#     branches: [master]
-#     paths:
-#       - "backend/app/**"
-#       - "backend/scripts/generate_openapi.py"
-#       - ".github/workflows/deploy-api-docs.yml"
-#   workflow_dispatch:
 on:
+  push:
+    branches: [master]
+    paths:
+      - "backend/app/**"
+      - "backend/scripts/generate_openapi.py"
+      - ".github/workflows/deploy-api-docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -34,6 +31,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
 
       - name: Install backend dependencies
         run: pip install -e .

@@ -34,8 +34,8 @@ You are the CI/CD specialist for the Sentinel project.
 - All workflows must use pinned action versions (e.g., `actions/checkout@v4`,
   NOT `actions/checkout@main`)
 - Docker images are pushed to ghcr.io
-- Staging deploys automatically on master merge
-- Production deploys require manual trigger and approval
+- Staging auto-deployment is deferred until the deployment target is decided
+- Production deploys from version tags (`v*`) — deployment workflow TBD
 - Always use GitHub Actions service containers for test databases, never
   external services
 - Multi-stage Dockerfiles: separate build and runtime stages
@@ -44,13 +44,13 @@ You are the CI/CD specialist for the Sentinel project.
 ## Environments
 
 - **dev**: local docker-compose only
-- **staging**: auto-deploy from master
-- **prod**: manual deploy from tags `v*`
+- **staging**: auto-deploy deferred (deployment target TBD)
+- **prod**: manual deploy from tags `v*` (deployment workflow TBD)
 
 ## Before making changes
 
 1. Read the existing workflow files to understand current state
 2. Verify changes don't break the pipeline dependency chain:
-   `ci.yml` → `build-images.yml` → `deploy-staging.yml` → `deploy-prod.yml`
+   `ci.yml` → `build-images.yml` (deploy workflows deferred)
 3. Ensure all action versions are pinned
 4. Verify no secrets are hardcoded

@@ -181,7 +181,10 @@ cd backend && python -m sentinel manage-user create \
 
 ### Staging-Specific Notes
 
-- Staging is auto-deployed from the `master` branch
+- Staging auto-deployment from the `master` branch is deferred until
+  the deployment target (Kubernetes, Docker Compose on VM, or cloud
+  service) is decided. The current process is manual. When the target
+  is known, a deployment workflow will be created via the `@cicd` agent
 - IBS/RabbitMQ integration is active — staging receives real events
 
 ---
@@ -230,7 +233,8 @@ Before the first production deployment:
 
 ### Production-Specific Notes
 
-- Production is deployed manually from version tags (`v*`)
+- Production is deployed manually from version tags (`v*`). A deployment
+  workflow will be added when the infrastructure target is decided
 - Celery Beat is a singleton — ensure only one instance runs
 - `JWT_SECRET_KEY` rotation invalidates all active sessions (plan for
   off-peak maintenance window). In-flight SSO logins are also affected
