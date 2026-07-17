@@ -582,7 +582,11 @@ reference for verifying the generalized content.
 2. **Async pattern table** (line 32): "Celery task (LDAP)" → "Celery
    task (sync)"
 
-3. **Acting user convention** (line 44): "LDAP sync" → "external sync"
+3. **Acting user convention** (line 41): "LDAP sync" → "external sync"
+
+3b. **API handler rule** (line 52): "entry points (LDAP sync, Celery
+    tasks, CLI commands)" → "entry points (external sync, Celery tasks,
+    CLI commands)"
 
 4. **AD User Data Ownership** section (lines 54-79) → rename to
    **"External User Data Ownership"**:
@@ -717,6 +721,9 @@ reference for verifying the generalized content.
     "`ExternalUserPasswordError`"; "AD user" → "external user";
     "authenticate via id.suse.com" → "authenticate via SSO"
 
+20b. **Concurrent deactivation prose** (line 766): "LDAP sync and admin
+     API" → "external sync and admin API"
+
 21. **Concurrency Considerations** (lines 779-803): "LDAP sync" →
     "external sync"; "manual actions use `ad_group_cn = '_manual'`
     while LDAP sync uses the actual AD group CN" → "manual actions use
@@ -750,7 +757,7 @@ reference for verifying the generalized content.
 
 **Changes**:
 
-1. **Capability table** (line 37): "AD role mapping CRUD, preview role
+1. **Capability table** (line 36): "AD role mapping CRUD, preview role
    mapping" → "Group-to-role mapping CRUD, preview role mapping"
 
 2. **Permission Matrix** (lines 162-163): "AD role mapping CRUD" →
@@ -860,7 +867,6 @@ reference for verifying the generalized content.
     containing AD-specific values must be updated:
     - `"source": "ad_sync"` → `"source": "external_sync"`
     - `"mapping": "cn=SecurityTeam"` → `"mapping": "SecurityTeam"`
-    - `"ad_group_cn"` → `"group_name"` (in any example JSON keys)
     - Apply to all example response bodies in the section
 
 2b. **detail field transparency prose** (lines 230-236):
@@ -1017,6 +1023,9 @@ reference for verifying the generalized content.
    "managed by Active Directory" at line 15, "AD-synced users" at
    line 19)
 
+1b. **IdP authentication prose** (line 196): "credentials managed by
+    SUSE AD" → "credentials managed by the identity provider"
+
 2. **`SSO_USER_CLAIM` description prose** (line 47): "matched against
    `username` for AD-synced users" → "matched against `username` for
    externally-provisioned users"
@@ -1068,7 +1077,7 @@ reference for verifying the generalized content.
    NULL`)" → "Users managed by external provisioning (`external_id IS
    NOT NULL`)"
 
-2. **Login behavior step 8** (line 67): "`ad_object_guid IS NOT NULL`
+2. **Login behavior step 8** (line 66): "`ad_object_guid IS NOT NULL`
    (AD user)" → "`external_id IS NOT NULL` (external user)"; "AD users
    cannot use local login" → "External users cannot use local login"
 
@@ -1398,8 +1407,8 @@ references, "Active" status, spec links) are modified. SUSEID
 **Changes**:
 
 1. **Mermaid architecture diagram**: replace `LDAP["SUSE AD<br/>
-   (pan.suse.de)"]` node and `WORKER -->|"LDAPS (port 636)"| LDAP`
-   edge with a generic placeholder or remove entirely.
+   (pan.suse.de)"]` node (line 60) and `WORKER -->|"LDAPS (port 636)"|
+   LDAP` edge (line 76) with a generic placeholder or remove entirely.
 
 2. **ERD**: `ad_object_guid` → `external_id`; UserRole/RoleMapping
    `ad_group_cn` → `group_name`.
@@ -1409,7 +1418,7 @@ references, "Active" status, spec links) are modified. SUSEID
 4. **Spec-dependency graph**: replace `ADI["ad-integration"]` node with
    `IDP["identity-provisioning"]`; update edge references.
 
-5. **Spec index**: replace ad-integration row with
+5. **Spec index** (line 789): replace ad-integration row with
    identity-provisioning row.
 
 ### Step 25 — Update `docs/reviews/.tracking.json`
