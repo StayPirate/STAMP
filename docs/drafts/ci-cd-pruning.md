@@ -88,8 +88,35 @@ or retrying after transient failures.
 - `frontend-build` (lines ~102–116)
 - `frontend-security` (lines ~135–150)
 
-3.3. The remaining jobs are: `backend-lint`, `backend-test`,
-`backend-security`. These stay unchanged.
+3.3. **Add concurrency group**: Cancel superseded CI runs on the same
+branch/PR (avoids wasting runner minutes when multiple pushes happen in
+quick succession):
+
+```yaml
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+3.4. **Enable pip caching**: Add `cache` and `cache-dependency-path` to
+all `actions/setup-python@v5` steps in the remaining backend jobs
+(`backend-lint`, `backend-test`, `backend-security`):
+
+```yaml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+```
+
+This caches downloaded pip packages between runs. The cache is
+invalidated automatically when `pyproject.toml` changes. Saves
+~30–60 seconds per job execution.
+
+3.5. The remaining jobs are: `backend-lint`, `backend-test`,
+`backend-security`. Apart from the pip caching added in 3.4, these
+stay unchanged.
 
 ### Step 4 — Modify build-images.yml
 
@@ -138,11 +165,68 @@ This is necessary because `workflow_run` with `types: [completed]`
 fires on both CI success and CI failure. Without this condition, a
 failed CI run would still trigger an image build.
 
-4.3. **Remove frontend image job**: Delete the entire `build-frontend`
+4.3. **Fix SHA for `workflow_run` trigger**: When triggered via
+`workflow_run`, the default `github.sha` points to the HEAD of the
+default branch *at the time the event fires*, not the commit that CI
+actually tested. If another commit was pushed between CI start and
+build start, the image would be built from untested code.
+
+Override the checkout `ref` and the `docker/metadata-action` SHA tag
+to use the commit CI validated:
+
+```yaml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # ... (login step unchanged) ...
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/backend
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,value=${{ github.event.workflow_run.head_sha || github.sha }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+```
+
+The `|| github.sha` fallback handles `push` (tag) and
+`workflow_dispatch` triggers where `workflow_run.head_sha` is empty.
+
+4.4. **Add concurrency group**: Prevent parallel image builds for the
+same ref. Use `cancel-in-progress: false` because a partially-pushed
+image is worse than a stale one:
+
+```yaml
+concurrency:
+  group: build-${{ github.event.workflow_run.head_sha || github.ref }}
+  cancel-in-progress: false
+```
+
+4.5. **Add Docker layer caching**: Enable GitHub Actions cache for
+Docker build layers to significantly reduce rebuild times when only
+application code changes (dependencies layer cached):
+
+```yaml
+      - uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+4.6. **Remove frontend image job**: Delete the entire `build-frontend`
 job block (lines ~48–79).
 
-4.4. The remaining job is `build-backend`. Apart from the `if` condition
-added in 4.2, it stays unchanged.
+4.7. The remaining job is `build-backend` with the changes from
+4.2–4.5 applied.
 
 ### Step 5 — Modify deploy-api-docs.yml
 
@@ -189,8 +273,8 @@ with:
 "### Production-Specific Notes", change:
 "Production is deployed manually from version tags (`v*`)"
 to:
-"Production is deployed manually from version tags (`v*`). An automated
-deployment workflow will be added when the infrastructure target is decided."
+"Production is deployed manually from version tags (`v*`). A deployment
+workflow will be added when the infrastructure target is decided."
 
 ### Step 7 — Update .opencode/agents/cicd.md
 
@@ -207,9 +291,13 @@ to:
 `ci.yml` → `build-images.yml`
 ```
 
-7.2. In the "Conventions" section, update "Staging deploys automatically on
-master merge" and "Production deploys require manual trigger and approval" to
-indicate these are deferred until the deployment target is decided.
+7.2. In the "Conventions" section:
+- Update "Staging deploys automatically on master merge" to indicate this is
+  deferred until the deployment target is decided
+- Update "Production deploys require manual trigger and approval" to:
+  "Production deploys from version tags (`v*`) — deployment workflow TBD"
+  (the manual model is the intended design regardless of workflow existence;
+  only the workflow implementation is deferred, not the operational model)
 
 7.3. In the "Environments" section, update:
 - `**staging**: auto-deploy from master` → indicate deferred
