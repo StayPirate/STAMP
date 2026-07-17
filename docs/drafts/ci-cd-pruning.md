@@ -45,6 +45,7 @@ backend jobs, `build-images.yml` backend image, `deploy-api-docs.yml`).
 | `.github/workflows/build-images.yml` | Remove frontend image job; reactivate triggers |
 | `.github/workflows/deploy-api-docs.yml` | Reactivate triggers |
 | `docs/deployment.md` | Add note about deploy workflows being deferred |
+| `.opencode/agents/cicd.md` | Update pipeline chain (remove deleted workflow references) |
 | `AGENTS.md` | No change needed (deployment docs already reference `docs/deployment.md`) |
 
 ---
@@ -112,6 +113,8 @@ block (lines ~48–79).
 with:
 
 ```yaml
+name: Deploy API Docs
+
 on:
   push:
     branches: [master]
@@ -129,7 +132,7 @@ functional for a backend-only project).
 
 ### Step 6 — Update docs/deployment.md
 
-6.1. In the **Staging Deployment** section (around line ~149), after
+6.1. In the **Staging Deployment** section (around line ~182), after
 "### Staging-Specific Notes", add a note:
 
 ```markdown
@@ -140,28 +143,52 @@ the target is known, a deployment workflow will be created via the `@cicd`
 agent.
 ```
 
-6.2. In the **Production Deployment** section (around line ~237), in
+6.2. In the **Production Deployment** section (around line ~231), in
 "### Production-Specific Notes", change:
 "Production is deployed manually from version tags (`v*`)"
 to:
 "Production is deployed manually from version tags (`v*`). An automated
 deployment workflow will be added when the infrastructure target is decided."
 
-### Step 7 — Verify remaining workflow references
+### Step 7 — Update .opencode/agents/cicd.md
 
-7.1. Grep `.github/workflows/` to confirm only three files remain:
+7.1. In the "Before making changes" section, update the pipeline dependency
+chain from:
+
+```
+`ci.yml` → `build-images.yml` → `deploy-staging.yml` → `deploy-prod.yml`
+```
+
+to:
+
+```
+`ci.yml` → `build-images.yml`
+```
+
+7.2. In the "Conventions" section, update "Staging deploys automatically on
+master merge" and "Production deploys require manual trigger and approval" to
+indicate these are deferred until the deployment target is decided.
+
+7.3. In the "Environments" section, update:
+- `**staging**: auto-deploy from master` → indicate deferred
+- `**prod**: manual deploy from tags \`v*\`` → stays as-is (production manual
+  deploy from tags remains the intended model regardless of workflow existence)
+
+### Step 8 — Verify remaining workflow references
+
+8.1. Grep `.github/workflows/` to confirm only three files remain:
 - `ci.yml`
 - `build-images.yml`
 - `deploy-api-docs.yml`
 
-7.2. Grep `AGENTS.md` and `docs/` for references to `deploy-staging`,
-`deploy-prod`, or the deleted workflow names. Update any stale references
-found.
+8.2. Grep `AGENTS.md`, `docs/`, and `.opencode/` for references to
+`deploy-staging`, `deploy-prod`, or the deleted workflow names. Update any
+stale references found.
 
-7.3. Verify that `ci.yml` no longer references `frontend/` in any path,
+8.3. Verify that `ci.yml` no longer references `frontend/` in any path,
 working-directory, or cache-dependency-path.
 
-### Step 8 — Run reviewers
+### Step 9 — Run reviewers
 
 Invoke the following reviewers:
 
@@ -171,7 +198,7 @@ Invoke the following reviewers:
 - `@docs-reviewer` on `docs/deployment.md` to verify the added notes are
   coherent with the rest of the document
 
-### Step 9 — Delete this draft
+### Step 10 — Delete this draft
 
 Delete `docs/drafts/ci-cd-pruning.md`.
 
@@ -189,3 +216,9 @@ Delete `docs/drafts/ci-cd-pruning.md`.
   to the future UI repository
 - **docker-compose.yml and dev-env.sh**: NOT modified — they are correct
   and useful as-is (Postgres + Redis for local dev)
+- **docs/architecture.md**: NOT modified — the Environments section (line
+  417: "Staging: auto-deployed from master branch") describes the intended
+  deployment model, not a claim about a working workflow. The design intent
+  has not changed (staging will be auto-deployed when the infrastructure
+  target is decided). Operational reality is documented in
+  `docs/deployment.md` (Step 6 adds an explicit "deferred" note there)
