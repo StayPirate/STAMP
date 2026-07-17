@@ -3,8 +3,8 @@
 ## Summary
 
 Remove speculative deployment workflows that contain only placeholder logic,
-remove all frontend CI jobs (aligned with the frontend removal in the
-companion draft), and reactivate the backend CI pipeline so it runs
+remove all frontend CI jobs (aligned with the frontend removal already
+completed), and reactivate the backend CI pipeline so it runs
 automatically on push/PR. Keep the genuinely useful workflows (`ci.yml`
 backend jobs, `build-images.yml` backend image, `deploy-api-docs.yml`).
 
@@ -15,9 +15,8 @@ backend jobs, `build-images.yml` backend image, `deploy-api-docs.yml`).
    explicitly undecided (`docs/architecture.md`: "The deployment target is
    not fixed at this stage"). Maintaining placeholder workflows creates
    false confidence and maintenance overhead
-2. **Frontend jobs have no subject**: with the frontend directory removed
-   (companion draft), CI jobs referencing `frontend/` would fail
-   unconditionally
+2. **Frontend jobs have no subject**: with the frontend directory removed,
+   CI jobs referencing `frontend/` would fail unconditionally
 3. **Backend CI is the safety net**: it is well-structured (lint, test with
    real Postgres/Redis, coverage, security scan) and must be active from
    day one of implementation
@@ -165,53 +164,70 @@ This is necessary because `workflow_run` with `types: [completed]`
 fires on both CI success and CI failure. Without this condition, a
 failed CI run would still trigger an image build.
 
-4.3. **Fix SHA for `workflow_run` trigger**: When triggered via
+4.3. **Fix checkout SHA for `workflow_run` trigger**: When triggered via
 `workflow_run`, the default `github.sha` points to the HEAD of the
 default branch *at the time the event fires*, not the commit that CI
 actually tested. If another commit was pushed between CI start and
 build start, the image would be built from untested code.
 
-Override the checkout `ref` and the `docker/metadata-action` SHA tag
-to use the commit CI validated:
+Override the checkout `ref` to use the commit CI validated:
 
 ```yaml
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+```
 
-      # ... (login step unchanged) ...
+The `|| github.sha` fallback handles `push` (tag) and
+`workflow_dispatch` triggers where `workflow_run.head_sha` is empty.
 
+The `docker/metadata-action` tags do NOT need a SHA tag — the OCI label
+`org.opencontainers.image.revision` (added automatically by
+`docker/metadata-action`) provides commit-to-image traceability via
+`docker inspect`. The tag set remains:
+
+```yaml
       - uses: docker/metadata-action@v5
         id: meta
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/backend
           tags: |
             type=ref,event=branch
-            type=sha,prefix=,value=${{ github.event.workflow_run.head_sha || github.sha }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 ```
 
-The `|| github.sha` fallback handles `push` (tag) and
-`workflow_dispatch` triggers where `workflow_run.head_sha` is empty.
-
 4.4. **Add concurrency group**: Prevent parallel image builds for the
-same ref. Use `cancel-in-progress: false` because a partially-pushed
+same branch. Use `cancel-in-progress: false` because a partially-pushed
 image is worse than a stale one:
 
 ```yaml
 concurrency:
-  group: build-${{ github.event.workflow_run.head_sha || github.ref }}
+  group: build-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 ```
 
+Using `head_branch` (not `head_sha`) ensures that builds for the same
+branch are serialized — if a newer commit triggers a build while an
+older one is still running, the newer one queues until the older
+finishes (rather than running in parallel and racing on tag pushes).
+The fallback uses `github.ref_name` (not `github.ref`) so that
+`workflow_dispatch` and `workflow_run` produce the same group name
+for the same branch (e.g., `build-master` in both cases, rather than
+`build-refs/heads/master` vs `build-master`).
+
 4.5. **Add Docker layer caching**: Enable GitHub Actions cache for
 Docker build layers to significantly reduce rebuild times when only
-application code changes (dependencies layer cached):
+application code changes (dependencies layer cached).
+
+The `type=gha` cache backend requires the `docker-container` driver
+provided by `docker/setup-buildx-action`. Add it before the build step:
 
 ```yaml
+      - uses: docker/setup-buildx-action@v3
+
       - uses: docker/build-push-action@v6
         with:
           context: backend
