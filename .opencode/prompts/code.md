@@ -87,8 +87,14 @@ Once the user approves a resolution:
 
 1. Read the relevant specification completely
 2. Identify all files that need to be created or modified
-3. Plan the implementation order (models → services → API → tests, or
-   as appropriate)
+3. Verify prerequisites: confirm that the direct dependencies of the
+   artifacts you will implement (the models and services they build on)
+   already exist and are tested. Identify these from the feature spec and
+   `docs/data-model.md`. If a prerequisite is missing, STOP and signal it
+   rather than implementing it ad-hoc
+4. Plan the implementation order (models → services → API → tests, or as
+   appropriate) and briefly confirm the intended artifacts with the user
+   before implementing
 
 ### During Implementation
 
@@ -107,6 +113,77 @@ Once the user approves a resolution:
 2. Run the test suite and fix failures
 3. Evaluate whether to suggest reviewer invocation (see below)
 
+## Definition of Done
+
+A slice is complete ONLY when ALL of the following are satisfied:
+
+1. **Guardrails met**: all applicable AGENTS.md Guardrails are satisfied
+   (tests pass and cover happy/error/permission paths per G6, lint clean,
+   reviewers invoked per G8–G17, no spec deviations per G1, Gap Protocol
+   followed if deviations were needed)
+2. **External contracts verified** (if the slice integrates with an
+   external service): the External Contract Verification protocol below
+   has been followed
+
+Do NOT inform the user that a slice is "done" until both criteria are
+met. If any criterion cannot be satisfied (e.g., a test environment is
+unavailable), explicitly state which criterion is unmet and why.
+
+## External Contract Verification
+
+When implementing code that parses responses from or sends requests to an
+external service (NVD, MITRE, Red Hat, SMELT, AIMAAS, IBS, GitHub, CISA,
+FIRST/EPSS, OSV, git.kernel.org), the request/response structures actually
+used in the code MUST be verified against the real upstream service during
+implementation — not assumed from documentation alone.
+
+### Identify the documented contract (starting point)
+
+1. **Read the owning fetcher specification** — this is the primary source
+   for documented response field mappings (e.g., `cve-sync-nvd.md` for NVD
+   field paths). `docs/data-sources.md` is secondary: it provides service
+   metadata only (URLs, authentication, rate limits) — NOT response
+   structures
+2. **Expect gaps**: the fetcher spec may be incomplete, ambiguous, or
+   outdated. Treat the spec as a starting point, not the final word on the
+   actual response format
+
+### Verify against the real upstream service (mandatory)
+
+3. **Obtain a real response sample**: for public APIs (NVD, Red Hat, CISA,
+   FIRST, OSV, GitHub), make a direct HTTP request. For SUSE internal HTTPS
+   services (SMELT at `smelt.suse.de/api`, AIMAAS at `aimaas.suse.de/api`),
+   use `curl` directly from the SUSE network. For IBS/OBS, use
+   `secbox osc api ...` (NEVER bare `osc`; exploratory only — never in
+   application code). For git-based sources, perform a manual clone/fetch to
+   observe the file format
+4. **Compare every field the code reads** against the real response. Pay
+   attention to: field names (camelCase vs snake_case), nesting levels,
+   pagination format, date formats, nullable fields, array vs object
+5. **If discrepancy found**: STOP. Do not guess. Signal the discrepancy to
+   the user with: the expected format (from spec), the actual format (from
+   real response), and a proposal for resolution (update spec, or adjust
+   implementation)
+6. **Sanitize and save as fixture**: replace all PII (Guardrail 23) with
+   fictional data. Save the sanitized response as a test fixture in
+   `backend/tests/fixtures/<service_name>/` for use in contract tests
+
+### During implementation
+
+7. **Write contract tests first**: before writing the parser, write tests
+   that load the fixture and verify the parser produces the expected output.
+   This ensures the parser is tested against a known-good shape
+8. **Use typed response models**: where practical, define Pydantic models or
+   TypedDicts for external response structures. This makes field name
+   mismatches fail loudly at parse time
+
+### When the service cannot be reached
+
+9. If the service requires credentials not available or is unreachable from
+   the current network, state explicitly that verification was
+   documentation-only and flag the affected fields as unverified. Do NOT
+   make assumptions about external service behavior without verification.
+
 ## Reviewer Invocation
 
 After implementation, evaluate and suggest relevant reviewers:
@@ -118,6 +195,8 @@ After implementation, evaluate and suggest relevant reviewers:
 - **Ticket mutations** → suggest `@ticket-integrity-reviewer`
 - **Identity mutations** → suggest `@identity-integrity-reviewer`
 - **Doc changes (gap fixes)** → suggest `@docs-reviewer`
+- **External service integration** → suggest `@external-contract-verifier`
+- **New external integration involving credentials, response parsing, or a new parser dependency** → also suggest `@security-reviewer`
 
 ## Non-Feature Work
 
