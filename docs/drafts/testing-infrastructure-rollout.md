@@ -12,6 +12,41 @@ and `conventions.md` trimming) is already applied.
 
 ---
 
+## Step 0 — Fix spec references in `testing-strategy.md`
+
+The spec references `.pre-commit-config.yaml` (the pre-commit Python
+framework) as the implementation owner for local git hooks. The actual
+implementation uses plain shell scripts in `.githooks/` with
+`core.hooksPath` — a simpler approach with no extra dependency. Update
+the spec to match.
+
+### 0a. Scope boundary paragraph (line 14–15)
+
+```diff
+ Scope boundary: this spec covers the backend test suite
+ (`backend/tests/`). CI pipeline configuration and local automation
+ (pre-commit hooks) are specified here at the requirements level; their
+ implementation is owned by `.github/workflows/ci.yml` and
+-`.pre-commit-config.yaml` respectively.
++`.githooks/` respectively.
+```
+
+### 0b. Pre-Commit Hooks section (line 380–381)
+
+```diff
+ Repository-level git hooks provide fast feedback before commits reach
+-CI. Configured via `.pre-commit-config.yaml` with `core.hooksPath`
+-pointing to the repo's hooks directory:
++CI. Configured as shell scripts in `.githooks/`, activated via
++`git config core.hooksPath .githooks`:
+```
+
+### Risks / Verification
+
+- Purely a documentation correction — no behavioral impact.
+
+---
+
 ## Step 1 — `backend/pyproject.toml`
 
 ### 1a. Add `testcontainers[postgres]` to dev dependencies
@@ -363,10 +398,10 @@ set -euo pipefail
 echo "Running pre-commit checks..."
 
 echo "  ruff check..."
-ruff check backend/app/ backend/tests/
+(cd backend && ruff check .)
 
 echo "  ruff format..."
-ruff format --check backend/app/ backend/tests/
+(cd backend && ruff format --check .)
 
 echo "  unit tests..."
 (cd backend && pytest -m unit --no-header -q)
@@ -461,8 +496,7 @@ Test requirements:
   registered in the Audit Trail Index
   (`docs/features/platform/audit-trail-infrastructure.md`), tests MUST
   verify that the corresponding audit event is created with correct
-  field values (`event_type`, `old_value`/`new_value`, `user_id`) in
-  the same transaction. See
+  field values in the same transaction. See
   `docs/features/platform/testing-strategy.md` (Audit Trail Testing)
   for the full assertion checklist
 
@@ -474,8 +508,9 @@ requires tests for all changes and suggest writing them.
 
 - Added marker guidance with reference to testing-strategy.md
 - Added audit trail coverage requirement generalized to the Audit Trail
-  Index (not hardcoded to TicketAuditEvent)
-- Reference to testing-strategy.md for the full assertion checklist
+  Index (not hardcoded to TicketAuditEvent), with pure reference to
+  testing-strategy.md for the assertion checklist (no inline field
+  enumeration)
 - All other content preserved
 
 ---
@@ -695,6 +730,7 @@ definitions.
 
 | File | Action |
 |------|--------|
+| `docs/features/platform/testing-strategy.md` | Edit (fix `.pre-commit-config.yaml` → `.githooks/` references) |
 | `backend/pyproject.toml` | Edit (deps, markers, coverage) |
 | `backend/tests/conftest.py` | Rewrite (Postgres fixtures) |
 | `backend/tests/test_health.py` | Edit (xfail marker) |
