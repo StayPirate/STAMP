@@ -1,12 +1,6 @@
 name: Deploy API Docs
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - "backend/app/**"
-      - "backend/scripts/generate_openapi.py"
-      - ".github/workflows/deploy-api-docs.yml"
   workflow_dispatch:
 
 permissions:
