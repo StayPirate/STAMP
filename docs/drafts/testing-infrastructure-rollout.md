@@ -10,6 +10,11 @@ and `conventions.md` trimming) is already applied.
 **Acceptance criteria**: `cd backend && pytest -v` and
 `cd backend && ruff check . && ruff format --check .` both pass green.
 
+**Line number convention**: line numbers in this document refer to the
+original file state before any modifications. When applying edits in
+order, use the diff context (surrounding lines) to locate the correct
+section, not the line numbers.
+
 ---
 
 ## Step 0 — Fix spec references in `testing-strategy.md`
@@ -31,19 +36,61 @@ the spec to match.
 +`.githooks/` respectively.
 ```
 
-### 0b. Pre-Commit Hooks section (line 380–381)
+### 0b. Pre-Commit Hooks section (line 379–390)
+
+Merged with Step 5c — the full replacement of this section (mechanism
+description + activation command) is specified in Step 5c to keep the
+edit atomic. See Step 5c for the diff.
+
+### 0c. Session-scoped async fixture requires `loop_scope` (line 148–149)
+
+The spec describes a session-scoped async fixture but omits the
+`loop_scope="session"` parameter required by pytest-asyncio ≥ 0.24.
+Without it, pytest raises `ScopeMismatch` at collection time because
+the default `loop_scope` is `"function"`.
 
 ```diff
- Repository-level git hooks provide fast feedback before commits reach
--CI. Configured via `.pre-commit-config.yaml` with `core.hooksPath`
--pointing to the repo's hooks directory:
-+CI. Configured as shell scripts in `.githooks/`, activated via
-+`git config core.hooksPath .githooks`:
+ Pattern (in `conftest.py`):
+
+-1. A session-scoped fixture creates the async engine and runs
+-   `create_all`.
++1. A session-scoped fixture (with `loop_scope="session"` to match the
++   pytest-asyncio event loop lifetime) creates the async engine and
++   runs `create_all`.
+ 2. A function-scoped `db_session` fixture begins a transaction, creates
+```
+
+### 0d. Default marker semantics clarification (line 72–80)
+
+The spec says unmarked tests are "treated as integration tests" but
+does not clarify that this is a convention — `pytest -m integration`
+does NOT select unmarked tests. The Execution Model section (line 365)
+shows `pytest -m integration` as an expected command, which is
+misleading without this clarification.
+
+```diff
+ ### Default Marker
+
+ Tests without an explicit marker are treated as **integration** tests.
+ This is the safe default — a test that accidentally omits its marker
+ gets the full database fixture rather than failing mysteriously.
++
++This is a classification convention, not a pytest enforcement
++mechanism — `pytest -m integration` selects only tests explicitly
++marked `@pytest.mark.integration`, not all unmarked tests. To run
++integration tests plus unmarked tests, use `pytest` without a marker
++filter (the full suite includes them).
+
+ The `asyncio_mode = "auto"` setting in `pyproject.toml` applies to all
 ```
 
 ### Risks / Verification
 
-- Purely a documentation correction — no behavioral impact.
+- 0a and 0b are purely documentation corrections — no behavioral impact.
+- 0c prevents a `ScopeMismatch` error that would occur if someone
+  implemented the conftest.py from the spec alone (without the rollout).
+- 0d prevents confusion when running `pytest -m integration` (which
+  would skip unmarked tests despite the spec calling them "integration").
 
 ---
 
@@ -128,6 +175,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     create_async_engine,
 )
@@ -165,7 +213,7 @@ def _database_url() -> str:
 
 
 @pytest.fixture(scope="session", loop_scope="session")
-async def _engine():
+async def _engine() -> AsyncGenerator[AsyncEngine, None]:
     """Create the async engine and tables once per session."""
     engine = create_async_engine(_database_url(), echo=False)
     async with engine.begin() as conn:
@@ -319,6 +367,27 @@ async def test_client_connects_to_app(client: AsyncClient) -> None:
 - Run `pytest tests/test_infrastructure_smoke.py -v` — both tests
   should pass.
 
+### 3c. Remove `test_api_conventions.py` placeholder
+
+Delete `backend/tests/test_api_conventions.py`. This file was created
+before the testing strategy as a placeholder with structural API
+convention tests. All 4 tests are permanently skipped (no API v1
+endpoints exist). Issues:
+
+- No tier marker (`unit`/`integration`/`e2e`) — predates the marker
+  convention
+- Created 2.5 months before the testing strategy spec
+
+The file's intended purpose (structural convention enforcement) is
+still documented in `testing-strategy.md` (Directory Structure,
+line 312). When the first API endpoint is implemented, the
+implementer will create this file following the current conventions
+(with proper markers and fixture usage).
+
+```bash
+rm backend/tests/test_api_conventions.py
+```
+
 ---
 
 ## Step 4 — CI pipeline updates
@@ -400,7 +469,10 @@ echo "  ruff format..."
 (cd backend && ruff format --check .)
 
 echo "  unit tests..."
-(cd backend && pytest -m unit --no-header -q)
+# Exit code 5 = "no tests collected" (no @pytest.mark.unit tests yet).
+# Treat it as success so the hook doesn't block commits before the
+# first unit test is added.
+(cd backend && pytest -m unit --no-header -q) || [ $? -eq 5 ]
 ```
 
 ### 5b. Create `.githooks/pre-push`
@@ -415,40 +487,54 @@ set -euo pipefail
 echo "Running pre-push checks..."
 
 echo "  full test suite..."
-(cd backend && pytest --no-header -q)
+# Exit code 5 = "no tests collected". Treat as success for the same
+# reason as pre-commit (see pre-commit script comments).
+(cd backend && pytest --no-header -q) || [ $? -eq 5 ]
 ```
 
 ### 5c. Document the setup
 
-Add a "Git Hooks" subsection to `docs/deployment.md` under
-Local Development, after the Quick Start section:
+In `docs/features/platform/testing-strategy.md`, replace the Pre-Commit
+Hooks section body (lines 379–390, after the heading on line 377) with:
 
-```markdown
-### Git Hooks
-
-The repository includes local git hooks in `.githooks/`. To activate
-them after cloning:
-
-\`\`\`bash
-git config core.hooksPath .githooks
-\`\`\`
-
-This enables:
-- **pre-commit**: ruff lint + format check + unit tests
-- **pre-push**: full test suite (requires PostgreSQL via
-  testcontainers or `dev-env.sh`)
-
-These hooks are optional — CI enforces the same checks authoritatively.
+```diff
+ Repository-level git hooks provide fast feedback before commits reach
+-CI. Configured via `.pre-commit-config.yaml` with `core.hooksPath`
+-pointing to the repo's hooks directory:
++CI. Configured as shell scripts in `.githooks/`, activated via
++`git config core.hooksPath .githooks`:
+ 
+ - **pre-commit**: ruff check + ruff format check + `pytest -m unit`
+   (fast gate, < 15 seconds)
+ - **pre-push**: full test suite (`pytest`) including integration and
+   e2e tests
+ 
+ These hooks are a supplementary safety net. The CI pipeline is the
+ authoritative enforcer — hooks can be bypassed in extraordinary
+ circumstances but CI cannot.
++
++To activate after cloning:
++
++```bash
++git config core.hooksPath .githooks
++```
 ```
+
+This consolidates the hooks description and the activation command in
+the same section — `testing-strategy.md` already owns the hook
+requirements, so the activation instructions belong here rather than
+fragmenting the topic across `deployment.md`.
 
 ### Risks / Verification
 
 - If `core.hooksPath` is not configured, hooks don't run — this is
   acceptable since CI is the authoritative enforcer.
 - The `unit-tests` check runs only tests marked `@pytest.mark.unit`.
-  Initially, there may be zero unit tests (all current tests are
-  integration/e2e), so the check passes trivially. This is fine —
-  it activates automatically as unit tests are added.
+  Initially, there are zero unit tests (all current tests are
+  integration/e2e). Pytest returns exit code 5 ("no tests collected")
+  in this case — the hook script handles this explicitly by treating
+  exit code 5 as success. The check activates automatically as unit
+  tests are added.
 - The `pre-push` hook runs the full suite, which requires a running
   PostgreSQL (via testcontainers or `dev-env.sh`). If the developer
   doesn't have Docker/Podman, the push hook will fail — this is
@@ -684,8 +770,7 @@ No other rows change.
 cd backend && pip install -e ".[dev]" && pytest -v
 ```
 
-Expected result: all tests pass (smoke tests green, health test xfail,
-API convention tests skipped).
+Expected result: all tests pass (smoke tests green, health test xfail).
 
 ### 10b. Run linting
 
@@ -717,7 +802,7 @@ Once all verification passes and all reviewer findings are resolved:
 rm docs/drafts/testing-infrastructure-rollout.md
 ```
 
-This draft is a transient runbook. All durable rules live in
+This draft is a transient rollout runbook. All durable rules live in
 `testing-strategy.md`, `conventions.md`, `AGENTS.md`, and the agent
 definitions.
 
@@ -727,15 +812,15 @@ definitions.
 
 | File | Action |
 |------|--------|
-| `docs/features/platform/testing-strategy.md` | Edit (fix `.pre-commit-config.yaml` → `.githooks/` references) |
+| `docs/features/platform/testing-strategy.md` | Edit (fix `.pre-commit-config.yaml` → `.githooks/`, add `loop_scope` note, clarify default marker semantics, add hooks activation command) |
 | `backend/pyproject.toml` | Edit (deps, markers, coverage) |
 | `backend/tests/conftest.py` | Rewrite (Postgres fixtures) |
 | `backend/tests/test_health.py` | Edit (xfail marker) |
+| `backend/tests/test_api_conventions.py` | Delete (pre-strategy placeholder) |
 | `backend/tests/test_infrastructure_smoke.py` | New (smoke tests) |
 | `.github/workflows/ci.yml` | Edit (coverage gate, Alembic drift, TEST_DATABASE_URL) |
 | `.githooks/pre-commit` | New (lint + unit tests hook) |
 | `.githooks/pre-push` | New (full test suite hook) |
-| `docs/deployment.md` | Edit (Git Hooks setup documentation) |
 | `AGENTS.md` | Edit (Guardrail 6) |
 | `.opencode/agents/test-reviewer.md` | Rewrite (generalized) |
 | `.opencode/skills/new-feature/SKILL.md` | Edit (Step 4) |
