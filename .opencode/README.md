@@ -71,7 +71,7 @@ their description.
 
 | Skill | Purpose |
 |-------|---------|
-| `new-api-endpoint` | Guided workflow for creating a new API endpoint with proper schema, service layer, and tests |
+| `new-api-endpoint` | Guided workflow for adding/modifying an endpoint in an existing feature (schema, service, thin route, tests, and reviews) |
 | `new-feature` | Guided workflow for adding a new feature following the spec-first approach |
 
 ## Directory Structure
