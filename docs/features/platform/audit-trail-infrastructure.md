@@ -367,3 +367,5 @@ All audit trail endpoints MUST apply standard pagination as defined in
 - `docs/features/platform/system-settings.md` — setting audit trail
 - `docs/features/platform/fetcher-infrastructure.md` — fetcher audit trail
 - `AGENTS.md` — Audit trail atomicity guardrail
+- `docs/features/platform/testing-strategy.md` — Audit trail testing
+  requirements, immutability verification

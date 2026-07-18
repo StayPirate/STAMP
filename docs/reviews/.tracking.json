@@ -1323,6 +1323,11 @@
         "not_reviewed": []
       }
     },
+    "testing-strategy": {
+      "enabled": true,
+      "abbr": "TST",
+      "cache": null
+    },
     "tickets": {
       "enabled": true,
       "abbr": "TKT",

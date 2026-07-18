@@ -368,17 +368,21 @@ canonical application of this rule.
 
 ### Testing Conventions
 
+For the full testing strategy — test pyramid, database setup, fixture
+catalog, coverage policy, audit trail testing, and execution model — see
+`docs/features/platform/testing-strategy.md`.
+
+Style rules (kept here for proximity with other Python conventions):
+
 - Test files mirror the `app/` directory structure
 - Use `pytest` with async support (`pytest-asyncio`)
 - Use fixtures for database sessions, test data, authenticated clients
 - Test naming: `test_<what>_<condition>_<expected_result>`
 - Example: `test_get_cve_not_found_returns_404`
 - **User identifier resolution**: every endpoint that accepts a user
-  identifier MUST be tested with both UUID and username inputs. At minimum:
-  - Valid UUID → returns expected result
-  - Valid username → returns same expected result
-  - Non-existent UUID → 404
-  - Non-existent username → 404
+  identifier MUST be tested with both UUID and username inputs. See
+  `docs/features/platform/testing-strategy.md` (Mandatory Test
+  Scenarios, User Identifier Resolution) for the required test cases
 
 ### Redis Key Conventions
 

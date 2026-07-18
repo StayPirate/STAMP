@@ -12,6 +12,10 @@ networking.md                   HTTP client (httpx), TLS configuration, SUSE CA
 fetcher-operations.md           Monitoring, API, and CLI diagnostics for fetchers
 audit-trail-infrastructure.md   BaseAuditLog base class, AuditEventMixin
 system-settings.md              System settings (default CVSS version, etc.)
+health-endpoints.md             Liveness (/health) and readiness (/ready) probes
+cve-record-parser.md            Shared CVE record parser for all CVE fetchers
+cve-source-failure-retry.md     Retry policy for per-source CVE fetch failures
+testing-strategy.md             Testing methodology, fixtures, coverage policy
 ```
 
 ## Relationships
@@ -28,3 +32,6 @@ system-settings.md              System settings (default CVSS version, etc.)
   `fetcher-infrastructure.md` — it consumes `FetcherRun` records.
 - `system-settings.md` defines the system settings API; settings like
   `default_cvss_version` are consumed by `tickets/cvss-scoring.md`.
+- `testing-strategy.md` defines the testing methodology, database setup,
+  and coverage policy. Its audit trail testing section references
+  `audit-trail-infrastructure.md` for the Audit Trail Index.
