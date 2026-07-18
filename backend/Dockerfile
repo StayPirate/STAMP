@@ -13,8 +13,8 @@ FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
-# Install SUSE internal CA certificate for LDAPS and other internal TLS
-# connections. The source cert lives at certs/SUSE_Trust_Root.crt in the
+# Install SUSE internal CA certificate for internal TLS connections
+# (IBS, SMELT, AIMAAS, etc.). The source cert lives at certs/SUSE_Trust_Root.crt in the
 # repository root. It must be copied into the backend build context before
 # building (e.g., cp ../certs/SUSE_Trust_Root.crt certs/) or the build
 # context must be set to the repository root with -f backend/Dockerfile.
