@@ -43,7 +43,7 @@ Tests that exercise service-layer functions with real database state.
 | Property | Value |
 |----------|-------|
 | Marker | `@pytest.mark.integration` |
-| Isolation | Real PostgreSQL (per-test transaction rollback). No external network I/O. Redis available via fixture when needed |
+| Isolation | Real PostgreSQL (per-test transaction rollback). Redis available through the shared fixture when needed. No external network I/O |
 | Speed target | Full integration suite < 120 seconds |
 | Typical subjects | Service functions, CRUD operations, audit event creation, status gate evaluation, query builders, authorization checks |
 
@@ -60,7 +60,7 @@ FastAPI's test client.
 | Property | Value |
 |----------|-------|
 | Marker | `@pytest.mark.e2e` |
-| Isolation | Real PostgreSQL + FastAPI test client (ASGI transport). No external network I/O |
+| Isolation | Real PostgreSQL + FastAPI test client (ASGI transport). Redis available via the shared fixture when exercised by the request path. No external network I/O |
 | Speed target | Full e2e suite < 60 seconds |
 | Typical subjects | API endpoint handlers, request validation, response schemas, authentication/authorization enforcement, error envelope format, pagination |
 
@@ -175,6 +175,95 @@ autogenerate dry-run) and fails the build if differences are detected.
 This ensures that developers who add or modify models also create the
 matching migration.
 
+### Concurrency Testing
+
+The standard `db_session` fixture provides a single connection with a
+wrapping transaction that is rolled back after each test. Within a
+single transaction, `SELECT ... FOR UPDATE` is a no-op — the lock is
+already held by the same transaction, so it never blocks. This means
+the per-test rollback pattern **cannot** verify that `FOR UPDATE` locks
+serialize concurrent mutations correctly (see `docs/conventions.md`,
+Transaction and Locking).
+
+Tests that need to verify lock serialization MUST use the
+`db_session_factory` fixture, which creates independent sessions with
+independent connections and transactions. The canonical two-session
+pattern is:
+
+1. Create **session A** and **session B** from `db_session_factory`.
+2. In **A**: insert test data, flush, then acquire the `FOR UPDATE`
+   lock on the target row.
+3. Launch **B** as an `asyncio.Task` that attempts `SELECT ... FOR
+   UPDATE` on the same row.
+4. Verify that **B** blocks by using `asyncio.wait_for(task_B,
+   timeout=0.5)` and catching `asyncio.TimeoutError`. A timeout
+   confirms that B is blocked on the lock held by A.
+5. Release the lock in **A** (rollback or commit).
+6. Await **B**'s completion — it should now acquire the lock
+   successfully.
+7. Both sessions are tracked by the factory; fixture teardown rolls
+   back open transactions and closes all sessions and connections.
+
+When a test requires **commit** (e.g., to verify post-commit
+visibility), the committed data is not rolled back by the fixture.
+The test MUST perform explicit `DELETE` cleanup before the factory
+teardown runs. Session and connection closure is still handled by the
+fixture.
+
+---
+
+## Redis Strategy
+
+Tier 2 tests and Tier 3 tests whose exercised request path uses Redis
+access Redis through the shared `redis_client` fixture. Tests MUST NOT
+create ad-hoc connections to application-configured Redis instances.
+
+### Provisioning
+
+Redis 7 is provisioned at session scope beneath the function-scoped
+fixture. The test harness selects one of two modes:
+
+1. **Configured test server**: when `TEST_REDIS_URL` is set (notably in
+   CI), the harness connects to that designated Redis 7 test server and
+   database range.
+2. **Local development**: when `TEST_REDIS_URL` is absent, the harness
+   starts an ephemeral Redis 7 container with `testcontainers`. The
+   container is shared for the test session and destroyed afterward.
+
+`TEST_REDIS_URL` is test-harness-only configuration, not Sentinel
+runtime configuration. Tests MUST never use `REDIS_URL` or
+`CELERY_BROKER_URL` as fixture storage, even when either variable points
+to a locally available server.
+
+### Worker and Test Isolation
+
+Each pytest worker receives a dedicated Redis logical database. The
+database encoded in `TEST_REDIS_URL` is the start of the test harness's
+designated range; additional workers use consecutive logical databases.
+The harness MUST verify that each worker maps to a distinct database and
+that the Redis server provides enough logical databases. It MUST fail
+explicitly if the range is insufficient or if the allocation could
+collide with another owner; it must not continue with unsafe sharing.
+
+All Redis clients and application processes created within one test MUST
+use that test's worker database. This intentionally preserves realistic
+contention, locking, and key-collision behavior within the test. Pytest
+workers are suite executors, not substitutes for application replicas;
+concurrency tests create multiple clients or processes inside one test
+against the same logical database.
+
+The fixture runs `FLUSHDB` before and after every test. It MUST never run
+`FLUSHALL`, because other workers use other logical databases. An
+unreachable server, an unsafe database allocation, or failed cleanup is
+a test failure rather than a skip.
+
+Scenarios whose behavior is server-global and cannot safely share a
+server use a Redis 7 container dedicated to that test. This includes
+memory exhaustion or eviction, server restart or unavailability, and
+Pub/Sub scenarios where server lifecycle affects the result. Tests of
+application outage handling do not stop a shared Redis service; they
+inject a client that raises `RedisError` instead.
+
 ---
 
 ## Fixture Catalog
@@ -199,10 +288,34 @@ expected patterns:
 | `user_factory` | function | integration, e2e | User model implementation (`user-management.md`) |
 | `ticket_factory` | function | integration, e2e | Ticket model implementation (`tickets.md`) |
 | `cve_factory` | function | integration, e2e | CVE model implementation (`cve-tracking.md`) |
+| `db_session_factory` | function | integration, e2e | First concurrency/locking test (pessimistic locking pattern) |
+| `redis_client` | function | integration, e2e | First Redis-dependent feature; follows Redis Strategy |
 
 Factory fixtures use `factory-boy` (already in dev dependencies) and
 follow the pattern: `<model>_factory` returns a callable that creates a
 model instance with sensible defaults, accepting keyword overrides.
+
+The planned `redis_client` fixture yields an asynchronous
+`redis.asyncio.Redis` client configured with decoded string responses.
+Its session-scoped provisioning layer selects the worker database and
+verifies connectivity with `PING`. Before yielding, it runs `FLUSHDB`
+and overrides applicable application Redis dependencies so all code in
+the test uses the same client. Teardown restores those overrides, runs
+`FLUSHDB`, and closes the client. Provisioning, connectivity, isolation,
+or cleanup failures fail the test suite; they are never converted to
+skips.
+
+The planned `db_session_factory` fixture is an async callable
+(`async def () -> AsyncSession`) that creates a new `AsyncSession` with
+an independent connection and transaction on each call. Internally, the
+factory uses the session-scoped `_engine` fixture (tests MUST NOT
+interact with the engine directly). The factory tracks all sessions it
+creates. During teardown, it rolls back all open transactions and closes
+all sessions and connections — even if the test did not clean up
+explicitly. If the database is unreachable or cleanup fails, the test
+fails (never skips). This fixture is used exclusively for concurrency
+and locking tests; all other integration tests continue using
+`db_session`.
 
 ### Fixture Location
 
@@ -382,10 +495,11 @@ cd backend && pytest tests/test_services/test_ticket_mutations.py
 cd backend && pytest -k "test_set_track_status"
 ```
 
-When `TEST_DATABASE_URL` is not set, the `db_session` fixture
-automatically starts a PostgreSQL container via testcontainers. The
-first run in a session incurs a ~3-second container startup cost;
-subsequent tests reuse the same container.
+When `TEST_DATABASE_URL` or `TEST_REDIS_URL` is not set, the corresponding
+shared fixture automatically starts a PostgreSQL 16 or Redis 7 container
+via testcontainers. Containers are reused for the test session. Redis
+tests require no application `REDIS_URL` or `CELERY_BROKER_URL`; leaving
+`TEST_REDIS_URL` unset is the normal local setup.
 
 ### Pre-Commit Hooks (Local Automation)
 
@@ -422,7 +536,9 @@ provides the **non-bypassable enforcement layer**:
 
 The `backend-test` job uses PostgreSQL 16 and Redis 7 as GitHub Actions
 service containers, matching the production stack. The
-`TEST_DATABASE_URL` environment variable points to the service container.
+`TEST_DATABASE_URL` and `TEST_REDIS_URL` test-harness variables point to
+their respective service containers. The Redis service provides enough
+dedicated logical databases for all configured pytest workers.
 
 An additional CI step verifies Alembic migration drift — the build
 fails if model definitions and migration scripts are out of sync.
@@ -445,6 +561,9 @@ Every new or modified API endpoint MUST be tested for:
 - Authorization enforcement (insufficient permissions → 403)
 - Resource not found → 404
 - Edge cases: empty results, boundary values, concurrent modifications
+  (for endpoints backed by `FOR UPDATE` locking: verify lock
+  serialization using `db_session_factory` and the two-session pattern
+  described in Database Strategy — Concurrency Testing)
 
 ### User Identifier Resolution
 
@@ -466,6 +585,13 @@ Every new or modified service function MUST be tested for:
   Testing)
 - Re-invocation behavior (Q5 — idempotency characteristics)
 - Exception propagation to callers (Q6)
+- Lock serialization: every service function that acquires `FOR UPDATE`
+  (as documented in `docs/features/tickets/ticket-mutations.md`,
+  `docs/features/tickets/ticket-service.md`,
+  `docs/features/packages/package-service.md`) MUST have at least one
+  test verifying lock serialization using `db_session_factory` and the
+  two-session pattern described in Database Strategy — Concurrency
+  Testing
 
 ### Model Constraints
 
@@ -507,8 +633,12 @@ comprehensive test coverage:
    or `@pytest.mark.e2e` to each test function or class.
 
 4. **Use fixtures**: use `db_session` for integration tests, `client`
-   for e2e tests. Create test data using factories (when available) or
-   direct model instantiation.
+   for e2e tests, `redis_client` for integration or e2e paths that
+   use Redis, and `db_session_factory` ONLY for concurrency/locking
+   tests (all other integration tests continue using `db_session`).
+   Create test data using factories (when available) or
+   direct model instantiation. Do not connect test fixtures through
+   application `REDIS_URL` or `CELERY_BROKER_URL`.
 
 5. **Test audit events**: for every mutation covered by an audit trail,
    assert event creation with correct fields (see Audit Trail Testing).
@@ -518,7 +648,10 @@ comprehensive test coverage:
    verifies the exception.
 
 7. **Test edge cases**: empty collections, boundary values, concurrent
-   access (where specified), re-invocation behavior.
+   access (if the function under test acquires `FOR UPDATE`, a
+   concurrency test using `db_session_factory` and the two-session
+   pattern in Database Strategy — Concurrency Testing is mandatory),
+   re-invocation behavior.
 
 8. **Run the suite**: `cd backend && pytest` — all tests must pass
    before declaring the task complete.
@@ -530,7 +663,8 @@ comprehensive test coverage:
 
 ## Cross-references
 
-- `docs/conventions.md` — Testing Conventions (style rules, naming)
+- `docs/conventions.md` — Testing Conventions (style rules, naming),
+  Transaction and Locking (pessimistic locking pattern)
 - `docs/features/platform/audit-trail-infrastructure.md` — Audit Trail
   Index, `BaseAuditLog`, atomicity rules, immutability
 - `docs/features/tickets/ticket-audit-log.md` — TicketAuditEvent

@@ -63,8 +63,6 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 | | 2:🟠 |  |  |  |  |  |  |  |
 | [rbac](rbac.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/43 | 2026-05-26 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [sso-authentication](sso-authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-05-07 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
 | [system-settings](system-settings.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/8 | 2026-07-03 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-05-17 | ⚠️ |
@@ -75,16 +73,16 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/28 | 2026-05-26 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [testing-strategy](testing-strategy.md) | 1 | 🟢 | 1 | 🟢 | 🟢 | 2/2 | 2026-07-18 | ⚠️ |
-| | 1:🟠 |  | 1:🟠 |  |  |  |  |  |
+| [testing-strategy](testing-strategy.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/2 | 2026-07-18 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-20 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/93 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **🟢** | **1** | **🟢** | **🟢** | **4/808** |  |  |
-| | 3:🟠 |  | 1:🟠 |  |  |  |  |  |
+| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/776** |  |  |
+| | 2:🟠 |  |  |  |  |  |  |  |
 
 ### Disabled specs
 
