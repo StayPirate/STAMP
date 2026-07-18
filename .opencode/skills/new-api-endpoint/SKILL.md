@@ -42,10 +42,14 @@ Follow these steps when adding a new API endpoint.
 ### Step 6: Write tests
 
 1. Create tests in `backend/tests/test_api/`
-2. Test cases required:
+2. Mark all endpoint tests with `@pytest.mark.e2e`
+3. Use the `client` fixture (provides HTTP test client with DB override)
+4. Test cases required:
    - Happy path with valid data
    - Validation errors (invalid input)
-   - Authentication (unauthenticated request)
-   - Authorization (insufficient permissions)
+   - Authentication (unauthenticated request → 401)
+   - Authorization (insufficient permissions → 403)
    - Edge cases (empty results, not found, etc.)
-3. Run `cd backend && pytest` and verify all tests pass
+5. For mutations, assert audit event creation with correct field values
+   (see `docs/features/platform/testing-strategy.md`, Audit Trail Testing)
+6. Run `cd backend && pytest` and verify all tests pass

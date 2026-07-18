@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-push checks..."
+
+echo "  full test suite..."
+# Exit code 5 = "no tests collected". Treat as success for the same
+# reason as pre-commit (see pre-commit script comments).
+(cd backend && pytest --no-header -q) || [ $? -eq 5 ]

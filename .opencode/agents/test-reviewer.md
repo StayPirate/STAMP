@@ -7,7 +7,7 @@ mode: subagent
 permission:
   edit: deny
   bash:
-    "cd backend && pytest *": allow
+    "cd backend && pytest*": allow
     "*": deny
 ---
 
@@ -17,26 +17,60 @@ You review tests for completeness and quality. You do NOT write or modify code.
 
 ## Before reviewing
 
-1. Read the implementation code that is being tested
-2. Read the corresponding feature specification in `docs/features/**/`
-3. Read `docs/conventions.md` for testing conventions
+1. Read `docs/features/platform/testing-strategy.md` for the full testing
+   strategy (test pyramid, fixtures, coverage policy, audit trail testing,
+   mandatory test scenarios)
+2. Read the implementation code that is being tested
+3. Read the corresponding feature specification in `docs/features/**/`
+4. Read `docs/conventions.md` for testing style conventions
 
 ## What to check
+
+### Test structure and markers
+
+- Are test files placed in the correct directory (mirroring `app/`)?
+- Do tests use the correct marker (`@pytest.mark.unit`,
+  `@pytest.mark.integration`, or `@pytest.mark.e2e`)?
+- Do unit tests avoid database, Redis, and network I/O?
+- Are fixtures used correctly (`db_session` for integration,
+  `client` for e2e)?
+
+### Coverage and completeness
 
 - Are all new/modified functions covered by tests?
 - Do tests cover happy path, edge cases, and error scenarios?
 - Are tests independent and not relying on execution order?
 - Are fixtures and mocks used correctly?
-- Do test names clearly describe what they verify?
+- Do test names follow the `test_<what>_<condition>_<expected_result>` pattern?
 - Is there a regression test for bug fixes?
 - Backend: are API endpoints tested for auth, validation, and permissions?
 - Backend: are database constraints and relationships tested?
-- Backend: for any code that modifies tickets or their related data (status,
-  assignee, duplicate links, packages, codestreams, products), do the tests
-  assert that a `TicketAuditEvent` is created with the correct `event_type`,
-  `old_value`, `new_value`, and `user_id`? Missing `TicketAuditEvent` assertions
-  for ticket-mutating operations MUST be flagged as a coverage gap. See
-  `docs/features/tickets/ticket-audit-log.md` for the event type contract.
+
+### Audit trail testing
+
+For every mutation covered by any audit trail registered in the Audit Trail
+Index (`docs/features/platform/audit-trail-infrastructure.md`), verify that
+tests assert:
+
+- The correct number of audit events are created (no missing, no duplicates)
+- The `event_type` matches the contract table in the owning spec
+- `user_id` is set for user-initiated actions, `NULL` for system/automated actions
+- Domain-specific fields (`old_value`, `new_value`, `comment`, `detail`,
+  `target_user_id`, etc.) match the contract
+- The event and mutation are in the same transaction (no intermediate commit)
+
+This applies to ALL registered audit trails: Ticket (`TicketAuditEvent`),
+Identity (`IdentityAuditEvent`), Fetcher (`FetcherAuditEvent`), and
+Setting (`SettingAuditEvent`). See the Audit Trail Index for the
+authoritative list — this enumeration is informational, not exhaustive.
+
+### Audit event immutability
+
+Verify that tests exist which check that service-layer code does not
+perform UPDATE or DELETE operations on audit event model instances.
+Audit event tables are append-only — this invariant should be enforced
+by structural tests inspecting service code for prohibited operations
+on audit event classes (preferred over per-function negative assertions).
 
 ## Output
 
@@ -45,4 +79,6 @@ Provide a structured summary of:
 1. **Well tested**: what is adequately covered
 2. **Missing coverage**: specific gaps in test coverage
 3. **Weak tests**: tests that exist but are insufficient
-4. **Suggestions**: specific additional test cases to write
+4. **Audit gaps**: mutations that create audit events but lack assertions
+   for correct event creation
+5. **Suggestions**: specific additional test cases to write

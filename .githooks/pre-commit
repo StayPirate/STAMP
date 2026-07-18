@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-commit checks..."
+
+echo "  ruff check..."
+(cd backend && ruff check .)
+
+echo "  ruff format..."
+(cd backend && ruff format --check .)
+
+echo "  unit tests..."
+# Exit code 5 = "no tests collected" (no @pytest.mark.unit tests yet).
+# Treat it as success so the hook doesn't block commits before the
+# first unit test is added.
+(cd backend && pytest -m unit --no-header -q) || [ $? -eq 5 ]

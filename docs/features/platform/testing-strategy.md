@@ -12,7 +12,7 @@ Scope boundary: this spec covers the backend test suite
 (`backend/tests/`). CI pipeline configuration and local automation
 (pre-commit hooks) are specified here at the requirements level; their
 implementation is owned by `.github/workflows/ci.yml` and
-`.pre-commit-config.yaml` respectively.
+`.githooks/` respectively.
 
 ---
 
@@ -75,9 +75,19 @@ Tests without an explicit marker are treated as **integration** tests.
 This is the safe default — a test that accidentally omits its marker
 gets the full database fixture rather than failing mysteriously.
 
+This is a classification convention, not a pytest enforcement
+mechanism — `pytest -m integration` selects only tests explicitly
+marked `@pytest.mark.integration`, not all unmarked tests. To run
+integration tests plus unmarked tests, use `pytest` without a marker
+filter (the full suite includes them).
+
 The `asyncio_mode = "auto"` setting in `pyproject.toml` applies to all
 tiers (all async tests run without manual `@pytest.mark.asyncio`
-decoration).
+decoration). The `asyncio_default_fixture_loop_scope = "session"` and
+`asyncio_default_test_loop_scope = "session"` settings ensure all async
+fixtures and tests share a single session-scoped event loop, which is
+required for the session-scoped engine fixture to work correctly with
+function-scoped test functions.
 
 ### Marker Registration
 
@@ -145,8 +155,11 @@ rolled back after the test completes. This provides:
 
 Pattern (in `conftest.py`):
 
-1. A session-scoped fixture creates the async engine and runs
-   `create_all`.
+1. A session-scoped async fixture (using `pytest_asyncio.fixture` with
+   `loop_scope="session"`) creates the async engine and runs
+   `create_all`. The global `asyncio_default_fixture_loop_scope` and
+   `asyncio_default_test_loop_scope` settings in `pyproject.toml` ensure
+   all fixtures and tests share this session-scoped event loop.
 2. A function-scoped `db_session` fixture begins a transaction, creates
    a savepoint, yields the session, then rolls back to the savepoint and
    closes the transaction.
@@ -377,8 +390,8 @@ subsequent tests reuse the same container.
 ### Pre-Commit Hooks (Local Automation)
 
 Repository-level git hooks provide fast feedback before commits reach
-CI. Configured via `.pre-commit-config.yaml` with `core.hooksPath`
-pointing to the repo's hooks directory:
+CI. Configured as shell scripts in `.githooks/`, activated via
+`git config core.hooksPath .githooks`:
 
 - **pre-commit**: ruff check + ruff format check + `pytest -m unit`
   (fast gate, < 15 seconds)
@@ -388,6 +401,12 @@ pointing to the repo's hooks directory:
 These hooks are a supplementary safety net. The CI pipeline is the
 authoritative enforcer — hooks can be bypassed in extraordinary
 circumstances but CI cannot.
+
+To activate after cloning:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ### CI Pipeline
 

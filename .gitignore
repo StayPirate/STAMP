@@ -12,6 +12,7 @@ build/
 .venv/
 venv/
 env/
+.python-version
 
 # Testing
 .pytest_cache/

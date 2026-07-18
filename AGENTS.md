@@ -53,6 +53,7 @@ sentinel/
 │   ├── agents/                  # Subagent definitions
 │   ├── commands/                # Custom slash commands
 │   └── skills/                  # Skill workflows
+├── .githooks/                   # Local git hooks (pre-commit, pre-push)
 ├── backend/                     # FastAPI backend
 │   ├── Dockerfile               # Backend container image
 │   ├── pyproject.toml           # Python dependencies and config
@@ -220,6 +221,8 @@ Before considering any implementation task complete:
 
 1. Write tests that cover the new/modified functionality
    - Backend: pytest tests in `backend/tests/` mirroring the `app/` structure
+   - Apply markers: `@pytest.mark.unit`, `@pytest.mark.integration`, or
+     `@pytest.mark.e2e` per `docs/features/platform/testing-strategy.md`
 2. Run the test suite and verify all tests pass
    - Backend: `cd backend && pytest`
 3. If tests fail, fix the code or tests until they pass
@@ -236,6 +239,13 @@ Test requirements:
 - New models: test creation, constraints, relationships
 - New services: test business logic, edge cases, error handling
 - Bug fixes: add a regression test that reproduces the bug
+- **Audit trail coverage**: for every mutation covered by any audit trail
+  registered in the Audit Trail Index
+  (`docs/features/platform/audit-trail-infrastructure.md`), tests MUST
+  verify that the corresponding audit event is created with correct
+  field values in the same transaction. See
+  `docs/features/platform/testing-strategy.md` (Audit Trail Testing)
+  for the full assertion checklist
 
 NEVER skip tests. If the user asks to skip tests, remind them that the project
 requires tests for all changes and suggest writing them.

@@ -73,7 +73,14 @@ Follow these steps in order when adding a new feature to Sentinel.
 ### Step 4: Write tests
 
 1. Backend tests in `backend/tests/` mirroring the `app/` structure
-2. Run all tests and verify they pass
+2. Apply markers per `docs/features/platform/testing-strategy.md`:
+   - `@pytest.mark.unit` for pure logic (no DB/Redis/network)
+   - `@pytest.mark.integration` for service-layer tests (with DB)
+   - `@pytest.mark.e2e` for API endpoint tests (with HTTP client)
+3. Use the shared fixtures: `db_session` for integration, `client` for e2e
+4. For every mutation covered by an audit trail, assert correct event creation
+   (see testing-strategy.md, Audit Trail Testing)
+5. Run all tests and verify they pass: `cd backend && pytest`
 
 ### Step 5: Review
 
