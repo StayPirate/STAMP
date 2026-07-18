@@ -10,6 +10,7 @@
     },
     "spec": {
       "description": "Writes and maintains feature specifications and declarative project configuration. Cannot modify implementation code.",
+      "model": "github-copilot/claude-sonnet-5",
       "mode": "primary",
       "color": "warning",
       "prompt": "{file:./.opencode/prompts/spec.md}",
@@ -26,6 +27,7 @@
     },
     "code": {
       "description": "Implements features from specifications. Signals spec gaps before making autonomous design decisions.",
+      "model": "github-copilot/claude-sonnet-5",
       "mode": "primary",
       "color": "error",
       "prompt": "{file:./.opencode/prompts/code.md}",
