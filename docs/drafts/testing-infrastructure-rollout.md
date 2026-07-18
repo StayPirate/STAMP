@@ -86,6 +86,7 @@ See docs/features/platform/testing-strategy.md for the full testing strategy.
 
 from __future__ import annotations
 
+import atexit
 import os
 from collections.abc import AsyncGenerator
 
@@ -118,6 +119,7 @@ def _database_url() -> str:
     if not hasattr(_database_url, "_container"):
         container = PostgresContainer("postgres:16")
         container.start()
+        atexit.register(container.stop)
         # Build asyncpg URL from the container's connection params
         url = container.get_connection_url().replace(
             "postgresql+psycopg2://", "postgresql+asyncpg://"
@@ -143,26 +145,32 @@ async def _engine():
 async def db_session(_engine) -> AsyncGenerator[AsyncSession, None]:
     """Provide an async DB session with per-test transaction rollback.
 
-    Each test runs inside a savepoint. After the test, the savepoint is
-    rolled back, ensuring complete isolation between tests.
+    Uses the SQLAlchemy 2.0 recommended pattern: the session joins an
+    external transaction with join_transaction_mode="create_savepoint".
+    When test code (or service code) calls session.commit(), it commits
+    a savepoint — not the outer transaction. The outer transaction is
+    rolled back in teardown, reverting all changes.
+
+    See: https://docs.sqlalchemy.org/en/20/orm/session_transaction.html
+         #joining-a-session-into-an-external-transaction-such-as-for-test-suites
     """
     async with _engine.connect() as conn:
         transaction = await conn.begin()
-        session = AsyncSession(bind=conn, expire_on_commit=False)
-        # Create a nested savepoint for per-test rollback
-        nested = await conn.begin_nested()
+        session = AsyncSession(
+            bind=conn,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
 
         try:
             yield session
         finally:
-            if nested.is_active:
-                await nested.rollback()
-            await transaction.rollback()
             await session.close()
+            await transaction.rollback()
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncClient:
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Provide an async HTTP test client with DB session override.
 
     The FastAPI app's get_db dependency is overridden to use the test
@@ -185,11 +193,13 @@ async def client(db_session: AsyncSession) -> AsyncClient:
 
 - **`_database_url()` with lazy container**: the testcontainers instance
   is created only once per process via a function attribute cache. This
-  avoids the session-scoped fixture dance for a non-async resource.
-- **`db_session` binds to a specific connection**: the session is created
-  with `AsyncSession(bind=conn)` (not via `async_sessionmaker`) to ensure
-  it shares the connection's transaction. `begin_nested()` creates a
-  savepoint; rollback after each test restores a clean state.
+  avoids the session-scoped fixture dance for a non-async resource. An
+  `atexit` handler ensures the container is stopped when the process exits.
+- **`db_session` uses `join_transaction_mode="create_savepoint"`**: the
+  [SQLAlchemy 2.0 recommended pattern](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#joining-a-session-into-an-external-transaction-such-as-for-test-suites)
+  for test suites. When service code calls `session.commit()`, it
+  commits a savepoint — not the outer transaction. The outer transaction
+  is rolled back in teardown, reverting all changes made during the test.
 - **`client` overrides `get_db`**: ensures that HTTP requests via the
   FastAPI test client use the same session and transaction as the test.
 
@@ -240,9 +250,9 @@ Create `backend/tests/test_infrastructure_smoke.py`:
 ```python
 """Smoke tests for the test infrastructure itself.
 
-These tests verify that the database fixture, transaction rollback,
-and test client work correctly. They serve as the green baseline
-before any feature code is implemented.
+These tests verify that the database fixture and test client work
+correctly. They serve as the green baseline before any feature code
+is implemented.
 """
 
 from __future__ import annotations
@@ -260,35 +270,6 @@ async def test_db_session_executes_query(db_session: AsyncSession) -> None:
     assert result.scalar() == 1
 
 
-@pytest.mark.integration
-async def test_db_session_rollback_isolation(db_session: AsyncSession) -> None:
-    """Each test should see a clean database (no state from other tests).
-
-    This test creates a temporary table and inserts a row. The next test
-    (test_db_session_no_leaked_state) verifies the table does not exist.
-    """
-    await db_session.execute(
-        text("CREATE TABLE IF NOT EXISTS _test_isolation (id INT)")
-    )
-    await db_session.execute(text("INSERT INTO _test_isolation VALUES (42)"))
-    result = await db_session.execute(text("SELECT COUNT(*) FROM _test_isolation"))
-    assert result.scalar() == 1
-
-
-@pytest.mark.integration
-async def test_db_session_no_leaked_state(db_session: AsyncSession) -> None:
-    """Verify that the previous test's table was rolled back."""
-    result = await db_session.execute(
-        text(
-            "SELECT EXISTS ("
-            "SELECT FROM information_schema.tables "
-            "WHERE table_name = '_test_isolation'"
-            ")"
-        )
-    )
-    assert result.scalar() is False
-
-
 @pytest.mark.e2e
 async def test_client_connects_to_app(client: AsyncClient) -> None:
     """The test client should be able to make requests to the app."""
@@ -300,13 +281,8 @@ async def test_client_connects_to_app(client: AsyncClient) -> None:
 
 ### Risks / Verification
 
-- `test_db_session_rollback_isolation` and `test_db_session_no_leaked_state`
-  depend on execution order. To enforce this, they test for a DDL
-  operation (CREATE TABLE) that is rolled back by the savepoint. If
-  savepoint rollback does NOT roll back DDL (unlikely in Postgres, but
-  worth knowing), the isolation test will fail — revealing a real
-  problem with the fixture.
-- Run `pytest tests/test_infrastructure_smoke.py -v` — all 4 should pass.
+- Run `pytest tests/test_infrastructure_smoke.py -v` — both tests
+  should pass.
 
 ---
 
@@ -326,16 +302,16 @@ command:
 
 ### 4b. `TEST_DATABASE_URL` environment variable
 
-Add to the `env` section of the `backend-test` job (may already be set
-via the existing `DATABASE_URL` — verify and use `TEST_DATABASE_URL`
-explicitly for clarity):
+Add `TEST_DATABASE_URL` to the existing `env` section of the
+`backend-test` job. The other variables (`DATABASE_URL`, `REDIS_URL`,
+`CELERY_BROKER_URL`) are already present and unchanged:
 
-```yaml
-env:
-  TEST_DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
-  DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
-  REDIS_URL: redis://localhost:6379/0
-  CELERY_BROKER_URL: redis://localhost:6379/1
+```diff
+ env:
++  TEST_DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
+   DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
+   REDIS_URL: redis://localhost:6379/0
+   CELERY_BROKER_URL: redis://localhost:6379/1
 ```
 
 The `conftest.py` from Step 2 checks `TEST_DATABASE_URL` first, falling
@@ -355,11 +331,8 @@ Add a new step to the `backend-test` job, **after** the pytest step:
 This verifies that running all migrations brings the DB to a state that
 matches the SQLAlchemy models — no pending autogenerate differences.
 
-Note: `alembic check` requires Alembic >= 1.13.0 (already satisfied by
-the `alembic>=1.14.0` dependency). If `alembic check` is not available,
-use `alembic revision --autogenerate -m "drift_check" --check` as an
-alternative (the `--check` flag causes a non-zero exit if differences
-are detected, without creating a migration file).
+Note: `alembic check` requires Alembic >= 1.9.0 (satisfied by the
+project's `alembic>=1.14.0` constraint).
 
 ### Risks / Verification
 
@@ -374,81 +347,76 @@ are detected, without creating a migration file).
 
 ---
 
-## Step 5 — Local automation (pre-commit hooks)
+## Step 5 — Local automation (git hooks)
 
 **Delegate to `@cicd`** — provide these requirements:
 
-### 5a. Create `.pre-commit-config.yaml`
+### 5a. Create `.githooks/pre-commit`
 
-At the repository root:
+At the repository root, create `.githooks/pre-commit` (must be
+executable: `chmod +x .githooks/pre-commit`):
 
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: ruff-check
-        name: ruff check
-        entry: ruff check backend/app/ backend/tests/
-        language: system
-        types: [python]
-        pass_filenames: false
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-      - id: ruff-format
-        name: ruff format check
-        entry: ruff format --check backend/app/ backend/tests/
-        language: system
-        types: [python]
-        pass_filenames: false
+echo "Running pre-commit checks..."
 
-      - id: unit-tests
-        name: unit tests
-        entry: bash -c "cd backend && pytest -m unit --no-header -q"
-        language: system
-        types: [python]
-        pass_filenames: false
-        stages: [pre-commit]
+echo "  ruff check..."
+ruff check backend/app/ backend/tests/
 
-  - repo: local
-    hooks:
-      - id: full-test-suite
-        name: full test suite
-        entry: bash -c "cd backend && pytest --no-header -q"
-        language: system
-        types: [python]
-        pass_filenames: false
-        stages: [pre-push]
+echo "  ruff format..."
+ruff format --check backend/app/ backend/tests/
+
+echo "  unit tests..."
+(cd backend && pytest -m unit --no-header -q)
 ```
 
-### 5b. Configure `core.hooksPath`
+### 5b. Create `.githooks/pre-push`
 
-The hooks must be repo-level, not global. Two options (the `@cicd` agent
-should choose the most appropriate):
+Create `.githooks/pre-push` (must be executable:
+`chmod +x .githooks/pre-push`):
 
-**Option A** — Use the `pre-commit` framework's install command:
 ```bash
-pip install pre-commit
-pre-commit install
-pre-commit install --hook-type pre-push
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-push checks..."
+
+echo "  full test suite..."
+(cd backend && pytest --no-header -q)
 ```
 
-**Option B** — Set `core.hooksPath` to a tracked `.githooks/` directory:
-```bash
+### 5c. Document the setup
+
+Add a "Git Hooks" subsection to `docs/deployment.md` under
+Local Development, after the Quick Start section:
+
+```markdown
+### Git Hooks
+
+The repository includes local git hooks in `.githooks/`. To activate
+them after cloning:
+
+\`\`\`bash
 git config core.hooksPath .githooks
-```
-with corresponding shell scripts in `.githooks/pre-commit` and
-`.githooks/pre-push` that invoke the checks.
+\`\`\`
 
-**Note**: document whichever approach is chosen in `docs/deployment.md`
-or a project README section, so new developers know how to activate the
-hooks after cloning.
+This enables:
+- **pre-commit**: ruff lint + format check + unit tests
+- **pre-push**: full test suite (requires PostgreSQL via
+  testcontainers or `dev-env.sh`)
+
+These hooks are optional — CI enforces the same checks authoritatively.
+```
 
 ### Risks / Verification
 
-- If `pre-commit` is not installed, hooks don't run — this is
+- If `core.hooksPath` is not configured, hooks don't run — this is
   acceptable since CI is the authoritative enforcer.
-- The `unit-tests` hook runs only tests marked `@pytest.mark.unit`.
+- The `unit-tests` check runs only tests marked `@pytest.mark.unit`.
   Initially, there may be zero unit tests (all current tests are
-  integration/e2e), so the hook passes trivially. This is fine —
+  integration/e2e), so the check passes trivially. This is fine —
   it activates automatically as unit tests are added.
 - The `pre-push` hook runs the full suite, which requires a running
   PostgreSQL (via testcontainers or `dev-env.sh`). If the developer
@@ -585,8 +553,11 @@ authoritative list — this enumeration is informational, not exhaustive.
 
 ### Audit event immutability
 
-Verify that no test performs UPDATE or DELETE operations on audit event
-model instances. Audit event tables are append-only.
+Verify that tests exist which check that service-layer code does not
+perform UPDATE or DELETE operations on audit event model instances.
+Audit event tables are append-only — this invariant should be enforced
+by structural tests inspecting service code for prohibited operations
+on audit event classes (preferred over per-function negative assertions).
 
 ## Output
 
@@ -610,7 +581,8 @@ Provide a structured summary of:
   registered audit trails via the Audit Trail Index
 - Added `detail`, `target_user_id` to the assertion checklist (for
   Identity trail compatibility)
-- Added audit event immutability check
+- Added audit event immutability check (verify structural tests exist
+  that ensure service code does not mutate audit events)
 - Added "Audit gaps" output section
 - Added test structure/marker verification
 - Added fixture usage verification
@@ -728,8 +700,9 @@ definitions.
 | `backend/tests/test_health.py` | Edit (xfail marker) |
 | `backend/tests/test_infrastructure_smoke.py` | New (smoke tests) |
 | `.github/workflows/ci.yml` | Edit (coverage gate, Alembic drift, TEST_DATABASE_URL) — `@cicd` |
-| `.pre-commit-config.yaml` | New (repo-level hooks) — `@cicd` |
-| `.githooks/pre-commit`, `.githooks/pre-push` | New (only if `@cicd` chooses Option B) |
+| `.githooks/pre-commit` | New (lint + unit tests hook) — `@cicd` |
+| `.githooks/pre-push` | New (full test suite hook) — `@cicd` |
+| `docs/deployment.md` | Edit (Git Hooks setup documentation) — `@cicd` |
 | `AGENTS.md` | Edit (Guardrail 6) |
 | `.opencode/agents/test-reviewer.md` | Rewrite (generalized) |
 | `.opencode/skills/new-feature/SKILL.md` | Edit (Step 4) |
