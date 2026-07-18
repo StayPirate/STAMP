@@ -323,8 +323,6 @@ async def test_client_connects_to_app(client: AsyncClient) -> None:
 
 ## Step 4 — CI pipeline updates
 
-**Delegate to `@cicd`** — provide these requirements:
-
 ### 4a. Coverage gate
 
 In `.github/workflows/ci.yml`, modify the `backend-test` job's pytest
@@ -383,8 +381,6 @@ project's `alembic>=1.14.0` constraint).
 ---
 
 ## Step 5 — Local automation (git hooks)
-
-**Delegate to `@cicd`** — provide these requirements:
 
 ### 5a. Create `.githooks/pre-commit`
 
@@ -709,6 +705,7 @@ Invoke the following reviewers on the artifacts changed by this rollout:
 | `@docs-placement-reviewer` | `AGENTS.md` (Guardrail 6) | Verify the audit trail generalization rule is correctly placed |
 | `@test-reviewer` | `backend/tests/conftest.py`, `test_infrastructure_smoke.py`, `test_health.py` | Verify the test infrastructure itself follows conventions |
 | `@spec-coherence-reviewer` | `testing-strategy.md` | Re-verify coherence after all changes are applied (catch any drift introduced by guardrail/agent updates) |
+| `@cicd` | `.github/workflows/ci.yml`, `.githooks/pre-commit`, `.githooks/pre-push` | Verify CI pipeline and git hooks follow project CI/CD conventions |
 
 Fix any "Needs revision" findings before declaring complete.
 
@@ -735,10 +732,10 @@ definitions.
 | `backend/tests/conftest.py` | Rewrite (Postgres fixtures) |
 | `backend/tests/test_health.py` | Edit (xfail marker) |
 | `backend/tests/test_infrastructure_smoke.py` | New (smoke tests) |
-| `.github/workflows/ci.yml` | Edit (coverage gate, Alembic drift, TEST_DATABASE_URL) — `@cicd` |
-| `.githooks/pre-commit` | New (lint + unit tests hook) — `@cicd` |
-| `.githooks/pre-push` | New (full test suite hook) — `@cicd` |
-| `docs/deployment.md` | Edit (Git Hooks setup documentation) — `@cicd` |
+| `.github/workflows/ci.yml` | Edit (coverage gate, Alembic drift, TEST_DATABASE_URL) |
+| `.githooks/pre-commit` | New (lint + unit tests hook) |
+| `.githooks/pre-push` | New (full test suite hook) |
+| `docs/deployment.md` | Edit (Git Hooks setup documentation) |
 | `AGENTS.md` | Edit (Guardrail 6) |
 | `.opencode/agents/test-reviewer.md` | Rewrite (generalized) |
 | `.opencode/skills/new-feature/SKILL.md` | Edit (Step 4) |
