@@ -167,6 +167,7 @@ Releases.
   and generates `CHANGELOG.md` automatically
 - **Compatible with existing CI/CD**: tags created by release-please
   (`v*`) trigger the existing `build-images.yml` without modification
+  (requires a non-default token — see Step 6)
 - **Squash-merge friendly**: works best with squash merge (PR title
   becomes commit message), which the project should adopt
 
@@ -246,8 +247,8 @@ line 631). This places versioning as a third subsection under
 ### Versioning
 
 Sentinel uses a single platform version following [Semantic Versioning
-2.0.0](https://semver.org/). All components (API server, Celery workers,
-Celery Beat, IBS consumer, migrations) are built from the same Docker
+2.0.0](https://semver.org/). All components (API server, Celery worker,
+Git worker, Celery Beat, IBS consumer) are built from the same Docker
 image and share the same version number.
 
 #### Version Source of Truth
@@ -430,6 +431,15 @@ These files are managed by release-please and should not be edited
 manually except during initial setup or to force a version via
 `Release-As`.
 
+### Repository Secret
+
+The `release-please.yml` workflow requires a repository secret named
+`RELEASE_TOKEN` containing a Fine-Grained Personal Access Token (or
+GitHub App token) with `contents: write`, `issues: write`, and
+`pull-requests: write` permissions. The default `GITHUB_TOKEN` cannot
+be used because tags created by it do not trigger downstream workflows
+(a GitHub Actions limitation to prevent recursive runs).
+
 ---
 ```
 
@@ -565,22 +575,35 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
+          token: ${{ secrets.RELEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 ```
+
+**Why `RELEASE_TOKEN` instead of `GITHUB_TOKEN`**: GitHub Actions
+suppresses events created by the built-in `GITHUB_TOKEN` to prevent
+recursive workflow runs. Tags created with `GITHUB_TOKEN` do not
+trigger other workflows. Since the pipeline chain depends on the `v*`
+tag triggering `build-images.yml`, a separate token (Fine-Grained PAT
+or GitHub App token) stored as a repository secret is required. See
+the [release-please documentation](https://github.com/googleapis/release-please-action#github-credentials)
+for details.
 
 **How it integrates with existing pipelines**:
 
 - Runs on every push to `master` (separate from `ci.yml`)
 - When a Release PR is merged, release-please creates a `v*` tag
+  using `RELEASE_TOKEN`, which is not subject to the `GITHUB_TOKEN`
+  event suppression
 - The `v*` tag triggers `build-images.yml` (line 9:
   `tags: ["v*"]`) — no changes needed to that workflow
 - `ci.yml` continues to run independently on pushes and PRs
@@ -589,7 +612,24 @@ jobs:
 
 **File**: `docs/architecture.md`
 
-**Location**: line 418
+**Change 1** — line 417 (Staging bullet, pre-existing inconsistency
+with `docs/deployment.md` which states staging auto-deployment is
+deferred):
+
+**Current text**:
+
+```
+- **Staging**: auto-deployed from `master` branch
+```
+
+**Replace with**:
+
+```
+- **Staging**: auto-deployed from `master` branch (deferred — see
+  `docs/deployment.md`)
+```
+
+**Change 2** — line 418 (Production bullet):
 
 **Current text**:
 
@@ -749,7 +789,7 @@ confirmed correct, delete this file:
 | 4 | `release-please-config.json` | Create (new file at repo root) | Step 4 |
 | 5 | `.release-please-manifest.json` | Create (new file at repo root) | Step 5 |
 | 6 | `.github/workflows/release-please.yml` | Create (new workflow) | Step 6 |
-| 7 | `docs/architecture.md` | Update Environments bullet (line 418) | Step 7 |
+| 7 | `docs/architecture.md` | Update Environments bullets (lines 417-418) | Step 7 |
 | 8 | `.opencode/agents/cicd.md` | Add release-please convention, update pipeline chain, add edit permissions | Step 8 |
 | 9 | `AGENTS.md` | Extend Guardrail 5 with release-please awareness | Step 9 |
 | 10 | `docs/drafts/versioning-and-release-process.md` | Delete after review | Step 11 |
@@ -786,6 +826,9 @@ package path).
 No modifications are needed to `build-images.yml`. It already triggers
 on `v*` tag pushes and produces semver Docker image tags. The tags
 created by release-please (`v1.2.3`) match the existing trigger pattern.
+The workflow requires `RELEASE_TOKEN` (not the default `GITHUB_TOKEN`)
+so that the tag push event is not suppressed by GitHub Actions — see
+Step 6 for details.
 
 ### Relationship to `docs/api-spec.md` (Versioning)
 
