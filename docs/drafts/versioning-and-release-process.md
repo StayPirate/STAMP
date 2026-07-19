@@ -106,7 +106,7 @@ versioning (`/api/v1/`) already handles API compatibility for consumers.
 
 | Bump | Trigger |
 |------|---------|
-| MAJOR | Breaking REST API changes (removal/renaming of fields, semantic changes to existing behavior, error code changes), database migrations requiring manual operator intervention, fundamental architectural changes |
+| MAJOR | Breaking REST API changes (removal/renaming of fields, changes to response structure, semantic changes to existing behavior, error code changes), database migrations requiring manual operator intervention, fundamental architectural changes |
 | MINOR | New API endpoints, new fetchers, new features, non-breaking database migrations, new CLI commands |
 | PATCH | Bug fixes, security patches, performance improvements, operational fixes |
 
@@ -310,7 +310,7 @@ interpreted as follows:
 
 | Bump | Trigger |
 |------|---------|
-| MAJOR | Breaking REST API changes (removal/renaming of fields, semantic changes to existing behavior, error code changes), database migrations requiring manual operator intervention, fundamental architectural changes |
+| MAJOR | Breaking REST API changes (removal/renaming of fields, changes to response structure, semantic changes to existing behavior, error code changes), database migrations requiring manual operator intervention, fundamental architectural changes |
 | MINOR | New API endpoints, new fetchers, new features, non-breaking database migrations, new CLI commands |
 | PATCH | Bug fixes, security patches, performance improvements, operational fixes |
 
@@ -352,12 +352,12 @@ takes full effect.
 
 #### Why Single Version
 
-All five runtime process roles (API server, Celery worker, Git worker,
-Celery Beat, IBS consumer) run from the same Docker image with different
-entrypoints (see `docs/architecture.md`, Container Images). They cannot
-be deployed at different versions. Per-component versioning (e.g.,
-per-fetcher) would add overhead without practical benefit since fetchers
-are built-in classes, not independently deployable plugins.
+All runtime process roles (see above) run from the same Docker image
+with different entrypoints (see `docs/architecture.md`, Container
+Images). They cannot be deployed at different versions. Per-component
+versioning (e.g., per-fetcher) would add overhead without practical
+benefit since fetchers are built-in classes, not independently
+deployable plugins.
 ```
 
 ### Step 2: Add "Release Process" section to `docs/deployment.md`
