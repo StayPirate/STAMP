@@ -19,7 +19,7 @@ For architectural decisions and portability constraints, see
 | PostgreSQL | 15+ | Primary database |
 | Redis | 7+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
-| Python | 3.11+ | Backend runtime (development only) |
+| Python | 3.12+ | Backend runtime (development only) |
 
 ### Network Access (Staging/Production)
 
@@ -171,8 +171,8 @@ cd backend && python -m sentinel manage-user create \
    docker run --rm --env-file .env sentinel-backend:latest \
      alembic upgrade head
    ```
-4. **Start services** (API server, Celery worker, Celery Beat, RabbitMQ
-   consumer) — each as a separate container/process
+4. **Start all runtime processes** defined in `docs/architecture.md`
+   (Container Images) — each as a separate container/process
 5. **Verify health**:
    - `GET /health` — liveness (API process is running)
    - `GET /ready` — readiness (PostgreSQL + Redis reachable)
@@ -206,8 +206,8 @@ Same as staging, with these differences:
 1. **Database migrations**: run as a one-shot job BEFORE deploying new
    application containers. Never run migrations automatically on API
    startup (multiple replicas could conflict).
-2. **Deploy containers**: API server, Celery worker(s), Celery Beat,
-   IBS RabbitMQ consumer
+2. **Deploy all runtime processes** defined in `docs/architecture.md`
+   (Container Images)
 3. **Health checks**: configure orchestrator to use `/health` (liveness)
    and `/ready` (readiness)
 4. **Verify**: confirm all services are healthy, check logs for errors
@@ -242,14 +242,15 @@ Before the first production deployment:
 
 ### Timezone and Locale Requirements
 
-All Sentinel containers (API server, Celery worker, Celery Beat) MUST
-operate with UTC as the system timezone. This is enforced at two levels:
+All Sentinel runtime processes (see `docs/architecture.md`, Container
+Images) MUST operate with UTC as the system timezone. This is enforced
+at two levels:
 
 1. **Celery configuration**: the application sets `timezone = "UTC"` and
    `enable_utc = True` in the Celery config. The Celery app factory
    validates these at module import time and raises a `RuntimeError` if
-   overridden — this prevents any Celery-based process (worker, Beat,
-   consumer) from starting with incorrect timezone configuration (see
+   overridden — this prevents any Celery-based process from starting
+   with incorrect timezone configuration (see
    `docs/configuration.md`, Celery Worker Configuration)
 
 2. **Container timezone**: set `TZ=UTC` in the container environment (or
@@ -284,6 +285,114 @@ GIT_TERMINAL_PROMPT=0
 
 ---
 
+## Release Process
+
+Sentinel uses [release-please](https://github.com/googleapis/release-please)
+to automate versioning, changelog generation, and GitHub Releases. The
+process is driven entirely by Conventional Commit messages on the
+`master` branch.
+
+### How It Works
+
+1. Developers merge PRs to `master` using conventional commits
+   (`feat:`, `fix:`, etc.). Squash merge is recommended so the PR title
+   becomes the commit message (see Squash Merge below)
+2. The `release-please` GitHub Action
+   (`.github/workflows/release-please.yml`) analyzes new commits and
+   creates (or updates) a **Release PR** with:
+   - Version bump in `backend/pyproject.toml`
+   - Updated `CHANGELOG.md`
+   - Summary of all changes since the last release
+3. The Release PR stays open and is updated automatically as more
+   commits land on `master`
+4. When the team decides to release, a maintainer merges the Release PR
+5. On merge, release-please:
+   - Creates a git tag (`v<major>.<minor>.<patch>`)
+   - Creates a GitHub Release with release notes
+6. The tag triggers `build-images.yml`, which builds and pushes the
+   Docker image to `ghcr.io` with semver tags
+
+### Creating a Release
+
+To create a release, merge the open Release PR. No manual version
+bumping, tagging, or changelog editing is required.
+
+To force a specific version (e.g., to reach `1.0.0`), use the
+`Release-As` footer in a commit message:
+
+```
+chore: prepare 1.0.0 release
+
+Release-As: 1.0.0
+```
+
+### Squash Merge
+
+All PRs to `master` SHOULD use squash merge. This keeps the git history
+linear and gives release-please a clean, single commit to analyze per
+PR. With squash merge, the PR title becomes the commit message — ensure
+it follows the Conventional Commits format defined in
+`docs/conventions.md` (Git Conventions).
+
+### Changelog
+
+`CHANGELOG.md` at the repository root is maintained automatically by
+release-please. Do not edit it manually. It groups changes by type
+(Features, Bug Fixes, etc.) and links to commits and PRs.
+
+### Pipeline Chain
+
+```
+master branch commits
+     │
+     ▼
+release-please.yml → creates/updates Release PR
+     │ (on merge)
+     ▼
+creates git tag (v*) + GitHub Release
+     │
+     ▼
+build-images.yml → builds and pushes Docker image to ghcr.io
+     │
+     ▼
+manual deployment from tag (staging/production)
+```
+
+### Version Locations
+
+| Location | Mechanism |
+|----------|-----------|
+| `backend/pyproject.toml` | Updated by release-please (source of truth) |
+| `backend/app/main.py` | Reads dynamically via `importlib.metadata` |
+| Git tag | Created by release-please (`v1.2.3`) |
+| Docker image tag | Derived from git tag by `build-images.yml` |
+| GitHub Release | Created by release-please with changelog |
+| `CHANGELOG.md` | Updated by release-please |
+
+### Configuration Files
+
+The release-please configuration lives in two files at the repository
+root:
+
+- `release-please-config.json` — release strategy and package
+  configuration
+- `.release-please-manifest.json` — current version tracking
+
+These files are managed by release-please and should not be edited
+manually except during initial setup or to force a version via
+`Release-As`.
+
+### Repository Secret
+
+The `release-please.yml` workflow requires a repository secret named
+`RELEASE_TOKEN` containing a Fine-Grained Personal Access Token (or
+GitHub App token) with `contents: write`, `issues: write`, and
+`pull-requests: write` permissions. The default `GITHUB_TOKEN` cannot
+be used because tags created by it do not trigger downstream workflows
+(a GitHub Actions limitation to prevent recursive runs).
+
+---
+
 ## Database Migrations
 
 Migrations are managed by Alembic and must be run explicitly:
@@ -309,7 +418,9 @@ alembic revision --autogenerate -m "description"
 
 ## Process Architecture
 
-Sentinel requires multiple processes running concurrently:
+Sentinel's process roles are defined in `docs/architecture.md`
+(Container Images). This section documents their operational properties
+for deployment.
 
 | Process | Role | Scalable |
 |---------|------|----------|
@@ -319,11 +430,15 @@ Sentinel requires multiple processes running concurrently:
 | Celery Beat | Periodic task scheduling | No (singleton) |
 | IBS RabbitMQ consumer | Real-time event consumption | No (singleton — see spec) |
 
+Alembic migration jobs are one-shot processes, not runtime services —
+see Database Migrations (above) for operational details.
+
 ### Singleton Processes
 
 Celery Beat and the IBS RabbitMQ consumer must run as single instances.
 Running multiple replicas causes duplicate task scheduling or duplicate
-event processing.
+event processing. See `docs/architecture.md` (Singleton Processes) for
+the architectural constraint.
 
 ### Git Worker Volume
 

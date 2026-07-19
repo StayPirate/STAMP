@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Conventional Commits format validation.
+# Allowed types: feat, fix, docs, refactor, test, chore, ci
+# Format: type[(scope)][!]: description
+#
+# Also allows git-generated messages: Merge, Revert, fixup!, squash!
+# and release-please messages: chore(main): release
+
+commit_msg_file="$1"
+commit_msg=$(head -1 "$commit_msg_file")
+
+# Skip merge commits, reverts, fixups, and squash commits
+if [[ "$commit_msg" =~ ^(Merge|Revert|fixup!|squash!) ]]; then
+    exit 0
+fi
+
+# Conventional Commits regex:
+# type(optional-scope)optional-!: description
+pattern="^(feat|fix|docs|refactor|test|chore|ci)(\([a-z0-9 _-]+\))?\!?: .{1,}"
+
+if ! [[ "$commit_msg" =~ $pattern ]]; then
+    echo "Error: commit message does not follow Conventional Commits format." >&2
+    echo "" >&2
+    echo "  Expected: type[(scope)][!]: description" >&2
+    echo "  Types:    feat, fix, docs, refactor, test, chore, ci" >&2
+    echo "  Example:  feat: add CVE severity filtering" >&2
+    echo "  Example:  fix(auth): correct token expiration check" >&2
+    echo "  Example:  feat!: remove deprecated endpoint" >&2
+    echo "" >&2
+    echo "  Got: $commit_msg" >&2
+    exit 1
+fi
+
+# Validate first line length (72 chars max)
+if [ ${#commit_msg} -gt 72 ]; then
+    echo "Error: commit message first line exceeds 72 characters (${#commit_msg})." >&2
+    echo "  Got: $commit_msg" >&2
+    exit 1
+fi

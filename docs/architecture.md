@@ -44,10 +44,10 @@ coordination across multiple maintained distribution versions.
 ┌──────────────────┐     ┌──────────────────────────────────┐
 │  IBS RabbitMQ    │────▶│      IBSEventConsumer            │
 │ (rabbit.suse.de) │     │                                  │
-└──────────────────┘     │  Consumes suse.obs.package.commit│
-                         │  events for real-time track-level│
-                         │  release detection. Shares MD5   │
-                         │  cache with periodic fetcher.    │
+└──────────────────┘     │  Consumes IBS events             │
+                         │  (package.commit, request.create,│
+                         │  request.state_change) for       │
+                         │  release & submission tracking.  │
                          └──────────────────────────────────┘
 ```
 
@@ -299,16 +299,26 @@ Podman, and Kubernetes must consume the same images without environment-specific
 image variants.
 
 The backend image must be able to run distinct process roles by command or
-entrypoint configuration:
+entrypoint configuration. This is the canonical enumeration of all
+process roles; see `docs/deployment.md` (Process Architecture) for
+operational properties (scalability, volume requirements).
 
-- FastAPI API server
+**Runtime processes** (long-running):
+
+- API server (uvicorn)
 - Celery worker
-- Celery Beat scheduler
-- Alembic migration job
-- Long-running integration consumers, such as the IBS RabbitMQ consumer
+- Git worker (Celery worker with dedicated queue and persistent volume —
+  see `docs/features/platform/git-fetcher-infrastructure.md`)
+- Celery Beat scheduler (singleton)
+- IBS RabbitMQ consumer (singleton — see
+  `docs/features/integrations/ibs-rabbitmq-integration.md`)
 
-This keeps process separation explicit and avoids later refactoring when moving
-from Docker/Podman services to Kubernetes Deployments or Jobs.
+**One-shot jobs**:
+
+- Alembic migration job
+
+This keeps process separation explicit and avoids later refactoring when
+moving from Docker/Podman services to Kubernetes Deployments or Jobs.
 
 ### Runtime State
 
@@ -350,13 +360,14 @@ Kubernetes environments.
 
 ### Singleton Processes
 
-Celery Beat is a singleton process. Local environments run a single scheduler
-service. Kubernetes deployments must also ensure only one active scheduler is
-running unless a future design introduces an explicit distributed locking or
-leader election mechanism.
+Celery Beat and the IBS RabbitMQ consumer are singleton processes.
+Running multiple instances causes duplicate task scheduling or duplicate
+event processing. The git worker is constrained to a single instance by
+volume affinity (ReadWriteOnce), not by a logical singleton requirement.
 
-Other long-running integration consumers must document whether they are safe to
-scale horizontally before more than one replica is deployed.
+Local environments run one instance of each. Kubernetes deployments must
+enforce singleton constraints unless a future design introduces
+distributed locking or leader election.
 
 ### API Routing
 
@@ -414,8 +425,10 @@ failure behavior, orchestrator configuration), see
 ## Environments
 
 - **Development**: `docker-compose.yml` provides PostgreSQL + Redis locally
-- **Staging**: auto-deployed from `master` branch
-- **Production**: manually deployed from version tags (`v*`)
+- **Staging**: auto-deployed from `master` branch (deferred — see
+  `docs/deployment.md`)
+- **Production**: manually deployed from version tags (`v*`) created by
+  the release-please process (see `docs/deployment.md`, Release Process)
 
 ## Security Considerations
 

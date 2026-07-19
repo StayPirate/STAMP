@@ -211,6 +211,12 @@ When modifying backend dependencies, build configuration, or Docker
 setup, verify that the CI pipeline (`.github/workflows/`) does not need
 corresponding updates. If it does, update the workflows in the same PR.
 
+When modifying release-related configuration
+(`release-please-config.json`, `.release-please-manifest.json`), verify
+that the release-please workflow
+(`.github/workflows/release-please.yml`) and the downstream
+`build-images.yml` pipeline are not affected.
+
 For CI/CD-specific changes, delegate to the `@cicd` subagent.
 
 ### 6. Mandatory testing
