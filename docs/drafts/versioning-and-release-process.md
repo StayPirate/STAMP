@@ -27,8 +27,10 @@ specifications and configuration.
 
 ### Architectural Constraint: Single Deployable Unit
 
-All five process roles run from the **same Docker image** with different
+All process roles run from the **same Docker image** with different
 entrypoints (per `docs/architecture.md`, Container Images):
+
+**Runtime processes** (long-running):
 
 1. API server (uvicorn)
 2. Celery worker
@@ -36,8 +38,18 @@ entrypoints (per `docs/architecture.md`, Container Images):
 4. Celery Beat
 5. IBS RabbitMQ consumer
 
-They cannot be deployed at different versions. This is a hard
-architectural constraint that eliminates per-component versioning.
+**One-shot jobs**:
+
+6. Alembic migration job
+
+The five runtime processes cannot be deployed at different versions.
+This is a hard architectural constraint that eliminates per-component
+versioning.
+
+Note: `docs/architecture.md` (Container Images) currently has a stale
+enumeration — it omits the Git worker, uses a generic description for
+the IBS consumer, and does not separate runtime processes from one-shot
+jobs. Step 7 corrects this (see D8).
 
 ### Fetchers Are Built-In, Not Plugins
 
@@ -224,6 +236,37 @@ appropriate because versioning is not a product feature — it is
 project-level infrastructure that naturally splits between conventions
 (rules) and deployment (process).
 
+### D8: Consolidate Process Role Enumeration
+
+**Decision**: `docs/architecture.md` (Container Images) becomes the
+**canonical enumeration** of all process roles.
+`docs/deployment.md` (Process Architecture) references it and adds
+only operational properties (scalability, volume requirements).
+
+**Problem**: both documents enumerate the process roles, but the two
+lists have diverged:
+
+| Element | `architecture.md` | `deployment.md` |
+|---------|-------------------|-----------------|
+| Git worker | Absent | Present (+ volume section) |
+| Alembic migration job | Present | Absent from table |
+| IBS consumer | Generic ("Long-running integration consumers, such as...") | Specific ("IBS RabbitMQ consumer") |
+| Singleton Processes | Only Beat + generic "other consumers" | Beat + IBS consumer explicit |
+
+**Rationale**:
+
+- The drift already happened — maintaining two synchronized lists is
+  fragile and has no enforcement mechanism
+- `architecture.md` is the natural owner: it already uses the phrase
+  "process roles" (the only document to do so), and the concept "what
+  the system is composed of" is architectural by definition
+- `deployment.md` header already references `architecture.md` for
+  "architectural decisions and portability constraints" (line 7-8)
+- Conforms to Guardrail 21 (information placement — single source of
+  truth)
+- Impact analysis confirms zero cross-references from other specs to
+  either section — no breakage risk
+
 ---
 
 ## Action Plan
@@ -309,12 +352,12 @@ takes full effect.
 
 #### Why Single Version
 
-All five process roles (API server, Celery worker, Git worker, Celery
-Beat, IBS consumer) run from the same Docker image with different
-entrypoints. They cannot be deployed at different versions.
-Per-component versioning (e.g., per-fetcher) would add overhead without
-practical benefit since fetchers are built-in classes, not independently
-deployable plugins.
+All five runtime process roles (API server, Celery worker, Git worker,
+Celery Beat, IBS consumer) run from the same Docker image with different
+entrypoints (see `docs/architecture.md`, Container Images). They cannot
+be deployed at different versions. Per-component versioning (e.g.,
+per-fetcher) would add overhead without practical benefit since fetchers
+are built-in classes, not independently deployable plugins.
 ```
 
 ### Step 2: Add "Release Process" section to `docs/deployment.md`
@@ -608,7 +651,7 @@ for details.
   `tags: ["v*"]`) — no changes needed to that workflow
 - `ci.yml` continues to run independently on pushes and PRs
 
-### Step 7: Update `docs/architecture.md` — Environments section
+### Step 7: Update `docs/architecture.md`
 
 **File**: `docs/architecture.md`
 
@@ -644,7 +687,146 @@ deferred):
   the release-please process (see `docs/deployment.md`, Release Process)
 ```
 
-### Step 8: Update `.opencode/agents/cicd.md`
+**Change 3** — Container Images process role list (lines 301-311).
+Implements D8: makes this the canonical enumeration, adds Git worker,
+makes IBS consumer explicit, separates runtime processes from one-shot
+jobs.
+
+**Current text**:
+
+```
+The backend image must be able to run distinct process roles by command or
+entrypoint configuration:
+
+- FastAPI API server
+- Celery worker
+- Celery Beat scheduler
+- Alembic migration job
+- Long-running integration consumers, such as the IBS RabbitMQ consumer
+
+This keeps process separation explicit and avoids later refactoring when moving
+from Docker/Podman services to Kubernetes Deployments or Jobs.
+```
+
+**Replace with**:
+
+```
+The backend image must be able to run distinct process roles by command or
+entrypoint configuration. This is the canonical enumeration of all
+process roles; see `docs/deployment.md` (Process Architecture) for
+operational properties (scalability, volume requirements).
+
+**Runtime processes** (long-running):
+
+- API server (uvicorn)
+- Celery worker
+- Git worker (Celery worker with dedicated queue and persistent volume —
+  see `docs/features/platform/git-fetcher-infrastructure.md`)
+- Celery Beat scheduler (singleton)
+- IBS RabbitMQ consumer (singleton — see
+  `docs/features/integrations/ibs-rabbitmq-integration.md`)
+
+**One-shot jobs**:
+
+- Alembic migration job
+
+This keeps process separation explicit and avoids later refactoring when
+moving from Docker/Podman services to Kubernetes Deployments or Jobs.
+```
+
+**Change 4** — Singleton Processes section (lines 351-359). Updates to
+be specific and consistent with the canonical list above.
+
+**Current text**:
+
+```
+### Singleton Processes
+
+Celery Beat is a singleton process. Local environments run a single scheduler
+service. Kubernetes deployments must also ensure only one active scheduler is
+running unless a future design introduces an explicit distributed locking or
+leader election mechanism.
+
+Other long-running integration consumers must document whether they are safe to
+scale horizontally before more than one replica is deployed.
+```
+
+**Replace with**:
+
+```
+### Singleton Processes
+
+Celery Beat and the IBS RabbitMQ consumer are singleton processes.
+Running multiple instances causes duplicate task scheduling or duplicate
+event processing. The git worker is constrained to a single instance by
+volume affinity (ReadWriteOnce), not by a logical singleton requirement.
+
+Local environments run one instance of each. Kubernetes deployments must
+enforce singleton constraints unless a future design introduces
+distributed locking or leader election.
+```
+
+### Step 8: Update `docs/deployment.md` — Process Architecture
+
+**File**: `docs/deployment.md`
+
+Implements D8: adds cross-reference to `docs/architecture.md` as the
+canonical source for process roles, and clarifies the Alembic omission.
+
+**Change 1** — Process Architecture header (lines 310-312). Replace
+the introductory text (keep the table unchanged):
+
+**Current text**:
+
+```
+## Process Architecture
+
+Sentinel requires multiple processes running concurrently:
+```
+
+**Replace with**:
+
+```
+## Process Architecture
+
+Sentinel's process roles are defined in `docs/architecture.md`
+(Container Images). This section documents their operational properties
+for deployment.
+```
+
+**Change 2** — Add Alembic note after the Process Architecture table
+(after line 320, before "### Singleton Processes" at line 322). Insert:
+
+```
+Alembic migration jobs are one-shot processes, not runtime services —
+see Database Migrations (below) for operational details.
+```
+
+**Change 3** — Singleton Processes (lines 322-326). Add cross-reference
+to `docs/architecture.md`:
+
+**Current text**:
+
+```
+### Singleton Processes
+
+Celery Beat and the IBS RabbitMQ consumer must run as single instances.
+Running multiple replicas causes duplicate task scheduling or duplicate
+event processing.
+```
+
+**Replace with**:
+
+```
+### Singleton Processes
+
+Celery Beat and the IBS RabbitMQ consumer must run as single instances.
+Running multiple replicas causes duplicate task scheduling or duplicate
+event processing. See `docs/architecture.md` (Singleton Processes) for
+the architectural constraint.
+```
+
+### Step 9: Update `.opencode/agents/cicd.md`
 
 **File**: `.opencode/agents/cicd.md`
 
@@ -702,7 +884,7 @@ permission:
     "*": deny
 ```
 
-### Step 9: Update `AGENTS.md` — Guardrail 5
+### Step 10: Update `AGENTS.md` — Guardrail 5
 
 **File**: `AGENTS.md`
 
@@ -738,9 +920,9 @@ that the release-please workflow
 For CI/CD-specific changes, delegate to the `@cicd` subagent.
 ```
 
-### Step 10: Run reviewers on affected specifications
+### Step 11: Run reviewers on affected specifications
 
-After all changes from Steps 1-9 have been applied, run the following
+After all changes from Steps 1-10 have been applied, run the following
 reviewers to verify correctness:
 
 1. **`@docs-placement-reviewer`** on `docs/conventions.md` — verify
@@ -770,7 +952,17 @@ reviewers to verify correctness:
    `build-images.yml`) integrates correctly with the existing CI/CD
    setup
 
-### Step 11: Delete this draft
+6. **`@docs-placement-reviewer`** on `docs/architecture.md` — verify
+   that the canonical process role list in Container Images is correctly
+   placed and does not duplicate operational details that belong in
+   `docs/deployment.md`
+
+7. **`@spec-coherence-reviewer`** on `docs/architecture.md` — verify
+   coherence between the consolidated Container Images and Singleton
+   Processes sections in `docs/architecture.md` and the referencing
+   Process Architecture section in `docs/deployment.md`
+
+### Step 12: Delete this draft
 
 After all reviewer findings have been addressed and the changes are
 confirmed correct, delete this file:
@@ -789,10 +981,11 @@ confirmed correct, delete this file:
 | 4 | `release-please-config.json` | Create (new file at repo root) | Step 4 |
 | 5 | `.release-please-manifest.json` | Create (new file at repo root) | Step 5 |
 | 6 | `.github/workflows/release-please.yml` | Create (new workflow) | Step 6 |
-| 7 | `docs/architecture.md` | Update Environments bullets (lines 417-418) | Step 7 |
-| 8 | `.opencode/agents/cicd.md` | Add release-please convention, update pipeline chain, add edit permissions | Step 8 |
-| 9 | `AGENTS.md` | Extend Guardrail 5 with release-please awareness | Step 9 |
-| 10 | `docs/drafts/versioning-and-release-process.md` | Delete after review | Step 11 |
+| 7 | `docs/architecture.md` | Update Environments (lines 417-418), Container Images (lines 301-311), Singleton Processes (lines 351-359) | Step 7 |
+| 8 | `docs/deployment.md` | Update Process Architecture header + add Alembic note + Singleton Processes cross-reference | Step 8 |
+| 9 | `.opencode/agents/cicd.md` | Add release-please convention, update pipeline chain, add edit permissions | Step 9 |
+| 10 | `AGENTS.md` | Extend Guardrail 5 with release-please awareness | Step 10 |
+| 11 | `docs/drafts/versioning-and-release-process.md` | Delete after review | Step 12 |
 
 ## Notes
 
