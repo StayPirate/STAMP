@@ -275,6 +275,11 @@ Each step below is prescriptive: it specifies exactly what to modify,
 where, and with what content. Steps are ordered by dependency — later
 steps may reference content added by earlier steps.
 
+**Execution model**: Steps 1-10 are executed by a single agent without
+delegation — every file's content is fully specified in this plan and
+no design decisions are required. Step 11 is a read-only validation
+phase where reviewers verify correctness after all changes are applied.
+
 ### Step 1: Add "Versioning" subsection to `docs/conventions.md`
 
 **File**: `docs/conventions.md`
@@ -920,10 +925,12 @@ that the release-please workflow
 For CI/CD-specific changes, delegate to the `@cicd` subagent.
 ```
 
-### Step 11: Run reviewers on affected specifications
+### Step 11: Run read-only reviewers on affected files
 
 After all changes from Steps 1-10 have been applied, run the following
-reviewers to verify correctness:
+read-only reviewers to validate correctness. No reviewer modifies
+files — they only report issues to be addressed before considering the
+work complete:
 
 1. **`@docs-placement-reviewer`** on `docs/conventions.md` — verify
    that the Versioning subsection is correctly placed under Git
@@ -945,12 +952,12 @@ reviewers to verify correctness:
    chain description matches the actual workflow files, and that no
    existing documentation references are broken
 
-5. **`@cicd`** agent — verify that the new
-   `release-please.yml` workflow is correct, that
-   `release-please-config.json` and `.release-please-manifest.json` are
-   valid, and that the pipeline chain (`release-please.yml` →
-   `build-images.yml`) integrates correctly with the existing CI/CD
-   setup
+5. **`@cicd`** (read-only reviewer) — validate that the
+   `release-please.yml` workflow created in Step 6 is syntactically
+   correct, that `release-please-config.json` and
+   `.release-please-manifest.json` are valid, and that the pipeline
+   chain (`release-please.yml` → `build-images.yml`) integrates
+   correctly with the existing CI/CD setup
 
 6. **`@docs-placement-reviewer`** on `docs/architecture.md` — verify
    that the canonical process role list in Container Images is correctly
