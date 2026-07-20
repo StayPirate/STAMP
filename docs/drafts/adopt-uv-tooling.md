@@ -136,14 +136,33 @@ lockfile.
   First Local User" command that both assume a pre-activated venv with
   `alembic`/`uvicorn`/`celery`/`python` directly on `PATH`
 - `AGENTS.md` "Commands" section lists bare `pytest`/`ruff`/`alembic`
-  invocations assuming an activated venv
-- `docs/conventions.md` (Runtime Version section) already generically
-  lists `pyenv, uv, mise` as example local-dev tools that read
-  `backend/.python-version` — this sentence remains accurate after
-  this RFC and requires **no change** (uv is one of the tools listed;
-  this RFC does not contradict it, it operationalizes it as the
-  project's recommended choice via `docs/deployment.md`, per the
-  reasoning in "Placement Decision" below)
+  invocations assuming an activated venv. Additionally, Guardrail 6
+  ("Mandatory testing", line 232) independently repeats a bare
+  `cd backend && pytest` example — this must be updated in the same
+  step as the Commands section to avoid a self-contradiction within
+  the same file
+- `docs/conventions.md` (Runtime Version section) contains a "Source of
+  Truth" table whose CI row (`CI (actions/setup-python) |
+  python-version-file: backend/.python-version`) describes the current
+  mechanism. This row becomes factually incorrect once `ci.yml` stops
+  using `actions/setup-python` (Step 4) — see the "Narrow exception" in
+  Placement Decision above
+- Several `.opencode/` files contain bare backend command invocations
+  that are executed directly (not just prose examples): the
+  `run-tests` command (`.opencode/commands/run-tests.md`), two skill
+  workflows (`.opencode/skills/new-api-endpoint/SKILL.md`,
+  `.opencode/skills/new-feature/SKILL.md`), and the `test-reviewer`
+  subagent's `bash` permission allowlist
+  (`.opencode/agents/test-reviewer.md`, pattern
+  `"cd backend && pytest*": allow`). All four need updating — a
+  permission glob mismatch would silently block the `test-reviewer`
+  agent from running tests via the OpenCode permission system
+- `docs/features/platform/testing-strategy.md` also contains bare
+  `pytest` examples (lines 481-496, 656), but these document test
+  *organization* (markers, fixture selection) rather than environment
+  setup, and remain valid under an activated venv regardless of how it
+  was activated — this file is deliberately left unmodified (see
+  "Files explicitly NOT modified")
 
 ## Placement Decision (Guardrail 21 self-check)
 
@@ -158,6 +177,16 @@ already the owning document for local development setup (it has a
 "Local Development" section with "Quick Start"). This RFC adds the
 `uv` recommendation there, not in `conventions.md`. No consolidation
 or generalization is proposed; each document keeps its existing scope.
+
+**Narrow exception**: `docs/conventions.md`'s "Source of Truth" table
+(Runtime Version section) contains one row that describes a *mechanism*
+rather than a *policy* — `CI (actions/setup-python) |
+python-version-file: backend/.python-version`. This row becomes
+factually wrong once CI stops using `actions/setup-python` (Step 4).
+This is a factual correction to keep an existing table accurate, not a
+new rule or a generalization — it does not change the
+policy-level statement that local development tools (pyenv/uv/mise)
+are treated as interchangeable. See Step 10 below.
 
 ## Scope
 
@@ -178,7 +207,12 @@ or generalization is proposed; each document keeps its existing scope.
 | `.githooks/pre-commit` | Prefix `ruff`/`pytest` invocations with `uv run` |
 | `.githooks/pre-push` | Prefix `pytest` invocation with `uv run` |
 | `docs/deployment.md` | Add `uv` to Software Requirements; update Quick Start and first-user creation commands |
-| `AGENTS.md` | Update Commands section to use `uv run` / `uv sync` |
+| `docs/conventions.md` | Fix the CI row of the Runtime Version "Source of Truth" table (mechanism changes from `actions/setup-python` to `astral-sh/setup-uv`) — a narrow factual correction, not a policy change |
+| `AGENTS.md` | Update Commands section to use `uv run` / `uv sync`; fix the bare `pytest` example in Guardrail 6 (Mandatory testing) to avoid a self-contradiction within the same file |
+| `.opencode/commands/run-tests.md` | Prefix `pytest`/`ruff` invocations with `uv run` |
+| `.opencode/skills/new-api-endpoint/SKILL.md` | Prefix `pytest` invocation with `uv run` |
+| `.opencode/skills/new-feature/SKILL.md` | Prefix `alembic`/`pytest` invocations with `uv run` |
+| `.opencode/agents/test-reviewer.md` | Update the `bash` permission glob pattern so it still matches the post-RFC test command |
 
 ### Files explicitly NOT modified (verified, with rationale)
 
@@ -188,9 +222,10 @@ or generalization is proposed; each document keeps its existing scope.
 | `.github/workflows/release-please.yml` | Does not touch Python dependencies |
 | `.gitignore` | Already correctly ignores `.venv/`; does not ignore lockfiles |
 | `backend/.dockerignore` | Already correctly excludes `tests/`, `.venv/`, caches |
-| `docs/conventions.md` | Runtime Version section remains accurate and tool-agnostic (see Placement Decision above) |
 | `docs/configuration.md` | No environment variable is introduced or changed by this RFC |
 | `backend/app/**`, `backend/tests/**` | No application or test code changes — this RFC is tooling-only |
+| `docs/features/platform/testing-strategy.md` | Documents test *organization* (markers, fixtures), not tooling setup. Bare `pytest` examples remain valid whenever a venv is activated (manually or via `uv run`); adding `uv run` throughout would over-specify a document whose purpose is orthogonal to environment management |
+| `docs/deployment.md` (Database Migrations section) | Mixed local/production reference section — the local-development case is already covered unambiguously by the updated Quick Start above it; the production-context commands correctly remain bare (they run inside a container where `alembic` is already on `PATH`) |
 
 ## Out of Scope
 
@@ -312,7 +347,7 @@ git check-ignore -v backend/uv.lock
 ```
 
 **Expected result**: no output (exit code 1), meaning the file is not
-ignored. If any pattern matches, STOP — do not proceed with Step 13
+ignored. If any pattern matches, STOP — do not proceed with Step 15
 (commit) until the pattern is identified and excluded, since the
 lockfile MUST be tracked in git.
 
@@ -806,9 +841,47 @@ sections are unaffected by this RFC).
 
 ---
 
-### Step 10: Modify `AGENTS.md`
+### Step 10: Modify `docs/conventions.md`
 
-Replace the **entire "Commands" section**:
+**Change**: fix the CI row of the Runtime Version "Source of Truth"
+table — a factual correction of the mechanism, not a policy change
+(see Placement Decision, "Narrow exception", above). No other part of
+`docs/conventions.md` is modified.
+
+Replace:
+
+```markdown
+| Consumer | How it reads the source of truth |
+|---|---|
+| Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
+| CI (`actions/setup-python`) | `python-version-file: backend/.python-version` |
+| Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
+| ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
+```
+
+with:
+
+```markdown
+| Consumer | How it reads the source of truth |
+|---|---|
+| Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
+| CI (`astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively |
+| Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
+| ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
+```
+
+**Rationale**: after Step 4, CI no longer uses `actions/setup-python`.
+Leaving the old row would describe a mechanism that no longer exists.
+The replacement row mirrors the phrasing already used for the "Local
+development" row (`uv` reads `.python-version` natively), which is
+accurate for both contexts. The other rows (Dockerfile, ruff) are
+unaffected by this RFC and remain unchanged.
+
+---
+
+### Step 11: Modify `AGENTS.md`
+
+**Change A** — replace the **entire "Commands" section**:
 
 ```markdown
 ## Commands
@@ -833,13 +906,141 @@ with:
 - **Local dev stack**: `./dev-env.sh up` (PostgreSQL + Redis, auto-detects Podman or Docker)
 ```
 
-No other section of `AGENTS.md` is modified.
+**Change B** — Guardrail 6 ("Mandatory testing") independently repeats
+a bare `pytest` example. Replace:
+
+```markdown
+2. Run the test suite and verify all tests pass
+   - Backend: `cd backend && pytest`
+```
+
+with:
+
+```markdown
+2. Run the test suite and verify all tests pass
+   - Backend: `cd backend && uv run pytest`
+```
+
+**Rationale for Change B**: without this fix, `AGENTS.md` would
+contradict itself — the Commands section (Change A) would say
+`uv run pytest` while Guardrail 6 would still say bare `pytest`, a
+few hundred lines below in the same file. No other section of
+`AGENTS.md` is modified.
 
 ---
 
-### Step 11: Verify no stale references remain
+### Step 12: Modify OpenCode tooling files (`.opencode/`)
 
-**Verification commands** (run after applying Steps 1–10):
+These files contain **executable** command invocations (not just
+documentation prose) — an OpenCode command, two skill workflows, and a
+subagent's `bash` permission allowlist. Left unmodified, they would
+either fail (no activated venv) or, in the permission case, silently
+block the `test-reviewer` subagent from running tests at all.
+
+**`.opencode/commands/run-tests.md`** — replace:
+
+````markdown
+1. Run backend tests:
+   ```
+   cd backend && pytest -v
+   ```
+
+2. Run backend linting:
+   ```
+   cd backend && ruff check . && ruff format --check .
+   ```
+````
+
+with:
+
+````markdown
+1. Run backend tests:
+   ```
+   cd backend && uv run pytest -v
+   ```
+
+2. Run backend linting:
+   ```
+   cd backend && uv run ruff check . && uv run ruff format --check .
+   ```
+````
+
+**`.opencode/skills/new-api-endpoint/SKILL.md`** — replace:
+
+```markdown
+7. Run `cd backend && pytest` and verify all tests pass
+```
+
+with:
+
+```markdown
+7. Run `cd backend && uv run pytest` and verify all tests pass
+```
+
+**`.opencode/skills/new-feature/SKILL.md`** — replace:
+
+```markdown
+6. Generate Alembic migration: `cd backend && alembic revision --autogenerate -m "description"`
+```
+
+with:
+
+```markdown
+6. Generate Alembic migration: `cd backend && uv run alembic revision --autogenerate -m "description"`
+```
+
+and replace:
+
+```markdown
+5. Run all tests and verify they pass: `cd backend && pytest`
+```
+
+with:
+
+```markdown
+5. Run all tests and verify they pass: `cd backend && uv run pytest`
+```
+
+**`.opencode/agents/test-reviewer.md`** — replace the `bash` permission
+block:
+
+```yaml
+permission:
+  edit: deny
+  bash:
+    "cd backend && pytest*": allow
+    "*": deny
+```
+
+with:
+
+```yaml
+permission:
+  edit: deny
+  bash:
+    "cd backend && uv run pytest*": allow
+    "*": deny
+```
+
+**Rationale**: OpenCode permission globs are matched literally against
+the command string being executed, not interpreted as regular
+expressions with wildcards mid-pattern beyond the trailing `*`. Since
+the actual command changes from `cd backend && pytest ...` to
+`cd backend && uv run pytest ...`, the allowlist entry must be updated
+to match the new literal prefix, or the `test-reviewer` subagent loses
+its only permitted way to run tests (falling through to the deny-all
+rule).
+
+No other `.opencode/` file is modified — in particular,
+`docs/features/platform/testing-strategy.md` is a specification
+document (not an executable instruction) and is deliberately left
+unmodified (see "Files explicitly NOT modified" in Scope, above).
+
+---
+
+### Step 13: Verify no stale references remain
+
+**Verification commands** (run after applying Steps 1–12):
 
 ```bash
 cd /home/crazybyte/Workspace/Sentinel
@@ -867,18 +1068,33 @@ grep -n "pip install" backend/Dockerfile
 grep -nE "cd backend && (pytest|ruff|alembic|uvicorn|celery|python -m sentinel)" docs/deployment.md AGENTS.md
 # Expected: no matches (every invocation must be prefixed with "uv run")
 
+# conventions.md must no longer reference actions/setup-python as the
+# CI mechanism for reading .python-version
+grep -n "actions/setup-python" docs/conventions.md
+# Expected: no matches
+
+# .opencode/ executable instructions must not contain bare backend
+# commands (command, skills, and the test-reviewer permission glob)
+grep -nE "cd backend && (pytest|ruff|alembic)" \
+  .opencode/commands/run-tests.md \
+  .opencode/skills/new-api-endpoint/SKILL.md \
+  .opencode/skills/new-feature/SKILL.md \
+  .opencode/agents/test-reviewer.md
+# Expected: no matches (every invocation must be prefixed with "uv run")
+
 # deploy-api-docs.yml must still retain its original tag trigger
 grep -n 'tags: \["v\*"\]' .github/workflows/deploy-api-docs.yml
 # Expected: exactly one match (the trigger must not be dropped)
 ```
 
-**Expected result for all commands above**: no matches (empty output).
-If any match is found, the corresponding file was not fully updated —
-fix it before proceeding to Step 12.
+**Expected result for all commands above**: no matches (empty output),
+except the last command (exactly one match). If any unexpected match
+is found, the corresponding file was not fully updated — fix it before
+proceeding to Step 14.
 
 ---
 
-### Step 12: Local smoke test
+### Step 14: Local smoke test
 
 Run locally (the user has already installed `uv` on this machine per
 the prior conversation):
@@ -911,7 +1127,7 @@ docker build -t sentinel-backend:uv-test .
 
 ---
 
-### Step 13: Commit
+### Step 15: Commit
 
 Single commit with message:
 
@@ -940,12 +1156,20 @@ resolution across local development, CI, and Docker builds.
 - Update .githooks/pre-commit and .githooks/pre-push to invoke
   ruff/pytest via `uv run`
 - Update docs/deployment.md (Software Requirements, Quick Start,
-  first local user creation) and AGENTS.md (Commands) to reflect the
-  new uv-based workflow
+  first local user creation), docs/conventions.md (Runtime Version
+  Source of Truth table), and AGENTS.md (Commands section and
+  Guardrail 6) to reflect the new uv-based workflow
+- Update OpenCode tooling (.opencode/commands/run-tests.md,
+  .opencode/skills/new-api-endpoint/SKILL.md,
+  .opencode/skills/new-feature/SKILL.md,
+  .opencode/agents/test-reviewer.md) so executable command examples
+  and the test-reviewer permission allowlist stay consistent with the
+  new uv-based invocation
 
 No application runtime behavior changes. No new environment variables.
-build-images.yml, release-please.yml, .gitignore, and
-backend/.dockerignore require no changes (verified).
+build-images.yml, release-please.yml, .gitignore,
+backend/.dockerignore, and docs/features/platform/testing-strategy.md
+require no changes (verified).
 ```
 
 Files in commit:
@@ -958,12 +1182,17 @@ Files in commit:
 - `.githooks/pre-commit`
 - `.githooks/pre-push`
 - `docs/deployment.md`
+- `docs/conventions.md`
 - `AGENTS.md`
-- `docs/drafts/adopt-uv-tooling.md` (deleted — see Step 15)
+- `.opencode/commands/run-tests.md`
+- `.opencode/skills/new-api-endpoint/SKILL.md`
+- `.opencode/skills/new-feature/SKILL.md`
+- `.opencode/agents/test-reviewer.md`
+- `docs/drafts/adopt-uv-tooling.md` (deleted — see Step 17)
 
 ---
 
-### Step 14: Run reviewers
+### Step 16: Run reviewers
 
 After the commit is applied, invoke the following reviewers to verify
 the change was applied correctly and without issues:
@@ -977,15 +1206,18 @@ the change was applied correctly and without issues:
    before (lint, test, coverage threshold, migration drift check,
    bandit, pip-audit)
 
-2. **`@docs-reviewer`** on `docs/deployment.md` and `AGENTS.md` —
-   verify the updated local development instructions are complete,
-   internally consistent, and that no stale bare-command example
-   remains anywhere in either file
+2. **`@docs-reviewer`** on `docs/deployment.md`, `docs/conventions.md`,
+   and `AGENTS.md` — verify the updated local development instructions
+   are complete, internally consistent, and that no stale bare-command
+   example remains anywhere in any of the three files (including
+   Guardrail 6 in `AGENTS.md`)
 
-3. **`@docs-placement-reviewer`** on `docs/deployment.md` — verify the
-   `uv` recommendation is correctly placed there (per the Placement
-   Decision section of this RFC) and does not need to be duplicated or
-   moved to `docs/conventions.md`
+3. **`@docs-placement-reviewer`** on `docs/deployment.md` and
+   `docs/conventions.md` — verify the `uv` recommendation is correctly
+   placed in `deployment.md` (per the Placement Decision section of
+   this RFC), and that the `conventions.md` change is confirmed to be
+   a narrow factual correction rather than a policy change requiring
+   further generalization
 
 If any reviewer identifies issues rated as "Needs revision", resolve
 them before considering this RFC complete. Minor issues should be
@@ -993,16 +1225,16 @@ fixed in the same PR/commit.
 
 ---
 
-### Step 15: Delete this draft
+### Step 17: Delete this draft
 
-Once Step 13 (commit) is applied and Step 14 (reviewers) confirms no
+Once Step 15 (commit) is applied and Step 16 (reviewers) confirms no
 outstanding issues:
 
 ```bash
 rm docs/drafts/adopt-uv-tooling.md
 ```
 
-Include the deletion in the same commit as Step 13, or as a separate
+Include the deletion in the same commit as Step 15, or as a separate
 follow-up `chore:` commit if the reviewers require revisions first
 (i.e., do not delete the draft until reviewers have signed off).
 
@@ -1019,9 +1251,11 @@ follow-up `chore:` commit if the reviewers require revisions first
    `backend-lint` step comparing the two values (analogous to the
    existing Python-version check), mirroring the "Dockerfile
    Convention" pattern in `docs/conventions.md`
-2. **`docs/conventions.md` "Runtime Version" section**: this RFC
-   deliberately leaves it unchanged (see Placement Decision). If, after
-   this RFC lands, the team wants `conventions.md` to explicitly name
-   `uv` as the project's endorsed tool (rather than one of several
-   generic examples), that would be a separate, small follow-up change
-   subject to its own Guardrail 21 self-check
+2. **`docs/conventions.md` "Runtime Version" section**: this RFC applies
+   only a narrow factual correction to the CI mechanism row (Step 10)
+   but deliberately does not change the tool-agnostic policy stance
+   (see Placement Decision). If, after this RFC lands, the team wants
+   `conventions.md` to explicitly name `uv` as the project's endorsed
+   tool (rather than one of several generic examples), that would be a
+   separate, small follow-up change subject to its own Guardrail 21
+   self-check
