@@ -32,7 +32,7 @@ jobs:
             echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL does not match .python-version=$EXPECTED"
             exit 1
           fi
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
           version: "0.11.29"
           enable-cache: true
@@ -76,7 +76,7 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret-key-not-for-production-min-32-chars
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
           version: "0.11.29"
           enable-cache: true
@@ -95,7 +95,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
           version: "0.11.29"
           enable-cache: true
