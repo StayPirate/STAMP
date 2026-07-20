@@ -23,9 +23,18 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+      - name: Verify Dockerfile Python version matches .python-version
+        working-directory: backend
+        run: |
+          EXPECTED=$(cat .python-version)
+          ACTUAL=$(grep -oP '(?<=ARG PYTHON_VERSION=)\S+' Dockerfile)
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL does not match .python-version=$EXPECTED"
+            exit 1
+          fi
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version-file: backend/.python-version
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: pip install ruff==0.15.22
@@ -70,7 +79,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version-file: backend/.python-version
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: pip install -e ".[dev]"
@@ -90,7 +99,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version-file: backend/.python-version
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: pip install bandit==1.9.4 pip-audit==2.10.1

@@ -47,6 +47,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Read Python version from .python-version
+        id: python-version
+        run: echo "version=$(cat backend/.python-version)" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/build-push-action@v7
@@ -55,5 +59,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: PYTHON_VERSION=${{ steps.python-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

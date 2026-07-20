@@ -451,6 +451,103 @@ except RedisError:
     # proceed without deduplication (idempotent downstream)
 ```
 
+### Runtime Version
+
+Sentinel targets a single Python minor version for all runtime
+components. The version is chosen based on: (1) active bugfix
+maintenance status from python.org, and (2) declared support from all
+critical dependencies (Celery in particular historically lags new
+Python releases by 6–12 months).
+
+**Current target**: Python **3.13** (bugfix maintenance, EOL 2029-10).
+
+#### Source of Truth
+
+The file `backend/.python-version` is the single source of truth for
+the Python runtime version used across all environments:
+
+| Consumer | How it reads the source of truth |
+|---|---|
+| Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
+| CI (`actions/setup-python`) | `python-version-file: backend/.python-version` |
+| Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
+| ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
+
+The `requires-python` field in `backend/pyproject.toml` MUST be kept
+aligned with the source of truth (`>=3.<minor>` matching the minor in
+`.python-version`). It serves as the package metadata floor — not as
+the authoritative pin.
+
+The `.python-version` file uses **minor-version granularity** (e.g.,
+`3.13`, not `3.13.7`). This ensures the same value works directly as a
+Docker image tag suffix, a `setup-python` specifier, and a pyenv/uv
+prefix match. Patch-level reproducibility is captured by Docker image
+digests and lockfiles, not by the version pin.
+
+#### Dockerfile Convention
+
+All Dockerfiles in the repository MUST use a global `ARG` for the
+Python version:
+
+```dockerfile
+ARG PYTHON_VERSION=3.13
+FROM python:${PYTHON_VERSION}-slim AS builder
+...
+FROM python:${PYTHON_VERSION}-slim AS runtime
+```
+
+The default value MUST match `backend/.python-version`. A CI drift-check
+step verifies this automatically — a mismatch fails the build.
+
+#### Version Bump Checklist
+
+When upgrading to a new Python minor version:
+
+1. **Verify dependency support**: check PyPI classifiers and changelog
+   for all critical dependencies. Priority order (historically slowest
+   to adopt):
+   - `celery` / `kombu` / `billiard` (task queue stack)
+   - `asyncpg` (C extension, needs wheel)
+   - `pydantic-core` (Rust extension, needs wheel)
+   - `bcrypt` (C extension)
+   - All other dependencies with C/Rust extensions
+2. **Update the source of truth**: change `backend/.python-version` to
+   the new minor (e.g., `3.14`).
+3. **Align `requires-python`**: update `backend/pyproject.toml`
+   `requires-python` to `>=3.<new-minor>`.
+4. **Update Dockerfile default**: change `ARG PYTHON_VERSION=...` in
+   `backend/Dockerfile` to match. (The drift-check will catch this if
+   forgotten.)
+5. **Run the full test suite locally** on the new interpreter. Pay
+   attention to `DeprecationWarning` output.
+6. **Temporary CI matrix** (optional but recommended): for the PR that
+   bumps the version, add the old version alongside the new one in CI
+   to confirm no regressions. Remove the old version after merge.
+7. **Update documentation**: change the "Current target" line in this
+   section and the prerequisite in `docs/deployment.md` (Software
+   Requirements table).
+8. **Update prose references**: search for hardcoded version strings in
+   `docs/` (e.g., `python:3.13-slim` in spec prose) and update or make
+   version-agnostic.
+9. **Rebuild and test images**: build the Docker image with the new
+   base, run smoke tests against it.
+10. **Deploy**: staging first, observe for one cycle of all fetchers,
+    then production.
+
+#### Forward Compatibility (recommended, deferred)
+
+To detect breakage early before the next bump:
+
+- A scheduled/manual CI workflow (`workflow_dispatch` + weekly cron)
+  that runs the test suite against the **next** Python version
+  (including pre-releases). Failures are informational, not blocking.
+- Periodic pytest runs with `-W error::DeprecationWarning` to surface
+  deprecated API usage before it becomes a hard break.
+- Renovate or Dependabot configured to auto-PR Docker base image
+  updates, GitHub Actions version bumps, and pip dependency updates.
+
+These are deferred to a future PR and not part of the current change.
+
 ## CLI Conventions
 
 ### Framework

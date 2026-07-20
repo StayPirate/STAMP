@@ -19,7 +19,7 @@ For architectural decisions and portability constraints, see
 | PostgreSQL | 15+ | Primary database |
 | Redis | 7+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
-| Python | 3.12+ | Backend runtime (development only) |
+| Python | 3.13+ | Backend runtime (development only; version policy in `docs/conventions.md`) |
 
 ### Network Access (Staging/Production)
 

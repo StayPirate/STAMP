@@ -2,7 +2,7 @@
 name = "sentinel"
 version = "0.1.0"
 description = "Security update management platform for SUSE/openSUSE distributions"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -39,7 +39,6 @@ packages = ["app"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
 
 [tool.ruff.lint]
 select = [

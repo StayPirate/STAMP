@@ -51,7 +51,7 @@ def _database_url() -> str:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def _engine() -> AsyncGenerator[AsyncEngine, None]:
+async def _engine() -> AsyncGenerator[AsyncEngine]:
     """Create the async engine and tables once per session."""
     engine = create_async_engine(_database_url(), echo=False)
     async with engine.begin() as conn:
@@ -63,7 +63,7 @@ async def _engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest.fixture
-async def db_session(_engine) -> AsyncGenerator[AsyncSession, None]:
+async def db_session(_engine) -> AsyncGenerator[AsyncSession]:
     """Provide an async DB session with per-test transaction rollback.
 
     Uses the SQLAlchemy 2.0 recommended pattern: the session joins an
@@ -91,7 +91,7 @@ async def db_session(_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     """Provide an async HTTP test client with DB session override.
 
     The FastAPI app's get_db dependency is overridden to use the test

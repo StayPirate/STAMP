@@ -13,6 +13,7 @@ build/
 venv/
 env/
 .python-version
+!backend/.python-version
 
 # Testing
 .pytest_cache/
