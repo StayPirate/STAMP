@@ -19,7 +19,7 @@ For architectural decisions and portability constraints, see
 | PostgreSQL | 15+ | Primary database |
 | Redis | 7+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
-| Python | 3.13+ | Backend runtime (development only; version policy in `docs/conventions.md`) |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.11+ | Manages the Python 3.13 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
 
 ### Network Access (Staging/Production)
 
@@ -87,20 +87,24 @@ All environments share the same `SSO_CLIENT_ID` and `SSO_CLIENT_SECRET`
 ### Quick Start
 
 ```bash
+# Install dependencies (downloads Python 3.13 and creates
+# backend/.venv automatically if not already present)
+cd backend && uv sync
+
 # Start PostgreSQL + Redis containers
 ./dev-env.sh up
 
 # Run database migrations
-cd backend && alembic upgrade head
+cd backend && uv run alembic upgrade head
 
 # Start the backend API server
-cd backend && uvicorn app.main:app --reload --port 8000
+cd backend && uv run uvicorn app.main:app --reload --port 8000
 
 # Start Celery worker (separate terminal)
-cd backend && celery -A app.celery_app worker --loglevel=info
+cd backend && uv run celery -A app.celery_app worker --loglevel=info
 
 # Start Celery Beat scheduler (separate terminal)
-cd backend && celery -A app.celery_app beat --loglevel=info
+cd backend && uv run celery -A app.celery_app beat --loglevel=info
 # Note: the redbeat scheduler class is configured in the Celery app
 # settings (beat_scheduler). No --scheduler CLI flag is needed.
 ```
@@ -136,7 +140,7 @@ DEBUG=true
 With SSO disabled (no SSO env vars), create a local admin user via CLI:
 
 ```bash
-cd backend && python -m sentinel manage-user create \
+cd backend && uv run python -m sentinel manage-user create \
   --username admin \
   --email admin@localhost \
   --role admin

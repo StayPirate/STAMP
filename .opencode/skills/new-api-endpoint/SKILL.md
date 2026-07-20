@@ -108,7 +108,7 @@ authoritative definitions.
 6. For **mutations**: assert audit event creation with correct field
    values (see `docs/features/platform/testing-strategy.md`, Audit
    Trail Testing)
-7. Run `cd backend && pytest` and verify all tests pass
+7. Run `cd backend && uv run pytest` and verify all tests pass
 
 ### Step 7: Reviews
 

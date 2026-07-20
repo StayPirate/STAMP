@@ -24,17 +24,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v8
         with:
-          python-version-file: backend/.python-version
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          version: "0.11.29"
+          enable-cache: true
 
       - name: Install backend dependencies
-        run: pip install -e .
+        run: uv sync --locked --no-dev
 
       - name: Generate OpenAPI schema
-        run: python scripts/generate_openapi.py > openapi.json
+        run: uv run python scripts/generate_openapi.py > openapi.json
 
       - name: Build Swagger UI static site
         run: |

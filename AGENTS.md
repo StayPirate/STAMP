@@ -75,10 +75,11 @@ sentinel/
 
 ## Commands
 
-- **Backend tests**: `cd backend && pytest`
-- **Backend lint**: `cd backend && ruff check . && ruff format --check .`
-- **DB migrations**: `cd backend && alembic upgrade head`
-- **New migration**: `cd backend && alembic revision --autogenerate -m "description"`
+- **Install/sync dependencies**: `cd backend && uv sync` (installs Python 3.13 and creates `.venv` automatically if needed)
+- **Backend tests**: `cd backend && uv run pytest`
+- **Backend lint**: `cd backend && uv run ruff check . && uv run ruff format --check .`
+- **DB migrations**: `cd backend && uv run alembic upgrade head`
+- **New migration**: `cd backend && uv run alembic revision --autogenerate -m "description"`
 - **Local dev stack**: `./dev-env.sh up` (PostgreSQL + Redis, auto-detects Podman or Docker)
 
 ## Local Environment
@@ -229,7 +230,7 @@ Before considering any implementation task complete:
    - Apply markers: `@pytest.mark.unit`, `@pytest.mark.integration`, or
      `@pytest.mark.e2e` per `docs/features/platform/testing-strategy.md`
 2. Run the test suite and verify all tests pass
-   - Backend: `cd backend && pytest`
+   - Backend: `cd backend && uv run pytest`
 3. If tests fail, fix the code or tests until they pass
 4. After all tests pass, evaluate whether a test quality review is needed:
    - New feature or new module: invoke `@test-reviewer`

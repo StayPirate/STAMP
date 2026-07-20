@@ -32,14 +32,12 @@ jobs:
             echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL does not match .python-version=$EXPECTED"
             exit 1
           fi
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v8
         with:
-          python-version-file: backend/.python-version
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
-      - run: pip install ruff==0.15.22
-      - run: ruff check .
-      - run: ruff format --check .
+          version: "0.11.29"
+          enable-cache: true
+      - run: uvx ruff@0.15.22 check .
+      - run: uvx ruff@0.15.22 format --check .
 
   backend-test:
     name: Backend Tests
@@ -78,17 +76,16 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret-key-not-for-production-min-32-chars
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v8
         with:
-          python-version-file: backend/.python-version
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
-      - run: pip install -e ".[dev]"
-      - run: pytest -v --cov=app --cov-report=term-missing --cov-fail-under=85
+          version: "0.11.29"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest -v --cov=app --cov-report=term-missing --cov-fail-under=85
       - name: Check Alembic migration drift
         run: |
-          alembic upgrade head
-          alembic check
+          uv run alembic upgrade head
+          uv run alembic check
 
   backend-security:
     name: Backend Security Scan
@@ -98,13 +95,11 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v8
         with:
-          python-version-file: backend/.python-version
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
-      - run: pip install bandit==1.9.4 pip-audit==2.10.1
+          version: "0.11.29"
+          enable-cache: true
       - name: Run bandit (static analysis)
-        run: bandit -r app/
+        run: uvx bandit@1.9.4 -r app/
       - name: Run pip-audit (dependency vulnerabilities)
-        run: pip install -e . && pip-audit
+        run: uvx pip-audit@2.10.1 --requirement <(uv export --no-hashes --no-dev)

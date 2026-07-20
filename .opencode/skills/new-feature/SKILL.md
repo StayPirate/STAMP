@@ -68,7 +68,7 @@ Follow these steps in order when adding a new feature to Sentinel.
 3. Create service layer in `backend/app/services/`
 4. Create API endpoints in `backend/app/api/v1/`
 5. If needed, create Celery tasks in `backend/app/tasks/`
-6. Generate Alembic migration: `cd backend && alembic revision --autogenerate -m "description"`
+6. Generate Alembic migration: `cd backend && uv run alembic revision --autogenerate -m "description"`
 
 ### Step 4: Write tests
 
@@ -80,7 +80,7 @@ Follow these steps in order when adding a new feature to Sentinel.
 3. Use the shared fixtures: `db_session` for integration, `client` for e2e
 4. For every mutation covered by an audit trail, assert correct event creation
    (see testing-strategy.md, Audit Trail Testing)
-5. Run all tests and verify they pass: `cd backend && pytest`
+5. Run all tests and verify they pass: `cd backend && uv run pytest`
 
 ### Step 5: Review
 

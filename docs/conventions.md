@@ -506,7 +506,7 @@ the Python runtime version used across all environments:
 | Consumer | How it reads the source of truth |
 |---|---|
 | Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
-| CI (`actions/setup-python`) | `python-version-file: backend/.python-version` |
+| CI (`astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively |
 | Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
 | ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
 

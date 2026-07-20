@@ -7,7 +7,7 @@ mode: subagent
 permission:
   edit: deny
   bash:
-    "cd backend && pytest*": allow
+    "cd backend && uv run pytest*": allow
     "*": deny
 ---
 
