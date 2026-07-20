@@ -55,6 +55,9 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/conftest.py" = ["E402"]
+
 [tool.bandit]
 exclude_dirs = ["tests"]
 skips = ["B101"]  # skip assert warnings (used in tests/app code)
@@ -75,7 +78,6 @@ source = ["app"]
 omit = [
     "*/tests/*",
     "*/alembic/*",
-    "app/config.py",
     "app/database.py",
 ]
 

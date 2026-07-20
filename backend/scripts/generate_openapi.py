@@ -12,9 +12,16 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import sys
 
-from app.main import app
+# Provide required settings for schema generation (no runtime needed).
+# This must precede the app import which triggers Settings() instantiation.
+os.environ.setdefault(
+    "JWT_SECRET_KEY", "openapi-schema-generation-only-not-for-runtime-use"
+)
+
+from app.main import app  # noqa: E402
 
 
 def main() -> None:

@@ -181,6 +181,43 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
 - **CLI**: timestamps in CLI output are displayed in UTC with an
   explicit "UTC" suffix (e.g., `2025-03-15 10:30:00 UTC`)
 
+### Configuration Management
+
+Sentinel uses four configuration artifacts with distinct roles:
+
+| Artifact | Role | Authority |
+|----------|------|-----------|
+| Feature spec (`Defined in` column) | Defines semantics, name, type, default, bounds | Source of truth — wins in case of conflict |
+| `docs/configuration.md` | Aggregated operational index for operators | Mirrors feature specs; all artifacts MUST agree |
+| `backend/app/config.py` | Implementation (Pydantic `Settings` class) | Field names are the `lower_snake_case` form of the env var name defined in the feature spec |
+| `backend/.env.example` | Developer quickstart template | Subset of `config.py` fields — see inclusion criteria below |
+
+**Invariant**: every field in `config.py` MUST correspond to an entry in
+`docs/configuration.md`. A field that exists in code but not in the
+registry is undocumented; a registry entry without a corresponding field
+is either not-yet-implemented (acceptable during incremental development),
+consumed by a specialized module outside the Settings class (e.g., Celery
+app factory, subprocess environment), or a drift bug.
+
+**`.env.example` inclusion criteria**: a variable appears in
+`.env.example` if and only if a developer MUST or WILL LIKELY customize
+it for local development. Variables excluded:
+
+- Infrastructure URLs with stable defaults (e.g., `IBS_API_URL`,
+  `SMELT_API_URL`) — usable only on SUSE internal network
+- Fixed operational constants (e.g., `CELERY_TIMEZONE`) — must not be
+  changed
+- Optional API keys for external services (e.g., `NVD_API_KEY`) — empty
+  default is functional for development
+
+**Feature development workflow** (configuration aspect):
+
+1. Define the variable in the owning feature spec (authoritative
+   semantics)
+2. Add an entry to `docs/configuration.md` (operator reference)
+3. Implement the field in `config.py` when the feature is implemented
+4. Add to `.env.example` only if it meets the inclusion criteria
+
 ## Python (Backend)
 
 ### Style

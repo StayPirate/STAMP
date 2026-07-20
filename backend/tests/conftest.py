@@ -18,6 +18,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+# Provide required settings for test environment (must precede app imports)
+os.environ.setdefault(
+    "JWT_SECRET_KEY", "test-secret-key-not-for-production-min-32-chars"
+)
+
 from app.database import Base, get_db
 from app.main import app
 

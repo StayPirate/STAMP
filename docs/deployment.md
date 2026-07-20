@@ -110,11 +110,11 @@ cd backend && celery -A app.celery_app beat --loglevel=info
 Create `backend/.env` for local development:
 
 ```bash
-# Required
-DATABASE_URL=postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel
+# Required (app refuses to start without this)
 JWT_SECRET_KEY=local-development-secret-minimum-32-characters
 
-# Redis (defaults work with dev-env.sh)
+# Connection settings (defaults work with dev-env.sh)
+DATABASE_URL=postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/1
 

@@ -14,7 +14,6 @@ start if any is missing.
 | Env Var | Type | Description | Defined in |
 |---------|------|-------------|------------|
 | `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/identity/authentication.md` |
-| `DATABASE_URL` | string | PostgreSQL async connection string (e.g. `postgresql+asyncpg://user:pass@host:5432/db`) | `docs/architecture.md` |
 
 ## Required Connection Settings
 
@@ -23,6 +22,7 @@ explicitly in staging/production.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
+| `DATABASE_URL` | string | `postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel` | PostgreSQL async connection string | `docs/architecture.md` |
 | `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | `docs/architecture.md` |
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
 
@@ -143,8 +143,8 @@ At startup, the application logs an INFO message indicating SSO status:
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `IBS_API_URL` | string | `https://api.suse.de` | IBS API base URL | `docs/features/integrations/ibs-integration.md` |
-| `IBS_USERNAME` | string | — | IBS HTTP Basic Auth username | `docs/features/integrations/ibs-integration.md` |
-| `IBS_PASSWORD` | string | — | IBS HTTP Basic Auth password | `docs/features/integrations/ibs-integration.md` |
+| `IBS_USERNAME` | string | `""` | IBS HTTP Basic Auth username. Empty default allows app startup without IBS credentials; IBS-dependent fetchers will fail at runtime | `docs/features/integrations/ibs-integration.md` |
+| `IBS_PASSWORD` | string | `""` | IBS HTTP Basic Auth password. Same rationale as `IBS_USERNAME` | `docs/features/integrations/ibs-integration.md` |
 | `IBS_DOWNLOAD_BASE_URL` | string | `https://download.suse.de/ibs` | HTTP download base for repository data | `docs/features/integrations/ibs-integration.md` |
 
 ## IBS RabbitMQ Consumer
