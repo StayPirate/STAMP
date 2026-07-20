@@ -168,7 +168,7 @@ cd backend && python -m sentinel manage-user create \
 2. **Redis**: ensure Redis is running and accessible
 3. **Run migrations** (one-shot, before starting API):
    ```bash
-   docker run --rm --env-file .env sentinel-backend:latest \
+    docker run --rm --env-file .env sentinel:latest \
      alembic upgrade head
    ```
 4. **Start all runtime processes** defined in `docs/architecture.md`
