@@ -78,6 +78,13 @@ undocumented logging setup.
    - `docs/deployment.md`
    - `docs/api-spec.md`
    - `docs/features/platform/README.md`
+   - `docs/features/platform/fetcher-infrastructure.md` (one-line
+     back-reference in the `run()` contract, pointing to the
+     `fetcher_run_id` correlation binding defined in `logging.md` —
+     see Step 9a)
+   - `docs/features/integrations/ibs-rabbitmq-integration.md` (add an
+     open point about a per-message correlation ID for the consumer —
+     see Step 9b)
    - `docs/drafts/ideas.md` (remove the now-addressed idea entry)
 3. Alignment of the small amount of existing backend code
    (`backend/app/config.py`, `backend/.env.example`) with the new
@@ -88,14 +95,25 @@ undocumented logging setup.
    Python modules, middleware, or logging setup code will be written
    as part of executing this plan. Full implementation (structlog
    wiring, middleware, Celery signals) is explicitly deferred to a
-   future implementation task, after this spec is approved.
+   future implementation task, after this spec is approved. **Revised
+   after review (see Step 9 below): this alignment step turned out to
+   be a verified no-op — `.env.example` is NOT modified, to preserve
+   the "subset of `config.py`" invariant in `docs/conventions.md`.**
 4. Registration of the new spec in the review tracking system
    (`docs/reviews/.tracking.json` and `docs/reviews/README.md`),
    enabled for review.
-5. Execution of the relevant spec reviewers against the new spec and
+5. Registration of `api-spec` (`docs/api-spec.md`) in the same review
+   tracking system, with a dedicated findings file
+   (`docs/reviews/api-spec.md`) capturing two gaps surfaced by
+   reviewing this plan: (a) no validation/sanitization rule for the
+   client-supplied `X-Request-ID` value before it is adopted, echoed
+   back, and logged; (b) ambiguous scope of the "end-to-end debugging"
+   wording in Request Tracing relative to asynchronous work. See Step
+   9c.
+6. Execution of the relevant spec reviewers against the new spec and
    the specs it touches, to catch problems introduced by this change
    (or pre-existing problems newly surfaced by it).
-6. Deletion of this draft file once all steps are complete.
+7. Deletion of this draft file once all steps are complete.
 
 ### 2.2 Out of scope (explicitly deferred)
 
@@ -181,24 +199,69 @@ any Sentinel-side code.
 
 ### D3 — Correlation IDs via `contextvars`
 
-Every log entry MUST be correlatable to the unit of work that produced
-it:
+Log entries produced in the following contexts MUST carry the
+corresponding correlation field (this is a scoped requirement, not a
+universal one — see the IBS RabbitMQ consumer note below):
 
 - **API requests**: `request_id` — adopts the incoming `X-Request-ID`
   header if present (per `docs/api-spec.md`, Request Tracing),
   otherwise generates a UUID. This is the existing promise in
   `api-spec.md` line ~305, currently unimplemented; this plan gives it
   a concrete mechanism (ASGI middleware + `contextvars`, described in
-  the new spec).
+  the new spec). The same middleware also satisfies the existing
+  `api-spec.md` response-header contract (Request Tracing: "every API
+  response includes an `X-Request-ID` header") — it is not a second,
+  independent mechanism; both the response header and the log field
+  are set from the same adopted-or-generated value. Validation of the
+  client-supplied value (charset/length bounds, handling of malformed
+  or duplicate headers) is a gap in `api-spec.md` itself, not in this
+  plan — tracked separately (see Section 2.1 item 5 / Step 9c).
 - **Celery tasks**: `celery_task_id` — bound via Celery signals
   (`task_prerun`/`task_postrun`).
-- **Fetcher runs**: `fetcher_run_id` — bound by `BaseFetcher.execute()`
-  wrapper (see `docs/features/platform/fetcher-infrastructure.md`),
-  linking log lines to the corresponding `FetcherRun` row without
-  duplicating fetcher metrics into the log stream.
+- **Fetcher runs**: `fetcher_run_id` — bound by `BaseFetcher.run()`
+  (the non-overridable wrapper around `execute()` — see
+  `docs/features/platform/fetcher-infrastructure.md`), after the
+  `FetcherRun` record is acquired, linking log lines to the
+  corresponding `FetcherRun` row without duplicating fetcher metrics
+  into the log stream. Sub-operations (`fetch_single()`, `catch_up()`)
+  do not create a `FetcherRun` and therefore carry no `fetcher_run_id`
+  — they are correlated via `celery_task_id` only. Log lines emitted
+  by `run()` before the `FetcherRun` is acquired (e.g. the
+  disabled-fetcher skip message) likewise carry no `fetcher_run_id`.
 - All correlation IDs use Python's `contextvars` module (not
   thread-locals), because the API layer is async (FastAPI) and
   thread-locals do not propagate correctly across `await` boundaries.
+
+**Scope boundary (per-execution-unit, no cross-enqueue propagation)**:
+each correlation ID is valid for the lifetime of its own unit of
+execution (one HTTP request, one Celery task, one fetcher `run()`
+call). Correlation IDs do **not** automatically propagate across an
+`apply_async()` enqueue boundary — a Celery task enqueued by an API
+request or by a fetcher starts a fresh correlation scope with its own
+`celery_task_id`; it does not inherit the parent's `request_id` or
+`fetcher_run_id`. This is a deliberate simplicity choice for this
+phase (see Section 7, Risks, for the rationale) — not an oversight.
+The "end-to-end debugging" wording in `api-spec.md` (Request Tracing)
+describes the synchronous request-processing lifecycle, not
+asynchronous work it may enqueue; this scoping should be clarified in
+that spec (tracked in the `api-spec` review findings, Step 9c).
+
+**Reset requirement**: each correlation ID MUST be reset (via the
+token returned by `contextvars.ContextVar.set()`) at the end of its
+unit of work. This prevents a stale value from leaking into
+subsequent log lines in reused processes — Celery prefork workers, in
+particular, execute multiple tasks in the same OS process over their
+lifetime.
+
+**Known gap, deliberately deferred**: the IBS RabbitMQ consumer (a
+fifth first-class runtime role — see `docs/architecture.md`,
+Container Images) performs per-message processing and inline
+mutations with none of the three correlation IDs above applicable to
+it. This is a real gap, but it is scoped to the consumer's own
+specification, not to this plan — see
+`docs/features/integrations/ibs-rabbitmq-integration.md`, which this
+plan adds an open point to (Step 9b), to be resolved when that spec
+is next revised.
 
 **Rationale**: without this, "check the logs" in
 `docs/deployment.md` (Troubleshooting) is not actionable at scale —
@@ -232,8 +295,8 @@ was considered and explicitly rejected because:
    same-named-but-different concepts ("debug mode" vs. "debug log
    level") is a textbook source of confusion.
 3. The only benefit (convenience in local dev) is fully achievable
-   without coupling, by shipping `backend/.env.example` with both
-   `DEBUG=true` and `LOG_LEVEL=DEBUG` pre-set.
+   without coupling — a developer who wants verbose logs locally sets
+   `LOG_LEVEL=DEBUG` explicitly, independently of `DEBUG`.
 
 ### D5 — Process role identification is delegated to the platform (no `LOG_PROCESS_ROLE`)
 
@@ -265,7 +328,9 @@ correctness benefit.
 correlation is already solved by other fields, not by a role label:
 - API log lines already carry `request_id`.
 - Celery task log lines already carry `celery_task_id`.
-- Fetcher log lines already carry `fetcher_run_id`.
+- Fetcher log lines emitted during `execute()` already carry
+  `fetcher_run_id`; sub-operations (`fetch_single`, `catch_up`) are
+  correlated via `celery_task_id` instead (see D3).
 - The one case with no other distinguishing field is telling
   `celery-worker` apart from `git-worker` — but these two roles always
   run in **separate containers** (per `docs/deployment.md`, Process
@@ -293,6 +358,21 @@ implementation task is expected to additionally consider a redaction
 processor, but that is an implementation detail deferred out of this
 plan.
 
+**Third-party logger gap (surfaced by review)**: D6 as stated governs
+only the application's own log statements. It does not, by itself,
+prevent third-party loggers captured by the stdlib bridge (D1) —
+notably `sqlalchemy.engine` (SQL statements with bound parameters at
+DEBUG/INFO) and `httpx`/`httpcore` (full request URLs, which may embed
+credentials, at DEBUG) — from emitting sensitive data once the root
+`LOG_LEVEL` is raised to `DEBUG` (a common scenario in local
+development and when an operator raises verbosity to debug a
+production incident). This is closed by a concrete
+default-levels policy for third-party loggers, independent of the
+root `LOG_LEVEL` — see Step 1 (§3/§6, Third-Party Integration) below.
+The future redaction processor MUST operate at the root/handler level
+of the pipeline (not only on application-issued log records) so it
+also covers records captured from third-party loggers.
+
 ---
 
 ## 4. Alternatives Considered and Rejected
@@ -314,9 +394,13 @@ explicitly not chosen.
 
 Each step below states exactly what file is touched, what changes,
 and what the acceptance criterion is. Steps 1–8 are documentation-only
-(spec-first, no code). Steps 9 is limited configuration-surface
-alignment for the small amount of existing code. Steps 10–11 are
-review and cleanup.
+(spec-first, no code). Step 9 verifies the existing backend
+configuration surface is left unchanged (no-op). Steps 9a-9c are
+small, targeted edits surfaced by the review round: a back-reference
+in `fetcher-infrastructure.md` (9a), an open point in
+`ibs-rabbitmq-integration.md` (9b), and registering `api-spec` for
+review tracking with its own findings (9c). Steps 10–11 are review and
+cleanup for the `logging` spec itself.
 
 ### Step 1 — Create `docs/features/platform/logging.md`
 
@@ -342,7 +426,15 @@ given the precedents of other infra specs like `networking.md`):
    start/end, scheduled task execution. WARNING: recoverable
    anomalies... ERROR: failures requiring operator attention...").
    `LOG_LEVEL` env var, default `INFO`. Explicitly restate D4 (no
-   coupling with `DEBUG`).
+   coupling with `DEBUG`). **Startup validation**: an invalid
+   `LOG_LEVEL` or `LOG_FORMAT` value (not one of the enumerated
+   options) MUST cause the process to refuse to start (fail-fast),
+   consistent with the project's existing fail-fast precedents
+   (invalid `JWT_SECRET_KEY` length, non-UTC Celery timezone). The
+   error MUST be emitted as a plain-text message on stderr — not
+   through the structured renderer, which may itself be the source of
+   the misconfiguration. Both variables are case-insensitive at parse
+   time (e.g., `debug`, `DEBUG`, `Debug` are equivalent).
 4. **Standard Log Record Schema** — table of fields every log record
    MUST include: `timestamp` (UTC, `Z` suffix — reusing the existing
    "UTC everywhere" convention from `docs/conventions.md`), `level`,
@@ -350,42 +442,81 @@ given the precedents of other infra specs like `networking.md`):
    `APP_NAME` — distinguishes Sentinel's own logs from other
    applications once aggregated with unrelated services; this is
    different from "process role" and is retained), and the
-   correlation fields below when present. Note explicitly that
-   `exception` (traceback) is included only for ERROR/CRITICAL records
-   raised from an exception context. Add an explicit note per D5: the
+   correlation fields below when present. Correlation fields are
+   **omitted entirely** when not set for the current unit of work —
+   never serialized as `null`. Note explicitly that `exception`
+   (traceback) is included only for ERROR/CRITICAL records raised
+   from an exception context. Add an explicit note per D5: the
    record does **not** include a process-role field — role
    identification is the log collector's responsibility via
    platform-provided container/pod metadata, not an application-level
    concern.
 5. **Correlation IDs** — full description of D3: `request_id` (adopt
-   `X-Request-ID` or generate), `celery_task_id`, `fetcher_run_id`,
-   propagation mechanism (`contextvars`, async-safe), and an explicit
-   cross-reference update target: `docs/api-spec.md` Request Tracing
-   section now points here for the "how" behind the existing "what"
-   promise.
+   `X-Request-ID` or generate), `celery_task_id`, `fetcher_run_id`
+   (bound in `run()`, not `execute()` — see D3), propagation mechanism
+   (`contextvars`, async-safe), the per-execution-unit scope boundary
+   (no automatic propagation across an `apply_async()` enqueue — see
+   D3), the mandatory reset-on-completion rule (see D3), and the
+   explicit statement that the same middleware realizes both the
+   `X-Request-ID` response header contract and the log-propagation
+   contract already promised in `docs/api-spec.md` (Request Tracing) —
+   this plan implements that existing promise, it does not add a new
+   one. Note the IBS RabbitMQ consumer correlation gap as a known,
+   deliberately out-of-scope item (see D3) tracked in
+   `ibs-rabbitmq-integration.md` (Step 9b).
 6. **Integration with Third-Party Loggers** — uvicorn, Celery
    (`worker_hijack_root_logger=False` requirement so Celery's own
    logging setup doesn't fight structlog's), SQLAlchemy engine
-   logging, httpx. State that Alembic keeps its own independent
+   logging, httpx. **Default levels for third-party loggers**, set
+   independently of the root `LOG_LEVEL` so that raising the
+   application's own log verbosity never silently enables sensitive
+   third-party output:
+
+   | Logger | Default level | Rationale |
+   |---|---|---|
+   | `sqlalchemy.engine` | `WARNING` | Prevents emission of SQL statements with bound parameters (may include credentials/PII) at INFO/DEBUG |
+   | `httpx` / `httpcore` | `WARNING` | Prevents emission of full request URLs (may embed tokens) at DEBUG |
+   | `celery` | `INFO` | No sensitive-data concern; follows root level |
+   | `uvicorn.access` | `INFO` | Standard access logging |
+
+   These defaults are overridable per-logger in the future
+   implementation task (not prescribed here). **Scope of this
+   pipeline**: the structlog pipeline configuration applies to the
+   long-running runtime processes (API server, Celery worker, Git
+   worker, Beat, IBS consumer). CLI (Click) processes do **not**
+   invoke it — they rely on the Python stdlib logging default (stderr),
+   which keeps stdout reserved for the CLI Output Contract
+   (`docs/conventions.md`) without requiring any CLI-specific logging
+   configuration. State that Alembic keeps its own independent
    logging configuration (`alembic.ini`, `fileConfig`) because it is a
    one-shot migration tool outside the application runtime, not part
-   of this spec's scope.
-7. **Secrets and PII Discipline** — restate D6, cross-reference
-   Guardrail #23 and `docs/conventions.md` Secret Field Typing.
+   of this spec's scope; acknowledge that its plain-text output is a
+   deliberate exception to the structured-format principle (D1/D2) —
+   operators locate a failed-migration error via the migration job's
+   exit code and its plain-text stdout/stderr, not via the structured
+   pipeline.
+7. **Secrets and PII Discipline** — the single authoritative statement
+   of D6, including the third-party-logger gap and the root/handler
+   placement requirement for the future redaction processor.
+   Cross-reference Guardrail #23 and `docs/conventions.md` Secret
+   Field Typing. `docs/conventions.md`'s own `### Logging` subsection
+   (Step 3) contains only a one-line pointer back to this section —
+   this section is the only place the policy itself is defined.
 8. **Configuration** — table of new env vars (see Step 2/9 for exact
    values) with types, defaults, and description, matching the format
    used in `docs/configuration.md`.
-9. **Consumption Model** — how operators read logs in each deployment
-   mode: `docker compose logs <service>` / `kubectl logs <pod>` /
-   journald query, filtering by `request_id`/`fetcher_run_id`.
-   Filtering by process role/container is done via platform-level
+9. **Consumption Model** — application-contract-level guidance only:
+   logs are filtered by `request_id`/`celery_task_id`/`fetcher_run_id`;
+   process-role/container filtering is done via platform-provided
    metadata (Kubernetes pod/container labels, Docker Compose service
    name) at the collector/orchestrator level, per D5 — not via any
    field emitted by the application. Explicit statement: rotation,
    long-term retention, and backup of the log stream are the
-   platform's responsibility, not the application's — cross-reference
-   `docs/deployment.md` for the per-orchestrator guidance added in
-   Step 5.
+   platform's responsibility, not the application's. Concrete
+   per-orchestrator commands, logging-driver configuration, and
+   collector/shipper setup are **not** duplicated here — cross-
+   reference `docs/deployment.md` (Log Aggregation, added in Step 5)
+   as the single owner of that operational detail.
 10. **Testing** — how logging configuration and correlation-ID
     propagation are expected to be tested once implemented (e.g.,
     `structlog.testing.capture_logs`, `caplog` for stdlib-level
@@ -397,8 +528,10 @@ given the precedents of other infra specs like `networking.md`):
     `docs/conventions.md` (Timestamps & Timezones, Secret Field
     Typing), `docs/deployment.md` (Log Aggregation),
     `docs/features/platform/audit-trail-infrastructure.md` (contrast),
-    `docs/features/platform/fetcher-infrastructure.md` (fetcher_run_id
-    binding).
+    `docs/features/platform/fetcher-infrastructure.md` (`run()` binds
+    `fetcher_run_id` — bidirectional reference, see Step 9a),
+    `docs/features/integrations/ibs-rabbitmq-integration.md`
+    (consumer correlation gap, see Step 9b).
 
 **New configuration variables to define in this spec** (authoritative
 definitions — semantics, type, default, bounds — per the "Configuration
@@ -448,12 +581,17 @@ defaults.
   near other cross-cutting backend runtime conventions), titled
   `### Logging`.
 - Content: how to obtain a logger/structlog binder in application code
-  (brief pattern example), the rule that log statements must never
-  include secret values (cross-reference `SecretStr` / Secret Field
-  Typing section already present in this same file, and Guardrail
-  #23), and a one-line pointer to
+  (brief pattern example), and a **one-line rule + pointer** — "Log
+  statements MUST NOT include secret or PII values — see
+  `docs/features/platform/logging.md` (Secrets and PII Discipline) and
+  Secret Field Typing above" — plus a pointer to
   `docs/features/platform/logging.md` as the authoritative spec for
-  format/levels/correlation.
+  format/levels/correlation. This subsection does **not** restate the
+  secrets/PII policy itself (its rationale, the third-party-logger
+  gap, the redaction-processor placement) — `logging.md` §7 is the
+  single authoritative statement of that policy (see Step 1 item 7);
+  this avoids the same rule being independently stated in two places,
+  which would drift over time.
 - **Important boundary**: this subsection must stay short — a pointer
   and a couple of hard rules, not a duplicate of `logging.md`. Applying
   the "Information placement" self-check (Guardrail #21): the
@@ -465,8 +603,9 @@ defaults.
   `fetcher-infrastructure.md`/others own the broader behavior.
 
 **Acceptance criterion**: no duplication of level/format/correlation
-policy between `conventions.md` and `logging.md`; `conventions.md`
-only states the developer-facing coding pattern and the secrets rule.
+policy, nor of the secrets/PII policy itself, between `conventions.md`
+and `logging.md`; `conventions.md` only states the developer-facing
+coding pattern and a one-line secrets rule pointing to `logging.md`.
 
 ### Step 4 — Update `docs/architecture.md`
 
@@ -532,12 +671,26 @@ D2.
   debugging.", add a cross-reference sentence: "See
   `docs/features/platform/logging.md` for the correlation ID mechanism
   and log record schema." Do not otherwise alter this section's
-  existing content — the promise itself is unchanged, only its
-  supporting spec reference is added.
+  existing content.
+- **Framing correction (post-review)**: the middleware defined in
+  `logging.md` *realizes* both existing promises in this section — the
+  `X-Request-ID` response header (adopt-or-generate) and the
+  log-propagation contract — with a single value. This is not "no new
+  headers, no behavior change" (as an earlier version of this plan
+  stated); it is the first concrete implementation of a header this
+  section already promises but that has never been implemented. No
+  *semantic* change to the promise itself (still adopt-or-generate,
+  still a header on every response) — only the addition of the
+  concrete mechanism and its cross-reference.
+- This step does **not** add the client-value validation rule
+  (charset/length bounds, malformed/duplicate header handling) — that
+  is a pre-existing gap in this section's own contract, tracked
+  separately as an `api-spec` review finding (see Step 9c), not
+  introduced or fixed by this plan.
 
 **Acceptance criterion**: the existing promise in `api-spec.md` now has
 a concrete implementing spec to point to; no semantic change to the API
-contract itself (no new headers, no behavior change).
+contract itself.
 
 ### Step 7 — Update `docs/features/platform/README.md`
 
@@ -575,35 +728,35 @@ link, consistent with the file's existing convention (verify against
 lines 11-12 of the current file before editing, do not invent a new
 convention).
 
-### Step 9 — Align existing backend configuration surface
+### Step 9 — Align existing backend configuration surface (revised: verified no-op)
 
 **Scope reminder**: no new logging implementation code is written
-here. This step only touches the two files that already exist and
-already define environment variable surface/defaults, so they do not
-silently drift from the newly authoritative spec.
+here.
 
-- `backend/.env.example`: add two lines — `LOG_LEVEL=DEBUG`,
-  `LOG_FORMAT=console`. No process-role variable is added (per the
-  revised D5 — process/container identification is delegated to
-  platform metadata, not to an application env var). This matches the
-  `.env.example` inclusion criteria in `docs/conventions.md`
-  (Configuration Management): these are variables a developer will
-  likely want to see locally.
-- `backend/app/config.py`: **evaluate, do not blindly edit.** The
-  `Settings` class currently has `app_name` and `debug` fields but no
+- **`backend/.env.example`: NOT modified.** An earlier version of this
+  plan proposed adding `LOG_LEVEL=DEBUG`/`LOG_FORMAT=console` here.
+  This was reconsidered after review: `docs/conventions.md`
+  (Configuration Management) defines `.env.example` as a "subset of
+  `config.py` fields." Adding these two lines without corresponding
+  `config.py` fields would break that subset relationship for the
+  first time in the project's history, and — since neither the
+  `Settings` fields nor the structlog wiring exist yet — the two
+  lines would be inert (pydantic-settings silently ignores unmapped
+  keys), making any claim of a "working out-of-the-box configuration"
+  false. The two variables are deferred to the future implementation
+  task, to be added to `.env.example` together with the corresponding
+  `config.py` fields and the structlog setup code that consumes them.
+- `backend/app/config.py`: **evaluate, do not edit.** The `Settings`
+  class currently has `app_name` and `debug` fields but no
   `log_level`/`log_format` fields. Per the "Configuration Management"
-  convention, `config.py` fields are only added "when the feature is
+  convention, `config.py` fields are added "when the feature is
   implemented" — and the actual logging setup code (structlog
   configuration, using these settings) is explicitly out of scope for
   this plan (Section 2.2). Therefore: **do NOT add these fields to the
-  `Settings` class in this pass.** Adding fields with no consuming
-  code would violate the same convention's invariant in the opposite
-  direction (a field/setting that exists in code but is not wired to
-  any actual behavior). Document this decision inline as a comment is
-  NOT necessary — simply leave `config.py` unchanged and note in the
-  completion summary that this was a deliberate no-op, to be picked up
-  by the future implementation task together with the `structlog`
-  dependency and logging setup module.
+  `Settings` class in this pass.** Leave `config.py` unchanged; this
+  is a deliberate no-op, to be picked up by the future implementation
+  task together with the `structlog` dependency and logging setup
+  module.
 - Double check `backend/app/main.py`, `backend/app/database.py`,
   `backend/app/models/__init__.py`, `backend/app/services/__init__.py`,
   `backend/app/tasks/__init__.py`, `backend/app/api/v1/__init__.py`
@@ -615,10 +768,87 @@ silently drift from the newly authoritative spec.
   (e.g., a stray `basicConfig()` call would need to be flagged, not
   silently left).
 
-**Acceptance criterion**: `.env.example` gives a new developer a
-working local logging configuration out of the box, consistent with
-D4; `config.py` is verified to have no contradicting logging setup, and
-is NOT prematurely extended with unwired settings fields.
+**Acceptance criterion**: `config.py` is verified to have no
+contradicting logging setup, and is NOT prematurely extended with
+unwired settings fields; `.env.example` is verified unchanged, keeping
+it a valid subset of `config.py`. No false "works out of the box"
+claim is made — the two variables remain undocumented in `.env.example`
+until the implementation task wires them end-to-end.
+
+### Step 9a — Add a one-line back-reference in `docs/features/platform/fetcher-infrastructure.md`
+
+- In the `run()` method contract (the "Run lifecycle management"
+  section, where `FetcherRun` record acquisition is described), add
+  one sentence: "`run()` binds `fetcher_run_id` into the logging
+  context for the duration of `execute()` — see
+  `docs/features/platform/logging.md` (Correlation IDs)."
+- Do not otherwise alter this spec. This is the minimal edit that
+  makes the `logging.md` → `fetcher-infrastructure.md` reference
+  bidirectional, so an implementer reading `run()`'s own contract is
+  aware of this responsibility without needing to discover it only
+  from `logging.md`.
+
+**Acceptance criterion**: the sentence exists in the correct location
+(inside the `run()` contract, near `FetcherRun` acquisition) and
+points to the correct section of `logging.md`.
+
+### Step 9b — Add an open point in `docs/features/integrations/ibs-rabbitmq-integration.md`
+
+- Add an open point (in the spec's existing open-points section, or a
+  new one if none exists): "Define a per-message correlation ID for
+  the consumer (e.g., `ibs_event_id`), bound at the start of
+  processing each AMQP message and reset at the end, so that log
+  lines produced while handling a given `package.commit` /
+  `request.create` / `request.state_change` event are correlatable to
+  that specific event. See `docs/features/platform/logging.md`
+  (Correlation IDs) for the general per-execution-unit correlation
+  model this would follow." This is deliberately left as an open
+  point rather than resolved now — it belongs to this spec's own next
+  revision, not to the logging infrastructure plan.
+
+**Acceptance criterion**: the open point is recorded in the spec, with
+a cross-reference to the correlation model in `logging.md`; no
+correlation mechanism is actually designed or implemented by this
+step.
+
+### Step 9c — Register `api-spec` for review tracking and record findings surfaced by this plan
+
+- `docs/reviews/.tracking.json`: add an entry under `"specs"` for
+  `api-spec` (abbreviation to be verified free of collision against
+  all existing `abbr` values at execution time — candidate: `APIS`).
+- `docs/reviews/README.md`: add the corresponding row, following the
+  same two-row format used for other tracked specs.
+- Create `docs/reviews/api-spec.md` recording two findings surfaced
+  while reviewing this logging plan (not introduced by it — these are
+  pre-existing gaps in `api-spec.md`'s Request Tracing section):
+  1. **No validation/sanitization rule for the client-supplied
+     `X-Request-ID` value.** The section promises the response header
+     "contain[s] a UUID" and says the server "adopts" a client-sent
+     value, but specifies no charset/length bounds, and no handling
+     for malformed, empty, or duplicate headers. Without a bound, a
+     client can force an arbitrary value into the response header and
+     into every log line for that request (a log-injection vector in
+     `LOG_FORMAT=console` rendering, and a contract violation of
+     "contains a UUID"). Recommended resolution direction: adopt the
+     client value only if it matches a bounded charset/length (e.g.,
+     ≤128 chars, `[A-Za-z0-9._-]`); otherwise generate a UUID; on
+     duplicate headers, use the first and ignore the rest.
+  2. **Ambiguous scope of "end-to-end debugging."** The wording
+     ("propagated to all log entries produced during request
+     processing, enabling end-to-end debugging") does not state
+     whether "end-to-end" extends into asynchronous work the request
+     may enqueue (Celery tasks). `logging.md` (per this plan) scopes
+     correlation IDs to their own execution unit, with no automatic
+     propagation across an `apply_async()` boundary — recommend
+     clarifying this section's wording to match that scope explicitly
+     (synchronous request-processing lifecycle only), or revisiting
+     the scope decision if broader propagation is later deemed
+     necessary.
+
+**Acceptance criterion**: `api-spec` appears in the tracking system,
+enabled, with the two findings above recorded in
+`docs/reviews/api-spec.md` following the standard review-file format
+(`.opencode/commands/review-spec/review-file-format.md`).
 
 ### Step 10 — Register the new spec for review tracking
 
@@ -632,7 +862,8 @@ is NOT prematurely extended with unwired settings fields.
   ```
   (Abbreviation `LOG` verified free of collision against all existing
   `abbr` values in the file at draft-writing time — re-verify at
-  execution time in case new specs were added meanwhile.)
+  execution time in case new specs were added meanwhile, including
+  the `api-spec` entry added in Step 9c.)
 - `docs/reviews/README.md`: add a new row to the main table (enabled
   specs), in correct alphabetical position (between
   `local-authentication` and `networking`), following the two-row
@@ -707,7 +938,7 @@ the Step 10 placeholder.
 
 **Acceptance criterion**: the draft file no longer exists in the
 repository; all its content has been durably captured in the actual
-spec files touched by Steps 1-9, such that no information is lost by
+spec files touched by Steps 1-9c, such that no information is lost by
 deleting it.
 
 ---
@@ -723,7 +954,11 @@ deleting it.
 6. Update docs/api-spec.md
 7. Update docs/features/platform/README.md
 8. Update docs/drafts/ideas.md
-9. Align backend/.env.example (config.py: verified no-op, documented)
+9. Verify backend/.env.example and config.py — no-op, documented
+9a. Add back-reference in docs/features/platform/fetcher-infrastructure.md
+9b. Add open point in docs/features/integrations/ibs-rabbitmq-integration.md
+9c. Register "api-spec" in docs/reviews/.tracking.json + README.md,
+    create docs/reviews/api-spec.md with the two findings
 10. Register "logging" in docs/reviews/.tracking.json + README.md
 11. Run @spec-gap-analyzer, @spec-coherence-reviewer,
     @docs-placement-reviewer, @docs-reviewer → fix findings → update
@@ -733,12 +968,15 @@ deleting it.
 
 Steps 1-8 should be executed in this order because later steps
 cross-reference the new spec created in Step 1. Step 9 depends on
-Step 1 (needs the final env var names/defaults). Step 10 can run
-anytime after Step 1 (needs the spec to exist) but is placed late so
-the "enabled: true, cache: null" placeholder has a short lifetime
-before Step 11 fills in real data. Step 11 must be last before cleanup
-since it may require revising any of Steps 1-8. Step 12 is strictly
-last.
+Step 1 (needs the final env var names/defaults) but results in no
+file changes (verified no-op). Steps 9a-9c are independent of each
+other and of Step 9, but depend on Step 1 (they reference sections of
+`logging.md`); they can run in any order relative to each other. Step
+10 can run anytime after Step 1 (needs the spec to exist) but is
+placed late so the "enabled: true, cache: null" placeholder has a
+short lifetime before Step 11 fills in real data. Step 11 must be
+last before cleanup since it may require revising any of Steps 1-8 or
+9a-9c. Step 12 is strictly last.
 
 ---
 
@@ -767,30 +1005,46 @@ Being transparent about residual uncertainty rather than hiding it:
    a bare-metal deployment scenario exists that this plan is unaware
    of.
 4. **This plan does not propose sampling, rate-limiting, or
-   log-volume budgets.** For a system with multiple fetchers running
-   frequently, INFO-level logging could be voluminous. This is
-   explicitly left for the future implementation task to address
-   empirically (e.g., via per-logger level overrides), not decided
-   here, to avoid speculative design.
+   log-volume budgets** beyond the third-party-logger default levels
+   (Step 1 item 6). For a system with multiple fetchers running
+   frequently, INFO-level application logging could still be
+   voluminous. This is explicitly left for the future implementation
+   task to address empirically (e.g., via additional per-logger level
+   overrides), not decided here, to avoid speculative design.
+5. **Correlation ID propagation across the Celery enqueue boundary is
+   deliberately not implemented** (D3, "Scope boundary"). A task
+   enqueued by an API request or a fetcher does not inherit the
+   parent's `request_id`/`fetcher_run_id`. This was a conscious
+   simplicity choice for this phase, reviewed and confirmed rather
+   than accidental — but it does mean the "end-to-end debugging"
+   wording in `api-spec.md` needs its own clarification (tracked as
+   an `api-spec` review finding, Step 9c) to avoid over-promising.
+6. **The IBS RabbitMQ consumer has no correlation ID in this plan.**
+   This is a known, explicitly deferred gap (D3) — tracked as an open
+   point in `ibs-rabbitmq-integration.md` (Step 9b) rather than
+   resolved here, since the consumer's own spec is the correct owner
+   of that design decision.
 
 ---
 
 ## 8. Internal Consistency Check (self-review performed before handoff)
 
-- Section 2.1/2.2 scope matches the 12-step plan in Section 5 (no step
+- Section 2.1/2.2 scope matches the plan in Section 5 (no step
   outside declared scope; Step 9 explicitly does not add unwired
-  `config.py` fields, consistent with 2.2's "no new logging
-  implementation code" boundary).
+  `config.py` fields and does not modify `.env.example`, consistent
+  with 2.2's "no new logging implementation code" boundary).
 - Every design decision in Section 3 (D1-D6) is referenced by at least
-  one concrete step in Section 5 (D1→Step1/9-deferred, D2→Step1/4/5,
-  D3→Step1/6, D4→Step1/2/9, D5→Step1(schema)/Step5(deployment),
-  D6→Step1/3).
+  one concrete step in Section 5 (D1→Step1/9-deferred,
+  D2→Step1/4/5, D3→Step1/9a/9b/9c, D4→Step1/2/9,
+  D5→Step1(schema)/Step5(deployment), D6→Step1/3).
 - Section 4's rejected alternatives are consistent with Section 3's
   decisions (no contradiction — e.g., OTel rejection in Section 4
   matches the absence of tracing/metrics scope in Section 2.2).
 - Abbreviation `LOG` for the tracking system (Step 10) was verified
   against the actual current `.tracking.json` contents (48 existing
-  abbreviations checked, no collision) rather than assumed.
+  abbreviations checked, no collision) rather than assumed; the new
+  `api-spec` abbreviation (Step 9c) must be verified free of collision
+  at execution time, including against `LOG` itself.
 - Step 8's edit format was checked against the actual current content
   of `docs/drafts/ideas.md` (lines 11-12 use the strikethrough+arrow
   convention) rather than invented.
@@ -810,3 +1064,14 @@ Being transparent about residual uncertainty rather than hiding it:
 - No step in this plan requires implemented code, a database, or a
   migration — consistent with the project's current spec-only state,
   as required by the stakeholder.
+- **Review round (post-initial-draft)**: this plan was reviewed by
+  five subagents (design, coherence, gap-analysis, docs-placement,
+  docs-completeness) against the initial draft. Eleven substantive
+  findings (V1-V11) were validated and incorporated above; three minor
+  findings (W1-W3) were incorporated with lighter treatment; several
+  reported findings were deliberately rejected as non-problems or
+  over-documentation (see the session's review discussion for the
+  full rationale of each rejection). The two findings that were
+  genuine gaps in `api-spec.md` itself (not in this plan) were
+  factored out into a separate `api-spec` review track (Step 9c)
+  rather than absorbed into the logging spec.
