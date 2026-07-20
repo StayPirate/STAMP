@@ -68,19 +68,21 @@ immediately after the existing `### Timestamps & Timezones` subsection
 ```markdown
 ### Configuration Management
 
-Sentinel uses three configuration artifacts with distinct roles:
+Sentinel uses four configuration artifacts with distinct roles:
 
-| Artifact | Role | Naming authority |
-|----------|------|------------------|
-| `docs/configuration.md` | Authoritative registry of ALL env vars | Source of truth for name, type, default, bounds |
-| `backend/app/config.py` | Implementation (Pydantic `Settings` class) | Field names are the `lower_snake_case` form of `configuration.md` entries (1:1 mapping) |
+| Artifact | Role | Authority |
+|----------|------|-----------|
+| Feature spec (`Defined in` column) | Defines semantics, name, type, default, bounds | Source of truth — wins in case of conflict |
+| `docs/configuration.md` | Aggregated operational index for operators | Mirrors feature specs; all artifacts MUST agree |
+| `backend/app/config.py` | Implementation (Pydantic `Settings` class) | Field names are the `lower_snake_case` form of the env var name defined in the feature spec |
 | `backend/.env.example` | Developer quickstart template | Subset of `config.py` fields — see inclusion criteria below |
 
 **Invariant**: every field in `config.py` MUST correspond to an entry in
 `docs/configuration.md`. A field that exists in code but not in the
 registry is undocumented; a registry entry without a corresponding field
-is either not-yet-implemented (acceptable during incremental development)
-or a drift bug.
+is either not-yet-implemented (acceptable during incremental development),
+consumed by a specialized module outside the Settings class (e.g., Celery
+app factory, subprocess environment), or a drift bug.
 
 **`.env.example` inclusion criteria**: a variable appears in
 `.env.example` if and only if a developer MUST or WILL LIKELY customize
@@ -237,6 +239,16 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_ibs_settings(self) -> "Settings":
+        """Warn if IBS credentials are not configured."""
+        if not self.ibs_username or not self.ibs_password:
+            logger.warning(
+                "IBS credentials not configured (IBS_USERNAME / IBS_PASSWORD "
+                "empty). IBS-dependent fetchers will fail at runtime."
+            )
+        return self
+
 
 settings = Settings()
 ```
@@ -249,10 +261,13 @@ settings = Settings()
   matching spec)
 - `obs_username` → `ibs_username`
 - `obs_password` → `ibs_password`
-- Added `model_validator` for startup validation (>= 32 chars,
-  >= 1 hour) and warning when > 720 hours (per `configuration.md`)
-- Added `import logging` and module-level `logger` for the > 720
-  warning
+- Added `_validate_security_settings` validator for startup validation
+  (>= 32 chars, >= 1 hour) and warning when > 720 hours (per
+  `configuration.md`)
+- Added `_validate_ibs_settings` validator: logs WARNING at startup
+  when IBS credentials are empty (per `ibs-integration.md` business
+  rule #1)
+- Added `import logging` and module-level `logger` for the warnings
 
 **Not changed**:
 
@@ -318,18 +333,156 @@ variable is provided. Tests import `app.main` which imports
 `app.config`, triggering Settings instantiation. We need to ensure the
 test environment provides this value.
 
-**Modification**: Add an environment variable override at the top of
-`conftest.py`, before any app imports occur. Insert the following lines
-immediately after line 9 (`import os`) and before line 10
-(`from collections.abc import AsyncGenerator`):
+**Modification**: Insert the following lines between the third-party
+imports (after line 19, the closing `)` of the sqlalchemy import) and
+the app-local imports (before line 21, `from app.database import ...`):
 
 ```python
-# Provide required settings for test environment (before app import)
+
+# Provide required settings for test environment (must precede app imports)
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production-min-32-chars")
+
 ```
 
-This uses `setdefault` so CI or developer overrides still take
-precedence. The value is 47 characters (satisfies >= 32 validation).
+This placement is semantically clear: "before importing the app, set the
+required environment variable." It uses `setdefault` so CI or developer
+overrides still take precedence. The value is 47 characters (satisfies
+>= 32 validation).
+
+**Linting**: inserting an executable statement between import groups
+triggers ruff's **E402** rule ("module level import not at top of file")
+on the subsequent local imports (`from app.database ...`, `from
+app.main ...`). This is a known, legitimate pattern for test
+configuration. Add a targeted `per-file-ignores` in `pyproject.toml`
+(see Step 5a below) rather than suppressing the entire rule or adding
+inline `# noqa` comments.
+
+---
+
+### Step 5a: Add `per-file-ignores` for conftest.py
+
+**File**: `backend/pyproject.toml`
+
+**Rationale**: Step 5 introduces an executable statement before local
+imports in `conftest.py`. The project has `"E"` in ruff's select rules,
+which includes E402. Rather than excluding E402 globally (it is useful
+everywhere else) or cluttering import lines with `# noqa` comments, a
+targeted `per-file-ignores` is the idiomatic ruff solution.
+
+**Modification**: Add the following section after the existing
+`[tool.ruff.lint.isort]` block (after line 56):
+
+```toml
+
+[tool.ruff.lint.per-file-ignores]
+"tests/conftest.py" = ["E402"]
+```
+
+---
+
+### Step 5b: Add tests for Settings validation
+
+**File**: `backend/tests/test_config.py` (new file)
+
+**Rationale**: Step 3 introduces a `model_validator` with startup
+rejection logic (key too short, expiry too low) and a warning path
+(expiry > 720, empty IBS credentials). Per Guardrail 6, new code must
+have test coverage.
+
+```python
+"""Tests for Settings startup validation (backend/app/config.py)."""
+
+from __future__ import annotations
+
+import logging
+
+import pytest
+from pydantic import ValidationError
+
+from app.config import Settings
+
+
+@pytest.mark.unit
+class TestJwtSecretKeyValidation:
+    """JWT_SECRET_KEY startup validation."""
+
+    def test_missing_jwt_secret_key_raises(self, monkeypatch):
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)
+
+    def test_short_jwt_secret_key_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "short")
+        with pytest.raises(ValidationError, match="at least 32 characters"):
+            Settings(_env_file=None)
+
+    def test_exactly_32_chars_accepted(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        s = Settings(_env_file=None)
+        assert s.jwt_secret_key == "a" * 32
+
+
+@pytest.mark.unit
+class TestJwtExpiryValidation:
+    """JWT_EXPIRY_HOURS startup validation."""
+
+    def test_zero_expiry_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("JWT_EXPIRY_HOURS", "0")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_negative_expiry_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("JWT_EXPIRY_HOURS", "-1")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_excessive_expiry_warns(self, monkeypatch, caplog):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("JWT_EXPIRY_HOURS", "721")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert "exceeds 720" in caplog.text
+
+    def test_720_does_not_warn(self, monkeypatch, caplog):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("JWT_EXPIRY_HOURS", "720")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert "exceeds 720" not in caplog.text
+
+
+@pytest.mark.unit
+class TestIbsCredentialWarning:
+    """IBS credential startup warning."""
+
+    def test_empty_ibs_credentials_warns(self, monkeypatch, caplog):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("IBS_USERNAME", "")
+        monkeypatch.setenv("IBS_PASSWORD", "")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert "IBS credentials not configured" in caplog.text
+
+    def test_configured_ibs_credentials_no_warning(self, monkeypatch, caplog):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("IBS_USERNAME", "jdoe")
+        monkeypatch.setenv("IBS_PASSWORD", "secret-password-here")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert "IBS credentials not configured" not in caplog.text
+```
+
+**Note**: all tests use `Settings(_env_file=None)` to prevent
+interference from any `.env` file on the developer's filesystem.
+`pydantic-settings` reads `.env` as fallback after environment
+variables — without `_env_file=None`, a test like
+`test_missing_jwt_secret_key_raises` would silently pass if no `.env`
+exists but fail if the developer has `backend/.env` with
+`JWT_SECRET_KEY` set (copied from `.env.example`). The `_env_file=None`
+argument disables file-based loading for the instance, ensuring tests
+depend only on `os.environ` (controlled by `monkeypatch`).
 
 ---
 
@@ -418,7 +571,7 @@ refactor: align env var naming between spec and code
 
 Rename environment variables in backend/app/config.py and
 backend/.env.example to match the authoritative names defined in
-docs/configuration.md:
+feature specifications (as indexed in docs/configuration.md):
 
 - SECRET_KEY → JWT_SECRET_KEY (now required, >= 32 chars validated)
 - ACCESS_TOKEN_EXPIRE_MINUTES → JWT_EXPIRY_HOURS (default: 72)
@@ -434,7 +587,7 @@ Add "Configuration Management" convention to docs/conventions.md
 defining the relationship between configuration artifacts.
 
 Update test infrastructure (conftest.py, ci.yml) to provide the
-now-required JWT_SECRET_KEY.
+now-required JWT_SECRET_KEY. Add Settings validation tests.
 ```
 
 Files in commit:
@@ -443,7 +596,9 @@ Files in commit:
 - `docs/conventions.md`
 - `backend/app/config.py`
 - `backend/.env.example`
+- `backend/pyproject.toml`
 - `backend/tests/conftest.py`
+- `backend/tests/test_config.py`
 - `.github/workflows/ci.yml`
 
 ---
