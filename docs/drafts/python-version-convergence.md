@@ -432,7 +432,7 @@ New:
           cache-dependency-path: backend/pyproject.toml
 ```
 
-**Change B** — `backend-test` job, same replacement (lines 71-72):
+**Change B** — `backend-test` job, same replacement (lines 72-73):
 
 Old:
 ```yaml
@@ -452,7 +452,7 @@ New:
           cache-dependency-path: backend/pyproject.toml
 ```
 
-**Change C** — `backend-security` job, same replacement (lines 91-92):
+**Change C** — `backend-security` job, same replacement (lines 92-93):
 
 Old:
 ```yaml
@@ -481,10 +481,10 @@ Insert after `- uses: actions/checkout@v7` (line 25) and before
 ```yaml
       - name: Verify Dockerfile Python version matches .python-version
         run: |
-          EXPECTED=$(cat backend/.python-version)
-          ACTUAL=$(grep -oP '(?<=ARG PYTHON_VERSION=)\S+' backend/Dockerfile)
+          EXPECTED=$(cat .python-version)
+          ACTUAL=$(grep -oP '(?<=ARG PYTHON_VERSION=)\S+' Dockerfile)
           if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL does not match backend/.python-version=$EXPECTED"
+            echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL does not match .python-version=$EXPECTED"
             exit 1
           fi
 ```
@@ -495,7 +495,7 @@ Insert after `- uses: actions/checkout@v7` (line 25) and before
 
 **File**: `.github/workflows/deploy-api-docs.yml`
 
-**Old** (lines 25-28):
+**Old** (lines 25-29):
 ```yaml
       - uses: actions/setup-python@v6
         with:
