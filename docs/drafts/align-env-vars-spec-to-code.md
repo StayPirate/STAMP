@@ -1,0 +1,513 @@
+# RFC: Align Environment Variable Naming Between Spec and Code
+
+## Problem Statement
+
+The implementation (`backend/app/config.py`) and the specification
+(`docs/configuration.md`) use different names for 5 environment
+variables. This creates a situation where an operator following the
+documentation would configure variables that the application ignores,
+resulting in silently broken deployments.
+
+Additionally, no convention exists to prevent this drift from
+recurring.
+
+## Root Cause
+
+`config.py` was created in the initial scaffolding commit (Apr 2026)
+with generic FastAPI boilerplate names. The feature specifications
+evolved the naming and semantics over subsequent months (May-Jul 2026)
+but the code was never updated to match.
+
+## Affected Variables
+
+| # | Current (code) | Specified (docs) | Issue |
+|---|---|---|---|
+| 1 | `SECRET_KEY` | `JWT_SECRET_KEY` | Different name; code has insecure default; no length validation |
+| 2 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `JWT_EXPIRY_HOURS` | Different name, different unit (min vs hr), different default (60 min vs 72 hr) |
+| 3 | `OBS_API_URL` | `IBS_API_URL` | Wrong prefix (OBS != IBS); `OBS_*` is reserved for future OBS integration |
+| 4 | `OBS_USERNAME` | `IBS_USERNAME` | Same as above |
+| 5 | `OBS_PASSWORD` | `IBS_PASSWORD` | Same as above |
+
+## Additional Gap
+
+No convention codifies the relationship between the three configuration
+artifacts (`docs/configuration.md`, `backend/app/config.py`,
+`backend/.env.example`), making future drift likely.
+
+## Decisions
+
+1. Rename all 5 variables to match the specification
+2. Remove the insecure default for `JWT_SECRET_KEY` (make it required)
+3. Add startup validation for `JWT_SECRET_KEY` (>= 32 chars) and
+   `JWT_EXPIRY_HOURS` (>= 1, warning if > 720)
+4. Add a "Configuration Management" convention to `docs/conventions.md`
+5. Fix `docs/configuration.md`: move `DATABASE_URL` to "Required
+   Connection Settings"; change `IBS_USERNAME`/`IBS_PASSWORD` defaults
+   from `—` to `""` (IBS is an optional integration — the app must
+   start without IBS credentials)
+6. Do NOT add `SESSION_MAX_LIFETIME_DAYS` or `LOGIN_*` to `config.py`
+   — those features are not yet implemented; adding them now would
+   create dead settings
+
+---
+
+## Action Plan
+
+### Step 1: Add "Configuration Management" section to `docs/conventions.md`
+
+**File**: `docs/conventions.md`
+
+**Location**: Insert as a new `### Configuration Management` subsection
+immediately after the existing `### Timestamps & Timezones` subsection
+(which ends before `## Python (Backend)`) — this places it in the
+"General" section alongside other cross-cutting conventions.
+
+**Content to insert** (after line 182, before line 184 `## Python
+(Backend)`):
+
+```markdown
+### Configuration Management
+
+Sentinel uses three configuration artifacts with distinct roles:
+
+| Artifact | Role | Naming authority |
+|----------|------|------------------|
+| `docs/configuration.md` | Authoritative registry of ALL env vars | Source of truth for name, type, default, bounds |
+| `backend/app/config.py` | Implementation (Pydantic `Settings` class) | Field names are the `lower_snake_case` form of `configuration.md` entries (1:1 mapping) |
+| `backend/.env.example` | Developer quickstart template | Subset of `config.py` fields — see inclusion criteria below |
+
+**Invariant**: every field in `config.py` MUST correspond to an entry in
+`docs/configuration.md`. A field that exists in code but not in the
+registry is undocumented; a registry entry without a corresponding field
+is either not-yet-implemented (acceptable during incremental development)
+or a drift bug.
+
+**`.env.example` inclusion criteria**: a variable appears in
+`.env.example` if and only if a developer MUST or WILL LIKELY customize
+it for local development. Variables excluded:
+
+- Infrastructure URLs with stable defaults (e.g., `IBS_API_URL`,
+  `SMELT_API_URL`) — usable only on SUSE internal network
+- Fixed operational constants (e.g., `CELERY_TIMEZONE`) — must not be
+  changed
+- Optional API keys for external services (e.g., `NVD_API_KEY`) — empty
+  default is functional for development
+
+**Feature development workflow** (configuration aspect):
+
+1. Define the variable in the owning feature spec (authoritative
+   semantics)
+2. Add an entry to `docs/configuration.md` (operator reference)
+3. Implement the field in `config.py` when the feature is implemented
+4. Add to `.env.example` only if it meets the inclusion criteria
+```
+
+---
+
+### Step 2: Fix `docs/configuration.md`
+
+**File**: `docs/configuration.md`
+
+**Rationale**: the coherence review identified two misclassifications in
+the configuration registry that must be corrected as part of this
+alignment:
+
+1. `DATABASE_URL` is in "Required Secrets" but it is a connection string
+   (same nature as `REDIS_URL` and `CELERY_BROKER_URL`). The code
+   provides a local-development default, which contradicts the "Required
+   Secrets" contract ("app refuses to start if missing"). It belongs in
+   "Required Connection Settings".
+2. `IBS_USERNAME` and `IBS_PASSWORD` show `—` (no default, required) but
+   the app must start without IBS credentials — IBS is an optional
+   integration, and most fetchers operate independently of it. Their
+   default should be `""` (empty string).
+
+**Modification A** — Move `DATABASE_URL` from "Required Secrets" to
+"Required Connection Settings":
+
+Remove the `DATABASE_URL` row from the "Required Secrets" table (line
+17), leaving only `JWT_SECRET_KEY`. Then add it to the "Required
+Connection Settings" table:
+
+```markdown
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `DATABASE_URL` | string | `postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel` | PostgreSQL async connection string | `docs/architecture.md` |
+| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | `docs/architecture.md` |
+| `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
+```
+
+**Modification B** — Change `IBS_USERNAME` and `IBS_PASSWORD` defaults
+from `—` to `""`:
+
+In the IBS section, replace:
+
+```markdown
+| `IBS_USERNAME` | string | — | IBS HTTP Basic Auth username | ...
+| `IBS_PASSWORD` | string | — | IBS HTTP Basic Auth password | ...
+```
+
+with:
+
+```markdown
+| `IBS_USERNAME` | string | `""` | IBS HTTP Basic Auth username. Empty default allows app startup without IBS credentials; IBS-dependent fetchers will fail at runtime | `docs/features/integrations/ibs-integration.md` |
+| `IBS_PASSWORD` | string | `""` | IBS HTTP Basic Auth password. Same rationale as `IBS_USERNAME` | `docs/features/integrations/ibs-integration.md` |
+```
+
+---
+
+### Step 3: Modify `backend/app/config.py`
+
+**File**: `backend/app/config.py`
+
+**Replace the entire file content with**:
+
+```python
+"""Application configuration using pydantic-settings."""
+
+from __future__ import annotations
+
+import logging
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
+
+    # Application
+    app_name: str = "sentinel"
+    debug: bool = False
+
+    # Database
+    database_url: str = "postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel"
+
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Celery
+    celery_broker_url: str = "redis://localhost:6379/1"
+
+    # CORS
+    cors_origins: list[str] = ["http://localhost:5173"]
+
+    # IBS Integration
+    ibs_api_url: str = "https://api.suse.de"
+    ibs_username: str = ""
+    ibs_password: str = ""
+    ibs_download_base_url: str = "https://download.suse.de/ibs"
+
+    # NVD API
+    nvd_api_key: str = ""
+
+    # Security
+    jwt_secret_key: str
+    jwt_expiry_hours: int = 72
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self) -> "Settings":
+        """Fail fast on invalid security configuration."""
+        if len(self.jwt_secret_key) < 32:
+            msg = (
+                f"Invalid JWT_SECRET_KEY: must be at least 32 characters "
+                f"(got: {len(self.jwt_secret_key)})"
+            )
+            raise ValueError(msg)
+        if self.jwt_expiry_hours < 1:
+            msg = (
+                f"Invalid JWT_EXPIRY_HOURS: must be >= 1 "
+                f"(got: {self.jwt_expiry_hours})"
+            )
+            raise ValueError(msg)
+        if self.jwt_expiry_hours > 720:
+            logger.warning(
+                "JWT_EXPIRY_HOURS=%d exceeds 720 (30 days). "
+                "Long-lived tokens increase the exposure window "
+                "if compromised.",
+                self.jwt_expiry_hours,
+            )
+        return self
+
+
+settings = Settings()
+```
+
+**Changes explained**:
+
+- `secret_key` → `jwt_secret_key` (no default — required field)
+- `access_token_expire_minutes` → `jwt_expiry_hours` (default: 72)
+- `obs_api_url` → `ibs_api_url` (default: `https://api.suse.de`,
+  matching spec)
+- `obs_username` → `ibs_username`
+- `obs_password` → `ibs_password`
+- Added `model_validator` for startup validation (>= 32 chars,
+  >= 1 hour) and warning when > 720 hours (per `configuration.md`)
+- Added `import logging` and module-level `logger` for the > 720
+  warning
+
+**Not changed**:
+
+- `database_url` — keeps local development default (Step 2 moves it
+  to "Required Connection Settings" in `configuration.md` to match)
+- `app_name`, `debug`, `cors_origins` — unchanged
+- `nvd_api_key` — unchanged (optional, empty default)
+
+---
+
+### Step 4: Modify `backend/.env.example`
+
+**File**: `backend/.env.example`
+
+**Replace the entire file content with**:
+
+```
+# Security (REQUIRED — no default; app refuses to start without this)
+JWT_SECRET_KEY=dev-only-not-for-production-use-min-32-chars
+
+# JWT token lifetime in hours (default: 72)
+JWT_EXPIRY_HOURS=72
+
+# Database
+DATABASE_URL=postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+
+# Celery
+CELERY_BROKER_URL=redis://localhost:6379/1
+
+# CORS
+CORS_ORIGINS=["http://localhost:5173"]
+
+# Debug
+DEBUG=true
+```
+
+**Changes explained**:
+
+- `SECRET_KEY` → `JWT_SECRET_KEY` with a clearly-named dev-only value
+  (44 chars, satisfies >= 32 requirement)
+- `ACCESS_TOKEN_EXPIRE_MINUTES=60` → `JWT_EXPIRY_HOURS=72`
+- Removed `OBS_API_URL`, `OBS_USERNAME`, `OBS_PASSWORD` — per the new
+  convention, IBS infrastructure URLs with stable defaults do not
+  belong in `.env.example` (only usable on SUSE internal network,
+  developers outside that network cannot use them regardless)
+- Removed `NVD_API_KEY` — optional, empty default is functional for
+  development (per convention: optional API keys excluded)
+- `JWT_SECRET_KEY` placed first with a prominent comment explaining it
+  is required
+
+---
+
+### Step 5: Update `backend/tests/conftest.py`
+
+**File**: `backend/tests/conftest.py`
+
+**Rationale**: With `jwt_secret_key` now required (no default), the
+Settings class will raise a `ValidationError` when imported unless the
+variable is provided. Tests import `app.main` which imports
+`app.config`, triggering Settings instantiation. We need to ensure the
+test environment provides this value.
+
+**Modification**: Add an environment variable override at the top of
+`conftest.py`, before any app imports occur. Insert the following lines
+immediately after line 9 (`import os`) and before line 10
+(`from collections.abc import AsyncGenerator`):
+
+```python
+# Provide required settings for test environment (before app import)
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-not-for-production-min-32-chars")
+```
+
+This uses `setdefault` so CI or developer overrides still take
+precedence. The value is 47 characters (satisfies >= 32 validation).
+
+---
+
+### Step 6: Update CI workflow environment
+
+**File**: `.github/workflows/ci.yml`
+
+**Rationale**: The CI `backend-test` job sets environment variables for
+the test run (lines 73-77). With `JWT_SECRET_KEY` now required, we must
+provide it in CI as well.
+
+**Modification**: In the `env:` block of the test job (after line 77
+`CELERY_BROKER_URL`), add:
+
+```yaml
+        JWT_SECRET_KEY: ci-test-secret-key-not-for-production-min-32-chars
+```
+
+**Note**: The `conftest.py` `setdefault` provides a fallback, but
+explicit CI configuration is clearer and avoids depending on import
+order.
+
+---
+
+### Step 7: Verify no other references to old variable names exist
+
+**Verification command** (to be run after applying Steps 2-5):
+
+```bash
+cd /home/crazybyte/Workspace/Sentinel
+grep -r "SECRET_KEY\|ACCESS_TOKEN_EXPIRE\|OBS_API_URL\|OBS_USERNAME\|OBS_PASSWORD" \
+  --include="*.py" --include="*.yml" --include="*.yaml" --include="*.env*" \
+  --include="*.ini" --include="*.toml" \
+  backend/ .github/ \
+  | grep -v "JWT_SECRET_KEY\|# OBS" | grep -v ".pyc"
+```
+
+**Expected result**: no matches. If any match is found, update that
+reference to use the new name.
+
+Also verify the documentation does not reference the old code names:
+
+```bash
+grep -r "SECRET_KEY\b" docs/ | grep -v "JWT_SECRET_KEY" | grep -v "drafts/"
+grep -r "ACCESS_TOKEN_EXPIRE" docs/ | grep -v "drafts/"
+grep -r "OBS_API_URL\|OBS_USERNAME\|OBS_PASSWORD" docs/ | grep -v "drafts/" | grep -v "would be"
+```
+
+**Expected result**: no matches outside this draft. The one reference
+to `OBS_API_URL`/`OBS_USERNAME`/`OBS_PASSWORD` in
+`docs/features/integrations/ibs-integration.md` (line 279) is
+intentional — it describes the future OBS public integration, which
+correctly uses the `OBS_*` prefix for a different system.
+
+---
+
+### Step 8: Run tests locally
+
+```bash
+cd backend && pytest
+```
+
+**Expected**: all tests pass. The `conftest.py` `setdefault` provides
+`JWT_SECRET_KEY` for the test environment. No test references the old
+variable names (confirmed by grep in analysis phase).
+
+---
+
+### Step 9: Run linter
+
+```bash
+cd backend && ruff check . && ruff format --check .
+```
+
+**Expected**: no violations. If `ruff format` reports formatting
+differences, run `ruff format .` and include in the commit.
+
+---
+
+### Step 10: Commit
+
+Single commit with message:
+
+```
+refactor: align env var naming between spec and code
+
+Rename environment variables in backend/app/config.py and
+backend/.env.example to match the authoritative names defined in
+docs/configuration.md:
+
+- SECRET_KEY → JWT_SECRET_KEY (now required, >= 32 chars validated)
+- ACCESS_TOKEN_EXPIRE_MINUTES → JWT_EXPIRY_HOURS (default: 72)
+- OBS_API_URL → IBS_API_URL (default: https://api.suse.de)
+- OBS_USERNAME → IBS_USERNAME
+- OBS_PASSWORD → IBS_PASSWORD
+
+Fix docs/configuration.md: move DATABASE_URL to "Required Connection
+Settings" (has a local-dev default), change IBS_USERNAME/IBS_PASSWORD
+defaults from required to empty string (IBS is an optional integration).
+
+Add "Configuration Management" convention to docs/conventions.md
+defining the relationship between configuration artifacts.
+
+Update test infrastructure (conftest.py, ci.yml) to provide the
+now-required JWT_SECRET_KEY.
+```
+
+Files in commit:
+
+- `docs/configuration.md`
+- `docs/conventions.md`
+- `backend/app/config.py`
+- `backend/.env.example`
+- `backend/tests/conftest.py`
+- `.github/workflows/ci.yml`
+
+---
+
+### Step 11: Run reviewers
+
+After the commit is applied, invoke the following reviewers on the
+relevant specs to verify no issues were introduced:
+
+1. **`@spec-coherence-reviewer`** on `docs/configuration.md` — verify
+   that the new convention in `docs/conventions.md` does not contradict
+   any existing configuration references across feature specs
+
+2. **`@docs-placement-reviewer`** on `docs/conventions.md` — verify
+   that the "Configuration Management" section is correctly placed (it
+   is a cross-cutting development convention, not feature-specific)
+
+3. **`@test-reviewer`** on `backend/tests/conftest.py` — verify that
+   the `setdefault` pattern is appropriate for providing required
+   settings in tests
+
+4. **`@cicd`** on `.github/workflows/ci.yml` — verify that the added
+   environment variable does not break the CI pipeline
+
+---
+
+### Step 12: Delete this draft
+
+Once all steps are applied and reviewers confirm no issues:
+
+```bash
+rm docs/drafts/align-env-vars-spec-to-code.md
+```
+
+Include the deletion in the commit (or as a separate `chore:` commit
+if the main refactor is already merged).
+
+---
+
+## Out of Scope
+
+The following are explicitly NOT part of this change:
+
+- Adding `SESSION_MAX_LIFETIME_DAYS`, `LOGIN_MAX_ATTEMPTS`,
+  `LOGIN_LOCKOUT_MINUTES` to `config.py` — these features are not yet
+  implemented
+- Adding SSO variables (`SSO_*`) to `config.py` — SSO is not yet
+  implemented
+- Adding `GITHUB_TOKEN`, `GIT_CLONE_BASE_DIR`, `SUSE_CA_CERT_PATH` to
+  `config.py` — the fetchers that consume them are not yet implemented
+- Making `DATABASE_URL` required (no default) — the local development
+  default is intentional; Step 2 moves it to the correct spec section
+
+## Risk Assessment
+
+**Low risk**. Justification:
+
+- The old variable names (`SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`,
+  `OBS_*`) are not referenced anywhere in the codebase except
+  `config.py` and `.env.example` (confirmed by grep)
+- No test uses these variables directly
+- No CI workflow references these variables
+- The application has no downstream consumers that depend on the old
+  names
+- The only user-facing impact is that anyone with a custom `.env` file
+  needs to update variable names — but since the project is pre-1.0
+  with no production deployment, this affects only developers
