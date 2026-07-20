@@ -301,7 +301,7 @@ process is driven entirely by Conventional Commit messages on the
    (`.github/workflows/release-please.yml`) analyzes new commits and
    creates (or updates) a **Release PR** with:
    - Version bump in `backend/pyproject.toml`
-   - Updated `CHANGELOG.md`
+   - Updated `backend/CHANGELOG.md`
    - Summary of all changes since the last release
 3. The Release PR stays open and is updated automatically as more
    commits land on `master`
@@ -336,7 +336,7 @@ it follows the Conventional Commits format defined in
 
 ### Changelog
 
-`CHANGELOG.md` at the repository root is maintained automatically by
+`backend/CHANGELOG.md` is maintained automatically by
 release-please. Do not edit it manually. It groups changes by type
 (Features, Bug Fixes, etc.) and links to commits and PRs.
 
@@ -367,7 +367,7 @@ manual deployment from tag (staging/production)
 | Git tag | Created by release-please (`v1.2.3`) |
 | Docker image tag | Derived from git tag by `build-images.yml` |
 | GitHub Release | Created by release-please with changelog |
-| `CHANGELOG.md` | Updated by release-please |
+| `backend/CHANGELOG.md` | Updated by release-please |
 
 ### Configuration Files
 
