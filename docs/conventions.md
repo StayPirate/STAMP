@@ -335,6 +335,49 @@ it for local development. Variables excluded:
 - Use `model_config = ConfigDict(from_attributes=True)` for ORM integration
 - Validate at the schema level, not in endpoints or services
 
+### Secret Field Typing
+
+Configuration fields in `backend/app/config.py` (`Settings` class) that
+contain secrets MUST use Pydantic's `SecretStr` type instead of plain
+`str`. This prevents accidental exposure of secret values via `repr()`,
+tracebacks, debug logging, or serialization (`model_dump()` renders
+`SecretStr` fields as `'**********'`).
+
+Classification:
+
+| Field nature | Type | Example |
+|---|---|---|
+| Pure secret (signing key, password, token, API key) | `SecretStr` | `jwt_secret_key: SecretStr` |
+| URL that may embed credentials (`user:password@host`) | `str` with `Field(..., repr=False)` | `database_url: str = Field(default="...", repr=False)` |
+| Non-secret configuration (usernames, public URLs, flags) | plain type (default) | `ibs_api_url: str = "..."` |
+
+Rules:
+
+- Access the real value of a `SecretStr` field exclusively via
+  `.get_secret_value()`. Never rely on implicit `str()` conversion,
+  which returns the masked representation (`'**********'`), not the
+  real value
+- Validators (`@model_validator`) that inspect a `SecretStr` field MUST
+  call `.get_secret_value()` before performing checks (e.g., length
+  validation, emptiness checks)
+- URL fields that may embed credentials use `Field(..., repr=False)`
+  rather than `SecretStr`, because downstream libraries (SQLAlchemy's
+  `create_async_engine`, Celery, httpx) require a plain `str` argument.
+  `repr=False` hides the field from `repr(settings)` and from
+  Pydantic's default logging integrations while preserving direct
+  string compatibility with those libraries
+- A username field (e.g., `ibs_username`) is NOT treated as a secret
+  by this convention — only the paired credential (e.g., `ibs_password`)
+  is
+- When adding a new field to `Settings` that holds credential material,
+  apply this classification before implementation. If genuinely
+  uncertain whether a value counts as a secret, treat it as a secret
+- Never serialize the full `Settings` object (`model_dump()`,
+  `model_dump_json()`) in API responses, health endpoints, or error
+  payloads — credential-bearing URL fields remain plain strings and are
+  not masked by serialization; only `repr()` is affected by
+  `Field(..., repr=False)`
+
 ### Audit Trail
 
 Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`

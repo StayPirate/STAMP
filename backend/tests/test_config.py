@@ -32,7 +32,7 @@ class TestJwtSecretKeyValidation:
     def test_exactly_32_chars_accepted(self, monkeypatch):
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         s = Settings(_env_file=None)
-        assert s.jwt_secret_key == "a" * 32
+        assert s.jwt_secret_key.get_secret_value() == "a" * 32
 
 
 @pytest.mark.unit
@@ -107,3 +107,101 @@ class TestIbsCredentialWarning:
         with caplog.at_level(logging.WARNING):
             Settings(_env_file=None)
         assert "IBS credentials not configured" not in caplog.text
+
+
+@pytest.mark.unit
+class TestSecretFieldRedaction:
+    """Secret field redaction, covering two distinct mechanisms:
+
+    - `SecretStr` fields (`jwt_secret_key`, `ibs_password`, `nvd_api_key`):
+      masked in both `repr()`/`str()` AND `model_dump()`/`model_dump_json()`.
+    - `Field(..., repr=False)` URL fields (`database_url`, `redis_url`,
+      `celery_broker_url`): the field is entirely excluded from `repr()`,
+      but the plain value IS still returned by `model_dump()` (repr=False
+      only affects repr, not serialization).
+    """
+
+    def test_repr_does_not_expose_jwt_secret_key(self, monkeypatch):
+        secret_value = "x" * 32
+        monkeypatch.setenv("JWT_SECRET_KEY", secret_value)
+        s = Settings(_env_file=None)
+        assert secret_value not in repr(s)
+        assert secret_value not in str(s)
+
+    def test_repr_does_not_expose_ibs_password(self, monkeypatch):
+        secret_value = "super-secret-ibs-password"
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("IBS_PASSWORD", secret_value)
+        s = Settings(_env_file=None)
+        assert secret_value not in repr(s)
+
+    def test_repr_does_not_expose_nvd_api_key(self, monkeypatch):
+        secret_value = "super-secret-nvd-api-key"
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("NVD_API_KEY", secret_value)
+        s = Settings(_env_file=None)
+        assert secret_value not in repr(s)
+
+    def test_repr_does_not_expose_database_url_credentials(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://sentinel_user:sentinel_pw@db:5432/sentinel",
+        )
+        s = Settings(_env_file=None)
+        assert "sentinel_pw" not in repr(s)
+        assert "database_url" not in repr(s)
+
+    def test_repr_does_not_expose_redis_url_credentials(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv(
+            "REDIS_URL",
+            "redis://:redis_secret_pw@redis:6379/0",
+        )
+        s = Settings(_env_file=None)
+        assert "redis_secret_pw" not in repr(s)
+        assert "redis_url" not in repr(s)
+
+    def test_repr_does_not_expose_celery_broker_url_credentials(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv(
+            "CELERY_BROKER_URL",
+            "redis://:celery_secret_pw@redis:6379/1",
+        )
+        s = Settings(_env_file=None)
+        assert "celery_secret_pw" not in repr(s)
+        assert "celery_broker_url" not in repr(s)
+
+    def test_repr_exposes_non_secret_fields(self, monkeypatch):
+        """Non-secret fields must remain visible in repr() — guards against
+        over-broad redaction being applied by mistake in the future."""
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("APP_NAME", "sentinel-test-instance")
+        s = Settings(_env_file=None)
+        assert "sentinel-test-instance" in repr(s)
+
+    def test_model_dump_masks_secret_str_fields(self, monkeypatch):
+        secret_value = "x" * 32
+        monkeypatch.setenv("JWT_SECRET_KEY", secret_value)
+        s = Settings(_env_file=None)
+        dumped = s.model_dump()
+        assert dumped["jwt_secret_key"].get_secret_value() == secret_value
+        assert secret_value not in repr(dumped["jwt_secret_key"])
+        assert secret_value not in str(dumped)
+
+    def test_model_dump_json_masks_secret_str_fields(self, monkeypatch):
+        secret_value = "x" * 32
+        monkeypatch.setenv("JWT_SECRET_KEY", secret_value)
+        s = Settings(_env_file=None)
+        dumped_json = s.model_dump_json()
+        assert secret_value not in dumped_json
+
+    def test_model_dump_exposes_plain_repr_false_url_fields(self, monkeypatch):
+        """`repr=False` only affects repr(); model_dump() must still return
+        the plain string value for these fields (no masking on dump)."""
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        db_url = "postgresql+asyncpg://sentinel_user:sentinel_pw@db:5432/sentinel"
+        monkeypatch.setenv("DATABASE_URL", db_url)
+        s = Settings(_env_file=None)
+        dumped = s.model_dump()
+        assert dumped["database_url"] == db_url
