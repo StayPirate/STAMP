@@ -48,6 +48,12 @@ artifacts (`docs/configuration.md`, `backend/app/config.py`,
 6. Do NOT add `SESSION_MAX_LIFETIME_DAYS` or `LOGIN_*` to `config.py`
    — those features are not yet implemented; adding them now would
    create dead settings
+7. Update `ibs-integration.md` to explicitly declare `""` as the default
+   for `IBS_USERNAME`/`IBS_PASSWORD` (establishes the source-of-truth
+   before `configuration.md` mirrors it)
+8. Make `generate_openapi.py` self-contained by providing required
+   settings via `os.environ.setdefault` before the app import (same
+   pattern as `conftest.py`) — avoids fragile CI env var propagation
 
 ---
 
@@ -103,6 +109,36 @@ it for local development. Variables excluded:
 3. Implement the field in `config.py` when the feature is implemented
 4. Add to `.env.example` only if it meets the inclusion criteria
 ```
+
+---
+
+### Step 1b: Update `docs/features/integrations/ibs-integration.md`
+
+**File**: `docs/features/integrations/ibs-integration.md`
+
+**Rationale**: The proposed Configuration Management convention establishes
+that feature specs are the source of truth for variable semantics,
+including defaults. Before `configuration.md` can declare `""` as the
+default for `IBS_USERNAME`/`IBS_PASSWORD`, the authoritative feature spec
+must declare it first.
+
+**Modification**: Replace lines 22-23:
+
+```markdown
+  - `IBS_USERNAME`: IBS API username
+  - `IBS_PASSWORD`: IBS API password
+```
+
+with:
+
+```markdown
+  - `IBS_USERNAME`: IBS API username (default: `""` — app starts without IBS credentials; IBS-dependent fetchers fail at runtime)
+  - `IBS_PASSWORD`: IBS API password (default: `""` — same rationale as `IBS_USERNAME`)
+```
+
+This is consistent with Business Rule #1 (line 260): "IBS credentials
+are validated at startup; warn if not configured" — which already implies
+optionality.
 
 ---
 
@@ -232,9 +268,9 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.jwt_expiry_hours > 720:
             logger.warning(
-                "JWT_EXPIRY_HOURS=%d exceeds 720 (30 days). "
-                "Long-lived tokens increase the exposure window "
-                "if compromised.",
+                "JWT_EXPIRY_HOURS is set to %d (>720 hours). "
+                "Long-lived tokens increase the window of exposure "
+                "if a token is compromised.",
                 self.jwt_expiry_hours,
             )
         return self
@@ -359,23 +395,58 @@ inline `# noqa` comments.
 
 ---
 
-### Step 5a: Add `per-file-ignores` for conftest.py
+### Step 5a: Modify `backend/pyproject.toml`
 
 **File**: `backend/pyproject.toml`
 
-**Rationale**: Step 5 introduces an executable statement before local
-imports in `conftest.py`. The project has `"E"` in ruff's select rules,
-which includes E402. Rather than excluding E402 globally (it is useful
+**Modification A — per-file-ignores for conftest.py**:
+
+Step 5 introduces an executable statement before local imports in
+`conftest.py`. The project has `"E"` in ruff's select rules, which
+includes E402. Rather than excluding E402 globally (it is useful
 everywhere else) or cluttering import lines with `# noqa` comments, a
 targeted `per-file-ignores` is the idiomatic ruff solution.
 
-**Modification**: Add the following section after the existing
-`[tool.ruff.lint.isort]` block (after line 56):
+Add the following section after the existing `[tool.ruff.lint.isort]`
+block (after line 56):
 
 ```toml
 
 [tool.ruff.lint.per-file-ignores]
 "tests/conftest.py" = ["E402"]
+```
+
+**Modification B — remove `app/config.py` from coverage omit**:
+
+Step 5b adds explicit unit tests for `config.py`. The current omit list
+excludes it from coverage reporting (comment: "env-driven, tested via
+integration"), which means the new tests would not contribute to the
+coverage metric. Remove the `"app/config.py",` line from the
+`[tool.coverage.run]` omit list.
+
+Replace:
+
+```toml
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "*/tests/*",
+    "*/alembic/*",
+    "app/config.py",
+    "app/database.py",
+]
+```
+
+with:
+
+```toml
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "*/tests/*",
+    "*/alembic/*",
+    "app/database.py",
+]
 ```
 
 ---
@@ -416,6 +487,11 @@ class TestJwtSecretKeyValidation:
         with pytest.raises(ValidationError, match="at least 32 characters"):
             Settings(_env_file=None)
 
+    def test_31_chars_jwt_secret_key_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 31)
+        with pytest.raises(ValidationError, match="at least 32 characters"):
+            Settings(_env_file=None)
+
     def test_exactly_32_chars_accepted(self, monkeypatch):
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         s = Settings(_env_file=None)
@@ -443,14 +519,14 @@ class TestJwtExpiryValidation:
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "721")
         with caplog.at_level(logging.WARNING):
             Settings(_env_file=None)
-        assert "exceeds 720" in caplog.text
+        assert ">720 hours" in caplog.text
 
     def test_720_does_not_warn(self, monkeypatch, caplog):
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "720")
         with caplog.at_level(logging.WARNING):
             Settings(_env_file=None)
-        assert "exceeds 720" not in caplog.text
+        assert ">720 hours" not in caplog.text
 
 
 @pytest.mark.unit
@@ -460,6 +536,22 @@ class TestIbsCredentialWarning:
     def test_empty_ibs_credentials_warns(self, monkeypatch, caplog):
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("IBS_USERNAME", "")
+        monkeypatch.setenv("IBS_PASSWORD", "")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert "IBS credentials not configured" in caplog.text
+
+    def test_only_username_empty_warns(self, monkeypatch, caplog):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("IBS_USERNAME", "")
+        monkeypatch.setenv("IBS_PASSWORD", "secret")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert "IBS credentials not configured" in caplog.text
+
+    def test_only_password_empty_warns(self, monkeypatch, caplog):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("IBS_USERNAME", "jdoe")
         monkeypatch.setenv("IBS_PASSWORD", "")
         with caplog.at_level(logging.WARNING):
             Settings(_env_file=None)
@@ -486,13 +578,80 @@ depend only on `os.environ` (controlled by `monkeypatch`).
 
 ---
 
-### Step 6: Update CI workflow environment
+### Step 6: Make `generate_openapi.py` self-contained
+
+**File**: `backend/scripts/generate_openapi.py`
+
+**Rationale**: The script imports `app.main` which triggers `Settings()`
+instantiation. With `jwt_secret_key` now required, the script would fail
+without the env var — but it never uses the JWT secret (its purpose is
+purely to extract OpenAPI metadata from route decorators). Rather than
+requiring every CI workflow that imports the app to carry `JWT_SECRET_KEY`,
+the script provides its own dummy value before the import.
+
+This is the same pattern used in `conftest.py` (Step 5) and makes the
+script self-contained: future additions of required settings only need a
+line here, not CI workflow changes.
+
+**Replace the entire file content with**:
+
+```python
+#!/usr/bin/env python3
+"""Generate OpenAPI JSON schema from the FastAPI application.
+
+This script imports the FastAPI app and dumps its OpenAPI schema to stdout
+as formatted JSON. It does not require a running server, database, or Redis
+connection — FastAPI builds the schema statically from route decorators.
+
+Usage:
+    python scripts/generate_openapi.py > openapi.json
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+# Provide required settings for schema generation (no runtime needed).
+# This must precede the app import which triggers Settings() instantiation.
+os.environ.setdefault(
+    "JWT_SECRET_KEY", "openapi-schema-generation-only-not-for-runtime-use"
+)
+
+from app.main import app  # noqa: E402
+
+
+def main() -> None:
+    """Print the OpenAPI schema as formatted JSON to stdout."""
+    schema = app.openapi()
+    json.dump(schema, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Changes explained**:
+
+- Added `import os` and `os.environ.setdefault("JWT_SECRET_KEY", ...)`
+  before the `app.main` import
+- The dummy value is 53 characters (satisfies >= 32 validation)
+- Added `# noqa: E402` on the deferred import (ruff would flag it)
+- No changes to `deploy-api-docs.yml` needed — the script is now
+  self-sufficient
+
+---
+
+### Step 6b: Update CI workflow environment
 
 **File**: `.github/workflows/ci.yml`
 
-**Rationale**: The CI `backend-test` job sets environment variables for
-the test run (lines 73-77). With `JWT_SECRET_KEY` now required, we must
-provide it in CI as well.
+**Rationale**: The CI `backend-test` job runs `alembic upgrade head &&
+alembic check` outside of pytest (does not pass through `conftest.py`).
+With `JWT_SECRET_KEY` now required, we must provide it in CI for the
+Alembic steps.
 
 **Modification**: In the `env:` block of the test job (after line 77
 `CELERY_BROKER_URL`), add:
@@ -501,9 +660,8 @@ provide it in CI as well.
         JWT_SECRET_KEY: ci-test-secret-key-not-for-production-min-32-chars
 ```
 
-**Note**: The `conftest.py` `setdefault` provides a fallback, but
-explicit CI configuration is clearer and avoids depending on import
-order.
+**Note**: The `conftest.py` `setdefault` covers pytest execution, but the
+Alembic step needs the env var explicitly.
 
 ---
 
@@ -579,6 +737,9 @@ feature specifications (as indexed in docs/configuration.md):
 - OBS_USERNAME → IBS_USERNAME
 - OBS_PASSWORD → IBS_PASSWORD
 
+Update ibs-integration.md to explicitly declare default "" for
+IBS_USERNAME/IBS_PASSWORD (source-of-truth for configuration.md).
+
 Fix docs/configuration.md: move DATABASE_URL to "Required Connection
 Settings" (has a local-dev default), change IBS_USERNAME/IBS_PASSWORD
 defaults from required to empty string (IBS is an optional integration).
@@ -586,17 +747,23 @@ defaults from required to empty string (IBS is an optional integration).
 Add "Configuration Management" convention to docs/conventions.md
 defining the relationship between configuration artifacts.
 
+Make generate_openapi.py self-contained (setdefault for JWT_SECRET_KEY
+before app import — schema generation does not need runtime secrets).
+
 Update test infrastructure (conftest.py, ci.yml) to provide the
 now-required JWT_SECRET_KEY. Add Settings validation tests.
+Remove app/config.py from coverage omit list.
 ```
 
 Files in commit:
 
+- `docs/features/integrations/ibs-integration.md`
 - `docs/configuration.md`
 - `docs/conventions.md`
 - `backend/app/config.py`
 - `backend/.env.example`
 - `backend/pyproject.toml`
+- `backend/scripts/generate_openapi.py`
 - `backend/tests/conftest.py`
 - `backend/tests/test_config.py`
 - `.github/workflows/ci.yml`
