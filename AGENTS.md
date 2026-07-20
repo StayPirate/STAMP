@@ -28,7 +28,6 @@ For full architecture details, read `docs/architecture.md`.
 sentinel/
 ├── AGENTS.md                    # Project instructions for OpenCode
 ├── opencode.json                # OpenCode configuration
-├── certs/                       # TLS certificates (SUSE Trust Root CA)
 ├── dev-env.sh                   # Local dev stack launcher (Podman/Docker)
 ├── docker-compose.yml           # Local development environment
 ├── docs/                        # Specifications and documentation
@@ -170,7 +169,7 @@ the location is correct according to this map:
 | Auth and permissions       | `backend/app/core/`               |
 | DB migrations              | `backend/alembic/versions/`       |
 | Utility scripts            | `backend/scripts/`                |
-| TLS certificates           | `certs/`                          |
+| TLS certificates           | `backend/certs/`                  |
 | Backend tests              | `backend/tests/`                  |
 | Draft documents            | `docs/drafts/`                    |
 | Review findings            | `docs/reviews/`                   |

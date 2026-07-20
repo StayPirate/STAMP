@@ -448,10 +448,11 @@ trust store that includes both the system CA bundle and the SUSE
 internal CA.
 
 - **Env var**: `SUSE_CA_CERT_PATH` (default: `certs/SUSE_Trust_Root.crt`)
-  - The SUSE Trust Root CA file is committed in the repository. The
-    default path works both in containers (workdir `/app`) and in local
-    development (run from project root). No configuration needed for
-    standard deployments
+  - The SUSE Trust Root CA file is committed in the repository at
+    `backend/certs/SUSE_Trust_Root.crt`. The default relative path
+    works both in containers (workdir `/app`) and in local development
+    (run from `backend/`). No configuration needed for standard
+    deployments
   - The env var exists as an override for non-standard deployments
 - **Combined trust store**: at runtime, Python builds an SSL context
   that includes system CAs (for public services: NVD, GitHub, CISA,

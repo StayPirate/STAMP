@@ -161,7 +161,7 @@ At startup, the application logs an INFO message indicating SSO status:
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, AMQP). Combined with system CA bundle at runtime. | `docs/features/platform/networking.md` |
+| `SUSE_CA_CERT_PATH` | string | `certs/SUSE_Trust_Root.crt` | Path to SUSE internal CA certificate for TLS validation of all connections to *.suse.de services (HTTP, AMQP). Relative to working directory (`backend/` locally, `/app` in containers). Combined with system CA bundle at runtime. | `docs/features/platform/networking.md` |
 
 ## SMELT / AIMAAS
 

@@ -727,7 +727,7 @@ source for identity data in Sentinel over the OpenLDAP instance at
 - **Access**: LDAPS protocol at `ldaps://pan.suse.de` (port 636, TLS).
   Supports anonymous bind — no credentials required for read access.
   Server certificate validated against SUSE Trust Root CA
-  (`certs/SUSE_Trust_Root.crt`). Base DN:
+  (`backend/certs/SUSE_Trust_Root.crt`). Base DN:
   `OU=User accounts,DC=corp,DC=suse,DC=com`. Approximately 913 active
   employee records (as of 2026). Security groups are located under
   `OU=Security Groups,OU=Groups,DC=corp,DC=suse,DC=com`
