@@ -99,9 +99,10 @@ undocumented logging setup.
    after review (see Step 9 below): this alignment step turned out to
    be a verified no-op — `.env.example` is NOT modified, to preserve
    the "subset of `config.py`" invariant in `docs/conventions.md`.
-   `backend/app/database.py` has `echo=settings.debug`, which is
-   consistent with the unidirectional rule (D4) but bypasses the
-   structured pipeline — removal deferred to the implementation task.**
+   `backend/app/database.py` has `echo=settings.debug`, which violates
+   the orthogonality rule (D4: DEBUG must not influence logging) and
+   bypasses the structured pipeline — removal deferred to the
+   implementation task.**
 4. Registration of the new spec in the review tracking system
    (`docs/reviews/.tracking.json` and `docs/reviews/README.md`),
    enabled for review.
@@ -270,61 +271,64 @@ is next revised.
 `docs/deployment.md` (Troubleshooting) is not actionable at scale —
 operators need to filter by request/task/run, not grep free text.
 
-### D4 — `DEBUG` implies verbose logging (unidirectional coupling)
+### D4 — `DEBUG` and `LOG_LEVEL` are fully orthogonal (no interaction)
 
-Two configuration axes with a unidirectional default relationship:
+Two completely independent configuration axes:
 
 | Variable | Type | Meaning | Existing? |
 |---|---|---|---|
-| `DEBUG` | bool | **Application mode**: verbose error responses, auto-reload, and (via the unidirectional rule below) verbose logging defaults. Already exists in `backend/app/config.py` and `docs/configuration.md`. | Yes |
-| `LOG_LEVEL` | enum (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`) | **Log verbosity**. Controls the minimum severity of log output. | No — new |
+| `DEBUG` | bool | **Application behavior mode**: enables verbose error responses (`FastAPI(debug=True)`). Has NO effect on logging. | Yes |
+| `LOG_LEVEL` | enum (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`) | **Log verbosity** for ALL loggers (Sentinel code and third-party alike). | No — new |
 
-**Unidirectional rule**:
+**Orthogonality rule**: `DEBUG` and `LOG_LEVEL` do not interact in any
+way. `DEBUG` never influences log levels. `LOG_LEVEL` never influences
+application behavior mode.
 
-- When `DEBUG=true` and `LOG_LEVEL` is NOT explicitly set: `LOG_LEVEL`
-  defaults to `DEBUG` and third-party logger pins (see Step 1 item 6)
-  are released — all loggers follow the root level. This gives the
-  developer full verbosity with a single flag.
-- When `LOG_LEVEL` is explicitly set: it ALWAYS takes precedence,
-  regardless of `DEBUG`. Example: `DEBUG=true LOG_LEVEL=WARNING` gives
-  debug mode (verbose errors) with quiet logs.
-- When `DEBUG=false` (production): `LOG_LEVEL` defaults to `INFO` and
-  third-party logger pins are active (WARNING). Setting
-  `LOG_LEVEL=DEBUG` gives verbose application logs while third-party
-  loggers stay pinned at WARNING — safe from PII/credential leakage.
-- `LOG_LEVEL` NEVER influences `DEBUG` in any direction.
+- `LOG_LEVEL=DEBUG` → all loggers (Sentinel, SQLAlchemy, httpx,
+  Celery, uvicorn) emit at DEBUG level. No exceptions, no "pins", no
+  conditional behavior.
+- `LOG_LEVEL=INFO` (default) → all loggers emit at INFO and above.
+- `DEBUG=true` → FastAPI renders stack traces in error responses.
+  Logging is unchanged.
+- `DEBUG=false` (default) → generic error responses. Logging is
+  unchanged.
 
-**Startup warning**: when `DEBUG=true`, the application MUST emit a
-prominent WARNING as the first log message: "DEBUG mode is enabled.
-This MUST NOT be used in production (verbose error responses, relaxed
-security, verbose third-party logging)." This is a guardrail for
-operators, not a hard block — the application does not refuse to start.
+**Typical configurations**:
+
+| Scenario | Configuration | Logging effect | Error responses |
+|---|---|---|---|
+| Local development | `DEBUG=true` `LOG_LEVEL=DEBUG` | Everything verbose | Stack traces |
+| Production normal | (defaults) | INFO and above | Generic |
+| Production diagnostics | `LOG_LEVEL=DEBUG` | Everything verbose | Generic (safe) |
+
+**PII/credential risk at `LOG_LEVEL=DEBUG`**: when set to DEBUG, third-
+party loggers (notably `sqlalchemy.engine` and `httpx`) will emit
+sensitive data (SQL with bound parameters, full HTTP URLs with
+tokens). This is accepted as an operator-initiated action — the
+operator explicitly requests maximum verbosity and accepts the
+consequences. The documentation (`docs/deployment.md`, Log
+Aggregation) will note this clearly. No code-level "pin" or safety
+mechanism restricts `LOG_LEVEL` — the protection is operational, not
+architectural. This aligns with how every major framework (Django,
+Spring Boot, Rails) handles the same scenario.
 
 **Log level changes require process restart.** `LOG_LEVEL` is read at
 process startup. Runtime log level modification (without restart) is
 out of scope for this phase and may be added as a future enhancement
 when production operational experience demonstrates the need.
 
-**Rationale (why unidirectional, not orthogonal)**:
+**Rationale (why orthogonal without pins)**:
 
-1. This is the dominant pattern in mature frameworks (Django, Spring
-   Boot, Rails): debug mode implies verbose everything, log level is
-   independently overridable. Developers expect this behavior.
-2. The security concern of strict orthogonality (operator forced to set
-   `DEBUG=true` in production to get verbose logs) does not apply here:
-   an operator who needs verbose logs in production sets only
-   `LOG_LEVEL=DEBUG` — no need to touch `DEBUG`, because the coupling
-   is unidirectional (DEBUG→LOG_LEVEL, not LOG_LEVEL→DEBUG).
-3. Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are
-   deferred to a future phase. The unidirectional model covers the
-   common cases without additional variables.
-
-**Rejected alternative — strict orthogonality**: was initially proposed
-in an earlier version of this plan. Rejected because it creates
-unnecessary complexity for the developer (two vars to set for the
-common local-dev case), breaks expectations set by every major
-framework, and solves a security problem that the unidirectional model
-already addresses (operator never needs DEBUG=true for verbose logs).
+1. `LOG_LEVEL` means what every developer and operator expects: it
+   controls all logging, without hidden exceptions or conditional
+   behavior depending on other flags.
+2. `DEBUG` means what every framework user expects: application
+   behavior mode (error verbosity), not logging.
+3. No "pin" or "release" mechanism to explain, implement, or debug.
+   The mental model is: one knob for logs, one knob for errors. Done.
+4. Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are
+   deferred to a future phase if production experience shows the need
+   for per-component granularity independent of the root level.
 
 ### D5 — Process role identification is delegated to the platform (no `LOG_PROCESS_ROLE`)
 
@@ -391,22 +395,17 @@ only the application's own log statements. It does not, by itself,
 prevent third-party loggers captured by the stdlib bridge (D1) —
 notably `sqlalchemy.engine` (SQL statements with bound parameters at
 DEBUG/INFO) and `httpx`/`httpcore` (full request URLs, which may embed
-credentials, at DEBUG) — from emitting sensitive data. Under the
-unidirectional model (D4), this risk is scoped by context:
-
-- **Development** (`DEBUG=true`): third-party pins are released, all
-  loggers operate at DEBUG. Sensitive data (SQL params, HTTP URLs) WILL
-  appear in logs. This is accepted as a development convenience — the
-  startup WARNING reinforces that this mode must not be used in
-  production.
-- **Production** (`DEBUG=false`): third-party pins are active (WARNING).
-  Even if `LOG_LEVEL=DEBUG`, third-party loggers stay at WARNING —
-  sensitive data is not emitted. This is the safety mechanism.
+credentials, at DEBUG) — from emitting sensitive data when
+`LOG_LEVEL=DEBUG`. This is accepted as an explicit operator choice:
+setting `LOG_LEVEL=DEBUG` is a deliberate request for maximum
+verbosity, and the operator accepts the PII/credential exposure risk.
+The documentation (`docs/deployment.md`) will clearly note this.
 
 The future redaction processor MUST operate at the root/handler level
 of the pipeline (not only on application-issued log records) so it
 also covers records captured from third-party loggers — providing
-defense-in-depth even if pins are misconfigured.
+defense-in-depth for environments where maximum verbosity is needed
+but credential leakage must still be mitigated.
 
 ---
 
@@ -420,8 +419,9 @@ explicitly not chosen.
 | Plain text logs, no structure (minimal stdlib `basicConfig`) | Not machine-parseable; breaks the `X-Request-ID` correlation promise already made in `api-spec.md`; would likely need to be redone later, at higher cost, once real aggregation is needed. |
 | OpenTelemetry (logs+traces+metrics unified) | Architecturally attractive long-term, but `docs/architecture.md` explicitly states the deployment target (Docker/Podman vs. Kubernetes) is not yet fixed. Adding an OTel collector dependency now is premature relative to the project's own stated deployment uncertainty. Revisit once the deployment target and a production instance exist (ties into the `1.0.0` graduation criteria in `docs/conventions.md`). |
 | In-app file logging with rotation (e.g., `RotatingFileHandler`) | Directly contradicts `docs/architecture.md` Runtime State ("must not rely on local persistent filesystem state for correctness") and the stateless container principle. Also duplicates functionality the container runtime already provides for free. |
-| Strict orthogonality between `DEBUG` and `LOG_LEVEL` | Initially proposed (D4 v1). Rejected: creates unnecessary complexity for developers (two vars for common case), breaks expectations set by Django/Spring Boot/Rails, and solves a security problem already addressed by the unidirectional model (operator sets LOG_LEVEL without touching DEBUG). See D4. |
-| Bidirectional coupling (`LOG_LEVEL=DEBUG` implies `DEBUG=true`) | Would create the security incentive to accidentally enable debug error responses when only verbose logs are wanted. The unidirectional model (D4) avoids this: only DEBUG→LOG_LEVEL, never LOG_LEVEL→DEBUG. |
+| Unidirectional coupling (`DEBUG=true` implies `LOG_LEVEL=DEBUG`) | Initially proposed (D4 v2). Rejected after further analysis: adds complexity (conditional "pin release", default-vs-override semantics) for a convenience gain that costs only one extra line in `.env`. The orthogonal model is simpler, more predictable, and eliminates an entire class of questions ("does DEBUG affect logging?"). |
+| Bidirectional coupling (`LOG_LEVEL=DEBUG` implies `DEBUG=true`) | Would create the security incentive to accidentally enable debug error responses when only verbose logs are wanted. |
+| Third-party logger "pins" (conditional levels based on `DEBUG`) | Initially proposed alongside unidirectional coupling. Rejected: creates surprising behavior where `LOG_LEVEL=DEBUG` doesn't actually give DEBUG for all loggers; violates the principle of least surprise; no major framework uses this pattern; the PII protection it provides is achievable via operational discipline (don't set LOG_LEVEL=DEBUG in production without understanding the consequences). |
 | Logging to PostgreSQL (treating operational logs like audit events) | Would conflate two fundamentally different concerns (business audit trail vs. operational diagnostics), contradicting the clean separation the project has already established for audit trails. Operational log volume is also unsuited to a relational audit table (no query patterns, no retention policy, high write volume from DEBUG/INFO-level noise). |
 
 ---
@@ -503,27 +503,27 @@ given the precedents of other infra specs like `networking.md`):
 6. **Integration with Third-Party Loggers** — uvicorn, Celery
    (`worker_hijack_root_logger=False` requirement so Celery's own
    logging setup doesn't fight structlog's), SQLAlchemy engine
-   logging, httpx. **Default levels for third-party loggers** (pinned
-   levels), active only when `DEBUG=false` (production mode). When
-   `DEBUG=true`, all pins are released and third-party loggers follow
-   the root `LOG_LEVEL` — giving developers full verbosity with a
-   single flag (see D4, unidirectional rule):
+   logging, httpx. All third-party loggers follow `LOG_LEVEL`
+   unconditionally — no "pins" or conditional levels. `LOG_LEVEL`
+   controls everything uniformly:
 
-   | Logger | Pinned level (`DEBUG=false`) | Rationale for pin |
+   | Logger | Typical output at DEBUG | PII/credential risk |
    |---|---|---|
-   | `sqlalchemy.engine` | `WARNING` | Prevents emission of SQL statements with bound parameters (may include credentials/PII) at INFO/DEBUG |
-   | `httpx` / `httpcore` | `WARNING` | Prevents emission of full request URLs (may embed tokens) at DEBUG |
-   | `celery` | `INFO` | No sensitive-data concern; follows root level |
-   | `uvicorn.access` | `INFO` | Standard access logging |
+   | `sqlalchemy.engine` | SQL statements with bound parameters | Yes — may include credentials |
+   | `httpx` / `httpcore` | Full request URLs, headers | Yes — URLs may embed tokens |
+   | `celery` | Task execution details | Low |
+   | `uvicorn.access` | HTTP access log entries | Low |
 
-   When `DEBUG=false` and `LOG_LEVEL=DEBUG`: application logs are
-   verbose but third-party loggers stay at their pinned level — the
-   safety mechanism for production diagnostics.
+   **Operational note** (to be documented in `docs/deployment.md`):
+   setting `LOG_LEVEL=DEBUG` in production will cause third-party
+   loggers to emit sensitive data. This is an explicit operator choice,
+   not an accidental side effect. Operators should use `LOG_LEVEL=DEBUG`
+   in production only for time-bounded diagnostics and revert promptly.
 
    Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are
-   explicitly deferred to a future phase. The current model covers the
-   common cases: `DEBUG=true` for full verbosity in development, and
-   `LOG_LEVEL=DEBUG` for safe application-only verbosity in production.
+   explicitly deferred to a future phase. If production experience
+   shows the need for "verbose httpx only, quiet everything else",
+   per-logger vars can be added without breaking changes.
 
    **Scope of this
    pipeline**: the structlog pipeline configuration applies to the
@@ -586,7 +586,7 @@ it):
 
 | Env Var | Type | Default | Notes |
 |---|---|---|---|
-| `LOG_LEVEL` | enum | `INFO` | `DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`. Defaults to `DEBUG` when `DEBUG=true` and not explicitly set (D4 unidirectional rule). |
+| `LOG_LEVEL` | enum | `INFO` | `DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`. Controls all loggers (app and third-party) uniformly. Independent of `DEBUG` (D4). |
 | `LOG_FORMAT` | enum | `json` | `json`\|`console`. |
 
 No process-role variable is defined — see D5: process/container
@@ -611,9 +611,9 @@ against that spec's actual current content, not assumed.
   endpoint") to remain accurate — no change needed, already correct,
   but verify no contradiction is introduced.
 - Add one sentence directly under the new table making D4 explicit for
-  readers who only skim `configuration.md`: "`LOG_LEVEL` defaults to
-  `DEBUG` when `DEBUG=true` (unidirectional) — see
-  `docs/features/platform/logging.md` for the full rule."
+  readers who only skim `configuration.md`: "`LOG_LEVEL` controls all
+  logging and is independent of `DEBUG` — see
+  `docs/features/platform/logging.md`."
 
 **Acceptance criterion**: `docs/configuration.md` mirrors
 `logging.md` exactly (per the "Configuration Management" convention's
@@ -814,11 +814,12 @@ here.
   (e.g., a stray `basicConfig()` call would need to be flagged, not
   silently left). **Known case**: `backend/app/database.py` passes
   `echo=settings.debug` to `create_async_engine()`. Under the
-  unidirectional model (D4), this is consistent with the rule's intent
-  (DEBUG=true → verbose third-party). However, `echo` bypasses the
-  structlog pipeline (no structured format, no correlation IDs). It
-  will be removed in the implementation task when the pipeline takes
-  over its function — not in this spec-only plan.
+  orthogonal model (D4), this is a violation — `DEBUG` must not
+  influence logging. Additionally, `echo` bypasses the structlog
+  pipeline (no structured format, no correlation IDs). It will be
+  removed in the implementation task when the pipeline takes over
+  SQL logging configuration via `LOG_LEVEL` — not in this spec-only
+  plan.
 
 **Acceptance criterion**: `config.py` is verified to have no
 contradicting logging setup, and is NOT prematurely extended with
@@ -1077,17 +1078,23 @@ Being transparent about residual uncertainty rather than hiding it:
    point in `ibs-rabbitmq-integration.md` (Step 9b) rather than
    resolved here, since the consumer's own spec is the correct owner
    of that design decision.
-7. **Per-logger override mechanism is deferred** (D4/Step 1 item 6).
-   The unidirectional model covers the common cases (`DEBUG=true` for
-   full local verbosity, `LOG_LEVEL=DEBUG` for safe production
-   diagnostics), but there is no mechanism for "verbose httpx only,
-   quiet everything else" in production. This was a deliberate choice
-   to avoid speculative env var design (e.g., `LOG_LEVEL_SQLALCHEMY`)
-   before real operational experience shows which loggers need
-   independent control. If this need materializes, it should be added
-   in a future revision informed by actual production incidents, not
-   guessed now.
-8. **Runtime log level change (without restart) is out of scope**
+7. **Per-logger override mechanism is deferred** (Step 1 item 6).
+   `LOG_LEVEL` controls all loggers uniformly. There is no mechanism
+   for "verbose httpx only, quiet everything else". This was a
+   deliberate choice to avoid speculative env var design (e.g.,
+   `LOG_LEVEL_SQLALCHEMY`) before real operational experience shows
+   which loggers need independent control. If this need materializes,
+   it should be added in a future revision informed by actual
+   production incidents, not guessed now.
+8. **`LOG_LEVEL=DEBUG` in production exposes sensitive third-party
+   output** (D4/D6). There is no architectural safety net ("pin") —
+   the protection is purely operational (documentation, operator
+   discipline). This is a deliberate simplicity choice, consistent
+   with how Django/Spring Boot/Rails handle the same scenario. If
+   production experience shows this is insufficient, a per-logger
+   override mechanism (risk #7) would allow raising only Sentinel's
+   verbosity without third-party exposure.
+9. **Runtime log level change (without restart) is out of scope**
    (D4). `LOG_LEVEL` is read once at process startup; changing it
    requires a restart, consistent with 12-factor config conventions
    and the container-per-process-role model already established. This
@@ -1137,10 +1144,9 @@ Being transparent about residual uncertainty rather than hiding it:
 - **Coherence review round (post-draft-v2)**: a coherence verification
   of this draft against the current codebase identified three findings:
   (F1) abbreviation count drift from 48 to 51 — corrected above;
-  (F2) `echo=settings.debug` in `database.py` — initially flagged as
-  D4 violation, but under the revised unidirectional model (D4 v2) it
-  is consistent with the rule's intent; removal deferred to the
-  implementation task (pipeline will replace its function);
+  (F2) `echo=settings.debug` in `database.py` — violates D4
+  orthogonality (DEBUG must not influence logging); removal deferred
+  to the implementation task (pipeline will replace its function);
   (F3) `ibs-rabbitmq-integration.md` has no Open Points section —
   Step 9b updated with explicit placement instructions.
 - **Review round (post-initial-draft)**: this plan was reviewed by
