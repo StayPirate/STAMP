@@ -34,6 +34,12 @@ This document defines the `.tracking.json` schema used by the
       "enabled": false,
       "abbr": "PAG",
       "cache": null
+    },
+    "api-spec": {
+      "enabled": true,
+      "abbr": "APIS",
+      "path": "docs/api-spec.md",
+      "cache": null
     }
   }
 }
@@ -43,6 +49,12 @@ This document defines the `.tracking.json` schema used by the
 
 - `enabled`: whether the spec is tracked for reviews
 - `abbr`: uppercase abbreviation used in finding IDs (e.g., `TKT-GAP-01`)
+- `path`: optional. Explicit path to the tracked document, relative to
+  the repository root. Present only for cross-cutting documents tracked
+  outside `docs/features/**/` (e.g., `docs/api-spec.md`,
+  `docs/data-model.md`, `docs/architecture.md`). Omitted for ordinary
+  feature specs, whose path is always derived as
+  `docs/features/**/<name>.md`
 - `cache`: review status summary, or `null` if never reviewed
   - `last_review`: timestamp of last review (ISO 8601 with timezone:
     `YYYY-MM-DDTHH:MM:SS±HHMM`, e.g., `2026-05-06T14:30:00+0200`).
@@ -64,8 +76,17 @@ When loading `.tracking.json`:
   NOT present in the JSON, add it as `"enabled": false` with
   auto-generated `abbr` and `"cache": null` (new spec discovered —
   disabled by default). Write the updated file back only if changed.
-- For any spec listed in the JSON that no longer exists in
+- For any spec listed in the JSON **without** a `path` field (i.e.,
+  an ordinary feature spec) that no longer exists in
   `docs/features/**/`, remove it from the JSON (stale entry cleanup).
+- For any spec listed in the JSON **with** a `path` field (a
+  cross-cutting document), verify the file exists at that `path`
+  instead of scanning `docs/features/**/`. If the file no longer
+  exists at `path`, remove the entry (same stale entry cleanup rule,
+  applied against the explicit path). Cross-cutting documents are
+  never auto-discovered — they must be added manually to
+  `.tracking.json` (with `enabled` and `path` set explicitly) because
+  the discovery scan is scoped to `docs/features/**/` only.
 
 **No review file parsing at startup**: the `cache` field in
 `.tracking.json` is always trusted. It is updated by the command itself
