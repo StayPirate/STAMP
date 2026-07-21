@@ -531,6 +531,26 @@ except RedisError:
     # proceed without deduplication (idempotent downstream)
 ```
 
+### Logging
+
+Application code obtains a `structlog` logger bound to the module and
+logs via its standard methods:
+
+```python
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+logger.info("fetcher_run_started", fetcher_name=self.name)
+logger.warning("retrying_http_call", url=url, attempt=attempt)
+```
+
+Log statements MUST NOT include secret or PII values — see
+`docs/features/platform/logging.md` (Secrets and PII Discipline) and
+Secret Field Typing above. `docs/features/platform/logging.md` is the
+authoritative specification for log format, levels, correlation IDs,
+and the full secrets/PII policy — it is not restated here.
+
 ### Runtime Version
 
 Sentinel targets a single Python minor version for all runtime

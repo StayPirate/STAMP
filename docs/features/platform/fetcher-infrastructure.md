@@ -79,11 +79,16 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      - When `run_id` is `None` (scheduled runs): creates a new
        `FetcherRun` record with `status = running`, `triggered_by` and
        `triggered_by_user_id` set from the corresponding parameters
-     - When `run_id` is provided (API trigger): retrieves the existing
-       `FetcherRun` record (created synchronously by the API trigger
-       endpoint). The record already has `status = running` and its
-       `triggered_by`/`triggered_by_user_id` fields already set.
-       `run()` continues its lifecycle without creating a new record
+      - When `run_id` is provided (API trigger): retrieves the existing
+        `FetcherRun` record (created synchronously by the API trigger
+        endpoint). The record already has `status = running` and its
+        `triggered_by`/`triggered_by_user_id` fields already set.
+        `run()` continues its lifecycle without creating a new record
+      - `run()` binds `fetcher_run_id` into the logging context after
+        acquiring the `FetcherRun` record and resets it before
+        returning, so log lines emitted during the finalization phase
+        (status determination, cursor persistence) also carry it — see
+        `docs/features/platform/logging.md` (Correlation IDs).
    - Reset of all metric counters (`items_created`, `items_updated`,
      `items_failed`) to zero before each execution. This ensures correct
      behavior regardless of instance lifecycle (singleton vs. per-run

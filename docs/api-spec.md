@@ -306,6 +306,9 @@ The request ID is propagated to all log entries produced during request
 processing, enabling end-to-end debugging. Clients should log or display the
 request ID when reporting errors to support staff.
 
+See `docs/features/platform/logging.md` for the correlation ID mechanism
+and log record schema.
+
 ### Rate Limiting
 
 Rate limiting is not enforced at this time. When activated, the API will

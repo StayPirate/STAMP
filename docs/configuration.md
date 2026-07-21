@@ -192,8 +192,18 @@ here.
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | `docs/architecture.md` |
-| `DEBUG` | bool | `false` | Enable debug mode (never in production) | `docs/architecture.md` |
+| `DEBUG` | bool | `false` | Enable verbose error responses (stack traces in API errors). Does not affect logging — see `docs/features/platform/logging.md` | `docs/architecture.md` |
 | `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for API consumers | `docs/architecture.md` |
+
+## Logging
+
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `LOG_LEVEL` | enum | `INFO` | Log verbosity (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`), applies to all loggers uniformly | `docs/features/platform/logging.md` |
+| `LOG_FORMAT` | enum | `auto` | Log output format (`auto`\|`json`\|`console`) | `docs/features/platform/logging.md` |
+
+`LOG_LEVEL` controls all logging and is independent of `DEBUG` — see
+`docs/features/platform/logging.md`.
 
 ### Standard Environment Variables (Non-Sentinel)
 

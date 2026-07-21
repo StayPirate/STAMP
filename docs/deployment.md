@@ -101,10 +101,10 @@ cd backend && uv run alembic upgrade head
 cd backend && uv run uvicorn app.main:app --reload --port 8000
 
 # Start Celery worker (separate terminal)
-cd backend && uv run celery -A app.celery_app worker --loglevel=info
+cd backend && uv run celery -A app.celery_app worker
 
 # Start Celery Beat scheduler (separate terminal)
-cd backend && uv run celery -A app.celery_app beat --loglevel=info
+cd backend && uv run celery -A app.celery_app beat
 # Note: the redbeat scheduler class is configured in the Celery app
 # settings (beat_scheduler). No --scheduler CLI flag is needed.
 ```
@@ -232,7 +232,7 @@ Before the first production deployment:
 - [ ] Rate limiting configured on the reverse proxy (see
       `docs/drafts/open-points.md`, OP-2)
 - [ ] CORS origins set correctly
-- [ ] Log aggregation configured
+- [ ] Log aggregation configured (see Log Aggregation, below)
 - [ ] Backup strategy for PostgreSQL defined
 
 ### Production-Specific Notes
@@ -625,7 +625,71 @@ timeouts (2s per dependency, checks concurrent; 5s provides margin for network o
 
 ---
 
+## Log Aggregation
+
+See `docs/features/platform/logging.md` for the application-side
+contract (structured format, log levels, correlation IDs, standard
+record schema). This section documents how the log stream surfaces
+and is retained in each deployment context — the application itself
+never writes, rotates, or persists log files; it only writes to
+stdout/stderr.
+
+### Docker / Podman
+
+Logs are captured via the container engine's logging driver. For
+local rotation without any external log shipper, configure the
+`json-file` (Docker) or `local` (Podman) logging driver with
+`max-size`/`max-file` options in `docker-compose.yml` — this is a
+platform/engine configuration concern, not something Sentinel
+implements. Example:
+
+```yaml
+services:
+  api:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+```
+
+### Kubernetes
+
+Use `kubectl logs <pod>` for ad hoc inspection. For persistent
+aggregation, a cluster-level log shipper (e.g., Fluent Bit or Vector)
+forwarding to an aggregator (e.g., Loki or an ELK stack) is the
+operator's responsibility — Sentinel does not bundle or require any
+specific shipper.
+
+### Process-role identification
+
+Per `docs/features/platform/logging.md`, log records do not carry a
+process-role field of their own. Which of the 5 runtime roles (`api`,
+`celery-worker`, `git-worker`, `beat`, `ibs-consumer`) produced a given
+line is identified via platform-provided metadata: Kubernetes pod/
+container labels, or the Docker Compose service name
+(`com.docker.compose.service`, attached automatically by the Compose
+engine). Configuring the log collector to attach and propagate this
+metadata when shipping logs to the aggregator is the operator's
+responsibility.
+
+### `LOG_LEVEL=DEBUG` risk in production
+
+Setting `LOG_LEVEL=DEBUG` causes third-party loggers (notably
+`sqlalchemy.engine` and `httpx`) to emit sensitive data — SQL
+statements with bound parameters, full request URLs that may embed
+tokens. See `docs/features/platform/logging.md` (Secrets and PII
+Discipline) for the full policy. Operators should use
+`LOG_LEVEL=DEBUG` in production only for time-bounded diagnostics and
+revert promptly.
+
+---
+
 ## Troubleshooting
+
+Log messages referenced below appear as structured `event` fields in
+the JSON/console log output — see `docs/features/platform/logging.md`
+for the record schema.
 
 ### SSO Login Fails
 

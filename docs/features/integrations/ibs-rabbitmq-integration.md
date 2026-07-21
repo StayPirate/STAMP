@@ -426,6 +426,16 @@ application-side. While the per-event filtering cost is negligible
 (in-memory set lookup), the consumer must maintain a persistent
 connection and process the full event stream.
 
+## Open Points
+
+- **Per-message correlation ID.** Define a per-message correlation ID
+  for the consumer (e.g., `ibs_event_id`), bound at the start of
+  processing each AMQP message and reset at the end, so that log lines
+  produced while handling a given `package.commit` / `request.create`
+  / `request.state_change` event are correlatable to that specific
+  event. See `docs/features/platform/logging.md` (Correlation IDs) for
+  the general per-execution-unit correlation model this would follow.
+
 ## Security
 
 - RabbitMQ credentials for `rabbit.suse.de` are embedded in the

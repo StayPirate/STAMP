@@ -13,6 +13,7 @@ fetcher-operations.md           Monitoring, API, and CLI diagnostics for fetcher
 audit-trail-infrastructure.md   BaseAuditLog base class, AuditEventMixin
 system-settings.md              System settings (default CVSS version, etc.)
 health-endpoints.md             Liveness (/health) and readiness (/ready) probes
+logging.md                       Operational/diagnostic logging model, correlation IDs
 cve-record-parser.md            Shared CVE record parser for all CVE fetchers
 cve-source-failure-retry.md     Retry policy for per-source CVE fetch failures
 testing-strategy.md             Testing methodology, fixtures, coverage policy
@@ -35,3 +36,8 @@ testing-strategy.md             Testing methodology, fixtures, coverage policy
 - `testing-strategy.md` defines the testing methodology, database setup,
   and coverage policy. Its audit trail testing section references
   `audit-trail-infrastructure.md` for the Audit Trail Index.
+- `logging.md` defines the operational logging model (structured logs,
+  correlation IDs) consumed implicitly by every other spec that
+  prescribes log statements; it is distinct from
+  `audit-trail-infrastructure.md`, which governs persisted business
+  audit events.

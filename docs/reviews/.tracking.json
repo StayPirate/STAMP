@@ -41,6 +41,47 @@
         "not_reviewed": []
       }
     },
+    "api-spec": {
+      "enabled": true,
+      "abbr": "APIS",
+      "cache": {
+        "last_review": "2026-07-21T00:00:00+0000",
+        "open": {
+          "GAP": {
+            "H": 0,
+            "M": 1,
+            "L": 1
+          },
+          "COH": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
+        },
+        "resolved": 0,
+        "not_reviewed": [
+          "COH",
+          "DES",
+          "SEC",
+          "API"
+        ]
+      }
+    },
     "audit-trail-infrastructure": {
       "enabled": true,
       "abbr": "ATI",
@@ -903,6 +944,11 @@
         "resolved": 21,
         "not_reviewed": []
       }
+    },
+    "logging": {
+      "enabled": true,
+      "abbr": "LOG",
+      "cache": null
     },
     "maintainer": {
       "enabled": false,

@@ -430,6 +430,25 @@ failure behavior, orchestrator configuration), see
 - **Production**: manually deployed from version tags (`v*`) created by
   the release-please process (see `docs/deployment.md`, Release Process)
 
+## Observability
+
+Sentinel emits structured operational logs (JSON or human-readable
+console format, selectable per environment) to stdout/stderr only —
+the application never writes, rotates, or backs up log files, in
+keeping with the stateless container principle above. Log entries
+carry correlation identifiers (`request_id`, `celery_task_id`,
+`fetcher_run_id`) so operators can filter the stream by request, task,
+or fetcher run rather than grepping free text. Log aggregation,
+rotation, and retention are the deployment platform's responsibility,
+not the application's.
+
+This is distinct from the audit trail infrastructure
+(`docs/features/platform/audit-trail-infrastructure.md`), which
+persists business events in PostgreSQL. See
+`docs/features/platform/logging.md` for the full operational logging
+specification and `docs/deployment.md` (Log Aggregation) for
+per-environment operational detail.
+
 ## Security Considerations
 
 - Capability-based access control (RBAC with capabilities and scope)
