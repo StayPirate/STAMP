@@ -302,9 +302,22 @@ Every API response includes an `X-Request-ID` header containing a UUID that
 uniquely identifies the request. If the client sends an `X-Request-ID`
 header, the server adopts it; otherwise the server generates one.
 
-The request ID is propagated to all log entries produced during request
-processing, enabling end-to-end debugging. Clients should log or display the
-request ID when reporting errors to support staff.
+**Client-supplied value validation.** The server adopts the client-supplied
+`X-Request-ID` value only if, after trimming leading/trailing whitespace, it
+is non-empty, at most 128 characters long, and composed exclusively of
+characters in `[A-Za-z0-9._-]`. If the value is absent, empty (or
+whitespace-only), exceeds 128 characters, or contains any character outside
+this set, the server discards it and generates a UUIDv4 instead — the
+request is never rejected on account of an invalid `X-Request-ID` value. The
+server does not truncate or sanitize an out-of-bounds value; it is either
+adopted whole or discarded whole. If the client sends multiple
+`X-Request-ID` headers, the server validates and considers only the first
+occurrence; subsequent occurrences are ignored.
+
+The request ID is propagated to all log entries produced during synchronous
+request processing (see `docs/features/platform/logging.md` for scope
+boundaries), enabling request-scoped debugging. Clients should log or
+display the request ID when reporting errors to support staff.
 
 See `docs/features/platform/logging.md` for the correlation ID mechanism
 and log record schema.

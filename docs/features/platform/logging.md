@@ -127,7 +127,7 @@ following fields:
 | `logger` | string | Yes | Dotted module path of the logger (e.g., `app.services.package_service`). |
 | `event` | string | Yes | The human-readable log message. |
 | `app` | string | Yes | Value of `APP_NAME`. Distinguishes Sentinel's own log lines from other applications once logs from multiple services are aggregated into a shared collector/index. This is distinct from "process role" (see below) and is retained regardless of role identification strategy. |
-| `request_id` | string (UUID or client-supplied value) | Only during API request processing | See Correlation IDs. |
+| `request_id` | string (UUID or validated client-supplied value) | Only during API request processing | See Correlation IDs. |
 | `celery_task_id` | string (UUID) | Only during Celery task execution | See Correlation IDs. |
 | `fetcher_run_id` | string (UUID) | Only during a fetcher's `execute()` and the surrounding finalization phase of `run()` | See Correlation IDs. |
 | `exception` | string (traceback) | Only when logged with `exc_info` | See below. |
@@ -178,11 +178,11 @@ single adopted-or-generated value: the `X-Request-ID` response header
 (present on every response) and the log-propagation contract ("the
 request ID is propagated to all log entries produced during request
 processing"). This is not a new API contract — it is the concrete
-mechanism implementing a promise that predates this specification.
-Validation/sanitization of the client-supplied header value
-(charset/length bounds, handling of malformed or duplicate headers) is
-a gap in `api-spec.md`'s own contract, tracked separately (see
-`docs/reviews/api-spec.md`) — not defined by this specification.
+mechanism implementing a promise that predates this specification. The
+middleware validates the client-supplied `X-Request-ID` per the rules
+defined in `docs/api-spec.md` (Request Tracing) before adopting it as
+`request_id`; a value that fails validation is discarded and a UUIDv4 is
+generated instead.
 
 ### Scope boundary: per-execution-unit, no cross-enqueue propagation
 
