@@ -10,7 +10,7 @@
 
 ### FEO-GAP-01 — Trigger endpoint: Celery enqueue failure unspecified (Medium)
 
-**Status**: RESOLVED — Enqueue failure handling documented: FetcherRun marked as failure + 503 CELERY_ENQUEUE_FAILED returned (2026-05-29)
+**Status**: RESOLVED — Enqueue failure handling documented: FetcherRun marked as failure + 503 CELERY_UNAVAILABLE returned (2026-05-29)
 
 ### FEO-GAP-02 — Aggregation fetcher: partial failure semantics (Medium)
 

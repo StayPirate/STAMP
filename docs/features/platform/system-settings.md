@@ -238,7 +238,7 @@ No setting change is made. No `SettingAuditEvent` is created.
 |--------|------|-----------|
 | 409 | `RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (slot occupied) |
 | 503 | `REDIS_UNAVAILABLE` | Redis is unreachable (slot acquisition failed) |
-| 503 | `CELERY_ENQUEUE_FAILED` | Task could not be enqueued (slot released) |
+| 503 | `CELERY_UNAVAILABLE` | Task could not be enqueued (slot released) |
 
 **Idempotency**: safe to call multiple times. If no derived values have
 changed since the last run, the batch produces no mutations or audit

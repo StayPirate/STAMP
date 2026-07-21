@@ -1689,10 +1689,8 @@ once per ticket in the results.
 `search` and `name` are mutually exclusive. If both are provided,
 return 422 `VALIDATION_ERROR`.
 
-Pagination constraints: `page < 1` or `per_page < 1` or `per_page > 100`
-return 422 `VALIDATION_ERROR`. If `page` exceeds the total number of
-pages, an empty `data` array is returned with the correct `total` in
-`meta` — this is not an error.
+Pagination constraints follow the standard rule in `docs/api-spec.md`
+(Pagination).
 
 **Naming note**: the parameter is named `ticket_status` (not `status`)
 to disambiguate from package-level statuses visible in `track_summary`.

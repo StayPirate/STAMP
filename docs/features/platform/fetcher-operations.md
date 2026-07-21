@@ -463,7 +463,7 @@ Enqueues a manual run of the specified fetcher.
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed). Cannot be triggered. |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false` in `FetcherConfig`) |
 | 409 | `FETCHER_ALREADY_RUNNING` | Fetcher is already running (a non-stale `FetcherRun` with status `running` exists for this fetcher). If the active run is stale, it is marked as `failure` and the new run proceeds (returns 202). |
-| 503 | `CELERY_ENQUEUE_FAILED` | Task broker unavailable — run record marked as failed |
+| 503 | `CELERY_UNAVAILABLE` | Task broker unavailable — run record marked as failed |
 
 **`Capability: manage_fetchers`**
 
@@ -492,7 +492,7 @@ fails (any exception from Celery/Redis), the endpoint updates the
 `FetcherRun` record to `status = failure`,
 `error_message = "Celery task enqueue failed: {exception}"`,
 `finished_at = now()`, `duration_seconds = 0`, then returns 503 Service
-Unavailable with code `CELERY_ENQUEUE_FAILED`. This cleanup is critical
+Unavailable with code `CELERY_UNAVAILABLE`. This cleanup is critical
 because the `FetcherRun` record with `status = running` is the
 concurrency mechanism — if not cleaned up, it blocks all future runs of
 this fetcher until the stale detection threshold (default 3660s,

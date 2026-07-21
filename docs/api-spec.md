@@ -115,12 +115,13 @@ Error responses follow this structure:
 
 ```json
 {
-  "code": "TICKET_NOT_FOUND",
-  "detail": "Ticket with ID 'abc-123' does not exist",
+  "code": "VALIDATION_ERROR",
+  "detail": "Request validation failed",
   "errors": [
     {
-      "field": "field_name",
-      "message": "Validation error message"
+      "loc": ["body", "field_name"],
+      "msg": "Field required",
+      "type": "missing"
     }
   ]
 }
@@ -134,7 +135,15 @@ Fields:
 - `detail` (string, required): a human-readable description of the error.
   May change without notice — do not match against this string
 - `errors` (array, optional): field-level validation errors. Present only
-  for `VALIDATION_ERROR` responses
+  for `VALIDATION_ERROR` responses. This array uses Pydantic v2's native
+  validation error format, produced automatically by FastAPI. Each
+  element has the following schema:
+  - `loc` (array of strings/integers, required): the path to the invalid
+    field within the request payload, e.g. `["body", "field_name"]` or
+    `["query", "per_page"]`
+  - `msg` (string, required): a human-readable error message
+  - `type` (string, required): a stable machine-readable error type
+    identifier, e.g. `"missing"`, `"string_type"`
 
 #### Error Code Categories
 
@@ -154,6 +163,7 @@ Error codes are grouped by prefix:
 | `RECALC_*` | Batch recalculation operations | `RECALC_ALREADY_IN_PROGRESS` |
 | `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_EXTERNAL_STATUS_READONLY`, `USER_EXTERNAL_FIELD_READONLY`, `USER_EXTERNAL_PASSWORD_FORBIDDEN`, `USER_EXTERNAL_ROLE_PROTECTED`, `USER_SELF_ROLE_REMOVAL`, `USER_SELF_DEACTIVATION`, `USER_PASSWORD_POLICY_VIOLATION` |
 | `DATE_RANGE_*` | Date range filter validation | `DATE_RANGE_INVERTED`, `DATE_RANGE_TOO_WIDE` |
+| `<DEPENDENCY>_UNAVAILABLE` | Infrastructure dependency availability (external service or broker unreachable) | `REDIS_UNAVAILABLE`, `SMELT_UNAVAILABLE`, `CELERY_UNAVAILABLE`, `PROVISIONING_UNAVAILABLE` |
 
 Rules:
 
@@ -183,7 +193,7 @@ Examples:
 | `PROVISIONING_UNAVAILABLE` | External identity provider |
 | `SMELT_UNAVAILABLE` | SMELT API |
 | `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
-| `CELERY_ENQUEUE_FAILED` | Celery task broker (task dispatch failed) |
+| `CELERY_UNAVAILABLE` | Celery task broker (task dispatch failed) |
 
 ### Pagination
 
@@ -191,6 +201,11 @@ List endpoints support pagination via query parameters:
 
 - `page` (int, default: 1): Page number
 - `per_page` (int, default: 20, max: 100): Items per page
+
+Constraint enforcement: if `page < 1`, `per_page < 1`, or `per_page > 100`,
+the endpoint returns `422 VALIDATION_ERROR`. Values are never silently
+clamped. Requesting a `page` beyond the last available page returns an
+empty `data` array with correct `meta.total` (not an error).
 
 ### Filtering
 
