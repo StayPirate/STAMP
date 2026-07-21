@@ -262,7 +262,16 @@ token returned by `contextvars.ContextVar.set()`) at the end of its
 unit of work. This prevents a stale value from leaking into
 subsequent log lines in reused processes — Celery prefork workers, in
 particular, execute multiple tasks in the same OS process over their
-lifetime.
+lifetime. For API requests specifically, "end of its unit of work"
+means the completion of the full ASGI request lifecycle — including
+any Starlette `BackgroundTask` attached to the response, if present.
+The reset MUST NOT occur at response-send when a `BackgroundTask` is
+pending; the middleware's `try/finally` must encompass the entire
+scope Starlette executes for the request, so that log lines produced
+by a `BackgroundTask` still carry `request_id`. Sentinel does not
+currently use `BackgroundTask` anywhere, but the middleware contract
+must be correct for this case regardless, since nothing prevents a
+future handler from using it.
 
 **Known gap, deliberately deferred**: the IBS RabbitMQ consumer (a
 fifth first-class runtime role — see `docs/architecture.md`,
@@ -549,6 +558,19 @@ given the precedents of other infra specs like `networking.md`):
    operators locate a failed-migration error via the migration job's
    exit code and its plain-text stdout/stderr, not via the structured
    pipeline.
+
+   **Bootstrap constraint**: log messages emitted during `Settings`
+   initialization (e.g., configuration validators warning about
+   non-fatal issues such as unusually long token lifetimes or missing
+   optional credentials) use Python stdlib's default plain-text format
+   on stderr. The structured pipeline cannot be active at this point
+   because it requires the configuration values that `Settings` itself
+   is still loading (chicken-and-egg). This is accepted as an inherent
+   bootstrap limitation — these are a small, fixed number of one-shot
+   messages at process startup, and log collectors handle non-JSON
+   lines gracefully (Fluent Bit passes them through unparsed; Vector
+   and Promtail have configurable fallback behavior). No architectural
+   change is needed to address this.
 7. **Secrets and PII Discipline** — the single authoritative statement
    of D6, including the third-party-logger gap and the root/handler
    placement requirement for the future redaction processor.
@@ -828,7 +850,14 @@ here.
   pipeline (no structured format, no correlation IDs). It will be
   removed in the implementation task when the pipeline takes over
   SQL logging configuration via `LOG_LEVEL` — not in this spec-only
-  plan.
+  plan. **Also known and NOT a violation**: `config.py`'s
+  `@model_validator` methods call `logger.warning(...)` for non-fatal
+  configuration issues (`JWT_EXPIRY_HOURS` > 720, missing IBS
+  credentials). These emit plain-text on stderr because they run
+  before the structured pipeline can be configured (see Step 1, item
+  6, "Bootstrap constraint"). This is consistent with the documented
+  bootstrap limitation, not a contradiction to flag — they remain
+  as-is.
 
 **Acceptance criterion**: `config.py` is verified to have no
 contradicting logging setup, and is NOT prematurely extended with
@@ -842,8 +871,10 @@ until the implementation task wires them end-to-end.
 - In the `run()` method contract (the "Run lifecycle management"
   section, where `FetcherRun` record acquisition is described), add
   one sentence: "`run()` binds `fetcher_run_id` into the logging
-  context for the duration of `execute()` — see
-  `docs/features/platform/logging.md` (Correlation IDs)."
+  context after acquiring the `FetcherRun` record and resets it
+  before returning, so log lines emitted during the finalization
+  phase (status determination, cursor persistence) also carry it —
+  see `docs/features/platform/logging.md` (Correlation IDs)."
 - Do not otherwise alter this spec. This is the minimal edit that
   makes the `logging.md` → `fetcher-infrastructure.md` reference
   bidirectional, so an implementer reading `run()`'s own contract is
