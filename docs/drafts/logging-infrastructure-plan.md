@@ -523,7 +523,9 @@ given the precedents of other infra specs like `networking.md`):
    Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are
    explicitly deferred to a future phase. The current model covers the
    common cases: `DEBUG=true` for full verbosity in development, and
-   `LOG_LEVEL=DEBUG` for safe application-only verbosity in production. **Scope of this
+   `LOG_LEVEL=DEBUG` for safe application-only verbosity in production.
+
+   **Scope of this
    pipeline**: the structlog pipeline configuration applies to the
    long-running runtime processes (API server, Celery worker, Git
    worker, Beat, IBS consumer). CLI (Click) processes do **not**
