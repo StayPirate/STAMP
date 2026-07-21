@@ -225,8 +225,13 @@ universal one — see the IBS RabbitMQ consumer note below):
   client-supplied value (charset/length bounds, handling of malformed
   or duplicate headers) is a gap in `api-spec.md` itself, not in this
   plan — tracked separately (see Section 2.1 item 5 / Step 9c).
-- **Celery tasks**: `celery_task_id` — bound via Celery signals
-  (`task_prerun`/`task_postrun`).
+- **Celery tasks**: `celery_task_id` — the value of
+  `task.request.id` (Celery's native task identifier), bound via
+  Celery signals (`task_prerun`/`task_postrun`). Since Celery
+  preserves `task.request.id` across retry attempts (`self.retry()`
+  re-enqueues with the same ID), all execution attempts of a retried
+  task share the same `celery_task_id` — enabling operators to see
+  the full history of a task (including retries) with a single filter.
 - **Fetcher runs**: `fetcher_run_id` — bound by `BaseFetcher.run()`
   (the non-overridable wrapper around `execute()` — see
   `docs/features/platform/fetcher-infrastructure.md`), after the
@@ -501,9 +506,16 @@ given the precedents of other infra specs like `networking.md`):
    different from "process role" and is retained), and the
    correlation fields below when present. Correlation fields are
    **omitted entirely** when not set for the current unit of work —
-   never serialized as `null`. Note explicitly that `exception`
-   (traceback) is included only for ERROR/CRITICAL records raised
-   from an exception context. Add an explicit note per D5: the
+   never serialized as `null`. Note explicitly that the `exception`
+   field (traceback) is typically present on ERROR/CRITICAL records
+   raised from an exception context; the pipeline does NOT strip
+   `exc_info` from lower-level records — developers MAY use
+   `exc_info=True` at WARNING for diagnostically valuable tracebacks
+   of recoverable errors (e.g., a retryable HTTP failure logged
+   before proceeding to the next item). The guidance is: reserve
+   routine use of `exc_info` for ERROR/CRITICAL; use it at WARNING
+   sparingly and only when the traceback adds diagnostic value not
+   available from the message alone. Add an explicit note per D5: the
    record does **not** include a process-role field — role
    identification is the log collector's responsibility via
    platform-provided container/pod metadata, not an application-level
