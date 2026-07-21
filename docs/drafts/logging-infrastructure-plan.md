@@ -171,9 +171,16 @@ bridging.
 
 ### D2 — Output format and destination: structured, stdout/stderr only
 
-- Log output is **JSON** in `LOG_FORMAT=json` (intended for
-  production/staging) or a **human-readable console renderer** in
-  `LOG_FORMAT=console` (intended for local development).
+- Log output format is controlled by `LOG_FORMAT`, which accepts three
+  values: `json` (structured JSON — intended for production/staging),
+  `console` (human-readable colorized output — intended for local
+  development), or `auto` (default). In `auto` mode, the format is
+  selected based on whether stdout is attached to a TTY: TTY detected
+  → `console`; no TTY → `json`. This follows structlog's recommended
+  best practice (`sys.stderr.isatty()` detection) and provides optimal
+  output for each context without explicit configuration. An explicit
+  `LOG_FORMAT=json` or `LOG_FORMAT=console` always overrides the
+  auto-detection.
 - Logs are written **exclusively to stdout/stderr**. The application
   **never** writes log files, never rotates files, never manages log
   backup.
@@ -453,7 +460,8 @@ given the precedents of other infra specs like `networking.md`):
    audit trail events, which are defined and persisted per
    `audit-trail-infrastructure.md`."
 2. **Principles** — structlog on top of stdlib `logging`; JSON or
-   console rendering via `LOG_FORMAT`; stdout/stderr only, never
+   console rendering via `LOG_FORMAT` (with `auto` TTY-detection as
+   the default — see D2); stdout/stderr only, never
    files; 12-factor app alignment (explicit citation of
    `docs/architecture.md`, Runtime State).
 3. **Log Levels** — definition of each level (`DEBUG/INFO/WARNING/
@@ -464,8 +472,9 @@ given the precedents of other infra specs like `networking.md`):
    `LOG_LEVEL` env var, default `INFO`. Explicitly restate D4 (no
    coupling with `DEBUG`). **Startup validation**: an invalid
    `LOG_LEVEL` or `LOG_FORMAT` value (not one of the enumerated
-   options) MUST cause the process to refuse to start (fail-fast),
-   consistent with the project's existing fail-fast precedents
+   options — `auto`/`json`/`console` for `LOG_FORMAT`) MUST cause the
+   process to refuse to start (fail-fast), consistent with the
+   project's existing fail-fast precedents
    (invalid `JWT_SECRET_KEY` length, non-UTC Celery timezone). The
    error MUST be emitted as a plain-text message on stderr — not
    through the structured renderer, which may itself be the source of
@@ -587,7 +596,7 @@ it):
 | Env Var | Type | Default | Notes |
 |---|---|---|---|
 | `LOG_LEVEL` | enum | `INFO` | `DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`. Controls all loggers (app and third-party) uniformly. Independent of `DEBUG` (D4). |
-| `LOG_FORMAT` | enum | `json` | `json`\|`console`. |
+| `LOG_FORMAT` | enum | `auto` | `auto`\|`json`\|`console`. `auto` selects format based on TTY detection on stdout (TTY → `console`, non-TTY → `json`); see D2. |
 
 No process-role variable is defined — see D5: process/container
 identification is delegated to platform-provided metadata, not to an
