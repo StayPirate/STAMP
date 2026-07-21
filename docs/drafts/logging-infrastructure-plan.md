@@ -175,12 +175,10 @@ bridging.
   values: `json` (structured JSON — intended for production/staging),
   `console` (human-readable colorized output — intended for local
   development), or `auto` (default). In `auto` mode, the format is
-  selected based on whether stdout is attached to a TTY: TTY detected
-  → `console`; no TTY → `json`. This follows structlog's recommended
-  best practice (`sys.stderr.isatty()` detection) and provides optimal
-  output for each context without explicit configuration. An explicit
-  `LOG_FORMAT=json` or `LOG_FORMAT=console` always overrides the
-  auto-detection.
+  selected based on `sys.stdout.isatty()`: returns `True` → `console`;
+  returns `False` → `json`. This provides optimal output for each
+  context without explicit configuration. An explicit `LOG_FORMAT=json`
+  or `LOG_FORMAT=console` always overrides the auto-detection.
 - Logs are written **exclusively to stdout/stderr**. The application
   **never** writes log files, never rotates files, never manages log
   backup.
@@ -262,7 +260,12 @@ token returned by `contextvars.ContextVar.set()`) at the end of its
 unit of work. This prevents a stale value from leaking into
 subsequent log lines in reused processes — Celery prefork workers, in
 particular, execute multiple tasks in the same OS process over their
-lifetime. For API requests specifically, "end of its unit of work"
+lifetime. To guarantee cleanup even when `task_postrun` is skipped
+(hard time limit kill, unhandled exception in the signal handler
+itself), `task_prerun` MUST unconditionally clear any existing
+correlation context before binding the new `celery_task_id`. The
+`task_postrun` reset remains as defense-in-depth but is not the sole
+cleanup mechanism. For API requests specifically, "end of its unit of work"
 means the completion of the full ASGI request lifecycle — including
 any Starlette `BackgroundTask` attached to the response, if present.
 The reset MUST NOT occur at response-send when a `BackgroundTask` is
@@ -641,6 +644,13 @@ against that spec's actual current content, not assumed.
 - Edit the existing `APP_NAME` row description ("used in logs, health
   endpoint") to remain accurate — no change needed, already correct,
   but verify no contradiction is introduced.
+- Edit the existing `DEBUG` row description from the current vague
+  "Enable debug mode (never in production)" to align with D4's strict
+  orthogonality rule. New description: "Enable verbose error responses
+  (stack traces in API errors). Does not affect logging — see
+  `docs/features/platform/logging.md`". This prevents operators
+  reading only `configuration.md` from assuming `DEBUG=true` makes
+  logs more verbose.
 - Add one sentence directly under the new table making D4 explicit for
   readers who only skim `configuration.md`: "`LOG_LEVEL` controls all
   logging and is independent of `DEBUG` — see
@@ -734,6 +744,15 @@ its authoritative content.
   the logging spec is implemented, with a one-line pointer — do not
   rewrite the bullets themselves, they remain accurate as
   human-readable descriptions of what to search for.
+- Update the Quick Start command examples (currently
+  `celery -A app.celery_app worker --loglevel=info` and the equivalent
+  Beat command) to remove the `--loglevel=info` flag. With the
+  structured logging pipeline controlling all logger levels via
+  `LOG_LEVEL`, an explicit `--loglevel` flag would override the
+  application-level setting for Celery's own loggers, violating D4's
+  "no exceptions" rule. The commands should use the bare form (e.g.,
+  `celery -A app.celery_app worker`) and let the pipeline handle
+  verbosity.
 
 **Acceptance criterion**: the "Log aggregation configured" checkbox is
 no longer a dangling reference; `deployment.md` clearly assigns
@@ -1200,3 +1219,15 @@ Being transparent about residual uncertainty rather than hiding it:
   genuine gaps in `api-spec.md` itself (not in this plan) were
   factored out into a separate `api-spec` review track (Step 9c)
   rather than absorbed into the logging spec.
+- **Pre-execution review round**: four subagents (gap-analysis,
+  coherence, design, docs-placement) reviewed this draft after the
+  internal coherence verification. Four actionable findings were
+  validated and incorporated: (F-A) stdout/stderr `isatty()`
+  contradiction in D2 — resolved to `sys.stdout.isatty()` explicitly;
+  (F-B) Celery prefork hard-kill stale contextvar — added
+  reset-before-bind pattern to D3; (F-C) `deployment.md` Quick Start
+  `--loglevel=info` flags conflict with D4 — Step 5 updated to remove
+  them; (F-D) `DEBUG` row description in `configuration.md` too vague
+  for D4 — Step 2 updated to narrow it. Twelve additional findings
+  were evaluated and rejected as non-problems, over-documentation, or
+  already covered by the draft's existing risk/deferral notes.
