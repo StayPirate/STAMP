@@ -68,6 +68,12 @@ guidance for choosing a level:
 | `ERROR` | Failures requiring operator attention: an unhandled exception in a background task, a fetcher run ending in `failure` status, a external service call that exhausted retries. |
 | `CRITICAL` | Failures that abort a process or a critical subsystem: fail-fast startup validation failures, unrecoverable database connectivity loss. |
 
+For batch operations processing a large number of items (indicatively
+>100), per-item success logs SHOULD use DEBUG; aggregate results (total
+created/updated/failed) SHOULD use INFO. This keeps the INFO stream
+focused on lifecycle events and operator-actionable signals, while
+per-item detail remains available at DEBUG for drill-down diagnostics.
+
 `LOG_LEVEL` (see Configuration) controls the minimum level emitted, for
 **all** loggers uniformly — application code and third-party libraries
 alike. There are no per-logger overrides, no conditional pins, and no
@@ -196,7 +202,7 @@ request or by a fetcher starts a fresh correlation scope with its own
 phase — cross-boundary propagation (e.g., injecting the parent
 `request_id` as a task header and re-binding it in `task_prerun`) may
 be added in a future revision if operational experience shows the
-need. The "end-to-end debugging" wording in `docs/api-spec.md`
+need. The "request-scoped debugging" wording in `docs/api-spec.md`
 (Request Tracing) describes the synchronous request-processing
 lifecycle, not asynchronous work it may enqueue.
 
@@ -231,8 +237,9 @@ multiple tasks in the same OS process over their lifetime.
 
 To guarantee cleanup even when `task_postrun` is skipped (hard time
 limit kill, unhandled exception in the signal handler itself),
-`task_prerun` MUST unconditionally clear any existing correlation
-context before binding the new `celery_task_id`. The `task_postrun`
+`task_prerun` MUST unconditionally clear all three correlation
+ContextVars — `request_id`, `celery_task_id`, and `fetcher_run_id` —
+before binding the new `celery_task_id`. The `task_postrun`
 reset remains as defense-in-depth but is not the sole cleanup
 mechanism.
 
@@ -292,6 +299,17 @@ consumer. CLI (Click) processes do **not** invoke it — they rely on
 the Python stdlib logging default (stderr), which keeps stdout
 reserved for the CLI Output Contract (`docs/conventions.md`) without
 requiring any CLI-specific logging configuration.
+
+When CLI processes invoke shared service or utility code that uses
+`structlog.get_logger()`, a minimal structlog configuration MUST be
+applied at Click group initialization. This configuration routes
+structlog output through stdlib `logging` to stderr, uses plain-text
+format (not JSON, not colorized console), and sets the level to WARNING
+or above — so that DEBUG/INFO messages from service code do not pollute
+CLI output. Correlation IDs (`request_id`, `celery_task_id`,
+`fetcher_run_id`) are not bound in CLI processes and are omitted from
+log records. stdout remains reserved exclusively for CLI Output Contract
+output (`docs/conventions.md`).
 
 Alembic keeps its own independent logging configuration
 (`alembic.ini`, `fileConfig`), because it is a one-shot migration tool
