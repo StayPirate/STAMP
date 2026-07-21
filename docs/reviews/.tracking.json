@@ -444,7 +444,18 @@
     "logging": {
       "enabled": true,
       "abbr": "LOG",
-      "cache": null
+      "cache": {
+        "last_review": "2026-07-21T18:55:46+0200",
+        "open": {
+          "GAP": { "H": 0, "M": 1, "L": 1 },
+          "COH": { "H": 0, "M": 0, "L": 1 },
+          "DES": { "H": 0, "M": 1, "L": 0 },
+          "SEC": { "H": 0, "M": 0, "L": 0 },
+          "API": { "H": 0, "M": 0, "L": 0 }
+        },
+        "resolved": 0,
+        "not_reviewed": []
+      }
     },
     "maintainer": {
       "enabled": false,
@@ -459,7 +470,10 @@
           "API": { "H": 0, "M": 2, "L": 2 }
         },
         "resolved": 0,
-        "not_reviewed": ["DES", "SEC"]
+        "not_reviewed": [
+          "DES",
+          "SEC"
+        ]
       }
     },
     "networking": {
