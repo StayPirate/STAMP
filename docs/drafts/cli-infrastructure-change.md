@@ -41,15 +41,28 @@ CLI commands use synchronous sessions unconditionally, which contradicts
 synchronous session for direct queries). This is a real, pre-existing
 contradiction between specs, independent of the new spec being introduced.
 
+A fourth finding, surfaced during review of an earlier version of this
+draft: the project maintains only an async database driver (`asyncpg`)
+and only an async engine/session factory
+(`backend/app/database.py`) — no synchronous driver or engine exists
+anywhere in the codebase. Resolving the third finding by introducing a
+synchronous session for a subset of CLI commands (as an earlier version
+of this draft proposed) would have required adding a new dependency
+(`psycopg`) and a second database engine solely to support 5 read-only
+commands — complexity not justified by any measured performance need,
+since `asyncio.run()` already provides a one-line, zero-dependency
+solution using existing infrastructure. See D2 and D6 below.
+
 ## 2. Decisions Made (confirmed with user)
 
 | # | Decision point | Resolution |
 |---|-----------------|------------|
 | D1 | Where should CLI infrastructure live? | New dedicated spec: `docs/features/platform/cli-infrastructure.md`, following the `platform/*-infrastructure.md` pattern. |
-| D2 | How to resolve the sync/async session contradiction? | **Hybrid model**: synchronous session for direct read-only queries (`fetcher list`, `fetcher config`); `AsyncSession` + `asyncio.run()` for commands that delegate to async services (`manage-user *`, `api-key *`). `conventions.md` is corrected to describe this hybrid model instead of "sync only". |
+| D2 | How to resolve the sync/async session contradiction? | **Async-only model**: all CLI commands use `AsyncSession` + a single `asyncio.run()` call, for both read-only queries (`fetcher list`, `fetcher config`, `manage-user list/show`, `api-key list`) and mutation commands that delegate to async services (`manage-user create/update/deactivate/set-password/unlock`, `api-key revoke`). No synchronous database driver or engine is introduced. Rationale: the project already maintains only `asyncpg` (no synchronous driver exists in `backend/pyproject.toml` or `backend/app/database.py`); adding a second driver, a second engine, and a per-command path-selection rule for 5 read-only commands is unjustified complexity when `asyncio.run()` already provides a one-line solution using existing infrastructure. `conventions.md` is corrected to state the async-only principle instead of "sync only" or a hybrid model. |
 | D3 | Should secondary documentation gaps be fixed in the same change? | Yes — `cli-reference.md` completeness, `AGENTS.md` file-placement map, `platform/README.md` index. |
 | D4 | Should `--json` output be specified as shared infrastructure? | **No.** No command currently defines a `--json` flag; specifying an envelope now would be premature generalization (Guardrail 21-C: rule observed in zero real contexts). The new spec explicitly states this is out of scope for this phase. |
 | D5 | What to do with `conventions.md:781` ("No JSON output unless a `--json` flag is explicitly added to a command")? | **Reword** to a generic constraint that does not name a specific flag: structured/machine-readable output is never the default; if a future command needs it, it must be an explicit per-command opt-in. This preserves the useful guardrail (JSON never silently becomes the default) while removing the forward reference to an unused, unspecified flag name. |
+| D6 | How to prevent a future agent from re-introducing a synchronous database driver "for performance", as almost happened in this session? | **Document async-only as an explicit project-wide convention**, not just a CLI-scoped rule. Add a bullet to `docs/conventions.md` (SQLAlchemy Conventions, under `## Python (Backend)` — the cross-cutting section, not the CLI-scoped one) stating the async-only principle and requiring explicit justification plus human reviewer approval before introducing any synchronous driver or engine. This directly addresses Guardrail 21 (information placement): the principle is cross-cutting (applies to API, Celery, and CLI alike), so it must live in the cross-cutting section, not be buried inside `## CLI Conventions` where a future agent working on a service or task would not see it. |
 
 ## 3. Files to Create
 
@@ -102,8 +115,8 @@ explicit per-command opt-in.
 | `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → CLI Commands) | Defines the mandatory CLI test scenarios; this spec defines the harness those tests run against. |
 | `docs/features/identity/user-management.md` | Consumer: `manage-user` command group delegates to async services via the pattern defined here. |
 | `docs/features/identity/authentication.md` | Consumer: `api-key` command group delegates to async services via the pattern defined here. |
-| `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the synchronous query path defined here. |
-| `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the `asyncio.run()` invocation pattern this spec's async session path wraps. |
+| `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the `asyncio.run()` session mechanism defined here for its read-only queries. |
+| `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the async service contracts invoked from within the `asyncio.run()` mechanism defined here. |
 
 ## Package Entry Point & Invocation
 
@@ -167,60 +180,74 @@ exceptions propagate to the per-command error handling described in
 
 ## Database Session Management
 
-CLI commands acquire a database session through one of two paths,
-selected per-command based on whether the command delegates to an async
-service module or performs a direct read-only query. **A command MUST use
-exactly one of the two paths — never both within the same invocation.**
+Sentinel is an async-only project (see `docs/conventions.md`, SQLAlchemy
+Conventions): no synchronous database driver or engine exists anywhere
+in the codebase (`backend/app/database.py` defines only
+`create_async_engine` and `async_sessionmaker`; `backend/pyproject.toml`
+declares only `asyncpg`, no `psycopg`/`psycopg2`). Every CLI command,
+whether read-only or mutating, follows the same mechanism — there is no
+per-command path selection.
 
-### Path A — Synchronous session (direct queries)
-
-Used by commands that query the database directly without delegating to
-an async service module. Currently: `sentinel fetcher list`,
-`sentinel fetcher config <name>` (per `fetcher-operations.md`, "Data
-source: queries the database directly (synchronous session)").
-
-- A synchronous SQLAlchemy engine and `sessionmaker` are constructed from
-  the same `DATABASE_URL` value used by the async engine
-  (`backend/app/database.py`), with the driver component of the URL
-  substituted for a synchronous driver (`postgresql+asyncpg://...` →
-  `postgresql+psycopg://...`). No separate configuration variable is
-  introduced — `DATABASE_URL` remains the single source of the connection
-  string, per `docs/conventions.md` (Configuration Management).
-- **Implementation note (non-normative, flagged for the implementation
-  phase)**: this requires a synchronous PostgreSQL driver (e.g.,
-  `psycopg`) as an additional dependency alongside `asyncpg`. This is a
-  Guardrail 5 (CI/CD awareness) consideration to revisit when the CLI is
-  implemented — not a spec-level requirement addressed further here.
-- The session is opened at the start of the command, used for one or more
-  reads, and closed (via context manager) before the command returns. No
-  explicit transaction/commit is required for read-only commands (no
-  writes occur on this path — per Guardrail 12/24, the `fetcher` CLI group
-  is read-only by design, all mutations are API-only).
-- Connection failure (database unreachable) is not caught locally — it
-  propagates per "Error Handling & Exit Code Mapping" below, resulting in
-  exit code 2.
-
-### Path B — Async session via `asyncio.run()` (service delegation)
-
-Used by commands that delegate to an async service module. Currently: all
-`sentinel manage-user *` commands (delegate to `user_service`, per
-`user-service.md`) and all `sentinel api-key *` commands (delegate to
-`api_key_service`, per `api-key-service.md`).
-
-- The command constructs an `AsyncSession` using the existing async
-  `async_sessionmaker` (`backend/app/database.py`) and passes it into a
-  single `asyncio.run(...)` call wrapping the entire service invocation,
-  per the pattern already declared in `user-service.md` ("Async pattern")
-  and `api-key-service.md` ("Async pattern"):
+- The command constructs an `AsyncSession` via the existing
+  `async_session_factory` (`backend/app/database.py`) and passes it
+  into a single `asyncio.run(...)` call wrapping the **entire command
+  workflow** — not just a service invocation. For read-only commands
+  (`fetcher list`, `fetcher config`, `manage-user list`, `manage-user
+  show`, `api-key list`), the wrapped function performs the read(s)
+  directly. For commands that delegate to an async service module
+  (`manage-user create`, `update`, `deactivate`, `set-password`,
+  `unlock`, and `api-key revoke`), the wrapped function calls the
+  service function, per the async pattern already declared in
+  `user-service.md` ("Async pattern") and `api-key-service.md` ("Async
+  pattern").
+- For commands with pre-mutation reads or interactive prompts (e.g.,
+  `manage-user deactivate` reads impact counts, prompts for
+  confirmation, then deactivates), all of these steps run inside the
+  same `asyncio.run()` call. Blocking terminal I/O (e.g.,
+  `click.confirm()`, hidden password prompts) inside the wrapped async
+  function is acceptable for one-shot CLI processes — the event loop has
+  no other work scheduled while waiting for operator input, unlike in a
+  server context where blocking would stall concurrent requests, e.g.:
 
   ```python
-  asyncio.run(user_service.create_user(session, ...))
+  async def deactivate_flow(session_factory, username):
+      async with session_factory() as db:
+          user = await lookup_user(db, username)      # pre-mutation reads
+          impact = await count_deactivation_impact(db, user)
+      if not click.confirm("Proceed?"):                # blocking prompt
+          return
+      async with session_factory() as db:
+          await user_service.deactivate_user(db, user.id, ...)  # mutation
+
+  asyncio.run(deactivate_flow(async_session_factory, username))
+  ```
+
+  For commands with no pre-mutation reads or prompts, the simpler
+  single-call form applies directly. Mutation example:
+
+  ```python
+  asyncio.run(api_key_service.revoke_key(session, ...))
+  ```
+
+  Read-only example:
+
+  ```python
+  async def fetcher_list(session_factory):
+      async with session_factory() as db:
+          fetchers = (await db.execute(select(FetcherConfig))).scalars().all()
+      print_table(fetchers)
+
+  asyncio.run(fetcher_list(async_session_factory))
   ```
 
 - Session and transaction lifecycle (commit on success, rollback on
-  exception) are the responsibility of the async service function being
-  called, per the transaction conventions already defined in each service
-  spec — this spec does not alter or restate those contracts.
+  exception) for mutation commands are the responsibility of the async
+  service function being called, per the transaction conventions
+  already defined in each service spec — this spec does not alter or
+  restate those contracts. Read-only commands require no explicit
+  commit (no writes occur — per `fetcher-operations.md` (CLI Commands),
+  the `fetcher` CLI group is read-only by design; all mutations are done
+  exclusively through the API).
 - Exactly one `asyncio.run()` call occurs per command invocation. Nested
   or multiple `asyncio.run()` calls within a single command are not a
   supported pattern.
@@ -228,23 +255,23 @@ Used by commands that delegate to an async service module. Currently: all
   from the wrapped async call; see "Error Handling & Exit Code Mapping"
   below.
 
-### Selecting the path
-
-| Condition | Path |
-|---|---|
-| Command only reads data and does not call an async service function | A (sync) |
-| Command calls any function in `app/services/*` (all of which are async, per `docs/conventions.md` and the FastAPI Conventions section) | B (async via `asyncio.run()`) |
-
-This mirrors the existing, already-specified behavior of all 11 current
-commands: it does not change any existing command's behavior, it
-documents the pattern each already follows.
+Of the 11 currently specified commands, 5 are read-only (`fetcher
+list`, `fetcher config`, `manage-user list`, `manage-user show`,
+`api-key list`) and 6 delegate to an async service module for mutation
+(`manage-user create`, `manage-user update`, `manage-user deactivate`,
+`manage-user set-password`, `manage-user unlock`, `api-key revoke`).
+This documents the pattern each command already follows in its owning
+spec (`user-management.md`, `authentication.md`,
+`fetcher-operations.md`) — this section does not change any existing
+command's behavior, it only defines the shared mechanism underlying all
+of them.
 
 **Q4 (audit events)**: N/A — this section describes session acquisition
 only. Whether a given command's operation creates audit events is
 determined entirely by the delegated service function's own contract
 (e.g., `user_service.create_user()` creates `IdentityAuditEvent` per
 `user-service.md`); this spec introduces no additional audit trail
-obligations.
+obligations. Read-only commands create no audit events.
 
 **Q5 (re-invocation)**: N/A at this level — idempotency is a per-command
 property already declared in each command's spec (per the CLI Output
@@ -265,6 +292,7 @@ specs do not need to restate this mapping.
 | No exception; command completed (including idempotent no-op) | 0 | Success message printed to stdout per the command's own spec. |
 | A `ServiceError` subclass (or any shared exception per `docs/conventions.md`, Service Exception Conventions) raised by a delegated service call | 1 | The exception's message is formatted as `Error: {message}` and printed to stderr. The specific message text is determined by the command's own spec (see each command spec's "Behavior" section for the exact error strings), not by this mechanism. |
 | A validation failure raised directly by the CLI command's own input parsing (e.g., invalid username format, password length) — i.e., a guard documented in the command's own spec, not a service exception | 1 | Same formatting as above; message text owned by the command spec. |
+| `click.UsageError` / `click.BadParameter` (missing required option, invalid option type, mutually exclusive option violation — i.e., malformed invocation caught by Click itself before the command callback executes) | 1 | Click's built-in argument parsing and validation are preserved unchanged (error formatting, type coercion, `--help` hints). Click's default behavior exits with code 2 for these exceptions; the root group remaps this to exit code 1, consistent with `docs/conventions.md` classifying "bad input" as a user error (exit 1), not a system error (exit 2). Implementation: the root Click group overrides exit handling to intercept `SystemExit(2)` raised by Click's internal `UsageError` handling and re-raise as `SystemExit(1)`. This remapping applies only to Click-originated usage errors — it does not alter the meaning of exit code 2 for any other condition in this table. |
 | `OSError`/`ConnectionError`/SQLAlchemy connection-level exceptions (database unreachable), or `RedisError` (per `docs/conventions.md`, Redis Error Handling) surfacing from a command that touches Redis | 2 | Printed to stderr as `Error: {message}`. This is the exit code the "Automated Verification" mandatory test scenario in `docs/conventions.md` (CLI Conventions) requires to be simulatable. |
 | Any other unhandled exception | 2 | Printed to stderr as `Error: {message}`. Reserved as the catch-all "system error" path per the Exit Codes table in `docs/conventions.md`. |
 | `KeyboardInterrupt` (operator sends SIGINT, e.g., Ctrl+C) | 130 | See Signal Handling below. |
@@ -295,14 +323,15 @@ Output Contract, Exit Codes table):
 | Signal | Trigger | Exit code | Behavior |
 |---|---|---|---|
 | `SIGINT` | Operator presses Ctrl+C | 130 | Click's default `KeyboardInterrupt` handling is allowed to propagate to the shared error-handling mechanism above, which recognizes `KeyboardInterrupt` specifically and exits 130 (not the generic 2) — no cleanup beyond what the interrupted database session's own `__exit__`/`finally` already performs. |
-| `SIGTERM` | Process manager requests shutdown | 143 | A handler is registered that raises a `SystemExit(143)`-equivalent signal at the next Python bytecode boundary. No mid-transaction partial commit is attempted — an in-flight database transaction (Path A or Path B) is left to roll back via the session's own `__exit__`/`finally` handling, consistent with normal exception-driven rollback. |
+| `SIGTERM` | Process manager requests shutdown | 143 | A handler is registered that raises a `SystemExit(143)`-equivalent signal at the next Python bytecode boundary. No mid-transaction partial commit is attempted — an in-flight database transaction is left to roll back via the session's own `__aexit__`/`finally` handling, consistent with normal exception-driven rollback. |
 
 Commands are not expected to perform custom cleanup beyond what their
 database session context manager already guarantees. No command in the
 current catalog holds a lock or performs a multi-step operation where
 partial interruption would leave inconsistent state beyond what a single
-transaction rollback already resolves (Path A is read-only; Path B
-delegates transaction atomicity entirely to the called service function).
+transaction rollback already resolves (read-only commands perform no
+writes; mutation commands delegate transaction atomicity entirely to the
+called service function).
 
 **Q6 (exceptions)**: `KeyboardInterrupt` and the SIGTERM-derived exit are
 both terminal — they do not propagate beyond the root group.
@@ -377,13 +406,14 @@ Scenarios → CLI Commands) and are not restated here.
 
 - **Test runner**: Click's `CliRunner` (`click.testing.CliRunner`),
   invoked against the root `sentinel` group.
-- **Database fixture**: CLI tests requiring database access use a
-  synchronous test session fixture (mirroring Path A) for commands on
-  the synchronous path, and the existing async test session fixture
-  wrapped in `asyncio.run()` (mirroring Path B) for commands that
-  delegate to services. Both fixtures point at the same test database
-  used by the rest of the suite (`docs/features/platform/testing-strategy.md`,
-  Database Strategy) — no separate CLI-only database is provisioned.
+- **Database fixture**: CLI tests requiring database access use the
+  existing async test session fixture wrapped in `asyncio.run()`, for
+  both read-only and mutation commands — there is no synchronous
+  fixture, consistent with the project's async-only database access
+  (`docs/conventions.md`, SQLAlchemy Conventions). The fixture points at
+  the same test database used by the rest of the suite
+  (`docs/features/platform/testing-strategy.md`, Database Strategy) —
+  no separate CLI-only database is provisioned.
 - **Exit code and channel assertions**: the "Automated Verification"
   scenarios required by `docs/conventions.md` (CLI Conventions) are
   implemented against this harness: exit 0 on success/idempotent no-op,
@@ -412,7 +442,7 @@ Scenarios → CLI Commands) and are not restated here.
   consuming this infrastructure.
 - `docs/features/identity/user-service.md`,
   `docs/features/identity/api-key-service.md` — the async service
-  contracts wrapped via the Path B session mechanism.
+  contracts wrapped via the `asyncio.run()` session mechanism.
 - `docs/cli-reference.md` — the command catalog.
 ```
 
@@ -420,8 +450,53 @@ Scenarios → CLI Commands) and are not restated here.
 
 ### 4.1 `docs/conventions.md`
 
-**Change 1 — §"Database Access" (currently lines 675-679, exact text
-below), replace to describe the hybrid model:**
+**Change 1 — §"SQLAlchemy Conventions" (currently lines 324-330, under
+`## Python (Backend)`), add the async-only project principle.** This is
+a cross-cutting principle (applies to API handlers, service modules,
+Celery tasks, and CLI commands alike — not just CLI), so per Guardrail
+21 it belongs in the cross-cutting Python conventions section, not
+buried inside `## CLI Conventions` where a future agent working on a
+service or task would not encounter it. This directly addresses D6: it
+gives every future agent, regardless of which part of the codebase they
+are touching, an explicit, hard-to-miss guard against reintroducing a
+synchronous driver "for performance" without justification.
+
+Current text (verify exact line numbers before editing):
+
+```
+### SQLAlchemy Conventions
+
+- Use SQLAlchemy 2.0 style (mapped_column, declarative base)
+- All models inherit from a common `Base` class
+- Use UUID primary keys
+- Always include `created_at` and `updated_at` timestamps
+- Define relationships explicitly with `back_populates`
+```
+
+New text (added bullet, rest unchanged):
+
+```
+### SQLAlchemy Conventions
+
+- Use SQLAlchemy 2.0 style (mapped_column, declarative base)
+- All models inherit from a common `Base` class
+- Use UUID primary keys
+- Always include `created_at` and `updated_at` timestamps
+- Define relationships explicitly with `back_populates`
+- **Async-only**: Sentinel uses async-only database access everywhere —
+  API handlers, service modules, Celery tasks, and CLI commands all use
+  `AsyncSession` backed by the `asyncpg` driver. No synchronous database
+  driver or engine is maintained. Introducing one (e.g., for a CLI
+  command "for performance" or "simplicity") requires explicit written
+  justification that the async-only model is insufficient for the
+  specific use case, and MUST be approved by a human reviewer before
+  implementation — do not introduce a synchronous driver/engine
+  autonomously
+```
+
+**Change 2 — §"Database Access" (currently lines 675-679, under `##
+CLI Conventions`), simplify to a CLI-specific cross-reference instead of
+restating a database-wide rule:**
 
 Current text (verify exact line numbers before editing, content may have
 shifted):
@@ -439,17 +514,14 @@ New text:
 ```
 ### Database Access
 
-- CLI commands acquire a database session through one of two paths,
-  selected per-command: a synchronous session for commands that query the
-  database directly, or an `AsyncSession` wrapped in a single
-  `asyncio.run()` call for commands that delegate to an async service
-  module (services are async-only — see FastAPI Conventions above). See
+- CLI commands wrap their database logic in a single `asyncio.run()`
+  call using the project's async session factory (see SQLAlchemy
+  Conventions above — Sentinel is async-only). See
   `docs/features/platform/cli-infrastructure.md` (Database Session
-  Management) for the full mechanism and the criteria for selecting a
-  path.
+  Management) for the full mechanism.
 ```
 
-**Change 2 — §"Human-Readable Format" (currently line 781), reword to
+**Change 3 — §"Human-Readable Format" (currently line 781), reword to
 remove the `--json` forward reference:**
 
 Current text:
@@ -478,7 +550,7 @@ New text:
   characters)
 ```
 
-**Change 3 — add a cross-reference.** In the `### Framework` subsection
+**Change 4 — add a cross-reference.** In the `### Framework` subsection
 (around line 651-658), no change needed (framework choice is unaffected).
 Optionally add one sentence at the top of `## CLI Conventions` pointing to
 the new spec:
@@ -494,7 +566,39 @@ handling, signal handling) backing the contract defined in this section.
 Insert this immediately after the `## CLI Conventions` heading, before
 `### Framework`.
 
-### 4.2 `docs/cli-reference.md`
+### 4.2 `docs/features/platform/fetcher-operations.md`
+
+**Change** — remove the stray "(synchronous session)" qualifier that
+contradicts the async-only principle established in §4.1 Change 1.
+Currently at line 853, within the `sentinel fetcher list` command
+description:
+
+Current text:
+
+```
+**Data source**: queries the database directly (synchronous session).
+The fetcher registry provides the list of registered fetcher names;
+`FetcherConfig` rows whose `fetcher_name` is not in the registry
+provide deregistered fetchers. The database provides `FetcherRun` and
+`FetcherConfig` data for both.
+```
+
+New text:
+
+```
+**Data source**: queries the database directly. The fetcher registry
+provides the list of registered fetcher names; `FetcherConfig` rows
+whose `fetcher_name` is not in the registry provide deregistered
+fetchers. The database provides `FetcherRun` and `FetcherConfig` data
+for both.
+```
+
+The session type is an implementation mechanism owned by
+`cli-infrastructure.md` (Database Session Management), not by this
+command's own spec — restating "synchronous" here would duplicate (and,
+after this change, contradict) that mechanism.
+
+### 4.3 `docs/cli-reference.md`
 
 Replace the entire "Commands" table (currently lines 7-17) with a complete
 11-row table, and add a reference to the new infrastructure spec. Full
@@ -532,7 +636,7 @@ handling).
 values above are taken from the exploration performed in this session);
 if any command's spec has changed since, use the current value instead.
 
-### 4.3 `AGENTS.md`
+### 4.4 `AGENTS.md`
 
 In the file-placement table (currently around line 154-176), add one row.
 Insert after the "Backend tests" row (line 174), before "Draft documents"
@@ -550,7 +654,7 @@ Resulting fragment (for context, do not duplicate other rows):
 | Draft documents            | `docs/drafts/`                    |
 ```
 
-### 4.4 `docs/features/platform/README.md`
+### 4.5 `docs/features/platform/README.md`
 
 **Change 1** — add one line to the `## Specs` code block (currently lines
 7-20). Insert `cli-infrastructure.md` in a position consistent with
@@ -588,7 +692,7 @@ testing-strategy.md             Testing methodology, fixtures, coverage policy
   `logging.md` (Scope of this pipeline).
 ```
 
-### 4.5 `docs/reviews/.tracking.json`
+### 4.6 `docs/reviews/.tracking.json`
 
 Insert a new entry in the `specs` object, **alphabetically between
 `authentication` and `cpe-package-mapping`**, registering
@@ -614,7 +718,7 @@ location `docs/features/platform/cli-infrastructure.md`, consistent with
 with any existing `abbr` value in the file (checked at draft time: no
 collision found).
 
-### 4.6 `docs/reviews/README.md`
+### 4.7 `docs/reviews/README.md`
 
 Insert one row (plus its blank spacer row, matching the table's existing
 two-row-per-spec pattern) in the Summary Table, **alphabetically between
@@ -641,14 +745,23 @@ involve running any reviewer, and does not add any finding to
 To avoid ambiguity during application, the following are confirmed **out
 of scope** and must NOT be touched by this change:
 
-- No changes to `user-management.md`, `authentication.md`, or
-  `fetcher-operations.md` command definitions — their behavior is
-  unchanged; the new spec only documents the mechanism they already rely
-  on.
+- No changes to `user-management.md` or `authentication.md` command
+  definitions — their behavior is unchanged; the new spec only
+  documents the mechanism they already rely on.
+  `fetcher-operations.md` receives one small wording fix (§4.2, removing
+  a stray "(synchronous session)" qualifier) — this is a correction of
+  an inaccurate implementation detail, not a behavioral change to the
+  `fetcher list` command itself.
 - No changes to `docs/data-model.md` — no new tables/columns.
 - No changes to `docs/api-spec.md` — no new API endpoints.
 - No changes to `docs/configuration.md` — no new environment variables
-  are introduced (the synchronous engine reuses `DATABASE_URL`).
+  are introduced (the async engine reuses `DATABASE_URL`, as it already
+  does today).
+- No synchronous database driver (`psycopg`, `psycopg2`, or equivalent)
+  is added to `backend/pyproject.toml`. Per D6, any future introduction
+  of one requires explicit justification and human reviewer approval —
+  this change does not perform that justification, it only documents
+  the guard.
 - No implementation code is written (`backend/app/cli/` etc. are
   referenced as future locations only, per the specs-first principle).
 - `--json` output infrastructure is explicitly NOT specified now, per
@@ -656,11 +769,11 @@ of scope** and must NOT be touched by this change:
 - `docs/drafts/ideas.md` line 7 ("Propose Sentinel command-line commands
   that could be useful") is a distinct, unrelated idea (proposing *new*
   commands) and is not resolved or removed by this change.
-- Steps 6 (§4.5/§4.6, review-tracking registration) and 8 (verification
+- Steps 7 (§4.6/§4.7, review-tracking registration) and 9 (verification
   reviewers) below are independent concerns and must not be conflated:
-  step 6 is a mechanical file edit with no reviewer execution; step 8
+  step 7 is a mechanical file edit with no reviewer execution; step 9
   runs reviewers but does not write to `docs/reviews/` or to the
-  `cache` field registered in step 6. The formal 5-reviewer pass that
+  `cache` field registered in step 7. The formal 5-reviewer pass that
   populates real findings for `cli-infrastructure` in `/reviews/` is
   explicitly deferred to the user, outside this change.
 
@@ -669,30 +782,42 @@ of scope** and must NOT be touched by this change:
 1. **Create** `docs/features/platform/cli-infrastructure.md` with the
    exact content from §3.1 above.
 2. **Edit** `docs/conventions.md`:
-   a. Apply Change 1 (§"Database Access" rewrite).
-   b. Apply Change 2 (§"Human-Readable Format" reword).
-   c. Apply Change 3 (cross-reference sentence under `## CLI
+   a. Apply Change 1 (§"SQLAlchemy Conventions" — add the async-only
+      principle).
+   b. Apply Change 2 (§"Database Access" — simplify to a CLI-specific
+      cross-reference).
+   c. Apply Change 3 (§"Human-Readable Format" reword).
+   d. Apply Change 4 (cross-reference sentence under `## CLI
       Conventions`).
-3. **Edit** `docs/cli-reference.md`: replace the Commands table per §4.2,
+3. **Edit** `docs/features/platform/fetcher-operations.md`: apply the
+   wording fix per §4.2 (remove the stray "(synchronous session)"
+   qualifier from `sentinel fetcher list`'s "Data source" line).
+4. **Edit** `docs/cli-reference.md`: replace the Commands table per §4.3,
    after re-verifying each command's current idempotency declaration
    against its owning spec.
-4. **Edit** `AGENTS.md`: add the file-placement row per §4.3.
-5. **Edit** `docs/features/platform/README.md`: apply both Change 1
-   (Specs list) and Change 2 (Relationships bullet) per §4.4.
-6. **Register the new spec in the review tracking system** — apply §4.5
+5. **Edit** `AGENTS.md`: add the file-placement row per §4.4.
+6. **Edit** `docs/features/platform/README.md`: apply both Change 1
+   (Specs list) and Change 2 (Relationships bullet) per §4.5.
+7. **Register the new spec in the review tracking system** — apply §4.6
    (`docs/reviews/.tracking.json`: add the `cli-infrastructure` entry,
-   `enabled: true`, `cache: null`) and §4.6 (`docs/reviews/README.md`:
+   `enabled: true`, `cache: null`) and §4.7 (`docs/reviews/README.md`:
    add the `—`/`0/0` row). **This step is purely mechanical — do not
    invoke any reviewer to perform or validate it.** It only marks the
    spec as eligible for the formal review pipeline the user will run
    later.
-7. **Self-check for internal coherence** before invoking reviewers:
+8. **Self-check for internal coherence** before invoking reviewers:
    - Confirm `cli-infrastructure.md`'s "Related Specifications" table
      lists every spec that now references it back (bidirectional
      consistency).
    - Confirm no other spec still contains the old, contradictory
      "CLI commands use synchronous database sessions (not async)"
-     wording (search the whole `docs/` tree for this exact phrase).
+     wording, nor any remaining "(synchronous session)" qualifier
+     anywhere in `docs/` (search the whole `docs/` tree for both exact
+     phrases).
+   - Confirm no synchronous database engine, session, or driver
+     (`psycopg`, `psycopg2`) is referenced anywhere in the new spec or
+     in the edited files — the async-only principle (D6) must be applied
+     consistently.
    - Confirm `docs/cli-reference.md` now lists exactly 11 commands and
      the count matches the "11 distinct CLI commands" figure used in
      `cli-infrastructure.md`'s own text (if referenced) — this
@@ -707,14 +832,14 @@ of scope** and must NOT be touched by this change:
      `cli-infrastructure` was inserted alphabetically and the **Total**
      row still correctly reflects the sum of all specs (unchanged, since
      the new row contributes `0/0`).
-8. **Invoke reviewers** against the changed/created specs to verify the
+9. **Invoke reviewers** against the changed/created specs to verify the
    plan was applied correctly and without introducing new problems. This
    step verifies the *application of this change* — it is distinct from,
    and does not substitute for, the formal review pipeline the user will
    run later to populate real findings in `docs/reviews/` for
    `cli-infrastructure`. Findings produced here are reported back to the
    user and are **not** written into `docs/reviews/` or into the `cache`
-   field registered in step 6:
+   field registered in step 7:
    - `@spec-gap-analyzer` on `docs/features/platform/cli-infrastructure.md`
      (new spec — Guardrail 17).
    - `@spec-coherence-reviewer` on `docs/features/platform/cli-infrastructure.md`
@@ -723,45 +848,58 @@ of scope** and must NOT be touched by this change:
      references — Guardrail 15).
    - `@docs-placement-reviewer` — verify the CLI mechanism content placed
      in the new spec is not misplaced relative to `docs/conventions.md`,
-     and that the `--json` exclusion and Database Access correction are
-     placed correctly (Guardrail 21).
+     and that the `--json` exclusion, the async-only principle placement
+     (SQLAlchemy Conventions vs. CLI Conventions), and the Database
+     Access correction are placed correctly (Guardrail 21).
    - `@docs-reviewer` on the full set of changed files (`conventions.md`,
-     `cli-reference.md`, `AGENTS.md`, `platform/README.md`,
-     `cli-infrastructure.md`) for overall completeness/coherence
-     (Guardrail 9).
+     `fetcher-operations.md`, `cli-reference.md`, `AGENTS.md`,
+     `platform/README.md`, `cli-infrastructure.md`) for overall
+     completeness/coherence (Guardrail 9).
    - Address any "Needs revision" finding from the above before
      considering the change complete; minor issues should be fixed in the
      same pass.
-9. **Delete this draft file**
-   (`docs/drafts/cli-infrastructure-change.md`) once all reviewer findings
-   from step 8 have been resolved and the change is considered complete.
+10. **Delete this draft file**
+    (`docs/drafts/cli-infrastructure-change.md`) once all reviewer
+    findings from step 9 have been resolved and the change is considered
+    complete.
 
 ## 7. Internal Coherence Check (performed on this draft)
 
 - D1↔§3.1: the new spec's own "Purpose & Scope" explicitly delimits
   itself from `conventions.md` and from individual command specs,
   consistent with D1's placement decision and Guardrail 21.
-- D2↔§3.1 "Database Session Management": the hybrid model is fully
-  specified with an explicit path-selection table; §4.1 Change 1 updates
-  `conventions.md` to match, removing the contradiction identified in §1.
-- D3↔§4.2/§4.3/§4.4: all three secondary gaps (cli-reference.md,
+- D2↔§3.1 "Database Session Management": the async-only model is fully
+  specified with a single mechanism (no path selection); §4.1 Change 1
+  (SQLAlchemy Conventions) and Change 2 (Database Access) update
+  `conventions.md` to match, removing the contradiction identified in
+  §1; §4.2 removes the last remaining "(synchronous session)" mention
+  in `fetcher-operations.md`.
+- D3↔§4.3/§4.4/§4.5: all three secondary gaps (cli-reference.md,
   AGENTS.md, platform/README.md) have concrete, complete edits specified.
 - D4↔§3.1 "Purpose & Scope" (Out of scope bullet) and §5 (Explicit
   Non-Changes): both consistently state `--json` is excluded; no other
   section of the new spec introduces `--json` handling.
-- D5↔§4.1 Change 2: the reworded text drops the `--json` flag name while
+- D5↔§4.1 Change 3: the reworded text drops the `--json` flag name while
   preserving the "never default" constraint, matching the decision
   exactly.
+- D6↔§4.1 Change 1: the async-only principle is placed in
+  `### SQLAlchemy Conventions` (under `## Python (Backend)`, the
+  cross-cutting section), not in `### Database Access` (under
+  `## CLI Conventions`), per the placement analysis discussed with the
+  user — a future agent touching any part of the codebase (not just the
+  CLI) will encounter the guard. §4.1 Change 2 keeps the CLI-specific
+  section as a short cross-reference to avoid duplicating the principle
+  (Guardrail 21-A, Duplication test).
 - Cross-check: `cli-infrastructure.md` §"Related Specifications" lists
   `user-management.md`, `authentication.md`, `fetcher-operations.md`,
   `user-service.md`, `api-key-service.md`, `logging.md`,
   `testing-strategy.md`, `system-settings.md` — every one of these is
-  either edited in this plan (none are — confirmed correct, since their
-  command definitions are unchanged per §5) or already contains the
-  content being referenced (verified during exploration: `logging.md`
-  lines 294-312 for the bootstrap requirement; `testing-strategy.md`
-  Mandatory Test Scenarios → CLI Commands; `user-service.md`/
-  `api-key-service.md` "Async pattern" sections).
+  either edited in this plan (`fetcher-operations.md` receives the
+  one-line fix in §4.2; the rest are unchanged, per §5) or already
+  contains the content being referenced (verified during exploration:
+  `logging.md` lines 294-312 for the bootstrap requirement;
+  `testing-strategy.md` Mandatory Test Scenarios → CLI Commands;
+  `user-service.md`/`api-key-service.md` "Async pattern" sections).
 - No section of the new spec duplicates content already owned elsewhere
   without a cross-reference (checked against Guardrail 21-A "Duplication"
   test): Output Contract details (exit codes, channel separation,
@@ -769,33 +907,42 @@ of scope** and must NOT be touched by this change:
   exit-code *mapping mechanism* (which exception maps to which code) is
   newly specified, since that mechanism did not exist anywhere before.
 - The plan does not touch `docs/data-model.md`, `docs/api-spec.md`, or
-  any file outside the seven files enumerated in §3 and §4 (the new spec
-  itself, plus `conventions.md`, `cli-reference.md`, `AGENTS.md`,
-  `platform/README.md`, `docs/reviews/.tracking.json`, and
-  `docs/reviews/README.md` — the last two added in §4.5/§4.6) —
-  consistent with the "no implementation, no migrations" framing
-  requested by the user.
+  any file outside the eight files enumerated in §3 and §4 (the new spec
+  itself, plus `conventions.md`, `fetcher-operations.md`,
+  `cli-reference.md`, `AGENTS.md`, `platform/README.md`,
+  `docs/reviews/.tracking.json`, and `docs/reviews/README.md` — the last
+  two added in §4.6/§4.7) — consistent with the "no implementation, no
+  migrations" framing requested by the user.
 - Action plan ordering (§6) creates the new spec first, then edits
-  cross-referencing files, then registers the spec in the review
-  tracking system (step 6), then self-checks (step 7), then runs
-  verification reviewers (step 8), then deletes the draft (step 9) —
-  matching the user's explicit requests: review-tracking registration
-  added as its own step (not folded into the reviewer step), reviewer
-  execution and draft deletion remain the last two steps.
-- Step 6 (§4.5/§4.6) and step 8 (verification reviewers) are kept
-  strictly separate, per the user's explicit clarification: step 6 is a
-  mechanical registration with **no reviewer execution**; step 8 runs
+  cross-referencing files (conventions.md, fetcher-operations.md,
+  cli-reference.md, AGENTS.md, platform/README.md), then registers the
+  spec in the review tracking system (step 7), then self-checks (step
+  8), then runs verification reviewers (step 9), then deletes the draft
+  (step 10) — matching the user's explicit requests: review-tracking
+  registration added as its own step (not folded into the reviewer
+  step), reviewer execution and draft deletion remain the last two
+  steps.
+- Step 7 (§4.6/§4.7) and step 9 (verification reviewers) are kept
+  strictly separate, per the user's explicit clarification: step 7 is a
+  mechanical registration with **no reviewer execution**; step 9 runs
   reviewers to verify correct application of this change but does
   **not** write findings into `docs/reviews/` or into the `cache` field
-  registered in step 6. The formal review pipeline that will populate
+  registered in step 7. The formal review pipeline that will populate
   real findings for `cli-infrastructure` is deferred to the user, to be
   run at a later time, entirely outside this change.
 - `docs/reviews/.tracking.json` and `docs/reviews/README.md` are edited
-  consistently with each other (§4.5/§4.6): both register
+  consistently with each other (§4.6/§4.7): both register
   `cli-infrastructure` in the same "enabled, never reviewed" state
   (`cache: null` ↔ all-`—` row), at the same alphabetical position
   (between `authentication`/`cpe-package-mapping`), with no discrepancy
   between the two files.
+- No occurrence of a synchronous database driver/engine/session remains
+  anywhere in the plan after this revision (D6): `psycopg` is not
+  introduced (§5), `fetcher-operations.md`'s "(synchronous session)"
+  qualifier is removed (§4.2), and `cli-infrastructure.md`'s Database
+  Session Management section uses a single async mechanism throughout,
+  including the Signal Handling and Testing sections (no residual
+  "Path A"/"Path B" references).
 
 **Result of coherence check**: no internal contradictions found. The
 draft is ready for review.
