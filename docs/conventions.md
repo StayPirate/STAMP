@@ -328,6 +328,15 @@ it for local development. Variables excluded:
 - Use UUID primary keys
 - Always include `created_at` and `updated_at` timestamps
 - Define relationships explicitly with `back_populates`
+- **Async-only**: Sentinel uses async-only database access everywhere —
+  API handlers, service modules, Celery tasks, and CLI commands all use
+  `AsyncSession` backed by the `asyncpg` driver. No synchronous database
+  driver or engine is maintained. Introducing one (e.g., for a CLI
+  command "for performance" or "simplicity") requires explicit written
+  justification that the async-only model is insufficient for the
+  specific use case, and MUST be approved by a human reviewer before
+  implementation — do not introduce a synchronous driver/engine
+  autonomously
 
 ### Pydantic Conventions
 
@@ -650,6 +659,10 @@ These are deferred to a future PR and not part of the current change.
 
 ## CLI Conventions
 
+See `docs/features/platform/cli-infrastructure.md` for the shared
+implementation mechanism (entry point, session management, error
+handling, signal handling) backing the contract defined in this section.
+
 ### Framework
 
 - **Library**: Click
@@ -674,9 +687,11 @@ These are deferred to a future PR and not part of the current change.
 
 ### Database Access
 
-- CLI commands use synchronous database sessions (not async). They are
-  one-shot processes, not long-running servers — async provides no benefit
-  and adds complexity
+- CLI commands wrap their database logic in a single `asyncio.run()`
+  call using the project's async session factory (see SQLAlchemy
+  Conventions above — Sentinel is async-only). See
+  `docs/features/platform/cli-infrastructure.md` (Database Session
+  Management) for the full mechanism.
 
 ### Output Contract
 
@@ -778,7 +793,11 @@ Each command specification MUST explicitly declare its idempotency:
 #### Human-Readable Format
 
 - Output is human-readable plain text by default
-- No JSON output unless a `--json` flag is explicitly added to a command
+- Structured/machine-readable output is never the default; if a command
+  needs it, it MUST be an explicit per-command opt-in, never silently
+  produced. As of this writing, no command defines such an option — see
+  `docs/features/platform/cli-infrastructure.md` (Purpose & Scope) for the
+  rationale
 - Tables use fixed-width columns aligned with spaces (no box-drawing
   characters)
 

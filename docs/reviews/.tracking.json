@@ -145,6 +145,11 @@
         "not_reviewed": []
       }
     },
+    "cli-infrastructure": {
+      "enabled": true,
+      "abbr": "CLII",
+      "cache": null
+    },
     "cpe-package-mapping": {
       "enabled": true,
       "abbr": "CPM",

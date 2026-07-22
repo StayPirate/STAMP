@@ -850,10 +850,10 @@ is unavailable).
 `FetcherConfig.enabled`. If no `FetcherConfig` record exists for the
 fetcher, defaults to `yes`.
 
-**Data source**: queries the database directly (synchronous session).
-The fetcher registry provides the list of registered fetcher names;
-`FetcherConfig` rows whose `fetcher_name` is not in the registry
-provide deregistered fetchers. The database provides `FetcherRun` and
+**Data source**: queries the database directly. The fetcher registry
+provides the list of registered fetcher names; `FetcherConfig` rows
+whose `fetcher_name` is not in the registry provide deregistered
+fetchers. The database provides `FetcherRun` and
 `FetcherConfig` data for both.
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any

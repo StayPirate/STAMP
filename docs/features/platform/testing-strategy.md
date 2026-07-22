@@ -472,6 +472,22 @@ cache in a fixture or teardown. See
 `docs/features/platform/cve-fetcher-infrastructure.md` for the test
 helper extension rule.
 
+### Sync Entry-Point Tests
+
+Test functions that exercise code containing `asyncio.run()` — such as
+CLI commands (invoked via `CliRunner.invoke()`) or Celery task
+functions called directly — MUST be synchronous (`def`, not
+`async def`). With `asyncio_mode = "auto"` (see Marker Registration
+above), an async test function runs inside an event loop managed by
+pytest-asyncio; `asyncio.run()` in the code under test then raises
+`RuntimeError: asyncio.run() cannot be called when another event loop
+is running`. This applies to any synchronous entry point that bridges
+into the project's async-only database layer (`docs/conventions.md`,
+SQLAlchemy Conventions) via a single `asyncio.run()` call. Fixtures for
+these tests provide the async session factory itself (for the code
+under test to wrap in its own `asyncio.run()` call), not a live
+`AsyncSession` via an async fixture.
+
 ---
 
 ## Execution Model

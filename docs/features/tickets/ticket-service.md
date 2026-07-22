@@ -22,6 +22,12 @@ manual-zone exits) are handled by `ticket_mutations`
 are handled by `package_service`
 (`docs/features/packages/package-service.md`).
 
+Read-only operations (listing tickets, retrieving ticket details,
+searching) are not centralized in this service because they carry no
+business logic, side effects, or audit trail requirements. They are
+implemented directly in API endpoint handlers (see
+`docs/features/tickets/tickets.md`).
+
 ## Architecture
 
 ### Module location

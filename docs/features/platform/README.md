@@ -11,6 +11,7 @@ git-fetcher-infrastructure.md   BaseGitFetcher base class, git_operations module
 networking.md                   HTTP client (httpx), TLS configuration, SUSE CA
 fetcher-operations.md           Monitoring, API, and CLI diagnostics for fetchers
 audit-trail-infrastructure.md   BaseAuditLog base class, AuditEventMixin
+cli-infrastructure.md           Shared CLI mechanism: entry point, session management, error handling
 system-settings.md              System settings (default CVSS version, etc.)
 health-endpoints.md             Liveness (/health) and readiness (/ready) probes
 logging.md                       Operational/diagnostic logging model, correlation IDs
@@ -31,6 +32,13 @@ testing-strategy.md             Testing methodology, fixtures, coverage policy
   configuration used by all fetchers and services.
 - `fetcher-operations.md` is the monitoring layer built on top of
   `fetcher-infrastructure.md` — it consumes `FetcherRun` records.
+- `cli-infrastructure.md` defines the shared mechanism backing every CLI
+  command (entry point, session management, error handling, signal
+  handling); individual command groups
+  (`user-management.md`, `authentication.md`, `fetcher-operations.md`)
+  consume it. It implements the contract declared in `docs/conventions.md`
+  (CLI Conventions) and consumes the CLI bootstrap requirement declared in
+  `logging.md` (Scope of this pipeline).
 - `system-settings.md` defines the system settings API; settings like
   `default_cvss_version` are consumed by `tickets/cvss-scoring.md`.
 - `testing-strategy.md` defines the testing methodology, database setup,

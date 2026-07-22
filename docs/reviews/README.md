@@ -15,6 +15,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/64 | 2026-05-18 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| [cli-infrastructure](cli-infrastructure.md) | — | — | — | — | — | 0/0 | — |  |
+|  |  |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-06-01 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | ⚠️ |

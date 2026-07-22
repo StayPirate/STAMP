@@ -172,6 +172,7 @@ the location is correct according to this map:
 | Utility scripts            | `backend/scripts/`                |
 | TLS certificates           | `backend/certs/`                  |
 | Backend tests              | `backend/tests/`                  |
+| CLI commands               | `backend/app/cli/`                |
 | Draft documents            | `docs/drafts/`                    |
 | Review findings            | `docs/reviews/`                   |
 

@@ -13,6 +13,12 @@ implement side effects (ticket unassignment, API key revocation,
 TicketAuditEvent creation) and business rules (self-removal guard,
 self-deactivation guard), leading to inconsistency and bugs.
 
+Read-only operations (listing users, retrieving user details) are not
+centralized in this service because they carry no business logic, side
+effects, or audit trail requirements. They are implemented directly in
+API endpoint handlers and CLI commands (see
+`docs/features/identity/user-management.md`).
+
 ## Architecture
 
 ### Module location
