@@ -19,6 +19,7 @@ Architectural decisions pending resolution before implementation begins.
 | OP-16 | CPE Mapping Fail-Fast Asymmetry | Cross-Process Startup | Open |
 | OP-17 | IBS RabbitMQ Consumer Startup Gaps | Cross-Process Startup | Open |
 | OP-18 | Cross-Process Startup Ordering | Cross-Process Startup | Open |
+| OP-19 | Beat Reconciliation Wiring Mechanism | Cross-Process Startup | Open |
 | OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
 | OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
 | OP-9 | Remove FetcherRunWeeklyAggregate | — | Resolved |
@@ -708,6 +709,59 @@ has constraints, so that deployment manifests can be written correctly.
 or leave it implicit. Related to: OP-4 resolution (which may introduce
 a Beat→worker ordering dependency), OP-14 in the celery-beat-sync draft
 (Beat with unmigrated schema).
+
+---
+
+### OP-19. Beat Reconciliation Wiring Mechanism Not Specified
+
+**Origin**: surfaced while resolving the non-fetcher periodic task
+scheduling gap (see
+`docs/drafts/non-fetcher-periodic-tasks-beat-scheduling.md`). That
+change does not require resolving this point, so it is split out here
+to keep the change minimal.
+
+**Context**: `docs/features/platform/fetcher-infrastructure.md`
+("Celery Beat Schedule Synchronization" → "Startup Reconciliation")
+specifies in detail *what* the startup reconciliation does (read
+`FetcherConfig`, upsert enabled fetcher entries, remove disabled and
+deregistered entries), but never specifies *how* or *where* this
+procedure is invoked at Beat process startup. The configured scheduler
+is the stock `redbeat.RedBeatScheduler` (`configuration.md:73-77`),
+which has no Sentinel-specific reconciliation hook. Two plausible
+wiring mechanisms exist:
+
+1. A `beat_init` signal handler that runs the reconciliation after the
+   scheduler is initialized (keeps the stock scheduler class).
+2. A thin `RedBeatScheduler` subclass overriding `setup_schedule()`
+   to run the reconciliation (changes the `beat_scheduler` config
+   value away from the stock class; gives deterministic in-method
+   ordering).
+
+An implementer today must choose between these without guidance, which
+violates the Function Specification Completeness convention
+(`conventions.md`).
+
+**Independence from the non-fetcher task change**: that change scopes
+reconciliation step 4 by inclusion (`task == "run_fetcher"`), so the
+static `beat_schedule` entries it introduces are safe regardless of
+which wiring mechanism is chosen and regardless of ordering between
+redbeat's native static installation and the fetcher reconciliation.
+This point is therefore a pre-existing under-specification, not
+introduced by that change.
+
+**Impact**: specification completeness gap. The choice affects:
+(a) whether `beat_scheduler` stays `redbeat.RedBeatScheduler` or
+becomes a Sentinel subclass, (b) startup ordering guarantees, (c) how
+failures during reconciliation propagate (a signal handler and an
+overridden method have different exception surfaces).
+
+**Options to evaluate**:
+- (a) `beat_init` signal handler (keeps stock scheduler class).
+- (b) `RedBeatScheduler` subclass overriding `setup_schedule()`.
+
+**Decision needed**: which wiring mechanism to specify in
+`fetcher-infrastructure.md`. Related to: OP-16, OP-17, OP-18
+(cross-process startup responsibilities).
 
 ---
 
