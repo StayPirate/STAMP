@@ -117,6 +117,7 @@ explicit per-command opt-in.
 | `docs/features/identity/authentication.md` | Consumer: `api-key` command group delegates to async services via the pattern defined here. |
 | `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the `asyncio.run()` session mechanism defined here for its read-only queries. |
 | `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the async service contracts invoked from within the `asyncio.run()` mechanism defined here. |
+| `docs/features/platform/system-settings.md` | Defines the system settings mechanism consumed by the Configuration Guard decorator. |
 | `docs/cli-reference.md` | Catalog: index table of all CLI commands, cross-referencing this spec for the shared mechanism. |
 
 ## Package Entry Point & Invocation
@@ -227,7 +228,11 @@ per-command path selection.
   single-call form applies directly. Mutation example:
 
   ```python
-  asyncio.run(api_key_service.revoke_key(session, ...))
+  async def revoke_flow(session_factory, key_id):
+      async with session_factory() as db:
+          await api_key_service.revoke_key(db, key_id, ...)
+
+  asyncio.run(revoke_flow(async_session_factory, key_id))
   ```
 
   Read-only example:
