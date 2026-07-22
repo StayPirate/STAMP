@@ -166,6 +166,25 @@ per-command path selection.
   represents an explicit operator-initiated cancellation, not a system
   error.
 
+  **Note on pre-mutation read staleness**: the pre-mutation reads in the
+  first session of the `deactivate_flow` example (user lookup,
+  deactivation impact count) are best-effort/advisory information
+  displayed to the human operator to support the confirmation decision
+  — they are not authoritative inputs to the mutation itself. The
+  service function (`user_service.deactivate_user()`) independently
+  re-validates all preconditions (active state, self-deactivation
+  guard, etc.) inside its own transaction using pessimistic locking
+  (`SELECT ... FOR UPDATE`), per `user-service.md` (Concurrency
+  Considerations) and the general pattern in `docs/conventions.md`
+  (Transaction and Locking). As a consequence, staleness between the
+  pre-mutation reads (first session) and the actual mutation (second
+  session) does not cause incorrect behavior — worst case, the
+  mutation becomes a no-op or raises a service exception handled
+  normally by the CLI's error handling mechanism. This is a deliberate,
+  accepted design tradeoff, not a defect requiring additional
+  complexity such as defensive re-checks or retry logic between the two
+  sessions.
+
   For commands with no pre-mutation reads or prompts, the simpler
   single-call form applies directly. Mutation example:
 
@@ -230,29 +249,48 @@ mechanism itself.
 
 ## Error Handling & Exit Code Mapping
 
-Every CLI command is wrapped by a shared error-handling mechanism that
+Every CLI command is wrapped by a single, unified exception mapper that
 maps exceptions to the exit codes defined in `docs/conventions.md` (CLI
-Output Contract, Exit Codes table). This mechanism is implemented once
-(e.g., as a Click command decorator or a shared invocation wrapper in
-`backend/app/cli/`) and applied to every command, so individual command
-specs do not need to restate this mapping.
+Output Contract, Exit Codes table). This mapper is implemented once, as
+a top-level `try/except` in the root Click group's `main()` override
+(the shared entry point wrapper in `backend/app/cli/`), so individual
+command specs do not need to restate this mapping.
+
+The root group invokes Click with `standalone_mode=False`. In this
+mode, Click does not perform its own `sys.exit()` calls, does not print
+"Aborted!", and re-raises `click.ClickException` and `click.Abort` to
+the caller instead of handling them internally — giving the mapper
+below full and exclusive control over exit codes and messages for every
+condition except broken-pipe handling (which Click performs internally
+regardless of `standalone_mode`, by catching `OSError` with
+`errno.EPIPE`, pacifying the stdout/stderr wrappers, and exiting 1
+before the mapper is ever reached).
+
+The mapper catches `Exception` (and all its subclasses, including the
+ones listed below) — it does NOT catch `BaseException` subclasses such
+as `SystemExit` or `KeyboardInterrupt`, so exit codes produced by signal
+handling (130, 143 — see Signal Handling below) propagate through
+untouched, never reaching this mapper.
 
 | Exception / condition | Exit code | Handling |
 |---|---|---|
 | No exception; command completed (including idempotent no-op) | 0 | Success message printed to stdout per the command's own spec. |
+| `click.ClickException` and all its subclasses (`UsageError`, `BadParameter`, `MissingParameter`, `NoSuchOption`, `NoSuchCommand`, `BadOptionUsage`, `BadArgumentUsage`, `FileError`, etc. — malformed invocation caught by Click itself before the command callback executes) | 1 | The mapper calls `e.show()` to preserve Click's native formatting (usage line, "Try '--help'" hint, message), then exits 1. All `ClickException` subclasses map to exit 1 uniformly — the mapper does not use `e.exit_code` (which Click would otherwise set to 2 for `UsageError`) — consistent with `docs/conventions.md` classifying malformed invocation as a user error (exit 1), not a system error (exit 2). |
+| `click.Abort` (raised by Click when an interactive prompt, e.g. `click.confirm()` or a hidden password prompt, receives EOF/Ctrl+D — and, in non-standalone mode, also the exception type Click internally converts `KeyboardInterrupt` into during prompt handling) | 0 | The mapper prints `Aborted.` to stdout and exits 0. This is the same code path whether `Abort` originates from an explicit prompt decline (in which case the command's own code, per Database Session Management, has already printed its own cancellation message before returning/re-raising, so the mapper's `Aborted.` fallback is not what the operator sees) or from EOF bypassing the command's own code entirely (in which case the mapper's `Aborted.` is the only message printed). Treated as an operator-initiated cancellation, not an error, consistent with the Exit Codes table. TTY detection (Interactive Input Helpers) is expected to reject non-interactive invocations before a prompt is reached in the first place. |
 | A `ServiceError` subclass (or any shared exception per `docs/conventions.md`, Service Exception Conventions) raised by a delegated service call | 1 | The exception's message is formatted as `Error: {message}` and printed to stderr. The specific message text is determined by the command's own spec (see each command spec's "Behavior" section for the exact error strings), not by this mechanism. |
 | A validation failure raised directly by the CLI command's own input parsing (e.g., invalid username format, password length) — i.e., a guard documented in the command's own spec, not a service exception | 1 | Same formatting as above; message text owned by the command spec. |
-| `click.UsageError` / `click.BadParameter` (missing required option, invalid option type, mutually exclusive option violation — i.e., malformed invocation caught by Click itself before the command callback executes) | 1 | Click's built-in argument parsing and validation are preserved unchanged (error formatting, type coercion, `--help` hints). Click's default behavior exits with code 2 for these exceptions; the root group remaps this to exit code 1, consistent with `docs/conventions.md` classifying "bad input" as a user error (exit 1), not a system error (exit 2). Implementation: the root Click group overrides exit handling to intercept `SystemExit(2)` raised by Click's internal `UsageError` handling and re-raise as `SystemExit(1)`. This remapping applies only to Click-originated usage errors — it does not alter the meaning of exit code 2 for any other condition in this table. |
-| `OSError`/`ConnectionError`/SQLAlchemy connection-level exceptions (database unreachable), or `RedisError` (per `docs/conventions.md`, Redis Error Handling) surfacing from a command that touches Redis | 2 | Printed to stderr as `Error: {message}`. This is the exit code the "Automated Verification" mandatory test scenario in `docs/conventions.md` (CLI Conventions) requires to be simulatable. |
+| SQLAlchemy `OperationalError`/`DBAPIError` (or another connection-related `SQLAlchemyError` subset, e.g. database unreachable), or `RedisError` (per `docs/conventions.md`, Redis Error Handling) surfacing from a command that touches Redis | 2 | Printed to stderr as `Error: {message}`. This is the exit code the "Automated Verification" mandatory test scenario in `docs/conventions.md` (CLI Conventions) requires to be simulatable. This category is intentionally narrow: generic `OSError`/`ConnectionError` are NOT caught here. Broken-pipe scenarios are already handled by Click's own EPIPE handling before the mapper is reached (see above); other unrelated `OSError` subclasses (`FileNotFoundError`, `PermissionError`, etc.) fall through to the catch-all row below, which prints an accurate generic message rather than a misleading "database unreachable" one. |
 | Any other unhandled exception | 2 | Printed to stderr as `Error: {message}`. Reserved as the catch-all "system error" path per the Exit Codes table in `docs/conventions.md`. |
-| `click.Abort` (EOF/Ctrl+D received by an interactive prompt, e.g. `click.confirm()` or a hidden password prompt) | 0 | Treated identically to an explicit decline of the prompt (see Database Session Management, "Interactive prompts" discussion) — an aborted interactive prompt is an operator-initiated cancellation, not an error. TTY detection (Interactive Input Helpers) is expected to reject non-interactive invocations before a prompt is reached in the first place; `click.Abort` reaching this handler means an already-detected TTY session was cancelled mid-prompt. |
-| `KeyboardInterrupt` (operator sends SIGINT, e.g., Ctrl+C) | 130 | See Signal Handling below. |
-| `SIGTERM` received while a command is running | 143 | See Signal Handling below. |
+| `KeyboardInterrupt` (operator sends SIGINT, e.g., Ctrl+C) | 130 | Not caught by this mapper (it is a `BaseException` subclass, and — for the direct SIGINT case — is intercepted at the OS signal level before it can even be raised as a Python exception). See Signal Handling below. |
+| `SIGTERM` received while a command is running | 143 | Not caught by this mapper (`BaseException` subclass). See Signal Handling below. |
 
 **Q6 (exceptions)**: this mechanism is the terminal exception handler for
-every CLI command — no exception propagates past it to the shell. It
-propagates nothing; it converts every exception into the exit code above
-and a stderr message.
+every CLI command — no `Exception`-derived exception propagates past it
+to the shell. It propagates nothing; it converts every caught exception
+into the exit code above and a stdout/stderr message. `BaseException`
+subclasses used for signal-derived termination (`SystemExit` raised by
+the signal handlers below) are explicitly outside its scope and pass
+through untouched.
 
 **Q3 (behavior in every case)**: the table above is exhaustive for the
 generic mechanism. Command-specific exception→message text mapping
@@ -273,8 +311,8 @@ Output Contract, Exit Codes table):
 
 | Signal | Trigger | Exit code | Behavior |
 |---|---|---|---|
-| `SIGINT` | Operator presses Ctrl+C | 130 | Click's default `KeyboardInterrupt` handling is allowed to propagate to the shared error-handling mechanism above, which recognizes `KeyboardInterrupt` specifically and exits 130 (not the generic 2) — no cleanup beyond what the interrupted database session's own `__exit__`/`finally` already performs. |
-| `SIGTERM` | Process manager requests shutdown | 143 | A handler is registered that raises a `SystemExit(143)`-equivalent signal at the next Python bytecode boundary. No mid-transaction partial commit is attempted — an in-flight database transaction is left to roll back via the session's own `__aexit__`/`finally` handling, consistent with normal exception-driven rollback. |
+| `SIGINT` | Operator presses Ctrl+C | 130 | The root group installs an explicit `signal.signal(signal.SIGINT, ...)` handler that raises `SystemExit(130)` directly, at the OS signal level, before Click's own EOFError/KeyboardInterrupt-to-`Abort` conversion (see Error Handling & Exit Code Mapping) has a chance to run. This is necessary because Click internally converts both Ctrl+C (`KeyboardInterrupt`) and Ctrl+D/EOF during a prompt into the same `click.Abort` exception, making the two indistinguishable by the time either would reach the exception mapper. Intercepting SIGINT at the signal level ensures Ctrl+C reliably produces exit 130 regardless of whether a prompt is active, while Ctrl+D during a prompt still flows through Click's own EOFError→`Abort` path (mapper's `Aborted.` / exit 0). No cleanup beyond what the interrupted database session's own `__exit__`/`finally` already performs. |
+| `SIGTERM` | Process manager requests shutdown | 143 | A handler is registered that raises a `SystemExit(143)`-equivalent signal at the next Python bytecode boundary. Because `SystemExit` is a `BaseException` subclass, it is not caught by the `Exception`-scoped mapper described in Error Handling & Exit Code Mapping, and propagates cleanly to terminate the process with code 143. No mid-transaction partial commit is attempted — an in-flight database transaction is left to roll back via the session's own `__aexit__`/`finally` handling, consistent with normal exception-driven rollback. |
 
 Commands are not expected to perform custom cleanup beyond what their
 database session context manager already guarantees. No command in the

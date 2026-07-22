@@ -284,7 +284,7 @@ sentinel manage-user deactivate \
    ```
    If the user is the last active admin, appends a warning to stderr:
    ```
-   WARNING: this is the last active user with Admin role.
+   Warning: this is the last active user with Admin role.
    After deactivation, assign Admin to another user via:
      sentinel manage-user update --username <user> --add-role admin
    ```
@@ -316,7 +316,7 @@ confirmation), 1 on validation error, 2 on system error (database
 unreachable).
 
 **Output channels**: impact summary and confirmation to stdout.
-`"Error: ..."` messages and `"WARNING: ..."` (last admin) to stderr.
+`"Error: ..."` messages and `"Warning: ..."` (last admin) to stderr.
 
 ### `sentinel manage-user set-password`
 
