@@ -117,6 +117,7 @@ explicit per-command opt-in.
 | `docs/features/identity/authentication.md` | Consumer: `api-key` command group delegates to async services via the pattern defined here. |
 | `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the `asyncio.run()` session mechanism defined here for its read-only queries. |
 | `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the async service contracts invoked from within the `asyncio.run()` mechanism defined here. |
+| `docs/cli-reference.md` | Catalog: index table of all CLI commands, cross-referencing this spec for the shared mechanism. |
 
 ## Package Entry Point & Invocation
 
@@ -377,12 +378,18 @@ does not raise, it exits directly.
 
 Three shared helpers back the interactive behaviors already declared in
 `user-management.md` for `manage-user create`, `manage-user
-set-password`, and `manage-user deactivate`:
+set-password`, and `manage-user deactivate`. Any command requiring
+interactive terminal input SHOULD use these helpers rather than
+reimplementing the pattern. The "Example consumers" column lists
+representative usages, not an exhaustive registry — each command's own
+spec remains authoritative for which helpers it uses, so this table
+does not need to be updated every time a new command adopts one of
+these helpers:
 
-| Helper | Behavior | Used by |
+| Helper | Behavior | Example consumers |
 |---|---|---|
 | Hidden password prompt with confirmation | Prompts twice via a hidden (non-echoed) input (Click's `hide_input=True`), compares the two entries. If they differ, the calling command receives a mismatch signal and is responsible for its own error message and exit code (per that command's own spec — this helper does not print the error itself, to preserve each command's exact wording). | `manage-user create`, `manage-user set-password` |
-| TTY detection | Checks `sys.stdin.isatty()` before invoking the password prompt. If no TTY is detected, returns a signal the calling command uses to print its own "requires an interactive terminal" error (exact wording owned by the command spec) and exit 1. | `manage-user create`, `manage-user set-password` |
+| TTY detection | Checks `sys.stdin.isatty()` before invoking a prompt (password entry or confirmation). If no TTY is detected, returns a signal the calling command uses to print its own "requires an interactive terminal" error (exact wording owned by the command spec) and exit 1. | `manage-user create`, `manage-user set-password` (before password prompt), `manage-user deactivate` (before confirmation prompt) |
 | Confirmation prompt | A yes/no prompt (Click's `confirm()`) for destructiveish operations. Exact prompt text and default answer are owned by the calling command's own spec. | `manage-user deactivate` |
 
 These are implementation-shared utility functions (e.g.,
@@ -406,14 +413,19 @@ Scenarios → CLI Commands) and are not restated here.
 
 - **Test runner**: Click's `CliRunner` (`click.testing.CliRunner`),
   invoked against the root `sentinel` group.
-- **Database fixture**: CLI tests requiring database access use the
-  existing async test session fixture wrapped in `asyncio.run()`, for
-  both read-only and mutation commands — there is no synchronous
-  fixture, consistent with the project's async-only database access
-  (`docs/conventions.md`, SQLAlchemy Conventions). The fixture points at
-  the same test database used by the rest of the suite
-  (`docs/features/platform/testing-strategy.md`, Database Strategy) —
-  no separate CLI-only database is provisioned.
+- **Test function type**: CLI tests MUST be synchronous (`def`, not
+  `async def`) — see `docs/features/platform/testing-strategy.md`
+  (Sync Entry-Point Tests) for the cross-cutting rationale. Click's
+  `CliRunner.invoke()` is itself synchronous; the commands under test
+  internally call `asyncio.run()`, which would raise `RuntimeError` if
+  invoked from within an already-running event loop.
+- **Database fixture**: the async session factory is passed into the
+  command under test (not injected via an async fixture in the test
+  function itself, since the test function is synchronous). The
+  factory points at the same test database used by the rest of the
+  suite (`docs/features/platform/testing-strategy.md`, Database
+  Strategy) — no separate CLI-only database is provisioned, for both
+  read-only and mutation commands.
 - **Exit code and channel assertions**: the "Automated Verification"
   scenarios required by `docs/conventions.md` (CLI Conventions) are
   implemented against this harness: exit 0 on success/idempotent no-op,
@@ -425,25 +437,6 @@ Scenarios → CLI Commands) and are not restated here.
   does not simulate OS signals); verified by manual/integration testing
   when the CLI is implemented. This is a documented testing limitation,
   not a gap in this specification.
-
-## Cross-references
-
-- `docs/conventions.md` (CLI Conventions) — the authoritative contract
-  this specification implements the mechanism for.
-- `docs/features/platform/logging.md` (Scope of this pipeline) — the
-  structlog bootstrap configuration applied at root group initialization.
-- `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios
-  → CLI Commands) — the test scenarios this spec's harness supports.
-- `docs/features/platform/system-settings.md` — the settings mechanism
-  read by the Configuration Guard.
-- `docs/features/identity/user-management.md`,
-  `docs/features/identity/authentication.md`,
-  `docs/features/platform/fetcher-operations.md` — command groups
-  consuming this infrastructure.
-- `docs/features/identity/user-service.md`,
-  `docs/features/identity/api-key-service.md` — the async service
-  contracts wrapped via the `asyncio.run()` session mechanism.
-- `docs/cli-reference.md` — the command catalog.
 ```
 
 ## 4. Files to Modify
@@ -521,8 +514,9 @@ New text:
   Management) for the full mechanism.
 ```
 
-**Change 3 — §"Human-Readable Format" (currently line 781), reword to
-remove the `--json` forward reference:**
+**Change 3 — §"Human-Readable Format" (currently lines 778-783, heading
+at line 778, `--json` bullet at line 781), reword to remove the `--json`
+forward reference:**
 
 Current text:
 
@@ -740,6 +734,46 @@ This edit, like §4.5, is a **mechanical registration only** — it does not
 involve running any reviewer, and does not add any finding to
 `docs/reviews/` beyond the empty placeholder row itself.
 
+### 4.8 `docs/features/platform/testing-strategy.md`
+
+**Change** — add a new cross-cutting subsection documenting that test
+functions exercising code containing `asyncio.run()` (CLI commands,
+Celery task functions called directly) MUST be synchronous. This gap
+was surfaced by `@spec-gap-analyzer` during review of this draft: the
+project's `asyncio_mode = "auto"` setting means an `async def test_...`
+function runs inside an event loop, and `asyncio.run()` in the code
+under test would then raise `RuntimeError`. This is a cross-cutting
+testing concern (applies to CLI and to Celery tasks alike, not just
+CLI — see draft discussion), so it belongs in `testing-strategy.md`,
+not duplicated into `cli-infrastructure.md`, which instead cross-references
+it.
+
+Insert as a new subsection immediately after "### Test Independence"
+(the pytest configuration/independence rules section), before the
+"## Execution Model" heading:
+
+```markdown
+### Sync Entry-Point Tests
+
+Test functions that exercise code containing `asyncio.run()` — such as
+CLI commands (invoked via `CliRunner.invoke()`) or Celery task
+functions called directly — MUST be synchronous (`def`, not
+`async def`). With `asyncio_mode = "auto"` (see Marker Registration
+above), an async test function runs inside an event loop managed by
+pytest-asyncio; `asyncio.run()` in the code under test then raises
+`RuntimeError: asyncio.run() cannot be called when another event loop
+is running`. This applies to any synchronous entry point that bridges
+into the project's async-only database layer (`docs/conventions.md`,
+SQLAlchemy Conventions) via a single `asyncio.run()` call. Fixtures for
+these tests provide the async session factory itself (for the code
+under test to wrap in its own `asyncio.run()` call), not a live
+`AsyncSession` via an async fixture.
+```
+
+**Verification step before applying**: verify the exact heading text
+and position of "### Test Independence" at application time (referenced
+at lines 461-473 as of this draft; content may have shifted).
+
 ## 5. Explicit Non-Changes
 
 To avoid ambiguity during application, the following are confirmed **out
@@ -769,11 +803,11 @@ of scope** and must NOT be touched by this change:
 - `docs/drafts/ideas.md` line 7 ("Propose Sentinel command-line commands
   that could be useful") is a distinct, unrelated idea (proposing *new*
   commands) and is not resolved or removed by this change.
-- Steps 7 (§4.6/§4.7, review-tracking registration) and 9 (verification
+- Steps 8 (§4.6/§4.7, review-tracking registration) and 10 (verification
   reviewers) below are independent concerns and must not be conflated:
-  step 7 is a mechanical file edit with no reviewer execution; step 9
+  step 8 is a mechanical file edit with no reviewer execution; step 10
   runs reviewers but does not write to `docs/reviews/` or to the
-  `cache` field registered in step 7. The formal 5-reviewer pass that
+  `cache` field registered in step 8. The formal 5-reviewer pass that
   populates real findings for `cli-infrastructure` in `/reviews/` is
   explicitly deferred to the user, outside this change.
 
@@ -798,14 +832,17 @@ of scope** and must NOT be touched by this change:
 5. **Edit** `AGENTS.md`: add the file-placement row per §4.4.
 6. **Edit** `docs/features/platform/README.md`: apply both Change 1
    (Specs list) and Change 2 (Relationships bullet) per §4.5.
-7. **Register the new spec in the review tracking system** — apply §4.6
+7. **Edit** `docs/features/platform/testing-strategy.md`: insert the
+   "Sync Entry-Point Tests" subsection per §4.8, after re-verifying the
+   exact position of "### Test Independence" against the current file.
+8. **Register the new spec in the review tracking system** — apply §4.6
    (`docs/reviews/.tracking.json`: add the `cli-infrastructure` entry,
    `enabled: true`, `cache: null`) and §4.7 (`docs/reviews/README.md`:
    add the `—`/`0/0` row). **This step is purely mechanical — do not
    invoke any reviewer to perform or validate it.** It only marks the
    spec as eligible for the formal review pipeline the user will run
    later.
-8. **Self-check for internal coherence** before invoking reviewers:
+9. **Self-check for internal coherence** before invoking reviewers:
    - Confirm `cli-infrastructure.md`'s "Related Specifications" table
      lists every spec that now references it back (bidirectional
      consistency).
@@ -832,35 +869,39 @@ of scope** and must NOT be touched by this change:
      `cli-infrastructure` was inserted alphabetically and the **Total**
      row still correctly reflects the sum of all specs (unchanged, since
      the new row contributes `0/0`).
-9. **Invoke reviewers** against the changed/created specs to verify the
-   plan was applied correctly and without introducing new problems. This
-   step verifies the *application of this change* — it is distinct from,
-   and does not substitute for, the formal review pipeline the user will
-   run later to populate real findings in `docs/reviews/` for
-   `cli-infrastructure`. Findings produced here are reported back to the
-   user and are **not** written into `docs/reviews/` or into the `cache`
-   field registered in step 7:
-   - `@spec-gap-analyzer` on `docs/features/platform/cli-infrastructure.md`
-     (new spec — Guardrail 17).
-   - `@spec-coherence-reviewer` on `docs/features/platform/cli-infrastructure.md`
-     (checks against `docs/conventions.md`, `logging.md`,
-     `testing-strategy.md`, and the three command-group specs it
-     references — Guardrail 15).
-   - `@docs-placement-reviewer` — verify the CLI mechanism content placed
-     in the new spec is not misplaced relative to `docs/conventions.md`,
-     and that the `--json` exclusion, the async-only principle placement
-     (SQLAlchemy Conventions vs. CLI Conventions), and the Database
-     Access correction are placed correctly (Guardrail 21).
-   - `@docs-reviewer` on the full set of changed files (`conventions.md`,
-     `fetcher-operations.md`, `cli-reference.md`, `AGENTS.md`,
-     `platform/README.md`, `cli-infrastructure.md`) for overall
-     completeness/coherence (Guardrail 9).
-   - Address any "Needs revision" finding from the above before
-     considering the change complete; minor issues should be fixed in the
-     same pass.
-10. **Delete this draft file**
+   - Confirm `cli-infrastructure.md`'s Testing section cross-references
+     the exact heading name ("Sync Entry-Point Tests") inserted into
+     `testing-strategy.md` per §4.8.
+10. **Invoke reviewers** against the changed/created specs to verify the
+    plan was applied correctly and without introducing new problems. This
+    step verifies the *application of this change* — it is distinct from,
+    and does not substitute for, the formal review pipeline the user will
+    run later to populate real findings in `docs/reviews/` for
+    `cli-infrastructure`. Findings produced here are reported back to the
+    user and are **not** written into `docs/reviews/` or into the `cache`
+    field registered in step 8:
+    - `@spec-gap-analyzer` on `docs/features/platform/cli-infrastructure.md`
+      (new spec — Guardrail 17).
+    - `@spec-coherence-reviewer` on `docs/features/platform/cli-infrastructure.md`
+      (checks against `docs/conventions.md`, `logging.md`,
+      `testing-strategy.md`, and the three command-group specs it
+      references — Guardrail 15).
+    - `@docs-placement-reviewer` — verify the CLI mechanism content placed
+      in the new spec is not misplaced relative to `docs/conventions.md`,
+      and that the `--json` exclusion, the async-only principle placement
+      (SQLAlchemy Conventions vs. CLI Conventions), the Database
+      Access correction, and the new `testing-strategy.md` subsection are
+      placed correctly (Guardrail 21).
+    - `@docs-reviewer` on the full set of changed files (`conventions.md`,
+      `fetcher-operations.md`, `cli-reference.md`, `AGENTS.md`,
+      `platform/README.md`, `testing-strategy.md`, `cli-infrastructure.md`)
+      for overall completeness/coherence (Guardrail 9).
+    - Address any "Needs revision" finding from the above before
+      considering the change complete; minor issues should be fixed in the
+      same pass.
+11. **Delete this draft file**
     (`docs/drafts/cli-infrastructure-change.md`) once all reviewer
-    findings from step 9 have been resolved and the change is considered
+    findings from step 10 have been resolved and the change is considered
     complete.
 
 ## 7. Internal Coherence Check (performed on this draft)
@@ -907,27 +948,29 @@ of scope** and must NOT be touched by this change:
   exit-code *mapping mechanism* (which exception maps to which code) is
   newly specified, since that mechanism did not exist anywhere before.
 - The plan does not touch `docs/data-model.md`, `docs/api-spec.md`, or
-  any file outside the eight files enumerated in §3 and §4 (the new spec
+  any file outside the nine files enumerated in §3 and §4 (the new spec
   itself, plus `conventions.md`, `fetcher-operations.md`,
   `cli-reference.md`, `AGENTS.md`, `platform/README.md`,
-  `docs/reviews/.tracking.json`, and `docs/reviews/README.md` — the last
-  two added in §4.6/§4.7) — consistent with the "no implementation, no
-  migrations" framing requested by the user.
+  `testing-strategy.md` — added in §4.8 to fix Gap 4 from the
+  `@spec-gap-analyzer` pass — `docs/reviews/.tracking.json`, and
+  `docs/reviews/README.md` — the last two added in §4.6/§4.7) —
+  consistent with the "no implementation, no migrations" framing
+  requested by the user.
 - Action plan ordering (§6) creates the new spec first, then edits
   cross-referencing files (conventions.md, fetcher-operations.md,
-  cli-reference.md, AGENTS.md, platform/README.md), then registers the
-  spec in the review tracking system (step 7), then self-checks (step
-  8), then runs verification reviewers (step 9), then deletes the draft
-  (step 10) — matching the user's explicit requests: review-tracking
-  registration added as its own step (not folded into the reviewer
-  step), reviewer execution and draft deletion remain the last two
-  steps.
-- Step 7 (§4.6/§4.7) and step 9 (verification reviewers) are kept
-  strictly separate, per the user's explicit clarification: step 7 is a
-  mechanical registration with **no reviewer execution**; step 9 runs
+  cli-reference.md, AGENTS.md, platform/README.md, testing-strategy.md),
+  then registers the spec in the review tracking system (step 8), then
+  self-checks (step 9), then runs verification reviewers (step 10), then
+  deletes the draft (step 11) — matching the user's explicit requests:
+  review-tracking registration added as its own step (not folded into
+  the reviewer step), reviewer execution and draft deletion remain the
+  last two steps.
+- Step 8 (§4.6/§4.7) and step 10 (verification reviewers) are kept
+  strictly separate, per the user's explicit clarification: step 8 is a
+  mechanical registration with **no reviewer execution**; step 10 runs
   reviewers to verify correct application of this change but does
   **not** write findings into `docs/reviews/` or into the `cache` field
-  registered in step 7. The formal review pipeline that will populate
+  registered in step 8. The formal review pipeline that will populate
   real findings for `cli-infrastructure` is deferred to the user, to be
   run at a later time, entirely outside this change.
 - `docs/reviews/.tracking.json` and `docs/reviews/README.md` are edited
@@ -943,6 +986,88 @@ of scope** and must NOT be touched by this change:
   Session Management section uses a single async mechanism throughout,
   including the Signal Handling and Testing sections (no residual
   "Path A"/"Path B" references).
+
+## 8. Revision Log — Findings from the Reviewer Dry-Run
+
+After the initial draft (§1-§7) was complete, all four verification
+reviewers listed in §6 step 10 were run against the draft content as a
+**dry run** (evaluating the drafted spec text directly, since the file
+does not exist yet) to catch issues before application. Findings were
+evaluated critically; only genuine gaps — not stylistic preferences or
+premature-generalization risks — were addressed. The following changes
+were made to this draft as a result:
+
+1. **Sync Entry-Point Tests gap** (`@spec-gap-analyzer`, Medium
+   severity): the original Testing section only said CLI tests use "the
+   existing async test session fixture wrapped in `asyncio.run()`"
+   without stating that the test *function itself* must be synchronous.
+   Given the project's `asyncio_mode = "auto"` pytest-asyncio setting,
+   an implementer could plausibly write `async def test_...` CLI tests,
+   which would raise `RuntimeError` the moment the command under test
+   calls its own `asyncio.run()`. Resolved by: (a) adding a new
+   cross-cutting "Sync Entry-Point Tests" subsection to
+   `testing-strategy.md` (§4.8, new file added to this plan), since the
+   same risk applies to any sync entry point bridging into the
+   async-only database layer (Celery tasks were considered but not
+   modified — see discussion below); (b) rewriting the Testing section
+   of the new spec (§3.1) to cross-reference it and to state explicitly
+   that CLI test functions must be synchronous.
+
+   **Explicitly NOT done**: no dedicated Celery/task infrastructure
+   spec was created, and no changes were made to any Celery task's
+   feature spec. The `asyncio.run()` bridge pattern for Celery tasks is
+   already adequately derivable from the async-only principle
+   (`conventions.md`) plus the concrete precedent in
+   `fetcher-infrastructure.md` — formalizing it further was judged to
+   be premature generalization (Guardrail 21-C) with no current
+   ambiguity to resolve. Likewise, how the two non-fetcher periodic
+   tasks (`cleanup_sessions`, `cleanup_stale_ticket_access_grants`) are
+   registered with Beat is a real but narrow gap in their own owning
+   specs (`authentication.md`, `tickets.md`) — out of scope for this
+   change, deferred to whenever those tasks are implemented.
+
+2. **TTY detection helper consumer list** (`@spec-coherence-reviewer`,
+   Low severity, Finding F-2): the original Interactive Input Helpers
+   table listed `manage-user create` and `manage-user set-password` as
+   the TTY detection helper's only consumers, omitting
+   `manage-user deactivate` (which also performs TTY detection before
+   its confirmation prompt, per `user-management.md`). Rather than
+   simply adding the missing entry (which would leave the table exposed
+   to the same drift risk for any future command), the table's framing
+   was changed: the "Used by" column is renamed "Example consumers" and
+   an introductory sentence now states explicitly that the list is
+   illustrative, not an exhaustive registry, and that each command's own
+   spec remains authoritative for which helpers it uses. This removes
+   the maintenance obligation to keep the table in sync with every
+   future command while still adding `manage-user deactivate` as a
+   concrete example.
+
+3. **Redundant "Cross-references" section** (`@docs-reviewer`, Low
+   severity, Finding I1): the new spec originally had both a "Related
+   Specifications" table near the top and a "Cross-references" list at
+   the bottom, with ~85% content overlap — a structure no other spec in
+   the project uses (specs have either one or the other, following the
+   precedent set by `fetcher-infrastructure.md`, which has only the top
+   table). Resolved by removing the bottom "Cross-references" section
+   entirely and adding its one non-duplicate entry
+   (`docs/cli-reference.md`) to the top "Related Specifications" table.
+
+All other findings from the four reviewers (see session discussion) were
+evaluated and deliberately NOT actioned, because they were either: not
+real ambiguities (the "Insufficiency test" was not met — an implementer
+would reach the same conclusion either way), already mitigated by an
+explicit statement elsewhere in the spec, or would have required
+speculative documentation of a mechanism with zero current consumers
+(Configuration Guard, Interactive Input Helpers centralization) — which
+Guardrail 21-C counsels against absent a second real consumer.
+
+**Files added to the plan as a result of this revision**: §4.8
+(`docs/features/platform/testing-strategy.md`) is a new file
+modification, not present in the original draft. The action plan (§6),
+§5 (Explicit Non-Changes), and this section have been updated
+accordingly; step numbers throughout §6 shifted by one from the
+original draft (former step 6→7 is unaffected content-wise but step
+7→8, 8→9, 9→10, 10→11 in numbering).
 
 **Result of coherence check**: no internal contradictions found. The
 draft is ready for review.
