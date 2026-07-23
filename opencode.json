@@ -10,7 +10,7 @@
     },
     "spec": {
       "description": "Writes and maintains feature specifications and declarative project configuration. Cannot modify implementation code.",
-      "model": "github-copilot/claude-sonnet-5",
+      "model": "github-copilot/claude-opus-4.6",
       "mode": "primary",
       "color": "warning",
       "prompt": "{file:./.opencode/prompts/spec.md}",
