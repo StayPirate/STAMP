@@ -4,7 +4,7 @@
 **Type**: Specification fix (bug in spec, no implementation exists yet)
 **Affected specs**: `docs/features/platform/fetcher-infrastructure.md`,
 `docs/features/identity/authentication.md`,
-`docs/features/tickets/tickets.md`
+`docs/features/tickets/tickets.md`, `docs/deployment.md`
 
 ## 1. Problem Statement
 
@@ -179,8 +179,18 @@ step 4, immediately followed by the "Assumption" paragraph).
      attribute equals `"run_fetcher"` (cross-reference the existing
      "Redbeat Entry Structure" table, which already documents `Task |
      run_fetcher` for every fetcher entry).
-   - For each such entry, keep the existing logic: delete if
-     `fetcher_name` (from kwargs) is not in `FETCHER_REGISTRY`.
+   - The `task` check MUST act as a pre-filter, applied strictly before
+     any kwargs inspection: entries whose `task` is not `"run_fetcher"`
+     are skipped entirely, without attempting to extract `fetcher_name`
+     from their kwargs. State this ordering explicitly — a non-fetcher
+     static entry has no `fetcher_name` kwarg, so an implementation
+     that extracts it unconditionally (e.g., via `kwargs.get()`) before
+     checking `task` would silently treat the missing value as "not in
+     `FETCHER_REGISTRY`" and delete the entry, reintroducing the exact
+     bug this step is meant to fix.
+   - For each entry that passes the `task` pre-filter, keep the
+     existing logic: delete if `fetcher_name` (from kwargs) is not in
+     `FETCHER_REGISTRY`.
    - Explicitly state that entries whose `task` is not `"run_fetcher"`
      are left untouched by this step (they are owned by redbeat's own
      static-entry handling — forward-reference the new subsection
@@ -231,10 +241,16 @@ point below):
 - **Mechanism**: such tasks are declared as static entries in
   `app.conf.beat_schedule` (the Celery configuration dict), set once
   at Celery app construction time (code-level, not runtime-mutable).
-  Redbeat's own `setup_schedule()` (native, unmodified library
-  behavior — Sentinel does not subclass or override it) installs,
-  refreshes, and removes these entries automatically at every Beat
-  startup, tracking them via its internal `redbeat::statics`
+  This assignment MUST happen before the Celery Beat scheduler is
+  instantiated — `setup_schedule()` reads `app.conf.beat_schedule`
+  during scheduler initialization, so if the dict is populated later
+  (e.g., via a `beat_init` signal handler or a module imported after
+  scheduler construction), the entries are not installed and any
+  previously-tracked static entries are removed as if they had been
+  deleted from the codebase. Redbeat's own `setup_schedule()` (native,
+  unmodified library behavior — Sentinel does not subclass or override
+  it) installs, refreshes, and removes these entries automatically at
+  every Beat startup, tracking them via its internal `redbeat::statics`
   bookkeeping. Sentinel code never directly creates, updates, or
   deletes these entries.
 - **Out of scope note**: this section does not specify how or where
@@ -274,6 +290,24 @@ point below):
     reconciliation **as long as it does not use the task name
     `"run_fetcher"`**. State this explicitly as the compatibility
     contract for any future addition to `beat_schedule`.
+  - **Entry name collision constraint**: `beat_schedule` dict keys
+    (which redbeat uses as the entry identifier, and therefore as the
+    Redis key) MUST NOT match any name in `FETCHER_REGISTRY`. The
+    `task` discriminator above only protects fetcher reconciliation's
+    deletion step (step 4) from touching non-fetcher entries — it does
+    NOT protect against a write-path collision: fetcher reconciliation
+    step 2 performs an unconditional upsert of every enabled fetcher's
+    entry by name, and redbeat's `setup_schedule()` performs the same
+    unconditional upsert for static entries by name. If a future
+    non-fetcher task's `beat_schedule` key happened to equal an
+    existing or future fetcher's name, both mechanisms would write to
+    the same Redis key on every Beat startup, each overwriting the
+    other's data non-deterministically. State this explicitly as a
+    second, independent compatibility constraint (name uniqueness, in
+    addition to the task-name constraint above) for any future
+    addition to `beat_schedule`. No runtime validation is introduced
+    for this constraint — it is a documented naming rule for whoever
+    adds a new entry.
   - **Behavior on Redis data loss**: redbeat preserves each static
     entry's `last_run_at` metadata across a normal Beat restart (Redis
     data intact), so a task does not fire early merely because Beat
@@ -351,15 +385,54 @@ fully specified in
 `docs/features/platform/fetcher-infrastructure.md` ("Non-Fetcher
 Periodic Tasks"). Same non-duplication rule as Step 3.
 
-### Step 5 — Internal coherence pass across the three edited documents
+### Step 5 — `docs/deployment.md`: qualify the "reconstructible from PostgreSQL" claim
 
-After Steps 1-4 are applied, perform a single read-through pass
+**Origin**: discovered as a side finding during the coherence analysis
+of this draft (not caused by this change, but exposed by it).
+
+**Problem**: `docs/deployment.md` ("Redis Durability, Memory, and
+Persistence" → "Persistence is Disabled by Design", point 1) states:
+
+> "No durable data lives solely in Redis. PostgreSQL is the source of
+> truth for all persistent state (sessions, schedules, task outcomes,
+> mutation serialization). Every Redis key is either TTL-bounded and
+> self-healing, or fully reconstructible from PostgreSQL via Beat's
+> startup reconciliation."
+
+After this change, non-fetcher static entries are a third category:
+they are neither TTL-bounded nor reconstructible from PostgreSQL — they
+are reconstructible from **code** (the `beat_schedule` declaration) via
+redbeat's native `setup_schedule()`, a different mechanism than
+Sentinel's custom startup reconciliation. The sentence's universal
+claim ("every Redis key is either X or Y") becomes inaccurate for this
+category, even though the operational conclusion it supports (Redis
+persistence can be safely disabled; everything recovers automatically
+at Beat startup) remains correct and unaffected.
+
+**Fix**: qualify the sentence to name both reconstruction sources, e.g.:
+"...or fully reconstructible at Beat startup — from PostgreSQL (fetcher
+schedules, via Sentinel's startup reconciliation) or from code
+(non-fetcher static entries, via redbeat's native `setup_schedule()`)."
+Cross-reference `fetcher-infrastructure.md` ("Non-Fetcher Periodic
+Tasks", added in Step 2) for the mechanism detail — do not duplicate it
+here.
+
+**Scope note**: this is a one-sentence qualification, not a rewrite of
+the surrounding rationale. Points 2 and 3 of the same "Rationale" list
+(lock sentinel recovery, persistence undermining the lock sentinel)
+remain accurate as-is and require no change.
+
+### Step 6 — Internal coherence pass across the four edited documents
+
+After Steps 1-5 are applied, perform a single read-through pass
 checking specifically for:
 
 1. **No duplicated mechanism description**: the *how* (static
-   `beat_schedule`, redbeat native handling, task-name discriminator)
-   must appear only in `fetcher-infrastructure.md`. `authentication.md`
-   and `tickets.md` must contain only a cross-reference sentence each.
+   `beat_schedule`, redbeat native handling, task-name discriminator,
+   entry-name uniqueness constraint) must appear only in
+   `fetcher-infrastructure.md`. `authentication.md`, `tickets.md`, and
+   `deployment.md` must contain only a cross-reference (the latter via
+   the qualified sentence from Step 5, not a full restatement).
 2. **No contradiction with "PostgreSQL-master, Redbeat-slave"**:
    confirm the carve-out language added in Step 2 is consistent with
    every other mention of that architecture principle in the document.
@@ -375,13 +448,16 @@ checking specifically for:
    `beat_scheduler` configuration value — this change intentionally
    keeps the stock `redbeat.RedBeatScheduler` (see Section 2, point 4).
 
-### Step 6 — `docker-compose.yml`: align local dev Redis with the no-persistence invariant
+### Step 7 — `docker-compose.yml`: align local dev Redis with the no-persistence invariant
 
 **Origin**: discovered as a side finding while investigating this
 change (Redis data-loss recovery behavior for static entries, Step 2 /
-Step 5 above), not caused by this change. Recorded here because it was
+Step 6 above), not caused by this change. Recorded here because it was
 found during this investigation and is cheap to fix in the same pass;
 it is otherwise unrelated to the non-fetcher periodic task mechanism.
+This is a separate finding from Step 5 above (`deployment.md` wording
+qualification) — Step 5 fixes a textual inaccuracy in a spec, this step
+fixes an actual infrastructure configuration drift.
 
 **Problem**: `docs/deployment.md` ("Redis Durability, Memory, and
 Persistence" → "Persistence is Disabled by Design") states that Redis
@@ -417,7 +493,7 @@ configuration, not a specification document under `docs/`. Per the
 project's agent scope rules, this file must be edited by a session
 with `docker-compose.yml`/CI-CD editing scope (e.g., the `@cicd` agent
 or a direct implementation session) — **not** as part of the spec-only
-edits in Steps 1-5 above, and not by this drafting session. This step
+edits in Steps 1-6 above, and not by this drafting session. This step
 is recorded here for completeness of the investigation, to be executed
 as a small, independent follow-up alongside (or after) the spec edits.
 
@@ -439,7 +515,7 @@ non-persistent service is misleading to a reader of the compose file,
 even though it is functionally inert once `save ""` takes effect
 (nothing will ever be written to it). Removing it is preferred for
 clarity, but keeping it is not a correctness bug — decide based on
-reviewer input during Step 7.
+reviewer input during Step 8.
 
 **Verification**: after the fix, confirm via `redis-cli CONFIG GET
 save` and `redis-cli CONFIG GET appendonly` against the local
@@ -456,23 +532,23 @@ and `appendonly no`.
 > placed after OP-18 in "Open — Cross-Process Startup") during the
 > drafting of this document. No further action is needed for OP-19 as
 > part of this change — it is listed here only so the reader knows
-> where the reference in Section 2, point 4 leads, and so Step 7
+> where the reference in Section 2, point 4 leads, and so Step 8
 > (reviewers) knows it does not need to verify an unapplied step for
 > it.
 
-### Step 7 — Invoke reviewers
+### Step 8 — Invoke reviewers
 
-Once Steps 1-6 are complete and applied (spec edits from Steps 1-5,
-`docker-compose.yml` fix from Step 6; OP-19 already recorded in
+Once Steps 1-7 are complete and applied (spec edits from Steps 1-6,
+`docker-compose.yml` fix from Step 7; OP-19 already recorded in
 `docs/drafts/open-points.md` per the note above), invoke the
 following reviewers, each scoped to the specs actually modified by
 this change (`fetcher-infrastructure.md`, `authentication.md`,
-`tickets.md`):
+`tickets.md`, `deployment.md`):
 
 1. `@spec-coherence-reviewer` — once per modified spec (per the
    project convention of one independent session per spec when doing
    a multi-spec review), to verify no contradictions were introduced
-   between the three documents or with other specs that reference
+   between the four documents or with other specs that reference
    Celery Beat / redbeat (e.g., `fetcher-operations.md`,
    `configuration.md`, `architecture.md`).
 2. `@spec-gap-analyzer` — on `fetcher-infrastructure.md` only (the
@@ -483,22 +559,23 @@ this change (`fetcher-infrastructure.md`, `authentication.md`,
    Function Specification Completeness convention).
 3. `@docs-placement-reviewer` — to verify the cross-cutting placement
    decision made in this draft (mechanism owned by
-   `fetcher-infrastructure.md`, referenced by the two feature specs)
-   is correctly applied and that no duplication slipped through Step 5.
+   `fetcher-infrastructure.md`, referenced by the two feature specs
+   and by `deployment.md`) is correctly applied and that no
+   duplication slipped through Step 6.
 4. `@docs-reviewer` — general completeness/coherence pass across all
-   three modified documents, since this change spans multiple
+   four modified documents, since this change spans multiple
    documentation files in the same set of edits.
-5. `@cicd` — to verify the `docker-compose.yml` fix from Step 6 is
+5. `@cicd` — to verify the `docker-compose.yml` fix from Step 7 is
    correctly applied and does not introduce any other drift against
    `docs/deployment.md`.
 
 If any reviewer flags a "Needs revision" issue, resolve it before
-proceeding to Step 8. Minor issues should be fixed in the same editing
+proceeding to Step 9. Minor issues should be fixed in the same editing
 pass.
 
-### Step 8 — Delete this draft
+### Step 9 — Delete this draft
 
-Once Steps 1-7 are complete (all spec edits applied and all reviewers
+Once Steps 1-8 are complete (all spec edits applied and all reviewers
 have signed off with no outstanding "Needs revision" issues), delete
 this file
 (`docs/drafts/non-fetcher-periodic-tasks-beat-scheduling.md`). This
@@ -512,12 +589,13 @@ in the target specs themselves after this change).
 
 | File | Nature of change |
 |------|-------------------|
-| `docs/features/platform/fetcher-infrastructure.md` | Fix step 4 of Startup Reconciliation (scope to `task == "run_fetcher"`); remove the now-resolved "Assumption" caveat; add new "Non-Fetcher Periodic Tasks" top-level section (including the Redis-data-loss "fires once" behavior, Step 2). Does NOT change the configured scheduler class or introduce a scheduler subclass — the stock `redbeat.RedBeatScheduler` is unaffected |
+| `docs/features/platform/fetcher-infrastructure.md` | Fix step 4 of Startup Reconciliation (scope to `task == "run_fetcher"`, with explicit task-check-before-kwargs-extraction ordering); remove the now-resolved "Assumption" caveat; add new "Non-Fetcher Periodic Tasks" top-level section (including the Redis-data-loss "fires once" behavior, the entry-name uniqueness constraint, and the `beat_schedule` construction-time timing requirement, Step 2). Does NOT change the configured scheduler class or introduce a scheduler subclass — the stock `redbeat.RedBeatScheduler` is unaffected |
 | `docs/features/identity/authentication.md` | One sentence added to "Session cleanup", cross-referencing the mechanism |
 | `docs/features/tickets/tickets.md` | One bullet modified/added in "Stale Access Grant Cleanup", cross-referencing the mechanism |
-| `docker-compose.yml` | Add `command: ["redis-server", "--save", "", "--appendonly", "no"]` (or equivalent) to the `redis:` service to align local dev with `docs/deployment.md`'s no-persistence invariant; evaluate removing the now-inert `redis_data` volume (Step 6). Pre-existing inconsistency, unrelated to the core mechanism change, fixed opportunistically in the same pass |
-| `docs/drafts/open-points.md` | New entry OP-19 (Beat Reconciliation Wiring Mechanism Not Specified) — summary table row + detail subsection. **Already applied** during the drafting of this document (see the note after Step 6); not a pending Action Plan step |
-| `docs/drafts/non-fetcher-periodic-tasks-beat-scheduling.md` (this file) | Deleted at the end of the process (Step 8) |
+| `docs/deployment.md` | One sentence qualified in "Persistence is Disabled by Design" (point 1) to account for non-fetcher static entries as a third, code-reconstructible category (Step 5) |
+| `docker-compose.yml` | Add `command: ["redis-server", "--save", "", "--appendonly", "no"]` (or equivalent) to the `redis:` service to align local dev with `docs/deployment.md`'s no-persistence invariant; evaluate removing the now-inert `redis_data` volume (Step 7). Pre-existing inconsistency, unrelated to the core mechanism change, fixed opportunistically in the same pass |
+| `docs/drafts/open-points.md` | New entry OP-19 (Beat Reconciliation Wiring Mechanism Not Specified) — summary table row + detail subsection. **Already applied** during the drafting of this document (see the note after Step 7); not a pending Action Plan step |
+| `docs/drafts/non-fetcher-periodic-tasks-beat-scheduling.md` (this file) | Deleted at the end of the process (Step 9) |
 
 ## 5. Non-Goals of This Change
 
@@ -540,9 +618,9 @@ in the target specs themselves after this change).
   from this plan. The separate, pre-existing question of how
   reconciliation is wired at Beat startup is tracked as OP-19
   (already recorded in `docs/drafts/open-points.md`, see the note
-  after Step 6) and explicitly deferred.
-- The `docker-compose.yml` fix (Step 6) is an opportunistic, pre-existing
+  after Step 7) and explicitly deferred.
+- The `docker-compose.yml` fix (Step 7) is an opportunistic, pre-existing
   finding unrelated to the mechanism itself — it does not touch any
-  application code and does not depend on Steps 1-5 being applied
+  application code and does not depend on Steps 1-6 being applied
   first (it may be executed independently, but is bundled into this
   plan since it was discovered during this investigation).
