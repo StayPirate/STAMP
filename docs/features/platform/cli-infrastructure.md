@@ -215,9 +215,9 @@ per-command path selection.
   commit (no writes occur — per `fetcher-operations.md` (CLI Commands),
   the `fetcher` CLI group is read-only by design; all mutations are done
   exclusively through the API).
-- Exactly one `asyncio.run()` call occurs per command invocation. Nested
-  or multiple `asyncio.run()` calls within a single command are not a
-  supported pattern.
+- Per the sync-to-async bridging convention (`docs/conventions.md`,
+  SQLAlchemy Conventions), exactly one `asyncio.run()` call occurs per
+  command invocation, wrapping the extracted `async def` flow function.
 - Connection failure (database unreachable) propagates as an exception
   from the wrapped async call; see "Error Handling & Exit Code Mapping"
   below.

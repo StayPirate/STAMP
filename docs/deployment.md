@@ -444,6 +444,38 @@ Running multiple replicas causes duplicate task scheduling or duplicate
 event processing. See `docs/architecture.md` (Singleton Processes) for
 the architectural constraint.
 
+### Startup Ordering
+
+After Alembic migrations complete, all runtime processes (API server,
+Celery worker, Git worker, Celery Beat, IBS RabbitMQ consumer) MAY start
+in any order. No inter-process startup dependency exists.
+
+This property is guaranteed by the following mechanisms:
+
+- **`bootstrap_fetcher_configs()`** runs in every process (worker, Beat,
+  API server) and uses `INSERT ... ON CONFLICT DO NOTHING` — Beat does
+  not depend on workers or the API having created `FetcherConfig` records
+  first. If Beat starts first, it creates them; if a worker starts first,
+  Beat's bootstrap is a no-op (records already exist); if all start
+  simultaneously, the first `INSERT` wins and concurrent duplicates are
+  no-ops.
+- **`system_settings` seeding** uses `ON CONFLICT DO NOTHING` (Alembic
+  data migration is the primary mechanism; FastAPI lifespan is
+  defense-in-depth).
+- **The IBS RabbitMQ consumer** connects to RabbitMQ with retry semantics
+  — it operates independently of Beat and workers.
+- **Each process fails fast** if infrastructure dependencies (PostgreSQL,
+  Redis) are unreachable — no process silently waits for another
+  application process.
+
+If a future change introduces an inter-process startup dependency, this
+section MUST be updated with the new constraint and the deployment
+manifests (Docker Compose, Kubernetes) adjusted accordingly.
+
+See `docs/features/platform/fetcher-infrastructure.md` (Startup
+Reconciliation, Complete Beat Startup Sequence) for the Beat-specific
+startup sequence detail.
+
 ### Git Worker Volume
 
 The git worker requires a persistent volume mounted at

@@ -1633,20 +1633,84 @@ When Celery Beat starts (or restarts after a crash), it performs a full
 reconciliation of the redbeat schedule against the current system state.
 This happens **before** Beat begins firing any tasks.
 
-#### Startup Sequence
+#### Wiring Mechanism
 
-**Preconditions** (satisfied before reconciliation begins):
-- `FETCHER_REGISTRY` is populated (via `import app.services.fetcher_discovery`)
-- `FetcherConfig` records exist for all registered fetchers (via
-  `bootstrap_fetcher_configs()` — see "Who Writes Where" below)
-- Every fetcher in `FETCHER_REGISTRY` has a valid, non-None
-  `default_schedule` (5-field cron expression) — this is guaranteed by
-  the `BaseFetcher` abstract interface contract
-  (`fetcher-infrastructure.md`, Abstract Interface)
-- The redbeat distributed lock has been acquired (see below)
+The fetcher startup reconciliation is invoked via a Celery **`beat_init`
+signal handler** registered in the Celery app module.
 
-**Lock acquisition** (first step of Beat startup): before reconciliation
-begins, redbeat acquires the distributed lock (`redbeat::lock`) via
+- **Handler location**: `backend/app/core/beat_init.py`
+- **Registration**: the handler is connected to the `beat_init` signal
+  at module import time (`@beat_init.connect`)
+- **Import**: the Celery app module (`backend/app/celery_app.py`)
+  imports the handler module to ensure registration occurs in every
+  process that loads the Celery app. This is safe because `beat_init` is
+  only emitted when the Beat service starts — workers and the IBS
+  consumer import the same Celery app but never emit `beat_init`, so
+  the registered handler is never called in those processes.
+- **Async bridging**: the handler uses a single `asyncio.run()` call on
+  an extracted `async def` function, per the sync-to-async bridging
+  convention (`docs/conventions.md`, SQLAlchemy Conventions). The
+  extracted async function is the independently testable unit — tests
+  `await` it directly without going through `asyncio.run()`.
+- **Error handling**: the handler wraps the entire bootstrap +
+  reconciliation sequence in a `try/except` with `sys.exit(1)` on
+  failure (explicit fail-fast).
+- **Scheduler unchanged**: the `beat_scheduler` Celery setting remains
+  `'redbeat.RedBeatScheduler'` (stock, unmodified). No custom scheduler
+  subclass is introduced.
+
+#### Complete Beat Startup Sequence
+
+```
+1. Celery app module imported
+   → Celery app factory runs
+   → Timezone validation (UTC check)
+   → Lock sentinel validation (redbeat_lock_key, redbeat_lock_timeout)
+   → import app.services.fetcher_discovery  (populates FETCHER_REGISTRY)
+
+2. RedBeatScheduler.__init__()
+   → Acquires distributed lock (redbeat::lock)
+     - Retries every max_interval (60s) if lock held by stale instance
+     - Immediate if lock absent (common case: fresh start or Redis data loss)
+
+3. RedBeatScheduler.setup_schedule()
+   → Installs/refreshes non-fetcher static entries from app.conf.beat_schedule
+     (cleanup_sessions, cleanup_stale_ticket_access_grants)
+   → Removes static entries that were deleted from beat_schedule since last run
+   → (native redbeat behavior — Sentinel does not modify this step)
+
+4. beat_init signal emitted by Celery
+   → Sentinel's handler executes the entire startup sequence within a
+     single asyncio.run() call on an extracted async def function:
+
+     4a. bootstrap_fetcher_configs()
+         - INSERT ON CONFLICT DO NOTHING for every fetcher in FETCHER_REGISTRY
+         - Idempotent, concurrency-safe
+
+     4b. reconcile_beat_schedule() — Steps 1-5 below
+
+5. Beat tick loop begins
+   → Normal operation: fires tasks per their schedules
+```
+
+**Ordering guarantee**: Celery's Beat startup sequence is:
+`Scheduler.__init__()` → `setup_schedule()` → `beat_init` signal.
+The reconciliation runs AFTER `setup_schedule()` has installed the
+static entries. This ordering is correct because:
+
+- Reconciliation step 4 (remove deregistered fetchers) uses the
+  `task != "run_fetcher"` pre-filter, which protects static entries
+  regardless of ordering
+- Static entries are already present when reconciliation inspects
+  the redbeat keyspace — no timing gap
+- `bootstrap_fetcher_configs()` runs as the first operation inside
+  the signal handler, satisfying the precondition "FetcherConfig
+  records exist before reconciliation begins"
+
+#### Lock Acquisition
+
+Before reconciliation begins (step 2 above), redbeat acquires the
+distributed lock (`redbeat::lock`) via
 `lock.acquire(blocking=True, sleep=max_interval)`. If the lock is held
 by a stale instance (e.g., previous Beat crashed without releasing it),
 the new Beat retries every `max_interval` (60 seconds) until the lock
@@ -1655,6 +1719,16 @@ In the common recovery case (Redis data loss → lock absent), acquisition
 is immediate. In a non-data-loss crash (Beat OOM-killed, Redis intact),
 the worst-case wait before the new Beat starts scheduling is
 `lock_timeout` = 300s (≤5 minutes).
+
+#### Reconciliation Steps
+
+**Preconditions** (satisfied by the time step 4b begins):
+- `FETCHER_REGISTRY` is populated (step 1)
+- `FetcherConfig` records exist for all registered fetchers (step 4a)
+- Every fetcher in `FETCHER_REGISTRY` has a valid, non-None
+  `default_schedule` (5-field cron expression) — guaranteed by the
+  `BaseFetcher` abstract interface contract (Abstract Interface above)
+- The redbeat distributed lock has been acquired (step 2)
 
 Steps:
 
@@ -2100,13 +2174,13 @@ removes these entries automatically at every Beat startup, tracking them
 via its internal `redbeat::statics` bookkeeping. Sentinel code never
 directly creates, updates, or deletes these entries.
 
-**Out of scope**: this section does not specify how or where Sentinel's
-fetcher startup-reconciliation procedure (see "Startup Reconciliation"
-above) is itself invoked at Beat process startup — that is a separate,
-pre-existing gap tracked as OP-19 in `docs/drafts/open-points.md`. It
-does not need to be resolved here because the scoping rule in step 4's
-revised wording (see above) makes the two mechanisms safe to coexist
-regardless of invocation order or wiring mechanism.
+The fetcher startup reconciliation is invoked via a `beat_init`
+signal handler that runs after `setup_schedule()` completes (see
+"Startup Reconciliation" above). The two mechanisms are independent:
+`setup_schedule()` manages non-fetcher static entries;
+reconciliation manages fetcher entries. The `task != "run_fetcher"`
+pre-filter in reconciliation step 4 ensures they do not interfere
+with each other.
 
 #### Boundaries and Constraints
 
@@ -2294,6 +2368,15 @@ These constraints are satisfied by the default redbeat configuration
 (lock enabled, key = `redbeat::lock`, timeout derived from
 `max_interval * 5`).
 
+#### Startup Ordering
+
+**Startup ordering invariant**: after Alembic migrations complete, all
+runtime processes (API server, Celery worker, Git worker, Celery Beat,
+IBS RabbitMQ consumer) MAY start in any order — no inter-process
+startup dependency exists. See `docs/deployment.md` (Startup Ordering)
+for the full rationale. Any change that introduces an inter-process
+startup dependency MUST update that section.
+
 ### Startup Validation
 
 Timezone enforcement (`CELERY_TIMEZONE = UTC`, `CELERY_ENABLE_UTC = True`)
@@ -2331,10 +2414,11 @@ fires only if an operator explicitly overrides the defaults.
 Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
 MUST import the Celery app object to function, the validation is
 inherited automatically — no per-process signal handlers
-(`worker_init`, `beat_init`) are needed. The exception prevents any
-process from completing initialization.
+(`worker_init`, `beat_init`) are needed for these validations. The
+exception prevents any process from completing initialization.
 
-Additionally, the Beat startup reconciliation implicitly validates:
+Additionally, the Beat startup reconciliation (see "Startup
+Reconciliation" above) implicitly validates:
 
 - PostgreSQL connectivity (reads `FetcherConfig`)
 - Redis/redbeat connectivity (writes entries)
@@ -2514,7 +2598,7 @@ Per-fetcher configuration, managed by admins. A record is created
 automatically at process startup by `bootstrap_fetcher_configs()`
 (`backend/app/services/fetcher_bootstrap.py`) — a shared idempotent
 routine that runs in every Celery-based process (worker, Beat, API
-server) before role-specific logic begins. The routine executes a batch
+server) as the first startup operation in each process. The routine executes a batch
 `INSERT ... ON CONFLICT DO NOTHING` (on the PK `fetcher_name`) for
 every fetcher in `FETCHER_REGISTRY`, guaranteeing safety when multiple
 processes start concurrently (common in Kubernetes multi-replica
@@ -2523,14 +2607,17 @@ deployments).
 The bootstrap routine:
 - **Location**: `backend/app/services/fetcher_bootstrap.py`
 - **Signature**: `async def bootstrap_fetcher_configs(db: AsyncSession) -> None`
-- **Sync callers**: worker and Beat startup use
-  `asyncio.run(bootstrap_fetcher_configs(session))` since they operate
-  outside an async event loop. The API server calls it with `await`
-  during the FastAPI startup event.
+- **Sync callers**: worker and Beat startup invoke this function via
+  the sync-to-async bridging pattern (`docs/conventions.md`) — a
+  single `asyncio.run()` wrapping the extracted async startup
+  function. The API server calls it with `await` during the FastAPI
+  startup event.
 - Runs AFTER `import app.services.fetcher_discovery` (which populates
   `FETCHER_REGISTRY`)
-- Runs BEFORE role-specific startup (Beat: reconciliation; API: serving
-  requests; worker: consuming tasks)
+- Runs as the first operation within each process's startup sequence
+  (Beat: first inside `beat_init` handler, before reconciliation; API:
+  during FastAPI startup event, before serving requests; worker: at
+  process init, before consuming tasks)
 - Creates records with column defaults (`enabled = true`,
   `run_timeout = 3600`, `request_delay` from `default_request_delay`,
   `custom_settings = '{}'`)

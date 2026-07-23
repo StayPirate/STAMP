@@ -337,6 +337,23 @@ it for local development. Variables excluded:
   specific use case, and MUST be approved by a human reviewer before
   implementation — do not introduce a synchronous driver/engine
   autonomously
+- **Sync-to-async bridging**: synchronous entry points (CLI commands,
+  Celery signal handlers, management scripts) that need to call async
+  code MUST follow this pattern:
+
+  1. Extract the async logic into a named `async def` function — this
+     is the independently testable unit (tests `await` it directly
+     without going through `asyncio.run()`)
+  2. The synchronous caller wraps the extracted function in exactly one
+     `asyncio.run()` call per invocation
+  3. Nested or multiple `asyncio.run()` calls within a single invocation
+     are not supported — each `asyncio.run()` creates and destroys an
+     event loop; multiple calls add overhead and risk subtle state leaks
+     between loops
+
+  See `docs/features/platform/testing-strategy.md` (Sync Entry-Point
+  Tests) for the corresponding test convention (why sync entry-point
+  tests must be `def`, not `async def`).
 
 ### Pydantic Conventions
 
@@ -687,11 +704,11 @@ handling, signal handling) backing the contract defined in this section.
 
 ### Database Access
 
-- CLI commands wrap their database logic in a single `asyncio.run()`
-  call using the project's async session factory (see SQLAlchemy
-  Conventions above — Sentinel is async-only). See
+- CLI commands bridge into the async database layer via the
+  sync-to-async pattern above (see SQLAlchemy Conventions). See
   `docs/features/platform/cli-infrastructure.md` (Database Session
-  Management) for the full mechanism.
+  Management) for CLI-specific details (session factory injection,
+  transaction lifecycle).
 
 ### Output Contract
 

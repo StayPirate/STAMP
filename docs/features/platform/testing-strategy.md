@@ -482,8 +482,9 @@ above), an async test function runs inside an event loop managed by
 pytest-asyncio; `asyncio.run()` in the code under test then raises
 `RuntimeError: asyncio.run() cannot be called when another event loop
 is running`. This applies to any synchronous entry point that bridges
-into the project's async-only database layer (`docs/conventions.md`,
-SQLAlchemy Conventions) via a single `asyncio.run()` call. Fixtures for
+into the project's async-only database layer via a single
+`asyncio.run()` call (see `docs/conventions.md`, Sync-to-Async
+Bridging). Fixtures for
 these tests provide the async session factory itself (for the code
 under test to wrap in its own `asyncio.run()` call), not a live
 `AsyncSession` via an async fixture.

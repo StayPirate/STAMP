@@ -18,13 +18,13 @@ Architectural decisions pending resolution before implementation begins.
 | OP-15 | IBSEventConsumer Admin Restart Endpoint | Platform | Open |
 | OP-16 | CPE Mapping Fail-Fast Asymmetry | Cross-Process Startup | Open |
 | OP-17 | IBS RabbitMQ Consumer Startup Gaps | Cross-Process Startup | Open |
-| OP-18 | Cross-Process Startup Ordering | Cross-Process Startup | Open |
-| OP-19 | Beat Reconciliation Wiring Mechanism | Cross-Process Startup | Open |
 | OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
 | OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
 | OP-9 | Remove FetcherRunWeeklyAggregate | — | Resolved |
 | OP-10 | Ecosystem Column on CVEAffectedVersion | — | Resolved |
 | OP-14 | BaseFetcher All-Items-Failed Safety Check | — | Resolved |
+| OP-18 | Cross-Process Startup Ordering | — | Resolved |
+| OP-19 | Beat Reconciliation Wiring Mechanism | — | Resolved |
 
 ---
 
@@ -652,119 +652,6 @@ behavior. This may belong in a dedicated revision of
 
 ---
 
-### OP-18. Cross-Process Startup Ordering Not Specified
-
-**Origin**: gap analysis of process startup responsibilities during
-Celery Beat sync specification work.
-
-**Context**: `deployment.md:287-306` mandates that database migrations
-are "a separate operational step" that precedes other processes. However,
-**no specification defines the full startup ordering contract** —
-specifically:
-
-1. **Migration before everything**: `deployment.md` states migrations
-   must not run in API startup, but it does not prescribe the ordering
-   between worker, Beat, API, and consumer startup after migrations.
-2. **Worker before Beat** (OP-4 dependency): if OP-4 resolves to option
-   (b) (Beat requires `FetcherConfig` records to exist), workers must
-   start before Beat. If OP-4 resolves to option (a) or (c'), no
-   ordering is required.
-3. **Who seeds `system_settings`**: the Alembic data migration is the
-   primary mechanism (`system-settings.md:88-94`); the FastAPI lifespan
-   is defense-in-depth. Both use `ON CONFLICT DO NOTHING`. But if a
-   worker calls `get_default_cvss_version()` before either the migration
-   or the API server has run, it would fail (the function raises if the
-   setting is absent, `system-settings.md:116-119`).
-
-The **current implicit ordering** is:
-
-```
-Alembic migration (must be first)
-    │
-    ├──→ API server (lifespan seeds system_settings as defense)
-    ├──→ Celery worker (auto-creates FetcherConfig)
-    ├──→ Celery Beat (reconciles redbeat from FetcherConfig)
-    └──→ IBS consumer (builds codestream set from DB)
-```
-
-After migrations, the remaining processes can start in any order — but
-this is an **emergent property** of the current design decisions, not an
-explicit specification. If any of those design decisions changes (e.g.,
-OP-4 → option b), the ordering becomes constrained.
-
-**Impact**: in containerized environments (Docker Compose, Kubernetes),
-all services typically start concurrently (with migration as an init
-container or one-shot service). The spec should state whether
-post-migration startup is order-independent (current design intent) or
-has constraints, so that deployment manifests can be written correctly.
-
-**Options to evaluate**:
-- (a) Document the current "order-independent after migrations"
-  property as an explicit architectural invariant, with rationale for
-  each process
-- (b) Accept implicit ordering and document it only if/when a
-  constraint is introduced (YAGNI approach)
-
-**Decision needed**: whether to formalize the startup ordering contract
-or leave it implicit. Related to: OP-4 resolution (which may introduce
-a Beat→worker ordering dependency), OP-14 in the celery-beat-sync draft
-(Beat with unmigrated schema).
-
----
-
-### OP-19. Beat Reconciliation Wiring Mechanism Not Specified
-
-**Origin**: surfaced while resolving the non-fetcher periodic task
-scheduling gap (see
-`docs/drafts/non-fetcher-periodic-tasks-beat-scheduling.md`). That
-change does not require resolving this point, so it is split out here
-to keep the change minimal.
-
-**Context**: `docs/features/platform/fetcher-infrastructure.md`
-("Celery Beat Schedule Synchronization" → "Startup Reconciliation")
-specifies in detail *what* the startup reconciliation does (read
-`FetcherConfig`, upsert enabled fetcher entries, remove disabled and
-deregistered entries), but never specifies *how* or *where* this
-procedure is invoked at Beat process startup. The configured scheduler
-is the stock `redbeat.RedBeatScheduler` (`configuration.md:73-77`),
-which has no Sentinel-specific reconciliation hook. Two plausible
-wiring mechanisms exist:
-
-1. A `beat_init` signal handler that runs the reconciliation after the
-   scheduler is initialized (keeps the stock scheduler class).
-2. A thin `RedBeatScheduler` subclass overriding `setup_schedule()`
-   to run the reconciliation (changes the `beat_scheduler` config
-   value away from the stock class; gives deterministic in-method
-   ordering).
-
-An implementer today must choose between these without guidance, which
-violates the Function Specification Completeness convention
-(`conventions.md`).
-
-**Independence from the non-fetcher task change**: that change scopes
-reconciliation step 4 by inclusion (`task == "run_fetcher"`), so the
-static `beat_schedule` entries it introduces are safe regardless of
-which wiring mechanism is chosen and regardless of ordering between
-redbeat's native static installation and the fetcher reconciliation.
-This point is therefore a pre-existing under-specification, not
-introduced by that change.
-
-**Impact**: specification completeness gap. The choice affects:
-(a) whether `beat_scheduler` stays `redbeat.RedBeatScheduler` or
-becomes a Sentinel subclass, (b) startup ordering guarantees, (c) how
-failures during reconciliation propagate (a signal handler and an
-overridden method have different exception surfaces).
-
-**Options to evaluate**:
-- (a) `beat_init` signal handler (keeps stock scheduler class).
-- (b) `RedBeatScheduler` subclass overriding `setup_schedule()`.
-
-**Decision needed**: which wiring mechanism to specify in
-`fetcher-infrastructure.md`. Related to: OP-16, OP-17, OP-18
-(cross-process startup responsibilities).
-
----
-
 ## Archive — Resolved
 
 ### OP-3. Orphan CVE Re-Ticketing Mechanism — RESOLVED
@@ -834,3 +721,31 @@ is reserved for runs where at least one item succeeded. The redundant
 step 11 in `BaseGitFetcher` was removed and renumbered. See
 `docs/features/platform/fetcher-infrastructure.md` (Status
 determination precedence).
+
+---
+
+### OP-18. Cross-Process Startup Ordering — RESOLVED (2026-07-23)
+
+**Resolution**: the "order-independent after migrations" property is
+now documented as an explicit architectural invariant in
+`docs/deployment.md` (Startup Ordering). The invariant is guaranteed
+by `bootstrap_fetcher_configs()` running idempotently in every
+process, `system_settings` seeding using `ON CONFLICT DO NOTHING`,
+and the IBS consumer operating independently with retry semantics. A
+cross-reference in `docs/features/platform/fetcher-infrastructure.md`
+(Multi-Process Coordination → Startup Ordering) ensures discoverability
+by spec authors.
+
+---
+
+### OP-19. Beat Reconciliation Wiring Mechanism — RESOLVED (2026-07-23)
+
+**Resolution**: the reconciliation is invoked via a `beat_init`
+signal handler (`@beat_init.connect`), registered in
+`backend/app/core/beat_init.py` and imported by the Celery app
+module. The handler runs `bootstrap_fetcher_configs()` followed by
+the reconciliation procedure, with `sys.exit(1)` on any failure
+(explicit fail-fast). The `beat_scheduler` setting remains
+`'redbeat.RedBeatScheduler'` (stock, unmodified). See
+`docs/features/platform/fetcher-infrastructure.md` (Startup
+Reconciliation) for the complete Beat startup sequence.
