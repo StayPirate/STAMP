@@ -17,7 +17,7 @@ Architectural decisions pending resolution before implementation begins.
 | OP-13 | CWE Accumulation | Fetcher Infrastructure | Open |
 | OP-15 | IBSEventConsumer Admin Restart Endpoint | Platform | Open |
 | OP-16 | CPE Mapping Fail-Fast Asymmetry | Cross-Process Startup | Open |
-| OP-17 | IBS RabbitMQ Consumer Startup Gaps | Cross-Process Startup | Open |
+| OP-17 | IBS RabbitMQ Consumer Startup Gaps | — | Resolved |
 | OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
 | OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
 | OP-9 | Remove FetcherRunWeeklyAggregate | — | Resolved |
@@ -601,57 +601,6 @@ trade-off or requires worker-side mitigation.
 
 ---
 
-### OP-17. IBS RabbitMQ Consumer Startup Specification Gaps
-
-**Origin**: gap analysis of process startup responsibilities during
-Celery Beat sync specification work.
-
-**Context**: `IBSEventConsumer` (`ibs-rabbitmq-integration.md`) is a
-singleton long-running process. Its specification covers the connection
-lifecycle, message processing, and reconnection strategy in detail, but
-leaves several **startup** behaviors unspecified:
-
-1. **Celery app sharing**: the spec says it "runs as a dedicated Celery
-   worker process (or standalone process)" (`:130-133`). The "or
-   standalone" phrasing makes ambiguous whether it loads the Celery app
-   at all. This matters because:
-   - If it loads the Celery app: does it execute the timezone validation
-     (`CELERY_TIMEZONE=UTC`)? The spec assigns that only to "workers."
-   - It MUST reach the Celery broker (Redis) to enqueue
-     `create_ticket_from_detection` — but is that via a full Celery app
-     or a minimal AMQP client?
-
-2. **`IBS_RABBITMQ_ENABLED=false` behavior**: `configuration.md:109`
-   defines this setting, but the spec never states what the **process**
-   does when disabled. Options: exit immediately with code 0? Start and
-   idle? Not start at all (orchestrator responsibility)?
-
-3. **DB/Redis connectivity at startup**: the consumer needs PostgreSQL
-   (builds the monitored codestream set on startup, `:164-177`) and
-   Redis (enqueue tasks + heartbeat). But unlike Beat's OP-1 (fail-fast
-   on DB unreachable), the consumer has **no** specified startup
-   connectivity check:
-   - RabbitMQ unreachable → retry with backoff (specified, `:293`)
-   - PostgreSQL unreachable at startup → **unspecified**
-   - Redis unreachable at startup → **unspecified**
-
-4. **Fetcher module imports**: the consumer enqueues
-   `create_ticket_from_detection` and calls `package_service`. Whether
-   it needs `FETCHER_REGISTRY` populated is unclear — it probably
-   doesn't (it doesn't schedule or list fetchers), but this is never
-   stated explicitly.
-
-**Impact**: these are specification completeness gaps. A correct
-implementation requires autonomous design decisions on each point —
-which violates the project's "Function Specification Completeness"
-convention (`conventions.md`).
-
-**Decision needed**: resolve each sub-point with the appropriate
-behavior. This may belong in a dedicated revision of
-`ibs-rabbitmq-integration.md` rather than as a standalone OP.
-
----
-
 ## Archive — Resolved
 
 ### OP-3. Orphan CVE Re-Ticketing Mechanism — RESOLVED
@@ -749,3 +698,29 @@ the reconciliation procedure, with `sys.exit(1)` on any failure
 `'redbeat.RedBeatScheduler'` (stock, unmodified). See
 `docs/features/platform/fetcher-infrastructure.md` (Startup
 Reconciliation) for the complete Beat startup sequence.
+
+---
+
+### OP-17. IBS RabbitMQ Consumer Startup Specification Gaps — RESOLVED (2026-07-23)
+
+**Resolution**: all four startup gaps have been specified in
+`docs/features/integrations/ibs-rabbitmq-integration.md` (section
+"Process Startup"):
+
+1. **Celery app sharing**: the consumer imports the Celery app module
+   (inherits timezone and lock sentinel validation). It is explicitly
+   NOT a Celery worker. The "(or standalone process)" ambiguity has been
+   removed.
+2. **`IBS_RABBITMQ_ENABLED=false`**: process exits immediately with
+   code 0 and an INFO log. Orchestrator does not restart (exit 0 is not
+   a failure).
+3. **DB/Redis connectivity at startup**: fail-fast (exit 1) if
+   PostgreSQL or Redis is unreachable (5-second timeout each, checked
+   sequentially). Consistent with `deployment.md` assertion and Beat's
+   fail-fast pattern.
+4. **Fetcher module imports**: FETCHER_REGISTRY populates as side-effect
+   of Celery app import (unused). Consumer does NOT run
+   `bootstrap_fetcher_configs()`.
+
+See `docs/features/integrations/ibs-rabbitmq-integration.md` (Process
+Startup) for the complete startup sequence.

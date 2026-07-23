@@ -127,17 +127,163 @@ RabbitMQ broker and processes commit events in real-time.
 
 #### Deployment
 
-The consumer runs as a **dedicated Celery worker process** (or standalone
-process) — separate from the periodic task workers. This ensures the
-persistent AMQP connection is not disrupted by Celery task execution
-mechanics.
+The consumer runs as a **standalone process** — a dedicated long-running
+service with its own entrypoint, separate from Celery workers and Celery
+Beat. It is NOT a Celery worker: it does not consume tasks from any
+Celery queue.
+
+The consumer imports the **Celery app module**
+(`backend/app/celery_app.py`) at startup. This provides:
+
+- Access to the configured Celery application for task enqueueing
+  (`create_ticket_from_detection.delay(...)`)
+- Automatic timezone validation (UTC check) inherited from the app
+  factory
+- Automatic lock sentinel validation inherited from the app factory
+  (innocuous — the consumer does not use redbeat)
+- `FETCHER_REGISTRY` population via `fetcher_discovery` import
+  (side-effect of the Celery app module; the consumer does not use the
+  registry)
+
+The consumer does **NOT** execute `bootstrap_fetcher_configs()` at
+startup. It does not read or write `FetcherConfig` records — that
+responsibility belongs to the API server, Celery workers, and Beat.
 
 Configuration:
 - `IBS_RABBITMQ_URL`: broker URL (default: `amqps://suse:suse@rabbit.suse.de`)
 - `IBS_RABBITMQ_ENABLED`: boolean to enable/disable the consumer
-  (default: `true`)
+  (default: `true`). See [Process Startup](#process-startup) for the
+  process-level behavior when disabled.
 - `IBS_RABBITMQ_ROUTING_KEYS`: comma-separated routing keys (default:
   `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change`)
+
+### Process Startup
+
+#### Complete Startup Sequence
+
+```
+1. Celery app module imported (backend/app/celery_app.py)
+   -> Celery app factory runs
+   -> Timezone validation (RuntimeError if CELERY_TIMEZONE != UTC)
+   -> Lock sentinel validation (RuntimeError if redbeat lock disabled)
+   -> import app.services.fetcher_discovery (populates FETCHER_REGISTRY — unused by consumer)
+
+2. Read IBS_RABBITMQ_ENABLED from configuration
+   -> If false: log INFO, exit with code 0 (see "Disabled Mode" below)
+
+3. Infrastructure connectivity check (fail-fast)
+   -> PostgreSQL: execute SELECT 1 with 5-second timeout
+      - If unreachable: log CRITICAL, exit with code 1
+   -> Redis: execute PING with 5-second timeout
+      - If unreachable: log CRITICAL, exit with code 1
+
+4. Build monitored codestream set (initial load from PostgreSQL)
+   -> Query TicketPackageTrack records for active tickets
+   -> Cache result in memory (subsequent refreshes every 5 minutes)
+   -> If the query fails (database error): log CRITICAL, exit with code 1
+      (no previous set to fall back to — same fail-fast as step 3)
+   -> An empty result (no active tickets) is normal — proceed with empty set
+
+5. Connect to RabbitMQ broker
+   -> If unreachable: log ERROR, retry with exponential backoff
+      (existing reconnection behavior — see Lifecycle above)
+
+6. Declare exclusive queue, bind routing keys
+
+7. Begin consume loop
+```
+
+#### Disabled Mode (`IBS_RABBITMQ_ENABLED=false`)
+
+When the `IBS_RABBITMQ_ENABLED` configuration setting is `false`, the
+consumer process performs only steps 1-2 of the startup sequence:
+
+1. Import the Celery app module (validates timezone and lock sentinel
+   configuration — ensures a misconfigured Celery app is detected even
+   when the consumer is disabled)
+2. Read the `IBS_RABBITMQ_ENABLED` setting and detect `false`
+3. Log at INFO level: `"IBS RabbitMQ consumer disabled
+   (IBS_RABBITMQ_ENABLED=false). Exiting."`
+4. Exit with code 0
+
+The process does NOT check PostgreSQL or Redis connectivity when
+disabled — infrastructure checks are skipped because the consumer will
+not operate.
+
+**Orchestrator interaction**: with `restart: on-failure` (Docker Compose)
+or the equivalent Kubernetes restart policy, exit code 0 is not treated
+as a failure — the container is not restarted. This allows operators to
+disable the consumer via environment variable without removing it from
+the deployment manifest.
+
+#### Startup Failure: PostgreSQL Unreachable
+
+If PostgreSQL is unreachable during the startup connectivity check
+(step 3):
+
+- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
+  startup failed — cannot connect to PostgreSQL: {error}. The monitored
+  codestream set cannot be built. Consumer will not start."`
+- Exit with code 1
+- The orchestrator (Docker/Kubernetes) restarts the container according
+  to its restart policy. On the next attempt, if PostgreSQL is
+  reachable, the consumer proceeds normally.
+
+**Rationale**: without the monitored codestream set, the consumer cannot
+determine which events are relevant. Processing all events
+indiscriminately would cause unnecessary IBS API calls (diff requests)
+for unmonitored codestreams. Failing fast is safer than operating
+blindly.
+
+#### Startup Failure: Redis Unreachable
+
+If Redis is unreachable during the startup connectivity check (step 3,
+after PostgreSQL succeeded):
+
+- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
+  startup failed — cannot connect to Redis: {error}. Cannot enqueue
+  tasks or write heartbeat. Consumer will not start."`
+- Exit with code 1
+- The orchestrator restarts the container. On the next attempt, if Redis
+  is reachable, the consumer proceeds normally.
+
+**Rationale**: without Redis, the consumer cannot enqueue Celery tasks
+(`create_ticket_from_detection`) or write its heartbeat. It would
+consume and acknowledge messages without producing any downstream
+effect — silently discarding events. Failing fast is preferable.
+
+**Contrast with runtime Redis unavailability**: the heartbeat section
+(Redis Heartbeat above) specifies that runtime Redis failures for
+heartbeat writes are non-fatal (log WARNING, continue operating). This
+is different from startup: at runtime, the consumer is already
+processing events and the inability to write heartbeat is a monitoring
+gap, not a functional failure. Task enqueue failures at runtime are
+handled per-event (the event's downstream processing fails, but the
+consumer itself continues receiving other events). At startup, however,
+total Redis unavailability means the consumer cannot perform ANY of its
+downstream responsibilities.
+
+#### Startup Failure: Codestream Set Build Fails
+
+If the initial codestream set query (step 4) fails with a database error
+after the connectivity check (step 3) succeeded:
+
+- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
+  startup failed — cannot build monitored codestream set: {error}.
+  Consumer will not start."`
+- Exit with code 1
+- The orchestrator restarts the container.
+
+**Distinction from empty result**: an empty result set (zero active
+tickets) is normal — especially on fresh installations. The consumer
+proceeds with an empty set and relies on the periodic 5-minute refresh
+to detect newly created tickets.
+
+**Distinction from runtime refresh failure**: during steady-state
+operation, a failed refresh logs WARNING and continues with the previous
+(stale) set as fallback. At initial startup, no previous set exists —
+the consumer cannot determine which events are relevant, so fail-fast
+applies.
 
 ### Processing Pipeline
 
@@ -303,6 +449,9 @@ The two mechanisms are fully independent:
 | IBS diff request fails (HTTP error, timeout) | Log ERROR, do NOT update MD5 cache. The periodic fetcher will retry on its next run |
 | SMELT unreachable during Case B/C | Log ERROR, package addition skipped. The MD5 cache IS updated (the IBS diff succeeded), so neither the consumer nor the periodic fetcher will re-attempt automatically. Same behavior as the periodic fetcher — the condition must be surfaced to operators via monitoring. See `docs/features/packages/ibs-track-release-detection.md` error handling |
 | Active codestream set refresh fails | Log WARNING, continue using stale set. Retry refresh on next interval |
+| PostgreSQL unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot build the monitored codestream set without PostgreSQL |
+| Redis unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot enqueue tasks or write heartbeat without Redis |
+| Initial codestream set query fails (step 4) | Log CRITICAL, exit with code 1. Orchestrator restarts the container. No previous set to fall back to (distinct from runtime refresh failure, which uses stale set) |
 
 ## Monitoring and Observability
 
@@ -435,6 +584,35 @@ connection and process the full event stream.
   / `request.state_change` event are correlatable to that specific
   event. See `docs/features/platform/logging.md` (Correlation IDs) for
   the general per-execution-unit correlation model this would follow.
+
+- **Heartbeat during initial RabbitMQ connection (step 5).** If
+  RabbitMQ is unreachable at first startup (step 5 retries with
+  exponential backoff), it is unspecified when the heartbeat loop
+  begins. If the heartbeat starts only after the first successful
+  connection, a consumer stuck in step 5 for hours is indistinguishable
+  from a crashed process via the `/api/v1/ibs-consumer/status` endpoint.
+  Decide whether: (a) the heartbeat loop starts immediately after step 4
+  (reporting `reconnecting` state while retrying), or (b) it starts only
+  after the first successful connection, accepting the observability gap.
+
+- **Per-event database query failure during steady-state.** The Error
+  Handling table specifies behavior for IBS diff failures and SMELT
+  unavailability, but does not cover the case where a per-event
+  database query (MD5 lookup at processing pipeline step 3, or MD5
+  update at step 6) fails due to PostgreSQL unavailability. Decide
+  whether the message is: (a) acknowledged and discarded (event lost),
+  (b) NACKed/requeued (risks infinite retry loop if PG is down), or
+  (c) acknowledged with the event skipped and logged for operator
+  alerting (similar to the SMELT-unreachable pattern).
+
+- **Exchange declaration failure at step 6.** If the consumer connects
+  to RabbitMQ successfully (step 5) but the `pubsub` exchange does not
+  exist when declaring the queue with `passive=True` (step 6), the
+  broker returns a channel error (404 NOT_FOUND). This is not a
+  transient network issue — retrying will not help. Decide whether this
+  is treated as: (a) a fatal configuration error (exit with code 1), or
+  (b) a transient error that enters the reconnection loop (in case IBS
+  ops are performing maintenance and the exchange will reappear).
 
 ## Security
 
