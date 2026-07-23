@@ -79,7 +79,8 @@ Redbeat stores schedule entries under the `redbeat:` key prefix in the
 broker database. See
 `docs/features/platform/fetcher-infrastructure.md` (Celery Beat Schedule
 Synchronization) for the full synchronization mechanism between
-PostgreSQL (source of truth) and redbeat (execution layer).
+PostgreSQL (source of truth for fetcher schedules) and redbeat
+(execution layer).
 
 **Beat tick interval**: `beat_max_loop_interval = 60` is a fixed
 application-level setting (not an environment variable). It controls the

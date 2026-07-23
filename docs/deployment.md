@@ -492,14 +492,19 @@ appendonly no
 1. **No durable data lives solely in Redis.** PostgreSQL is the source
    of truth for all persistent state (sessions, schedules, task
    outcomes, mutation serialization). Every Redis key is either
-   TTL-bounded and self-healing, or fully reconstructible from
-   PostgreSQL via Beat's startup reconciliation.
+   TTL-bounded and self-healing, or fully reconstructible at Beat
+   startup — from PostgreSQL (fetcher schedules, via Sentinel's startup
+   reconciliation) or from code (non-fetcher static entries, via
+   redbeat's native `setup_schedule()`). See
+   `docs/features/platform/fetcher-infrastructure.md` ("Non-Fetcher
+   Periodic Tasks") for the coexistence mechanism.
 
 2. **The Beat lock sentinel provides automatic recovery.** When Redis
    loses data (restart or flush), Beat detects the missing lock within
    ≤60 seconds, terminates, and the orchestrator restarts it. The
-   reconciliation rebuilds the full schedule from PostgreSQL. No manual
-   intervention is required. See
+   startup process rebuilds the full schedule — fetcher entries from
+   PostgreSQL (reconciliation) and non-fetcher static entries from code
+   (`setup_schedule()`). No manual intervention is required. See
    `docs/features/platform/fetcher-infrastructure.md` (Runtime: Redis
    Data Loss) for the mechanism.
 

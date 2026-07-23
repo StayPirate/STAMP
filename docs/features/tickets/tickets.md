@@ -1014,7 +1014,10 @@ To prevent infinite database growth, a Celery Beat background task
 (`cleanup_stale_ticket_access_grants`) will be implemented:
 
 - **Type**: Plain Celery Beat task (NOT a `BaseFetcher`, as it does not
-  fetch external data).
+  fetch external data). Registered as a static `beat_schedule` entry;
+  the Beat registration mechanism is fully specified in
+  `docs/features/platform/fetcher-infrastructure.md` ("Non-Fetcher
+  Periodic Tasks").
 - **Schedule**: Weekly, Sunday at 04:00 UTC.
 - **Logic**: Deletes all `TicketAccessGrant` records belonging to
   tickets where `is_confidential = FALSE` AND `updated_at` is older

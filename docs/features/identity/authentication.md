@@ -303,7 +303,10 @@ No session history is retained — invalidated and expired sessions are
 deleted without trace.
 
 This is a maintenance task, not a `BaseFetcher` subclass (it does not
-fetch data from external sources).
+fetch data from external sources). It is registered as a static
+`beat_schedule` entry; the Beat registration mechanism is fully
+specified in `docs/features/platform/fetcher-infrastructure.md`
+("Non-Fetcher Periodic Tasks").
 
 ### Session audit logging
 

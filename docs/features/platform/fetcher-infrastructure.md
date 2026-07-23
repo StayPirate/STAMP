@@ -18,6 +18,11 @@ full map. For the monitoring dashboard (API endpoints,
 CLI diagnostics) that consumes this infrastructure, see
 `docs/features/platform/fetcher-operations.md`.
 
+This document also defines the coexistence rules that prevent the
+fetcher reconciliation mechanism from interfering with non-fetcher
+periodic tasks declared via Celery's native `beat_schedule` (see
+"Non-Fetcher Periodic Tasks").
+
 ## Terminology
 
 | Term | Definition |
@@ -1508,8 +1513,11 @@ Redis (redbeat entries)
 - **PostgreSQL** owns the schedule definition:
   `FetcherConfig.schedule_override` (if set) or
   `BaseFetcher.default_schedule` (fallback from the code registry)
-- **Redbeat** is a derived cache that can be reconstructed entirely from
-  PostgreSQL + the in-memory `FETCHER_REGISTRY`
+- **Redbeat**'s fetcher entries are a derived cache that can be
+  reconstructed entirely from PostgreSQL + the in-memory
+  `FETCHER_REGISTRY`. Non-fetcher static entries (see "Non-Fetcher
+  Periodic Tasks" below) are reconstructed independently from code via
+  redbeat's native `setup_schedule()`
 - The system MUST never read redbeat entries to determine what the
   "correct" schedule is — only PostgreSQL is authoritative
 
@@ -1680,18 +1688,30 @@ Steps:
    - No-op if no entry exists
 
 4. **Remove entries for deregistered fetchers**: enumerate all scheduled
-   entries via the redbeat scheduler API. For each entry whose
-   `fetcher_name` (extracted from the entry's kwargs) is NOT present in
-   `FETCHER_REGISTRY`:
-   - Delete the entry
-   - Log at INFO level: `"Removed redbeat entry for deregistered fetcher
-     '%s'", fetcher_name`
+   entries via the redbeat scheduler API. For each entry, apply the
+   following logic in strict order:
+   - **Pre-filter by task name**: if the entry's `task` attribute is NOT
+     `"run_fetcher"`, skip it entirely — do not inspect its kwargs, do
+     not delete it. These entries are owned by redbeat's native
+     static-entry handling (see "Non-Fetcher Periodic Tasks" below) or
+     by Celery framework internals, and are outside the scope of fetcher
+     reconciliation.
+   - **For entries where `task == "run_fetcher"`**: extract
+     `fetcher_name` from the entry's kwargs. If `fetcher_name` is NOT
+     present in `FETCHER_REGISTRY`, delete the entry and log at INFO
+     level: `"Removed redbeat entry for deregistered fetcher '%s'",
+     fetcher_name`. If the entry's kwargs lack a valid `fetcher_name`
+     (missing key, `None`, or empty string), the entry is treated as
+     corrupted and deleted. Log at WARNING level: `"Deleted corrupted
+     redbeat entry '%s': missing or empty fetcher_name in kwargs",
+     entry.name`.
 
-   **Assumption**: this step assumes that all entries in the redbeat
-   schedule are fetcher entries (created by this reconciliation or by
-   runtime propagation). If Sentinel introduces non-fetcher periodic
-   tasks managed via redbeat in the future, this step must be revised to
-   avoid interference with those entries.
+   The `task` pre-filter MUST be applied strictly before any kwargs
+   inspection. A non-fetcher static entry has no `fetcher_name` kwarg;
+   an implementation that extracts kwargs unconditionally before
+   checking `task` (e.g., via `kwargs.get("fetcher_name")`) would treat
+   the missing value as "not in `FETCHER_REGISTRY`" and delete the
+   entry — reintroducing the interference this scoping rule prevents.
 
 5. **Log reconciliation summary**: after all entries are processed, log
    at INFO level:
@@ -2009,8 +2029,10 @@ Beat is running:
    Data Loss" above)
 3. Beat logs CRITICAL and exits with non-zero exit code
 4. The orchestrator restarts Beat
-5. On startup, the full reconciliation recreates all schedule entries
-   from PostgreSQL
+5. On startup, the full reconciliation recreates all fetcher schedule
+   entries from PostgreSQL; non-fetcher static entries are recreated
+   independently by redbeat's native `setup_schedule()` from
+   `beat_schedule` (see "Non-Fetcher Periodic Tasks" below)
 
 **Recovery is automatic** — no manual intervention is required. The
 orchestrator's restart policy handles the process lifecycle.
@@ -2038,8 +2060,10 @@ Modifying redbeat entries directly in Redis (via `redis-cli`, RedisInsight,
 or any path that bypasses the API) is **undefined behavior**:
 
 - The change will be effective immediately (Beat reads entries from Redis)
-- The change will be **silently overwritten** at the next Beat restart
-  (startup reconciliation unconditionally overwrites from PostgreSQL)
+- The change will be **silently overwritten** at the next Beat restart:
+  fetcher entries are overwritten by startup reconciliation from
+  PostgreSQL; non-fetcher static entries are overwritten by redbeat's
+  `setup_schedule()` from `beat_schedule` (code)
 - No error, no warning, no audit trail
 - PostgreSQL remains unchanged — the API will show the "old" schedule
   until the admin changes it via PATCH
@@ -2048,15 +2072,141 @@ The spec does not attempt to detect or prevent direct Redis manipulation.
 The self-healing nature of startup reconciliation makes this safe (no
 permanent damage), though operationally confusing if done intentionally.
 
+### Non-Fetcher Periodic Tasks
+
+Sentinel has a small number of periodic maintenance tasks that are not
+`BaseFetcher` subclasses because they do not fetch data from an external
+source. These tasks still require a Celery Beat schedule, and since Beat
+runs a single scheduler (`redbeat.RedBeatScheduler`, per the "Redbeat
+Configuration" table above — unchanged by this section), their entries
+necessarily live in the same redbeat keyspace as fetcher entries.
+
+#### Mechanism
+
+Non-fetcher periodic tasks are declared as static entries in
+`app.conf.beat_schedule` (the standard Celery configuration dict), set
+once at Celery app construction time (code-level, not runtime-mutable).
+This assignment MUST happen before the Celery Beat scheduler is
+instantiated — `setup_schedule()` reads `app.conf.beat_schedule` during
+scheduler initialization, so if the dict is populated later (e.g., via
+a `beat_init` signal handler or a module imported after scheduler
+construction), the entries are not installed and any previously-tracked
+static entries are removed as if they had been deleted from the
+codebase.
+
+Redbeat's own `setup_schedule()` (native, unmodified library behavior —
+Sentinel does not subclass or override it) installs, refreshes, and
+removes these entries automatically at every Beat startup, tracking them
+via its internal `redbeat::statics` bookkeeping. Sentinel code never
+directly creates, updates, or deletes these entries.
+
+**Out of scope**: this section does not specify how or where Sentinel's
+fetcher startup-reconciliation procedure (see "Startup Reconciliation"
+above) is itself invoked at Beat process startup — that is a separate,
+pre-existing gap tracked as OP-19 in `docs/drafts/open-points.md`. It
+does not need to be resolved here because the scoping rule in step 4's
+revised wording (see above) makes the two mechanisms safe to coexist
+regardless of invocation order or wiring mechanism.
+
+#### Boundaries and Constraints
+
+- These tasks are **never** registered in `FETCHER_REGISTRY` and
+  **never** have a `FetcherConfig` row.
+- These tasks **do not appear** in the fetcher dashboard
+  (`GET /api/v1/fetchers` and related endpoints) — they are outside the
+  fetcher subsystem entirely.
+- Their schedule is **fixed in code**. There is no admin-facing way to
+  change their schedule (no PATCH endpoint, no `schedule_override`). If
+  a future requirement needs admin-configurable scheduling for a
+  maintenance task, that task should be reconsidered as a `BaseFetcher`
+  subclass (with `custom_settings`/`FetcherConfig`) rather than
+  extending this mechanism — this mechanism is intentionally minimal and
+  must stay that way.
+- The "PostgreSQL is the authoritative source of schedules" invariant
+  (see "Architecture: PostgreSQL-master, Redbeat-slave") applies
+  **only** to fetcher entries. For non-fetcher periodic tasks, the
+  **code** (the `beat_schedule` declaration) is authoritative.
+- **Task name constraint**: the task discriminator used by fetcher
+  reconciliation step 4 (`task == "run_fetcher"`) means any future
+  non-fetcher periodic task automatically coexists safely with fetcher
+  reconciliation as long as it does not use the task name
+  `"run_fetcher"`. Any task registered in `beat_schedule` MUST NOT use
+  `"run_fetcher"` as its Celery task name.
+- **Entry name collision constraint**: `beat_schedule` dict keys (which
+  redbeat uses as the entry identifier, and therefore as the Redis key)
+  MUST NOT match any name in `FETCHER_REGISTRY`. The `task`
+  discriminator protects only fetcher reconciliation's deletion step
+  (step 4) from touching non-fetcher entries — it does NOT protect
+  against a write-path collision: fetcher reconciliation step 2 performs
+  an unconditional upsert of every enabled fetcher's entry by name, and
+  redbeat's `setup_schedule()` performs the same unconditional upsert
+  for static entries by name. If a non-fetcher task's `beat_schedule`
+  key matched an existing or future fetcher's name, both mechanisms
+  would write to the same Redis key on every Beat startup, each
+  overwriting the other's data non-deterministically. No runtime
+  validation is introduced for this constraint — it is a documented
+  naming rule for whoever adds a new entry.
+
+#### Behavior on Redis Data Loss
+
+Redbeat preserves each static entry's `last_run_at` metadata across a
+normal Beat restart (Redis data intact), so a task does not fire early
+merely because Beat restarted. However, if Redis loses its data (restart
+without persistence, or `FLUSHALL` — see `docs/deployment.md`, "Redis
+Durability, Memory, and Persistence"), the `last_run_at` metadata is
+lost along with everything else in the keyspace.
+
+On the next Beat startup (triggered by the existing lock-sentinel
+recovery mechanism — see "Runtime: Redis Data Loss" elsewhere in this
+document), redbeat reinstalls each static entry with no prior
+`last_run_at`, which makes it evaluate as due immediately: each
+non-fetcher periodic task fires **once**, shortly after the Beat restart
+that follows the data-loss event, ahead of its normal weekly schedule.
+
+This is expected, accepted behavior — not a bug — because both existing
+non-fetcher periodic tasks (`cleanup_sessions` and
+`cleanup_stale_ticket_access_grants`) are idempotent deletion queries
+with static, time-based filter conditions (e.g.,
+`updated_at < now() - interval '14 days'`); running one extra time ahead
+of schedule deletes only rows that were already eligible for deletion
+and has no correctness impact.
+
+Contrast this with fetcher entries, whose custom reconciliation computes
+`due_at` from the cron schedule relative to current time specifically to
+avoid retroactively firing missed runs (see "Startup Reconciliation"
+step 2) — the two mechanisms have deliberately different recovery
+behavior. This difference is acceptable only because non-fetcher
+periodic tasks are restricted by design to idempotent maintenance
+operations (see the boundary constraints above). If a future non-fetcher
+periodic task is NOT idempotent with respect to an extra unscheduled
+run, it must not use this mechanism as-is without re-evaluating this
+behavior.
+
+#### Current Inventory
+
+| Task | Owning specification |
+|------|---------------------|
+| `cleanup_sessions` | `docs/features/identity/authentication.md` (Session cleanup) |
+| `cleanup_stale_ticket_access_grants` | `docs/features/tickets/tickets.md` (Stale Access Grant Cleanup) |
+
+The business logic, deletion criteria, and schedule of each task are
+owned by their respective specifications — this section owns only the
+Beat registration mechanism.
+
 ### Multi-Process Coordination
 
 #### Who Writes Where
 
-**Redbeat** (Redis schedule entries) — only two components write:
+**Redbeat** (Redis schedule entries) — writes originate from:
 
 1. **Celery Beat process** (singleton): writes during startup
-   reconciliation
-2. **API server process** (potentially multiple replicas): writes during
+   reconciliation (fetcher entries)
+2. **Celery Beat process** (singleton): writes during redbeat's native
+   `setup_schedule()` (non-fetcher static entries from `beat_schedule`
+   — see "Non-Fetcher Periodic Tasks" above). This is a separate,
+   library-native code path invoked at Beat startup independently of
+   Sentinel's custom reconciliation
+3. **API server process** (potentially multiple replicas): writes during
    PATCH endpoint handling (runtime propagation)
 
 **FetcherConfig** (PostgreSQL) — two types of writes:

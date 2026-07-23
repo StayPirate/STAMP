@@ -17,10 +17,9 @@ services:
 
   redis:
     image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -29,4 +28,3 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
