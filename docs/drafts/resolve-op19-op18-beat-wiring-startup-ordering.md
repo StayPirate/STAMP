@@ -87,11 +87,15 @@ signal handler registered in the Celery app module.
    → (native redbeat behavior — Sentinel does not modify this step)
 
 4. beat_init signal emitted by Celery
-   → Sentinel's handler executes:
+   → Sentinel's handler executes the entire startup sequence within a
+     single asyncio.run() call on an extracted async def function, per
+     the sync-to-async bridging convention (docs/conventions.md). The
+     extracted function is the independently testable unit — tests await
+     it directly without going through asyncio.run().
+
      4a. bootstrap_fetcher_configs()
          - INSERT ON CONFLICT DO NOTHING for every fetcher in FETCHER_REGISTRY
          - Idempotent, concurrency-safe
-         - Uses asyncio.run() (sync caller context)
      4b. reconcile_beat_schedule()
          - Step 1: Read FetcherConfig from PostgreSQL
          - Step 2: Write entries for enabled registered fetchers
@@ -172,7 +176,7 @@ by spec authors.
 
 | Process | Startup dependencies | Why order-independent |
 |---------|---------------------|----------------------|
-| API server | PostgreSQL, Redis | Imports `fetcher_discovery`, runs `bootstrap_fetcher_configs()` (idempotent), seeds `system_settings` (idempotent `ON CONFLICT DO NOTHING`). No dependency on other application processes. |
+| API server | PostgreSQL, Redis | Imports `fetcher_discovery`, runs `bootstrap_fetcher_configs()` (idempotent). No dependency on other application processes. |
 | Celery worker | PostgreSQL, Redis | Imports `fetcher_discovery`, runs `bootstrap_fetcher_configs()` (idempotent). Consumes tasks from Redis queue — if no tasks are queued yet, it idles. No dependency on Beat or API. |
 | Git worker | PostgreSQL, Redis, persistent volume | Same as Celery worker with a dedicated queue. Volume is created by the orchestrator independently. |
 | Celery Beat | PostgreSQL, Redis | Imports `fetcher_discovery`, acquires redbeat lock, runs `setup_schedule()` (static entries), then runs `bootstrap_fetcher_configs()` + reconciliation via `beat_init` handler. `bootstrap_fetcher_configs()` creates `FetcherConfig` records if they don't exist — Beat does not depend on any other process having created them first. |
@@ -227,6 +231,9 @@ section must:
   inside the signal handler (satisfying the existing precondition)
 - State that the handler wraps the entire sequence in error handling
   with `sys.exit(1)` on failure
+- State that the handler uses a single `asyncio.run()` on an extracted
+  `async def` function, per the sync-to-async bridging convention
+  (`docs/conventions.md`)
 - State the handler location (`backend/app/core/beat_init.py`) and
   registration mechanism (`@beat_init.connect`, imported by the Celery
   app module)
@@ -256,10 +263,14 @@ a brief statement confirming the relationship:
 > pre-filter in reconciliation step 4 ensures they do not interfere
 > with each other.
 
-**1c. Add cross-reference in "Multi-Process Coordination" (after line 2255)**
+**1c. Add cross-reference in "Multi-Process Coordination" (after line 2295)**
 
-After the existing "Concurrency Between Beat and API" subsection, add
-the startup ordering cross-reference note described in Part 2:
+After the existing "Redbeat Distributed Lock" subsection (the last
+`####` within "Multi-Process Coordination", ending at ~line 2295) and
+before "### Startup Validation" (line 2297), add a new `####` subsection
+with the startup ordering cross-reference note described in Part 2:
+
+#### Startup Ordering
 
 > **Startup ordering invariant**: after Alembic migrations complete,
 > all runtime processes MAY start in any order — no inter-process
@@ -267,31 +278,65 @@ the startup ordering cross-reference note described in Part 2:
 > Invariant) for the full rationale. Any change that introduces an
 > inter-process startup dependency MUST update that section.
 
-**1d. Update "Startup Validation" section (lines 2297-2335)**
+**1d. Disambiguate "no signal handlers needed" scope (lines 2331-2335)**
 
-The current text at lines 2337-2343 says:
+The current text at lines 2331-2335 says:
+
+> Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
+> MUST import the Celery app object to function, the validation is
+> inherited automatically — no per-process signal handlers
+> (`worker_init`, `beat_init`) are needed. The exception prevents any
+> process from completing initialization.
+
+After OP-19, a `beat_init` handler DOES exist (for reconciliation, not
+for validation). To prevent reader confusion, scope the statement
+explicitly. Replace lines 2333-2334 with:
+
+> inherited automatically — no per-process signal handlers
+> (`worker_init`, `beat_init`) are needed for these validations. The
+> exception prevents any process from completing initialization.
+
+(Only the addition of "for these validations" — four words.)
+
+**1e. Add cross-reference in implicit validation block (line 2337)**
+
+The current text at line 2337 says:
 
 > Additionally, the Beat startup reconciliation implicitly validates:
-> - PostgreSQL connectivity (reads `FetcherConfig`)
-> - Redis/redbeat connectivity (writes entries)
-> - `FETCHER_REGISTRY` population (via `import
->   app.services.fetcher_discovery` at process startup)
 
-This remains accurate — the reconciliation still validates these
-implicitly. Add a note clarifying the invocation mechanism:
+Add an explicit section reference. Replace with:
 
-> These validations occur inside the `beat_init` signal handler.
-> Failures cause `sys.exit(1)` — see "Startup Reconciliation" above.
+> Additionally, the Beat startup reconciliation (see "Startup
+> Reconciliation" above) implicitly validates:
+
+**1f. Update "before role-specific logic" phrasing (lines 2517, 2532)**
+
+After this change, Beat's `bootstrap_fetcher_configs()` runs inside the
+`beat_init` signal handler — which is role-specific logic for Beat. Two
+passages currently claim it runs "before role-specific logic"; both
+become inaccurate and must be updated:
+
+- Line 2517 (FetcherConfig data model section): "before role-specific
+  logic begins"
+  → Change to: "as the first startup operation in each process"
+
+- Lines 2532-2533 (bootstrap_fetcher_configs calling pattern): "Runs
+  BEFORE role-specific startup (Beat: reconciliation; API: serving
+  requests; worker: consuming tasks)"
+  → Change to: "Runs as the first operation within each process's
+  startup sequence (Beat: first inside `beat_init` handler, before
+  reconciliation; API: during FastAPI startup event, before serving
+  requests; worker: at process init, before consuming tasks)"
 
 ### Step 2 — Update `deployment.md`: add the Startup Ordering Invariant
 
 **File**: `docs/deployment.md`
 
-**2a. Add "Startup Ordering" subsection after "Process Architecture" (after line 438)**
+**2a. Add "Startup Ordering" subsection after "Singleton Processes" (after line 445)**
 
 Insert a new subsection within the Process Architecture section, after
-the existing "Singleton Processes" subsection (line 440-445) and
-before "Git Worker Volume" (line 448). The new subsection:
+the existing "Singleton Processes" subsection (lines 440-445) and
+before "Git Worker Volume" (line 447). The new subsection:
 
 **Title**: `### Startup Ordering`
 
@@ -341,6 +386,114 @@ The current text states:
 This remains correct — the OP-19 resolution does not change the
 scheduler class. No modification needed, but verify during
 application that no contradictory text exists elsewhere in this file.
+
+### Step 3b — Move sync-to-async bridging convention to `conventions.md`
+
+The "exactly one `asyncio.run()` per invocation" rule currently lives
+in `cli-infrastructure.md` (line 218) scoped to CLI commands, but in
+practice it applies to all synchronous entry points (CLI commands,
+Celery signal handlers, management scripts). The testing strategy spec
+(`testing-strategy.md`, lines 484-486) already treats it as
+cross-cutting. Move it to `docs/conventions.md` as the authoritative
+cross-cutting convention and update all references.
+
+**File**: `docs/conventions.md`
+
+**3b-i. Add "Sync-to-Async Bridging" bullet after "Async-only" (after line 339)**
+
+Insert within the SQLAlchemy Conventions section, immediately after
+the "Async-only" bullet point (which ends at line 339):
+
+> - **Sync-to-async bridging**: synchronous entry points (CLI commands,
+>   Celery signal handlers, management scripts) that need to call async
+>   code MUST follow this pattern:
+>
+>   1. Extract the async logic into a named `async def` function — this
+>      is the independently testable unit (tests `await` it directly
+>      without going through `asyncio.run()`)
+>   2. The synchronous caller wraps the extracted function in exactly
+>      one `asyncio.run()` call per invocation
+>   3. Nested or multiple `asyncio.run()` calls within a single
+>      invocation are not supported — each `asyncio.run()` creates and
+>      destroys an event loop; multiple calls add overhead and risk
+>      subtle state leaks between loops
+>
+>   See `docs/features/platform/testing-strategy.md` (Sync Entry-Point
+>   Tests) for the corresponding test convention (why sync entry-point
+>   tests must be `def`, not `async def`).
+
+**File**: `docs/conventions.md`
+
+**3b-ii. Simplify CLI Database Access section (line 688-694)**
+
+Replace the current text:
+
+> - CLI commands wrap their database logic in a single `asyncio.run()`
+>   call using the project's async session factory (see SQLAlchemy
+>   Conventions above — Sentinel is async-only). See
+>   `docs/features/platform/cli-infrastructure.md` (Database Session
+>   Management) for the full mechanism.
+
+With:
+
+> - CLI commands bridge into the async database layer via the
+>   sync-to-async pattern above (see SQLAlchemy Conventions). See
+>   `docs/features/platform/cli-infrastructure.md` (Database Session
+>   Management) for CLI-specific details (session factory injection,
+>   transaction lifecycle).
+
+**File**: `docs/features/platform/cli-infrastructure.md`
+
+**3b-iii. Replace inline rule (line 218-220)**
+
+Replace:
+
+> - Exactly one `asyncio.run()` call occurs per command invocation. Nested
+>   or multiple `asyncio.run()` calls within a single command are not a
+>   supported pattern.
+
+With:
+
+> - Per the sync-to-async bridging convention (`docs/conventions.md`,
+>   SQLAlchemy Conventions), exactly one `asyncio.run()` call occurs
+>   per command invocation, wrapping the extracted `async def` flow
+>   function.
+
+**File**: `docs/features/platform/testing-strategy.md`
+
+**3b-iv. Update cross-reference (line 484-486)**
+
+Replace:
+
+> is running`. This applies to any synchronous entry point that bridges
+> into the project's async-only database layer (docs/conventions.md,
+> SQLAlchemy Conventions) via a single `asyncio.run()` call. Fixtures for
+
+With:
+
+> is running`. This applies to any synchronous entry point that bridges
+> into the project's async-only database layer via a single
+> `asyncio.run()` call (see `docs/conventions.md`, Sync-to-Async
+> Bridging). Fixtures for
+
+**File**: `docs/features/platform/fetcher-infrastructure.md`
+
+**3b-v. Update sync callers description (lines 2526-2529)**
+
+Replace:
+
+> - **Sync callers**: worker and Beat startup use
+>   `asyncio.run(bootstrap_fetcher_configs(session))` since they operate
+>   outside an async event loop. The API server calls it with `await`
+>   during the FastAPI startup event.
+
+With:
+
+> - **Sync callers**: worker and Beat startup invoke this function via
+>   the sync-to-async bridging pattern (`docs/conventions.md`) — a
+>   single `asyncio.run()` wrapping the extracted async startup
+>   function. The API server calls it with `await` during the FastAPI
+>   startup event.
 
 ### Step 4 — Update `open-points.md`: mark OP-19 and OP-18 as Resolved
 
