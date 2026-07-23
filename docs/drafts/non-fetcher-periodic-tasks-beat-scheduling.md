@@ -213,6 +213,25 @@ wording states literally: "entries where `task == 'run_fetcher'`" (or
 equivalent unambiguous phrasing) — not a vaguer "fetcher-related
 entries."
 
+### Step 1bis — `docs/features/platform/fetcher-infrastructure.md`: update the document's Purpose statement
+
+**Origin**: identified by `@docs-placement-reviewer` during draft review.
+The document's opening Purpose statement scopes it exclusively to
+data-fetcher infrastructure. After Step 2 adds a "Non-Fetcher Periodic
+Tasks" subsection, the document's declared scope would no longer match
+its actual content, which could confuse future authors or reviewers
+about where non-fetcher Beat/redbeat content belongs.
+
+**Location**: the Purpose statement at the top of
+`fetcher-infrastructure.md`.
+
+**Edit**: append one sentence acknowledging the scope addition, e.g.:
+"This document also defines the coexistence rules that prevent the
+fetcher reconciliation mechanism from interfering with non-fetcher
+periodic tasks declared via Celery's native `beat_schedule` (see
+'Non-Fetcher Periodic Tasks')." Do not restate the mechanism — this is
+a one-sentence scope acknowledgment, not a summary.
+
 ### Step 2 — `docs/features/platform/fetcher-infrastructure.md`: document non-fetcher periodic tasks
 
 **Location**: new subsection immediately after "### Reconciliation
@@ -436,6 +455,42 @@ checking specifically for:
 2. **No contradiction with "PostgreSQL-master, Redbeat-slave"**:
    confirm the carve-out language added in Step 2 is consistent with
    every other mention of that architecture principle in the document.
+   The following specific sentences were identified during draft review
+   (`@spec-coherence-reviewer`, `@docs-reviewer`) as making blanket
+   claims that become inaccurate once non-fetcher static entries exist
+   in the same redbeat keyspace, and MUST each be qualified in this
+   pass (not just checked for contradiction — actively edited):
+   - **"Architecture: PostgreSQL-master, Redbeat-slave"** (~line 1511):
+     "Redbeat is a derived cache that can be reconstructed entirely
+     from PostgreSQL + the in-memory `FETCHER_REGISTRY`" — qualify to
+     scope this claim to fetcher entries specifically (e.g., "...the
+     redbeat schedule's fetcher entries can be reconstructed
+     entirely..."), consistent with the carve-out added in Step 2.
+   - **"Reconciliation and Divergence Recovery" → "Redis Flush
+     Recovery"** (~line 2012): "the full reconciliation recreates all
+     schedule entries from PostgreSQL" — qualify to "all fetcher
+     schedule entries" (or equivalent), and note that non-fetcher
+     static entries are recreated independently by redbeat's native
+     `setup_schedule()` from `beat_schedule`.
+   - **"Reconciliation and Divergence Recovery" → "Direct Redis
+     Manipulation"** (~lines 2041-2042): "The change will be silently
+     overwritten at the next Beat restart (startup reconciliation
+     unconditionally overwrites from PostgreSQL)" — this is only true
+     for fetcher entries. For a non-fetcher static entry, the overwrite
+     source is `setup_schedule()` reading from `beat_schedule` (code),
+     not Sentinel's reconciliation reading from PostgreSQL. Add a
+     qualifying clause covering both cases.
+   - **"Multi-Process Coordination" → "Who Writes Where"** (~line
+     2055): "only two components write" to redbeat (Celery Beat process
+     during startup reconciliation; API server during runtime
+     propagation) — this becomes incomplete: redbeat's own
+     `setup_schedule()`, invoked by the Beat process at every startup
+     as a mechanism independent of Sentinel's custom reconciliation,
+     is a third write path for non-fetcher static entries. Update the
+     enumeration (or add a note) to acknowledge this, while making
+     clear it is still the "Celery Beat process" performing the write
+     — just via a different, library-native code path than the
+     reconciliation described elsewhere in this document.
 3. **Terminology consistency**: use "non-fetcher periodic task"
    consistently (matches the heading proposed in Step 2) rather than
    introducing synonyms like "maintenance task" as a formal term —
@@ -589,7 +644,7 @@ in the target specs themselves after this change).
 
 | File | Nature of change |
 |------|-------------------|
-| `docs/features/platform/fetcher-infrastructure.md` | Fix step 4 of Startup Reconciliation (scope to `task == "run_fetcher"`, with explicit task-check-before-kwargs-extraction ordering); remove the now-resolved "Assumption" caveat; add new "Non-Fetcher Periodic Tasks" top-level section (including the Redis-data-loss "fires once" behavior, the entry-name uniqueness constraint, and the `beat_schedule` construction-time timing requirement, Step 2). Does NOT change the configured scheduler class or introduce a scheduler subclass — the stock `redbeat.RedBeatScheduler` is unaffected |
+| `docs/features/platform/fetcher-infrastructure.md` | Fix step 4 of Startup Reconciliation (scope to `task == "run_fetcher"`, with explicit task-check-before-kwargs-extraction ordering); remove the now-resolved "Assumption" caveat; append one sentence to the document's Purpose statement acknowledging the scope addition (Step 1bis); add new "Non-Fetcher Periodic Tasks" top-level section (including the Redis-data-loss "fires once" behavior, the entry-name uniqueness constraint, and the `beat_schedule` construction-time timing requirement, Step 2); qualify four pre-existing blanket-claim sentences that become inaccurate after this change — "Architecture: PostgreSQL-master, Redbeat-slave" (~line 1511), "Redis Flush Recovery" (~line 2012), "Direct Redis Manipulation" (~lines 2041-2042), and "Who Writes Where" (~line 2055) (Step 6). Does NOT change the configured scheduler class or introduce a scheduler subclass — the stock `redbeat.RedBeatScheduler` is unaffected |
 | `docs/features/identity/authentication.md` | One sentence added to "Session cleanup", cross-referencing the mechanism |
 | `docs/features/tickets/tickets.md` | One bullet modified/added in "Stale Access Grant Cleanup", cross-referencing the mechanism |
 | `docs/deployment.md` | One sentence qualified in "Persistence is Disabled by Design" (point 1) to account for non-fetcher static entries as a third, code-reconstructible category (Step 5) |
