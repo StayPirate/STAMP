@@ -138,6 +138,9 @@ expects.
 4. Build monitored codestream set (initial load from PostgreSQL)
    -> Query TicketPackageTrack records for active tickets
    -> Cache result in memory (subsequent refreshes every 5 minutes)
+   -> If the query fails (database error): log CRITICAL, exit with code 1
+      (no previous set to fall back to — same fail-fast as step 3)
+   -> An empty result (no active tickets) is normal — proceed with empty set
 
 5. Connect to RabbitMQ broker
    -> If unreachable: log ERROR, retry with exponential backoff
@@ -217,6 +220,28 @@ handled per-event (the event's downstream processing fails, but the
 consumer itself continues receiving other events). At startup, however,
 total Redis unavailability means the consumer cannot perform ANY of its
 downstream responsibilities.
+
+#### Startup Failure: Codestream Set Build Fails
+
+If the initial codestream set query (step 4) fails with a database error
+after the connectivity check (step 3) succeeded:
+
+- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
+  startup failed — cannot build monitored codestream set: {error}.
+  Consumer will not start."`
+- Exit with code 1
+- The orchestrator restarts the container.
+
+**Distinction from empty result**: an empty result set (zero active
+tickets) is normal — especially on fresh installations. The consumer
+proceeds with an empty set and relies on the periodic 5-minute refresh
+to detect newly created tickets.
+
+**Distinction from runtime refresh failure**: during steady-state
+operation, a failed refresh logs WARNING and continues with the previous
+(stale) set as fallback. At initial startup, no previous set exists —
+the consumer cannot determine which events are relevant, so fail-fast
+applies.
 ```
 
 ---
@@ -227,12 +252,13 @@ downstream responsibilities.
 
 **Location**: the Error Handling table (lines 297-305)
 
-**Add two new rows** at the end of the existing table (after the
+**Add three new rows** at the end of the existing table (after the
 "Active codestream set refresh fails" row):
 
 ```markdown
 | PostgreSQL unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot build the monitored codestream set without PostgreSQL |
 | Redis unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot enqueue tasks or write heartbeat without Redis |
+| Initial codestream set query fails (step 4) | Log CRITICAL, exit with code 1. Orchestrator restarts the container. No previous set to fall back to (distinct from runtime refresh failure, which uses stale set) |
 ```
 
 ---
@@ -261,12 +287,15 @@ to:
 
 **File**: `docs/drafts/open-points.md`
 
-**Location**: lines 603-651 (the full `### OP-17` section under
-"Open — Cross-Process Startup")
+**Location**: lines 602-652 (the `---` separator before OP-17, the
+blank line, the full `### OP-17` section content, and the trailing blank
+line)
 
-**Action**: remove the entire `### OP-17. IBS RabbitMQ Consumer Startup
-Specification Gaps` section (from `### OP-17.` through the end of its
-content before the next `---` separator).
+**Action**: remove lines 602-652 inclusive. This eliminates the
+separator that preceded OP-17, the section heading, all content, and the
+trailing blank line — leaving the `---` at line 653 as the sole
+separator between the "Open — Cross-Process Startup" section (now
+containing only OP-16) and "## Archive — Resolved".
 
 **Additionally**: if OP-16 is the only remaining item under
 "## Open — Cross-Process Startup", the section header remains (OP-16 is
@@ -375,7 +404,7 @@ specification now lives in
 
 | File | Action |
 |------|--------|
-| `docs/features/integrations/ibs-rabbitmq-integration.md` | Rewrite "Deployment" subsection + add "Process Startup" section + add 2 rows to Error Handling table |
+| `docs/features/integrations/ibs-rabbitmq-integration.md` | Rewrite "Deployment" subsection + add "Process Startup" section + add 3 rows to Error Handling table |
 | `docs/drafts/open-points.md` | Move OP-17 from Open to Archive (Resolved) |
 | `docs/drafts/op17-ibs-consumer-startup.md` | Created (this file) then deleted at end |
 
