@@ -61,6 +61,7 @@ does not break application logic or cause cascading damage.
 | FetcherRunStatus | `status` | FetcherRun | `running`, `success`, `failure`, `partial` | VARCHAR(20) |
 | SubmissionRequestState | `state` | SubmissionRequest | `open`, `accepted`, `declined`, `revoked`, `superseded` | VARCHAR(20) |
 | ReleaseRequestState | `state` | ReleaseRequest | `open`, `accepted`, `declined`, `revoked` | VARCHAR(20) |
+| CveState | `cve_state` | CVE | `PUBLISHED`, `REJECTED` | VARCHAR(20) |
 
 **CHECK constraint naming**: `chk_{table}_{column}_valid` (e.g.,
 `chk_ticket_status_valid`, `chk_user_role_role_valid`).
@@ -73,7 +74,6 @@ the longest value (`Vulnerability Analyst`) is 21 characters.
 | Enum | Column(s) | Table(s) | Values | VARCHAR |
 |------|-----------|----------|--------|---------|
 | Severity | `severity`, `severity_override` | CVE, Ticket | `Critical`, `High`, `Medium`, `Low`, `None` | VARCHAR(20) |
-| cve_state | `cve_state` | CVE | `PUBLISHED`, `REJECTED` | VARCHAR(20) |
 | CVESourceFetchStatus | `status` | CVESource | `success`, `failure`, `missing` | VARCHAR(20) |
 | CVESourceType | `source` | CVESource | `nvd`, `mitre`, `kernel`, `redhat`, `ghsa`, `osv`, `kev`, `epss` | VARCHAR(100) |
 | CVEExternalIdentifierSource | `source` | CVEExternalIdentifier | `GHSA`, `PYSEC`, `RUSTSEC` | VARCHAR(20) |
@@ -203,12 +203,12 @@ existing `### SQLAlchemy Conventions` section (after line ~300, before
 ```
 - Sentinel does not use PostgreSQL ENUM types. All enumerated columns
   use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
-  DeliveryStatus, Role, FetcherRunStatus, SubmissionRequestState,
-  ReleaseRequestState) are protected by CHECK constraints — see
-  `docs/conventions.md` (Enum Storage Strategy) for the classification
-  criterion, naming convention, and implementation patterns.
-  Classification enums (audit event types, source types, informational
-  labels) are validated exclusively by Python StrEnum in
+  DeliveryStatus, CveState, Role, FetcherRunStatus,
+  SubmissionRequestState, ReleaseRequestState) are protected by CHECK
+  constraints — see `docs/conventions.md` (Enum Storage Strategy) for
+  the classification criterion, naming convention, and implementation
+  patterns. Classification enums (audit event types, source types,
+  informational labels) are validated exclusively by Python StrEnum in
   `app/core/enums.py`
 ```
 
@@ -229,8 +229,9 @@ Uses PostgreSQL ENUM (stable value set defined by the CVE Program).
 **New description** (replace the fragment above with):
 
 ```
-Validated by Python Enum in `app/core/enums.py` (Category B —
-classification). Stable value set defined by the CVE Program.
+Category A — state-machine (triggers rejection handling flow).
+Protected by CHECK constraint `chk_cve_cve_state_valid`. Stable value
+set defined by the CVE Program.
 ```
 
 #### Step 2.3: Update `severity` column in CVE table
@@ -638,10 +639,10 @@ the "## Open — Data Model" header if OP-1 was the only entry.
 ```
 **Resolution** (2026-07-24): decided on a zero-PG-ENUM strategy. All
 enumerated columns use VARCHAR. State-machine enums (TicketStatus,
-PackageStatus, DeliveryStatus, Role, FetcherRunStatus,
+PackageStatus, DeliveryStatus, CveState, Role, FetcherRunStatus,
 SubmissionRequestState, ReleaseRequestState) are protected by CHECK
 constraints. Classification enums (audit event types, source types,
-severity, cve_state, informational labels) are validated exclusively
+severity, informational labels) are validated exclusively
 by Python StrEnum in `app/core/enums.py`. The classification criterion
 is: CHECK if the value is part of a state machine with code-managed
 transitions or has direct security implications; Python Enum only for
