@@ -393,52 +393,53 @@ PostgreSQL ENUM.
 **Lines**: 86–419 (all 5 domain-specific ER diagrams)
 
 All Mermaid diagrams use `ENUM` as a type annotation for enumerated
-fields. Change each occurrence to `VARCHAR`:
+fields. Change each occurrence to sized `VARCHAR_N` (matching the
+`data-model.md` diagram convention — underscores replace parentheses):
 
 **CVE & Ticket Core** (lines 86–197):
 
 | Line | Entity | Field | Current | New |
 |------|--------|-------|---------|-----|
-| 91 | CVE | `severity` | `ENUM severity "nullable"` | `VARCHAR severity "nullable"` |
-| 92 | CVE | `cve_state` | `ENUM cve_state "NOT NULL, DEFAULT PUBLISHED"` | `VARCHAR cve_state "NOT NULL, DEFAULT PUBLISHED"` |
-| 99 | CVESource | `status` | `ENUM status "NOT NULL"` | `VARCHAR status "NOT NULL"` |
-| 147 | Ticket | `status` | `ENUM status "NOT NULL"` | `VARCHAR status "NOT NULL"` |
-| 148 | Ticket | `severity_override` | `ENUM severity_override "nullable"` | `VARCHAR severity_override "nullable"` |
-| 163 | TicketAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
-| 173 | TicketReference | `type` | `ENUM type "nullable"` | `VARCHAR type "nullable"` |
+| 91 | CVE | `severity` | `ENUM severity "nullable"` | `VARCHAR_20 severity "nullable"` |
+| 92 | CVE | `cve_state` | `ENUM cve_state "NOT NULL, DEFAULT PUBLISHED"` | `VARCHAR_20 cve_state "NOT NULL, DEFAULT PUBLISHED"` |
+| 99 | CVESource | `status` | `ENUM status "NOT NULL"` | `VARCHAR_20 status "NOT NULL"` |
+| 147 | Ticket | `status` | `ENUM status "NOT NULL"` | `VARCHAR_20 status "NOT NULL"` |
+| 148 | Ticket | `severity_override` | `ENUM severity_override "nullable"` | `VARCHAR_20 severity_override "nullable"` |
+| 163 | TicketAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR_50 event_type "NOT NULL"` |
+| 173 | TicketReference | `type` | `ENUM type "nullable"` | `VARCHAR_20 type "nullable"` |
 
 **Package Hierarchy** (lines 201–250):
 
 | Line | Entity | Field | Current | New |
 |------|--------|-------|---------|-----|
-| 215 | TicketPackageTrack | `workflow_type` | `ENUM workflow_type "NOT NULL (ibs, git)"` | `VARCHAR workflow_type "NOT NULL (ibs, git)"` |
-| 217 | TicketPackageTrack | `status` | `ENUM status "NOT NULL, DEFAULT ANALYSIS"` | `VARCHAR status "NOT NULL, DEFAULT ANALYSIS"` |
-| 218 | TicketPackageTrack | `delivery_status` | `ENUM delivery_status "NOT NULL, DEFAULT PENDING"` | `VARCHAR delivery_status "NOT NULL, DEFAULT PENDING"` |
+| 215 | TicketPackageTrack | `workflow_type` | `ENUM workflow_type "NOT NULL (ibs, git)"` | `VARCHAR_20 workflow_type "NOT NULL (ibs, git)"` |
+| 217 | TicketPackageTrack | `status` | `ENUM status "NOT NULL, DEFAULT ANALYSIS"` | `VARCHAR_20 status "NOT NULL, DEFAULT ANALYSIS"` |
+| 218 | TicketPackageTrack | `delivery_status` | `ENUM delivery_status "NOT NULL, DEFAULT PENDING"` | `VARCHAR_20 delivery_status "NOT NULL, DEFAULT PENDING"` |
 
 **Identity** (lines 254–312):
 
 | Line | Entity | Field | Current | New |
 |------|--------|-------|---------|-----|
-| 268 | UserRole | `role` | `ENUM role "NOT NULL"` | `VARCHAR role "NOT NULL"` |
-| 275 | RoleMapping | `role` | `ENUM role "NOT NULL"` | `VARCHAR role "NOT NULL"` |
-| 295 | IdentityAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
+| 268 | UserRole | `role` | `ENUM role "NOT NULL"` | `VARCHAR_30 role "NOT NULL"` |
+| 275 | RoleMapping | `role` | `ENUM role "NOT NULL"` | `VARCHAR_30 role "NOT NULL"` |
+| 295 | IdentityAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR_50 event_type "NOT NULL"` |
 
 **Platform Infrastructure** (lines 316–365):
 
 | Line | Entity | Field | Current | New |
 |------|--------|-------|---------|-----|
-| 329 | FetcherRun | `status` | `ENUM status "NOT NULL"` | `VARCHAR status "NOT NULL"` |
-| 330 | FetcherRun | `triggered_by` | `ENUM triggered_by "NOT NULL"` | `VARCHAR triggered_by "NOT NULL"` |
-| 337 | FetcherAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
-| 349 | SettingAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
+| 329 | FetcherRun | `status` | `ENUM status "NOT NULL"` | `VARCHAR_20 status "NOT NULL"` |
+| 330 | FetcherRun | `triggered_by` | `ENUM triggered_by "NOT NULL"` | `VARCHAR_20 triggered_by "NOT NULL"` |
+| 337 | FetcherAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR_50 event_type "NOT NULL"` |
+| 349 | SettingAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR_50 event_type "NOT NULL"` |
 
 **IBS Integration** (lines 369–419):
 
 | Line | Entity | Field | Current | New |
 |------|--------|-------|---------|-----|
-| 376 | SubmissionRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR state "DEFAULT open"` |
-| 390 | ReleaseRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR state "DEFAULT open"` |
-| 402 | PackageBugowner | `bugowner_type` | `ENUM bugowner_type "nullable"` | `VARCHAR bugowner_type "nullable"` |
+| 376 | SubmissionRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR_20 state "DEFAULT open"` |
+| 390 | ReleaseRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR_20 state "DEFAULT open"` |
+| 402 | PackageBugowner | `bugowner_type` | `ENUM bugowner_type "nullable"` | `VARCHAR_20 bugowner_type "nullable"` |
 
 #### Step 2.12: Update `docs/system-map.md` Mermaid ER diagram
 
