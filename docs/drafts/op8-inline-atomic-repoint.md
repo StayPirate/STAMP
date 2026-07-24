@@ -183,6 +183,8 @@ async def mark_as_duplicate(
         user_id = NULL,
         detail = `{"triggered_by_ticket": "SNTL-{n}"}` where the
         value is the source ticket's identifier)
+      - Dependents are repointed as a system action (`user_id = NULL`);
+        no confidentiality access check is applied to dependent tickets
 4. Return updated source ticket
 
 **Post-operation**: no post-commit work. Everything is atomic.
@@ -194,9 +196,13 @@ ordered). All within a single transaction.
 manual zone.
 
 **Audit events**:
-- `status_change` (on source — records the status transition)
+- `status_change` (on source — records the `{current} → Duplicated`
+  transition)
 - `duplicate_set` (on source — records the link creation)
 - One `duplicate_target_changed` per dependent (system action)
+- Plus any events produced by `auto_assign_actor` (e.g.,
+  `status_change` for `New → Analysis`, `assignment`) — see
+  `ticket-mutations.md`
 
 **Atomicity guarantee**: if any step fails (validation, NOWAIT
 conflict, or database error), the entire transaction rolls back. No
@@ -414,7 +420,9 @@ introduces a contradiction that is only resolved by a later step).
      (status != 'Duplicated' AND duplicate_of_id IS NULL)`
    - `chk_ticket_no_self_duplicate`: `duplicate_of_id <> id`
 
-3. In the Indexes section (line 1513-1515), add:
+3. In the Indexes section (line 1513-1515), replace the placeholder
+   text ("TBD — will be defined based on query patterns during
+   implementation.") with the following index:
    - `ix_ticket_duplicate_of_id`: index on `duplicate_of_id` where
      `duplicate_of_id IS NOT NULL` — used by `mark_as_duplicate` to find
      dependents of the source ticket
@@ -654,16 +662,40 @@ introduces a contradiction that is only resolved by a later step).
     tickets currently point to the source, they are atomically repointed
     to the target."
 
-14. **Confidential target risk** (lines 972-992): remove the word
-    "chain" and "through a chain". The risk description becomes: "A
-    Duplicated ticket that is non-confidential may have a
-    `duplicate_of_id` pointing to a confidential ticket."
+14. **Confidential target risk** (lines 972-992): replace the entire
+    paragraph with:
+
+    > **Accepted risk — `duplicate_of_id` and confidential targets**: A
+    > Duplicated ticket that is non-confidential may have a
+    > `duplicate_of_id` pointing to a confidential ticket. The target
+    > identifier (`SNTL-{n}`) appears in public API responses. This
+    > reveals the *existence* of the confidential target ticket but not
+    > its content (the detail endpoint returns 404 for unauthorized
+    > callers, indistinguishable from a non-existent ticket). This is an
+    > accepted risk because: (a) only the identifier is exposed — no
+    > title, CVE, severity, or package data leaks; (b) creating the
+    > duplicate link requires `triage_ticket` capability — users with
+    > this capability via the `vulnerability_analyst` role already have
+    > scope `all`; `restricted_analyst` users have `non_confidential`
+    > scope but only reach this code path for non-confidential source
+    > tickets; (c) the reverse scenario (target becomes confidential
+    > after the link is created) is rare and the leak is limited to
+    > existence inference; (d) implementing bidirectional cascading
+    > confidentiality adds significant complexity (reverse traversal,
+    > audit events, revert semantics) disproportionate to the severity
+    > of the information leak.
 
 15. **Response schemas note** (lines 1200-1203): replace with:
     > Note: the API field `duplicate_of` is the `SNTL-{n}` format of
     > the database column `duplicate_of_id` (UUID FK). No resolution is
     > needed — the stored UUID always references a non-Duplicated
     > ticket.
+
+16. **Schema field descriptions** — update `duplicate_of` description in
+    both TicketSummary (line 1172) and TicketDetail (line 1191):
+    - **Remove**: "Canonical duplicate target identifier (`SNTL-{n}`),
+      or `null`"
+    - **New text**: `Duplicate target identifier (SNTL-{n}), or null`
 
 ### Step 6: Update `docs/api-spec.md`
 
