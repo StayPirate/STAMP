@@ -386,13 +386,15 @@ PostgreSQL ENUM.
 | 1466 | SubmissionRequest | `state` | `ENUM` | `VARCHAR(20)` | |
 | 1488 | ReleaseRequest | `state` | `ENUM` | `VARCHAR(20)` | |
 
-#### Step 2.11: Update Mermaid ER diagram
+#### Step 2.11: Update Mermaid ER diagrams
 
 **File**: `docs/data-model.md`  
-**Lines**: 88–174 (Mermaid diagram entities)
+**Lines**: 86–419 (all 5 domain-specific ER diagrams)
 
-The Mermaid diagram uses `ENUM` as a type annotation in several
-entities. Change each occurrence to `VARCHAR`:
+All Mermaid diagrams use `ENUM` as a type annotation for enumerated
+fields. Change each occurrence to `VARCHAR`:
+
+**CVE & Ticket Core** (lines 86–197):
 
 | Line | Entity | Field | Current | New |
 |------|--------|-------|---------|-----|
@@ -404,8 +406,67 @@ entities. Change each occurrence to `VARCHAR`:
 | 163 | TicketAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
 | 173 | TicketReference | `type` | `ENUM type "nullable"` | `VARCHAR type "nullable"` |
 
-Note: the Mermaid diagram is a simplified view that only includes a
-subset of tables. Not all enum columns appear in the diagram.
+**Package Hierarchy** (lines 201–250):
+
+| Line | Entity | Field | Current | New |
+|------|--------|-------|---------|-----|
+| 215 | TicketPackageTrack | `workflow_type` | `ENUM workflow_type "NOT NULL (ibs, git)"` | `VARCHAR workflow_type "NOT NULL (ibs, git)"` |
+| 217 | TicketPackageTrack | `status` | `ENUM status "NOT NULL, DEFAULT ANALYSIS"` | `VARCHAR status "NOT NULL, DEFAULT ANALYSIS"` |
+| 218 | TicketPackageTrack | `delivery_status` | `ENUM delivery_status "NOT NULL, DEFAULT PENDING"` | `VARCHAR delivery_status "NOT NULL, DEFAULT PENDING"` |
+
+**Identity** (lines 254–312):
+
+| Line | Entity | Field | Current | New |
+|------|--------|-------|---------|-----|
+| 268 | UserRole | `role` | `ENUM role "NOT NULL"` | `VARCHAR role "NOT NULL"` |
+| 275 | RoleMapping | `role` | `ENUM role "NOT NULL"` | `VARCHAR role "NOT NULL"` |
+| 295 | IdentityAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
+
+**Platform Infrastructure** (lines 316–365):
+
+| Line | Entity | Field | Current | New |
+|------|--------|-------|---------|-----|
+| 329 | FetcherRun | `status` | `ENUM status "NOT NULL"` | `VARCHAR status "NOT NULL"` |
+| 330 | FetcherRun | `triggered_by` | `ENUM triggered_by "NOT NULL"` | `VARCHAR triggered_by "NOT NULL"` |
+| 337 | FetcherAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
+| 349 | SettingAuditEvent | `event_type` | `ENUM event_type "NOT NULL"` | `VARCHAR event_type "NOT NULL"` |
+
+**IBS Integration** (lines 369–419):
+
+| Line | Entity | Field | Current | New |
+|------|--------|-------|---------|-----|
+| 376 | SubmissionRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR state "DEFAULT open"` |
+| 390 | ReleaseRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR state "DEFAULT open"` |
+| 402 | PackageBugowner | `bugowner_type` | `ENUM bugowner_type "nullable"` | `VARCHAR bugowner_type "nullable"` |
+
+#### Step 2.12: Update `docs/system-map.md` Mermaid ER diagram
+
+**File**: `docs/system-map.md`  
+**Lines**: 89–340 (single ER diagram covering all tables)
+
+The system-map diagram uses `ENUM` as a type annotation for the same
+fields. Change each occurrence to `VARCHAR`:
+
+| Line | Entity | Field | Current | New |
+|------|--------|-------|---------|-----|
+| 94 | CVE | `severity` | `ENUM severity` | `VARCHAR severity` |
+| 95 | CVE | `cve_state` | `ENUM cve_state` | `VARCHAR cve_state` |
+| 102 | CVESource | `status` | `ENUM status` | `VARCHAR status` |
+| 116 | CVEExternalIdentifier | `source` | `ENUM source` | `VARCHAR source` |
+| 158 | Ticket | `status` | `ENUM status` | `VARCHAR status` |
+| 168 | TicketAuditEvent | `event_type` | `ENUM event_type` | `VARCHAR event_type` |
+| 192 | TicketPackageTrack | `workflow_type` | `ENUM workflow_type` | `VARCHAR workflow_type` |
+| 194 | TicketPackageTrack | `status` | `ENUM status` | `VARCHAR status` |
+| 195 | TicketPackageTrack | `delivery_status` | `ENUM delivery_status` | `VARCHAR delivery_status` |
+| 232 | UserRole | `role` | `ENUM role` | `VARCHAR role` |
+| 240 | RoleMapping | `role` | `ENUM role` | `VARCHAR role` |
+| 263 | IdentityAuditEvent | `event_type` | `ENUM event_type` | `VARCHAR event_type` |
+| 275 | SettingAuditEvent | `event_type` | `ENUM event_type` | `VARCHAR event_type` |
+| 290 | PackageBugowner | `bugowner_type` | `ENUM bugowner_type "nullable"` | `VARCHAR bugowner_type "nullable"` |
+| 304 | SubmissionRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR state "DEFAULT open"` |
+| 319 | ReleaseRequest | `state` | `ENUM state "DEFAULT open"` | `VARCHAR state "DEFAULT open"` |
+| 331 | FetcherRun | `status` | `ENUM status` | `VARCHAR status` |
+| 338 | FetcherAuditEvent | `event_type` | `ENUM event_type` | `VARCHAR event_type` |
 
 ---
 
@@ -427,19 +488,20 @@ needed) would be handled via a migration that reassigns affected users.
 **New text**:
 
 ```
-required. The Role enum uses a VARCHAR(30) column protected by a CHECK
-constraint (`chk_user_role_role_valid`) — Category A (state-machine,
-security-critical). Adding a new role requires an Alembic migration
-(DROP + ADD constraint — reversible). Values are never removed from
-the CHECK if existing records reference them. Deprecated roles (if
-ever needed) would be handled via a migration that reassigns affected
-users and then removes the value from the constraint.
+required. The Role enum uses VARCHAR(30) columns protected by CHECK
+constraints (`chk_user_role_role_valid`, `chk_role_mapping_role_valid`)
+— Category A (state-machine, security-critical). Adding a new role
+requires an Alembic migration (DROP + ADD constraints — reversible).
+Values are never removed from the CHECK if existing records reference
+them. Deprecated roles (if ever needed) would be handled via a
+migration that reassigns affected users and then removes the value
+from the constraints.
 ```
 
 #### Step 3.2: Update `docs/features/tickets/tickets.md`
 
 **File**: `docs/features/tickets/tickets.md`  
-**Lines**: 1706, 1708  
+**Lines**: 202, 1706, 1708  
 
 Change column types in the "Key fields" table:
 
@@ -447,6 +509,12 @@ Change column types in the "Key fields" table:
 |------|--------|-------------|----------|
 | 1706 | `status` | `ENUM` | `VARCHAR(20)` |
 | 1708 | `severity_override` | `ENUM` | `VARCHAR(20)` |
+
+Change prose reference on line 202:
+
+**Current text**: `- \`Ticket.severity_override\`: ENUM (Critical, High, Medium, Low, None),`
+
+**New text**: `- \`Ticket.severity_override\`: VARCHAR(20) (Critical, High, Medium, Low, None),`
 
 #### Step 3.3: Update `docs/features/tickets/ticket-references.md`
 
@@ -541,6 +609,17 @@ Note: lines 247–248 use enum class names as column types rather than
 the generic `ENUM` keyword. They must be changed to `VARCHAR(20)` for
 consistency.
 
+#### Step 3.10: Update `docs/features/tickets/cve-tracking.md`
+
+**File**: `docs/features/tickets/cve-tracking.md`  
+**Line**: 240  
+
+Change prose type descriptor:
+
+**Current text**: `The CVE table stores a \`cve_state\` field (ENUM: \`PUBLISHED\`,`
+
+**New text**: `The CVE table stores a \`cve_state\` field (\`PUBLISHED\`,`
+
 ---
 
 ### Phase 4 — Resolve OP-1
@@ -583,9 +662,13 @@ ENUM that were missed:
 - Pattern: `PG ENUM`
 - Pattern: `ALTER TYPE`
 - Pattern: `AS ENUM`
+- Pattern: `\bENUM\b` (broad word-boundary match — triage manually:
+  references to "Python Enum" as a concept are acceptable; references
+  using "ENUM" as a column type descriptor in prose or tables are not)
 
 All matches in approved specifications (`docs/features/`, `docs/*.md`)
-must be zero. Matches in `docs/drafts/open-points.md` (the archived
+must be zero (after triaging acceptable "Python Enum" concept
+references). Matches in `docs/drafts/open-points.md` (the archived
 OP-1 text) are acceptable — they are historical context.
 
 #### Step 5.2: Column type verification
