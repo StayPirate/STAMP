@@ -6,7 +6,7 @@ Architectural decisions pending resolution before implementation begins.
 
 | ID | Title | Domain | Status |
 |----|-------|--------|--------|
-| OP-1 | Enum Storage Strategy | Data Model | Open |
+| OP-1 | Enum Storage Strategy | — | Resolved |
 | OP-2 | Rate Limiting via Reverse Proxy | Deployment | Open |
 | OP-4 | Anomaly Observer | Packages | Open |
 | OP-6 | Periodic Ticket Status Reconciliation | Tickets | Open |
@@ -25,60 +25,6 @@ Architectural decisions pending resolution before implementation begins.
 | OP-14 | BaseFetcher All-Items-Failed Safety Check | — | Resolved |
 | OP-18 | Cross-Process Startup Ordering | — | Resolved |
 | OP-19 | Beat Reconciliation Wiring Mechanism | — | Resolved |
-
----
-
-## Open — Data Model
-
-### OP-1. Enum Storage Strategy: PostgreSQL ENUM vs VARCHAR + Python Enum
-
-**Origin**: while fixing finding UMGT-API-02 (missing validation for
-invalid role values in `POST /api/v1/admin/users/{user}/roles`), we
-identified that the choice of enum storage strategy has broad
-implications across the project.
-
-**Context**: the project currently specifies (in `docs/data-model.md`,
-line 868) that all ENUM types are PostgreSQL enums. However, 4 of the
-12 enums in the system are "evolving" — their value sets grow as new
-features are added:
-
-| Enum | Current values | Growth driver |
-|------|---------------|---------------|
-| Role | 2 | New roles as platform matures |
-| TicketAuditEventType | 24 | Every new ticket mutation type |
-| CVESourceType | 2 | New data source integrations |
-| FetcherAuditEventType | 4 | New admin operations on fetchers |
-
-With PostgreSQL ENUM, adding a value requires an Alembic migration
-(`ALTER TYPE ... ADD VALUE`) that must run before the new application
-code is deployed. Removing a value is even more complex (requires
-recreating the type). This creates deployment coupling and operational
-risk for values that are expected to change.
-
-**Proposed alternative**: a hybrid approach where stable enums (8) keep
-PostgreSQL ENUM for database-level integrity, while evolving enums (4)
-use VARCHAR columns with validation enforced exclusively through a
-Python Enum (single source of truth in `app/core/enums.py`). Adding a
-value to an evolving enum would require only a code change — no
-migration.
-
-**Why it matters before implementation**: the storage type chosen for
-these columns affects model definitions, Alembic migrations, deployment
-procedures, and the testing strategy. Changing this after models are
-implemented would require a non-trivial migration to convert existing
-PostgreSQL ENUM columns to VARCHAR.
-
-**Partial resolution**: the CVE ingestion architecture draft
-(`docs/drafts/cve-ingestion-architecture.md`, OP-7 resolution) confirms
-`CVESourceType` as an evolving enum that will use VARCHAR + Python Enum.
-The growth trajectory is clear: current values are NVD and MITRE, but
-kernel, Red Hat, EPSS, KEV, GHSA, and OSV sources will be added as the
-ingestion pipeline expands. This provides a concrete data point for the
-broader decision.
-
-**Decision still needed**: hybrid (stable=PG ENUM, evolving=VARCHAR) vs
-full VARCHAR for uniformity. See conversation for detailed tradeoff
-analysis.
 
 ---
 
@@ -602,6 +548,22 @@ trade-off or requires worker-side mitigation.
 ---
 
 ## Archive — Resolved
+
+### OP-1. Enum Storage Strategy — RESOLVED (2026-07-24)
+
+**Resolution**: decided on a zero-PG-ENUM strategy. All enumerated
+columns use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
+DeliveryStatus, CveState, Role, FetcherRunStatus,
+SubmissionRequestState, ReleaseRequestState) are protected by CHECK
+constraints. Classification enums (audit event types, source types,
+severity, informational labels) are validated exclusively
+by Python StrEnum in `app/core/enums.py`. The classification criterion
+is: CHECK if the value is part of a state machine with code-managed
+transitions or has direct security implications; Python Enum only for
+everything else. See `docs/conventions.md` (Enum Storage Strategy) for
+the full convention.
+
+---
 
 ### OP-3. Orphan CVE Re-Ticketing Mechanism — RESOLVED
 

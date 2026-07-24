@@ -91,15 +91,15 @@ erDiagram
     CVE {
         UUID id PK
         VARCHAR cve_id UK
-        ENUM severity
-        ENUM cve_state
+        VARCHAR severity
+        VARCHAR cve_state
     }
 
     CVESource {
         UUID id PK
         UUID cve_id FK
         VARCHAR source
-        ENUM status
+        VARCHAR status
     }
 
     CVECVSSAssessment {
@@ -113,7 +113,7 @@ erDiagram
     CVEExternalIdentifier {
         UUID id PK
         UUID cve_id FK
-        ENUM source
+        VARCHAR source
         VARCHAR identifier
     }
 
@@ -155,7 +155,7 @@ erDiagram
         UUID id PK
         INTEGER sequence_id UK
         UUID cve_id FK "nullable, unique"
-        ENUM status
+        VARCHAR status
         BOOLEAN is_confidential
         UUID assignee_id FK "nullable"
         UUID duplicate_of_id FK "nullable, self-ref"
@@ -165,7 +165,7 @@ erDiagram
         UUID id PK
         UUID ticket_id FK
         UUID user_id FK "nullable"
-        ENUM event_type
+        VARCHAR event_type
     }
 
     TicketAccessGrant {
@@ -189,10 +189,10 @@ erDiagram
     TicketPackageTrack {
         UUID id PK
         UUID ticket_package_id FK
-        ENUM workflow_type
+        VARCHAR workflow_type
         VARCHAR reference
-        ENUM status
-        ENUM delivery_status
+        VARCHAR status
+        VARCHAR delivery_status
     }
 
     TicketPackageProduct {
@@ -229,7 +229,7 @@ erDiagram
     UserRole {
         UUID id PK
         UUID user_id FK
-        ENUM role
+        VARCHAR role
         VARCHAR group_name
         UUID assigned_by FK "nullable"
     }
@@ -237,7 +237,7 @@ erDiagram
     RoleMapping {
         UUID id PK
         VARCHAR group_name
-        ENUM role
+        VARCHAR role
         UUID created_by FK
     }
 
@@ -260,7 +260,7 @@ erDiagram
 
     IdentityAuditEvent {
         UUID id PK
-        ENUM event_type
+        VARCHAR event_type
         UUID user_id FK "nullable"
         UUID target_user_id FK "nullable"
     }
@@ -272,7 +272,7 @@ erDiagram
 
     SettingAuditEvent {
         UUID id PK
-        ENUM event_type
+        VARCHAR event_type
         VARCHAR setting_key
         UUID user_id FK "nullable"
     }
@@ -287,7 +287,7 @@ erDiagram
     PackageBugowner {
         UUID id PK
         VARCHAR package_name UK
-        ENUM bugowner_type "nullable"
+        VARCHAR bugowner_type "nullable"
     }
 
     PackageBugownerMember {
@@ -301,7 +301,7 @@ erDiagram
         INTEGER request_number UK
         VARCHAR package_name
         VARCHAR codestream_name
-        ENUM state
+        VARCHAR state
         INTEGER incident_number "nullable"
     }
 
@@ -316,7 +316,7 @@ erDiagram
         INTEGER request_number UK
         VARCHAR package_name
         VARCHAR codestream_name
-        ENUM state
+        VARCHAR state
         INTEGER incident_number
     }
 
@@ -328,14 +328,14 @@ erDiagram
     FetcherRun {
         UUID id PK
         VARCHAR fetcher_name FK
-        ENUM status
+        VARCHAR status
         UUID triggered_by_user_id FK "nullable"
     }
 
     FetcherAuditEvent {
         UUID id PK
         VARCHAR fetcher_name FK
-        ENUM event_type
+        VARCHAR event_type
         UUID user_id FK "nullable"
     }
 

@@ -2546,14 +2546,14 @@ the dashboard charts.
 | started_at | TIMESTAMPTZ | NOT NULL | When the run started |
 | finished_at | TIMESTAMPTZ | nullable | When the run ended (NULL while running) |
 | duration_seconds | FLOAT | nullable | Computed: `finished_at - started_at` in seconds |
-| status | ENUM | NOT NULL | `running`, `success`, `failure`, `partial` |
+| status | VARCHAR(20) | NOT NULL | `running`, `success`, `failure`, `partial` |
 | items_created | INTEGER | NOT NULL, DEFAULT 0 | Number of new records created |
 | items_updated | INTEGER | NOT NULL, DEFAULT 0 | Number of existing records updated |
 | items_failed | INTEGER | NOT NULL, DEFAULT 0 | Number of items that failed processing |
 | error_message | TEXT | nullable | Sanitized error description (for all users). Written explicitly by the fetcher (`FetcherError`), by BaseFetcher's generic fallback (see "Error Message Sanitization"), or by the all-items-failed safety check (`"All {N} items failed"` — see "Status determination precedence") |
 | error_detail | TEXT | nullable | Raw exception message — `str(exception)` (`manage_fetchers` capability required for visibility) |
 | error_traceback | TEXT | nullable | Full Python traceback (`manage_fetchers` capability required for visibility) |
-| triggered_by | ENUM | NOT NULL | `schedule`, `manual` |
+| triggered_by | VARCHAR(20) | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
 | cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the git-specific usage pattern |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
@@ -2703,7 +2703,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
 | fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
-| event_type | ENUM | NOT NULL | See FetcherAuditEventType enum |
+| event_type | VARCHAR(50) | NOT NULL | See FetcherAuditEventType enum |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
 | old_value | TEXT | nullable | Previous value (e.g., old schedule expression) |
 | new_value | TEXT | nullable | New value (e.g., new schedule expression) |

@@ -199,7 +199,7 @@ layer.
 
 ### severity_override Field
 
-- `Ticket.severity_override`: ENUM (Critical, High, Medium, Low, None),
+- `Ticket.severity_override`: VARCHAR(20) (Critical, High, Medium, Low, None),
   nullable
 - Set manually by the VA via the API or UI
 - Only used when `cve_id IS NULL`
@@ -1703,9 +1703,9 @@ table:
 | id                | UUID        | PK                           | Internal identifier |
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ID, exposed as `SNTL-{n}` |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
-| status            | ENUM        | NOT NULL, DEFAULT New        | Ticket status |
+| status            | VARCHAR(20) | NOT NULL, DEFAULT New        | Ticket status |
 | assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |
-| severity_override | ENUM        | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = VA explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL` |
+| severity_override | VARCHAR(20) | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = VA explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |

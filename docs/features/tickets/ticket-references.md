@@ -57,7 +57,7 @@ user choice). It is functionally equivalent to "uncategorized".
 | url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource       |
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
-| type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
+| type        | VARCHAR(20)                | nullable                     | Content classification. NULL = uncategorized |
 | source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_nvd_cves"`) or `"manual"` for user-added references |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |

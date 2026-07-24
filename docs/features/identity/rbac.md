@@ -664,9 +664,14 @@ See `docs/data-model.md`. Key tables:
 
 The capability-to-role mapping and scope-to-role mapping are static
 definitions in code (not stored in the database). No new tables are
-required. The Role enum in the database is **append-only** — values are
-never removed from the PostgreSQL enum type. Deprecated roles (if ever
-needed) would be handled via a migration that reassigns affected users.
+required. The Role enum uses VARCHAR(30) columns protected by CHECK
+constraints (`chk_user_role_role_valid`, `chk_role_mapping_role_valid`)
+— Category A (state-machine, security-critical). Adding a new role
+requires an Alembic migration (DROP + ADD constraints — reversible).
+Values are never removed from the CHECK if existing records reference
+them. Deprecated roles (if ever needed) would be handled via a
+migration that reassigns affected users and then removes the value
+from the constraints.
 
 ### Role Wire Format
 

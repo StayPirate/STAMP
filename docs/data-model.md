@@ -88,15 +88,15 @@ erDiagram
     CVE {
         UUID id PK
         VARCHAR_20 cve_id UK "NOT NULL"
-        ENUM severity "nullable"
-        ENUM cve_state "NOT NULL, DEFAULT PUBLISHED"
+        VARCHAR_20 severity "nullable"
+        VARCHAR_20 cve_state "NOT NULL, DEFAULT PUBLISHED"
         TIMESTAMPTZ date_rejected "nullable"
     }
     CVESource {
         UUID id PK
         UUID cve_id FK "NOT NULL"
         VARCHAR_100 source "NOT NULL"
-        ENUM status "NOT NULL"
+        VARCHAR_20 status "NOT NULL"
     }
     CVECVSSAssessment {
         UUID id PK
@@ -144,8 +144,8 @@ erDiagram
         UUID id PK
         INTEGER sequence_id UK "auto-increment"
         UUID cve_id FK "UNIQUE, nullable"
-        ENUM status "NOT NULL"
-        ENUM severity_override "nullable"
+        VARCHAR_20 status "NOT NULL"
+        VARCHAR_20 severity_override "nullable"
         BOOLEAN is_confidential "NOT NULL, DEFAULT FALSE"
         UUID assignee_id FK "nullable"
          UUID duplicate_of_id FK "self-ref, nullable"
@@ -160,7 +160,7 @@ erDiagram
         UUID id PK
         UUID ticket_id FK "NOT NULL"
         UUID user_id FK "nullable"
-        ENUM event_type "NOT NULL"
+        VARCHAR_50 event_type "NOT NULL"
         TEXT old_value "nullable"
         TEXT new_value "nullable"
         TEXT comment "nullable"
@@ -170,7 +170,7 @@ erDiagram
         UUID id PK
         UUID ticket_id FK "NOT NULL"
         VARCHAR_2048 url "NOT NULL"
-        ENUM type "nullable"
+        VARCHAR_20 type "nullable"
         VARCHAR_100 source "NOT NULL"
     }
     User {
@@ -212,10 +212,10 @@ erDiagram
     TicketPackageTrack {
         UUID id PK
         UUID ticket_package_id FK "NOT NULL"
-        ENUM workflow_type "NOT NULL (ibs, git)"
+        VARCHAR_20 workflow_type "NOT NULL (ibs, git)"
         VARCHAR_255 reference "NOT NULL"
-        ENUM status "NOT NULL, DEFAULT ANALYSIS"
-        ENUM delivery_status "NOT NULL, DEFAULT PENDING"
+        VARCHAR_20 status "NOT NULL, DEFAULT ANALYSIS"
+        VARCHAR_20 delivery_status "NOT NULL, DEFAULT PENDING"
         TIMESTAMPTZ deleted_at "nullable"
     }
     TicketPackageProduct {
@@ -265,14 +265,14 @@ erDiagram
     UserRole {
         UUID id PK
         UUID user_id FK "NOT NULL"
-        ENUM role "NOT NULL"
+        VARCHAR_30 role "NOT NULL"
         VARCHAR_256 group_name "NOT NULL, DEFAULT _manual"
         UUID assigned_by FK "nullable"
     }
     RoleMapping {
         UUID id PK
         VARCHAR_256 group_name "NOT NULL"
-        ENUM role "NOT NULL"
+        VARCHAR_30 role "NOT NULL"
         UUID created_by FK "NOT NULL"
     }
     Session {
@@ -292,7 +292,7 @@ erDiagram
     }
     IdentityAuditEvent {
         UUID id PK
-        ENUM event_type "NOT NULL"
+        VARCHAR_50 event_type "NOT NULL"
         UUID user_id FK "nullable"
         UUID target_user_id FK "nullable"
         TEXT old_value "nullable"
@@ -326,15 +326,15 @@ erDiagram
     FetcherRun {
         UUID id PK
         VARCHAR_100 fetcher_name FK "NOT NULL"
-        ENUM status "NOT NULL"
-        ENUM triggered_by "NOT NULL"
+        VARCHAR_20 status "NOT NULL"
+        VARCHAR_20 triggered_by "NOT NULL"
         UUID triggered_by_user_id FK "nullable"
         JSONB cursor "nullable"
     }
     FetcherAuditEvent {
         UUID id PK
         VARCHAR_100 fetcher_name FK "NOT NULL"
-        ENUM event_type "NOT NULL"
+        VARCHAR_50 event_type "NOT NULL"
         UUID user_id FK "nullable"
         TEXT old_value "nullable"
         TEXT new_value "nullable"
@@ -346,7 +346,7 @@ erDiagram
     }
     SettingAuditEvent {
         UUID id PK
-        ENUM event_type "NOT NULL"
+        VARCHAR_50 event_type "NOT NULL"
         VARCHAR_100 setting_key FK "NOT NULL"
         TEXT old_value "nullable"
         TEXT new_value "NOT NULL"
@@ -373,7 +373,7 @@ erDiagram
         INTEGER request_number UK "NOT NULL"
         VARCHAR_255 package_name "NOT NULL"
         VARCHAR_255 codestream_name "NOT NULL"
-        ENUM state "DEFAULT open"
+        VARCHAR_20 state "DEFAULT open"
         INTEGER incident_number "nullable"
         INTEGER superseded_by "nullable"
     }
@@ -387,7 +387,7 @@ erDiagram
         INTEGER request_number UK "NOT NULL"
         VARCHAR_255 package_name "NOT NULL"
         VARCHAR_255 codestream_name "NOT NULL"
-        ENUM state "DEFAULT open"
+        VARCHAR_20 state "DEFAULT open"
         INTEGER incident_number "NOT NULL"
     }
     CodestreamPackageChecksum {
@@ -399,7 +399,7 @@ erDiagram
     PackageBugowner {
         UUID id PK
         VARCHAR_255 package_name UK "NOT NULL"
-        ENUM bugowner_type "nullable"
+        VARCHAR_20 bugowner_type "nullable"
         VARCHAR_100 bugowner_name "nullable"
     }
     PackageBugownerMember {
@@ -430,10 +430,10 @@ Represents a Common Vulnerability and Exposure entry.
 | cve_id         | VARCHAR(20)  | UNIQUE, NOT NULL     | CVE identifier (e.g., CVE-2024-1234) |
 | title          | VARCHAR(256) |                      | Brief summary from the CNA (CVE 5.x `containers.cna.title`). Populated by fetchers that parse CVE JSON 5.x format (`sync_mitre_cves`, `sync_kernel_cves`). Null when the CNA does not provide a title. Max 256 chars per CVE schema specification |
 | description    | TEXT         |                      | Vulnerability description       |
-| severity       | ENUM         | nullable               | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). `NULL` when no CVSS assessment is available from any provider (unresolved). `None` is a valid severity value representing a CVSS score of exactly 0.0 (the standard CVSS "None" rating). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
+| severity       | VARCHAR(20)  | nullable               | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). `NULL` when no CVSS assessment is available from any provider (unresolved). `None` is a valid severity value representing a CVSS score of exactly 0.0 (the standard CVSS "None" rating). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
-| cve_state      | ENUM         | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Uses PostgreSQL ENUM (stable value set defined by the CVE Program). Populated by any discovery fetcher: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
+| cve_state      | VARCHAR(20)  | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Stable value set defined by the CVE Program. Populated by any discovery fetcher: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
 | date_rejected  | TIMESTAMPTZ  | nullable             | From CVE JSON 5.x `cveMetadata.dateRejected`. Set when `cve_state` transitions to `REJECTED`, cleared when it reverts to `PUBLISHED` |
 | created_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp        |
@@ -452,8 +452,8 @@ See `docs/features/tickets/cve-service.md`.
 |-------------|---------------|------------------------------------|------------------------------------|
 | id          | UUID          | PK                                 | Internal identifier                |
 | cve_id      | UUID          | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                   |
-| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR (not PG ENUM) for migration flexibility. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (VARCHAR, Python Enum, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
-| status      | ENUM          | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). Uses PostgreSQL ENUM type `CVESourceFetchStatus`. No default — always written explicitly by the caller |
+| source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR(100) — Category B classification enum. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (VARCHAR, Python Enum, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
+| status      | VARCHAR(20)   | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). CVESourceFetchStatus — validated by Python Enum in `app/core/enums.py` (Category B — classification). No default — always written explicitly by the caller |
 | fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
 | first_failed_at | TIMESTAMPTZ | nullable                          | Timestamp when the current failure streak began. Set to now() on the first transition to failure status (when first_failed_at is currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. Used by evaluate_failed_cve_sources to determine retry eligibility (within 30 days) and stalled status (beyond 30 days). See docs/features/platform/cve-source-failure-retry.md |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
@@ -471,9 +471,9 @@ window and require operator investigation.
 
 ### CVESourceFetchStatus Enum
 
-Outcome of a CVE data fetch attempt from an external source. Uses
-PostgreSQL ENUM type (stable, closed value set — adding a new status
-requires a migration).
+Outcome of a CVE data fetch attempt from an external source. Category B
+— classification enum (Python Enum in `app/core/enums.py`, no CHECK
+constraint). Adding a new status requires only a code change.
 
 | Value | Description |
 |-------|-------------|
@@ -484,10 +484,10 @@ requires a migration).
 ### CVESourceType Python Enum
 
 "CVESourceType" is the formal term for the short lowercase provider
-labels stored in `CVESource.source`. This is a **Python Enum** in
-`app/core/enums.py` — NOT a PostgreSQL ENUM. The database column
-remains `VARCHAR(100)` for migration flexibility (adding a new source
-requires only a code change, not an Alembic migration).
+labels stored in `CVESource.source`. Category B — classification enum
+(Python Enum in `app/core/enums.py`, no CHECK constraint). The database
+column is `VARCHAR(100)`. Adding a new source requires only a code
+change.
 
 | Value | Description |
 |-------|-------------|
@@ -560,10 +560,9 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
 ### CVEExternalIdentifierSource Python Enum
 
 Identifies the naming authority that assigned an external vulnerability
-identifier. This is a **Python Enum** in `app/core/enums.py` — NOT a
-PostgreSQL ENUM. The database column remains `VARCHAR(20)` for migration
-flexibility (adding a new source requires only a code change, not an
-Alembic migration).
+identifier. Category B — classification enum (Python Enum in
+`app/core/enums.py`, no CHECK constraint). The database column is
+`VARCHAR(20)`. Adding a new source requires only a code change.
 
 | Value | Description |
 |-------|-------------|
@@ -590,7 +589,7 @@ CVE remains the sole canonical identifier in Sentinel.
 |------------|----------------------------------------|-------------------------|------------------------------------------|
 | id         | UUID                                   | PK                      | Internal identifier                      |
 | cve_id     | UUID                                   | FK(cve.id) ON DELETE CASCADE, NOT NULL | Related CVE                |
-| source     | VARCHAR(20)                            | NOT NULL                | Naming authority (e.g., `GHSA`, `PYSEC`, `RUSTSEC`). Valid values defined by the `CVEExternalIdentifierSource` Python Enum in `app/core/enums.py` (evolving value set). Column is VARCHAR (not PG ENUM) for migration flexibility |
+| source     | VARCHAR(20)                            | NOT NULL                | Naming authority (e.g., `GHSA`, `PYSEC`, `RUSTSEC`). Valid values defined by the `CVEExternalIdentifierSource` Python Enum in `app/core/enums.py` (evolving value set). Column is VARCHAR(20) — Category B classification enum |
 | identifier | VARCHAR(100)                           | NOT NULL                | External ID (e.g., `GHSA-xxxx-xxxx-xxxx`) |
 | url        | TEXT                                   | nullable                | Direct link to the advisory page         |
 | created_at | TIMESTAMPTZ                            | NOT NULL, DEFAULT       | Record creation timestamp                |
@@ -853,10 +852,10 @@ dimensions (affectedness, eligibility, delivery).
 |-------------------|-----------|---------------------------------------|------------------------------------|
 | id                | UUID      | PK                                    | Internal identifier                |
 | ticket_package_id | UUID      | FK(ticket_package.id), NOT NULL       | Parent package record              |
-| workflow_type     | ENUM      | NOT NULL                              | WorkflowType enum (`ibs` or `git`) |
+| workflow_type     | VARCHAR(20) | NOT NULL                              | WorkflowType enum (`ibs` or `git`) |
 | reference         | VARCHAR(255) | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
-| status            | ENUM      | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
-| delivery_status   | ENUM      | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
+| status            | VARCHAR(20) | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
+| delivery_status   | VARCHAR(20) | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
 | deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
 | created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record creation timestamp          |
 | updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
@@ -973,7 +972,7 @@ process and cannot be removed via the API. See
 |--------------|-------------|------------------------------|----------------------------------|
 | id           | UUID        | PK                           | Internal identifier              |
 | user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
-| role         | ENUM        | NOT NULL                     | Role: Admin, Vulnerability Analyst, Restricted Analyst |
+| role         | VARCHAR(30) | NOT NULL                     | Role: Admin, Vulnerability Analyst, Restricted Analyst |
 | group_name   | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | External group name that granted this role, or `_manual` for manual assignments |
 | assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (external sync, CLI) |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
@@ -1012,7 +1011,7 @@ current group membership. See
 |--------------|-------------|------------------------------|------------------------------------|
 | id           | UUID        | PK                           | Internal identifier                |
 | group_name   | VARCHAR(256) | NOT NULL                     | External group name (e.g., `SecurityTeam`) |
-| role         | ENUM        | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Restricted Analyst` |
+| role         | VARCHAR(30) | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Restricted Analyst` |
 | created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
 | created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
 
@@ -1083,8 +1082,8 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | id                | UUID        | PK                           | Internal identifier                  |
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
-| status            | ENUM        | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| severity_override | ENUM        | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
+| status            | VARCHAR(20) | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
+| severity_override | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the canonical target ticket when status is Duplicated. May transiently reference a Duplicated ticket if a flattening was interrupted; the `resolve_canonical_target` function handles resolution at read time. Hop limit: 50 |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
@@ -1147,7 +1146,7 @@ manually by users with the `manage_references` capability. See
 | url         | VARCHAR(2048)              | NOT NULL                     | URL of the external resource. Stored in normalized form: scheme + host lowercased, `http` upgraded to `https`, empty trailing slash removed (see `docs/features/tickets/ticket-references.md`, Upsert Strategy § URL Normalization) |
 | title       | VARCHAR(500)               | nullable                     | Human-readable label               |
 | description | VARCHAR(2000)              | nullable                     | Short note explaining relevance    |
-| type        | ENUM(ReferenceType)        | nullable                     | Content classification. NULL = uncategorized |
+| type        | VARCHAR(20)                | nullable                     | Content classification. NULL = uncategorized |
 | source      | VARCHAR(100)               | NOT NULL                     | Origin: fetcher name (e.g., `"sync_nvd_cves"`) or `"manual"` for user-added references |
 | created_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ                | NOT NULL, DEFAULT            | Record update timestamp            |
@@ -1200,7 +1199,7 @@ system action).
 | id          | UUID        | PK                     | Inherited from AuditEventMixin             |
 | ticket_id   | UUID        | FK(ticket.id), NOT NULL| Related ticket                             |
 | user_id     | UUID        | FK(user.id), nullable  | Inherited from AuditEventMixin. User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
-| event_type  | ENUM        | NOT NULL               | See TicketAuditEventType enum below             |
+| event_type  | VARCHAR(50) | NOT NULL               | See TicketAuditEventType enum below             |
 | old_value   | TEXT        | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | TEXT        | nullable               | New value (e.g., new status, new assignee username) |
 | comment     | TEXT        | nullable               | Free-text note from the VA, or human-readable system-generated description for automated events |
@@ -1268,7 +1267,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
-| event_type | ENUM | NOT NULL | See IdentityAuditEventType enum below |
+| event_type | VARCHAR(50) | NOT NULL | See IdentityAuditEventType enum below |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (external sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
 | old_value | TEXT | nullable | Previous state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
@@ -1306,7 +1305,7 @@ Audit trail for system setting modifications. Inherits `id`,
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Inherited from AuditEventMixin |
-| event_type | ENUM | NOT NULL | See SettingAuditEventType enum below |
+| event_type | VARCHAR(50) | NOT NULL | See SettingAuditEventType enum below |
 | setting_key | VARCHAR(100) | FK(system_setting.key) ON DELETE RESTRICT, NOT NULL | Which setting was changed |
 | user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who changed the setting. Nullable at DB level; service validates presence |
 | old_value | TEXT | nullable | Previous value |
@@ -1358,7 +1357,7 @@ longer appears in any active ticket. See
 |----------------|-------------|----------------------|------------------------------------|
 | id             | UUID        | PK                   | Internal identifier                |
 | package_name   | VARCHAR(255) | UNIQUE, NOT NULL     | Source package name (matches `TicketPackage.package_name`) |
-| bugowner_type  | ENUM        | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
+| bugowner_type  | VARCHAR(20) | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
 | bugowner_name  | VARCHAR(100) | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
 | bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group (stored as lowercase). NULL if unresolved |
 | created_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record creation timestamp          |
@@ -1402,14 +1401,14 @@ Growth rate is approximately 20,000 rows per year. See
 | started_at           | TIMESTAMPTZ   | NOT NULL                 | When the run started               |
 | finished_at          | TIMESTAMPTZ   | nullable                 | When the run ended (NULL while running) |
 | duration_seconds     | FLOAT       | nullable                 | `finished_at - started_at` in seconds |
-| status               | ENUM        | NOT NULL                 | FetcherRunStatus: `running`, `success`, `failure`, `partial` |
+| status               | VARCHAR(20) | NOT NULL                 | FetcherRunStatus: `running`, `success`, `failure`, `partial` |
 | items_created        | INTEGER     | NOT NULL, DEFAULT 0      | New records created                |
 | items_updated        | INTEGER     | NOT NULL, DEFAULT 0      | Existing records updated           |
 | items_failed         | INTEGER     | NOT NULL, DEFAULT 0      | Items that failed processing       |
 | error_message        | TEXT        | nullable                 | Sanitized error description (for all users). See `docs/features/platform/fetcher-infrastructure.md`, "Error Message Sanitization" |
 | error_detail         | TEXT        | nullable                 | Raw exception message (admin-only visibility in API) |
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
-| triggered_by         | ENUM        | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
+| triggered_by         | VARCHAR(20) | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
 | cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "...", "committed_at": "..."}` for git-based fetchers). Written when the final run status is `success` or `partial`; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
@@ -1442,7 +1441,7 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Inherited from AuditEventMixin     |
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier                 |
-| event_type           | ENUM        | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
+| event_type           | VARCHAR(50) | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
 | user_id              | UUID        | FK(user.id), nullable    | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; service validates presence |
 | old_value            | TEXT        | nullable                 | Previous value (e.g., old schedule expression) |
 | new_value            | TEXT        | nullable                 | New value (e.g., new schedule expression) |
@@ -1463,7 +1462,7 @@ to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 | request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
 | package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
 | codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
-| state              | ENUM         | NOT NULL, DEFAULT open   | SubmissionRequestState (see below)       |
+| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | SubmissionRequestState (see below)       |
 | author             | VARCHAR(64)  | nullable                 | IBS username who created the request     |
 | incident_number    | INTEGER      | nullable                 | Populated when state becomes `accepted`  |
 | superseded_by      | INTEGER      | nullable                 | Request number of the superseding request |
@@ -1485,7 +1484,7 @@ to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 | request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
 | package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
 | codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
-| state              | ENUM         | NOT NULL, DEFAULT open   | ReleaseRequestState (see below)          |
+| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | ReleaseRequestState (see below)          |
 | incident_number    | INTEGER      | NOT NULL                 | Maintenance incident number              |
 | created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
 | updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
@@ -1535,12 +1534,15 @@ TBD — will be defined based on query patterns during implementation.
   replaced via delete-and-reinsert during sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
   group membership changes)
-- ENUM types follow a hybrid approach: stable, closed value sets (e.g.,
-  `TicketStatus`, `CVESourceFetchStatus`) use PostgreSQL ENUM types
-  (adding a value requires a migration). Evolving value sets (e.g.,
-  `CVESourceType`, `CVEExternalIdentifierSource`) use VARCHAR columns
-  validated by Python Enums in `app/core/enums.py` (adding a value
-  requires only a code change)
+- Sentinel does not use PostgreSQL ENUM types. All enumerated columns
+  use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
+  DeliveryStatus, CveState, Role, FetcherRunStatus,
+  SubmissionRequestState, ReleaseRequestState) are protected by CHECK
+  constraints — see `docs/conventions.md` (Enum Storage Strategy) for
+  the classification criterion, naming convention, and implementation
+  patterns. Classification enums (audit event types, source types,
+  informational labels) are validated exclusively by Python StrEnum in
+  `app/core/enums.py`
 - All timestamp columns use `TIMESTAMPTZ` (timestamp with time zone), which
   normalizes values to UTC internally. See `docs/conventions.md` (Timestamps
   & Timezones) for the full timezone policy

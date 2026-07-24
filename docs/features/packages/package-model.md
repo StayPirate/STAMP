@@ -242,10 +242,10 @@ by the system based on IBS SR/RR tracking data.
 |--------|------|-------------|-------------|
 | `id` | UUID | PK | Internal identifier |
 | `ticket_package_id` | UUID | FK(ticket_package.id), NOT NULL | Parent package record |
-| `workflow_type` | ENUM | NOT NULL | `ibs` or `git` |
+| `workflow_type` | VARCHAR(20) | NOT NULL | `ibs` or `git` |
 | `reference` | VARCHAR(255) | NOT NULL | Track identifier: IBS codestream name or git branch name |
-| `status` | PackageStatus | NOT NULL, DEFAULT ANALYSIS | Affectedness status |
-| `delivery_status` | DeliveryStatus | NOT NULL, DEFAULT PENDING | Delivery pipeline status |
+| `status` | VARCHAR(20) | NOT NULL, DEFAULT ANALYSIS | Affectedness status |
+| `delivery_status` | VARCHAR(20) | NOT NULL, DEFAULT PENDING | Delivery pipeline status |
 | `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
 | `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |

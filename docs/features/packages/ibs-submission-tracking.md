@@ -142,7 +142,7 @@ to Sentinel.
 | request_number     | INTEGER      | UNIQUE, NOT NULL     | IBS request number (from payload `number`) |
 | package_name       | VARCHAR(255) | NOT NULL             | Target package (from payload `actions[0].targetpackage`) |
 | codestream_name    | VARCHAR(255) | NOT NULL             | Target codestream (from payload `actions[0].target_releaseproject`) |
-| state              | ENUM         | NOT NULL, DEFAULT open | See SubmissionRequestState below        |
+| state              | VARCHAR(20)  | NOT NULL, DEFAULT open | See SubmissionRequestState below        |
 | author             | VARCHAR(64)  |                      | IBS username who created the request (from payload `author`) |
 | incident_number    | INTEGER      | nullable             | Populated when state becomes `accepted` (extracted from `actions[0].targetproject` which becomes `SUSE:Maintenance:XXXXX` after acceptance) |
 | superseded_by      | INTEGER      | nullable             | Request number of the superseding request (from payload `superseded_by`) |
@@ -193,7 +193,7 @@ Sentinel.
 | request_number     | INTEGER      | UNIQUE, NOT NULL     | IBS request number (from payload `number`) |
 | package_name       | VARCHAR(255) | NOT NULL             | Target package (from payload `actions[0].targetpackage`) |
 | codestream_name    | VARCHAR(255) | NOT NULL             | Target codestream (from payload `actions[0].targetproject`) |
-| state              | ENUM         | NOT NULL, DEFAULT open | See ReleaseRequestState below           |
+| state              | VARCHAR(20)  | NOT NULL, DEFAULT open | See ReleaseRequestState below           |
 | incident_number    | INTEGER      | NOT NULL             | Extracted from `actions[0].sourceproject` (e.g., `SUSE:Maintenance:12345` -> `12345`) |
 | created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp                |
 | updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp                  |

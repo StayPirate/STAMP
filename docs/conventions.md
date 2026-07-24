@@ -355,6 +355,66 @@ it for local development. Variables excluded:
   Tests) for the corresponding test convention (why sync entry-point
   tests must be `def`, not `async def`).
 
+### Enum Storage Strategy
+
+Sentinel does not use PostgreSQL ENUM types (`CREATE TYPE ... AS ENUM`).
+All enumerated columns use `VARCHAR(N)` with one of two validation
+strategies:
+
+| Category | Validation | Adding a value |
+|----------|------------|----------------|
+| **State-machine** | `VARCHAR(N)` + `CHECK` constraint | Alembic migration (reversible) |
+| **Classification** | `VARCHAR(N)` + Python `StrEnum` in `app/core/enums.py` | Code change only |
+
+**Classification criterion**: a column uses a CHECK constraint if and
+only if (a) the value is part of a state machine whose transitions are
+managed by application code, or (b) the value has direct security
+implications. All other enumerated columns (classifications, labels,
+audit event types, source identifiers) use Python Enum validation only.
+
+All Python Enums for enumerated columns — both categories — are defined
+in `app/core/enums.py` as `StrEnum` subclasses. Category A enums are
+additionally protected by a CHECK constraint at the database level.
+
+All schema tables — in `docs/data-model.md` and in feature
+specifications — use `VARCHAR(N)` as the column type for enumerated
+columns. The enum name and valid values are documented in the column
+description or in a dedicated enum section.
+
+**CHECK constraint naming**: `chk_{table}_{column}_valid`.
+
+**Implementation patterns**:
+
+```python
+# Category A — State-machine (VARCHAR + CHECK)
+class TicketStatus(StrEnum):
+    NEW = "New"
+    ANALYSIS = "Analysis"
+    ...
+
+status: Mapped[str] = mapped_column(String(20), nullable=False, default=TicketStatus.NEW)
+
+__table_args__ = (
+    CheckConstraint(
+        status.in_([e.value for e in TicketStatus]),
+        name="chk_ticket_status_valid",
+    ),
+)
+
+
+# Category B — Classification (VARCHAR + Python Enum only)
+class CVESourceType(StrEnum):
+    NVD = "nvd"
+    MITRE = "mitre"
+    ...
+
+source: Mapped[str] = mapped_column(String(100), nullable=False)
+# Validation in service layer: CVESourceType(value) raises ValueError if invalid
+```
+
+See `docs/data-model.md` (Notes) for the classification of every enum
+in the schema.
+
 ### Pydantic Conventions
 
 - Separate schemas for Create, Update, and Response
