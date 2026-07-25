@@ -57,18 +57,6 @@ This matches the `ticket_mutations`, `package_service`, and
 `user_service` pattern — the module applies mutations and creates audit
 events, but the transaction boundary is the caller's decision.
 
-**Exception — flattening operations**: `mark_as_duplicate` has a flattening
-phase that updates other tickets' `duplicate_of_id`. The flattening is
-executed by a dedicated service function `execute_duplicate_flattening`
-which accepts a `db_session_factory` and opens/commits independent
-sessions internally. This is the only function in the module that
-commits transactions — it is an explicit, limited exception to the
-"module does not commit" rule, justified by the requirement for
-independent per-ticket transactions (see `tickets.md` and
-`ticket_mutations.md` single-ticket scope rule). The caller invokes
-`execute_duplicate_flattening` after committing the primary transaction.
-See `mark_as_duplicate` and `execute_duplicate_flattening` for details.
-
 ### Acting user convention
 
 All mutation operations accept an `acting_user_id: UUID | None`
@@ -94,7 +82,7 @@ revoking explicit access.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `recalculate_cvss_chain()`, `auto_assign_actor()`, `ensure_ticket_operable()`, and `resolve_canonical_target()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
+| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `recalculate_cvss_chain()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
 | `services/package_service.py` | No direct dependency. Both modules independently depend on `ticket_mutations` for status evaluation |
 | `services/cvss.py` | No direct dependency. CVSS resolution is triggered indirectly via `reconcile_ticket_status()` |
 
@@ -394,7 +382,9 @@ auto-assign).
 
 ### mark_as_duplicate
 
-Marks a ticket as a duplicate of another ticket.
+Marks a ticket as a duplicate of another non-Duplicated ticket. If
+other tickets currently point to the source, they are atomically
+repointed to the target within the same transaction.
 
 ```python
 async def mark_as_duplicate(
@@ -403,124 +393,83 @@ async def mark_as_duplicate(
     ticket_id: UUID,
     duplicate_of_id: UUID,
     acting_user_id: UUID | None,
-) -> MarkAsDuplicateResult:
+) -> Ticket:
 ```
-
-Returns a `MarkAsDuplicateResult` containing the updated ticket and
-a list of ticket IDs requiring flattening updates. The caller passes
-`flattening_ticket_ids` to `execute_duplicate_flattening` after committing
-the primary transaction (see below).
-
-```python
-@dataclass
-class MarkAsDuplicateResult:
-    ticket: Ticket
-    flattening_ticket_ids: list[UUID]
-```
-
-This is a service-layer-only dataclass defined in
-`backend/app/services/ticket_service.py` (not a Pydantic schema or
-database model).
 
 **Preconditions**:
 
-- Ticket must be operable (`ensure_ticket_operable`) — rejects
-  Ignored and Duplicated tickets
-- Target ticket must exist (else
-  `TicketNotFoundError`)
+- Source ticket must exist (else `TicketNotFoundError`)
+- Target ticket must exist (else `TicketNotFoundError`)
 - Target ticket must be accessible to the acting user (API-layer scope
-  check). If the target ticket is confidential and the acting user's
-  scope is `non_confidential`, the endpoint returns `404
-  TicketNotFoundError` (to avoid confirming the existence of the
-  confidential ticket). This is an API-layer constraint — the service
-  function itself does not enforce scope filtering
-- Target is resolved through `ticket_mutations.resolve_canonical_target()`
-  to follow the duplicate chain to its end (may raise
-  `DuplicateChainDepthError` if chain exceeds 50 hops)
-- Circular reference check: resolved target must not be the ticket itself
-  (else `SelfDuplicateError`)
+  check; confidential target without access → 404)
+- Source ticket must be operable (`ensure_ticket_operable`)
+- Target must not be in Duplicated status (else
+  `DuplicateTargetIsDuplicatedError`)
+- Source must not equal target (else `SelfDuplicateError`)
 
 **Behavioral steps**:
 
-1. Acquire `FOR UPDATE` on the Ticket row (single ticket scope)
-2. Call `ensure_ticket_operable(ticket)`
-3. Resolve canonical target via
-   `ticket_mutations.resolve_canonical_target()`
-4. Verify no circular reference (else `SelfDuplicateError`)
-5. `auto_assign_actor(ticket, acting_user_id)`
-6. Set `ticket.status = Duplicated`, `ticket.duplicate_of_id = resolved_target`
-7. Create `TicketAuditEvent` (`duplicate_set`)
-8. Query tickets where `duplicate_of_id` = this ticket — return their
-    IDs as `flattening_ticket_ids`
-9. Return `MarkAsDuplicateResult(ticket=ticket, flattening_ticket_ids=...)`
+1. **Phase 1 — lock and validate roots**:
+   a. Determine lock order: `first = min(source_id, target_id)`,
+      `second = max(source_id, target_id)`
+   b. `SELECT ... WHERE id = first FOR UPDATE` — lock first root
+   c. Validate the first root immediately (operable if source,
+      non-Duplicated if target)
+   d. `SELECT ... WHERE id = second FOR UPDATE` — lock second root
+   e. Validate the second root immediately
+   f. Validate source != target (else `SelfDuplicateError`)
+2. **Phase 2 — lock dependents**:
+   `SELECT ... WHERE duplicate_of_id = source_id ORDER BY id FOR UPDATE NOWAIT`
+   On SQLSTATE `55P03`: rollback and raise
+   `DuplicateConcurrentModificationError`
+3. **Mutations** (only reached if all locks acquired):
+   a. `auto_assign_actor(source, acting_user_id)`
+   b. Set `source.status = Duplicated`,
+      `source.duplicate_of_id = target_id`
+   c. Create `TicketAuditEvent` (`status_change`,
+      old_value = source's current status after auto_assign,
+      new_value = `Duplicated`, user_id = acting_user_id)
+   d. Create `TicketAuditEvent` (`duplicate_set`,
+      old_value = NULL, new_value = target's `SNTL-{n}`,
+      user_id = acting_user_id)
+   e. For each dependent ticket:
+      - Set `dependent.duplicate_of_id = target_id`
+      - Create `TicketAuditEvent` (`duplicate_target_changed`,
+        old_value = source's `SNTL-{n}`,
+        new_value = target's `SNTL-{n}`,
+        user_id = NULL,
+        detail = `{"triggered_by_ticket": "SNTL-{n}"}` where the
+        value is the source ticket's identifier)
+      - Dependents are repointed as a system action (`user_id = NULL`);
+        no confidentiality access check is applied to dependent tickets
+4. Return updated source ticket
 
-**Flattening orchestration** — handled by `execute_duplicate_flattening`
-(see below). The caller's only responsibility is to invoke
-`execute_duplicate_flattening(db_session_factory, flattening_ticket_ids,
-canonical_target_id, acting_user_id)` after committing the primary
-transaction. The endpoint handler pattern is:
+**Post-operation**: no post-commit work. Everything is atomic.
 
-```python
-result = await mark_as_duplicate(db, ticket_id=..., ...)
-await db.commit()
-await execute_duplicate_flattening(
-    session_factory, result.flattening_ticket_ids, resolved_target, acting_user_id
-)
-return result.ticket
-```
+**Locking**: source + target (blocking, ordered) + dependents (NOWAIT,
+ordered). All within a single transaction.
 
-**Locking**: FOR UPDATE on the source Ticket row only. Flattening
-operations each acquire their own FOR UPDATE in independent transactions
-managed by `execute_duplicate_flattening`.
+**Constraint**: `mark_as_duplicate` MUST execute in a transaction
+holding no pre-existing Ticket row locks. This ensures Phase 1 is
+always the first lock acquisition on Ticket rows in the transaction,
+preventing ordering inversions with locks acquired by prior operations
+in the same session.
 
-**reconcile_ticket_status**: NOT called — this is a direct transition
-into the manual zone (Duplicated).
+**reconcile_ticket_status**: NOT called — direct transition into
+manual zone.
 
-**Audit events**: `duplicate_set`. Flattening produces
-`duplicate_target_changed` events (in separate transactions managed by
-`execute_duplicate_flattening`).
+**Audit events**:
+- `status_change` (on source — records the `{current} → Duplicated`
+  transition)
+- `duplicate_set` (on source — records the link creation)
+- One `duplicate_target_changed` per dependent (system action)
+- Plus any events produced by `auto_assign_actor` (e.g.,
+  `status_change` for `New → Analysis`, `assignment`) — see
+  `ticket-mutations.md`
 
-### execute_duplicate_flattening
-
-Executes the flattening phase of `mark_as_duplicate`: updates
-`duplicate_of_id` for all tickets that pointed to the just-duplicated
-ticket.
-
-```python
-async def execute_duplicate_flattening(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    *,
-    flattening_ticket_ids: list[UUID],
-    canonical_target_id: UUID,
-    acting_user_id: UUID | None,
-) -> None:
-```
-
-This function opens and commits independent database sessions — it is
-the sole exception to the "module does not commit" invariant (see
-Transaction ownership above).
-
-**Behavioral steps** (for each ticket ID in `flattening_ticket_ids`):
-
-1. Open a new session via `db_session_factory()`
-2. Acquire `FOR UPDATE` on the flattening ticket
-3. Verify the ticket is still in Duplicated status and still points to
-   the original ticket. If reverted concurrently, the function logs an
-   informational message (ticket ID + observed state) and skips to the
-   next ticket
-4. Set `duplicate_of_id = canonical_target_id`
-5. Create `TicketAuditEvent` (`duplicate_target_changed`)
-6. Commit the session
-
-**Best-effort semantics**: if an individual flattening step fails (e.g.,
-database error on one ticket), the function logs the failure and
-continues with the remaining tickets. This matches the "flattening is not
-a correctness requirement" invariant from `tickets.md` — the canonical
-resolver handles unflattened chains.
-
-**Locking**: each flattening ticket is locked independently in its own
-transaction. No multi-ticket locks are held simultaneously (as required
-by `ticket_mutations.md` single-ticket scope rule).
+**Atomicity guarantee**: if any step fails (validation, NOWAIT
+conflict, or database error), the entire transaction rolls back. No
+mutations or audit events persist.
 
 ## Ticket Reactivation
 
@@ -758,8 +707,8 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `AssigneeInactiveError` | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive (for assignment) |
 | `InactiveUserError` † | 409 | `USER_INACTIVE` | Target user is inactive (for access grant) |
 | `SelfDuplicateError` | 400 | `TICKET_SELF_DUPLICATE` | Ticket cannot be marked as duplicate of itself |
-| `DuplicateCycleDetectedError` † | 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
-| `DuplicateChainDepthError` † | 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Duplicate chain exceeds maximum allowed depth |
+| `DuplicateTargetIsDuplicatedError` | 409 | `TICKET_DUPLICATE_TARGET_DUPLICATED` | Target ticket is already in Duplicated status |
+| `DuplicateConcurrentModificationError` | 409 | `TICKET_DUPLICATE_CONCURRENT_MODIFICATION` | NOWAIT lock on a dependent failed (concurrent operation on the duplicate group) |
 | `SeverityDerivedError` † | 409 | `TICKET_SEVERITY_DERIVED` | Cannot manually set severity when it is auto-derived |
 | `TicketNotConfidentialError` | 409 | `TICKET_NOT_CONFIDENTIAL` | Operation requires a confidential ticket |
 | `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | Referenced user does not exist |
@@ -776,26 +725,24 @@ ticket_mutations (infrastructure)
     ├── reconcile_ticket_status()
     ├── recalculate_cvss_chain()
     ├── auto_assign_actor()
-    ├── ensure_ticket_operable()
-    └── resolve_canonical_target()
+    └── ensure_ticket_operable()
          ▲                ▲
          │                │
   ticket_service    package_service
   (non-gate ops)    (package ops)
 ```
 
-| ticket_service function | ensure_ticket_operable | reconcile_ticket_status | recalculate_cvss_chain | auto_assign_actor | resolve_canonical_target |
-|------------------------|:----------------------:|:----------------------:|:---------------------:|:---------------------:|:------------------------:|
-| create_ticket          | —                      | —                      | —                     | —                     | —                        |
-| associate_cve          | ✓                      | (via chain)            | ✓                     | ✓                     | —                        |
-| assign_ticket          | ✓                      | ✓                      | —                     | —                     | —                        |
-| ignore_ticket          | ✓                      | —                      | —                     | ✓                     | —                        |
-| mark_as_duplicate      | ✓                      | —                      | —                     | ✓                     | ✓                        |
-| execute_duplicate_flattening | —                   | —                      | —                     | —                     | —                        |
-| set_confidentiality    | ✓                      | —                      | —                     | —                     | —                        |
-| grant_access           | ✓                      | —                      | —                     | —                     | —                        |
-| revoke_access          | ✓                      | —                      | —                     | —                     | —                        |
-| list_access_grants     | —                      | —                      | —                     | —                     | —                        |
+| ticket_service function | ensure_ticket_operable | reconcile_ticket_status | recalculate_cvss_chain | auto_assign_actor |
+|------------------------|:----------------------:|:----------------------:|:---------------------:|:---------------------:|
+| create_ticket          | —                      | —                      | —                     | —                     |
+| associate_cve          | ✓                      | (via chain)            | ✓                     | ✓                     |
+| assign_ticket          | ✓                      | ✓                      | —                     | —                     |
+| ignore_ticket          | ✓                      | —                      | —                     | ✓                     |
+| mark_as_duplicate      | ✓                      | —                      | —                     | ✓                     |
+| set_confidentiality    | ✓                      | —                      | —                     | —                     |
+| grant_access           | ✓                      | —                      | —                     | —                     |
+| revoke_access          | ✓                      | —                      | —                     | —                     |
+| list_access_grants     | —                      | —                      | —                     | —                     |
 
 ## Architectural Test Requirement
 
@@ -826,15 +773,24 @@ behavior of `ticket_service` operations:
    future code paths that set `assignee_id` without performing the
    `New → Analysis` transition.
 
-4. **Mark-as-duplicate flattening with concurrent revert**: mark ticket B as
-   duplicate of C (with ticket A pointing to B). Verify flattening updates
-   A to point to C. Then revert A → verify A is no longer Duplicated
+4. **Mark-as-duplicate with dependents (atomic repoint)**: mark ticket B as
+   duplicate of C, where tickets A1 and A2 currently point to B. Verify:
+   (a) A1 and A2 are atomically repointed to C, (b)
+   `duplicate_target_changed` events are created for A1 and A2, (c)
+   `duplicate_set` and `status_change` events are created for B
 
-5. **CVE uniqueness race condition**: simulate concurrent `create_ticket`
+5. **Concurrent modification conflict**: hold a lock on a dependent
+   ticket (simulating a concurrent revert). Call `mark_as_duplicate`
+   on the dependent's target. Verify: (a) the operation raises
+   `DuplicateConcurrentModificationError`, (b) the transaction is
+   rolled back (no mutations, no audit events persist), (c) retrying
+   after the lock is released succeeds normally
+
+6. **CVE uniqueness race condition**: simulate concurrent `create_ticket`
    calls for the same CVE → verify one succeeds and the other raises
    `TicketCVEConflictError`
 
-6. **grant_access concurrent requests**: simulate concurrent
+7. **grant_access concurrent requests**: simulate concurrent
    `grant_access` calls for the same user/ticket → verify one creates
    the grant and the other returns idempotent success
 

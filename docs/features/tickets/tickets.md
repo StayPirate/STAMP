@@ -501,37 +501,11 @@ the helper's signature and behavior.
 
 #### Terminology
 
-- **Canonical target**: the non-Duplicated ticket at the end of the
-  `duplicate_of_id` resolution chain. This is the technically precise
-  term used throughout the resolver logic, flattening operations, and
-  concurrency sections.
-- **Original ticket**: the user-facing synonym for "canonical target."
-  Used in UI copy (e.g., "See the original ticket: SNTL-42"), audit
-  event descriptions, and high-level prose where the technical
-  resolution mechanism is not relevant.
-
-#### Canonical Target Resolver
-
-A centralized public function `resolve_canonical_target` in the
-`ticket_mutations` module follows the `duplicate_of_id` chain to
-find the non-Duplicated canonical target. See
-[ticket-mutations.md](ticket-mutations.md#resolve_canonical_target)
-for the full function contract (parameters, hop limit, cycle detection,
-error codes).
-
-All code paths that need the canonical target MUST use this function:
-- `mark-as-duplicate` operation (pre-write validation)
-- API response serialization (see
-  [API Response Behavior](#api-response-behavior))
-- Any future logic that reads `duplicate_of_id` for decision-making
-
-Direct reads of `duplicate_of_id` without resolution are only permitted
-for:
-- Audit event recording (`old_value`/`new_value` store the `SNTL-{n}`
-  identifier corresponding to the DB value at the time of the event)
-- Database-level queries that need the raw FK (e.g., finding all tickets
-  whose raw `duplicate_of_id` points to a specific ticket, for flattening
-  purposes)
+- **Target**: the non-Duplicated ticket referenced by
+  `duplicate_of_id`. The system guarantees this ticket is never in
+  Duplicated status (see Invariant below).
+- **Original ticket**: the user-facing synonym for "target." Used in
+  UI copy (e.g., "See the original ticket: SNTL-42").
 
 #### Mark-as-Duplicate Operation
 
@@ -545,40 +519,23 @@ Steps:
 
 1. Verify the ticket is operable (`ensure_ticket_operable` in the
    service layer — rejects Ignored and Duplicated).
-2. Resolve the requested target to its canonical target using the
-   resolver.
-3. If the canonical target equals the ticket being modified, reject with
-   400 Bad Request ("a ticket cannot be a duplicate of itself").
-4. Set `duplicate_of_id = canonical_target_id` and
-   `status = Duplicated`.
-5. Flattening: all tickets whose `duplicate_of_id` points to the
-   just-duplicated ticket are updated to point to the canonical target
-   (synchronous, best-effort per-item in independent transactions).
-6. If the flattening is interrupted or individual steps fail, the system
-   is NOT corrupted — subsequent reads resolve the chain through the
-   canonical resolver.
-
-The flattening is synchronous (completes before the API response returns)
-because chains longer than two tickets are almost nonexistent, making
-the overhead negligible (1–2 extra DB operations in the worst case).
+2. Verify the target ticket is not in Duplicated status (else 409
+   `TICKET_DUPLICATE_TARGET_DUPLICATED`).
+3. Verify the target is not the source ticket (else 400
+   `TICKET_SELF_DUPLICATE`).
+4. Set `duplicate_of_id = target_id` and `status = Duplicated`.
+5. Atomically repoint all tickets whose `duplicate_of_id` points to
+   the source ticket to point to the target instead. One
+   `duplicate_target_changed` audit event is created per repointed
+   ticket.
+6. If a dependent ticket is locked by a concurrent operation, the
+   entire transaction rolls back (409
+   `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`). The client should
+   re-read source and target state before retrying.
 
 See [ticket-service.md](ticket-service.md#mark_as_duplicate) for the
-full service-layer contract (locking, auto-assignment, audit events,
-flattening transaction isolation).
-
-#### Best-Effort Flattening
-
-The flattening is an optimization that reduces hops for future resolutions.
-It is NOT a correctness requirement. The system is correct with or
-without flattening completion because:
-
-- All reads use the canonical resolver.
-- Duplicated tickets are immutable (API returns 409 on modification
-  attempts), so intermediate links are stable.
-- The only operation that can alter an intermediate link is
-  `revert-duplicate` on that specific ticket, which clears
-  `duplicate_of_id` entirely (correct behavior regardless of chain
-  state).
+full service-layer contract (two-phase locking, auto-assignment, audit
+events, atomicity guarantee).
 
 #### Revert-Duplicate Operation
 
@@ -598,99 +555,26 @@ When reverting a ticket from Duplicated status
 See [ticket-mutations.md](ticket-mutations.md#revert_duplicate) for the
 full function contract.
 
-The revert operation does NOT need to know or care about the canonical
-target — it simply removes the ticket from the duplicate chain.
-
-#### Revert of an Intermediate Ticket
-
-Scenario: `A → B → C` (A points to B, B points to C, flattening was
-interrupted so A was not flattened).
-
-If a VA reverts B (removes B from Duplicated status):
-- B.`duplicate_of_id` is cleared, `_reenter_gate_zone` determines B's
-  new status based on current gate conditions.
-- A still points to B, but B is no longer Duplicated.
-- Therefore A.`duplicate_of_id` resolves to B directly (B is the
-  canonical target now).
-- This is correct: A is a duplicate of B, which is now a live ticket
-  again.
-- No flattening or repair needed on A.
+The revert is non-retroactive: if other tickets were repointed away
+from this ticket during a prior `mark_as_duplicate` operation, they are
+not affected by this revert — they remain pointing to their current
+target.
 
 #### API Response Behavior
 
-Wherever the `duplicate_of_id` field is included in an API response,
-its value MUST be the resolved canonical target (the `SNTL-{n}`
-identifier of the non-Duplicated ticket at the end of the chain), not
-the raw DB value. The API does NOT expose the raw DB value in a separate
-field.
+`duplicate_of_id` always points to a non-Duplicated ticket. The
+API field `duplicate_of` is the `SNTL-{n}` format of the stored
+UUID — a direct conversion with no resolution step. The raw
+`duplicate_of_id` UUID is not exposed in the API.
 
-This rule is endpoint-agnostic: it applies to any response schema that
-includes `duplicate_of_id`. This ensures:
+#### Invariant
 
-- UI links always point to the correct non-Duplicated ticket (the
-  "original ticket").
-- Third-party scripts and integrations can trust that following
-  `duplicate_of_id` always leads to a non-Duplicated ticket — no
-  client-side chain resolution needed.
-- The transient state (interrupted flattening) is invisible to API
-  consumers.
-
-The raw value remains accessible through the audit history
-(`duplicate_set` and `duplicate_target_changed` events record what was
-written to the DB).
-
-#### Cycle Prevention
-
-Under normal sequential operations, cycles cannot form because:
-1. `mark-as-duplicate` always resolves the target to a canonical
-   non-Duplicated ticket before writing.
-2. A ticket in Duplicated status cannot be the target of
-   mark-as-duplicate (it would be resolved through to its canonical).
-3. A non-Duplicated ticket being marked as duplicate has its target
-   resolved — if the resolution leads back to itself, the operation is
-   rejected.
-
-Under concurrent operations (two users simultaneously marking tickets
-that reference each other), a cycle could theoretically form under READ
-COMMITTED isolation. This is accepted as a residual risk because:
-- Duplicate operations are rare.
-- Concurrent conflicting duplicate operations on the same chain are
-  essentially zero probability.
-- The cycle detection in the resolver catches this at read time with a
-  clear integrity error (`TICKET_DUPLICATE_CYCLE_DETECTED`).
-- Resolution requires manual admin intervention.
-- Adding `FOR UPDATE` on the target ticket would lock two tickets in the
-  same transaction, contradicting the single-ticket-scope rule — a
-  disproportionate cost for an essentially impossible scenario.
-
-#### Cycle Resolution
-
-When `TICKET_DUPLICATE_CYCLE_DETECTED` is encountered, a VA or Admin
-must invoke `POST /api/v1/tickets/{ticket_id}/revert-duplicate` on at
-least one ticket in the cycle to break it.
-
-The `revert-duplicate` operation is designed to work correctly in the
-presence of cycles — it clears `duplicate_of_id` unconditionally
-regardless of chain state. No chain resolution is performed during
-revert, so the cycle does not interfere with the operation.
-
-After breaking the cycle, the reverted ticket returns to its
-pre-duplicate status (determined by `_reenter_gate_zone` based on
-current gate conditions) and can be re-evaluated normally.
-
-#### Correctness Guarantee
-
-`duplicate_of_id` SHOULD reference the canonical non-Duplicated ticket
-after normal write operations complete successfully. A link to a
-Duplicated ticket is a valid transient state (e.g., after an interrupted
-flattening) and MUST be handled gracefully by the canonical resolver.
-Correctness MUST NOT depend on immediate flatness of the link. Multiple
-tickets may reference the same canonical target.
-
-This operation modifies the `Ticket` row and calls
-`reconcile_ticket_status`. It MUST acquire `FOR UPDATE` on the `Ticket`
-row before any modification (see
-[Concurrency Control](#concurrency-control)).
+`duplicate_of_id` always points to a non-Duplicated ticket. This is
+enforced by `mark_as_duplicate`, which locks the target and verifies
+its status before writing. The CHECK constraint
+`chk_ticket_duplicate_status_coherence` enforces the bidirectional
+implication between status and FK at the database level. Multiple
+tickets may reference the same target.
 
 ### Status Categories
 
@@ -970,26 +854,24 @@ return OR(
 | `require_accessible_cve` | `Ticket.id` (via JOIN from CVE) | Single-CVE access guard |
 
 **Accepted risk — `duplicate_of_id` and confidential targets**: A
-Duplicated ticket that is non-confidential may have a `duplicate_of_id`
-pointing (directly or through a chain) to a confidential ticket. The
-`resolve_canonical_target` function resolves this chain without
-confidentiality checks (it operates at the service layer), and the
-resolved canonical target identifier (`SNTL-{n}`) appears in public API
-responses. This reveals the *existence* of the confidential target ticket
-but not its content (the detail endpoint returns 404 for unauthorized
+Duplicated ticket that is non-confidential may have a
+`duplicate_of_id` pointing to a confidential ticket. The target
+identifier (`SNTL-{n}`) appears in public API responses. This
+reveals the *existence* of the confidential target ticket but not
+its content (the detail endpoint returns 404 for unauthorized
 callers, indistinguishable from a non-existent ticket). This is an
-accepted risk because: (a) only the identifier is exposed — no title,
-CVE, severity, or package data leaks; (b) creating the duplicate link
-requires `triage_ticket` capability — users with this capability via
-the `vulnerability_analyst` role already have scope `all`;
-`restricted_analyst` users have `non_confidential` scope but only reach
-this code path for non-confidential source tickets; (c) the reverse
-scenario (target becomes
-confidential after the link is created) is rare and the leak is limited
-to existence inference; (d) implementing bidirectional cascading
-confidentiality adds significant complexity (reverse chain traversal,
-audit events, revert semantics) disproportionate to the severity of the
-information leak.
+accepted risk because: (a) only the identifier is exposed — no
+title, CVE, severity, or package data leaks; (b) creating the
+duplicate link requires `triage_ticket` capability — users with
+this capability via the `vulnerability_analyst` role already have
+scope `all`; `restricted_analyst` users have `non_confidential`
+scope but only reach this code path for non-confidential source
+tickets; (c) the reverse scenario (target becomes confidential
+after the link is created) is rare and the leak is limited to
+existence inference; (d) implementing bidirectional cascading
+confidentiality adds significant complexity (reverse traversal,
+audit events, revert semantics) disproportionate to the severity
+of the information leak.
 
 ### Audit Trail
 
@@ -1169,7 +1051,7 @@ views without the full package tree.
 | `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no override. `"none"` = CVSS score 0.0 (informational) |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
-| `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
+| `duplicate_of` | string \| null | Duplicate target identifier (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
 | `package_names` | string[] | Flat list of affected package names (e.g., `["curl", "openssl-3"]`) |
 | `created_at` | datetime | Creation timestamp (UTC) |
@@ -1188,7 +1070,7 @@ TicketSummary with the full package tree and expanded CVE data.
 | `severity` | string \| null | Resolved severity (CVSS-derived → override fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no override. `"none"` = CVSS score 0.0 (informational) |
 | `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
-| `duplicate_of` | string \| null | Canonical duplicate target identifier (`SNTL-{n}`), or `null` |
+| `duplicate_of` | string \| null | Duplicate target identifier (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
 | `packages` | PackageDetail[] | Full package/track/product tree with bugowner data |
 | `created_at` | datetime | Creation timestamp (UTC) |
@@ -1197,10 +1079,10 @@ TicketSummary with the full package tree and expanded CVE data.
 Note: TicketDetail does not include `package_names` — the same
 information is available from `packages[].package_name`.
 
-Note: the API field `duplicate_of` exposes the resolved canonical target
-as a human-readable `SNTL-{n}` string (after chain resolution). This
-corresponds to the database column `duplicate_of_id` (UUID FK), but the
-API performs resolution and format conversion before serialization.
+Note: the API field `duplicate_of` is the `SNTL-{n}` format of
+the database column `duplicate_of_id` (UUID FK). No resolution is
+needed — the stored UUID always references a non-Duplicated
+ticket.
 
 #### Endpoint → Schema Mapping
 
@@ -1486,11 +1368,10 @@ POST /api/v1/tickets/{ticket_id}/duplicate
 **`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
-Marks a ticket as a duplicate of another ticket. The target is resolved
-following the chain if it is itself Duplicated. Existing tickets pointing
-to this ticket are flattening-updated to the resolved target. See
-[Duplicate Handling](#duplicate-handling) for chain resolution, flattening
-updates, and invariants.
+Marks a ticket as a duplicate of another non-Duplicated ticket. If other
+tickets currently point to the source, they are atomically repointed
+to the target. See [Duplicate Handling](#duplicate-handling) for the
+invariant and error conditions.
 
 Request body:
 
@@ -1510,10 +1391,10 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `TICKET_SELF_DUPLICATE` | Resolved target is the same ticket (self-reference after chain resolution) |
+| 400 | `TICKET_SELF_DUPLICATE` | Source and target are the same ticket |
 | 404 | `TICKET_NOT_FOUND` | Target ticket (`duplicate_of_id`) does not exist |
-| 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
-| 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Chain depth exceeded (data corruption) |
+| 409 | `TICKET_DUPLICATE_TARGET_DUPLICATED` | Target ticket is itself Duplicated (use its target instead) |
+| 409 | `TICKET_DUPLICATE_CONCURRENT_MODIFICATION` | A dependent is locked by a concurrent operation; retry |
 
 ### Reopen Ticket
 

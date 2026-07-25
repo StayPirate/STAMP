@@ -1085,10 +1085,15 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | severity_override | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Ignored when `cve_id IS NOT NULL` (automatic severity from CVSS takes precedence). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
-| duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the canonical target ticket when status is Duplicated. May transiently reference a Duplicated ticket if a flattening was interrupted; the `resolve_canonical_target` function handles resolution at read time. Hop limit: 50 |
+| duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the target ticket when status is Duplicated. Always references a non-Duplicated ticket (enforced by the transactional locking protocol in `mark_as_duplicate`). See `docs/features/tickets/tickets.md` (Duplicate Handling) |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | When TRUE, access is restricted to authorized users only. See `docs/features/tickets/tickets.md` (Confidential Tickets) |
+
+**CHECK constraints**:
+
+- `chk_ticket_duplicate_status_coherence`: `(status = 'Duplicated' AND duplicate_of_id IS NOT NULL) OR (status != 'Duplicated' AND duplicate_of_id IS NULL)`
+- `chk_ticket_no_self_duplicate`: `duplicate_of_id <> id`
 
 
 **Deletion policy**: Tickets MUST NOT be deleted from the database. There is no soft-delete mechanism at the ticket level. Tickets that are no longer relevant are transitioned to Ignored or Duplicated status.
@@ -1214,7 +1219,7 @@ system action).
 | assignment                 | Ticket was assigned or reassigned                  |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
-| duplicate_target_changed   | Flattening update: the ticket's `duplicate_of_id` was re-pointed because its previous canonical target was itself marked as duplicate. `old_value` is the previous canonical target identifier (`SNTL-{n}`). `new_value` is the new canonical target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered the flattening. This event may be absent if flattening was interrupted (not an error). |
+| duplicate_target_changed   | Atomic repoint: the ticket's `duplicate_of_id` was updated because its previous target was marked as duplicate. `old_value` is the previous target identifier (`SNTL-{n}`). `new_value` is the new target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered this repoint. |
 | package_added              | Package added to the ticket (manual by VA or automatic via CVE ingestion / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
 | package_excluded           | Package directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the package name. `user_id` is the VA who performed the action, or NULL for system (orphan cleanup). `detail` carries `{"reason"}` for automatic exclusions, NULL for manual. Child records are not modified — they become effectively excluded via the hierarchy. |
 | package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |
@@ -1512,7 +1517,7 @@ records whose CVEs are mentioned in the request's diff.
 
 ## Indexes
 
-TBD — will be defined based on query patterns during implementation.
+- `ix_ticket_duplicate_of_id`: index on `Ticket.duplicate_of_id` where `duplicate_of_id IS NOT NULL` — used by `mark_as_duplicate` to find dependents of the source ticket
 
 ## Notes
 

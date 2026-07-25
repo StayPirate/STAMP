@@ -11,7 +11,7 @@ Architectural decisions pending resolution before implementation begins.
 | OP-4 | Anomaly Observer | Packages | Open |
 | OP-6 | Periodic Ticket Status Reconciliation | Tickets | Open |
 | OP-7 | Platform Status Monitoring | Platform | Open |
-| OP-8 | Simplify Duplicate Handling | Tickets | Open |
+| OP-8 | Simplify Duplicate Handling | Tickets | Resolved |
 | OP-11 | Ecosystem Prefix Mapping | Packages | Open |
 | OP-12 | Fetcher Metrics Granularity | Fetcher Infrastructure | Open |
 | OP-13 | CWE Accumulation | Fetcher Infrastructure | Open |
@@ -122,80 +122,6 @@ strategy (WARNING + optional webhook notification to ops channel), (c)
 whether to also emit a `TicketAuditEvent` for drift corrections (to
 distinguish admin-triggered reconciliation from bug-induced drift in
 the audit trail).
-
----
-
-### OP-8. Simplify Duplicate Handling — Eliminate Chains
-
-**Origin**: architectural simplification review (pre-implementation
-phase).
-
-**Context**: the current duplicate handling design in `tickets.md`
-supports chains of duplicates (A→B→C) with:
-
-- `resolve_canonical_target()` — a chain resolver with 50-hop limit and
-  cycle detection (`DuplicateChainDepthError`,
-  `TICKET_DUPLICATE_CYCLE_DETECTED`)
-- `execute_duplicate_flattening` — best-effort flattening that re-points
-  intermediate tickets when a target is itself marked as duplicate.
-  Requires independent transactions per ticket (separate
-  `db_session_factory`), making it the **only exception** to the "module
-  does not commit" invariant in `ticket-service.md`
-- `duplicate_target_changed` audit event type — created during
-   flattening
-- Cycle detection and resolution procedures (manual admin intervention)
-- API response serialization that resolves the chain before returning
-  `duplicate_of_id`
-
-The specification itself acknowledges: "chains longer than two tickets
-are almost nonexistent."
-
-**Proposed simplification**: require the duplicate target to be a
-non-Duplicated ticket at the time of the operation. If B is already in
-Duplicated status, `mark_as_duplicate(A, B)` is rejected with a
-validation error instructing the caller to use B's target instead.
-
-Under this model:
-
-- `mark_as_duplicate(ticket, target)` — validates `target.status !=
-  Duplicated`, sets `duplicate_of_id = target.id`, transitions to
-  Duplicated status
-- `revert_duplicate(ticket)` — clears `duplicate_of_id`, re-enters gate
-  zone
-- No chain resolution needed — `duplicate_of_id` always points directly
-  to a non-Duplicated ticket
-- No flattening needed — if B is later marked as duplicate of C, tickets
-  pointing to B now have a stale reference. Two options:
-  - **(a) Reject**: block `mark_as_duplicate(B, C)` if any ticket's
-    `duplicate_of_id` points to B. The VA must revert those tickets
-    first. Simplest, most explicit.
-  - **(b) Inline flattening**: re-point the (typically 0-1) tickets
-    pointing to B within the same transaction. No separate session
-    factory needed since the set is trivially small (single UPDATE).
-    Less restrictive than (a) but still eliminates chains.
-
-**What gets removed**:
-
-- `resolve_canonical_target()` function (50-hop resolver, cycle
-  detection)
-- `execute_duplicate_flattening` and its special transaction handling
-- `DuplicateChainDepthError` and `TICKET_DUPLICATE_CYCLE_DETECTED`
-  error codes
-- `duplicate_target_changed` audit event type
-- Cycle resolution documentation
-- API-level chain resolution in response serialization
-
-**What stays**:
-
-- `mark_as_duplicate` operation (with the simpler validation)
-- `revert_duplicate` operation (unchanged)
-- `duplicate_set` audit event type (records the raw operation)
-
-**Decision needed**: (a) whether to adopt option (a) (reject if
-dependents exist) or option (b) (inline re-point in same transaction),
-and (b) whether the edge case of "target becomes Duplicated after the
-operation" needs any handling beyond the stale-reference approach (API
-could detect and show a warning in the UI without breaking correctness).
 
 ---
 
@@ -548,6 +474,21 @@ trade-off or requires worker-side mitigation.
 ---
 
 ## Archive — Resolved
+
+### OP-8. Simplify Duplicate Handling — Eliminate Chains — RESOLVED (2026-07-25)
+
+**Resolution**: adopted corrected option (b) — inline atomic
+repoint. `mark_as_duplicate` locks source and target with blocking
+waits in UUID order, then locks dependents with `FOR UPDATE NOWAIT`.
+All dependents repointed atomically. Duplicated targets rejected
+with `TICKET_DUPLICATE_TARGET_DUPLICATED`. Concurrent conflicts
+produce `TICKET_DUPLICATE_CONCURRENT_MODIFICATION` (retryable).
+Resolver, flattening, cycle handling, and hop limit eliminated.
+Changes applied to all relevant specs. See
+`docs/drafts/op8-inline-atomic-repoint.md` for the full decision
+record.
+
+---
 
 ### OP-1. Enum Storage Strategy — RESOLVED (2026-07-24)
 

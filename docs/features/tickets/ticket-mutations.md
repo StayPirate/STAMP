@@ -311,11 +311,22 @@ from racing with gate operations on the same ticket.
 ### Single-ticket scope
 
 `ticket_mutations` functions operate on a single ticket per
-transaction. Code that must modify multiple tickets (e.g., the flattening
-update of `duplicate_of_id` when marking a ticket as duplicate) MUST
-NOT acquire `FOR UPDATE` on multiple ticket rows in the same
-transaction — process each ticket in an independent transaction to
-avoid deadlocks.
+transaction.
+
+**Exception — `mark_as_duplicate` (in `ticket_service`)**: this
+operation acquires `FOR UPDATE` on the source ticket, the target
+ticket, and all current dependents of the source ticket in a
+single transaction. Source and target are locked with blocking
+waits in deterministic UUID order. Dependents are locked with
+`FOR UPDATE NOWAIT` — if any dependent is currently locked by
+another transaction, the operation aborts immediately
+(`DuplicateConcurrentModificationError`) rather than waiting.
+This two-phase protocol prevents deadlocks: Phase 1 (roots)
+cannot form cycles due to UUID ordering; Phase 2 (dependents)
+never waits, so it cannot participate in a wait cycle.
+
+All other operations retain the single-ticket-scope rule and
+blocking waits unchanged.
 
 ### Blocking wait
 
@@ -323,6 +334,9 @@ The default PostgreSQL behavior (blocking wait) is used. `NOWAIT` is
 intentionally not specified — the transaction hygiene rules ensure
 locks are held for milliseconds, making spurious failures from `NOWAIT`
 more harmful than brief waits.
+
+Exception: `mark_as_duplicate` Phase 2 uses `FOR UPDATE NOWAIT`
+on dependent rows. See Single-ticket scope above.
 
 ### Ticket-not-found handling
 
@@ -753,39 +767,12 @@ Produces two `TicketAuditEvent` records in the same transaction:
 
 **TicketAuditEvent**: `duplicate_removed` + `status_change`
 
-The revert operation does NOT need to know or care about the canonical
-target — it simply removes the ticket from the duplicate chain.
+The revert is non-retroactive: if other tickets were previously
+repointed away from this ticket (via `duplicate_target_changed`
+events), they are not affected by this revert — they remain
+pointing to their current target.
 
 ## Utility Functions
-
-### `resolve_canonical_target()`
-
-A centralized public function that follows the `duplicate_of_id` chain
-to find the non-Duplicated canonical target.
-
-**Parameters**:
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `db` | `AsyncSession` | Yes | Database session |
-| `ticket_id` | `UUID` | Yes | Starting ticket ID |
-
-**Behavior**:
-
-- Follows the `duplicate_of_id` chain until a non-Duplicated ticket is
-  found
-- Maintains a set of visited ticket IDs to detect cycles
-- Enforces a maximum hop limit of 50 (corruption guard — under normal
-  operation chains are 1-2 hops)
-- If a cycle is detected, raises `DuplicateCycleDetectedError`
-  (maps to 409 `TICKET_DUPLICATE_CYCLE_DETECTED`)
-- If the hop limit is exceeded, raises `DuplicateChainDepthError`
-  (maps to 409 `TICKET_DUPLICATE_CHAIN_DEPTH`)
-- Returns the canonical (non-Duplicated) target ticket
-
-The resolver does not apply confidentiality checks — it is a
-service-layer utility used by both API serialization and background
-tasks.
 
 ## Auto-Assignment Rule
 
@@ -964,8 +951,6 @@ them to the corresponding HTTP status code and error code per
 |-----------|------|------|-------------|
 | `TicketNotFoundError` † | 404 | `TICKET_NOT_FOUND` | Ticket ID does not exist |
 | `TicketNotMutableError` † | 409 | `TICKET_NOT_MUTABLE` | Ticket is in manual zone (Ignored or Duplicated) |
-| `DuplicateCycleDetectedError` † | 409 | `TICKET_DUPLICATE_CYCLE_DETECTED` | Duplicate resolution would create a cycle |
-| `DuplicateChainDepthError` † | 409 | `TICKET_DUPLICATE_CHAIN_DEPTH` | Duplicate chain exceeds maximum allowed depth |
 | `CVSSAssessmentNotFoundError` | 404 | `CVSS_ASSESSMENT_NOT_FOUND` | No assessment exists for the given natural key `(cve_id, provider, cvss_version)` |
 | `InvalidCVSSVectorError` | 422 | `CVSS_INVALID_VECTOR` | CVSS vector string is malformed or invalid |
 | `InvalidTransitionError` † | 409 | `TICKET_INVALID_TRANSITION` | Requested status transition is not allowed |
@@ -1000,8 +985,7 @@ Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
 - `docs/features/tickets/ticket-service.md` — non-gate ticket lifecycle
   operations, ticket reactivation hooks (imports
   `reconcile_ticket_status()`, `recalculate_cvss_chain()`,
-  `auto_assign_actor()`, `ensure_ticket_operable()`,
-  `resolve_canonical_target()`)
+  `auto_assign_actor()`, `ensure_ticket_operable()`)
 - `docs/features/platform/system-settings.md` — default CVSS version
   change triggering batch `recalculate_cvss_chain()` via Celery task
 - `docs/features/platform/fetcher-infrastructure.md` — `catch_up()`

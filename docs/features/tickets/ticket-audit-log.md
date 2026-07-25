@@ -30,7 +30,7 @@ fields populated according to this table:
 | `assignment` | Ticket assigned or reassigned | VA user for manual, `NULL` for system (e.g., employee deactivation) | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for manual; system-generated description for automatic (e.g., `"Unassigned from {old}: employee deactivated"`) | `NULL` |
 | `duplicate_set` | Ticket marked as duplicate | VA user | `NULL` | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` |
 | `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
-| `duplicate_target_changed` | Flattening update: the canonical target was itself marked as duplicate, so this ticket's `duplicate_of_id` was re-pointed to the new canonical target. This event may be absent if the flattening was interrupted — this is not an error (the canonical resolver handles resolution at read time) | `NULL` | `SNTL-{n}` identifier of the previous canonical target | `SNTL-{n}` identifier of the new canonical target | `NULL` | `{"triggered_by_ticket": "SNTL-{n}"}` — the identifier of the ticket whose mark-as-duplicate operation triggered this flattening |
+| `duplicate_target_changed` | Atomic repoint: the ticket's `duplicate_of_id` was updated within the same transaction as the triggering mark-as-duplicate operation, because the ticket's previous target was itself marked as duplicate | `NULL` | `SNTL-{n}` identifier of the previous target | `SNTL-{n}` identifier of the new target | `NULL` | `{"triggered_by_ticket": "SNTL-{n}"}` — the identifier of the ticket whose mark-as-duplicate operation triggered this repoint |
 | `package_added` | Package added to ticket (manual or automatic). One event per package — child tracks and products created as part of the addition do not generate separate events (their initial creation is implicit in the package_added event) | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"vendor:product match"`, `"resolved_packages"`, `"Detected in track SUSE:SLE-15-SP6:Update"`) | `NULL` |
 | `package_excluded` | Package directly soft-deleted (excluded) from ticket. One event per action — child tracks and products are not modified and do not generate events (they become effectively excluded via the hierarchy) | VA user for manual, `NULL` for system (orphan cleanup) | Package name | `NULL` | `NULL` | `NULL` for manual; `{"reason": "..."}` for automatic (see detail contract) |
 | `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | `NULL` | `NULL` |
@@ -101,6 +101,7 @@ types not listed here MUST set `detail` to `NULL`.
 | `reference_type_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 | `reference_title_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 | `reference_description_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
+| `duplicate_target_changed` | `triggered_by_ticket` (string) | — | `{"triggered_by_ticket": "SNTL-42"}` |
 
 **Notes**:
 

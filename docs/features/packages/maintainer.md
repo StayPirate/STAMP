@@ -107,11 +107,12 @@ wins):
 | Ticket status is `New` or `Analysis` | 200 | `not_analyzed` |
 | Ticket status is `Resolved` | 200 | `resolved` |
 | Ticket status is `Ignored` | 200 | `ignored` |
-| Ticket status is `Duplicated` | 200 | `duplicated` (includes `duplicate_of_id`) |
+| Ticket status is `Duplicated` | 200 | `duplicated` (includes `duplicate_of`) |
 | User is not a bugowner | 200 | `no_packages` |
 
-**Duplicated link**: the `duplicate_of_id` value in API responses is
-always the resolved canonical target (a non-Duplicated ticket).
+**Duplicated link**: the `duplicate_of` value in the error-state
+response is the `SNTL-{n}` identifier of the target ticket (always
+non-Duplicated).
 
 ## API Endpoints
 
@@ -315,14 +316,25 @@ or the user is not a bugowner. Object with an `error_state` key:
   "data": {
     "error_state": {
       "type": "not_analyzed",
-      "duplicate_of_id": null
+      "duplicate_of": null
     }
   }
 }
 ```
 
-The `duplicate_of_id` field is populated only for the `duplicated` type,
-containing the UUID of the original ticket.
+```json
+{
+  "data": {
+    "error_state": {
+      "type": "duplicated",
+      "duplicate_of": "SNTL-42"
+    }
+  }
+}
+```
+
+The `duplicate_of` field is populated only for the `duplicated` type,
+containing the `SNTL-{n}` identifier of the target ticket.
 
 ## Security
 
