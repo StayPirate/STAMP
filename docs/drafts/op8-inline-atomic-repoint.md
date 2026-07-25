@@ -611,10 +611,14 @@ introduces a contradiction that is only resolved by a later step).
 
 4. **Remove Best-Effort Flattening section** (lines 569-581).
 
-5. **Revert-Duplicate Operation** (lines 583-602): keep unchanged
-   except add the non-retroactive clause: "If other tickets were
-   repointed away from this ticket during a prior `mark_as_duplicate`
-   operation, they are not affected by this revert."
+5. **Revert-Duplicate Operation** (lines 583-602): keep lines
+   583-599 unchanged. **Remove** lines 601-602 ("The revert operation
+   does NOT need to know or care about the canonical target — it
+   simply removes the ticket from the duplicate chain.") and
+   **replace with**: "The revert is non-retroactive: if other tickets
+   were repointed away from this ticket during a prior
+   `mark_as_duplicate` operation, they are not affected by this
+   revert — they remain pointing to their current target."
 
 6. **Remove Revert of an Intermediate Ticket section** (lines 604-617).
 
