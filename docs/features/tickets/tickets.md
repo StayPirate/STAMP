@@ -1198,8 +1198,9 @@ Request body:
   `docs/features/tickets/cve-service.md`, "On-Demand Fetch: fetch_single_cve")
 - `severity` (string, optional): initial severity override (critical,
   high, medium, low, none). If omitted, severity is `null` (unresolved)
-  until set by the user. Ignored if `cve_id` is provided (severity is
-  derived from CVSS)
+  until set by the user. Must not be provided when `cve_id` is also
+  provided — severity is derived from CVSS; providing both yields 409
+  `TICKET_SEVERITY_DERIVED`
 - `is_confidential` (boolean, optional): if `true`, the ticket is
   created as confidential. Requires the `manage_confidentiality`
   capability in addition to `create_ticket`. If the caller lacks
@@ -1215,6 +1216,7 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 |--------|------|-----------|
 | 422 | `CVE_INVALID_FORMAT` | `cve_id` provided but does not match `^CVE-[0-9]{4}-[0-9]{4,}$` or exceeds 20 characters |
 | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket. Response includes `existing_ticket_id` (UUID) |
+| 409 | `TICKET_SEVERITY_DERIVED` | Both `cve_id` and `severity` provided; severity is auto-derived from CVSS |
 
 ### Associate CVE
 

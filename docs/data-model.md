@@ -1207,7 +1207,7 @@ system action).
 | event_type  | VARCHAR(50) | NOT NULL               | See TicketAuditEventType enum below             |
 | old_value   | TEXT        | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | TEXT        | nullable               | New value (e.g., new status, new assignee username) |
-| comment     | TEXT        | nullable               | Free-text note from the VA, or human-readable system-generated description for automated events |
+| comment     | TEXT        | nullable               | Human-readable system-generated description for automated events (e.g., creation source, deactivation reason). Not populated by user input. See `docs/features/tickets/ticket-audit-log.md` |
 | detail      | JSONB       | nullable               | Additional structured context. Schema validated per event type — see `docs/features/tickets/ticket-audit-log.md` (detail JSONB Schema Contract) |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT      | Inherited from AuditEventMixin             |
 
