@@ -1,7 +1,7 @@
 # Review: cpe-package-mapping
 
 **Spec**: `docs/features/packages/cpe-package-mapping.md`
-**Last reviewed**: 2026-06-01
+**Last reviewed**: 2026-07-25
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---

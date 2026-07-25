@@ -17,7 +17,7 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cli-infrastructure](cli-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-22 |  |
 |  |  |  |  |  |  |  |  |  |
-| [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-06-01 | ⚠️ |
+| [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
 | [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
@@ -71,24 +71,24 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [system-settings](system-settings.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/8 | 2026-07-03 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-05-17 | ⚠️ |
+| [ticket-audit-log](ticket-audit-log.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/41 | 2026-06-03 | ⚠️ |
+| [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/41 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-references](ticket-references.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/32 | 2026-05-30 | ⚠️ |
+| [ticket-references](ticket-references.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1/35 | 2026-07-25 |  |
+| |  | 1:🟠 |  |  |  |  |  |  |
+| [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/28 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/28 | 2026-05-26 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
-| [testing-strategy](testing-strategy.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/2 | 2026-07-18 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
-| [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-20 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [testing-strategy](testing-strategy.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1/3 | 2026-07-25 |  |
+| |  |  | 1:🟡 |  |  |  |  |  |
+| [tickets](tickets.md) | 1 | 1 | 🟢 | 🟢 | 🟢 | 2/25 | 2026-07-25 |  |
+| | 1:🟠 | 1:🟡 |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/93 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/791** |  |  |
-| | 2:🟠 |  |  |  |  |  |  |  |
+| **Total** | **3** | **2** | **1** | **🟢** | **🟢** | **6/797** |  |  |
+| | 3:🟠 | 1:🟠 1:🟡 | 1:🟡 |  |  |  |  |  |
 
 ### Disabled specs
 

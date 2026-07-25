@@ -1,7 +1,7 @@
 # Review: ticket-references
 
 **Spec**: `docs/features/tickets/ticket-references.md`
-**Last reviewed**: 2026-05-30
+**Last reviewed**: 2026-07-25
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -64,7 +64,20 @@
 
 ## Coherence
 
-_No issues found._
+### TRF-COH-01 — Stale "No URL transformation" statement contradicts URL Normalization section and data-model.md (Medium)
+
+**Category**: Contradictory definitions
+**Status**: OPEN
+
+Lines 261–264 state: "No URL transformation: URLs are stored exactly as received from the source or user. No percent-encoding, normalization, or transformation is applied before storage. The unique constraint `(ticket_id, url)` operates on the literal stored value."
+
+Lines 316–326 state: "Before comparison or storage, every URL (automatic and manual) is normalized: Scheme + host lowercased (per RFC 3986 §3.1 and §3.2.2); `http://` normalized to `https://`; Trailing slash removed when the path is empty or consists only of `/`."
+
+Additionally, `data-model.md` documents the url column as "Stored in normalized form."
+
+This is a direct internal contradiction — a stale remnant from before URL normalization was added. An implementer reading the spec linearly encounters the "No transformation" statement first (in the Ingestion Flow section) and could implement without normalization, only to discover the contradicting Normalization section 50 lines later in the Upsert Strategy subsection.
+
+**Fix**: Remove or replace the "No URL transformation" paragraph at lines 261–264 with a forward reference to the URL Normalization section (e.g., "URLs are normalized before storage — see URL Normalization below.").
 
 ---
 
@@ -97,6 +110,10 @@ _No issues found._
 ### TRF-DES-07 — Source column uses free-form strings with no schema validation (Low)
 
 **Status**: RESOLVED — Auto-resolved: finding no longer applicable after spec changes; source field stability documented at line 324 of spec, VARCHAR rationale documented in data-model.md (2026-05-31)
+
+### TRF-DES-08 — Contradictory URL transformation statements (Medium)
+
+**Status**: RESOLVED — Cross-agent duplicate of TRF-COH-01 (2026-07-25)
 
 ---
 
@@ -153,3 +170,7 @@ _No issues found._
 ### TRF-API-03 — PATCH endpoint doesn't explicitly state empty-body rejection (Low)
 
 **Status**: RESOLVED — Auto-resolved: finding no longer applicable — empty body rejection is a cross-cutting convention in api-spec.md Partial Update Semantics, explicitly referenced by the spec; endpoint error tables list only endpoint-specific errors (2026-05-31)
+
+### TRF-API-04 — Contradictory "No URL transformation" vs URL Normalization (Medium)
+
+**Status**: RESOLVED — Cross-agent duplicate of TRF-COH-01 (2026-07-25)

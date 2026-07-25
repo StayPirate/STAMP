@@ -1,12 +1,19 @@
 # Review: tickets
 
 **Spec**: `docs/features/tickets/tickets.md`
-**Last reviewed**: 2026-05-20
+**Last reviewed**: 2026-07-25
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
 
 ## Gap Analysis
+
+### TKT-GAP-009 — No API path to clear severity_override (Medium)
+
+**Category**: Boundary condition
+**Status**: OPEN
+
+The `set_severity_override()` function in `ticket-mutations.md` accepts `Severity | None` where Python `None` clears the override (sets `severity_override` to SQL `NULL` = unresolved). However, the API endpoint `PATCH /api/v1/tickets/{ticket_id}/severity` defines `severity` as a required string with valid values `critical`, `high`, `medium`, `low`, `none`. There is no way to send JSON `null` through this endpoint to invoke the "clear" path. The severity value `"none"` means "CVSS score 0.0 / informational" — it is NOT equivalent to clearing the override. An implementer cannot expose the clear functionality without a spec change (e.g., making the field nullable in the request schema, or adding a dedicated DELETE endpoint).
 
 ### TKT-GAP-001 — Ignore from Analyzed/Resolved status not explicitly rejected (Low)
 
@@ -43,6 +50,13 @@
 ---
 
 ## Coherence
+
+### TKT-COH-003 — data-model.md narrows automatic Ignored transition source to NVD only (Low)
+
+**Category**: Terminology inconsistency
+**Status**: OPEN
+
+`data-model.md` line 1106 states "New -> Ignored (manual or automatic: NVD rejection)" but the authoritative source (`tickets.md` line 265) specifies that CVE rejection is "detectable from any discovery fetcher — NVD, MITRE, or kernel". The data-model.md transition summary is factually incorrect — it should say "CVE rejection" (not "NVD rejection") to match the authoritative spec.
 
 ### TKT-COH-001 — Data model allows Ignored → Duplicated but tickets.md blocks it (Medium)
 

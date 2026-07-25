@@ -185,7 +185,7 @@
       "enabled": true,
       "abbr": "CPM",
       "cache": {
-        "last_review": "2026-06-01T00:00:00+0000",
+        "last_review": "2026-07-25T19:23:57+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -1292,7 +1292,7 @@
       "enabled": true,
       "abbr": "TST",
       "cache": {
-        "last_review": "2026-07-18T00:00:00+0000",
+        "last_review": "2026-07-25T19:16:32+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -1307,7 +1307,7 @@
           "DES": {
             "H": 0,
             "M": 0,
-            "L": 0
+            "L": 1
           },
           "SEC": {
             "H": 0,
@@ -1328,7 +1328,7 @@
       "enabled": true,
       "abbr": "TAL",
       "cache": {
-        "last_review": "2026-05-17T00:00:00+0000",
+        "last_review": "2026-07-25T19:08:47+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -1364,7 +1364,7 @@
       "enabled": true,
       "abbr": "TKM",
       "cache": {
-        "last_review": "2026-06-03T17:21:12+0200",
+        "last_review": "2026-07-25T18:31:49+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -1400,7 +1400,7 @@
       "enabled": true,
       "abbr": "TRF",
       "cache": {
-        "last_review": "2026-05-30T20:47:58+0200",
+        "last_review": "2026-07-25T18:59:11+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -1409,7 +1409,7 @@
           },
           "COH": {
             "H": 0,
-            "M": 0,
+            "M": 1,
             "L": 0
           },
           "DES": {
@@ -1428,7 +1428,7 @@
             "L": 0
           }
         },
-        "resolved": 32,
+        "resolved": 34,
         "not_reviewed": []
       }
     },
@@ -1436,7 +1436,7 @@
       "enabled": true,
       "abbr": "TKS",
       "cache": {
-        "last_review": "2026-05-26T00:00:00+0000",
+        "last_review": "2026-07-25T18:00:44+0200",
         "open": {
           "GAP": {
             "H": 0,
@@ -1472,17 +1472,17 @@
       "enabled": true,
       "abbr": "TKT",
       "cache": {
-        "last_review": "2026-05-20T21:59:20+0200",
+        "last_review": "2026-07-25T18:40:50+0200",
         "open": {
           "GAP": {
             "H": 0,
-            "M": 0,
+            "M": 1,
             "L": 0
           },
           "COH": {
             "H": 0,
             "M": 0,
-            "L": 0
+            "L": 1
           },
           "DES": {
             "H": 0,

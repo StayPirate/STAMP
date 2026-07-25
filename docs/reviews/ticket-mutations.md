@@ -1,7 +1,7 @@
 # Review: ticket-mutations
 
 **Spec**: `docs/features/tickets/ticket-mutations.md`
-**Last reviewed**: 2026-06-03
+**Last reviewed**: 2026-07-25
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
