@@ -13,16 +13,28 @@ ingestion task runs — potentially hours after deployment.
 
 ## Decision
 
-Validate the CPE mapping **in the worker process** via a
-`celeryd_after_setup` handler. Retain the API lifespan guard as
-defense-in-depth. Extract the validation logic into a shared function
-so both call sites use the same check.
+Validate the CPE mapping **only in the worker process** via a
+`celeryd_after_setup` handler. Remove the existing API lifespan guard
+(which was the only validation point before this change).
+
+**Why not validate in the API server**: the API does not consume the CPE
+mapping — it never calls `resolve_cpe_packages()` or
+`resolve_vendor_product()`. Validating in a process that does not use
+the resource provides no real guarantee for the worker process that
+does: in practice, API and worker containers may run different image
+versions (rolling updates, configuration errors) or have different
+volume mounts (Kubernetes ConfigMaps). A passing check on the API gives
+a false sense of security about the worker's state.
+
+**Why not validate in Beat or IBS consumer**: neither process consumes
+the CPE mapping, even indirectly. The IBS consumer enqueues Celery tasks
+that run on workers; Beat only schedules tasks. Each process validates
+only the resources it uses.
 
 This is option (b) from OP-16. A broader startup-validation architecture
 (shared connectivity primitives, pre-flight job) was evaluated and
-rejected as disproportionate — see
-`docs/drafts/startup-validation-architecture-v2.md` for the full
-rationale.
+rejected as disproportionate — the rationale is preserved in the OP-16
+discussion history.
 
 ## Solution
 
@@ -34,29 +46,46 @@ rationale.
 def check_cpe_mapping() -> None:
     """Validate the CPE mapping by forcing a load through the cached loader.
 
-    Raises CPEMappingLoadError if the file is missing, unreadable, or
-    structurally invalid. On success, the lru_cache is warmed for subsequent
-    use by worker tasks.
+    Raises CPEMappingLoadError if the file exists, is non-empty, but
+    structurally invalid. On success (including file-absent or
+    file-empty cases), the lru_cache is warmed for subsequent use by
+    worker tasks.
+
+    If the file is absent or empty, logs WARNING and warms the cache
+    with an empty mapping — package resolution degrades gracefully
+    (all lookups fall through to the raw product name fallback).
     """
 ```
 
 The function invokes `resolve_cpe_packages()` with the fixed dummy CPE
-`cpe:2.3:a:test:test:*:*:*:*:*:*:*:*`. The loader validates the
-complete file before returning. If loading fails, `CPEMappingLoadError`
-propagates to the caller.
+`cpe:2.3:a:test:test:*:*:*:*:*:*:*:*`. The loader handles all three
+cases (valid file, absent/empty file, invalid file) internally. If
+loading raises `CPEMappingLoadError`, the function propagates it to the
+caller.
 
 This is a simple wrapper — it performs no I/O beyond what the loader
 already does, creates no audit events, and has no side effects beyond
-cache warming. It raises on failure rather than returning a result
-object; the caller decides the reaction.
+cache warming.
+
+**Why a separate module** (`startup_checks.py`): separates *what* to
+verify from *when and how to react* (which is the worker handler's
+responsibility in `worker_startup.py`). Currently has a single consumer,
+but the separation keeps the validation logic independently testable
+and avoids coupling it to Celery signal mechanics.
 
 ### CPE loader runtime validation contract
 
 The CPE mapping spec (`cpe-package-mapping.md`) currently defines
 validation rules only for CI. This decision requires adding a **runtime
 validation contract** to that spec — the loader itself must enforce
-correctness, independent of whether CI has run. The following rules
-apply at load time:
+correctness, independent of whether CI has run.
+
+Package resolution is a **best-effort** mechanism (see
+`cpe-package-mapping.md` § Match rate expectations and `cve-service.md`
+§ Phase 2). The platform functions correctly without a CPE mapping —
+tickets are created normally, and VAs can add packages manually. This
+informs the loader's error handling: absence or emptiness of the file
+is a degraded-but-operational state, not a fatal error.
 
 **Exception**: `CPEMappingLoadError` — a `RuntimeError` subclass defined
 beside the loader in `backend/app/services/cpe_mapping.py`. Message
@@ -65,7 +94,17 @@ identifies the failed rule and, for structural failures, the offending
 key or zero-based array index; it never includes file contents or
 package values.
 
-**Validation rules** (checked in order, first failure aborts):
+**Loader behavior by file state**:
+
+| Condition | Behavior | Rationale |
+|-----------|----------|-----------|
+| File does not exist | Log WARNING `cpe_mapping_absent`; return empty dict | Best-effort degradation — resolution disabled, platform operational |
+| File exists but is empty (`{}`) | Log WARNING `cpe_mapping_empty`; return empty dict | Same as above |
+| File exists, non-empty, structurally valid | Return populated dict | Normal operation |
+| File exists, non-empty, structurally invalid | Raise `CPEMappingLoadError` | Corrupted file = deployment bug; partial/wrong mappings are worse than no mappings |
+
+**Validation rules** (applied only when file exists and is non-empty;
+checked in order, first failure raises `CPEMappingLoadError`):
 
 1. The file is readable and valid UTF-8.
 2. The content is syntactically valid JSON.
@@ -75,7 +114,11 @@ package values.
    duplicate.
 5. Every key is lowercase with exactly one literal `:` separating
    non-empty `vendor` and `product` components. Key and both components
-   must equal their whitespace-trimmed forms.
+   must equal their whitespace-trimmed forms. Components MUST NOT
+   contain internal whitespace (only `[a-z0-9._-]` characters are
+   permitted) — keys with spaces would never be matched by the
+   resolution functions, which produce underscore-separated keys from
+   CPE data.
 6. Every value is a non-empty array of strings. Every string is
    non-empty after trimming and must equal its trimmed form.
 
@@ -83,12 +126,13 @@ package values.
 Unsorted but otherwise valid JSON loads successfully.
 
 **Cache behavior**: the loader uses `@lru_cache(maxsize=1)` and returns
-`dict[str, tuple[str, ...]]` (immutable tuples for package lists). Only
-successful returns are cached. A failed load stores no entry — the next
-call retries a full read and revalidation. After one successful load,
-subsequent calls return the cached mapping without file I/O. There is no
-hot-reload or cache invalidation; a mapping update requires a new
-deployment and process restart.
+`dict[str, tuple[str, ...]]` (immutable tuples for package lists). Both
+successful loads (populated or empty dict) are cached. A load that
+raises `CPEMappingLoadError` stores no entry — the next call retries a
+full read and revalidation. After one successful load, subsequent calls
+return the cached mapping without file I/O. There is no hot-reload or
+cache invalidation; a mapping update requires a new deployment and
+process restart.
 
 **Unexpected exceptions** (`MemoryError`, OS-level failures beyond
 `IOError`) propagate unchanged — they are not wrapped in
@@ -109,19 +153,22 @@ log and abort before any task runs. `worker_process_init` is unsuitable
 
 **Sequence**:
 
-1. Call `check_cpe_mapping()`.
-2. If `CPEMappingLoadError` (or any other exception) is raised: log
-   CRITICAL `worker_startup_failed` with `stage="cpe_mapping"` and
+1. Call `check_cpe_mapping()` (synchronous — no event loop needed).
+2. If `CPEMappingLoadError` is raised: log CRITICAL
+   `worker_startup_failed` with `stage="cpe_mapping"` and
    `error_type=type(exc).__name__` (no raw exception text); call
-   `sys.exit(1)`.
-3. Run `bootstrap_fetcher_configs()` via one `asyncio.run()` call
-   (existing requirement, now explicitly ordered after CPE validation).
-4. If bootstrap fails: log CRITICAL `worker_startup_failed` with
-   `stage="fetcher_config_bootstrap"` and `error_type`; call
-   `sys.exit(1)`.
-5. After bootstrap, call `engine.dispose()` to close the parent's
-   pooled connections before Celery forks worker children.
-6. If both succeed: log INFO `worker_startup_completed`; return.
+   `sys.exit(1)`. (Note: file-absent and file-empty do NOT raise —
+   they log WARNING inside the loader and return normally.)
+3. Call `asyncio.run(worker_async_bootstrap())` where the async
+   function performs:
+   - `await bootstrap_fetcher_configs()`
+   - `await engine.dispose()` (closes the parent's pooled connections
+     before Celery forks worker children — must happen inside the event
+     loop because `AsyncEngine.dispose()` is a coroutine)
+4. If `worker_async_bootstrap()` raises: log CRITICAL
+   `worker_startup_failed` with `stage="fetcher_config_bootstrap"` and
+   `error_type`; call `sys.exit(1)`.
+5. If all steps succeed: log INFO `worker_startup_completed`; return.
 
 **Exit mechanism**: the handler catches exceptions and calls
 `sys.exit(1)`. This is required because Celery's signal dispatcher
@@ -137,15 +184,14 @@ sequence for Celery workers. There MUST NOT be separate handlers for
 CPE and bootstrap, because Celery does not guarantee ordering between
 independent receivers of the same signal.
 
-### Retained API lifespan guard
+## What Is Removed
 
-The FastAPI `lifespan` event retains its CPE validation, now calling
-`check_cpe_mapping()` from the shared module instead of an inline
-dummy-CPE call. If the function raises, lifespan logs CRITICAL and
-raises `RuntimeError`; uvicorn aborts startup.
-
-This preserves fail-fast for the API server and for direct-run
-deployments (`uvicorn` without orchestration).
+- **API lifespan CPE guard**: the existing `resolve_cpe_packages()`
+  call in the FastAPI `lifespan` event is removed. The API server does
+  not consume the CPE mapping, and validating it there provided no
+  guarantee for worker processes (which may run a different image
+  version or have a different volume mount). The worker now validates
+  its own dependency directly.
 
 ## What Does NOT Change
 
@@ -154,7 +200,7 @@ deployments (`uvicorn` without orchestration).
 - **OP-18 startup ordering invariant**: unchanged; no new sequential
   gate.
 - **CPE lazy-load pattern** (`lru_cache`): unchanged; the startup
-  guards warm the cache, they do not replace it.
+  guard warms the cache, it does not replace it.
 - **Process architecture**: no new process role or container.
 - **Beat startup** (`beat_init`): unchanged.
 
@@ -163,37 +209,47 @@ deployments (`uvicorn` without orchestration).
 ### Step 1: Update `docs/features/packages/cpe-package-mapping.md`
 
 - **Add runtime validation contract** to the Loading section: define
-  `CPEMappingLoadError`, the 6 validation rules (UTF-8, valid JSON,
-  object root, no duplicate keys, key format, non-empty string arrays),
-  the CI-only exclusion (alphabetical ordering), and the `lru_cache`
-  failed-load behavior (not cached, next call retries). These rules
-  currently exist only as CI checks — the spec must state that the
-  loader enforces them at runtime too.
+  `CPEMappingLoadError`, the loader behavior table (file absent → WARNING
+  + empty dict; file empty → WARNING + empty dict; file invalid →
+  raise), the 6 validation rules (UTF-8, valid JSON, object root, no
+  duplicate keys, key format with no internal whitespace, non-empty
+  string arrays), the CI-only exclusion (alphabetical ordering), and
+  the `lru_cache` behavior (empty/populated dicts cached; failures not
+  cached, next call retries).
 - Define `check_cpe_mapping()` as a shared function in
   `app/core/startup_checks.py` that forces a load via the dummy CPE.
-- Reformulate the lifespan paragraph: the guard now calls
-  `check_cpe_mapping()` instead of an inline dummy-CPE call.
+- **Remove the lifespan CPE guard paragraph** — the API server does not
+  consume the CPE mapping and validating it on a different process
+  provides no guarantee for workers (images/mounts may differ).
 - Add the `celeryd_after_setup` worker guard, referencing the handler
   contract above.
-- Correct the process list in "Operational semantics": API and Celery
-  workers load/validate the mapping at startup; Beat and IBS consumer
-  do not.
+- Correct the process list in "Operational semantics": only Celery
+  workers load/validate the mapping at startup; API, Beat, and IBS
+  consumer do not.
 
 ### Step 2: Update `docs/features/tickets/cve-service.md`
 
 - Phase 2 error handling: update "loaded and validated once at
-  application startup via the lifespan event" → validated at startup in
-  **both** the API lifespan **and** the worker (`celeryd_after_setup`).
-  The semantic argument (runtime exception = programming bug) is
-  unchanged and strengthened.
+  application startup via the lifespan event" → loaded and validated at
+  **worker process startup** (`celeryd_after_setup`). Use per-process
+  terminology (avoid ambiguous "application startup"). Remove the
+  reference to the lifespan event (the API no longer validates the
+  mapping).
+- The semantic argument (runtime `CPEMappingLoadError` = programming
+  bug) is unchanged and strengthened: the worker process validates the
+  mapping before consuming tasks; an exception during task execution is
+  therefore unreachable under correct deployment.
 
 ### Step 3: Update `docs/features/platform/fetcher-infrastructure.md`
 
 - In the Worker Startup / FetcherConfig section: state that
-  `bootstrap_fetcher_configs()` is preceded by CPE validation in the
-  unified `celeryd_after_setup` handler, and that both run inside one
-  `asyncio.run()` bridge. Add `engine.dispose()` after bootstrap as a
-  pre-fork requirement.
+  `bootstrap_fetcher_configs()` is preceded by CPE validation (a
+  synchronous step) in the unified `celeryd_after_setup` handler.
+  Bootstrap and `await engine.dispose()` run together inside one
+  `asyncio.run()` call; the CPE check runs synchronously before it.
+- Update the "first operation" claim: bootstrap is no longer the first
+  operation in the worker startup sequence — it is preceded by the
+  synchronous CPE mapping validation.
 - Correct: bootstrap's DB access is the worker's effective PostgreSQL
   fail-fast (no separate `SELECT 1` needed).
 
@@ -202,8 +258,8 @@ deployments (`uvicorn` without orchestration).
 - Move OP-16 from Open to Resolved.
 - Resolution text: "Resolved via `celeryd_after_setup` worker handler
   that validates the CPE mapping in the worker process before accepting
-  tasks. API lifespan guard retained as defense-in-depth. See
-  `docs/features/packages/cpe-package-mapping.md`."
+  tasks. API lifespan guard removed (API does not consume the mapping).
+  See `docs/features/packages/cpe-package-mapping.md`."
 
 ### Step 5: Run reviewers
 
@@ -211,17 +267,14 @@ deployments (`uvicorn` without orchestration).
 - `@spec-coherence-reviewer` on `cpe-package-mapping.md`,
   `cve-service.md`, and `fetcher-infrastructure.md`
 
-### Step 6: Delete this draft and archive v2
+### Step 6: Delete this draft
 
-After all spec changes are applied and reviewers pass, delete both
-`docs/drafts/op16-cpe-worker-validation.md` and
-`docs/drafts/startup-validation-architecture-v2.md`.
+After all spec changes are applied and reviewers pass, delete
+`docs/drafts/op16-cpe-worker-validation.md`.
 
 ## Cross-References
 
 - `docs/drafts/open-points.md` — OP-16
-- `docs/drafts/startup-validation-architecture-v2.md` — rejected broader
-  architecture (preserved for historical rationale)
 - `docs/features/packages/cpe-package-mapping.md` — CPE mapping spec
 - `docs/features/tickets/cve-service.md` — Phase 2 error handling
 - `docs/features/platform/fetcher-infrastructure.md` — worker bootstrap
