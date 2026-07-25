@@ -141,8 +141,14 @@ return the cached mapping without file I/O. There is no hot-reload or
 cache invalidation; a mapping update requires a new deployment and
 process restart.
 
-**Unexpected exceptions** (`MemoryError`, OS-level failures beyond
-`IOError`) propagate unchanged — they are not wrapped in
+**File I/O errors** (`PermissionError`, `IsADirectoryError`, and any
+other `OSError` subclass raised during file access) are wrapped in
+`CPEMappingLoadError` with the underlying OS error as `{reason}`.
+These indicate deployment/mount issues that prevent determining file
+state.
+
+**Non-`OSError` exceptions** (`MemoryError`, `KeyboardInterrupt`,
+etc.) propagate unchanged — they are not wrapped in
 `CPEMappingLoadError`.
 
 ### Unified worker startup handler
@@ -318,9 +324,14 @@ subsequent calls return the cached mapping without file I/O. There is
 no hot-reload or cache invalidation; a mapping update requires a new
 deployment and process restart.
 
-Unexpected exceptions (`MemoryError`, OS-level failures beyond
-`IOError`) propagate unchanged — they are not wrapped in
-`CPEMappingLoadError`.
+File I/O errors (`PermissionError`, `IsADirectoryError`, and any
+other `OSError` subclass raised during file access) are wrapped in
+`CPEMappingLoadError` with the underlying OS error as `{reason}`.
+These indicate deployment/mount issues that prevent determining file
+state.
+
+Non-`OSError` exceptions (`MemoryError`, `KeyboardInterrupt`, etc.)
+propagate unchanged — they are not wrapped in `CPEMappingLoadError`.
 
 **Worker startup guard**: Celery workers validate the CPE mapping at
 process startup via `check_cpe_mapping()` in the unified
@@ -578,6 +589,32 @@ inside the signal handler..." refers to Beat's `beat_init` handler,
 where bootstrap IS the first operation (no CPE validation in Beat).
 No modification needed.
 
+#### 3f. Qualify FetcherConfig introductory sentence (line 2599-2601)
+
+**Replace**:
+
+```
+routine that runs in every Celery-based process (worker, Beat, API
+server) as the first startup operation in each process.
+```
+
+**With**:
+
+```
+routine that runs in every Celery-based process (worker, Beat, API
+server) during startup. In Beat and API it is the first operation; in
+workers it is the second step, after CPE mapping validation (see
+Worker Startup Handler).
+```
+
+**Rationale**: after the worker startup handler is introduced,
+bootstrap is no longer the first operation in workers. The replacement
+avoids calling it "first" globally (which would contradict Step 3b's
+"worker: second step" in the timing bullet below). The idempotency
+guarantee (`INSERT ... ON CONFLICT DO NOTHING`) is an intrinsic
+property of the routine and does not depend on execution ordering
+relative to other startup operations.
+
 ---
 
 ### Step 4: Update `docs/drafts/open-points.md`
@@ -596,10 +633,18 @@ No modification needed.
 | OP-16 | CPE Mapping Fail-Fast Asymmetry | — | Resolved |
 ```
 
-#### 4b. Move OP-16 entry to Archive
+#### 4b. Remove the `## Open — Cross-Process Startup` section and move OP-16 to Archive
 
-**Remove** the full OP-16 entry (lines 428-473, from the heading
-through the `---` separator) from the Open section.
+OP-16 is the only item in the `## Open — Cross-Process Startup`
+section. After resolution, the entire section is empty and must be
+removed — not just the entry.
+
+**Remove** lines 426-474 (from the `## Open — Cross-Process Startup`
+heading through the `---` separator after the OP-16 content). This
+includes: the section heading (line 426), the blank line (427), the
+full OP-16 entry (428-472), the trailing blank line (473), and the
+`---` separator (474). The `---` on line 424 and blank line 425 are
+retained as the separator before `## Archive — Resolved`.
 
 **Insert** in the `## Archive — Resolved` section (after line 476,
 before the first existing archived entry), following the established
