@@ -99,9 +99,16 @@ package values.
 | Condition | Behavior | Rationale |
 |-----------|----------|-----------|
 | File does not exist | Log WARNING `cpe_mapping_absent`; return empty dict | Best-effort degradation — resolution disabled, platform operational |
-| File exists but is empty (`{}`) | Log WARNING `cpe_mapping_empty`; return empty dict | Same as above |
+| File exists, zero bytes or whitespace-only | Log WARNING `cpe_mapping_absent`; return empty dict | Equivalent to absent — no meaningful content to parse |
+| File exists, content is `{}` (empty JSON object) | Log WARNING `cpe_mapping_empty`; return empty dict | Explicit empty mapping — resolution disabled, platform operational |
 | File exists, non-empty, structurally valid | Return populated dict | Normal operation |
 | File exists, non-empty, structurally invalid | Raise `CPEMappingLoadError` | Corrupted file = deployment bug; partial/wrong mappings are worse than no mappings |
+
+"Non-empty" for the purpose of validation means: the file contains at
+least one non-whitespace character AND the content is not the empty
+JSON object `{}`. Files that are zero bytes, whitespace-only, or
+contain exactly `{}` are treated as graceful-degradation cases (no
+validation rules applied, no error raised).
 
 **Validation rules** (applied only when file exists and is non-empty;
 checked in order, first failure raises `CPEMappingLoadError`):
@@ -154,26 +161,48 @@ log and abort before any task runs. `worker_process_init` is unsuitable
 **Sequence**:
 
 1. Call `check_cpe_mapping()` (synchronous — no event loop needed).
-2. If `CPEMappingLoadError` is raised: log CRITICAL
-   `worker_startup_failed` with `stage="cpe_mapping"` and
-   `error_type=type(exc).__name__` (no raw exception text); call
-   `sys.exit(1)`. (Note: file-absent and file-empty do NOT raise —
-   they log WARNING inside the loader and return normally.)
-3. Call `asyncio.run(worker_async_bootstrap())` where the async
+   - If `CPEMappingLoadError` is raised: log CRITICAL
+     `worker_startup_failed` with `stage="cpe_mapping"`,
+     `error_type=type(exc).__name__`, and `error=str(exc)`; call
+     `sys.exit(1)`.
+   - (Note: file-absent and file-empty do NOT raise — they log WARNING
+     inside the loader and return normally.)
+2. Call `asyncio.run(worker_async_bootstrap())` where the async
    function performs:
    - `await bootstrap_fetcher_configs()`
    - `await engine.dispose()` (closes the parent's pooled connections
      before Celery forks worker children — must happen inside the event
      loop because `AsyncEngine.dispose()` is a coroutine)
-4. If `worker_async_bootstrap()` raises: log CRITICAL
-   `worker_startup_failed` with `stage="fetcher_config_bootstrap"` and
-   `error_type`; call `sys.exit(1)`.
-5. If all steps succeed: log INFO `worker_startup_completed`; return.
+   - If raises: log CRITICAL `worker_startup_failed` with
+     `stage="fetcher_config_bootstrap"`, `error_type`, and
+     `error=str(exc)`; call `sys.exit(1)`.
+3. If all steps succeed: log INFO `worker_startup_completed`; return.
 
-**Exit mechanism**: the handler catches exceptions and calls
-`sys.exit(1)`. This is required because Celery's signal dispatcher
-catches ordinary `Exception` from receivers; only `SystemExit`
-(a `BaseException`) propagates through it to abort the process.
+**Catch-all**: the entire sequence (steps 1–2) is wrapped in a
+`try/except Exception` that catches any exception not already handled
+by the step-specific catches above, logs CRITICAL
+`worker_startup_failed` with the appropriate `stage` (derived from
+which step was executing), `error_type=type(exc).__name__`, and
+`error=str(exc)`, then calls `sys.exit(1)`. This ensures that
+exceptions not wrapped in `CPEMappingLoadError` by the loader (e.g.,
+`PermissionError` from a misconfigured volume mount, or OS-level
+failures) still abort the worker instead of being silently swallowed
+by Celery's signal dispatcher.
+
+This follows the same pattern as the Beat `beat_init` handler, which
+wraps its entire bootstrap + reconciliation sequence in a catch-all
+with `sys.exit(1)` on failure.
+
+**Exit mechanism**: the handler calls `sys.exit(1)` on any failure.
+This is required because Celery's signal dispatcher catches ordinary
+`Exception` from receivers; only `SystemExit` (a `BaseException`)
+propagates through it to abort the process.
+
+**Logging rationale**: exception messages are included in the log
+(`error=str(exc)`) because startup errors on local files contain only
+filesystem paths and validation rule descriptions — no PII or secrets.
+This gives operators actionable diagnostic information without
+requiring reproduction of the failure.
 
 **Worker-role scope**: runs for both general workers and Git workers.
 All workers run from the same image; validating a small static file is
