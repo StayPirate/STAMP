@@ -16,7 +16,7 @@ Architectural decisions pending resolution before implementation begins.
 | OP-12 | Fetcher Metrics Granularity | Fetcher Infrastructure | Open |
 | OP-13 | CWE Accumulation | Fetcher Infrastructure | Open |
 | OP-15 | IBSEventConsumer Admin Restart Endpoint | Platform | Open |
-| OP-16 | CPE Mapping Fail-Fast Asymmetry | Cross-Process Startup | Open |
+| OP-16 | CPE Mapping Fail-Fast Asymmetry | — | Resolved |
 | OP-17 | IBS RabbitMQ Consumer Startup Gaps | — | Resolved |
 | OP-3 | Orphan CVE Re-Ticketing | — | Resolved |
 | OP-5 | Response Header for Silently Ignored Parameters | — | Closed |
@@ -423,57 +423,19 @@ to other open points.
 
 ---
 
-## Open — Cross-Process Startup
+## Archive — Resolved
 
-### OP-16. CPE Mapping Fail-Fast Asymmetry (Validation in API, Consumption in Worker)
+### OP-16. CPE Mapping Fail-Fast Asymmetry — RESOLVED
 
-**Origin**: gap analysis of process startup responsibilities during
-Celery Beat sync specification work.
-
-**Context**: the CPE-to-package mapping (`cpe-package-mapping.json`) is
-a critical static data file that maps CPE vendor:product pairs to SUSE
-package names. The spec (`cpe-package-mapping.md:243-252`) mandates a
-**fail-fast guard at boot**:
-
-> "the FastAPI `lifespan` event MUST call `resolve_cpe_packages()` once
-> with a dummy CPE string... This ensures a broken mapping file is
-> detected at boot time"
-
-However, this guard runs only in the **FastAPI API server** (lifespan
-event). The actual consumers of the mapping are **Celery worker** tasks:
-- `resolve_ticket_packages` (Phase 2 of CVE ingestion)
-- `fetch_single_cve` (on-demand single-CVE fetch)
-
-Workers load the mapping **lazily** on first use via
-`functools.lru_cache(maxsize=1)` (`cpe-package-mapping.md:236-241`). A
-broken/missing JSON file would be detected at API boot (fail-fast), but
-in the worker it surfaces only at the **first CVE ingestion task**
-runtime — potentially hours after deploy.
-
-`cve-service.md:432-441` acknowledges this asymmetry but frames it as
-"the lifespan event validates the file, so a runtime exception indicates
-a programming bug." This reasoning is valid only if the worker reads the
-**same** file that the API validated — true in same-image deployments,
-but not explicitly guaranteed.
-
-**Impact**: in a correctly-configured deployment (same image, same
-volume), the risk is minimal. In edge cases (misconfigured volume mount,
-stale file in worker image), a corrupted mapping could be undetected
-until the first ingestion task fails.
-
-**Options to evaluate**:
-- (a) Accept the current asymmetry as documented (low-risk edge case)
-- (b) Add a worker-level boot validation (e.g., a Celery
-  `worker_init` signal handler that calls `resolve_cpe_packages()`)
-- (c) Move from lazy-load to eager-load in all processes (import-time
-  or startup-event, not `lru_cache`)
-
-**Decision needed**: whether the asymmetry is an acceptable design
-trade-off or requires worker-side mitigation.
+**Resolution**: resolved via `celeryd_after_setup` worker handler
+that validates the CPE mapping in the worker process before accepting
+tasks. API lifespan guard removed (API does not consume the mapping).
+Worker-specific startup handler contract documented in
+`docs/features/platform/fetcher-infrastructure.md` (Worker Startup
+Handler). Runtime validation contract added to
+`docs/features/packages/cpe-package-mapping.md`.
 
 ---
-
-## Archive — Resolved
 
 ### OP-8. Simplify Duplicate Handling — Eliminate Chains — RESOLVED (2026-07-25)
 

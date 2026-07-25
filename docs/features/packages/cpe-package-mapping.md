@@ -234,22 +234,112 @@ results, and the package is not added (see `package-service.md`,
 phantom data is created.
 
 **Loading**: the mapping dict is loaded lazily on first call to
-`resolve_cpe_packages()`, cached for subsequent calls (e.g., via
-`functools.lru_cache(maxsize=1)` on the internal loader function).
-The file path is `backend/app/data/cpe-package-mapping.json`. If the
-JSON file is missing or malformed, the loader raises an error
-immediately.
+`resolve_cpe_packages()`, cached for subsequent calls via
+`functools.lru_cache(maxsize=1)` on the internal loader function.
+The file path is `backend/app/data/cpe-package-mapping.json`.
 
-To preserve the fail-fast property at application startup, the FastAPI
-`lifespan` event MUST call `resolve_cpe_packages()` once with a dummy
-CPE string (e.g., `cpe:2.3:a:test:test:*:*:*:*:*:*:*:*`). This
-ensures a broken mapping file is detected at boot time -- before any
-CVE ingestion occurs -- rather than silently failing hours later when
-the first NVD sync runs. The lazy-init pattern avoids coupling all
-modules that transitively import `cpe_mapping` to the existence of
-the JSON file, improving test ergonomics (tests that don't exercise
-CPE resolution can import the module freely without requiring the
-data file).
+The lazy-init pattern avoids coupling all modules that transitively
+import `cpe_mapping` to the existence of the JSON file, improving
+test ergonomics (tests that don't exercise CPE resolution can import
+the module freely without requiring the data file).
+
+**Runtime validation contract**:
+
+Package resolution is a best-effort mechanism — the platform functions
+correctly without a CPE mapping (tickets are created normally, VAs can
+add packages manually). This informs the loader's error handling:
+absence or emptiness of the file is a degraded-but-operational state,
+not a fatal error.
+
+**Exception**: `CPEMappingLoadError` — a `RuntimeError` subclass
+defined beside the loader in `backend/app/services/cpe_mapping.py`.
+Message format: `CPE mapping load failed at {path}: {reason}`.
+`{reason}` identifies the failed rule and, for structural failures,
+the offending key or zero-based array index; it never includes file
+contents or package values.
+
+**Loader behavior by file state**:
+
+| Condition | Behavior | Rationale |
+|-----------|----------|-----------|
+| File does not exist | Log WARNING `cpe_mapping_absent`; return empty dict | Best-effort degradation — resolution disabled, platform operational |
+| File exists, zero bytes or whitespace-only | Log WARNING `cpe_mapping_absent`; return empty dict | Equivalent to absent — no meaningful content to parse |
+| File exists, content is `{}` (empty JSON object) | Log WARNING `cpe_mapping_empty`; return empty dict | Explicit empty mapping — resolution disabled, platform operational |
+| File exists, non-empty, structurally valid | Return populated dict | Normal operation |
+| File exists, non-empty, structurally invalid | Raise `CPEMappingLoadError` | Corrupted file = deployment bug; partial/wrong mappings are worse than no mappings |
+
+"Non-empty" for the purpose of validation means: the file contains at
+least one non-whitespace character AND the content is not the empty
+JSON object `{}`. Files that are zero bytes, whitespace-only, or
+contain exactly `{}` are treated as graceful-degradation cases (no
+validation rules applied, no error raised).
+
+**Validation rules** (applied only when file exists and is non-empty;
+checked in order, first failure raises `CPEMappingLoadError`):
+
+1. The file is readable and valid UTF-8.
+2. The content is syntactically valid JSON.
+3. The root value is an object (not array, string, null, etc.).
+4. No duplicate keys exist. The loader MUST use a pair-preserving
+   decoder hook because a standard dict silently retains only the last
+   duplicate.
+5. Every key is lowercase with exactly one literal `:` separating
+   non-empty `vendor` and `product` components. Key and both components
+   must equal their whitespace-trimmed forms. Components MUST NOT
+   contain internal whitespace (only `[a-z0-9._-]` characters are
+   permitted) — keys with spaces would never be matched by the
+   resolution functions, which produce underscore-separated keys from
+   CPE data.
+6. Every value is a non-empty array of strings. Every string is
+   non-empty after trimming and must equal its trimmed form.
+
+**Not enforced at runtime** (CI-only): alphabetical key ordering.
+Unsorted but otherwise valid JSON loads successfully.
+
+**Cache behavior**: the loader uses `@lru_cache(maxsize=1)` and
+returns `dict[str, tuple[str, ...]]` (immutable tuples for package
+lists). Both successful loads (populated or empty dict) are cached. A
+load that raises `CPEMappingLoadError` stores no entry — the next
+call retries a full read and revalidation. After one successful load,
+subsequent calls return the cached mapping without file I/O. There is
+no hot-reload or cache invalidation; a mapping update requires a new
+deployment and process restart.
+
+File I/O errors (`PermissionError`, `IsADirectoryError`, and any
+other `OSError` subclass raised during file access) are wrapped in
+`CPEMappingLoadError` with the underlying OS error as `{reason}`.
+These indicate deployment/mount issues that prevent determining file
+state.
+
+Non-`OSError` exceptions (`MemoryError`, `KeyboardInterrupt`, etc.)
+propagate unchanged — they are not wrapped in `CPEMappingLoadError`.
+
+**Worker startup guard**: Celery workers validate the CPE mapping at
+process startup via `check_cpe_mapping()` in the unified
+`celeryd_after_setup` handler, before accepting any task. This
+ensures a corrupted mapping file is detected at boot time — not hours
+later when the first ingestion task runs. See
+`docs/features/platform/fetcher-infrastructure.md` (Worker Startup
+Handler) for the full handler contract.
+
+The API server, Beat, and IBS consumer do not validate the CPE
+mapping — they never call `resolve_cpe_packages()` or
+`resolve_vendor_product()`.
+
+**`check_cpe_mapping()`**:
+
+- **Location**: `backend/app/core/startup_checks.py`
+- **Signature**: `def check_cpe_mapping() -> None`
+- **Behavior**: invokes `resolve_cpe_packages()` with the fixed dummy
+  CPE `cpe:2.3:a:test:test:*:*:*:*:*:*:*:*`. The loader handles all
+  three cases (valid file, absent/empty file, invalid file) internally.
+  On success (including file-absent or file-empty), the `lru_cache` is
+  warmed for subsequent use by worker tasks. If loading raises
+  `CPEMappingLoadError`, propagates it to the caller.
+- **Side effects**: cache warming only. No I/O beyond what the loader
+  performs, no audit events.
+- **Exceptions**: propagates `CPEMappingLoadError` from the loader.
+  Unexpected exceptions from the loader propagate unchanged.
 
 **Operational semantics**: the mapping file is treated as source code —
 committed to the repository, versioned, and reviewed via normal code
@@ -257,9 +347,9 @@ review. It is loaded exactly once per process at first use and remains
 immutable in memory for the entire process lifetime (read-once-per-process).
 Modifications to the mapping require a commit and a new deployment to
 reach production. There is no hot-reload or runtime cache invalidation
-mechanism. After a deployment with an updated mapping, all processes
-(API server, Celery workers, Beat scheduler) start fresh with the new
-version.
+mechanism. After a deployment with an updated mapping, Celery workers (the only
+consumers) start fresh with the new version. The API server, Beat,
+and IBS consumer do not load the mapping.
 
 **Mapping file key format**: all keys in the JSON mapping file MUST be
 lowercase (`vendor:product`). The lowercase normalization step in the
@@ -366,7 +456,8 @@ CNA vendor:product both resolving to `emacs`).
 ## Security
 
 - **No external I/O**: the resolution function reads from an in-memory
-  dict loaded at startup. No network calls, no database queries
+  dict loaded lazily at first use (in worker processes). No network
+  calls, no database queries
 - **Input validation**: CPE strings are validated during parsing. Strings
   that cannot be parsed are logged and skipped, never passed through
   to downstream operations
