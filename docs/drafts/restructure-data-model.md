@@ -178,6 +178,14 @@ operates only on headings that already exist — entries suffixed with
   CVE & Ticket Core (temporary — Phase 4 will relocate it to Shared
   Structures)
 
+Ordering principle: within each domain group, entities are ordered
+**hierarchy-first** (parent → child chain first, then referenced lookup
+tables). Example in Package Model: TicketPackage → TicketPackageTrack →
+TicketPackageProduct (hierarchy), then enums, then Product +
+ProductRepository (lookup tables referenced by the hierarchy). This
+differs from the current file which uses dependency-first ordering in
+some domains.
+
 **Verification criteria**:
 
 - `git diff --stat` shows only `data-model.md` modified
@@ -297,6 +305,22 @@ into dedicated H4 sections with Category classification and value table.
    Resolved, Ignored, Duplicated"`. The extracted H4 section is the
    authoritative source for detailed value descriptions.
 
+   Scope of the brief reference pattern: it replaces ONLY the enum value
+   definition and detailed per-value descriptions. Other column metadata
+   (provenance info like "Populated by...", cross-references to specs,
+   default values, nullability notes) MUST remain in the column
+   description unchanged.
+
+   Description column strategy for the extracted value table:
+   - If the source text has per-value descriptions or semantic
+     annotations (e.g., IBS state mappings, non-final behavior), carry
+     them into the Description column verbatim
+   - If the source text has only bare value names (e.g.,
+     FetcherRunStatus: `running`, `success`, `failure`, `partial`),
+     derive a brief description from the owning spec. If the owning
+     spec has no per-value detail, use a minimal self-evident phrase
+     (e.g., "Fetcher is currently executing" for `running`)
+
    Enums to extract:
    - `TicketStatus` (currently inline in Ticket table column `status`,
      line 1087: "New, Analysis, Analyzed, Resolved, Ignored, Duplicated")
@@ -339,6 +363,9 @@ into dedicated H4 sections with Category classification and value table.
 
 - Every enum value that existed before still exists in the file
 - No enum values were changed, added, or removed
+- Semantic annotations (IBS state mappings, non-final behavior notes,
+  cross-version mappings) MUST be preserved in the Description column
+  of the extracted value table — not just the bare value names
 - The Notes section's enum classification list is updated to include
   newly-extracted enums
 - Each new section follows the standardized pattern from Phase 5a
@@ -356,10 +383,10 @@ in the owning spec) or move it there (if not present elsewhere).
 
 | Item | Location in data-model.md | Owning spec | Action |
 |------|---------------------------|-------------|--------|
-| UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `docs/features/tickets/cve-sync-epss.md` for display guidance" |
-| Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `docs/features/identity/authentication.md` (Session cleanup) for retention policy" |
-| CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `docs/features/tickets/cve-service.md` (`record_source_status`) for write semantics and `docs/features/platform/cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
-| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column, ENUM value, or API status field value — a query-time predicate. See docs/features/platform/cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
+| UI display note for EPSS (staleness indicator, frontend SHOULD display) | `**UI display note**` block after the CVEEPSSScore table | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after the staleness check section). Leave a short reference in data-model.md: "See `docs/features/tickets/cve-sync-epss.md` for display guidance" |
+| Session cleanup policy detail (weekly task, criteria, retention) | `**Cleanup**` block after the Session table indexes | `docs/features/identity/authentication.md` (Session cleanup section) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `docs/features/identity/authentication.md` (Session cleanup) for retention policy" |
+| CVESource `first_failed_at` detailed retry mechanism explanation | `first_failed_at` column Description in the CVESource table | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `docs/features/tickets/cve-service.md` (`record_source_status`) for write semantics and `docs/features/platform/cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
+| CVESource "Derived predicate — stalled" block | `**Derived predicate — "stalled"**` block after the CVESource unique constraint | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column, ENUM value, or API status field value — a query-time predicate. See docs/features/platform/cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
 
 **Actions**:
 
