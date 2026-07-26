@@ -721,6 +721,12 @@
         "not_reviewed": []
       }
     },
+    "data-model": {
+      "enabled": true,
+      "abbr": "DM",
+      "path": "docs/data-model.md",
+      "cache": null
+    },
     "fetcher-infrastructure": {
       "enabled": true,
       "abbr": "FEI",
