@@ -235,31 +235,43 @@ async def associate_cve(
     `TicketCVEConflictError` if CVE is already associated with another
     ticket)
 5. `auto_assign_actor(ticket, acting_user_id)`
-6. Set `ticket.cve_id`
-7. Create `TicketAuditEvent` (`cve_associated`)
-8. Call `recalculate_cvss_chain(ticket_id,
-    acting_user_id=acting_user_id)` — reads `default_cvss_version`
-    internally, recalculates severity (switching from
-    `severity_manual` to CVSS-cascade-derived) and product eligibility
-    using the CVE's existing assessments, then calls
+6. Capture `previous_severity = ticket.severity_manual` (may be `NULL`)
+7. Set `ticket.cve_id` and clear `ticket.severity_manual = NULL` (same
+    UPDATE — maintains `chk_ticket_severity_manual_cve_exclusive`)
+8. Create `TicketAuditEvent` (`cve_associated`)
+9. Call `recalculate_cvss_chain(ticket_id,
+    acting_user_id=acting_user_id,
+    suppress_severity_event=True)` — reads `default_cvss_version`
+    internally, recalculates severity (now CVSS-cascade-derived) and
+    product eligibility using the CVE's existing assessments, then calls
     `reconcile_ticket_status()` internally. Gate #3 (severity set) and
     gate #4 (SUSE CVSS provided) may now fail, causing regression to
-    Analysis
-9. Return updated Ticket
+    Analysis. The `suppress_severity_event=True` flag prevents
+    `recalculate_cvss_chain` from emitting its own `severity_changed`
+    event — this function owns the handover event (step 10)
+10. Determine `new_severity`: the value of `cve.severity` after step 9
+    (may be `NULL` if no CVSS data exists). If
+    `previous_severity != new_severity`, create `TicketAuditEvent`
+    (`severity_changed`, `user_id = acting_user_id`,
+    `old_value = previous_severity`, `new_value = new_severity`,
+    `detail = NULL`). This event captures the handover from manual to
+    CVSS-derived severity
+11. Return updated Ticket
 
 **Locking**: FOR UPDATE on Ticket row. Step 4 (CVE Resolution Behavior)
 executes entirely within the locked transaction but involves only local
 database operations: a `SELECT` on the CVE table and possibly an `INSERT`
 of a minimal CVE record via `ensure_cve_exists()`. No synchronous
 external HTTP calls or Redis/Celery operations occur while the lock is
-held. `recalculate_cvss_chain()` (step 8) re-acquires `FOR UPDATE` on
+held. `recalculate_cvss_chain()` (step 9) re-acquires `FOR UPDATE` on
 the same row within the same transaction (PostgreSQL same-transaction
 re-lock, no-op). Task dispatch via `trigger_on_demand_fetch()` is the
 endpoint handler's responsibility and MUST occur after `db.commit()`,
 outside the locked transaction.
 
-**recalculate_cvss_chain**: YES — associating a CVE changes the severity
-resolution source. `recalculate_cvss_chain()` recalculates severity via
+**recalculate_cvss_chain**: YES (with `suppress_severity_event=True`) —
+associating a CVE changes the severity resolution source.
+`recalculate_cvss_chain()` recalculates severity via
 `resolve_severity_score()` (5-step cascade using the CVE's existing
 assessments) and product eligibility via `resolve_eligibility_score()`
 (SUSE-only, 2-step). If the CVE has no assessments (e.g., MITRE-sourced
@@ -269,15 +281,25 @@ effectively a no-op for eligibility in this case. The final
 `reconcile_ticket_status()` call (chain step 7) evaluates gates and may
 regress the ticket to Analysis.
 
+The `suppress_severity_event=True` parameter prevents
+`recalculate_cvss_chain` from emitting its own `severity_changed` event
+in this path. `associate_cve` owns the handover event (step 10), which
+uses the captured `previous_severity` (the VA's manual value) as
+`old_value` — information that `recalculate_cvss_chain` does not have
+access to (it only sees the CVE's previous `severity` field).
+
 **Note on pre-existing CVSS assessments**: If the CVE being associated
 already has `CVECVSSAssessment` records (e.g., from a prior NVD sync), these
 assessments are immediately available to the CVSS resolution cascade.
 `recalculate_cvss_chain()` uses them to derive severity and recalculate
 product eligibility without requiring a fresh NVD fetch.
 
-**Audit events**: `cve_associated`. Possibly `assignment` (from
-auto-assign). Possibly `severity_changed`, `product_eligibility_changed`
-(from recalculate chain). Possibly `status_change` (from reconcile).
+**Audit events**: `cve_associated` (always). `severity_changed` (if
+`previous_severity != new_severity` — captures the manual→derived
+handover; emitted by `associate_cve`, not by `recalculate_cvss_chain`).
+Possibly `assignment` and `status_change` (from auto-assign). Possibly
+`product_eligibility_changed` (from recalculate chain). Possibly
+`status_change` (from reconcile).
 
 ### assign_ticket
 

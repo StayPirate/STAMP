@@ -289,7 +289,7 @@ Severity is recalculated whenever:
   the transition, plus `catch_up()` tasks are enqueued internally
 - A CVE is associated with a ticket (or a ticket is created with a
    CVE) — `recalculate_cvss_chain()` is called synchronously within
-   the transaction (see `ticket-service.md`, `associate_cve()` step 8)
+   the transaction (see `ticket-service.md`, `associate_cve()` step 9)
 
 ### Severity Override by CVSS
 

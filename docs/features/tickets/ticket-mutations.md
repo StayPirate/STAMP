@@ -635,10 +635,10 @@ function does NOT create, update, or delete any `CVECVSSAssessment`
 record — it only recalculates derived data.
 
 **Callers**: `upsert_cvss_assessment()`, `delete_cvss_assessment()`,
-`associate_cve()` (ticket-service), `reconcile_ticket_status()` step 4
-(post-transition catch-up), and the batch recalculation Celery task
-triggered by a default CVSS version change (see
-`docs/features/platform/system-settings.md`).
+`associate_cve()` (ticket-service, with `suppress_severity_event=True`),
+`reconcile_ticket_status()` step 4 (post-transition catch-up), and the
+batch recalculation Celery task triggered by a default CVSS version
+change (see `docs/features/platform/system-settings.md`).
 
 **Parameters**:
 
@@ -648,6 +648,7 @@ triggered by a default CVSS version change (see
 | `ticket_id` | `UUID` | Yes | Ticket to recalculate |
 | `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly (passed as a task argument from the triggering endpoint) to ensure all tickets in a batch use the same version. Other callers should typically omit this parameter |
 | `acting_user_id` | `UUID \| None` | No | Who triggered the recalculation (typically `None` for system-initiated batch operations) |
+| `suppress_severity_event` | `bool` | No | Default `False`. When `True`, suppresses emission of the `severity_changed` audit event. Used exclusively by `associate_cve()`, which owns the severity handover event and needs to use the ticket's previous `severity_manual` (not `CVE.severity`) as `old_value`. All other callers MUST NOT set this to `True` |
 
 **Behavior**:
 
@@ -668,12 +669,14 @@ triggered by a default CVSS version change (see
    - Products with `is_eligible_override = true` are not modified
    - Products in Reactive LTSS phase remain `eligible = false` regardless
 6. Create `TicketAuditEvent` records for each change:
-   - `severity_changed` if severity changed
-   - `product_eligibility_changed` for each product whose eligibility
-     changed
+    - `severity_changed` if severity changed AND
+      `suppress_severity_event` is `False`
+    - `product_eligibility_changed` for each product whose eligibility
+      changed
 7. Call `reconcile_ticket_status()`
 
-**TicketAuditEvent**: `severity_changed` (if severity changed) +
+**TicketAuditEvent**: `severity_changed` (if severity changed and
+`suppress_severity_event` is `False`) +
 `product_eligibility_changed` (for each affected product)
 
 **Idempotency**: safe to call multiple times — if nothing has changed

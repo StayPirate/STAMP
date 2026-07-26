@@ -203,9 +203,13 @@ layer.
   nullable
 - Set manually by the VA via the API or UI
 - Only used when `cve_id IS NULL`
-- When a CVE is associated later, the automatic severity from CVSS takes
-  over and `severity_manual` is preserved (but not used — it serves
-  as a historical record of the VA's initial assessment)
+- Mutually exclusive with `cve_id` at the database level
+  (`chk_ticket_severity_manual_cve_exclusive`): at most one can be
+  non-NULL at any given time
+- When a CVE is associated later (`associate_cve`), `severity_manual` is
+  cleared to `NULL` in the same transaction. The automatic severity from
+  CVSS takes over. The VA's previous manual assessment is preserved in
+  the audit trail (`severity_changed` events)
 
 ## Ticket Lifecycle
 
@@ -1597,7 +1601,7 @@ table:
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | Ticket status |
 | assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |
-| severity_manual | VARCHAR(20) | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = VA explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL` |
+| severity_manual | VARCHAR(20) | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = VA explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL`. Cleared to NULL by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (`chk_ticket_severity_manual_cve_exclusive`) |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |

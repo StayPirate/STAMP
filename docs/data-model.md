@@ -1083,7 +1083,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). See `docs/features/tickets/tickets.md` (Severity Resolution) |
+| severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the target ticket when status is Duplicated. Always references a non-Duplicated ticket (enforced by the transactional locking protocol in `mark_as_duplicate`). See `docs/features/tickets/tickets.md` (Duplicate Handling) |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
@@ -1094,6 +1094,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 
 - `chk_ticket_duplicate_status_coherence`: `(status = 'Duplicated' AND duplicate_of_id IS NOT NULL) OR (status != 'Duplicated' AND duplicate_of_id IS NULL)`
 - `chk_ticket_no_self_duplicate`: `duplicate_of_id <> id`
+- `chk_ticket_severity_manual_cve_exclusive`: `severity_manual IS NULL OR cve_id IS NULL`
 
 
 **Deletion policy**: Tickets MUST NOT be deleted from the database. There is no soft-delete mechanism at the ticket level. Tickets that are no longer relevant are transitioned to Ignored or Duplicated status.
@@ -1231,7 +1232,7 @@ system action).
 | product_restored           | Directly soft-deleted product restored by VA. `new_value` contains the product display name. `user_id` is the VA. |
 | ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
 | cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the VA who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
-| severity_changed           | NULL for automatic CVSS recalculation, acting user's UUID for manual severity (`set_severity_manual()`). |
+| severity_changed           | NULL for automatic CVSS recalculation, acting user's UUID for manual severity (`set_severity_manual()`) or CVE association handover (`associate_cve()`). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
 | product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `detail` carries `{"track", "package", "product_id", "reason"}` context where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
 | confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/tickets.md` (Confidential Tickets). |
