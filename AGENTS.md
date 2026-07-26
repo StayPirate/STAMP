@@ -520,8 +520,8 @@ ticket status gates MUST go through the appropriate centralized module:
 - **Package/track/product mutations** (`TicketPackageTrack`,
   `TicketPackageProduct`, package soft-delete/restore): `package_service`
   (`backend/app/services/package_service.py`)
-- **CVSS and severity mutations** (`CVECVSSAssessment` records, severity
-  override): `ticket_mutations`
+- **CVSS and severity mutations** (`CVECVSSAssessment` records, manual
+  severity): `ticket_mutations`
   (`backend/app/services/ticket_mutations.py`)
 - **Non-gate ticket lifecycle mutations** (assignment, CVE association,
   mark-as-duplicate, confidentiality):

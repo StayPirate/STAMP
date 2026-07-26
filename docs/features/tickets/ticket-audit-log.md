@@ -38,7 +38,7 @@ fields populated according to this table:
 | `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "advisory_id": "..."}` (see detail contract) |
 | `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) | `NULL` |
 | `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | `NULL` |
-| `severity_changed` | CVSS recalculation changes ticket severity (system) or VA sets/clears severity override (manual) | `NULL` for automatic CVSS recalculation, acting user's UUID for manual severity override (`set_severity_override()`) | Old severity (e.g., `High`) or `NULL` | New severity (e.g., `Critical`) or `NULL` | `NULL` | `NULL` |
+| `severity_changed` | CVSS recalculation changes ticket severity (system) or VA sets/clears manual severity | `NULL` for automatic CVSS recalculation, acting user's UUID for manual severity (`set_severity_manual()`) | Old severity (e.g., `High`) or `NULL` | New severity (e.g., `Critical`) or `NULL` | `NULL` | `NULL` |
 
 > **Note**: `old_value` and `new_value` can be `NULL` for `severity_changed`
 > events. When severity transitions from unresolved (`NULL`) to a resolved

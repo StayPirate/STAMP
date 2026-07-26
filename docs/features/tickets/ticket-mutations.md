@@ -3,7 +3,7 @@
 ## Purpose
 
 Centralize ticket-centric operations that modify data relevant to ticket
-status gates — CVSS assessment management, severity overrides, and
+status gates — CVSS assessment management, manual severity, and
 manual-zone exits — in a single service module (`ticket_mutations`).
 This module also provides the shared `reconcile_ticket_status()` function
 and the `auto_assign_actor()` helper, which are called by both this
@@ -37,7 +37,7 @@ RabbitMQ consumer) call the service via `asyncio.run()`.
 
 | Entry point               | Invocation pattern                                              |
 |---------------------------|-----------------------------------------------------------------|
-| API endpoint              | `await ticket_mutations.set_severity_override(session, ...)`    |
+| API endpoint              | `await ticket_mutations.set_severity_manual(session, ...)`    |
 
 ### Transaction ownership
 
@@ -207,7 +207,7 @@ beyond status changes.
          internally; if the setting is absent, the exception propagates —
          this indicates a deployment error and the transaction rolls back).
          If `ticket.cve_id IS NULL`: skip (tickets without a CVE derive
-         severity from `severity_override`, not from CVSS assessments —
+         severity from `severity_manual`, not from CVSS assessments —
          there is nothing to recalculate)
       2. Enqueue `catch_up()` for every registered fetcher via
          `get_catch_up_fetchers()` (wrapped in try/except — a transient
@@ -393,7 +393,7 @@ function.
 
 | Module | Functions that call `ensure_ticket_operable` |
 |--------|----------------------------------------------|
-| `ticket_mutations` | `upsert_cvss_assessment`\*, `delete_cvss_assessment`\*, `set_severity_override` |
+| `ticket_mutations` | `upsert_cvss_assessment`\*, `delete_cvss_assessment`\*, `set_severity_manual` |
 | `ticket_service` | `associate_cve`, `assign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_confidentiality`, `grant_access`, `revoke_access` |
 | `package_service` | `set_track_status`, `set_track_delivery_status`, `set_product_eligibility`, `set_product_released_at`, and other mutation functions |
 
@@ -583,9 +583,9 @@ an associated ticket)
 
 ---
 
-### `set_severity_override()`
+### `set_severity_manual()`
 
-Sets or clears the `severity_override` field on a ticket.
+Sets or clears the `severity_manual` field on a ticket.
 
 **Parameters**:
 
@@ -593,7 +593,7 @@ Sets or clears the `severity_override` field on a ticket.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Ticket to modify |
-| `severity` | `Severity \| None` | Yes | New severity value (`Critical`, `High`, `Medium`, `Low`, or `None` for CVSS score 0.0 / informational), or Python `None` to clear the override (sets `severity_override` to SQL `NULL` = unresolved) |
+| `severity` | `Severity \| None` | Yes | New severity value (`Critical`, `High`, `Medium`, `Low`, or `None` for CVSS score 0.0 / informational), or Python `None` to clear the value (sets `severity_manual` to SQL `NULL` = unresolved) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
 **Preconditions**:
@@ -601,7 +601,7 @@ Sets or clears the `severity_override` field on a ticket.
 - Ticket must be operable (`ensure_ticket_operable`)
 - Ticket must have `cve_id IS NULL` — raises `SeverityDerivedError`
   if the ticket has an associated CVE (severity is derived from CVSS
-  scores and cannot be manually overridden)
+   scores and cannot be set manually)
 
 **Behavior**:
 
@@ -610,16 +610,16 @@ Sets or clears the `severity_override` field on a ticket.
 3. Validate preconditions
 4. If severity unchanged, return (no-op)
 5. Call `auto_assign_actor(ticket, acting_user_id, db)`
-6. Update `ticket.severity_override`
+6. Update `ticket.severity_manual`
 7. Create `TicketAuditEvent` (`severity_changed`, `user_id = acting_user_id`)
 8. Call `reconcile_ticket_status()`
 9. Return updated ticket
 
-**Gate relevance**: setting `severity_override` affects the ticket's
+**Gate relevance**: setting `severity_manual` affects the ticket's
 resolved severity, which is gate-relevant (Analyzed gate #3 requires
 severity). This operation is only valid when `cve_id IS NULL` — when a
 CVE is associated, severity is derived from CVSS scores via the
-resolution cascade and `severity_override` is not applicable.
+resolution cascade and `severity_manual` is not applicable.
 
 **TicketAuditEvent**: `severity_changed`
 
@@ -885,7 +885,7 @@ status gates MUST go through the appropriate centralized module:
   `TicketPackageProduct` eligibility overrides, soft-delete/restore, record
   creation)
 - **CVSS and severity mutations**: `ticket_mutations`
-  (`CVECVSSAssessment` records, severity override)
+  (`CVECVSSAssessment` records, manual severity)
 - **Ticket status evaluation**: `ticket_mutations` (called after any
   gate-relevant mutation)
 
@@ -924,15 +924,15 @@ which operations call `reconcile_ticket_status` and why.
 
 A parametrized integration test MUST be implemented to verify that the
 `ticket_mutations` module produces the correct ticket status after every
-type of ticket-centric mutation (CVSS assessment operations, severity
-override, manual-zone exits). The test must cover:
+type of ticket-centric mutation (CVSS assessment operations, manual
+severity, manual-zone exits). The test must cover:
 
 - **Forward transitions**: CVSS and severity changes causing ticket
   advancement
 - **Backward transitions**: CVSS deletion breaking gate conditions
 - **No-op cases**: mutations that do not affect gate conditions
-- **Edge cases**: ticket without CVE (no SUSE CVSS gate), severity
-  override on CVE-less ticket
+- **Edge cases**: ticket without CVE (no SUSE CVSS gate), manual
+  severity on CVE-less ticket
 - **Manual-zone exits**: `reopen_from_ignored` and `revert_duplicate`
   producing correct status transitions
 

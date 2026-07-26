@@ -16,7 +16,7 @@ management — in a single service module
   point
 - Business rules (idempotency) are enforced regardless of entry point
 
-Gate-relevant mutations (CVSS assessments, severity overrides,
+Gate-relevant mutations (CVSS assessments, manual severity,
 manual-zone exits) are handled by `ticket_mutations`
 (`docs/features/tickets/ticket-mutations.md`). Package-centric mutations
 are handled by `package_service`
@@ -94,7 +94,7 @@ exit operations:
 
 | Endpoint | Function | Reason |
 |----------|----------|--------|
-| `PATCH .../severity` | `set_severity_override()` | Gate-relevant (severity affects Analyzed gate #3) |
+| `PATCH .../severity` | `set_severity_manual()` | Gate-relevant (severity affects Analyzed gate #3) |
 | `POST .../reopen` | `reopen_from_ignored()` | Manual-zone exit (re-enters gate zone via `_reenter_gate_zone()`) |
 | `POST .../revert-duplicate` | `revert_duplicate()` | Manual-zone exit (re-enters gate zone via `_reenter_gate_zone()`) |
 
@@ -149,7 +149,7 @@ async def create_ticket(
     *,
     acting_user_id: UUID | None,
     cve_id: str | None = None,
-    severity_override: Severity | None = None,
+    severity_manual: Severity | None = None,
     is_confidential: bool = False,
     source: TicketCreationSource,
 ) -> Ticket:
@@ -169,9 +169,9 @@ comment (e.g., "Ticket created manually", "CVE ingested from NVD",
   ticket)
 - If `is_confidential` is True: the acting user must hold
   `manage_confidentiality` capability (enforced at the API layer)
-- If both `cve_id` and `severity_override` are provided: the service
+- If both `cve_id` and `severity_manual` are provided: the service
   raises `SeverityDerivedError`. When a CVE is associated, severity is
-  derived exclusively from CVSS assessments — manual override is not
+  derived exclusively from CVSS assessments — manual severity is not
   applicable. UI implementations should disable the severity field when
   a CVE is provided at creation time
 
@@ -186,8 +186,8 @@ comment (e.g., "Ticket created manually", "CVE ingested from NVD",
      `status = Analysis`, `assignee_id = acting_user_id`
    - Otherwise: `status = New`
 4. Create `TicketAuditEvent` (`ticket_created`, comment from `source`)
-5. If `severity_override` provided: create `TicketAuditEvent`
-   (`severity_changed`, `old_value = NULL`, `new_value = <override>`)
+5. If `severity_manual` provided: create `TicketAuditEvent`
+   (`severity_changed`, `old_value = NULL`, `new_value = <severity>`)
 6. If assigned (step 3): create `TicketAuditEvent` (`assignment`)
 7. If CVE associated: create `TicketAuditEvent` (`cve_associated`)
 8. Return the created Ticket
@@ -240,7 +240,7 @@ async def associate_cve(
 8. Call `recalculate_cvss_chain(ticket_id,
     acting_user_id=acting_user_id)` — reads `default_cvss_version`
     internally, recalculates severity (switching from
-    `severity_override` to CVSS-cascade-derived) and product eligibility
+    `severity_manual` to CVSS-cascade-derived) and product eligibility
     using the CVE's existing assessments, then calls
     `reconcile_ticket_status()` internally. Gate #3 (severity set) and
     gate #4 (SUSE CVSS provided) may now fail, causing regression to
@@ -750,7 +750,7 @@ The following integration tests MUST be implemented to verify correct
 behavior of `ticket_service` operations:
 
 1. **CVE association causes status regression**: create a ticket without
-   CVE, set `severity_override`, add a package with tracks in final
+   CVE, set `severity_manual`, add a package with tracks in final
    status to reach Analyzed. Associate a CVE → verify ticket regresses
    to Analysis (gate #3 and #4 fail)
 
@@ -768,7 +768,7 @@ behavior of `ticket_service` operations:
    `status_change` event with `old_value = "New"` and
    `new_value = "Analysis"`. Paths to cover: `assign_ticket()` (explicit
    assignment) and `auto_assign_actor()` (triggered via any mutation
-   function on an unassigned ticket, e.g., `set_severity_override`,
+   function on an unassigned ticket, e.g., `set_severity_manual`,
    `set_track_status`, `add_package_to_ticket`). This test guards against
    future code paths that set `assignee_id` without performing the
    `New → Analysis` transition.

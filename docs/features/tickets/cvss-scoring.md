@@ -262,7 +262,7 @@ always derived from CVSS assessments. It is never set manually.
 exactly 0.0 (the standard CVSS "None" rating — no security impact).
 
 **Note**: for tickets without a CVE, severity is determined by the
-`severity_override` field on the Ticket, set manually by the VA. The
+`severity_manual` field on the Ticket, set manually by the VA. The
 CVE severity derivation described below applies only to tickets with an
 associated CVE. See `docs/features/tickets/tickets.md` (Severity Resolution)
 for the unified resolution logic.
@@ -308,7 +308,7 @@ Analysis → Analyzed gate (see [`tickets.md`](tickets.md), Gate condition
 ticket progresses.
 
 **Tickets without CVE**: this gate does not apply. Instead, the VA must
-set `severity_override` before the ticket can progress. See
+set `severity_manual` before the ticket can progress. See
 [`tickets.md`](tickets.md) (Gate: Analysis → Analyzed) for the full gate
 conditions applicable to all ticket types.
 

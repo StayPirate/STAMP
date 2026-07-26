@@ -114,7 +114,7 @@ For each `TicketAuditEvent` creation, verify:
   delivery status change), `TicketPackageProduct` records (creation,
   deletion, status change, eligibility change), `CVECVSSAssessment`
   records (creation, update, deletion), ticket severity
-  (`severity_override` or CVSS-derived), and package addition or removal
+  (`severity_manual` or CVSS-derived), and package addition or removal
 - For each modification, verify that it goes through the appropriate
   centralized module:
   - **Package/track/product mutations**: `package_service`

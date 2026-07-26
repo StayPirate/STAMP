@@ -22,7 +22,7 @@ Endpoints are protected by a single capability via the
 | Capability | Operations Covered |
 |---|---|
 | `create_ticket` | Create ticket manually |
-| `triage_ticket` | Assign/reassign ticket, change ticket status (all transitions: ignore, reopen, duplicate, revert-duplicate), associate CVE with ticket, set/update severity override |
+| `triage_ticket` | Assign/reassign ticket, change ticket status (all transitions: ignore, reopen, duplicate, revert-duplicate), associate CVE with ticket, set/update manual severity |
 | `manage_packages` | Add/remove packages from tickets, exclude/restore (package, track, product), change track affectedness status, override product eligibility |
 | `manage_cvss` | Add/edit/delete SUSE CVSS assessments |
 | `manage_references` | Add/edit/delete ticket references |
@@ -141,7 +141,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Assign/reassign ticket | `triage_ticket` |
 | Change ticket status (ignore, reopen, duplicate, revert-duplicate) | `triage_ticket` |
 | Associate CVE with ticket | `triage_ticket` |
-| Set/update severity override | `triage_ticket` |
+| Set/update manual severity | `triage_ticket` |
 | Add/remove packages from tickets | `manage_packages` |
 | Exclude/restore package, track, or product | `manage_packages` |
 | Change track affectedness status | `manage_packages` |
@@ -376,7 +376,7 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#get-ticket) |
 | POST | `/api/v1/tickets` | `create_ticket` †manage_confidentiality | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | `triage_ticket` | [tickets](../tickets/tickets.md#associate-cve) |
-| PATCH | `/api/v1/tickets/{ticket_id}/severity` | `triage_ticket` | [tickets](../tickets/tickets.md#set-severity-override) |
+| PATCH | `/api/v1/tickets/{ticket_id}/severity` | `triage_ticket` | [tickets](../tickets/tickets.md#set-severity-manual) |
 | PATCH | `/api/v1/tickets/{ticket_id}/assignee` | `triage_ticket` | [tickets](../tickets/tickets.md#assign-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/ignore` | `triage_ticket` | [tickets](../tickets/tickets.md#ignore-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/reopen` | `triage_ticket` | [tickets](../tickets/tickets.md#reopen-ticket) |

@@ -681,7 +681,7 @@ Two patterns exist for modifying resources:
 
 ```
 PATCH /api/v1/tickets/{ticket_id}/severity
-Body: {"severity_override": "critical"}
+Body: {"severity": "critical"}
 ```
 
 Used when the client sets one or more fields on a resource clearly
