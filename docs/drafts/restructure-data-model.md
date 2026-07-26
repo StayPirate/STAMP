@@ -299,7 +299,8 @@ into dedicated H4 sections with Category classification and value table.
      (Python Enum only)
    - `Role` enum values (currently within UserRole section) → extract to
      `#### Role Enum`. Category A — state-machine (VARCHAR + CHECK
-     constraint `chk_user_role_role_valid`)
+     constraints: `chk_user_role_role_valid` on `user_role`,
+     `chk_role_mapping_role_valid` on `role_mapping`)
    - `FetcherRunStatus` (currently inline in FetcherRun description) →
      extract to `#### FetcherRunStatus Enum`. Category A — state-machine
      (VARCHAR + CHECK constraint `chk_fetcher_run_status_valid`)
@@ -337,6 +338,7 @@ in the owning spec) or move it there (if not present elsewhere).
 | UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `cve-sync-epss.md` for display guidance" |
 | Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `authentication.md` (Session cleanup) for retention policy" |
 | CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `cve-service.md` (`record_source_status`) for write semantics and `cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
+| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to negative assertion only: `**Derived predicate — "stalled"**: not a stored column or ENUM value — a query-time predicate. See cve-source-failure-retry.md for the full definition.` Remove the predicate formula, consumer list, and operational guidance (already in owning spec) |
 
 **Actions**:
 
