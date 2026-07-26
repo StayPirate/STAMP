@@ -66,18 +66,7 @@
 
 ### TRF-COH-01 — Stale "No URL transformation" statement contradicts URL Normalization section and data-model.md (Medium)
 
-**Category**: Contradictory definitions
-**Status**: OPEN
-
-Lines 261–264 state: "No URL transformation: URLs are stored exactly as received from the source or user. No percent-encoding, normalization, or transformation is applied before storage. The unique constraint `(ticket_id, url)` operates on the literal stored value."
-
-Lines 316–326 state: "Before comparison or storage, every URL (automatic and manual) is normalized: Scheme + host lowercased (per RFC 3986 §3.1 and §3.2.2); `http://` normalized to `https://`; Trailing slash removed when the path is empty or consists only of `/`."
-
-Additionally, `data-model.md` documents the url column as "Stored in normalized form."
-
-This is a direct internal contradiction — a stale remnant from before URL normalization was added. An implementer reading the spec linearly encounters the "No transformation" statement first (in the Ingestion Flow section) and could implement without normalization, only to discover the contradicting Normalization section 50 lines later in the Upsert Strategy subsection.
-
-**Fix**: Remove or replace the "No URL transformation" paragraph at lines 261–264 with a forward reference to the URL Normalization section (e.g., "URLs are normalized before storage — see URL Normalization below.").
+**Status**: RESOLVED — Replaced stale "No URL transformation" paragraph with forward reference to URL Normalization section (2026-07-26)
 
 ---
 

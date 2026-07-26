@@ -77,8 +77,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [ticket-mutations](ticket-mutations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/41 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [ticket-references](ticket-references.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1/35 | 2026-07-25 |  |
-| |  | 1:🟠 |  |  |  |  |  |  |
+| [ticket-references](ticket-references.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/35 | 2026-07-25 |  |
+|  |  |  |  |  |  |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/28 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
 | [testing-strategy](testing-strategy.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1/3 | 2026-07-25 |  |
@@ -89,8 +89,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **1** | **1** | **🟢** | **🟢** | **4/797** |  |  |
-| | 2:🟠 | 1:🟠 | 1:🟡 |  |  |  |  |  |
+| **Total** | **2** | **🟢** | **1** | **🟢** | **🟢** | **3/797** |  |  |
+| | 2:🟠 |  | 1:🟡 |  |  |  |  |  |
 
 ### Disabled specs
 

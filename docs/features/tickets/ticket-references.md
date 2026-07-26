@@ -258,10 +258,9 @@ references validated at the API layer by Pydantic `HttpUrl` will never
 reach this gate with invalid data, but the gate remains active for all
 paths as a safety net.
 
-**No URL transformation**: URLs are stored exactly as received from the
-source or user. No percent-encoding, normalization, or transformation is
-applied before storage. The unique constraint `(ticket_id, url)` operates
-on the literal stored value.
+**URL normalization**: before storage, all URLs are normalized as described
+in the Upsert Strategy § URL Normalization section below. The unique
+constraint `(ticket_id, url)` operates on the post-normalization value.
 
 The service performs the following steps:
 
