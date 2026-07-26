@@ -165,6 +165,9 @@ operates only on headings that already exist — entries suffixed with
   Ticket Core group
 - Move `SystemSetting` from its current position (after CVEEPSSScore)
   to the Platform Infrastructure group
+- Position `AuditEventMixin` immediately before `TicketAuditEvent` in
+  CVE & Ticket Core (temporary — Phase 4 will relocate it to Shared
+  Structures)
 
 **Verification criteria**:
 
@@ -172,14 +175,18 @@ operates only on headings that already exist — entries suffixed with
 - Heading inventory: all original H3 headings are now H4 under their
   domain group; 5 new H3 domain headings were added; no heading was
   deleted
-- Body content preservation: extract all non-heading lines from before
-  and after; diff must show zero differences (reordering does not
-  add/remove/modify content lines)
-- Per-section association check: extract content sections by H4 heading
-  (from heading to next heading). Compare each extracted section's body
-  against the pre-reorder version keyed by the same heading text.
-  Differences indicate misassociation (a block landed under the wrong
-  heading during reorder)
+- Body content sanity check: sort all non-heading lines from before and
+  after; compare the sorted output — differences reveal accidental
+  additions or deletions. Additionally, non-heading line count must be
+  identical before and after
+- Per-section association check (primary verification): extract content
+  sections by H4 heading (from heading to next heading). Compare each
+  extracted section's body against the pre-reorder version keyed by the
+  same heading text. Differences indicate misassociation (a block landed
+  under the wrong heading during reorder)
+- External anchor stability: grep all files in `docs/` for links
+  containing `data-model.md#` and verify each anchor resolves correctly
+  after the reorder
 
 ---
 
@@ -337,10 +344,10 @@ in the owning spec) or move it there (if not present elsewhere).
 
 | Item | Location in data-model.md | Owning spec | Action |
 |------|---------------------------|-------------|--------|
-| UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `cve-sync-epss.md` for display guidance" |
-| Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `authentication.md` (Session cleanup) for retention policy" |
-| CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `cve-service.md` (`record_source_status`) for write semantics and `cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
-| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column or ENUM value — a query-time predicate. See cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
+| UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `docs/features/tickets/cve-sync-epss.md` for display guidance" |
+| Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `docs/features/identity/authentication.md` (Session cleanup) for retention policy" |
+| CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `docs/features/tickets/cve-service.md` (`record_source_status`) for write semantics and `docs/features/platform/cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
+| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column or ENUM value — a query-time predicate. See docs/features/platform/cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
 
 **Actions**:
 
@@ -353,12 +360,14 @@ in the owning spec) or move it there (if not present elsewhere).
 **Verification criteria**:
 
 - No information was deleted without being present elsewhere
-- For the EPSS UI note: verify it now appears in `cve-sync-epss.md`
-- For the Session cleanup: verify `authentication.md` already contains
+- For the EPSS UI note: verify it now appears in
+  `docs/features/tickets/cve-sync-epss.md`
+- For the Session cleanup: verify
+  `docs/features/identity/authentication.md` already contains
   equivalent or more detailed information (it does — lines 285-309)
-- For the CVESource retry: verify `cve-source-failure-retry.md` already
-  contains the identical information (it does — lines 39-57, 82-84,
-  288-290)
+- For the CVESource retry: verify
+  `docs/features/platform/cve-source-failure-retry.md` already contains
+  the consumer-side information (it does — lines 39-57, 82-84, 288-290)
 - `data-model.md` column descriptions remain sufficient to understand the
   column's purpose and type without consulting the feature spec
 - Cross-references use the standard format:
