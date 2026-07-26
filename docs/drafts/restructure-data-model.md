@@ -169,12 +169,12 @@ operates only on headings that already exist — entries suffixed with
 **Verification criteria**:
 
 - `git diff --stat` shows only `data-model.md` modified
-- Line count comparison: the total non-blank content lines must remain
-  identical (reordering does not add/remove content)
-- Every H3/H4 heading that existed before still exists (possibly at a
-  different heading level)
-- Run a word-count comparison on the file before and after: character
-  count should differ only by the added domain heading lines
+- Heading inventory: all original H3 headings are now H4 under their
+  domain group; 5 new H3 domain headings were added; no heading was
+  deleted
+- Body content preservation: extract all non-heading lines from before
+  and after; diff must show zero differences (reordering does not
+  add/remove/modify content lines)
 - Specifically verify: all unique constraint blocks, all CHECK constraint
   blocks, all index blocks, and the Notes section remain intact and
   associated with the correct table
@@ -238,8 +238,8 @@ no content is moved or restructured.
    - `WorkflowType Enum` → add "Category B — classification (Python
      Enum only)". WorkflowType is a static classification assigned once
      at track creation, not a state that transitions
-   - `ReferenceType Enum` → determine category (likely B — classification).
-     Add classification
+   - `ReferenceType Enum` → add "Category B — classification (Python
+     Enum only)"
    - `TicketAuditEventType Enum` → add "Category B — classification
      (Python Enum only)"
    - `IdentityAuditEventType Enum` → add "Category B — classification
@@ -267,7 +267,16 @@ into dedicated H4 sections with Category classification and value table.
 
 1. For each enum below, extract into a dedicated H4 section immediately
    after its owning table. Each extracted enum MUST include the Category
-   classification line per the target pattern in Phase 5a:
+   classification line per the target pattern in Phase 5a.
+
+   After extraction, update the column description in the owning table
+   to use the brief reference pattern (matching existing conventions,
+   e.g., `CVESource.status`): retain a bare value list + enum name as
+   reference. Example: `"TicketStatus: New, Analysis, Analyzed,
+   Resolved, Ignored, Duplicated"`. The extracted H4 section is the
+   authoritative source for detailed value descriptions.
+
+   Enums to extract:
    - `TicketStatus` (currently inline in Ticket table column `status`,
      line 1087: "New, Analysis, Analyzed, Resolved, Ignored, Duplicated")
      → extract to `#### TicketStatus Enum`. Category A — state-machine
@@ -327,7 +336,7 @@ in the owning spec) or move it there (if not present elsewhere).
 |------|---------------------------|-------------|--------|
 | UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `cve-sync-epss.md` for display guidance" |
 | Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `authentication.md` (Session cleanup) for retention policy" |
-| CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics: "Timestamp when the current failure streak began. NULL when status is not `failure`. See `cve-source-failure-retry.md` for the full retry mechanism" |
+| CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `cve-service.md` (`record_source_status`) for write semantics and `cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
 
 **Actions**:
 
@@ -342,7 +351,7 @@ in the owning spec) or move it there (if not present elsewhere).
 - No information was deleted without being present elsewhere
 - For the EPSS UI note: verify it now appears in `cve-sync-epss.md`
 - For the Session cleanup: verify `authentication.md` already contains
-  the identical information (it does — lines 285-309)
+  equivalent or more detailed information (it does — lines 285-309)
 - For the CVESource retry: verify `cve-source-failure-retry.md` already
   contains the identical information (it does — lines 39-57, 82-84,
   288-290)
