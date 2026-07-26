@@ -84,7 +84,7 @@ Add domain separator headings for navigability.
 
 **Target structure** (shows the final state after all phases; Phase 3
 operates only on headings that already exist — entries suffixed with
-`†` will be created by Phase 5):
+`†` will be created by Phase 5b):
 
 ```
 ## Tables
@@ -207,10 +207,11 @@ physical database table.
 
 ---
 
-### Phase 5: Standardize enum documentation pattern
+### Phase 5a: Add Category classification to existing enum headings
 
-**Scope**: Ensure all enums follow a consistent documentation pattern
-with explicit Category classification.
+**Scope**: Add explicit Category A/B classification to the 7 standalone
+enum sections that currently lack it. This is an append-only operation —
+no content is moved or restructured.
 
 **Target pattern for each enum**:
 
@@ -228,8 +229,8 @@ with explicit Category classification.
 
 **Actions**:
 
-1. For enums that currently have their own heading but lack Category
-   classification, add the Category line:
+- For enums that currently have their own heading but lack Category
+  classification, add the Category line:
    - `PackageStatus Enum` → add "Category A — state-machine (VARCHAR +
      CHECK constraint `chk_ticket_package_track_status_valid`)"
    - `DeliveryStatus Enum` → add "Category A — state-machine (VARCHAR +
@@ -246,10 +247,27 @@ with explicit Category classification.
    - `SettingAuditEventType Enum` → add "Category B — classification
      (Python Enum only)"
 
-2. For enums currently documented inline (no own heading), extract into
-   a dedicated H4 section immediately after their owning table. Each
-   extracted enum MUST include the Category classification line per the
-   target pattern above:
+**Verification criteria**:
+
+- Each of the 7 enum sections now has a Category classification line
+  matching the target pattern
+- No enum values were changed, added, or removed
+- Classifications are consistent with the Notes section (line 1549):
+  Category A enums appear in the CHECK-constraint list; Category B enums
+  do not
+
+---
+
+### Phase 5b: Extract inline enums into standalone sections
+
+**Scope**: Extract 9 enums currently documented inline (no own heading)
+into dedicated H4 sections with Category classification and value table.
+
+**Actions**:
+
+1. For each enum below, extract into a dedicated H4 section immediately
+   after its owning table. Each extracted enum MUST include the Category
+   classification line per the target pattern in Phase 5a:
    - `TicketStatus` (currently inline in Ticket table column `status`,
      line 1087: "New, Analysis, Analyzed, Resolved, Ignored, Duplicated")
      → extract to `#### TicketStatus Enum`. Category A — state-machine
@@ -283,16 +301,16 @@ with explicit Category classification.
      extract to `#### FetcherAuditEventType Enum`. Category B —
      classification (Python Enum only)
 
-3. Update the Notes section enum list to reflect any newly-extracted
+2. Update the Notes section enum list to reflect any newly-extracted
    enums and verify the Category A/B classification is consistent
 
 **Verification criteria**:
 
 - Every enum value that existed before still exists in the file
 - No enum values were changed, added, or removed
-- The Notes section's enum classification list is consistent with the
-  per-enum Category declarations
-- Each enum section follows the standardized pattern
+- The Notes section's enum classification list is updated to include
+  newly-extracted enums
+- Each new section follows the standardized pattern from Phase 5a
 
 ---
 
@@ -421,7 +439,8 @@ rm docs/drafts/restructure-data-model.md
 | 2 | Low | Incorrect Mermaid syntax |
 | 3 | **High** | Sections accidentally truncated or misplaced during reorder |
 | 4 | Low | Broken cross-references from audit tables |
-| 5 | Medium | Enum values accidentally changed during reformatting |
+| 5a | Low | Typo in Category classification line |
+| 5b | Medium | Enum values accidentally changed during extraction |
 | 6 | Medium | Information removed that doesn't exist in destination |
 | 7 | Low | Broken anchor links |
 
