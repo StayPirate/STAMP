@@ -52,7 +52,7 @@ because they are historical review findings (point-in-time snapshots):
 
 **File**: `docs/data-model.md`
 
-Two changes:
+Three changes:
 
 1. **Line 148** (ERD diagram): rename column in the Ticket entity block
 
@@ -70,6 +70,13 @@ Two changes:
    `cve_id IS NOT NULL` (severity is derived from CVSS)" — this aligns
    the description with the actual behavior (`SeverityDerivedError`
    prevents setting, rather than the field being ignored).
+
+3. **Line 1234** (TicketAuditEventType table, `severity_changed`
+   description): remove "override" language and align with Step 7
+   (`ticket-audit-log.md` updates the same event type description)
+
+   - Old: `| severity_changed           | NULL for automatic CVSS recalculation, acting user's UUID for manual severity override. |`
+   - New: `| severity_changed           | NULL for automatic CVSS recalculation, acting user's UUID for manual severity (\`set_severity_manual()\`). |`
 
 ---
 
@@ -140,7 +147,12 @@ Changes (in document order):
 9. **Line 1070** (TicketDetail response schema, severity field description):
    same change as item 8 (identical text in both schemas).
 
-10. **Line 1199** (Create Ticket API, severity parameter description):
+10. **Line 1132** (List Tickets, `severity` query parameter, `unresolved`
+    value description):
+    - Old: `(no CVSS data and no override set).`
+    - New: `(no CVSS data and no manual severity set).`
+
+11. **Line 1199** (Create Ticket API, severity parameter description):
     - Old: `- \`severity\` (string, optional): initial severity override (critical, ...`
     - New: `- \`severity\` (string, optional): initial manual severity (critical, ...`
 
@@ -150,27 +162,27 @@ Changes (in document order):
     consistent with the existing pattern (the Set Severity endpoint also
     uses `"severity"` as the request key).
 
-11. **Line 1259** (Endpoint section header):
+12. **Line 1259** (Endpoint section header):
     - Old: `### Set Severity Override`
     - New: `### Set Severity Manual`
 
-12. **Line 1268** (Endpoint description):
+13. **Line 1268** (Endpoint description):
     - Old: `Sets or clears the severity override for a ticket without a CVE.`
     - New: `Sets or clears the manual severity for a ticket without a CVE.`
 
-13. **Line 1278** (Clear example prose):
+14. **Line 1278** (Clear example prose):
     - Old: `To clear the override (revert to unresolved):`
     - New: `To clear the manual severity (revert to unresolved):`
 
-14. **Lines 1286-1288** (Parameter description):
+15. **Lines 1286-1288** (Parameter description):
     - Old: `medium, low, none) sets the severity override; JSON \`null\` clears the override (sets \`severity_override\` to SQL NULL = unresolved)`
     - New: `medium, low, none) sets the manual severity; JSON \`null\` clears it (sets \`severity_manual\` to SQL NULL = unresolved)`
 
-15. **Line 1600** (Schema table, column row):
+16. **Line 1600** (Schema table, column row):
     - Old: `| severity_override | VARCHAR(20) | nullable | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). \`None\` = VA explicitly set informational severity (CVSS score 0.0). Used when \`cve_id IS NULL\` |`
     - New: `| severity_manual | VARCHAR(20) | nullable | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). \`None\` = VA explicitly set informational severity (CVSS score 0.0). Used when \`cve_id IS NULL\` |`
 
-16. **Line 1616** (Security section):
+17. **Line 1616** (Security section):
     - Old: `Assigning, changing status, associating CVE, setting severity override: \`triage_ticket\` capability`
     - New: `Assigning, changing status, associating CVE, setting manual severity: \`triage_ticket\` capability`
 
@@ -212,25 +224,33 @@ Changes (in document order):
    - Old: `...or Python \`None\` to clear the override (sets \`severity_override\` to SQL \`NULL\` = unresolved)`
    - New: `...or Python \`None\` to clear the value (sets \`severity_manual\` to SQL \`NULL\` = unresolved)`
 
-8. **Line 613** (Behavior step 6):
-   - Old: `6. Update \`ticket.severity_override\``
-   - New: `6. Update \`ticket.severity_manual\``
-
-9. **Line 618** (Gate relevance):
-   - Old: `**Gate relevance**: setting \`severity_override\` affects the ticket's`
-   - New: `**Gate relevance**: setting \`severity_manual\` affects the ticket's`
-
-10. **Line 622** (Gate relevance continued):
-    - Old: `resolution cascade and \`severity_override\` is not applicable.`
-    - New: `resolution cascade and \`severity_manual\` is not applicable.`
-
-11. **Line 604** (Preconditions, prose): remove "overridden" language
+8. **Line 604** (Preconditions, prose): remove "overridden" language
     - Old: `scores and cannot be manually overridden)`
     - New: `scores and cannot be set manually)`
+
+9. **Line 613** (Behavior step 6):
+    - Old: `6. Update \`ticket.severity_override\``
+    - New: `6. Update \`ticket.severity_manual\``
+
+10. **Line 618** (Gate relevance):
+    - Old: `**Gate relevance**: setting \`severity_override\` affects the ticket's`
+    - New: `**Gate relevance**: setting \`severity_manual\` affects the ticket's`
+
+11. **Line 622** (Gate relevance continued):
+    - Old: `resolution cascade and \`severity_override\` is not applicable.`
+    - New: `resolution cascade and \`severity_manual\` is not applicable.`
 
 12. **Line 888** (Module ownership):
     - Old: `(\`CVECVSSAssessment\` records, severity override)`
     - New: `(\`CVECVSSAssessment\` records, manual severity)`
+
+13. **Lines 927-928** (Architectural Test Requirement, mutation types):
+    - Old: `type of ticket-centric mutation (CVSS assessment operations, severity\noverride, manual-zone exits).`
+    - New: `type of ticket-centric mutation (CVSS assessment operations, manual\nseverity, manual-zone exits).`
+
+14. **Lines 934-935** (Architectural Test Requirement, edge cases):
+    - Old: `- **Edge cases**: ticket without CVE (no SUSE CVSS gate), severity\n   override on CVE-less ticket`
+    - New: `- **Edge cases**: ticket without CVE (no SUSE CVSS gate), manual\n   severity on CVE-less ticket`
 
 ---
 
@@ -354,9 +374,21 @@ One change:
 
 ---
 
-### Step 10 — Verification (reviewers)
+### Step 10 — `AGENTS.md`
 
-After applying all changes from Steps 1-9, invoke the following
+**File**: `AGENTS.md`
+
+One change:
+
+1. **Lines 523-524** (Guardrail 16, ticket_mutations scope description):
+   - Old: `(**CVSS and severity mutations** (\`CVECVSSAssessment\` records, severity\n  override): \`ticket_mutations\``
+   - New: `(**CVSS and severity mutations** (\`CVECVSSAssessment\` records, manual\n  severity): \`ticket_mutations\``
+
+---
+
+### Step 11 — Verification (reviewers)
+
+After applying all changes from Steps 1-10, invoke the following
 reviewers to verify correctness:
 
 1. **`@spec-coherence-reviewer`** on:
@@ -383,7 +415,7 @@ reviewers to verify correctness:
 
 ---
 
-### Step 11 — Delete this draft
+### Step 12 — Delete this draft
 
 After all reviewer findings are addressed (or confirmed as clean), delete
 this file:
