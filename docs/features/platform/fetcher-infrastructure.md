@@ -2613,7 +2613,7 @@ the dashboard charts.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
+| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
 | started_at | TIMESTAMPTZ | NOT NULL | When the run started |
 | finished_at | TIMESTAMPTZ | nullable | When the run ended (NULL while running) |
 | duration_seconds | FLOAT | nullable | Computed: `finished_at - started_at` in seconds |
@@ -2628,6 +2628,11 @@ the dashboard charts.
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
 | cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the git-specific usage pattern |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+
+**Indexes**:
+
+- (fetcher_name, started_at) — composite index supporting timeline
+  queries and cursor lookups at any date range.
 
 **Notes**:
 - `finished_at` is NULL while a run is in progress (status `running`).

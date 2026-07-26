@@ -1035,8 +1035,10 @@ See `docs/features/identity/authentication.md` (Session Management).
 | updated_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
 | is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
 
-**Index**: (user_id, is_active) — for efficient bulk invalidation on
-user deactivation.
+**Indexes**:
+
+- (user_id, is_active) — for efficient bulk invalidation on user
+  deactivation.
 
 **Cleanup**: inactive sessions (`is_active = false`) and sessions older
 than `SESSION_MAX_LIFETIME_DAYS + 1` days
@@ -1096,6 +1098,11 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 - `chk_ticket_no_self_duplicate`: `duplicate_of_id <> id`
 - `chk_ticket_severity_manual_cve_exclusive`: `severity_manual IS NULL OR cve_id IS NULL`
 
+**Indexes**:
+
+- `ix_ticket_duplicate_of_id`: partial index on `duplicate_of_id` WHERE
+  `duplicate_of_id IS NOT NULL` — supports `mark_as_duplicate` finding
+  dependents of the source ticket.
 
 **Deletion policy**: Tickets MUST NOT be deleted from the database. There is no soft-delete mechanism at the ticket level. Tickets that are no longer relevant are transitioned to Ignored or Duplicated status.
 
@@ -1403,7 +1410,7 @@ Growth rate is approximately 20,000 rows per year. See
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Internal identifier                |
-| fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
+| fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
 | started_at           | TIMESTAMPTZ   | NOT NULL                 | When the run started               |
 | finished_at          | TIMESTAMPTZ   | nullable                 | When the run ended (NULL while running) |
 | duration_seconds     | FLOAT       | nullable                 | `finished_at - started_at` in seconds |
@@ -1419,8 +1426,10 @@ Growth rate is approximately 20,000 rows per year. See
 | cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "...", "committed_at": "..."}` for git-based fetchers). Written when the final run status is `success` or `partial`; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
 
-**Indexes**: `(fetcher_name, started_at)` composite index — supports
-timeline queries at any date range efficiently.
+**Indexes**:
+
+- (fetcher_name, started_at) — composite index supporting timeline
+  queries at any date range.
 
 ### FetcherConfig
 
@@ -1516,10 +1525,6 @@ records whose CVEs are mentioned in the request's diff.
 
 **Unique constraint**: (submission_request_id, ticket_package_track_id)
 
-## Indexes
-
-- `ix_ticket_duplicate_of_id`: index on `Ticket.duplicate_of_id` where `duplicate_of_id IS NOT NULL` — used by `mark_as_duplicate` to find dependents of the source ticket
-
 ## Notes
 
 - All tables use UUID primary keys (exceptions: `SystemSetting` uses a
@@ -1557,3 +1562,9 @@ records whose CVEs are mentioned in the request's diff.
   updated before any schema changes
 - The `CVECVSSAssessment` table supports multiple providers and CVSS
   versions — see `docs/features/tickets/cvss-scoring.md`
+- Non-primary-key, non-unique-constraint indexes are documented inline
+  under their owning table in an `**Indexes**:` block. There is no
+  centralized index section. Partial unique indexes (with a `WHERE`
+  clause) are documented in the `**Indexes**:` block rather than as
+  standalone unique constraints, because their filtering logic is part
+  of the index definition
