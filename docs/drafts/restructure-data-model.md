@@ -82,14 +82,16 @@ eligibility thresholds) and its absence from the overview is a gap.
 section to follow the domain grouping established by the ER diagrams.
 Add domain separator headings for navigability.
 
-**Target structure**:
+**Target structure** (shows the final state after all phases; Phase 3
+operates only on headings that already exist — entries suffixed with
+`†` will be created by Phase 5):
 
 ```
 ## Tables
 
 ### CVE & Ticket Core
 #### CVE
-#### CveState Enum
+#### CveState Enum †
 #### CVESource
 #### CVESourceFetchStatus Enum
 #### CVESourceType Python Enum
@@ -102,7 +104,7 @@ Add domain separator headings for navigability.
 #### CVEKEVEntry
 #### CVEEPSSScore
 #### Ticket
-#### TicketStatus Enum
+#### TicketStatus Enum †
 #### TicketReference
 #### ReferenceType Enum
 #### TicketAuditEvent
@@ -122,7 +124,7 @@ Add domain separator headings for navigability.
 ### Identity
 #### User
 #### UserRole
-#### Role Enum
+#### Role Enum †
 #### RoleMapping
 #### Session
 #### ApiKey
@@ -135,21 +137,21 @@ Add domain separator headings for navigability.
 #### SettingAuditEventType Enum
 #### FetcherConfig
 #### FetcherRun
-#### FetcherRunStatus Enum
-#### FetcherRunTriggeredBy Enum
+#### FetcherRunStatus Enum †
+#### FetcherRunTriggeredBy Enum †
 #### FetcherAuditEvent
-#### FetcherAuditEventType Enum
+#### FetcherAuditEventType Enum †
 
 ### IBS Integration
 #### CodestreamPackageChecksum
 #### PackageBugowner
-#### BugownerType Enum
+#### BugownerType Enum †
 #### PackageBugownerMember
 #### SubmissionRequest
-#### SubmissionRequestState Enum
+#### SubmissionRequestState Enum †
 #### SubmissionRequestTrack
 #### ReleaseRequest
-#### ReleaseRequestState Enum
+#### ReleaseRequestState Enum †
 ```
 
 **Actions**:
@@ -245,28 +247,41 @@ with explicit Category classification.
      (Python Enum only)"
 
 2. For enums currently documented inline (no own heading), extract into
-   a dedicated H4 section immediately after their owning table:
+   a dedicated H4 section immediately after their owning table. Each
+   extracted enum MUST include the Category classification line per the
+   target pattern above:
    - `TicketStatus` (currently inline in Ticket table column `status`,
      line 1087: "New, Analysis, Analyzed, Resolved, Ignored, Duplicated")
-     → extract to `#### TicketStatus Enum`
+     → extract to `#### TicketStatus Enum`. Category A — state-machine
+     (VARCHAR + CHECK constraint `chk_ticket_status_valid`)
    - `CveState` (currently inline in CVE table column `cve_state`,
      line 436: "PUBLISHED or REJECTED") → extract to
-     `#### CveState Enum`
+     `#### CveState Enum`. Category A — state-machine (VARCHAR + CHECK
+     constraint `chk_cve_cve_state_valid`)
    - `SubmissionRequestState` (currently inline text after
      SubmissionRequest table) → extract to
-     `#### SubmissionRequestState Enum`
+     `#### SubmissionRequestState Enum`. Category A — state-machine
+     (VARCHAR + CHECK constraint
+     `chk_submission_request_state_valid`)
    - `ReleaseRequestState` (currently inline text after ReleaseRequest
-     table) → extract to `#### ReleaseRequestState Enum`
+     table) → extract to `#### ReleaseRequestState Enum`. Category A —
+     state-machine (VARCHAR + CHECK constraint
+     `chk_release_request_state_valid`)
    - `BugownerType` (currently bold+table within PackageBugowner) →
-     extract to `#### BugownerType Enum`
+     extract to `#### BugownerType Enum`. Category B — classification
+     (Python Enum only)
    - `Role` enum values (currently within UserRole section) → extract to
-     `#### Role Enum`
+     `#### Role Enum`. Category A — state-machine (VARCHAR + CHECK
+     constraint `chk_user_role_role_valid`)
    - `FetcherRunStatus` (currently inline in FetcherRun description) →
-     extract to `#### FetcherRunStatus Enum` (if not already standalone)
+     extract to `#### FetcherRunStatus Enum`. Category A — state-machine
+     (VARCHAR + CHECK constraint `chk_fetcher_run_status_valid`)
    - `FetcherRunTriggeredBy` (currently inline) → extract to
-     `#### FetcherRunTriggeredBy Enum`
+     `#### FetcherRunTriggeredBy Enum`. Category B — classification
+     (Python Enum only)
    - `FetcherAuditEventType` (currently inline in FetcherAuditEvent) →
-     extract to `#### FetcherAuditEventType Enum`
+     extract to `#### FetcherAuditEventType Enum`. Category B —
+     classification (Python Enum only)
 
 3. Update the Notes section enum list to reflect any newly-extracted
    enums and verify the Category A/B classification is consistent
