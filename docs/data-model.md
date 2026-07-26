@@ -1103,7 +1103,7 @@ for the full transition diagram, gates, and rules.
 
 Summary:
 - New -> Analysis (manual: assignment or any modifying operation)
-- New -> Ignored (manual or automatic: NVD rejection)
+- New -> Ignored (manual or automatic: CVE rejection)
 - Analysis -> Analyzed (automatic: all gates met — at least one package,
   no track records in ANALYSIS, severity set, SUSE CVSS
   provided if CVE present)

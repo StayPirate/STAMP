@@ -1265,7 +1265,7 @@ PATCH /api/v1/tickets/{ticket_id}/severity
 **`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
-Sets the severity override for a ticket without a CVE.
+Sets or clears the severity override for a ticket without a CVE.
 
 Request body:
 
@@ -1275,8 +1275,17 @@ Request body:
 }
 ```
 
-- `severity` (string, required): severity value (critical, high, medium,
-  low, none)
+To clear the override (revert to unresolved):
+
+```json
+{
+  "severity": null
+}
+```
+
+- `severity` (string | null, required): a string value (critical, high,
+  medium, low, none) sets the severity override; JSON `null` clears the
+  override (sets `severity_override` to SQL NULL = unresolved)
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
