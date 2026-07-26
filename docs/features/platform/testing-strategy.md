@@ -369,9 +369,8 @@ Coverage is measured by `pytest-cov` with the following settings (in
 `pyproject.toml`):
 
 - Source: `app` (the application package)
-- Omissions: `*/tests/*`, `*/alembic/*`, `app/config.py` (env-driven,
-  tested via integration), `app/database.py` (infrastructure, tested
-  via integration)
+- Omissions: `*/tests/*`, `*/alembic/*`, `app/database.py` (infrastructure,
+  tested via integration)
 - Report format: `term-missing` in CI (shows uncovered lines)
 
 ---

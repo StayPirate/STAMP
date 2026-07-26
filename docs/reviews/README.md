@@ -81,16 +81,16 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [ticket-service](ticket-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/28 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [testing-strategy](testing-strategy.md) | 🟢 | 🟢 | 1 | 🟢 | 🟢 | 1/3 | 2026-07-25 |  |
-| |  |  | 1:🟡 |  |  |  |  |  |
+| [testing-strategy](testing-strategy.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/3 | 2026-07-25 |  |
+|  |  |  |  |  |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
 | [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/93 | 2026-05-09 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **🟢** | **1** | **🟢** | **🟢** | **3/797** |  |  |
-| | 2:🟠 |  | 1:🟡 |  |  |  |  |  |
+| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/797** |  |  |
+| | 2:🟠 |  |  |  |  |  |  |  |
 
 ### Disabled specs
 

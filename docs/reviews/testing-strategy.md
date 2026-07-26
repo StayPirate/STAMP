@@ -24,12 +24,7 @@ _No findings._
 
 ### TST-DES-02 — Coverage Configuration documents non-existent config.py omission (Low)
 
-**Category**: Specification accuracy
-**Status**: OPEN
-
-The Coverage Configuration section (line 372) lists `app/config.py` as omitted from coverage measurement. However, the actual `pyproject.toml` does NOT omit `config.py` — only `*/tests/*`, `*/alembic/*`, and `app/database.py` are in the omit list. The spec is factually wrong about what is omitted.
-
-This matters because a developer reading the spec might "correct" `pyproject.toml` to match the documented omissions, which would remove coverage enforcement from `config.py` — a module containing security-critical validators (JWT secret length, password policy, credential handling). The fix is to remove `app/config.py` from the documented omissions list in the spec.
+**Status**: RESOLVED — Removed incorrect app/config.py omission from Coverage Configuration section (2026-07-26)
 
 ### TST-DES-01 — Concurrency Testing Infrastructure Gap (Medium)
 
