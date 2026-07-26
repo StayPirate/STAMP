@@ -89,6 +89,7 @@ Add domain separator headings for navigability.
 
 ### CVE & Ticket Core
 #### CVE
+#### CveState Enum
 #### CVESource
 #### CVESourceFetchStatus Enum
 #### CVESourceType Python Enum
@@ -101,6 +102,7 @@ Add domain separator headings for navigability.
 #### CVEKEVEntry
 #### CVEEPSSScore
 #### Ticket
+#### TicketStatus Enum
 #### TicketReference
 #### ReferenceType Enum
 #### TicketAuditEvent
@@ -120,6 +122,7 @@ Add domain separator headings for navigability.
 ### Identity
 #### User
 #### UserRole
+#### Role Enum
 #### RoleMapping
 #### Session
 #### ApiKey
@@ -132,15 +135,21 @@ Add domain separator headings for navigability.
 #### SettingAuditEventType Enum
 #### FetcherConfig
 #### FetcherRun
+#### FetcherRunStatus Enum
+#### FetcherRunTriggeredBy Enum
 #### FetcherAuditEvent
+#### FetcherAuditEventType Enum
 
 ### IBS Integration
 #### CodestreamPackageChecksum
 #### PackageBugowner
+#### BugownerType Enum
 #### PackageBugownerMember
 #### SubmissionRequest
+#### SubmissionRequestState Enum
 #### SubmissionRequestTrack
 #### ReleaseRequest
+#### ReleaseRequestState Enum
 ```
 
 **Actions**:
@@ -190,7 +199,7 @@ physical database table.
 - `git diff` shows the AuditEventMixin block moved, not deleted
 - The content of the mixin section is byte-for-byte identical to the
   original (only heading level and position change)
-- The three audit event tables (TicketAuditEvent, IdentityAuditEvent,
+- The four audit event tables (TicketAuditEvent, IdentityAuditEvent,
   SettingAuditEvent, FetcherAuditEvent) still reference the mixin via
   their "Inherits..." text
 
@@ -223,8 +232,9 @@ with explicit Category classification.
      CHECK constraint `chk_ticket_package_track_status_valid`)"
    - `DeliveryStatus Enum` → add "Category A — state-machine (VARCHAR +
      CHECK constraint `chk_ticket_package_track_delivery_status_valid`)"
-   - `WorkflowType Enum` → determine category (likely A — state-machine
-     for track type). Add classification
+   - `WorkflowType Enum` → add "Category B — classification (Python
+     Enum only)". WorkflowType is a static classification assigned once
+     at track creation, not a state that transitions
    - `ReferenceType Enum` → determine category (likely B — classification).
      Add classification
    - `TicketAuditEventType Enum` → add "Category B — classification
@@ -236,6 +246,12 @@ with explicit Category classification.
 
 2. For enums currently documented inline (no own heading), extract into
    a dedicated H4 section immediately after their owning table:
+   - `TicketStatus` (currently inline in Ticket table column `status`,
+     line 1087: "New, Analysis, Analyzed, Resolved, Ignored, Duplicated")
+     → extract to `#### TicketStatus Enum`
+   - `CveState` (currently inline in CVE table column `cve_state`,
+     line 436: "PUBLISHED or REJECTED") → extract to
+     `#### CveState Enum`
    - `SubmissionRequestState` (currently inline text after
      SubmissionRequest table) → extract to
      `#### SubmissionRequestState Enum`
