@@ -25,26 +25,35 @@ lines with structural inconsistencies that hinder readability.
 
 ### Phase 1: Naming consistency between overview and ER sections
 
-**Scope**: Fix naming mismatches between the overview flowchart subgraph
-labels and the ER diagram section headings.
+**Scope**: Fix naming mismatch between the overview flowchart subgraph
+label `"Platform"` and the ER diagram section heading
+`"Platform Infrastructure"`.
+
+Note: the `"CVE & Tickets"` subgraph is intentionally named differently
+from the ER section `"CVE & Ticket Core"`. The overview flowchart splits
+that domain into two visual subgraphs (`cve_tickets` + `cve_enrichment`)
+for readability — the subgraph name signals it is a visual subset, not a
+1:1 mapping to the ER section.
 
 **Actions**:
 
-| Current (overview flowchart) | Current (ER section heading) | Target (unified) |
-|------------------------------|------------------------------|-------------------|
-| `CVE & Tickets` | `CVE & Ticket Core` | `CVE & Ticket Core` |
+| Current (overview flowchart) | Current (ER section heading) | Target |
+|------------------------------|------------------------------|--------|
 | `Platform` | `Platform Infrastructure` | `Platform Infrastructure` |
 
-- Update the `subgraph` labels in the overview Mermaid flowchart to match
-  the ER section headings
+- Update the `subgraph platform` label in the overview Mermaid flowchart
+  to `"Platform Infrastructure"`
 - Verify no other naming inconsistencies exist between the two levels
+  (excluding the intentional `"CVE & Tickets"` / `"CVE & Ticket Core"`
+  split documented above)
 
 **Verification criteria**:
 
-- `git diff` shows only the two subgraph label changes in the overview
-  flowchart (lines 22, 52 area)
+- `git diff` shows only the one subgraph label change in the overview
+  flowchart (line 52 area)
 - No content lines (table definitions, column descriptions) are modified
-- Ctrl+F for the old labels returns zero matches
+- Ctrl+F for `"Platform"` (as a standalone subgraph label) returns zero
+  matches
 
 ---
 
@@ -275,8 +284,11 @@ into dedicated H4 sections with Category classification and value table.
 **Actions**:
 
 1. For each enum below, extract into a dedicated H4 section immediately
-   after its owning table. Each extracted enum MUST include the Category
-   classification line per the target pattern in Phase 5a.
+   after its owning table. "Immediately after" means the next H4
+   sibling heading after the owning entity's entire section (including
+   its constraints, indexes, and narrative blocks) — NOT insertion
+   within the section body. Each extracted enum MUST include the
+   Category classification line per the target pattern in Phase 5a.
 
    After extraction, update the column description in the owning table
    to use the brief reference pattern (matching existing conventions,
@@ -347,7 +359,7 @@ in the owning spec) or move it there (if not present elsewhere).
 | UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `docs/features/tickets/cve-sync-epss.md` for display guidance" |
 | Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `docs/features/identity/authentication.md` (Session cleanup) for retention policy" |
 | CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `docs/features/tickets/cve-service.md` (`record_source_status`) for write semantics and `docs/features/platform/cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
-| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column or ENUM value — a query-time predicate. See docs/features/platform/cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
+| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column, ENUM value, or API status field value — a query-time predicate. See docs/features/platform/cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
 
 **Actions**:
 
