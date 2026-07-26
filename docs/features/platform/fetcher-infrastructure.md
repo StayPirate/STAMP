@@ -2668,8 +2668,8 @@ the dashboard charts.
 Per-fetcher configuration, managed by admins. A record is created
 automatically at process startup by `bootstrap_fetcher_configs()`
 (`backend/app/services/fetcher_bootstrap.py`) — a shared idempotent
-routine that runs in every Celery-based process (worker, Beat, API
-server) during startup. In Beat and API it is the first operation; in
+routine that runs in worker, Beat, and API server processes during
+startup. In Beat and API it is the first operation; in
 workers it is the second step, after CPE mapping validation (see
 Worker Startup Handler). The routine executes a batch
 `INSERT ... ON CONFLICT DO NOTHING` (on the PK `fetcher_name`) for
