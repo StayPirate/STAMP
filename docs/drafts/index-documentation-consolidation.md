@@ -66,9 +66,10 @@ make it discoverable by future authors.
 ### In scope
 
 Only `docs/data-model.md` is modified, with one exception: Step 4 also
-updates `docs/features/platform/fetcher-infrastructure.md` to keep its
-`FetcherRun` table definition in sync. No other spec, convention, or
-code file is affected.
+updates `docs/features/platform/fetcher-infrastructure.md` — the
+authoritative spec for `FetcherRun` — to add the `**Indexes**:` block
+that was previously documented only in the aggregate (`data-model.md`).
+No other spec, convention, or code file is affected.
 
 ### Scope exclusions
 
@@ -185,20 +186,52 @@ entry is currently on the same line as the label rather than in a
 bulleted list. Normalize to the same bulleted-list shape as `ApiKey` and
 the newly added `Ticket` block.
 
-### Step 4 — Remove redundant `indexed` from `FetcherRun.fetcher_name`
+### Step 4 — Fix `FetcherRun` index authority and remove redundant `indexed`
 
-**Files**: `docs/data-model.md`, `docs/features/platform/fetcher-infrastructure.md`
+**Files**: `docs/features/platform/fetcher-infrastructure.md` (authority),
+`docs/data-model.md` (aggregate)
 
-**Rationale**: the composite index `(fetcher_name, started_at)` covers
-single-column lookups on `fetcher_name` via leftmost-prefix. The
-standalone `indexed` annotation is therefore redundant and misleading —
-an implementer could create a separate single-column index that wastes
-resources. This was adjudicated by `@data-model-reviewer` during review.
+**Rationale**: `fetcher-infrastructure.md` is the authoritative spec for
+the `FetcherRun` table (`data-model.md` explicitly defers to it: "See
+`docs/features/platform/fetcher-infrastructure.md` for full
+specification"). The composite index `(fetcher_name, started_at)` is
+currently documented only in `data-model.md` — an authority inversion.
+This step moves the authoritative index definition to the owning spec
+and removes the redundant `indexed` column annotation from both files
+(leftmost-prefix of the composite covers single-column lookups).
 
 **Note**: `FetcherAuditEvent.fetcher_name` (which has `indexed` but NO
 composite index) is NOT affected — its annotation is correct.
 
-**In `docs/data-model.md`** — replace:
+**In `docs/features/platform/fetcher-infrastructure.md`** — two edits:
+
+1. Remove `indexed` from the column constraints. Replace:
+
+```
+| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
+```
+
+With:
+
+```
+| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
+```
+
+2. Add the `**Indexes**:` block between the table (ending at line 2631)
+   and the `**Notes**:` block (starting at line 2632). Insert the
+   following text between those lines:
+
+```markdown
+
+**Indexes**:
+
+- (fetcher_name, started_at) — composite index supporting timeline
+  queries and cursor lookups at any date range.
+
+```
+
+**In `docs/data-model.md`** — remove `indexed` from the column
+constraints. Replace:
 
 ```
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
@@ -210,17 +243,8 @@ With:
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
 ```
 
-**In `docs/features/platform/fetcher-infrastructure.md`** — replace:
-
-```
-| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier (matches `BaseFetcher.name`) |
-```
-
-With:
-
-```
-| fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
-```
+(The `**Indexes**:` block in `data-model.md` — standardized by Step 3 —
+remains as the aggregate mirror of the authoritative definition above.)
 
 ### Step 5 — Delete the `## Indexes` section
 
@@ -270,9 +294,9 @@ future authors from re-creating a central section.
 
 After applying steps 1–6, verify the following (manual or automated):
 
-1. **No residual `## Indexes` header** exists in the file.
+1. **No residual `## Indexes` header** exists in `data-model.md`.
 2. **Every table that has non-PK, non-unique indexes** has an
-   `**Indexes**:` block:
+   `**Indexes**:` block in `data-model.md`:
    - `Session`: 1 entry (user_id, is_active)
    - `ApiKey`: 2 entries (user_id, revoked_at) and partial UNIQUE
      (user_id, name)
@@ -284,14 +308,21 @@ After applying steps 1–6, verify the following (manual or automated):
 5. **No broken cross-references**: re-grep for `data-model.md#indexes`
    across the repo (expect zero matches — already verified, but confirm
    after edit).
+6. **`fetcher-infrastructure.md`** has an `**Indexes**:` block under its
+   `FetcherRun` table with the composite index entry, and
+   `FetcherRun.fetcher_name` no longer has `indexed` in its Constraints
+   column.
 
 ### Step 8 — Run reviewers
 
-Invoke the following reviewers on the modified `docs/data-model.md`:
+Invoke the following reviewers on the modified files (`docs/data-model.md`
+and `docs/features/platform/fetcher-infrastructure.md`):
 
 1. **`@data-model-reviewer`** (Guardrail 8) — verifies:
    - Schema documentation remains correct after the edits.
    - No unintended semantic changes were introduced.
+   - The index block in `fetcher-infrastructure.md` is consistent with
+     `data-model.md`.
 2. **`@docs-placement-reviewer`** (Guardrail 21-E) — verifies:
    - The new convention (all indexes inline) is the appropriate
      placement for this information type.
@@ -317,8 +348,9 @@ bullet) and does not need a separate document.
 
 ## Post-change state (reference)
 
-After all steps are applied, the index documentation landscape in
-`docs/data-model.md` is:
+After all steps are applied, the index documentation landscape is:
+
+**`docs/data-model.md`** (aggregate):
 
 | Table | `**Indexes**:` block contents |
 |-------|-------------------------------|
@@ -328,6 +360,12 @@ After all steps are applied, the index documentation landscape in
 | FetcherRun | (fetcher_name, started_at) |
 | FetcherAuditEvent | *(none — uses column-level `indexed` annotation, unchanged)* |
 
+**`docs/features/platform/fetcher-infrastructure.md`** (authority for FetcherRun):
+
+| Table | `**Indexes**:` block contents |
+|-------|-------------------------------|
+| FetcherRun | (fetcher_name, started_at) — authoritative definition |
+
 The `## Indexes` section no longer exists. The `## Notes` section
 documents the convention for future authors.
 
@@ -335,10 +373,12 @@ documents the convention for future authors.
 
 The `FetcherRun` table had both:
 - `fetcher_name` marked `indexed` in the column Constraints cell
-- A composite index `(fetcher_name, started_at)` in the `**Indexes**:`
-  block
+- A composite index `(fetcher_name, started_at)` documented only in
+  `data-model.md` (not in the authoritative spec
+  `fetcher-infrastructure.md`)
 
 `@data-model-reviewer` adjudicated: the standalone `indexed` annotation
 is redundant (leftmost-prefix coverage). **Resolved by Step 4** — the
 `indexed` annotation is removed from `FetcherRun.fetcher_name` in both
-`docs/data-model.md` and `docs/features/platform/fetcher-infrastructure.md`.
+files, and the authoritative `**Indexes**:` block is added to
+`fetcher-infrastructure.md` (fixing the authority inversion).
