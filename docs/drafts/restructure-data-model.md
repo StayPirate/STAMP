@@ -175,9 +175,11 @@ operates only on headings that already exist — entries suffixed with
 - Body content preservation: extract all non-heading lines from before
   and after; diff must show zero differences (reordering does not
   add/remove/modify content lines)
-- Specifically verify: all unique constraint blocks, all CHECK constraint
-  blocks, all index blocks, and the Notes section remain intact and
-  associated with the correct table
+- Per-section association check: extract content sections by H4 heading
+  (from heading to next heading). Compare each extracted section's body
+  against the pre-reorder version keyed by the same heading text.
+  Differences indicate misassociation (a block landed under the wrong
+  heading during reorder)
 
 ---
 
@@ -338,7 +340,7 @@ in the owning spec) or move it there (if not present elsewhere).
 | UI display note for EPSS (staleness indicator, frontend SHOULD display) | Lines 758-763 (CVEEPSSScore) | `docs/features/tickets/cve-sync-epss.md` | Move to owning spec (append after line 117 area). Leave a short reference in data-model.md: "See `cve-sync-epss.md` for display guidance" |
 | Session cleanup policy detail (weekly task, criteria, retention) | Lines 1043-1047 (Session) | `docs/features/identity/authentication.md` (lines 285-309) | Remove from data-model.md — already present in full detail in the owning spec. Replace with: "See `authentication.md` (Session cleanup) for retention policy" |
 | CVESource `first_failed_at` detailed retry mechanism explanation | Line 458 (CVESource table, `first_failed_at` column Description) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to column-level semantics (retaining write contract): "Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `cve-service.md` (`record_source_status`) for write semantics and `cve-source-failure-retry.md` for the retry mechanism." Remove only the consumer-side explanation (evaluate_failed_cve_sources, 30-day window, stalled status) |
-| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to negative assertion only: `**Derived predicate — "stalled"**: not a stored column or ENUM value — a query-time predicate. See cve-source-failure-retry.md for the full definition.` Remove the predicate formula, consumer list, and operational guidance (already in owning spec) |
+| CVESource "Derived predicate — stalled" block | Lines 464-470 (CVESource, after table) | `docs/features/platform/cve-source-failure-retry.md` | Reduce to formula + negative assertion: `**Derived predicate — "stalled"**: status = 'failure' AND first_failed_at < now() - 30 days. Not a stored column or ENUM value — a query-time predicate. See cve-source-failure-retry.md for consumers, threshold rationale, and operational guidance.` Remove consumer list (evaluate_failed_cve_sources, ?stalled filter) and operational guidance ("require operator investigation") — already in owning spec |
 
 **Actions**:
 
