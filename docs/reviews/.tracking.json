@@ -181,6 +181,12 @@
         "not_reviewed": []
       }
     },
+    "conventions": {
+      "enabled": true,
+      "abbr": "CONV",
+      "path": "docs/conventions.md",
+      "cache": null
+    },
     "cpe-package-mapping": {
       "enabled": true,
       "abbr": "CPM",
