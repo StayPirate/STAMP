@@ -613,15 +613,16 @@ eligible as source states for automatic transitions.
 |------|----|---------|
 | `PENDING` | `IN_PROGRESS` | SR created (state `open` or `accepted`) for the track |
 | `IN_PROGRESS` | `RELEASED` | RR accepted for the track |
-| `IN_PROGRESS` | `PENDING` | All SRs linked to this track reach a negative final state (`revoked` or `declined`) with no remaining SR in `open` or `accepted` state |
+| `IN_PROGRESS` | `PENDING` | No SR linked to this track remains in `open` or `accepted` state |
 
 #### Delivery status regression
 
 `delivery_status` can regress from `IN_PROGRESS` back to `PENDING` when
-all submission requests linked to the track (via `SubmissionRequestTrack`)
-reach a negative terminal or non-final state (`revoked`, `declined`, or
-`superseded`) with no remaining SR in `open` or `accepted` state for the
-same track. This signals to the VA that the maintainer's submission
+no submission request linked to the track (via `SubmissionRequestTrack`)
+remains in `open` or `accepted` state. In practice this means all SRs
+are in `revoked` (final), `declined` (non-final — can be reopened), or
+`superseded` (final — but a superseding SR inherits the delivery role;
+see below). This signals to the VA that the maintainer's submission
 attempt has failed and a new submission is needed.
 
 Specific SR state change effects on `delivery_status`:

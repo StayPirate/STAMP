@@ -278,7 +278,7 @@ erDiagram
         UUID id PK
         VARCHAR_64 username UK "NOT NULL"
         VARCHAR_255 email UK "NOT NULL"
-        BOOLEAN active "NOT NULL"
+        BOOLEAN active "NOT NULL, DEFAULT true"
         UUID external_id UK "nullable"
         UUID manager_id FK "nullable, self-ref"
         VARCHAR_72 password_hash "nullable"
@@ -822,7 +822,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 |-------------------|-------------|------------------------------|--------------------------------------|
 | id                | UUID        | PK                           | Internal identifier                  |
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
-| cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
+| cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{ticket_id}/associate-cve` |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | TicketStatus: New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
@@ -1188,7 +1188,7 @@ bugowner matching.
 | username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username. Updated by external sync if changed at the provider |
 | email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
 | full_name        | VARCHAR(255) |                          | Display name                     |
-| active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active. For external users, synced from the identity provider |
+| active           | BOOLEAN     | NOT NULL, DEFAULT true   | Whether the account is active. For external users, synced from the identity provider |
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
 | external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
