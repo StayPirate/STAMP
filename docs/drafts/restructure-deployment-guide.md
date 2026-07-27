@@ -10,7 +10,7 @@ navigability, and logical grouping — without modifying any content
 
 1. **No Table of Contents** — 756-line document with no navigation aid
 2. **Timezone/Locale misplaced** — under "Production Deployment" but
-   applies to all environments
+   it's a runtime process constraint, not environment-specific
 3. **No separation between environment-specific and cross-cutting
    sections** — reader cannot quickly scan for their deployment context
 4. **"Release Process" interrupts operational flow** — CI/CD pipeline
@@ -29,8 +29,6 @@ navigability, and logical grouping — without modifying any content
   ## Prerequisites
     ### Software Requirements
     ### Network Access
-    ### Timezone and Locale Requirements
-      #### Locale for git worker containers
 
   ## External Service Registration
     ### IdP Client Registration (id.suse.com)
@@ -66,6 +64,8 @@ navigability, and logical grouping — without modifying any content
     ### Singleton Processes
     ### Startup Ordering
     ### Git Worker Volume
+    ### Timezone and Locale Requirements
+      #### Locale for git worker containers
 
   ## Operations
     ### Database Migrations
@@ -90,12 +90,19 @@ Each phase produces exactly one commit. After each commit, verify via
 `git diff HEAD~1` that no content was lost or altered — only structural
 placement and heading levels change.
 
-### Phase 1 — Move Timezone and Locale to Prerequisites
+### Phase 1 — Move Timezone and Locale to Process Architecture
 
 **What moves**:
 - "Timezone and Locale Requirements" (H3) and its child "Locale for git
   worker containers" (H4) move from under "Production Deployment" to
-  under "Prerequisites" (as the last H3 in that section)
+  under "Process Architecture" (as the last H3, after "Git Worker
+  Volume")
+
+**Rationale**: Timezone/Locale is a constraint on how runtime processes
+must be configured — the same category as "Singleton Processes", "Startup
+Ordering", and "Git Worker Volume". Prerequisites contains things you
+need to acquire/install (software, network access); Process Architecture
+contains constraints on how processes operate once deployed.
 
 **Heading level changes**: none (stays H3/H4)
 
@@ -124,28 +131,7 @@ content bytes added or removed.
 **Verification**: diff shows heading level changes + new H2 line; all
 content paragraphs/tables/code blocks unchanged.
 
-### Phase 3 — Move Database Migrations to Operations
-
-**What moves**:
-- "Database Migrations" H2 section (lines 400-419) moves to the
-  beginning of "Operations" as its first H3 subsection (before "Health
-  Checks")
-
-**Rationale**: Database migrations are an operational procedure executed
-by operators during deployment — not part of the CI/CD release pipeline.
-An operator looking for "how do I run migrations?" would naturally scan
-"Operations", not "Release Process". Placing it as the first Operations
-entry gives chronological sense: migrate first, then verify health.
-
-**Heading level changes**:
-| Current | New |
-|---------|-----|
-| `## Database Migrations` | `### Database Migrations` |
-
-**Verification**: diff shows removal at old location + insertion at new
-location; content identical byte-for-byte.
-
-### Phase 4 — Create Operations grouping
+### Phase 3 — Create Operations grouping
 
 **What changes**:
 - New H2 section "Operations" created after "Process Architecture"
@@ -173,6 +159,37 @@ location; content identical byte-for-byte.
 
 **Verification**: diff shows heading level changes + new H2 line; all
 content unchanged.
+
+### Phase 4 — Move Database Migrations to Operations
+
+**What moves**:
+- "Database Migrations" H2 section moves to the beginning of
+  "Operations" (created in Phase 3) as its first H3 subsection (before
+  "Health Checks")
+
+**Rationale**: Database migrations are an operational procedure executed
+by operators during deployment — not part of the CI/CD release pipeline.
+An operator looking for "how do I run migrations?" would naturally scan
+"Operations", not "Release Process". Placing it as the first Operations
+entry gives chronological sense: migrate first, then verify health.
+
+**Heading level changes**:
+| Current | New |
+|---------|-----|
+| `## Database Migrations` | `### Database Migrations` |
+
+**Positional reference fix**: in the "Process Architecture" section,
+the sentence at current line 437-438 reads:
+
+> Alembic migration jobs are one-shot processes, not runtime services —
+> see Database Migrations (above) for operational details.
+
+After this move, "Database Migrations" is below "Process Architecture".
+Update `(above)` to `(below)`.
+
+**Verification**: diff shows removal at old location + insertion at new
+location; content identical byte-for-byte except the `(above)` →
+`(below)` positional reference fix.
 
 ### Phase 5 — Fix hierarchy depth (External Service Registration)
 
@@ -208,7 +225,6 @@ the commit log of the next phase.
 - [Prerequisites](#prerequisites)
   - [Software Requirements](#software-requirements)
   - [Network Access](#network-access-stagingproduction)
-  - [Timezone and Locale Requirements](#timezone-and-locale-requirements)
 - [External Service Registration](#external-service-registration)
   - [IdP Client Registration](#idp-client-registration-idsusecom)
 - [Environments](#environments)
@@ -219,8 +235,10 @@ the commit log of the next phase.
   - [How It Works](#how-it-works)
   - ...
 - [Process Architecture](#process-architecture)
+  - [Timezone and Locale Requirements](#timezone-and-locale-requirements)
   - ...
 - [Operations](#operations)
+  - [Database Migrations](#database-migrations)
   - [Health Checks](#health-checks)
   - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
   - [Log Aggregation](#log-aggregation)
@@ -243,8 +261,8 @@ modified).
 **Known anchors that may break**:
 - `#database-migrations` — now nested under Operations (anchor
   itself unchanged, but verify)
-- `#timezone-and-locale-requirements` — moved to Prerequisites (anchor
-  unchanged, just position)
+- `#timezone-and-locale-requirements` — moved to Process Architecture
+  (anchor unchanged, just position)
 - `#health-checks` — now under Operations (anchor unchanged)
 - Any anchor referencing the old standalone H2 sections that are now H3
 
@@ -285,6 +303,8 @@ structural change — in which case, revert in reverse order).
 
 ## Out of Scope
 
-- Content modifications (rewording, adding/removing information)
+- Content modifications (rewording, adding/removing information) —
+  except positional reference fixes (e.g., `(above)` → `(below)`)
+  necessitated by section relocation
 - Changes to other documentation files (except anchor link fixes)
 - Any implementation code changes
