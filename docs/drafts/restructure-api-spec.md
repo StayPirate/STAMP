@@ -70,11 +70,11 @@ the heading hierarchy and section ordering change.
     #### Authorization Chain Evaluation Order
 
 ## Request Conventions
+  ### Query Parameter Length Limit              ← promoted and moved first (general constraint, applies to all params)
   ### Pagination
   ### Filtering
     #### Enum Filter Validation
     #### Date Range Interpretation
-  ### Query Parameter Length Limit              ← promoted from under Filtering (applies to all string params)
   ### Sorting
     #### Semantic Sort Fields
     #### Sort Parameter Validation
