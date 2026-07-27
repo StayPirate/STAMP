@@ -64,7 +64,7 @@ the heading hierarchy and section ordering change.
   ### Base URL
   ### Versioning                                  ← moved from after Scoped Responses
 
-## Authentication & Authorization
+## Authentication and Authorization
   ### Authentication
   ### Authorization
     #### Authorization Chain Evaluation Order
@@ -72,9 +72,9 @@ the heading hierarchy and section ordering change.
 ## Request Conventions
   ### Pagination
   ### Filtering
-    #### Query Parameter Length Limit
     #### Enum Filter Validation
     #### Date Range Interpretation
+  ### Query Parameter Length Limit              ← promoted from under Filtering (applies to all string params)
   ### Sorting
     #### Semantic Sort Fields
     #### Sort Parameter Validation
@@ -118,18 +118,23 @@ no existing heading is renamed (only moved or wrapped under new H2
 parents), all existing anchors survive:
 
 - `#base-url`, `#authentication`, `#authorization`, `#response-format`,
-  `#pagination`, `#filtering`, `#sorting`, `#versioning`, etc. — all
-  unchanged
+  `#pagination`, `#filtering`, `#sorting`, `#versioning`,
+  `#query-parameter-length-limit`, etc. — all unchanged
 
 **Only breaking anchor**: `#general-conventions` (the H2 container is
 removed entirely).
+
+**Level change (anchor preserved)**: `#### Query Parameter Length Limit`
+is promoted to `### Query Parameter Length Limit`. The anchor
+`#query-parameter-length-limit` is unchanged (derived from text, not
+level).
 
 **Self-reference affected**: the prescriptive template in Semantic Sort
 Fields references "General Conventions" by name (not as a link anchor,
 but as prose text that spec authors copy). This must be updated to
 reference the correct post-restructuring section name ("Sorting").
 
-**New anchors created**: `#fundamentals`, `#authentication--authorization`,
+**New anchors created**: `#fundamentals`, `#authentication-and-authorization`,
 `#request-conventions`, `#response-conventions`, `#identifier-resolution`,
 `#mutation-conventions`, `#naming-conventions`.
 
@@ -163,6 +168,12 @@ Known self-reference in `api-spec.md`:
   `"semantic ordering (see General Conventions)"` must be updated to
   `"semantic ordering (see Sorting)"` — the target section `### Sorting`
   remains as a valid heading under `## Request Conventions`
+
+Known external references:
+- `docs/features/platform/health-endpoints.md` (line 191-192): reference
+  to "General Conventions" must be updated to "Response Conventions" —
+  the cross-reference explains why health endpoints deviate from the
+  standard response envelope format
 
 Files to audit:
 - `docs/api-spec.md` (self-references)
