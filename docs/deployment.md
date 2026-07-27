@@ -496,7 +496,29 @@ GIT_TERMINAL_PROMPT=0
 
 ---
 
-## Redis Durability, Memory, and Persistence
+## Operations
+
+### Health Checks
+
+See `docs/features/platform/health-endpoints.md` for the authoritative
+endpoint specification (response schemas, failure semantics, design
+decisions).
+
+| Endpoint | Purpose | Checks |
+|----------|---------|--------|
+| `GET /health` | Liveness | API process running |
+| `GET /ready` | Readiness | PostgreSQL + Redis reachable |
+
+Configure your orchestrator to use these endpoints:
+
+- **Docker**: `healthcheck` directive in compose file or Dockerfile
+- **Kubernetes**: `livenessProbe` → `/health`, `readinessProbe` → `/ready`
+
+The orchestrator MUST set `timeoutSeconds` (Kubernetes) or `timeout`
+(Docker) to at least 5 seconds to accommodate the internal check
+timeouts (2s per dependency, checks concurrent; 5s provides margin for network overhead).
+
+### Redis Durability, Memory, and Persistence
 
 Sentinel uses Redis in two roles, addressed by two configuration URLs
 (see `docs/configuration.md`):
@@ -508,7 +530,7 @@ Sentinel uses Redis in two roles, addressed by two configuration URLs
   and `celery-redbeat` schedule entries (including the distributed lock
   used as recovery sentinel).
 
-### Persistence is Disabled by Design
+#### Persistence is Disabled by Design
 
 Redis persistence (RDB and AOF) MUST be disabled in all environments:
 
@@ -555,7 +577,7 @@ appendonly no
    fetches can be re-triggered via the API. The `FetcherRun` table in
    PostgreSQL tracks outcomes — no Celery result backend is used.
 
-### Memory Configuration
+#### Memory Configuration
 
 Redis MUST be configured with explicit memory limits and the
 `noeviction` policy to prevent silent data loss through eviction:
@@ -606,7 +628,7 @@ operation nearly empty (workers consume in real-time); under stress
 ~100-150 MB. The 768 MB `maxmemory` provides >5× headroom over
 realistic peak usage.
 
-### Monitoring Scheduler Liveness (Recommended)
+#### Monitoring Scheduler Liveness (Recommended)
 
 The lock sentinel mechanism ensures automatic recovery in all standard
 failure modes. As defense-in-depth for edge cases (lock accidentally
@@ -636,31 +658,7 @@ fetchers, the schedule is empty by design. The monitoring signal above
 correctly handles this: with no enabled fetchers, the condition "at
 least one enabled fetcher with stale last_run" is false → no alert.
 
----
-
-## Health Checks
-
-See `docs/features/platform/health-endpoints.md` for the authoritative
-endpoint specification (response schemas, failure semantics, design
-decisions).
-
-| Endpoint | Purpose | Checks |
-|----------|---------|--------|
-| `GET /health` | Liveness | API process running |
-| `GET /ready` | Readiness | PostgreSQL + Redis reachable |
-
-Configure your orchestrator to use these endpoints:
-
-- **Docker**: `healthcheck` directive in compose file or Dockerfile
-- **Kubernetes**: `livenessProbe` → `/health`, `readinessProbe` → `/ready`
-
-The orchestrator MUST set `timeoutSeconds` (Kubernetes) or `timeout`
-(Docker) to at least 5 seconds to accommodate the internal check
-timeouts (2s per dependency, checks concurrent; 5s provides margin for network overhead).
-
----
-
-## Log Aggregation
+### Log Aggregation
 
 See `docs/features/platform/logging.md` for the application-side
 contract (structured format, log levels, correlation IDs, standard
@@ -669,7 +667,7 @@ and is retained in each deployment context — the application itself
 never writes, rotates, or persists log files; it only writes to
 stdout/stderr.
 
-### Docker / Podman
+#### Docker / Podman
 
 Logs are captured via the container engine's logging driver. For
 local rotation without any external log shipper, configure the
@@ -688,7 +686,7 @@ services:
         max-file: "5"
 ```
 
-### Kubernetes
+#### Kubernetes
 
 Use `kubectl logs <pod>` for ad hoc inspection. For persistent
 aggregation, a cluster-level log shipper (e.g., Fluent Bit or Vector)
@@ -696,7 +694,7 @@ forwarding to an aggregator (e.g., Loki or an ELK stack) is the
 operator's responsibility — Sentinel does not bundle or require any
 specific shipper.
 
-### Process-role identification
+#### Process-role identification
 
 Per `docs/features/platform/logging.md`, log records do not carry a
 process-role field of their own. Which of the 5 runtime roles (`api`,
@@ -708,7 +706,7 @@ engine). Configuring the log collector to attach and propagate this
 metadata when shipping logs to the aggregator is the operator's
 responsibility.
 
-### `LOG_LEVEL=DEBUG` risk in production
+#### `LOG_LEVEL=DEBUG` risk in production
 
 Setting `LOG_LEVEL=DEBUG` causes third-party loggers (notably
 `sqlalchemy.engine` and `httpx`) to emit sensitive data — SQL
@@ -718,15 +716,13 @@ Discipline) for the full policy. Operators should use
 `LOG_LEVEL=DEBUG` in production only for time-bounded diagnostics and
 revert promptly.
 
----
-
-## Troubleshooting
+### Troubleshooting
 
 Log messages referenced below appear as structured `event` fields in
 the JSON/console log output — see `docs/features/platform/logging.md`
 for the record schema.
 
-### SSO Login Fails
+#### SSO Login Fails
 
 1. Check that `SSO_REDIRECT_URI` matches exactly one of the URIs
    registered in the IdP client configuration
@@ -739,7 +735,7 @@ for the record schema.
 5. Verify the user exists in the Sentinel database with a matching
    `username` and `external_id IS NOT NULL` (the user must be provisioned via external identity provider first — see `identity-provisioning.md`)
 
-### Celery Tasks Not Running
+#### Celery Tasks Not Running
 
 1. Verify Redis is reachable at `CELERY_BROKER_URL`
 2. Check that Celery Beat is running (scheduler)
