@@ -27,9 +27,10 @@ API conventions so that implementation can proceed without design ambiguity.
 
 ## Before reviewing
 
-1. Read `docs/api-spec.md` — focus on the **General Conventions** section
-   (Response Format, Error Code Categories, Pagination, Filtering, Sorting,
-   Request Tracing, Rate Limiting, Versioning, Mutation Patterns)
+1. Read `docs/api-spec.md` — focus on the thematic convention sections
+   (Fundamentals, Authentication and Authorization, Request Conventions,
+   Response Conventions, Identifier Resolution, Mutation Conventions,
+   Naming Conventions)
 2. Read the feature spec provided for review
 3. If the spec references other feature specs that define related endpoints,
    read those for context (first level of depth only)
@@ -104,10 +105,10 @@ API conventions so that implementation can proceed without design ambiguity.
 ### Consistency with api-spec.md conventions
 
 - Verify the endpoint follows the naming and structural patterns defined
-  in the General Conventions section of `docs/api-spec.md` (path naming,
-  mutation patterns, error codes, response envelope, pagination)
-- If the endpoint introduces a new pattern not covered by General
-  Conventions, flag it for explicit documentation in `api-spec.md`
+  in `docs/api-spec.md` (path naming, mutation patterns, error codes,
+  response envelope, pagination)
+- If the endpoint introduces a new pattern not covered by the existing
+  conventions, flag it for explicit documentation in `api-spec.md`
 
 ### Endpoint Permission Map completeness
 

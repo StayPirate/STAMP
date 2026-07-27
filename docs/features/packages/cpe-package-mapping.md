@@ -478,4 +478,5 @@ CNA vendor:product both resolving to `emacs`).
   Ticket (`add_package_to_ticket()`)
 - `docs/features/packages/package-service.md` --
   `add_package_to_ticket()` function specification
-- `docs/api-spec.md` -- General Conventions
+- `docs/api-spec.md` -- global API conventions (envelope format, error
+  codes, pagination)

@@ -188,5 +188,5 @@ timeouts:
 - `docs/deployment.md` — Health Checks (operational configuration guide)
 - `docs/features/platform/networking.md` — TLS Trust Store (SUSE CA
   deliberately excluded from readiness checks)
-- `docs/api-spec.md` — General Conventions (explains why these endpoints
+- `docs/api-spec.md` — Response Conventions (explains why these endpoints
   do NOT follow the `/api/v1/` envelope format)
