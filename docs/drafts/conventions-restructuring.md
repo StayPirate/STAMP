@@ -16,7 +16,7 @@ content semantics.
 | D4 | CLI `### Naming` moves after `### Framework` | Semantically belongs with structure/design, not after Output Contract |
 | D5 | "Feature Specifications" renames to "Specification Writing" | Clarifies this section is about *how to write specs*, not about features themselves |
 | D6 | Heading names preserved wherever externally referenced (unless the rename clearly improves clarity AND references are few) | Minimizes churn |
-| D7 | Testing Conventions moves after Redis+Logging (from its current position before Redis) | Groups infrastructure patterns (Transaction, Redis, Logging) contiguously; Testing is a natural last topic before Runtime/ops |
+| D7 | Testing Conventions moves after Redis+Logging (from its current position before Redis) | Testing is a meta-activity (how to verify code) rather than a production code pattern; placing it after all production patterns (Transaction, Redis, Logging) and before Runtime/ops creates a natural narrative flow: write → test → deploy |
 
 ## Target Structure
 
