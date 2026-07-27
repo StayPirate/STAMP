@@ -61,7 +61,6 @@ navigability, and logical grouping — without modifying any content
     ### Version Locations
     ### Configuration Files
     ### Repository Secret
-    ### Database Migrations
 
   ## Process Architecture
     ### Singleton Processes
@@ -69,6 +68,7 @@ navigability, and logical grouping — without modifying any content
     ### Git Worker Volume
 
   ## Operations
+    ### Database Migrations
     ### Health Checks
     ### Redis Durability, Memory, and Persistence
       #### Persistence is Disabled by Design
@@ -124,11 +124,18 @@ content bytes added or removed.
 **Verification**: diff shows heading level changes + new H2 line; all
 content paragraphs/tables/code blocks unchanged.
 
-### Phase 3 — Absorb Database Migrations into Release Process
+### Phase 3 — Move Database Migrations to Operations
 
 **What moves**:
-- "Database Migrations" H2 section (lines 400-419) moves to the end of
-  "Release Process" as an H3 subsection
+- "Database Migrations" H2 section (lines 400-419) moves to the
+  beginning of "Operations" as its first H3 subsection (before "Health
+  Checks")
+
+**Rationale**: Database migrations are an operational procedure executed
+by operators during deployment — not part of the CI/CD release pipeline.
+An operator looking for "how do I run migrations?" would naturally scan
+"Operations", not "Release Process". Placing it as the first Operations
+entry gives chronological sense: migrate first, then verify health.
 
 **Heading level changes**:
 | Current | New |
@@ -154,7 +161,7 @@ location; content identical byte-for-byte.
 | `## Redis Durability, Memory, and Persistence` | `### Redis Durability, Memory, and Persistence` |
 | `### Persistence is Disabled by Design` | `#### Persistence is Disabled by Design` |
 | `### Memory Configuration` | `#### Memory Configuration` |
-| `### Monitoring Scheduler Liveness` | `#### Monitoring Scheduler Liveness (Recommended)` |
+| `### Monitoring Scheduler Liveness (Recommended)` | `#### Monitoring Scheduler Liveness (Recommended)` |
 | `## Log Aggregation` | `### Log Aggregation` |
 | `### Docker / Podman` | `#### Docker / Podman` |
 | `### Kubernetes` | `#### Kubernetes` |
@@ -234,7 +241,7 @@ modified).
 - Update each broken reference to the new anchor
 
 **Known anchors that may break**:
-- `#database-migrations` — now nested under Release Process (anchor
+- `#database-migrations` — now nested under Operations (anchor
   itself unchanged, but verify)
 - `#timezone-and-locale-requirements` — moved to Prerequisites (anchor
   unchanged, just position)
