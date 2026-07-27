@@ -1,6 +1,16 @@
 # Code Conventions
 
-## General
+## Contents
+
+- [General Principles](#general-principles)
+- [Terminology](#terminology)
+- [Cross-Cutting Rules](#cross-cutting-rules)
+- [Python (Backend)](#python-backend)
+- [CLI Conventions](#cli-conventions)
+- [Git Conventions](#git-conventions)
+- [Specification Writing](#specification-writing)
+
+## General Principles
 
 - All code, comments, docstrings, and documentation MUST be in English
 - Follow the principle of least surprise: code should do what a reader expects
@@ -16,37 +26,7 @@
   API response format) and MUST NOT be used in application code or background
   tasks
 
-### Example Data in Documentation
-
-All examples, API response samples, test fixtures, and documentation
-snippets MUST use fictional placeholder data. Never copy real personal
-identifiers — names, email addresses, usernames, Distinguished Names, or
-any other PII — from external systems (IBS, SMELT, Bugzilla, NVD,
-etc.) into the repository.
-
-Approved placeholder patterns:
-
-| Type          | Examples                                             |
-|---------------|------------------------------------------------------|
-| Person names  | `John Doe`, `Alice Smith`, `Bob Wilson`              |
-| Usernames     | `jdoe`, `asmith`, `bwilson`                          |
-| Emails        | `john.doe@suse.com`, `alice.smith@example.com`       |
-| Groups        | `pkg-maintainers`, `kernel-team`                     |
-| Group emails  | `pkg-maintainers@suse.de`                            |
-| External IDs  | `ext-12345`, `00000000-0000-0000-0000-000000000001` |
-
-When documenting API response formats from external services, first
-sanitize the response by replacing all real identifiers with fictional
-equivalents before inserting it into a specification or documentation file.
-
-### Username Format
-
-Usernames must be 1–64 characters, start with a letter, and contain only
-lowercase letters, numbers, dots, hyphens, and underscores
-(`[a-z0-9._-]`). Usernames are stored exclusively as lowercase in the
-database. Any entry point that accepts a username for user creation MUST
-normalize it (trim whitespace, lowercase) and validate the format before
-storage.
+## Terminology
 
 ### External Identity / SSO Terminology
 
@@ -149,6 +129,40 @@ Rules:
 
 See `docs/data-model.md` (`CVEAffectedVersion.ecosystem`) for the column
 definition and constraints.
+
+## Cross-Cutting Rules
+
+### Example Data in Documentation
+
+All examples, API response samples, test fixtures, and documentation
+snippets MUST use fictional placeholder data. Never copy real personal
+identifiers — names, email addresses, usernames, Distinguished Names, or
+any other PII — from external systems (IBS, SMELT, Bugzilla, NVD,
+etc.) into the repository.
+
+Approved placeholder patterns:
+
+| Type          | Examples                                             |
+|---------------|------------------------------------------------------|
+| Person names  | `John Doe`, `Alice Smith`, `Bob Wilson`              |
+| Usernames     | `jdoe`, `asmith`, `bwilson`                          |
+| Emails        | `john.doe@suse.com`, `alice.smith@example.com`       |
+| Groups        | `pkg-maintainers`, `kernel-team`                     |
+| Group emails  | `pkg-maintainers@suse.de`                            |
+| External IDs  | `ext-12345`, `00000000-0000-0000-0000-000000000001` |
+
+When documenting API response formats from external services, first
+sanitize the response by replacing all real identifiers with fictional
+equivalents before inserting it into a specification or documentation file.
+
+### Username Format
+
+Usernames must be 1-64 characters, start with a letter, and contain only
+lowercase letters, numbers, dots, hyphens, and underscores
+(`[a-z0-9._-]`). Usernames are stored exclusively as lowercase in the
+database. Any entry point that accepts a username for user creation MUST
+normalize it (trim whitespace, lowercase) and validate the format before
+storage.
 
 ### Timestamps & Timezones
 
@@ -531,25 +545,9 @@ orchestration functions MUST NOT acquire locks. See
 `docs/features/packages/package-service.md` (Module Invariant) for the
 canonical application of this rule.
 
-### Testing Conventions
+### Redis
 
-For the full testing strategy — test pyramid, database setup, fixture
-catalog, coverage policy, audit trail testing, and execution model — see
-`docs/features/platform/testing-strategy.md`.
-
-Style rules (kept here for proximity with other Python conventions):
-
-- Test files mirror the `app/` directory structure
-- Use `pytest` with async support (`pytest-asyncio`)
-- Use fixtures for database sessions, test data, authenticated clients
-- Test naming: `test_<what>_<condition>_<expected_result>`
-- Example: `test_get_cve_not_found_returns_404`
-- **User identifier resolution**: every endpoint that accepts a user
-  identifier MUST be tested with both UUID and username inputs. See
-  `docs/features/platform/testing-strategy.md` (Mandatory Test
-  Scenarios, User Identifier Resolution) for the required test cases
-
-### Redis Key Conventions
+#### Redis Key Conventions
 
 Redis keys in Sentinel fall into two categories with different
 documentation rules:
@@ -570,7 +568,7 @@ in terms of the library API (e.g., "create an entry via
 as informational notes for operational debugging, clearly marked as
 library-internal.
 
-### Redis Error Handling
+#### Redis Error Handling
 
 All application-owned Redis operations (operations that access
 `REDIS_URL` directly, as opposed to library-managed broker operations)
@@ -636,13 +634,31 @@ Secret Field Typing above. `docs/features/platform/logging.md` is the
 authoritative specification for log format, levels, correlation IDs,
 and the full secrets/PII policy — it is not restated here.
 
+### Testing Conventions
+
+For the full testing strategy — test pyramid, database setup, fixture
+catalog, coverage policy, audit trail testing, and execution model — see
+`docs/features/platform/testing-strategy.md`.
+
+Style rules (kept here for proximity with other Python conventions):
+
+- Test files mirror the `app/` directory structure
+- Use `pytest` with async support (`pytest-asyncio`)
+- Use fixtures for database sessions, test data, authenticated clients
+- Test naming: `test_<what>_<condition>_<expected_result>`
+- Example: `test_get_cve_not_found_returns_404`
+- **User identifier resolution**: every endpoint that accepts a user
+  identifier MUST be tested with both UUID and username inputs. See
+  `docs/features/platform/testing-strategy.md` (Mandatory Test
+  Scenarios, User Identifier Resolution) for the required test cases
+
 ### Runtime Version
 
 Sentinel targets a single Python minor version for all runtime
 components. The version is chosen based on: (1) active bugfix
 maintenance status from python.org, and (2) declared support from all
 critical dependencies (Celery in particular historically lags new
-Python releases by 6–12 months).
+Python releases by 6-12 months).
 
 **Current target**: Python **3.13** (bugfix maintenance, EOL 2029-10).
 
@@ -745,6 +761,11 @@ handling, signal handling) backing the contract defined in this section.
 - **Entry point**: `sentinel` (registered as a console script in `pyproject.toml`)
 - **Architecture**: command groups for related commands (e.g.,
   `sentinel manage-user create`, `sentinel manage-user update`)
+
+### Naming
+
+- Command groups: `noun` with `verb` subcommands for related operations
+  (e.g., `sentinel manage-user create`, `sentinel fetcher list`)
 
 ### Command Design
 
@@ -894,11 +915,6 @@ cover:
 This is preferred over a manual review agent because the rules are
 deterministic and mechanically verifiable.
 
-### Naming
-
-- Command groups: `noun` with `verb` subcommands for related operations
-  (e.g., `sentinel manage-user create`, `sentinel fetcher list`)
-
 ## Git Conventions
 
 ### Branch Naming
@@ -992,7 +1008,7 @@ versioning (e.g., per-fetcher) would add overhead without practical
 benefit since fetchers are built-in classes, not independently
 deployable plugins.
 
-## Feature Specifications
+## Specification Writing
 
 ### API Cross-references
 

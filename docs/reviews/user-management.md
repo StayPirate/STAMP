@@ -10,7 +10,7 @@
 
 ### UMGT-GAP-31 — Admin API roles endpoint missing error response for invalid role names (Medium)
 
-**Status**: RESOLVED — Not a real gap — invalid role names are rejected by Pydantic enum validation (global 422). Per api-spec.md Global Responses, per-endpoint tables must not repeat framework-handled errors. Added cross-cutting convention in conventions.md (Feature Specifications > API Cross-references) and added api-spec.md to Cross-references of all 16 specs defining API endpoints (2026-05-09).
+**Status**: RESOLVED — Not a real gap — invalid role names are rejected by Pydantic enum validation (global 422). Per api-spec.md Global Responses, per-endpoint tables must not repeat framework-handled errors. Added cross-cutting convention in conventions.md (Specification Writing > API Cross-references) and added api-spec.md to Cross-references of all 16 specs defining API endpoints (2026-05-09).
 
 ### UMGT-GAP-32 — Conflicting --add-role and --remove-role resolution not specified at CLI layer (Medium)
 
@@ -354,7 +354,7 @@
 
 ### UMGT-API-09 — POST /api/v1/admin/users/{user}/roles missing error for invalid role values (Medium)
 
-**Status**: RESOLVED — Not a real gap — invalid role names are rejected by Pydantic enum validation (global 422). Per api-spec.md Global Responses, per-endpoint tables must not repeat framework-handled errors. Added cross-cutting convention in conventions.md (Feature Specifications > API Cross-references) and added api-spec.md to Cross-references of all 16 specs defining API endpoints (2026-05-09).
+**Status**: RESOLVED — Not a real gap — invalid role names are rejected by Pydantic enum validation (global 422). Per api-spec.md Global Responses, per-endpoint tables must not repeat framework-handled errors. Added cross-cutting convention in conventions.md (Specification Writing > API Cross-references) and added api-spec.md to Cross-references of all 16 specs defining API endpoints (2026-05-09).
 
 ### UMGT-API-10 — GET /api/v1/users lists "role" as valid sort_by field (Low)
 
