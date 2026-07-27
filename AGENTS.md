@@ -633,7 +633,7 @@ is needed:
    - An existing feature specification is modified with changes to endpoint
      definitions (new endpoints, changed paths, modified error responses,
      altered pagination or filtering)
-   - `docs/api-spec.md` General Conventions section is modified (to verify
+   - `docs/api-spec.md` convention sections are modified (to verify
      existing specs still conform)
 2. Skip the review when:
    - The change is purely cosmetic (typo fixes, formatting, rewording
