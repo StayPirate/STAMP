@@ -51,6 +51,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [data-model](data-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-27 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
+| [deployment](deployment.md) | — | — | — | — | — | 0/0 |  |  |
+|  |  |  |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/31 | 2026-06-29 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |

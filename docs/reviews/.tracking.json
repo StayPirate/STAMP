@@ -775,6 +775,12 @@
         "not_reviewed": []
       }
     },
+    "deployment": {
+      "enabled": true,
+      "abbr": "DEP",
+      "path": "docs/deployment.md",
+      "cache": null
+    },
     "fetcher-infrastructure": {
       "enabled": true,
       "abbr": "FEI",
