@@ -1141,7 +1141,7 @@ full details.
 | smelt_id             | INTEGER      | UNIQUE, NOT NULL     | Product ID in SMELT                |
 | name                 | VARCHAR(100) | NOT NULL             | Short product name from SMELT (e.g., `SLES-LTSS`) |
 | version              | VARCHAR(50)  | NOT NULL             | Product version from SMELT (e.g., `15-SP4`) |
-| display_name         | VARCHAR(255) | NOT NULL             | Human-readable full name from AIMAAS, used in the UI (e.g., `SUSE Linux Enterprise Server LTSS 15 SP4`) |
+| display_name         | VARCHAR(255) | NOT NULL             | Human-readable full name from SMELT (`friendly_name` field), used in the UI (e.g., `SUSE Linux Enterprise Server LTSS 15 SP4`) |
 | cpe                  | VARCHAR(255) | UNIQUE, NOT NULL     | CPE identifier — primary join key between SMELT and AIMAAS |
 | cvss_threshold       | DECIMAL(3,1) | nullable             | Minimum CVSS score for eligibility (from AIMAAS `cvss-threshold` endpoint). NULL means threshold is 0 (all CVEs eligible). |
 | fcs                  | DATE         | nullable             | First Customer Shipment date (from AIMAAS) |

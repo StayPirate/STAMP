@@ -97,11 +97,12 @@ for the general SMELT description.
 
 - **Endpoint**: `GET /api/v1/basic/products/` (paginated)
 - **Base URL**: `https://smelt.suse.de/api`
-- **Response fields used**: `id`, `name`, `version`, `cpe`, `repos`
+- **Response fields used**: `id`, `name`, `version`, `cpe`, `friendly_name`, `repos`
 - **Sync behavior**:
   1. Iterate all pages of the products endpoint
   2. For each product, upsert a `Product` record using `smelt_id` as the
-     match key, setting `name`, `version`, `cpe`
+     match key, setting `name`, `version`, `cpe`, and `display_name`
+     (from SMELT's `friendly_name` field)
   3. For each product, replace the `ProductRepository` entries with the
      current `repos` list from SMELT
   4. Products no longer reported by SMELT are marked `active = false`
@@ -123,16 +124,15 @@ Store Configuration.
 - **Base URL**: `https://aimaas.suse.de/api`
 - **Matching**: AIMAAS products are matched to local `Product` records
   via `cpe`. Both SMELT and AIMAAS use identical CPE identifiers.
-- **Response fields used**: `name` (used as `display_name` in Sentinel),
-  `cpe`, `fcs`, `end_of_gs`, `end_of_ltss`, `end_of_espos`,
-  `end_of_reactive_ltss`
+- **Response fields used**: `cpe`, `fcs`, `end_of_gs`, `end_of_ltss`,
+  `end_of_espos`, `end_of_reactive_ltss`
 - **Note**: the list endpoint returns a subset of fields (no `cpe`, no
   lifecycle dates). To get full details, fetch each product individually
   by slug, or use the list endpoint to discover slugs and then fetch
   details.
 - **Sync behavior**:
   1. For each local `Product` with a known CPE, find the matching
-     AIMAAS product and update `display_name` and lifecycle date fields
+     AIMAAS product and update lifecycle date fields
   2. Update `aimaas_synced_at` timestamp
 
 ### CVSS Threshold Sync (periodic)

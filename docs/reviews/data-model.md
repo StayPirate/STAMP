@@ -10,10 +10,7 @@
 
 ### DM-GAP-01 — Product.display_name NOT NULL but no initial value during SMELT-only sync (Medium)
 
-**Category**: Boundary conditions
-**Status**: OPEN
-
-The `Product` table defines `display_name VARCHAR(255) NOT NULL`, described as "Human-readable full name from AIMAAS, used in the UI." However, products are created by the SMELT sync fetcher (`product-catalog.md`), which sets only `name`, `version`, `cpe`, and `smelt_id`. The `display_name` field is populated later by the AIMAAS sync fetcher. Since `display_name` is `NOT NULL`, the INSERT during SMELT sync would fail unless the implementer chooses a fallback value (e.g., `f"{name} {version}"`), but no fallback is specified in either the data model or the product-catalog spec. Two implementers could plausibly choose different fallback strategies, producing inconsistent product labels during the window between SMELT sync and AIMAAS enrichment.
+**Status**: RESOLVED — SMELT's `friendly_name` field added as source for `display_name` during product creation, eliminating the NOT NULL gap (2026-07-27)
 
 ---
 

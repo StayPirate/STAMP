@@ -47,8 +47,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cvss-scoring](cvss-scoring.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/49 | 2026-06-10 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [data-model](data-model.md) | 1 | 3 | 🟢 | 🟢 | 1 | 5/5 | 2026-07-27 |  |
-| | 1:🟠 | 3:🟠 |  |  | 1:🟡 |  |  |  |
+| [data-model](data-model.md) | 🟢 | 3 | 🟢 | 🟢 | 1 | 4/5 | 2026-07-27 |  |
+| |  | 3:🟠 |  |  | 1:🟡 |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/31 | 2026-06-29 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |
@@ -89,8 +89,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **3** | **3** | **🟢** | **🟢** | **1** | **7/802** |  |  |
-| | 3:🟠 | 3:🟠 |  |  | 1:🟡 |  |  |  |
+| **Total** | **2** | **3** | **🟢** | **🟢** | **1** | **6/802** |  |  |
+| | 2:🟠 | 3:🟠 |  |  | 1:🟡 |  |  |  |
 
 ### Disabled specs
 
