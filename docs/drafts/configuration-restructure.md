@@ -57,7 +57,21 @@ and logical grouping. Fix content accuracy issues identified during review.
    (`CORS_ORIGINS=["http://localhost:5173"]`) confirm Pydantic Settings
    parses it as a **JSON array**. A comma-separated value (`a,b`) would
    fail to parse. This is a real correctness bug in the documented type,
-   not a cosmetic inconsistency
+   not a cosmetic inconsistency. The same root defect (bare string shown
+   instead of JSON array) propagates to four more locations, found in a
+   follow-up review pass:
+   - `configuration.md:197`, **Default** column: `http://localhost:5173`
+     (bare string, same row as the Type fix above — fixing the Type
+     without fixing the Default in the same row would leave a
+     self-contradictory table row)
+   - `deployment.md:166`, local dev `.env` copy-paste block:
+     `CORS_ORIGINS=http://localhost:5173` — **the most severe instance**:
+     this block is meant to be copied verbatim by a developer setting up
+     a local environment; the app fails to start with this value
+   - `deployment.md:196`, Staging configuration checklist:
+     `` `https://sentinel-staging.suse.de` `` (Value column)
+   - `deployment.md:235`, Production configuration checklist:
+     `` `https://sentinel.suse.de` `` (Value column)
 
 ### Content accuracy — evaluated and discarded
 
@@ -170,17 +184,33 @@ from H3 to H2, removing its false nesting under "Logging".
   actual Pydantic Settings parsing behavior (`cors_origins: list[str]`
   in `config.py`) and the `.env.example` syntax
   (`CORS_ORIGINS=["http://localhost:5173"]`)
+- **Finding 3 propagation fix (round 4)**: correct the same bare-string
+  defect in the four locations identified above, in the same phase so
+  the type fix and its examples stay consistent:
+  - `configuration.md:197`, Default column: `http://localhost:5173` →
+    `["http://localhost:5173"]`
+  - `deployment.md:166`: `CORS_ORIGINS=http://localhost:5173` →
+    `CORS_ORIGINS=["http://localhost:5173"]`
+  - `deployment.md:196`: `` `https://sentinel-staging.suse.de` `` →
+    `` `["https://sentinel-staging.suse.de"]` ``
+  - `deployment.md:235`: `` `https://sentinel.suse.de` `` →
+    `` `["https://sentinel.suse.de"]` ``
 - **No change to `IBS_RABBITMQ_ROUTING_KEYS`** — see "Content accuracy
   — evaluated and discarded" (items 10-11) above. It remains `string`
   with "Comma-separated" in the description, in both `configuration.md`
   and `ibs-rabbitmq-integration.md` (already consistent)
 
-**Changes**: Table modifications in `docs/configuration.md` only.
+**Changes**: Table modifications in `docs/configuration.md` and
+`docs/deployment.md`.
 
 **Verification**: diff shows only column header additions/renames and
-the `CORS_ORIGINS` type correction. No other row content changes.
-Confirm `IBS_RABBITMQ_ROUTING_KEYS` is untouched in both
-`configuration.md` and `ibs-rabbitmq-integration.md`.
+the `CORS_ORIGINS` type/Default correction in `configuration.md`, plus
+the three `CORS_ORIGINS` value corrections in `deployment.md`. No other
+row content changes. Confirm `IBS_RABBITMQ_ROUTING_KEYS` is untouched
+in both `configuration.md` and `ibs-rabbitmq-integration.md`. Grep for
+`CORS_ORIGINS` in both `configuration.md` and `deployment.md` to
+confirm every occurrence (outside of prose descriptions) uses JSON
+array syntax.
 
 ---
 
@@ -285,13 +315,18 @@ specs exactly.
 ### Phase 6 — Verify and fix anchor links
 
 **Scope**: Full-project search for any broken references to
-`docs/configuration.md` (with or without anchors) and to the modified
-section of `sso-authentication.md`. Since no section was renamed, this
-phase is expected to be a no-op verification.
+`docs/configuration.md` (with or without anchors), to the modified
+section of `sso-authentication.md`, and to the modified `CORS_ORIGINS`
+examples in `deployment.md`. Since no section was renamed, this phase
+is expected to be a no-op verification for anchors; the `deployment.md`
+check is a content-correctness re-verification, not an anchor check.
 
 **Verification**: grep for `configuration.md` and
-`sso-authentication.md` across the project. Confirm all textual
-section references still match actual heading text.
+`sso-authentication.md` across the project to confirm all textual
+section references still match actual heading text. Separately, grep
+for `CORS_ORIGINS` in `deployment.md` to confirm all three corrected
+lines use JSON array syntax and no other bare-string occurrence
+remains.
 
 ---
 
@@ -317,7 +352,7 @@ Remove `docs/drafts/configuration-restructure.md` and commit.
 | Phase | Risk | Mitigation |
 |-------|------|-----------|
 | 1 | Minimal | Single character change |
-| 2 | Low | Column additions and one type fix; row content otherwise unchanged |
+| 2 | Low | Column additions, one type fix, and CORS_ORIGINS bare-string fixes across two files; row content otherwise unchanged |
 | 3 | Medium | Block reordering; verified by line count + env var grep |
 | 4 | Medium | Heading insertions + one paragraph replacement; verified by diff |
 | 5 | Low | Two small content fixes aligned with owning specs |
