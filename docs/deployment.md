@@ -244,49 +244,6 @@ Before the first production deployment:
   off-peak maintenance window). In-flight SSO logins are also affected
   (max 10 minutes of disruption)
 
-### Timezone and Locale Requirements
-
-All Sentinel runtime processes (see `docs/architecture.md`, Container
-Images) MUST operate with UTC as the system timezone. This is enforced
-at two levels:
-
-1. **Celery configuration**: the application sets `timezone = "UTC"` and
-   `enable_utc = True` in the Celery config. The Celery app factory
-   validates these at module import time and raises a `RuntimeError` if
-   overridden — this prevents any Celery-based process from starting
-   with incorrect timezone configuration (see
-   `docs/configuration.md`, Celery Worker Configuration)
-
-2. **Container timezone**: set `TZ=UTC` in the container environment (or
-   leave unset — most base images default to UTC). This ensures that
-   system-level time functions (`datetime.now()`, file timestamps, log
-   entries) are consistent with the Celery scheduler
-
-**Why this matters**: all fetcher cron schedules are expressed in UTC.
-Some external data sources publish at specific UTC times (e.g., EPSS at
-13:31 UTC daily). A timezone misconfiguration causes fetchers to run at
-incorrect wall-clock times, potentially before upstream data is
-available.
-
-#### Locale for git worker containers
-
-Containers running the git worker (git-based CVE fetchers) SHOULD set
-`LC_ALL=C` in their environment as a secondary defense. The primary
-guarantee is code-level: `git_operations.py` injects `LC_ALL=C`,
-`GIT_TERMINAL_PROMPT=0`, and `TZ=UTC` into every git subprocess call
-(see `docs/features/platform/git-fetcher-infrastructure.md`, Module
-Invariants — Rule 3). The container-level setting serves as
-defense-in-depth in case a future code path invokes git outside the
-centralized module.
-
-Recommended container environment for git workers:
-
-```
-TZ=UTC
-LC_ALL=C
-GIT_TERMINAL_PROMPT=0
-```
-
 ---
 
 ## Release Process
@@ -495,6 +452,49 @@ impossible.
 See `docs/features/platform/git-fetcher-infrastructure.md` (Volume
 Requirements, Recovery, Worker Affinity) for volume layout, recovery
 procedures, and worker affinity configuration.
+
+### Timezone and Locale Requirements
+
+All Sentinel runtime processes (see `docs/architecture.md`, Container
+Images) MUST operate with UTC as the system timezone. This is enforced
+at two levels:
+
+1. **Celery configuration**: the application sets `timezone = "UTC"` and
+   `enable_utc = True` in the Celery config. The Celery app factory
+   validates these at module import time and raises a `RuntimeError` if
+   overridden — this prevents any Celery-based process from starting
+   with incorrect timezone configuration (see
+   `docs/configuration.md`, Celery Worker Configuration)
+
+2. **Container timezone**: set `TZ=UTC` in the container environment (or
+   leave unset — most base images default to UTC). This ensures that
+   system-level time functions (`datetime.now()`, file timestamps, log
+   entries) are consistent with the Celery scheduler
+
+**Why this matters**: all fetcher cron schedules are expressed in UTC.
+Some external data sources publish at specific UTC times (e.g., EPSS at
+13:31 UTC daily). A timezone misconfiguration causes fetchers to run at
+incorrect wall-clock times, potentially before upstream data is
+available.
+
+#### Locale for git worker containers
+
+Containers running the git worker (git-based CVE fetchers) SHOULD set
+`LC_ALL=C` in their environment as a secondary defense. The primary
+guarantee is code-level: `git_operations.py` injects `LC_ALL=C`,
+`GIT_TERMINAL_PROMPT=0`, and `TZ=UTC` into every git subprocess call
+(see `docs/features/platform/git-fetcher-infrastructure.md`, Module
+Invariants — Rule 3). The container-level setting serves as
+defense-in-depth in case a future code path invokes git outside the
+centralized module.
+
+Recommended container environment for git workers:
+
+```
+TZ=UTC
+LC_ALL=C
+GIT_TERMINAL_PROMPT=0
+```
 
 ---
 
