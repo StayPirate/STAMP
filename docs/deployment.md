@@ -82,9 +82,11 @@ All environments share the same `SSO_CLIENT_ID` and `SSO_CLIENT_SECRET`
 
 ---
 
-## Local Development
+## Environments
 
-### Quick Start
+### Local Development
+
+#### Quick Start
 
 ```bash
 # Install dependencies (downloads Python 3.13 and creates
@@ -109,7 +111,7 @@ cd backend && uv run celery -A app.celery_app beat
 # settings (beat_scheduler). No --scheduler CLI flag is needed.
 ```
 
-### Local Environment Variables
+#### Local Environment Variables
 
 Create `backend/.env` for local development:
 
@@ -135,7 +137,7 @@ CORS_ORIGINS=http://localhost:5173
 DEBUG=true
 ```
 
-### Creating the First Local User
+#### Creating the First Local User
 
 With SSO disabled (no SSO env vars), create a local admin user via CLI:
 
@@ -146,11 +148,9 @@ cd backend && uv run python -m sentinel manage-user create \
   --role admin
 ```
 
----
+### Staging Deployment
 
-## Staging Deployment
-
-### Configuration Checklist
+#### Configuration Checklist
 
 | Setting | Value | Notes |
 |---------|-------|-------|
@@ -166,7 +166,7 @@ cd backend && uv run python -m sentinel manage-user create \
 | `IBS_API_URL` | `https://api.suse.de` | |
 | `IBS_USERNAME` / `IBS_PASSWORD` | Service account credentials | |
 
-### Deployment Steps
+#### Deployment Steps
 
 1. **Database**: ensure PostgreSQL is running and accessible
 2. **Redis**: ensure Redis is running and accessible
@@ -183,7 +183,7 @@ cd backend && uv run python -m sentinel manage-user create \
 6. **Verify SSO**: navigate to the login page, confirm "Login with SUSE
    SSO" button appears, complete a test login
 
-### Staging-Specific Notes
+#### Staging-Specific Notes
 
 - Staging auto-deployment from the `master` branch is deferred until
   the deployment target (Kubernetes, Docker Compose on VM, or cloud
@@ -191,11 +191,9 @@ cd backend && uv run python -m sentinel manage-user create \
   is known, a deployment workflow will be created via the `@cicd` agent
 - IBS/RabbitMQ integration is active — staging receives real events
 
----
+### Production Deployment
 
-## Production Deployment
-
-### Configuration Checklist
+#### Configuration Checklist
 
 Same as staging, with these differences:
 
@@ -205,7 +203,7 @@ Same as staging, with these differences:
 | `CORS_ORIGINS` | `https://sentinel.suse.de` | |
 | `JWT_SECRET_KEY` | Unique production secret | Different from staging |
 
-### Deployment Steps
+#### Deployment Steps
 
 1. **Database migrations**: run as a one-shot job BEFORE deploying new
    application containers. Never run migrations automatically on API
@@ -216,7 +214,7 @@ Same as staging, with these differences:
    and `/ready` (readiness)
 4. **Verify**: confirm all services are healthy, check logs for errors
 
-### Pre-Production Checklist
+#### Pre-Production Checklist
 
 Before the first production deployment:
 
@@ -235,7 +233,7 @@ Before the first production deployment:
 - [ ] Log aggregation configured (see Log Aggregation, below)
 - [ ] Backup strategy for PostgreSQL defined
 
-### Production-Specific Notes
+#### Production-Specific Notes
 
 - Production is deployed manually from version tags (`v*`). A deployment
   workflow will be added when the infrastructure target is decided
