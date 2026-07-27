@@ -1,10 +1,27 @@
 # API Specification
 
-## General Conventions
+## Fundamentals
 
 ### Base URL
 
 All API endpoints are prefixed with `/api/v1/`.
+
+### Versioning
+
+The API uses URL-path versioning (`/api/v1/`). Only v1 exists at this time.
+
+Rules:
+
+- Additive changes (new fields in responses, new endpoints, new optional
+  query parameters) are NOT breaking changes and are added to v1 directly
+- Removal or renaming of fields, changes to response structure, changes to
+  error codes, or semantic changes to existing behavior are breaking changes
+- A v2 will only be considered after a stable production instance is
+  confirmed — until then, all work happens on v1
+- When a new version is eventually introduced, the previous version will
+  include a `Sunset` response header indicating the deprecation date
+
+## Authentication and Authorization
 
 ### Authentication
 
@@ -80,6 +97,163 @@ For `GET /cves/{cve_id}/cvss` (Public — no authentication required),
 only step 3 applies.
 
 For non-ticket, non-CVE endpoints, only steps 1 and 2 apply.
+
+## Request Conventions
+
+### Query Parameter Length Limit
+
+Every string query parameter has an individual maximum length of 500
+characters, unless the endpoint specifies otherwise. Values exceeding the
+limit return `422 VALIDATION_ERROR`.
+
+### Pagination
+
+List endpoints support pagination via query parameters:
+
+- `page` (int, default: 1): Page number
+- `per_page` (int, default: 20, max: 100): Items per page
+
+Constraint enforcement: if `page < 1`, `per_page < 1`, or `per_page > 100`,
+the endpoint returns `422 VALIDATION_ERROR`. Values are never silently
+clamped. Requesting a `page` beyond the last available page returns an
+empty `data` array with correct `meta.total` (not an error).
+
+### Filtering
+
+List endpoints support filtering via query parameters specific to each
+resource. Common patterns:
+
+- Exact match: `?status=active`
+- Search: `?search=term` (searches relevant text fields)
+- Date range: `?from_date=2024-01-01&to_date=2024-12-31`
+
+#### Enum Filter Validation
+
+When a filter parameter accepts enum values (comma-separated or repeatable),
+invalid values are silently ignored. If all provided values are invalid, the
+endpoint returns an empty result set (not an error). This applies to all
+endpoints that accept enum-based filter parameters (e.g., `event_type`,
+`status`, `severity`).
+
+#### Date Range Interpretation
+
+When a date range filter (`from_date`, `to_date`) is applied against a
+`datetime` column:
+
+- **Date-only value** (e.g., `2025-01-15`):
+  - `from_date` → interpreted as `2025-01-15T00:00:00Z` (start of day
+    UTC, inclusive)
+  - `to_date` → interpreted as `2025-01-15T23:59:59.999999Z` (end of day
+    UTC, inclusive)
+- **Full datetime value without offset** (e.g., `2025-01-15T14:30:00`):
+  interpreted as UTC
+- **Full datetime value with offset** (e.g., `2025-01-15T14:30:00+02:00`):
+  accepted and converted to UTC before comparison (i.e.,
+  `2025-01-15T12:30:00Z`)
+
+**Inverted range validation**: when both `from_date` and `to_date` are
+provided and `from_date` is strictly after `to_date` (after timezone
+normalization), the endpoint returns **400 Bad Request** with error code
+`DATE_RANGE_INVERTED`. This validation applies globally to all endpoints
+that accept date range parameters.
+
+**Maximum range constraint**: endpoints that return unbounded datasets
+without pagination (e.g., chart/timeline data) SHOULD declare a maximum
+allowed interval between `from_date` and `to_date`. When the interval
+exceeds the declared limit, the endpoint returns **400 Bad Request** with
+error code `DATE_RANGE_TOO_WIDE`. Paginated endpoints generally do not
+need this constraint — pagination already bounds the response size.
+Each endpoint that enforces this constraint MUST document its specific
+limit in its own error table.
+
+This ensures that "inclusive bounds" means inclusive of the full day when no
+time component is specified. For the full timezone policy, see
+`docs/conventions.md` (Timestamps & Timezones).
+
+### Sorting
+
+List endpoints support sorting:
+
+- `sort_by` (string): Field name to sort by
+- `sort_order` (string): `asc` or `desc` (default: `desc`)
+
+**Default sort order**: when a paginated list endpoint does not document
+specific sorting behavior, the implicit default is `sort_by=created_at`,
+`sort_order=desc` (newest first). Endpoints with a different natural
+ordering (e.g., alphabetical, severity-based) must state their default
+explicitly.
+
+Endpoints that intentionally do not support client-controlled sorting must
+state so with justification (e.g., "fixed chronological order for timeline
+display").
+
+#### Semantic Sort Fields
+
+When `sort_by` references a field with domain-defined ordinal semantics
+(not alphabetical), the sort uses the semantic rank:
+
+| Field | Ascending order (semantic rank) |
+|-------|--------------------------------|
+| `severity` | None (0) < Low (1) < Medium (2) < High (3) < Critical (4) |
+
+`None` is the resolved severity label for CVSS score 0.0 (rank 0 in the
+semantic ordering). `NULL` (severity not yet resolved) is not part of the
+ranking — NULL values sort last regardless of sort direction.
+
+Endpoints that support sorting by semantic fields MUST note this in
+their query parameter specification: "semantic ordering (see Sorting)".
+
+#### Sort Parameter Validation
+
+A `sort_by` value not present in the endpoint's documented list of valid
+sort fields returns `422 VALIDATION_ERROR`. Similarly, a `sort_order`
+value other than `asc` or `desc` returns `422 VALIDATION_ERROR`.
+
+Rationale: sorting is a singular operation (one active field per
+request). Unlike set-based enum filters — where removing an invalid
+value still produces a valid narrower result — an invalid sort field
+leaves the entire response ordering undefined. Silent fallback to the
+default sort would mask client errors (e.g., typos in field names).
+
+### Request Tracing
+
+Every API response includes an `X-Request-ID` header containing a UUID that
+uniquely identifies the request. If the client sends an `X-Request-ID`
+header, the server adopts it; otherwise the server generates one.
+
+**Client-supplied value validation.** The server adopts the client-supplied
+`X-Request-ID` value only if, after trimming leading/trailing whitespace, it
+is non-empty, at most 128 characters long, and composed exclusively of
+characters in `[A-Za-z0-9._-]`. If the value is absent, empty (or
+whitespace-only), exceeds 128 characters, or contains any character outside
+this set, the server discards it and generates a UUIDv4 instead — the
+request is never rejected on account of an invalid `X-Request-ID` value. The
+server does not truncate or sanitize an out-of-bounds value; it is either
+adopted whole or discarded whole. If the client sends multiple
+`X-Request-ID` headers, the server validates and considers only the first
+occurrence; subsequent occurrences are ignored.
+
+The request ID is propagated to all log entries produced during synchronous
+request processing (see `docs/features/platform/logging.md` for scope
+boundaries), enabling request-scoped debugging. Clients should log or
+display the request ID when reporting errors to support staff.
+
+See `docs/features/platform/logging.md` for the correlation ID mechanism
+and log record schema.
+
+### Rate Limiting
+
+Rate limiting is not enforced at this time. When activated, the API will
+communicate limits via standard headers:
+
+- `X-RateLimit-Limit`: maximum requests allowed in the current window
+- `X-RateLimit-Remaining`: requests remaining in the current window
+- `X-RateLimit-Reset`: UTC epoch timestamp when the window resets
+
+Clients that exceed the limit will receive `429 Too Many Requests`. Clients
+SHOULD respect these headers proactively to avoid hitting limits.
+
+## Response Conventions
 
 ### Response Format
 
@@ -194,160 +368,6 @@ Examples:
 | `SMELT_UNAVAILABLE` | SMELT API |
 | `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
 | `CELERY_UNAVAILABLE` | Celery task broker (task dispatch failed) |
-
-### Pagination
-
-List endpoints support pagination via query parameters:
-
-- `page` (int, default: 1): Page number
-- `per_page` (int, default: 20, max: 100): Items per page
-
-Constraint enforcement: if `page < 1`, `per_page < 1`, or `per_page > 100`,
-the endpoint returns `422 VALIDATION_ERROR`. Values are never silently
-clamped. Requesting a `page` beyond the last available page returns an
-empty `data` array with correct `meta.total` (not an error).
-
-### Filtering
-
-List endpoints support filtering via query parameters specific to each
-resource. Common patterns:
-
-- Exact match: `?status=active`
-- Search: `?search=term` (searches relevant text fields)
-- Date range: `?from_date=2024-01-01&to_date=2024-12-31`
-
-#### Query Parameter Length Limit
-
-Every string query parameter has an individual maximum length of 500
-characters, unless the endpoint specifies otherwise. Values exceeding the
-limit return `422 VALIDATION_ERROR`.
-
-#### Enum Filter Validation
-
-When a filter parameter accepts enum values (comma-separated or repeatable),
-invalid values are silently ignored. If all provided values are invalid, the
-endpoint returns an empty result set (not an error). This applies to all
-endpoints that accept enum-based filter parameters (e.g., `event_type`,
-`status`, `severity`).
-
-#### Date Range Interpretation
-
-When a date range filter (`from_date`, `to_date`) is applied against a
-`datetime` column:
-
-- **Date-only value** (e.g., `2025-01-15`):
-  - `from_date` → interpreted as `2025-01-15T00:00:00Z` (start of day
-    UTC, inclusive)
-  - `to_date` → interpreted as `2025-01-15T23:59:59.999999Z` (end of day
-    UTC, inclusive)
-- **Full datetime value without offset** (e.g., `2025-01-15T14:30:00`):
-  interpreted as UTC
-- **Full datetime value with offset** (e.g., `2025-01-15T14:30:00+02:00`):
-  accepted and converted to UTC before comparison (i.e.,
-  `2025-01-15T12:30:00Z`)
-
-**Inverted range validation**: when both `from_date` and `to_date` are
-provided and `from_date` is strictly after `to_date` (after timezone
-normalization), the endpoint returns **400 Bad Request** with error code
-`DATE_RANGE_INVERTED`. This validation applies globally to all endpoints
-that accept date range parameters.
-
-**Maximum range constraint**: endpoints that return unbounded datasets
-without pagination (e.g., chart/timeline data) SHOULD declare a maximum
-allowed interval between `from_date` and `to_date`. When the interval
-exceeds the declared limit, the endpoint returns **400 Bad Request** with
-error code `DATE_RANGE_TOO_WIDE`. Paginated endpoints generally do not
-need this constraint — pagination already bounds the response size.
-Each endpoint that enforces this constraint MUST document its specific
-limit in its own error table.
-
-This ensures that "inclusive bounds" means inclusive of the full day when no
-time component is specified. For the full timezone policy, see
-`docs/conventions.md` (Timestamps & Timezones).
-
-### Sorting
-
-List endpoints support sorting:
-
-- `sort_by` (string): Field name to sort by
-- `sort_order` (string): `asc` or `desc` (default: `desc`)
-
-**Default sort order**: when a paginated list endpoint does not document
-specific sorting behavior, the implicit default is `sort_by=created_at`,
-`sort_order=desc` (newest first). Endpoints with a different natural
-ordering (e.g., alphabetical, severity-based) must state their default
-explicitly.
-
-Endpoints that intentionally do not support client-controlled sorting must
-state so with justification (e.g., "fixed chronological order for timeline
-display").
-
-#### Semantic Sort Fields
-
-When `sort_by` references a field with domain-defined ordinal semantics
-(not alphabetical), the sort uses the semantic rank:
-
-| Field | Ascending order (semantic rank) |
-|-------|--------------------------------|
-| `severity` | None (0) < Low (1) < Medium (2) < High (3) < Critical (4) |
-
-`None` is the resolved severity label for CVSS score 0.0 (rank 0 in the
-semantic ordering). `NULL` (severity not yet resolved) is not part of the
-ranking — NULL values sort last regardless of sort direction.
-
-Endpoints that support sorting by semantic fields MUST note this in
-their query parameter specification: "semantic ordering (see General
-Conventions)".
-
-#### Sort Parameter Validation
-
-A `sort_by` value not present in the endpoint's documented list of valid
-sort fields returns `422 VALIDATION_ERROR`. Similarly, a `sort_order`
-value other than `asc` or `desc` returns `422 VALIDATION_ERROR`.
-
-Rationale: sorting is a singular operation (one active field per
-request). Unlike set-based enum filters — where removing an invalid
-value still produces a valid narrower result — an invalid sort field
-leaves the entire response ordering undefined. Silent fallback to the
-default sort would mask client errors (e.g., typos in field names).
-
-### Request Tracing
-
-Every API response includes an `X-Request-ID` header containing a UUID that
-uniquely identifies the request. If the client sends an `X-Request-ID`
-header, the server adopts it; otherwise the server generates one.
-
-**Client-supplied value validation.** The server adopts the client-supplied
-`X-Request-ID` value only if, after trimming leading/trailing whitespace, it
-is non-empty, at most 128 characters long, and composed exclusively of
-characters in `[A-Za-z0-9._-]`. If the value is absent, empty (or
-whitespace-only), exceeds 128 characters, or contains any character outside
-this set, the server discards it and generates a UUIDv4 instead — the
-request is never rejected on account of an invalid `X-Request-ID` value. The
-server does not truncate or sanitize an out-of-bounds value; it is either
-adopted whole or discarded whole. If the client sends multiple
-`X-Request-ID` headers, the server validates and considers only the first
-occurrence; subsequent occurrences are ignored.
-
-The request ID is propagated to all log entries produced during synchronous
-request processing (see `docs/features/platform/logging.md` for scope
-boundaries), enabling request-scoped debugging. Clients should log or
-display the request ID when reporting errors to support staff.
-
-See `docs/features/platform/logging.md` for the correlation ID mechanism
-and log record schema.
-
-### Rate Limiting
-
-Rate limiting is not enforced at this time. When activated, the API will
-communicate limits via standard headers:
-
-- `X-RateLimit-Limit`: maximum requests allowed in the current window
-- `X-RateLimit-Remaining`: requests remaining in the current window
-- `X-RateLimit-Reset`: UTC epoch timestamp when the window resets
-
-Clients that exceed the limit will receive `429 Too Many Requests`. Clients
-SHOULD respect these headers proactively to avoid hitting limits.
 
 ### Global Responses
 
@@ -574,20 +594,7 @@ Section-level declarations (e.g., "Global responses per api-spec.md
 apply to all endpoints in this section") are not necessary and MUST NOT
 be used — the derivation rules apply uniformly by access level and path.
 
-### Versioning
-
-The API uses URL-path versioning (`/api/v1/`). Only v1 exists at this time.
-
-Rules:
-
-- Additive changes (new fields in responses, new endpoints, new optional
-  query parameters) are NOT breaking changes and are added to v1 directly
-- Removal or renaming of fields, changes to response structure, changes to
-  error codes, or semantic changes to existing behavior are breaking changes
-- A v2 will only be considered after a stable production instance is
-  confirmed — until then, all work happens on v1
-- When a new version is eventually introduced, the previous version will
-  include a `Sunset` response header indicating the deprecation date
+## Identifier Resolution
 
 ### User Identifier Resolution
 
@@ -672,6 +679,8 @@ The CVE-ID format pattern used by this resolution function is the
 canonical `CVE_ID_PATTERN` defined in `backend/app/core/identifiers.py`
 (anchored regex `^CVE-[0-9]{4}-[0-9]{4,}$`). This is the single
 source of truth for CVE-ID format validation across all layers.
+
+## Mutation Conventions
 
 ### Mutation Patterns
 
@@ -758,6 +767,8 @@ Implementation note: in Pydantic v2, distinguishing "field omitted" from
 `UNSET` constant as the field default) or inspecting `model_fields_set`
 after parsing. Standard `Optional[X] = None` conflates the two cases and
 MUST NOT be used for PATCH request schemas with nullable fields.
+
+## Naming Conventions
 
 ### Audit Trail Endpoint Naming
 
