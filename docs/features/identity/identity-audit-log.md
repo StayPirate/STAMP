@@ -291,7 +291,7 @@ Tests for any identity-mutating service MUST verify:
 
 - `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
   AuditEventMixin, naming conventions
-- `docs/conventions.md` — Audit Trail Conventions
+- `docs/conventions.md` — Audit Trail
 - `docs/api-spec.md` — global API conventions
 - `docs/features/identity/user-service.md` — service operations that
   produce identity audit events

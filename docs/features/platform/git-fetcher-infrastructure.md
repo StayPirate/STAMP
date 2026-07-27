@@ -376,8 +376,7 @@ container image of the worker that consumes the `git` queue.
 | `git` | 2.25 | Minimum version for protocol v2, improved bare-clone performance, and `--filter` support (retained for future extensibility) |
 
 The `python:<version>-slim` base image (where `<version>` is the
-project's Python target — see `docs/conventions.md`, Python Runtime
-Version) does not include git — it must be added explicitly to the
+project's Python target — see `docs/conventions.md`, Runtime Version) does not include git — it must be added explicitly to the
 container image.
 
 **No Python Git library is used.** All git operations are performed

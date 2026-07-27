@@ -270,6 +270,6 @@ Indefinite. TicketAuditEvent records are never automatically deleted.
   AuditEventMixin, naming conventions
 - `docs/features/identity/identity-audit-log.md` — IdentityAuditEvent detail
   JSONB pattern (reference implementation for the detail column contract)
-- `docs/conventions.md` — Audit Trail Conventions
+- `docs/conventions.md` — Audit Trail
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
