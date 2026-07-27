@@ -10,17 +10,11 @@
 
 ### APIS-GAP-04 — No tie-breaking convention for pagination with non-unique sort keys (Medium)
 
-**Category**: Boundaries
-**Status**: OPEN
-
-The Sorting section defines `sort_by` and `sort_order` with a default of `sort_by=created_at, sort_order=desc`. The Pagination section defines `page` and `per_page`. Neither section addresses what happens when multiple resources share the same value for the sorted field. During batch CVE ingestion, 50 tickets could be created in the same second, all sharing identical `created_at` timestamps. A client paginating with `sort_by=created_at&per_page=20` receives page 1 with 20 tickets. On the next request for page 2, the database may return a different partition of the 50 tickets (PostgreSQL does not guarantee stable ordering for equal values without a tiebreaker). The client sees duplicates on page 2 that were already on page 1, and misses other tickets entirely. A cross-cutting convention (e.g., "all paginated endpoints MUST include a deterministic secondary sort by `id`") would ensure consistent behavior across all list endpoints.
+**Status**: RESOLVED — Added cross-cutting "Deterministic Pagination Ordering" subsection to docs/api-spec.md Sorting section mandating secondary sort by `id`; replaced per-endpoint secondary sort details in package-model.md and package-service.md with references to the new convention (2026-07-27)
 
 ### APIS-GAP-05 — Enum filter value format ambiguity (comma-separated vs repeatable) (Medium)
 
-**Category**: Boundaries
-**Status**: OPEN
-
-The Enum Filter Validation section states: "When a filter parameter accepts enum values (comma-separated or repeatable), invalid values are silently ignored." The phrase "comma-separated or repeatable" is ambiguous. It could mean: (a) both formats are always accepted on any enum filter parameter, or (b) the format choice is per-endpoint. The tickets.md spec declares `status` as "repeatable", suggesting format is per-endpoint. But the cross-cutting spec doesn't establish whether endpoints that say "repeatable" also accept comma-separated values. An implementer of a new list endpoint must decide: should `?status=new,analysis` be accepted (split on comma) or treated as a single invalid value `"new,analysis"` (silently ignored, producing an empty result set)? Two implementers working on different endpoints could make opposite choices, creating an inconsistent API surface.
+**Status**: RESOLVED — Rewrote Enum Filter Validation section in docs/api-spec.md to define repeatable format as the exclusive multi-value standard, explicitly disallow comma-separated format, and add opt-in rule (single-value by default, endpoints must declare `repeatable`) (2026-07-27)
 
 ### APIS-GAP-01 — No validation/sanitization rule for client-supplied `X-Request-ID` (Medium)
 
@@ -58,10 +52,7 @@ _No findings._
 
 ### APIS-DES-01 — Semantic Sort Fields table incomplete — status has lifecycle semantics but no defined ordering (Medium)
 
-**Category**: Design
-**Status**: OPEN
-
-The Semantic Sort Fields section defines ordinal ranking only for `severity`. However, `tickets.md` allows `sort_by=status` without a semantic ordering annotation. Without a defined rank, status sorting defaults to alphabetical (Analysis, Analyzed, Duplicated, Ignored, New, Resolved), which is meaningless from a workflow perspective — `New` sorts after `Ignored`, and `Duplicated` sorts between `Analyzed` and `Ignored`. A VA sorting tickets by lifecycle progression would get a confusing jumble. The api-spec should add a lifecycle-based ranking for status to the Semantic Sort Fields table (e.g., New < Analysis < Analyzed < Resolved < Ignored < Duplicated). Any reasonable ordering is better than alphabetical.
+**Status**: RESOLVED — Added `status` row to the Semantic Sort Fields table in docs/api-spec.md with lifecycle-based ranking (New < Analysis < Analyzed < Resolved < Ignored < Duplicated); annotated `status` in tickets.md sort_by values with "semantic ordering, see Sorting" (2026-07-27)
 
 ### APIS-DES-02 — INTERNAL_ERROR code sits outside the prefix-based error code taxonomy (Low)
 
@@ -79,17 +70,11 @@ _No findings._
 
 ### APIS-API-04 — INTERNAL_ERROR not registered in Error Code Categories table (Medium)
 
-**Category**: API Conventions
-**Status**: OPEN
-
-`INTERNAL_ERROR` is used in the Global Responses table and the Response Applicability Derivation table, making it a fundamental error code returned by every endpoint. However, it does not appear under any prefix in the Error Code Categories table. No `INTERNAL_*` or `SYSTEM_*` prefix category exists. The spec rule states "Every new error introduced in the codebase MUST have a corresponding code with the appropriate prefix," but `INTERNAL_ERROR` has no assigned prefix. Fix by either adding an `INTERNAL_*` prefix row to the Error Code Categories table, or adding an explicit note that `INTERNAL_ERROR` is a framework-level code exempt from the prefix rule.
+**Status**: RESOLVED — Added `INTERNAL_*` prefix row (domain: Framework) to Error Code Categories table; migrated `RECALC_ALREADY_IN_PROGRESS` to `CVSS_RECALC_ALREADY_IN_PROGRESS` under `CVSS_*` prefix in api-spec.md and system-settings.md (2026-07-27)
 
 ### APIS-API-05 — AUTH_SSO_UNAVAILABLE doesn't follow DEPENDENCY_UNAVAILABLE naming pattern (Medium)
 
-**Category**: API Conventions
-**Status**: OPEN
-
-The Infrastructure Dependency Errors section defines the pattern as `<DEPENDENCY>_UNAVAILABLE` with HTTP 503, showing examples: `REDIS_UNAVAILABLE`, `SMELT_UNAVAILABLE`, `CELERY_UNAVAILABLE`, `PROVISIONING_UNAVAILABLE`. All follow the `<DEPENDENCY>_UNAVAILABLE` pattern without a domain prefix. However, `AUTH_SSO_UNAVAILABLE` uses the `AUTH_` domain prefix, breaking the pattern (it should be `SSO_UNAVAILABLE` per the convention). Additionally, `AUTH_SSO_UNAVAILABLE` is not listed in the `AUTH_*` row examples, so it falls through a categorization gap. This creates ambiguity: when adding a new infrastructure dependency error, should the implementer use the `<DEPENDENCY>_UNAVAILABLE` pattern or add a domain prefix? Fix by either renaming to `SSO_UNAVAILABLE` for consistency, or documenting that dependencies within an existing domain may use the domain prefix.
+**Status**: RESOLVED — Renamed `AUTH_SSO_UNAVAILABLE` to `SSO_UNAVAILABLE` in api-spec.md (Infrastructure Dependency Errors table + Error Code Categories examples) and sso-authentication.md (all 3 occurrences) (2026-07-27)
 
 ### APIS-API-01 — `errors` array element schema underspecified (Medium)
 

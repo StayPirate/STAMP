@@ -186,7 +186,7 @@ see `docs/architecture.md`, Clock Synchronization.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
-| 503 | `AUTH_SSO_UNAVAILABLE` | OIDC discovery document unreachable and no cached version available |
+| 503 | `SSO_UNAVAILABLE` | OIDC discovery document unreachable and no cached version available |
 
 The frontend then redirects the browser to this URL.
 
@@ -304,7 +304,7 @@ callback URL with an authorization `code` and `state` parameter.
 | 401 | `AUTH_SSO_USER_NOT_FOUND` | User authenticated by IdP does not exist in the Sentinel User table |
 | 401 | `AUTH_SSO_USER_INACTIVE` | User exists but has been deactivated |
 | 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
-| 503 | `AUTH_SSO_UNAVAILABLE` | SSO service temporarily unavailable (IdP discovery unreachable) |
+| 503 | `SSO_UNAVAILABLE` | SSO service temporarily unavailable (IdP discovery unreachable) |
 
 Error response format:
 
@@ -339,7 +339,7 @@ Unlike the local login endpoint, SSO error messages can be specific
      should not normally happen since availability is checked via
      `/auth/providers`, but handles race conditions (e.g., SSO disabled
      between page load and click)
-   - On HTTP 503 (`AUTH_SSO_UNAVAILABLE`): display an inline error
+   - On HTTP 503 (`SSO_UNAVAILABLE`): display an inline error
      message on the login page: "SSO is temporarily unavailable, please
      try later." Do not redirect the browser away
    - On success: proceed to step 4

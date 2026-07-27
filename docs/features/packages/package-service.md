@@ -761,8 +761,8 @@ async def search_packages(
    ignored)
 5. Apply `search` (ILIKE `%term%` substring match on `package_name`) or
    `name` (exact match)
-6. Apply sorting (primary: `sort_by`/`sort_order`; secondary: `id` for
-   deterministic pagination)
+6. Apply sorting (`sort_by`/`sort_order`; deterministic tiebreaker per
+   `docs/api-spec.md`, Deterministic Pagination Ordering)
 7. Execute paginated query
 8. Compute `track_summary` via SQL aggregation (`COUNT(*) FILTER (WHERE
    status = ...)`) in the same query — NOT as Python post-processing —

@@ -43,7 +43,7 @@ executes the following sequence:
    - If Redis is unreachable → return 503 `REDIS_UNAVAILABLE` (nothing
      committed)
    - If the key already exists (a recalculation is in progress) → return
-     409 `RECALC_ALREADY_IN_PROGRESS` (nothing committed)
+     409 `CVSS_RECALC_ALREADY_IN_PROGRESS` (nothing committed)
 4. **Commit** the new setting value and a `SettingAuditEvent` record to
    the database. If the commit fails: release the slot (`DEL
    cvss_recalc_active`) and return 500
@@ -170,7 +170,7 @@ the response. This is a documented deviation from the
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 409 | `RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (setting change blocked until current batch completes) |
+| 409 | `CVSS_RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (setting change blocked until current batch completes) |
 | 503 | `REDIS_UNAVAILABLE` | Redis broker is unreachable (setting change requires broker availability) |
 
 Response (200 OK): the settings object in the standard
@@ -236,7 +236,7 @@ No setting change is made. No `SettingAuditEvent` is created.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 409 | `RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (slot occupied) |
+| 409 | `CVSS_RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (slot occupied) |
 | 503 | `REDIS_UNAVAILABLE` | Redis is unreachable (slot acquisition failed) |
 | 503 | `CELERY_UNAVAILABLE` | Task could not be enqueued (slot released) |
 

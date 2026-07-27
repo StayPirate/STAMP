@@ -129,11 +129,27 @@ resource. Common patterns:
 
 #### Enum Filter Validation
 
-When a filter parameter accepts enum values (comma-separated or repeatable),
-invalid values are silently ignored. If all provided values are invalid, the
-endpoint returns an empty result set (not an error). This applies to all
-endpoints that accept enum-based filter parameters (e.g., `event_type`,
-`status`, `severity`).
+Enum filter parameters accept a **single value** by default. Endpoints
+that support multiple values MUST declare the parameter as `repeatable`
+in the endpoint specification. If nothing is stated, the parameter
+accepts only one value.
+
+**Repeatable format**: multiple values are specified as separate query
+parameters with the same name (e.g., `?status=new&status=analysis`).
+The semantics are OR — the result includes resources matching **any** of
+the provided values.
+
+Comma-separated format is **not supported**. A value containing commas
+(e.g., `?status=new,analysis`) is treated as a single literal value that
+does not match any enum member and is silently ignored per the validation
+rule below.
+
+**Validation rules**: invalid enum values are silently ignored — they
+are removed from the filter set without producing an error. If all
+provided values are invalid (or the resulting filter set is empty after
+removing invalid values), the endpoint returns an empty result set (not
+an error). This applies to all endpoints that accept enum-based filter
+parameters (e.g., `event_type`, `status`, `severity`).
 
 #### Date Range Interpretation
 
@@ -195,6 +211,7 @@ When `sort_by` references a field with domain-defined ordinal semantics
 | Field | Ascending order (semantic rank) |
 |-------|--------------------------------|
 | `severity` | None (0) < Low (1) < Medium (2) < High (3) < Critical (4) |
+| `status` | New (0) < Analysis (1) < Analyzed (2) < Resolved (3) < Ignored (4) < Duplicated (5) |
 
 `None` is the resolved severity label for CVSS score 0.0 (rank 0 in the
 semantic ordering). `NULL` (severity not yet resolved) is not part of the
@@ -214,6 +231,24 @@ request). Unlike set-based enum filters — where removing an invalid
 value still produces a valid narrower result — an invalid sort field
 leaves the entire response ordering undefined. Silent fallback to the
 default sort would mask client errors (e.g., typos in field names).
+
+#### Deterministic Pagination Ordering
+
+All paginated list endpoints MUST append a secondary sort by the
+resource's primary key (`id`) when the primary `sort_by` field is not
+guaranteed to be unique. This ensures deterministic pagination — clients
+will never see duplicate items or miss items across pages due to
+unstable ordering of rows with identical sort-key values.
+
+If the primary `sort_by` field is the resource's primary key itself (or
+another column with a UNIQUE constraint), the secondary sort is
+redundant and MAY be omitted.
+
+The secondary sort uses the same direction as `sort_order`. It is an
+implementation-level concern — the `id` tiebreaker is NOT exposed as a
+client-visible query parameter and is not documented in per-endpoint
+query parameter tables. Per-endpoint specifications reference this
+cross-cutting rule instead of repeating the secondary sort detail.
 
 ### Request Tracing
 
@@ -329,15 +364,15 @@ Error codes are grouped by prefix:
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_INVALID`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED`, `AUTH_LOGOUT_NOT_APPLICABLE` |
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_ALREADY_RESOLVED`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE`, `CVE_INVALID_FORMAT` |
-| `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND` |
+| `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_RECALC_ALREADY_IN_PROGRESS` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE`, `RESOURCE_NOT_EDITABLE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
 | `ROLE_MAPPING_*` | Role mapping operations | `ROLE_MAPPING_GROUP_NOT_FOUND`, `ROLE_MAPPING_INVALID_GROUP_NAME` |
 | `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING`, `FETCHER_DEREGISTERED`, `FETCHER_DISABLED`, `FETCHER_SETTING_UNKNOWN`, `FETCHER_SETTING_INVALID` |
-| `RECALC_*` | Batch recalculation operations | `RECALC_ALREADY_IN_PROGRESS` |
 | `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_EXTERNAL_STATUS_READONLY`, `USER_EXTERNAL_FIELD_READONLY`, `USER_EXTERNAL_PASSWORD_FORBIDDEN`, `USER_EXTERNAL_ROLE_PROTECTED`, `USER_SELF_ROLE_REMOVAL`, `USER_SELF_DEACTIVATION`, `USER_PASSWORD_POLICY_VIOLATION` |
 | `DATE_RANGE_*` | Date range filter validation | `DATE_RANGE_INVERTED`, `DATE_RANGE_TOO_WIDE` |
-| `<DEPENDENCY>_UNAVAILABLE` | Infrastructure dependency availability (external service or broker unreachable) | `REDIS_UNAVAILABLE`, `SMELT_UNAVAILABLE`, `CELERY_UNAVAILABLE`, `PROVISIONING_UNAVAILABLE` |
+| `INTERNAL_*` | Framework | `INTERNAL_ERROR` |
+| `<DEPENDENCY>_UNAVAILABLE` | Infrastructure dependency availability (external service or broker unreachable) | `REDIS_UNAVAILABLE`, `SMELT_UNAVAILABLE`, `CELERY_UNAVAILABLE`, `PROVISIONING_UNAVAILABLE`, `SSO_UNAVAILABLE` |
 
 Rules:
 
@@ -366,7 +401,7 @@ Examples:
 | `REDIS_UNAVAILABLE` | Redis cache/session store |
 | `PROVISIONING_UNAVAILABLE` | External identity provider |
 | `SMELT_UNAVAILABLE` | SMELT API |
-| `AUTH_SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
+| `SSO_UNAVAILABLE` | SSO identity provider (OIDC discovery) |
 | `CELERY_UNAVAILABLE` | Celery task broker (task dispatch failed) |
 
 ### Global Responses

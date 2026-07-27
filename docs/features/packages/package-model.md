@@ -1682,7 +1682,7 @@ once per ticket in the results.
 | `search` | string | Substring match on `package_name` (case-insensitive, equivalent to SQL ILIKE `%term%`). Max 500 chars |
 | `name` | string | Exact match on `package_name`. Max 500 chars |
 | `ticket_status` | string (repeatable) | Ticket statuses to include: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated`. Repeatable — multiple values are specified as separate query parameters (e.g., `?ticket_status=new&ticket_status=analysis`). Invalid values are silently ignored per `api-spec.md` (Enum Filter Validation). If all values are invalid, an empty result set is returned. Default: no filter (all statuses) |
-| `sort_by` | string | `package_name` or `created_at` (default: `created_at`). Refers to `TicketPackage.created_at` (the date the package was added to the ticket), not `Ticket.created_at`. Secondary sort: `id` (deterministic pagination when primary key has duplicates) |
+| `sort_by` | string | `package_name` or `created_at` (default: `created_at`). Refers to `TicketPackage.created_at` (the date the package was added to the ticket), not `Ticket.created_at`. Deterministic tiebreaker per `docs/api-spec.md` (Deterministic Pagination Ordering) |
 | `sort_order` | string | `asc` or `desc` (default: `desc`) |
 | `page` | integer | Page number (default: 1, min: 1) |
 | `per_page` | integer | Items per page (default: 20, min: 1, max: 100) |
