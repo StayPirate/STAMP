@@ -12,10 +12,11 @@ content semantics.
 |---|----------|-----------|
 | D1 | Ecosystem Naming goes under `## Terminology` | It is a terminological convention ("use OSSF canonical name, not GitHub's variant") |
 | D2 | Runtime Version stays at the bottom of `## Python (Backend)` | It is Python-specific with Docker/CI implications; not worth a standalone `##` section |
-| D3 | Redis sections merge under `### Redis` with `####` sub-headings | Closely related content that was arbitrarily split into siblings |
+| D3 | Redis sections merge under `### Redis` with qualified `####` sub-headings (`#### Redis Key Conventions`, `#### Redis Error Handling`) | Closely related content that was arbitrarily split into siblings. Sub-headings keep qualified names for self-documentation and to preserve existing cross-reference patterns |
 | D4 | CLI `### Naming` moves after `### Framework` | Semantically belongs with structure/design, not after Output Contract |
 | D5 | "Feature Specifications" renames to "Specification Writing" | Clarifies this section is about *how to write specs*, not about features themselves |
 | D6 | Heading names preserved wherever externally referenced (unless the rename clearly improves clarity AND references are few) | Minimizes churn |
+| D7 | Testing Conventions moves after Redis+Logging (from its current position before Redis) | Groups infrastructure patterns (Transaction, Redis, Logging) contiguously; Testing is a natural last topic before Runtime/ops |
 
 ## Target Structure
 
@@ -25,7 +26,7 @@ content semantics.
 ## Contents (TOC — top-level sections only)
 
 ## General Principles                              ← renamed from "## General"
-  (5 bullet points only)
+  (6 bullet points)
 
 ## Terminology                                     ← NEW section (extracted from General)
   ### External Identity / SSO Terminology
@@ -53,8 +54,8 @@ content semantics.
     #### Pessimistic Locking Pattern
     #### Transaction Hygiene Rules
   ### Redis                                        ← NEW parent (merge of 2 sections)
-    #### Key Conventions                           ← renamed from "### Redis Key Conventions"
-    #### Error Handling                            ← renamed from "### Redis Error Handling"
+    #### Redis Key Conventions                     ← demoted from ### to ####, name preserved
+    #### Redis Error Handling                      ← demoted from ### to ####, name preserved
   ### Logging
   ### Testing Conventions
   ### Runtime Version                              ← moved to end of Python section
@@ -163,23 +164,21 @@ content semantics.
 
 | Old reference text | New reference text | Files |
 |---|---|---|
-| `(Redis Error Handling)` | `(Redis, Error Handling)` | `docs/deployment.md`, `docs/features/platform/cli-infrastructure.md` |
 | `"Feature Specifications > API Cross-references"` | `"Specification Writing > API Cross-references"` | `docs/reviews/user-management.md` |
 
 **Actions**:
-1. Update the references listed above
-2. Grep for any other parenthetical references to "Redis Key
-   Conventions" or "Redis Error Handling" that were missed in analysis
-3. Grep for any reference to "Feature Specifications" pointing to
+1. Update the reference listed above
+2. Grep for any reference to "Feature Specifications" pointing to
    conventions.md
+3. Verify that parenthetical references to "Redis Error Handling" and
+   "Redis Key Conventions" still resolve (heading text preserved, only
+   level changed from `###` to `####`)
 
 **Commit**: `docs: update cross-references to conventions.md`
 
 **Verification**:
-1. Grep `conventions.md.*Redis Key Conventions` — expect 0 results
-2. Grep `conventions.md.*Redis Error Handling` — expect 0 results
-3. Grep `conventions.md.*Feature Specifications` — expect 0 results
-4. All existing parenthetical references still resolve to a valid
+1. Grep `conventions.md.*Feature Specifications` — expect 0 results
+2. All existing parenthetical references still resolve to a valid
    heading in the restructured file
 
 ---
@@ -452,12 +451,12 @@ All files referencing `docs/conventions.md` with a section name:
 
 ### Impact Summary
 
-| Heading rename | Cross-references to update | Count |
+| Heading change | Cross-references to update | Count |
 |---|---|---|
-| `## General` → `## General Principles` | 0 | 0 |
+| `## General` → `## General Principles` | (none) | 0 |
 | `## Feature Specifications` → `## Specification Writing` | `docs/reviews/user-management.md` | 1 |
-| `### Redis Key Conventions` → `#### Key Conventions` | (none) | 0 |
-| `### Redis Error Handling` → `#### Error Handling` | `docs/deployment.md`, `docs/features/platform/cli-infrastructure.md` | 2 |
+| `### Redis Key Conventions` → `#### Redis Key Conventions` (level change only) | (none — heading text preserved) | 0 |
+| `### Redis Error Handling` → `#### Redis Error Handling` (level change only) | (none — heading text preserved) | 0 |
 
 All other headings preserve their exact names — only their position in
 the document changes. Since cross-references use parenthetical style
