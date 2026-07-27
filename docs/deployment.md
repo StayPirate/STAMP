@@ -352,29 +352,6 @@ be used because tags created by it do not trigger downstream workflows
 
 ---
 
-## Database Migrations
-
-Migrations are managed by Alembic and must be run explicitly:
-
-```bash
-# Apply all pending migrations
-alembic upgrade head
-
-# Check current migration state
-alembic current
-
-# Create a new migration
-alembic revision --autogenerate -m "description"
-```
-
-**Rules**:
-- Never run migrations automatically on API container startup
-- Always run migrations as a separate step before deploying new code
-- In Kubernetes: use a Job that runs before the Deployment rollout
-- In Docker/Podman: run as a one-shot container before starting services
-
----
-
 ## Process Architecture
 
 Sentinel's process roles are defined in `docs/architecture.md`
@@ -390,7 +367,7 @@ for deployment.
 | IBS RabbitMQ consumer | Real-time event consumption | No (singleton — see spec) |
 
 Alembic migration jobs are one-shot processes, not runtime services —
-see Database Migrations (above) for operational details.
+see Database Migrations (below) for operational details.
 
 ### Singleton Processes
 
@@ -497,6 +474,27 @@ GIT_TERMINAL_PROMPT=0
 ---
 
 ## Operations
+
+### Database Migrations
+
+Migrations are managed by Alembic and must be run explicitly:
+
+```bash
+# Apply all pending migrations
+alembic upgrade head
+
+# Check current migration state
+alembic current
+
+# Create a new migration
+alembic revision --autogenerate -m "description"
+```
+
+**Rules**:
+- Never run migrations automatically on API container startup
+- Always run migrations as a separate step before deploying new code
+- In Kubernetes: use a Job that runs before the Deployment rollout
+- In Docker/Podman: run as a one-shot container before starting services
 
 ### Health Checks
 
