@@ -124,6 +124,11 @@ parents), all existing anchors survive:
 **Only breaking anchor**: `#general-conventions` (the H2 container is
 removed entirely).
 
+**Self-reference affected**: the prescriptive template in Semantic Sort
+Fields references "General Conventions" by name (not as a link anchor,
+but as prose text that spec authors copy). This must be updated to
+reference the correct post-restructuring section name ("Sorting").
+
 **New anchors created**: `#fundamentals`, `#authentication--authorization`,
 `#request-conventions`, `#response-conventions`, `#identifier-resolution`,
 `#mutation-conventions`, `#naming-conventions`.
@@ -132,8 +137,12 @@ removed entirely).
 
 ### Phase 1 — Restructure `api-spec.md`
 
-**Scope**: rewrite the file with the target structure. No content
-changes — only heading levels and section ordering.
+**Scope**: rewrite the file with the target structure. No semantic
+content changes — only heading levels and section ordering.
+
+**Note**: internal self-references within `api-spec.md` that point to
+the removed `## General Conventions` heading are updated in Phase 2
+(not here), because they are reference-fix work, not structural work.
 
 **Verification**:
 1. Commit the change
@@ -143,12 +152,20 @@ changes — only heading levels and section ordering.
 
 ### Phase 2 — Fix broken anchor links
 
-**Scope**: search the entire project for references to
-`api-spec.md#general-conventions` (the only breaking anchor) and any
+**Scope**: search the entire project — including `api-spec.md` itself —
+for references to `api-spec.md#general-conventions` (the only breaking
+anchor), internal self-references to the removed section name, and any
 other textual references to "General Conventions section" that need
 updating.
 
+Known self-reference in `api-spec.md`:
+- Semantic Sort Fields (line ~298-300): the prescriptive template
+  `"semantic ordering (see General Conventions)"` must be updated to
+  `"semantic ordering (see Sorting)"` — the target section `### Sorting`
+  remains as a valid heading under `## Request Conventions`
+
 Files to audit:
+- `docs/api-spec.md` (self-references)
 - `AGENTS.md`
 - `docs/conventions.md`
 - `docs/features/**/*.md`
