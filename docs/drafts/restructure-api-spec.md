@@ -174,6 +174,28 @@ Known external references:
   to "General Conventions" must be updated to "Response Conventions" —
   the cross-reference explains why health endpoints deviate from the
   standard response envelope format
+- `docs/features/tickets/cve-tracking.md` (line 104): prescriptive text
+  `"(see General Conventions)"` in sort_by parameter description — must
+  be updated to `"(see Sorting)"`
+- `docs/features/packages/cpe-package-mapping.md` (line 481):
+  cross-reference `docs/api-spec.md -- General Conventions` — must be
+  updated to reference the appropriate section or the file generically
+- `.opencode/agents/api-convention-reviewer.md` (lines 30, 107):
+  agent instructions referencing `the **General Conventions** section` —
+  must be updated to reflect the new structure
+- `AGENTS.md` (line 636): guardrail 20 references
+  `General Conventions section is modified` — must be updated to
+  reference the correct section(s)
+
+**Intentionally unchanged** (~27 feature specs): cross-references of the
+form `docs/api-spec.md — global API conventions (envelope format, error
+codes, pagination)` are file-level dependency declarations. They do not
+use an anchor link and do not reference "General Conventions" by name.
+The parenthetical describes multiple concepts spanning several H2
+sections — splitting into per-section links would triple the lines in
+27 files for marginal benefit. The restructured TOC actually improves
+the reader experience when following these links (thematic sections
+vs. one monolithic list). No action required.
 
 Files to audit:
 - `docs/api-spec.md` (self-references)
