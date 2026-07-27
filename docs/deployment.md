@@ -7,6 +7,38 @@ For environment variable reference, see `docs/configuration.md`.
 For architectural decisions and portability constraints, see
 `docs/architecture.md`.
 
+## Contents
+
+- [Prerequisites](#prerequisites)
+  - [Software Requirements](#software-requirements)
+  - [Network Access (Staging/Production)](#network-access-stagingproduction)
+- [External Service Registration](#external-service-registration)
+  - [IdP Client Registration (id.suse.com)](#idp-client-registration-idsusecom)
+- [Environments](#environments)
+  - [Local Development](#local-development)
+  - [Staging Deployment](#staging-deployment)
+  - [Production Deployment](#production-deployment)
+- [Release Process](#release-process)
+  - [How It Works](#how-it-works)
+  - [Creating a Release](#creating-a-release)
+  - [Squash Merge](#squash-merge)
+  - [Changelog](#changelog)
+  - [Pipeline Chain](#pipeline-chain)
+  - [Version Locations](#version-locations)
+  - [Configuration Files](#configuration-files)
+  - [Repository Secret](#repository-secret)
+- [Process Architecture](#process-architecture)
+  - [Singleton Processes](#singleton-processes)
+  - [Startup Ordering](#startup-ordering)
+  - [Git Worker Volume](#git-worker-volume)
+  - [Timezone and Locale Requirements](#timezone-and-locale-requirements)
+- [Operations](#operations)
+  - [Database Migrations](#database-migrations)
+  - [Health Checks](#health-checks)
+  - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
+  - [Log Aggregation](#log-aggregation)
+  - [Troubleshooting](#troubleshooting)
+
 ---
 
 ## Prerequisites
