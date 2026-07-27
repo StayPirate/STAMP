@@ -285,7 +285,8 @@ it for local development. Variables excluded:
   from uuid import UUID
   from sqlalchemy import select
   from sqlalchemy.ext.asyncio import AsyncSession
-  from fastapi import HTTPException
+
+  from app.core.exceptions import UserNotFoundError
 
   async def resolve_user_identifier(
       identifier: str, db: AsyncSession
@@ -294,7 +295,7 @@ it for local development. Variables excluded:
 
       If the identifier is a valid UUID, lookup is by primary key.
       Otherwise, lookup is by the username field (exact match).
-      Raises 404 if no user is found.
+      Raises UserNotFoundError if no user is found.
       """
       try:
           user_uuid = UUID(identifier)
@@ -304,7 +305,7 @@ it for local development. Variables excluded:
               select(User).where(User.username == identifier)
           )
       if not user:
-          raise HTTPException(status_code=404, detail="User not found")
+          raise UserNotFoundError(identifier)
       return user
   ```
 
