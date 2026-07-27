@@ -18,6 +18,13 @@ and logical grouping. Fix content accuracy issues identified during review.
   not contradict the owning spec. Any type/behavior change applied to
   `configuration.md` MUST be verified against (and, if needed, applied
   to) the owning feature spec in the same phase
+- **Document the exception, not the default**: a constraint description
+  states additional behavior only when that behavior deviates from what
+  the reader would reasonably assume. "Must be >= 1" already implies a
+  hard rejection of invalid values by default — this is only restated
+  when the actual behavior is a graceful fallback (the surprising case).
+  Restating the hard-fail default adds no information and is
+  over-documentation
 
 ## Current Issues
 
@@ -29,7 +36,7 @@ and logical grouping. Fix content accuracy issues identified during review.
 4. Dense prose in Celery section with no sub-structure
 5. Inconsistent section granularity (IBS split in two; SMELT/AIMAAS merged)
 
-### Content accuracy (from review findings, round 1)
+### Content accuracy — confirmed, to fix
 
 6. **Finding A**: SSO "enabled" startup log message exists only in
    `configuration.md` (lines 118-119) — not in the owning feature spec
@@ -42,37 +49,54 @@ and logical grouping. Fix content accuracy issues identified during review.
    descriptions say "Must be >= 1", implying hard failure. The owning
    spec (`local-authentication.md:298-301`) specifies graceful fallback
    to defaults with a warning. An operator reading only `configuration.md`
-   would expect the app to refuse to start
-9. **Finding E**: `CORS_ORIGINS` uses type `list (comma-separated)` but
-   `IBS_RABBITMQ_ROUTING_KEYS` uses type `string` with "Comma-separated"
-   buried in the description. Same input format, different notation
+   would expect the app to refuse to start. This is a genuine deviation
+   from the reasonable default expectation, and therefore must be stated
+9. **Finding 3**: `CORS_ORIGINS` is documented as
+   `list (comma-separated)`, but `config.py:39` (`cors_origins:
+   list[str]`) and `.env.example:17`
+   (`CORS_ORIGINS=["http://localhost:5173"]`) confirm Pydantic Settings
+   parses it as a **JSON array**. A comma-separated value (`a,b`) would
+   fail to parse. This is a real correctness bug in the documented type,
+   not a cosmetic inconsistency
 
-### Content accuracy (from review findings, round 2)
+### Content accuracy — evaluated and discarded
 
-10. **Finding 1 (authority chain violation introduced by Finding E fix)**:
-    the original Finding E fix changed `IBS_RABBITMQ_ROUTING_KEYS`'s type
-    only in `configuration.md`, leaving `ibs-rabbitmq-integration.md:437`
-    at `string`. This would have created a fresh authority-chain violation
-    — the exact defect class the draft's Principles forbid. The owning
-    spec must be updated in the same phase
-11. **Finding 2 (hard-failure omission for JWT/session settings)**:
-    `JWT_EXPIRY_HOURS` and `SESSION_MAX_LIFETIME_DAYS` in
-    `configuration.md` say only "Must be >= 1", with no mention that
-    invalid values cause a hard startup failure. The owning spec
-    (`authentication.md:62-63, 72-73`) specifies the application refuses
-    to start with a specific error message. This is a pre-existing
-    ambiguity made more visible by contrast once Finding D's fix
-    (graceful fallback wording) is applied to the login settings
-12. **Finding 3 (CORS_ORIGINS type itself was inaccurate)**: the original
-    Finding E fix used `CORS_ORIGINS`'s existing type
-    (`list (comma-separated)`) as the template for
-    `IBS_RABBITMQ_ROUTING_KEYS`. However, `config.py:39`
-    (`cors_origins: list[str]`) and `.env.example:17`
-    (`CORS_ORIGINS=["http://localhost:5173"]`) show that `CORS_ORIGINS`
-    is actually parsed as a **JSON array** by Pydantic Settings, not a
-    comma-separated string. The two variables use genuinely different
-    input formats and must use distinct, individually correct type
-    notations rather than being unified under a single (wrong) template
+The following candidate fixes were proposed in earlier review rounds and
+discarded after verification. They are recorded here to prevent
+re-introduction in a future round.
+
+10. **Discarded — "Finding E" / IBS routing keys type change**: an
+    earlier round proposed changing `IBS_RABBITMQ_ROUTING_KEYS` from
+    `string` to `list (comma-separated)` to "match" `CORS_ORIGINS`'s
+    notation. This was based on a false premise: the two variables use
+    genuinely different input formats.
+    `CORS_ORIGINS` is parsed by Pydantic as a JSON array (see Finding 3);
+    `IBS_RABBITMQ_ROUTING_KEYS` is a plain string split manually by
+    application code on commas — it is not a Pydantic `list[str]` field.
+    `configuration.md:157` and `ibs-rabbitmq-integration.md:437` already
+    **agree** with each other (both say `string` with "Comma-separated"
+    in the description) — there is no authority-chain divergence to fix.
+    Relabeling it `list (comma-separated)` would be actively misleading,
+    implying JSON-array parsing semantics it does not have. **No change
+    needed.**
+11. **Discarded — cross-file update to `ibs-rabbitmq-integration.md`
+    (dependent on item 10)**: a follow-up finding proposed updating
+    `ibs-rabbitmq-integration.md:437` to keep it "in sync" with the
+    `configuration.md` change from item 10. Since item 10 itself is
+    discarded, this dependent fix is also discarded. No change to
+    `ibs-rabbitmq-integration.md` is needed for this restructuring.
+12. **Discarded — JWT/session hard-failure restatement**: a follow-up
+    finding proposed adding "(application refuses to start on invalid
+    values)" to the `JWT_EXPIRY_HOURS` and `SESSION_MAX_LIFETIME_DAYS`
+    descriptions in `configuration.md`, arguing that the contrast with
+    Finding D's fallback wording made the omission more visible. Rejected
+    per the "document the exception, not the default" principle above:
+    `authentication.md:62-74` confirms JWT/session settings **do** hard
+    fail on invalid values, which is exactly what "Must be >= 1" already
+    conveys by default. Unlike `LOGIN_*` (which deviates from that
+    default via graceful fallback — Finding D), JWT/session settings
+    conform to it. Restating conforming behavior is over-documentation.
+    **No change needed.**
 
 ## Target Section Order
 
@@ -141,31 +165,22 @@ from H3 to H2, removing its false nesting under "Logging".
   `— (required)` to match the 5-column format used elsewhere
 - "Standard Environment Variables" table: rename `Variable` column to
   `Env Var`
-- **Finding E / Finding 1 fix**: change `IBS_RABBITMQ_ROUTING_KEYS`
-  type from `string` to `list (comma-separated)` and remove the
-  redundant "Comma-separated" prefix from its description **in both**
-  `configuration.md` and the owning spec
-  `docs/features/integrations/ibs-rabbitmq-integration.md:437`
-  (currently `string`). Both documents must agree after this phase
 - **Finding 3 fix**: change `CORS_ORIGINS` type in `configuration.md`
   from `list (comma-separated)` to `list (JSON array)`, matching the
-  actual Pydantic Settings parsing behavior
-  (`cors_origins: list[str]` in `config.py`) and the `.env.example`
-  syntax (`CORS_ORIGINS=["http://localhost:5173"]`). This is a
-  correction of a pre-existing inaccuracy, not a byproduct of the
-  `IBS_RABBITMQ_ROUTING_KEYS` fix — the two variables use different
-  input formats and retain different type notations after this phase:
-  `CORS_ORIGINS` → `list (JSON array)`,
-  `IBS_RABBITMQ_ROUTING_KEYS` → `list (comma-separated)`
+  actual Pydantic Settings parsing behavior (`cors_origins: list[str]`
+  in `config.py`) and the `.env.example` syntax
+  (`CORS_ORIGINS=["http://localhost:5173"]`)
+- **No change to `IBS_RABBITMQ_ROUTING_KEYS`** — see "Content accuracy
+  — evaluated and discarded" (items 10-11) above. It remains `string`
+  with "Comma-separated" in the description, in both `configuration.md`
+  and `ibs-rabbitmq-integration.md` (already consistent)
 
-**Changes**: Table modifications in `docs/configuration.md` and
-`docs/features/integrations/ibs-rabbitmq-integration.md`.
+**Changes**: Table modifications in `docs/configuration.md` only.
 
-**Verification**: diff shows only column header additions/renames, the
-`CORS_ORIGINS` type correction, and the `IBS_RABBITMQ_ROUTING_KEYS`
-type/description fix applied consistently in both files. No other row
-content changes. Explicitly confirm the two files agree on
-`IBS_RABBITMQ_ROUTING_KEYS`'s type after the phase.
+**Verification**: diff shows only column header additions/renames and
+the `CORS_ORIGINS` type correction. No other row content changes.
+Confirm `IBS_RABBITMQ_ROUTING_KEYS` is untouched in both
+`configuration.md` and `ibs-rabbitmq-integration.md`.
 
 ---
 
@@ -231,10 +246,10 @@ startup validation paragraph. All other prose text appears unchanged.
 
 ---
 
-### Phase 5 — Fix content accuracy (Findings A, D, and 2)
+### Phase 5 — Fix content accuracy (Findings A and D)
 
-**Scope**: Content accuracy fixes that correct the authority chain and
-align `configuration.md` with the owning feature specs.
+**Scope**: Two content accuracy fixes that correct the authority chain
+and align `configuration.md` with the owning feature specs.
 
 **Finding A fix** (SSO "enabled" log message):
 - Add the "enabled" startup log message to `sso-authentication.md`
@@ -252,44 +267,31 @@ align `configuration.md` with the owning feature specs.
 - Apply the same change to `LOGIN_LOCKOUT_MINUTES`
 - This aligns `configuration.md` with the behavior specified in
   `local-authentication.md:298-301`
-
-**Finding 2 fix** (JWT/session hard-failure behavior):
-- Update the `JWT_EXPIRY_HOURS` description in `configuration.md` from
-  "Must be >= 1 (3 days). Tokens are refreshed transparently via
-  sliding session for active users. Must be >= 1; values > 720 log a
-  warning" to make the hard-failure behavior explicit: "Must be >= 1
-  (application refuses to start on invalid values); values > 720 log a
-  warning"
-- Apply the analogous change to `SESSION_MAX_LIFETIME_DAYS`: "Must be
-  >= 1 (application refuses to start on invalid values); values > 365
-  log a warning"
-- This aligns `configuration.md` with the behavior specified in
-  `authentication.md:62-68, 72-78`, and creates the intended contrast
-  with the graceful-fallback wording introduced by the Finding D fix
-  (hard failure vs. fallback are now both explicit, for different
-  variables, instead of both looking identical under "Must be >= 1")
+- **No corresponding change to `JWT_EXPIRY_HOURS` or
+  `SESSION_MAX_LIFETIME_DAYS`** — see "Content accuracy — evaluated and
+  discarded" (item 12) above. Their existing "Must be >= 1" wording
+  already correctly conveys hard-fail behavior; that is the
+  default-conforming case, not the exception
 
 **Verification**: diff shows one addition in `sso-authentication.md`
-and four description changes in `configuration.md`
-(`LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES`, `JWT_EXPIRY_HOURS`,
-`SESSION_MAX_LIFETIME_DAYS`). Cross-check that the wording matches the
-owning feature specs exactly, and that the hard-failure vs.
-graceful-fallback distinction is unambiguous between the two pairs of
-variables.
+and two description changes in `configuration.md`
+(`LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES`). Confirm
+`JWT_EXPIRY_HOURS` and `SESSION_MAX_LIFETIME_DAYS` descriptions are
+unchanged. Cross-check that the wording matches the owning feature
+specs exactly.
 
 ---
 
 ### Phase 6 — Verify and fix anchor links
 
 **Scope**: Full-project search for any broken references to
-`docs/configuration.md` (with or without anchors), to the modified
-section of `sso-authentication.md`, and to the modified table row in
-`ibs-rabbitmq-integration.md`. Since no section was renamed, this
+`docs/configuration.md` (with or without anchors) and to the modified
+section of `sso-authentication.md`. Since no section was renamed, this
 phase is expected to be a no-op verification.
 
-**Verification**: grep for `configuration.md`, `sso-authentication.md`,
-and `ibs-rabbitmq-integration.md` across the project. Confirm all
-textual section references still match actual heading text.
+**Verification**: grep for `configuration.md` and
+`sso-authentication.md` across the project. Confirm all textual
+section references still match actual heading text.
 
 ---
 
@@ -301,9 +303,6 @@ Invoke the following reviewers on the final state:
 - `@spec-coherence-reviewer` on `docs/configuration.md`
 - `@spec-coherence-reviewer` on `docs/features/identity/sso-authentication.md`
   (due to Finding A addition)
-- `@spec-coherence-reviewer` on
-  `docs/features/integrations/ibs-rabbitmq-integration.md` (due to the
-  `IBS_RABBITMQ_ROUTING_KEYS` type fix — Finding 1)
 
 Address any issues rated "Needs revision" before proceeding.
 
@@ -318,10 +317,10 @@ Remove `docs/drafts/configuration-restructure.md` and commit.
 | Phase | Risk | Mitigation |
 |-------|------|-----------|
 | 1 | Minimal | Single character change |
-| 2 | Low | Column additions and two type fixes across two files; cross-file consistency explicitly verified |
+| 2 | Low | Column additions and one type fix; row content otherwise unchanged |
 | 3 | Medium | Block reordering; verified by line count + env var grep |
 | 4 | Medium | Heading insertions + one paragraph replacement; verified by diff |
-| 5 | Low | Four small content fixes aligned with owning specs |
+| 5 | Low | Two small content fixes aligned with owning specs |
 | 6 | Low | Verification pass; likely no-op |
 | 7 | None | Read-only review |
 | 8 | None | Cleanup |
