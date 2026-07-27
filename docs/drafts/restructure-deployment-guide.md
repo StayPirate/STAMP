@@ -13,8 +13,10 @@ navigability, and logical grouping — without modifying any content
    it's a runtime process constraint, not environment-specific
 3. **No separation between environment-specific and cross-cutting
    sections** — reader cannot quickly scan for their deployment context
-4. **"Release Process" interrupts operational flow** — CI/CD pipeline
-   details sit between environment guides and operational references
+4. **Operational procedures scattered** — Health Checks, Redis,
+   Log Aggregation, Database Migrations, and Troubleshooting exist as
+   independent H2 sections with no grouping, making day-2 operational
+   material hard to locate as a unit
 5. **"Database Migrations" too thin as standalone H2** — 20 lines,
    content partially duplicated in environment sections
 6. **Inconsistent hierarchy depth** — External Service Registration
@@ -83,6 +85,30 @@ navigability, and logical grouping — without modifying any content
       #### SSO Login Fails
       #### Celery Tasks Not Running
 ```
+
+## Design Decisions
+
+### Release Process position (kept between Environments and Process Architecture)
+
+Release Process stays in its current relative position because the
+resulting structure follows a deployment lifecycle progression:
+
+1. **Environments** — where to deploy
+2. **Release Process** — how deployable artifacts are produced
+3. **Process Architecture** — what processes to run and how they behave
+4. **Operations** — day-to-day operational procedures
+
+Moving Release Process elsewhere (e.g., after Operations) would break
+this lifecycle flow. The original concern was not Release Process's
+position per se, but the absence of clear grouping for operational
+content — resolved by creating the "Operations" section.
+
+### External Service Registration hierarchy (kept as H2 → H3 → H4)
+
+The current depth (3 levels) is acceptable for a registration procedure
+with sub-steps. It supports future extensibility — additional service
+registrations (e.g., IBS, RabbitMQ) would become sibling H3 sections.
+Flattening would require restructuring if more services are added later.
 
 ## Execution Phases
 
@@ -191,27 +217,7 @@ Update `(above)` to `(below)`.
 location; content identical byte-for-byte except the `(above)` →
 `(below)` positional reference fix.
 
-### Phase 5 — Fix hierarchy depth (External Service Registration)
-
-**What changes**:
-- "External Service Registration" currently has:
-  H2 → H3 (IdP Client Registration) → H4 (Steps, Environment-Specific
-  Configuration)
-- This is already 3 levels deep which is acceptable for a registration
-  procedure. However, if the hierarchy feels excessive for a single
-  entry, we can flatten:
-  - Keep H2 → H3 → H4 as-is (it's correct for future extensibility —
-    more services may be added)
-
-**Decision**: no change needed. The current depth is justified by the
-content structure (registration procedure with sub-steps). This phase
-becomes a no-op verification that the hierarchy is already consistent
-with the rest of the document after phases 1-4.
-
-**If the phase is a no-op**: skip the commit, document the decision in
-the commit log of the next phase.
-
-### Phase 6 — Add Table of Contents
+### Phase 5 — Add Table of Contents
 
 **What adds**:
 - A `## Contents` section immediately after the introductory paragraph
@@ -248,15 +254,24 @@ the commit log of the next phase.
 **Verification**: diff shows only new lines added (no existing content
 modified).
 
-### Phase 7 — Fix broken anchor links across the project
+### Phase 6 — Fix broken references across the project
 
 **What to check**:
-- Search all `docs/**/*.md` and `AGENTS.md` for links targeting
-  `docs/deployment.md` with anchors (e.g.,
-  `docs/deployment.md#database-migrations`,
-  `docs/deployment.md#process-architecture`)
-- Identify anchors that changed due to heading level or section moves
-- Update each broken reference to the new anchor
+
+1. **Anchor links**: search all `docs/**/*.md` and `AGENTS.md` for links
+   targeting `docs/deployment.md` with anchors (e.g.,
+   `docs/deployment.md#database-migrations`,
+   `docs/deployment.md#process-architecture`). Confirm each anchor
+   resolves to an existing heading in the restructured file.
+
+2. **Parenthetical references**: search for patterns like
+   `deployment.md` followed by a parenthetical section name (e.g.,
+   `docs/deployment.md (Log Aggregation)`,
+   `docs/deployment.md (Process Architecture)`). Confirm each cited
+   section name still exists as a heading in the restructured file.
+
+   Grep pattern: `deployment\.md.*\(` across `docs/**/*.md` and
+   `AGENTS.md`.
 
 **Known anchors that may break**:
 - `#database-migrations` — now nested under Operations (anchor
@@ -271,10 +286,11 @@ level. Moving a section or changing its level (H2 → H3) does NOT change
 the anchor. Only renaming the heading text changes the anchor. Therefore
 most links should remain valid. This phase verifies rather than assumes.
 
-**Verification**: grep for all links to `deployment.md`, confirm each
-anchor resolves to an existing heading in the restructured file.
+**Verification**: all anchor links and parenthetical references in the
+project resolve to existing headings in the restructured file. No
+broken references remain.
 
-### Phase 8 — Run reviewers
+### Phase 7 — Run reviewers
 
 Invoke the following reviewers on the restructured `docs/deployment.md`:
 
@@ -285,7 +301,7 @@ Invoke the following reviewers on the restructured `docs/deployment.md`:
 
 Address any issues identified before proceeding.
 
-### Phase 9 — Delete this draft
+### Phase 8 — Delete this draft
 
 Remove `docs/drafts/restructure-deployment-guide.md` and commit.
 
