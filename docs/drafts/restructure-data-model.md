@@ -105,8 +105,8 @@ operates only on headings that already exist — entries suffixed with
 #### CVESourceFetchStatus Enum
 #### CVESourceType Python Enum
 #### CVECVSSAssessment
-#### CVEExternalIdentifierSource Python Enum
 #### CVEExternalIdentifier
+#### CVEExternalIdentifierSource Python Enum
 #### CVEAffectedVersion
 #### CVECWE
 #### CVESSVCAssessment
