@@ -9,8 +9,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |------|-----|-----|-----|-----|-----|------|-------------|-------|
 | [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [api-spec](api-spec.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/6 | 2026-07-21 |  |
-|  |  |  |  |  |  |  |  |  |
+| [api-spec](api-spec.md) | 2 | 🟢 | 1 | 🟢 | 2 | 5/15 | 2026-07-27 |  |
+| | 2:🟠 |  | 1:🟠 |  | 2:🟠 |  |  |  |
 | [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/18 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/64 | 2026-05-18 | ⚠️ |
@@ -89,8 +89,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **3** | **🟢** | **🟢** | **1** | **6/802** |  |  |
-| | 2:🟠 | 3:🟠 |  |  | 1:🟡 |  |  |  |
+| **Total** | **4** | **3** | **1** | **🟢** | **3** | **11/811** |  |  |
+| | 4:🟠 | 3:🟠 | 1:🟠 |  | 2:🟠 1:🟡 |  |  |  |
 
 ### Disabled specs
 
