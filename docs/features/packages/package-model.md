@@ -281,7 +281,7 @@ eligibility and delivery confirmation.
 ### Enums
 
 See `docs/data-model.md` for the full definitions of `PackageStatus`,
-`DeliveryStatus`, and `WorkflowType` enums (values, UI labels, colors).
+`DeliveryStatus`, and `WorkflowType` enums (values and descriptions).
 The semantic meaning of each value in the context of package tracking is
 described in [Three Orthogonal Dimensions](#three-orthogonal-dimensions)
 below.

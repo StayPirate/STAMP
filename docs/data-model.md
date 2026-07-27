@@ -3,6 +3,24 @@
 This document describes the database schema for Sentinel. All models are
 implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
+## Contents
+
+- [Entity Relationship Overview](#entity-relationship-overview)
+  - [Overview](#overview)
+  - [CVE & Ticket Core](#cve--ticket-core)
+  - [Package Model](#package-model)
+  - [Identity](#identity)
+  - [Platform Infrastructure](#platform-infrastructure)
+  - [IBS Integration](#ibs-integration)
+- [Tables](#tables)
+  - [Shared Structures](#shared-structures)
+  - [CVE & Ticket Core](#cve--ticket-core-1)
+  - [Package Model](#package-model-1)
+  - [Identity](#identity-1)
+  - [Platform Infrastructure](#platform-infrastructure-1)
+  - [IBS Integration](#ibs-integration-1)
+- [Notes](#notes)
+
 ## Entity Relationship Overview
 
 The data model comprises 35 entities organized into five domains. The
@@ -28,6 +46,7 @@ flowchart TB
     end
 
     subgraph cve_enrichment["CVE Enrichment"]
+        CVECVSSAssessment
         CVEAffectedVersion
         CVECWE
         CVESSVCAssessment
@@ -49,7 +68,7 @@ flowchart TB
         ApiKey
     end
 
-    subgraph platform["Platform"]
+    subgraph platform["Platform Infrastructure"]
         FetcherConfig
         FetcherRun
         SystemSetting
@@ -60,6 +79,8 @@ flowchart TB
         ReleaseRequest
     end
 
+    CVE --> CVEExternalIdentifier
+    CVE --> CVECVSSAssessment
     CVE --> CVEAffectedVersion
     CVE --> CVECWE
     CVE --> CVESSVCAssessment
@@ -420,7 +441,31 @@ erDiagram
 
 ## Tables
 
-### CVE
+### Shared Structures
+
+This section documents shared SQLAlchemy structures that are not
+physical database tables.
+
+#### AuditEventMixin
+
+Shared SQLAlchemy mixin inherited by all audit event models. Provides
+the common columns for every audit trail table. See
+`docs/features/platform/audit-trail-infrastructure.md` for the full
+specification.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal identifier |
+| created_at | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
+| user_id | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
+
+**Location**: `backend/app/models/mixins.py`
+
+All audit event models below inherit these columns from the mixin and
+add their own domain-specific columns.
+
+### CVE & Ticket Core
+#### CVE
 
 Represents a Common Vulnerability and Exposure entry.
 
@@ -433,12 +478,23 @@ Represents a Common Vulnerability and Exposure entry.
 | severity       | VARCHAR(20)  | nullable               | Critical, High, Medium, Low, None — denormalized field, always derived from CVSS assessments via the resolution cascade (see `docs/features/tickets/cvss-scoring.md`). `NULL` when no CVSS assessment is available from any provider (unresolved). `None` is a valid severity value representing a CVSS score of exactly 0.0 (the standard CVSS "None" rating). Recalculated whenever CVSS assessments change or the default CVSS version is modified. |
 | published_date | TIMESTAMPTZ    |                      | Date CVE was published         |
 | modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
-| cve_state      | VARCHAR(20)  | NOT NULL, DEFAULT PUBLISHED | CVE record state: `PUBLISHED` or `REJECTED`. Stable value set defined by the CVE Program. Populated by any discovery fetcher: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
+| cve_state      | VARCHAR(20)  | NOT NULL, DEFAULT PUBLISHED | CveState: PUBLISHED, REJECTED. Populated by any discovery fetcher: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
 | date_rejected  | TIMESTAMPTZ  | nullable             | From CVE JSON 5.x `cveMetadata.dateRejected`. Set when `cve_state` transitions to `REJECTED`, cleared when it reverts to `PUBLISHED` |
 | created_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp        |
 
-### CVESource
+#### CveState Enum
+
+CVE record state. Category A — state-machine (VARCHAR + CHECK constraint
+`chk_cve_cve_state_valid`). Adding a value requires an Alembic
+migration. Stable value set defined by the CVE Program.
+
+| Value | Description |
+|-------|-------------|
+| `PUBLISHED` | CVE record is published and active |
+| `REJECTED` | CVE record has been rejected by the CNA |
+
+#### CVESource
 
 Tracks the fetch outcome for each CVE data source. One record per source
 per CVE. Most sources write records for all outcomes (success, failure,
@@ -455,21 +511,19 @@ See `docs/features/tickets/cve-service.md`.
 | source      | VARCHAR(100)  | NOT NULL                           | Provider identifier (e.g., `"nvd"`, `"mitre"`, `"kernel"`, `"redhat"`). Stored as lowercase. The valid values are defined by the `CVESourceType` Python Enum in `app/core/enums.py` (evolving value set — new sources are added as the ingestion pipeline expands). Column is VARCHAR(100) — Category B classification enum. Note: despite the shared column name `source`, each table uses a different value format. `CVESource.source` stores CVESourceType identifiers (lowercase, e.g., `"nvd"`). `CVEExternalIdentifier.source` stores naming authority labels (VARCHAR, Python Enum, e.g., `GHSA`). `CVECWE.source` stores provider names (mixed case, e.g., `"NVD"`, `"Red Hat"`). `TicketReference.source` stores `BaseFetcher.name` (e.g., `"sync_nvd_cves"`) or `"manual"` |
 | status      | VARCHAR(20)   | NOT NULL                           | Fetch outcome: `success` (data written), `failure` (retries exhausted), `missing` (CVE not in source). CVESourceFetchStatus — validated by Python Enum in `app/core/enums.py` (Category B — classification). No default — always written explicitly by the caller |
 | fetched_at  | TIMESTAMPTZ   | NOT NULL                           | Timestamp of the last fetch attempt (success, failure, or missing) |
-| first_failed_at | TIMESTAMPTZ | nullable                          | Timestamp when the current failure streak began. Set to now() on the first transition to failure status (when first_failed_at is currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. Used by evaluate_failed_cve_sources to determine retry eligibility (within 30 days) and stalled status (beyond 30 days). See docs/features/platform/cve-source-failure-retry.md |
+| first_failed_at | TIMESTAMPTZ | nullable                          | Timestamp when the current failure streak began. Set to now() on first transition to failure (when currently NULL). Preserved on subsequent failure writes. Cleared to NULL on success or missing writes. See `docs/features/tickets/cve-service.md` (`record_source_status`) for write semantics and `docs/features/platform/cve-source-failure-retry.md` for the retry mechanism |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record creation timestamp          |
 | updated_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT                  | Record update timestamp            |
 
 **Unique constraint**: (cve_id, source)
 
-**Derived predicate — "stalled"**: a CVESource record is considered
-stalled when `status = 'failure' AND first_failed_at < now() - 30 days`.
-This is a query predicate used by the `evaluate_failed_cve_sources` retry
-task (exclusion from retry window) and the `?stalled` filter on
-`GET /api/v1/cve-sources`. It is not stored as a column, ENUM value, or
-API status field value. Stalled items have exceeded the automated retry
-window and require operator investigation.
+**Derived predicate — "stalled"**: `status = 'failure' AND
+first_failed_at < now() - 30 days`. Not a stored column, ENUM value, or
+API status field value — a query-time predicate. See
+`docs/features/platform/cve-source-failure-retry.md` for consumers,
+threshold rationale, and operational guidance.
 
-### CVESourceFetchStatus Enum
+#### CVESourceFetchStatus Enum
 
 Outcome of a CVE data fetch attempt from an external source. Category B
 — classification enum (Python Enum in `app/core/enums.py`, no CHECK
@@ -481,7 +535,7 @@ constraint). Adding a new status requires only a code change.
 | `failure` | Fetcher ran, exhausted retries, and could not retrieve data |
 | `missing` | Fetcher ran, source responded, but CVE does not exist in that source |
 
-### CVESourceType Python Enum
+#### CVESourceType Python Enum
 
 "CVESourceType" is the formal term for the short lowercase provider
 labels stored in `CVESource.source`. Category B — classification enum
@@ -516,7 +570,7 @@ Not to be confused with `BaseFetcher.name` (the fetcher registry key,
 e.g., `"sync_nvd_cves"`), which is a different identifier type stored
 in `TicketReference.source` and `FetcherRun.fetcher_name`.
 
-### CVECVSSAssessment
+#### CVECVSSAssessment
 
 Stores individual CVSS assessments from multiple providers for each CVE.
 A CVE can have assessments from NVD, CNA vendors, Red Hat, and SUSE (VA
@@ -557,28 +611,7 @@ See `docs/features/tickets/cvss-scoring.md` for the full specification.
   fetchers run on regular schedules, data converges to the most recent
   value within one cycle
 
-### CVEExternalIdentifierSource Python Enum
-
-Identifies the naming authority that assigned an external vulnerability
-identifier. Category B — classification enum (Python Enum in
-`app/core/enums.py`, no CHECK constraint). The database column is
-`VARCHAR(20)`. Adding a new source requires only a code change.
-
-| Value | Description |
-|-------|-------------|
-| `GHSA` | GitHub Security Advisory identifier |
-| `PYSEC` | Python Security Advisory (PyPI) identifier |
-| `RUSTSEC` | Rust Security Advisory (crates.io) identifier |
-
-**Format constraint**: values MUST match `[A-Z][A-Z0-9_]*` and not
-exceed 20 characters (matching the `CVEExternalIdentifier.source`
-VARCHAR(20) column constraint). Enforced by a unit test on the Enum
-definition.
-
-**Adding a new value**: add the value to the `CVEExternalIdentifierSource`
-Enum in `app/core/enums.py`. No Alembic migration required.
-
-### CVEExternalIdentifier
+#### CVEExternalIdentifier
 
 Tracks external vulnerability identifiers (e.g., GHSA-ID) mapped to a
 CVE by their respective naming authority. External identifiers are
@@ -607,7 +640,28 @@ globally unique within its naming system.
 - The `url` column stores the canonical advisory URL for UI convenience
   (e.g., `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx`)
 
-### CVEAffectedVersion
+#### CVEExternalIdentifierSource Python Enum
+
+Identifies the naming authority that assigned an external vulnerability
+identifier. Category B — classification enum (Python Enum in
+`app/core/enums.py`, no CHECK constraint). The database column is
+`VARCHAR(20)`. Adding a new source requires only a code change.
+
+| Value | Description |
+|-------|-------------|
+| `GHSA` | GitHub Security Advisory identifier |
+| `PYSEC` | Python Security Advisory (PyPI) identifier |
+| `RUSTSEC` | Rust Security Advisory (crates.io) identifier |
+
+**Format constraint**: values MUST match `[A-Z][A-Z0-9_]*` and not
+exceed 20 characters (matching the `CVEExternalIdentifier.source`
+VARCHAR(20) column constraint). Enforced by a unit test on the Enum
+definition.
+
+**Adding a new value**: add the value to the `CVEExternalIdentifierSource`
+Enum in `app/core/enums.py`. No Alembic migration required.
+
+#### CVEAffectedVersion
 
 Stores affected product/version information from CVE JSON 5.x
 `affected[]` arrays. Populated by multiple fetchers (both discovery
@@ -671,7 +725,7 @@ properties of the entry, not identity — two entries differing only in
 status would be semantically contradictory. Different
 `source_container` values independently own their own set of rows.
 
-### CVECWE
+#### CVECWE
 
 Stores CWE (Common Weakness Enumeration) identifiers from multiple
 providers. Different providers (NVD, CNA, CISA-ADP, Red Hat) frequently
@@ -689,7 +743,7 @@ for VA triage.
 
 **Unique constraint**: (cve_id, cwe_id, source)
 
-### CVESSVCAssessment
+#### CVESSVCAssessment
 
 Stores CISA SSVC (Stakeholder-Specific Vulnerability Categorization)
 decision points. Although CISA is currently the only SSVC provider
@@ -707,7 +761,7 @@ decision points. Although CISA is currently the only SSVC provider
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
-### CVEKEVEntry
+#### CVEKEVEntry
 
 Stores CISA Known Exploited Vulnerabilities catalog data. Although it
 is a 1:1 relationship with CVE, isolating KEV data keeps the CVE table
@@ -722,7 +776,7 @@ lean and gives the `sync_cisa_kev` fetcher a clean upsert target.
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
-### CVEEPSSScore
+#### CVEEPSSScore
 
 Stores the latest FIRST EPSS (Exploit Prediction Scoring System) score
 for each CVE. This is a **point-in-time snapshot** (one row per CVE),
@@ -755,324 +809,9 @@ but no longer refreshed — consistent with the CVSS lifecycle pattern
 returns to an active status, the fetcher resumes refreshing the record on
 its next run.
 
-**UI display note**: the frontend SHOULD display the EPSS score only
-for active tickets. For inactive tickets, the score
-reflects the last assessment before the ticket left the active scope
-and may be stale. If the UI chooses to display it for inactive
-tickets, it SHOULD include a staleness indicator (e.g., "Last
-assessed: {date}").
+See `docs/features/tickets/cve-sync-epss.md` for display guidance.
 
-### SystemSetting
-
-Key-value store for system-wide configuration. See
-`docs/features/platform/system-settings.md` for details.
-
-| Column     | Type        | Constraints        | Description                      |
-|------------|-------------|--------------------|----------------------------------|
-| key        | VARCHAR(100) | PK                 | Setting identifier (e.g., `default_cvss_version`) |
-| value      | VARCHAR(255) | NOT NULL           | Setting value                    |
-| updated_at | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp      |
-
-**Initial data**:
-
-| Key                    | Initial Value |
-|------------------------|---------------|
-| `default_cvss_version` | `3.1`         |
-
-### Product
-
-Represents a SUSE product (base products, LTSS variants, ESPOS variants,
-etc.). Each variant is a separate product with its own CPE. Synced
-periodically from SMELT (product list and repositories) and enriched with
-lifecycle data from AIMAAS. See `docs/features/packages/product-catalog.md` for
-full details.
-
-| Column               | Type         | Constraints          | Description                        |
-|----------------------|--------------|----------------------|------------------------------------|
-| id                   | UUID         | PK                   | Internal identifier                |
-| smelt_id             | INTEGER      | UNIQUE, NOT NULL     | Product ID in SMELT                |
-| name                 | VARCHAR(100) | NOT NULL             | Short product name from SMELT (e.g., `SLES-LTSS`) |
-| version              | VARCHAR(50)  | NOT NULL             | Product version from SMELT (e.g., `15-SP4`) |
-| display_name         | VARCHAR(255) | NOT NULL             | Human-readable full name from AIMAAS, used in the UI (e.g., `SUSE Linux Enterprise Server LTSS 15 SP4`) |
-| cpe                  | VARCHAR(255) | UNIQUE, NOT NULL     | CPE identifier — primary join key between SMELT and AIMAAS |
-| cvss_threshold       | DECIMAL(3,1) | nullable             | Minimum CVSS score for eligibility (from AIMAAS `cvss-threshold` endpoint). NULL means threshold is 0 (all CVEs eligible). |
-| fcs                  | DATE         | nullable             | First Customer Shipment date (from AIMAAS) |
-| end_of_gs            | DATE         | nullable             | End of General Support (from AIMAAS) |
-| end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
-| end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
-| end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, products have `eligible = false` regardless of CVSS score. |
-| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/packages/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
-| smelt_synced_at      | TIMESTAMPTZ    |                      | Last sync from SMELT               |
-| aimaas_synced_at     | TIMESTAMPTZ    |                      | Last sync from AIMAAS              |
-| created_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp            |
-
-**Unique constraint**: (name, version)
-
-### ProductRepository
-
-Maps SMELT repository project names to products. Used to resolve the
-`target` values returned by SMELT's `maintainedpackage` endpoint to local
-Product records. Synced from SMELT alongside products.
-
-| Column     | Type      | Constraints                  | Description                        |
-|------------|-----------|------------------------------|------------------------------------|
-| id         | UUID      | PK                           | Internal identifier                |
-| product_id | UUID      | FK(product.id), NOT NULL     | Related product                    |
-| repo_name  | VARCHAR(255) | UNIQUE, NOT NULL             | SMELT repository project name (e.g., `SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64`) |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
-
-### TicketPackage
-
-Anchors a source package within a ticket. Provides an explicit grouping
-entity for tracks and products. See
-`docs/features/packages/package-model.md` for full specification.
-
-| Column       | Type      | Constraints                  | Description                        |
-|--------------|-----------|------------------------------|------------------------------------|
-| id           | UUID      | PK                           | Internal identifier                |
-| ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
-| package_name | VARCHAR(255) | NOT NULL                     | Source package name                |
-| deleted_at   | TIMESTAMPTZ | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
-| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
-| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record update timestamp            |
-
-**Unique constraint**: (ticket_id, package_name)
-
-### TicketPackageTrack
-
-Records the affectedness and delivery status of a source package in a
-specific maintenance track within the context of a ticket. The VA sets
-the affectedness status at this level. The delivery status is maintained
-by the system based on IBS SR/RR tracking data. See
-`docs/features/packages/package-model.md` for the three orthogonal
-dimensions (affectedness, eligibility, delivery).
-
-| Column            | Type      | Constraints                           | Description                        |
-|-------------------|-----------|---------------------------------------|------------------------------------|
-| id                | UUID      | PK                                    | Internal identifier                |
-| ticket_package_id | UUID      | FK(ticket_package.id), NOT NULL       | Parent package record              |
-| workflow_type     | VARCHAR(20) | NOT NULL                              | WorkflowType enum (`ibs` or `git`) |
-| reference         | VARCHAR(255) | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
-| status            | VARCHAR(20) | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
-| delivery_status   | VARCHAR(20) | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
-| deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
-| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record creation timestamp          |
-| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
-
-**Unique constraint**: (ticket_package_id, reference)
-
-### TicketPackageProduct
-
-Records the eligibility and release confirmation of a source package
-for a specific product within the context of a ticket and track.
-Affectedness is determined exclusively at the track level. See
-`docs/features/packages/package-model.md` for the eligibility rules and
-override model.
-
-| Column                   | Type      | Constraints                                 | Description                        |
-|--------------------------|-----------|---------------------------------------------|------------------------------------|
-| id                       | UUID      | PK                                          | Internal identifier                |
-| ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL       | Parent track record                |
-| product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
-| eligible                 | BOOLEAN   | NOT NULL, DEFAULT true                      | Whether the product will receive the fix |
-| is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
-| released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
-| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
-| created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
-| updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |
-
-**Unique constraint**: (ticket_package_track_id, product_id)
-
-> **Soft-deletion semantics — package level**: Package/track/product-level `deleted_at`
-> does NOT block mutations on those child records — soft-deleted children
-> on operable tickets continue receiving updates (release detection,
-> eligibility recalculation) to stay current with reality. See
-> `docs/features/packages/package-service.md` (Soft-Deleted Records and
-> Mutations) for the full semantics.
-
-### PackageStatus Enum
-
-Affectedness status, used by TicketPackageTrack.
-
-| Value        |
-|--------------|
-| ANALYSIS     |
-| AFFECTED     |
-| NOT_AFFECTED |
-| FIXED        |
-| WONT_FIX     |
-
-See `docs/features/packages/package-model.md` (Axis 1: Affectedness)
-for the semantic meaning of each value and the final/non-final
-classification.
-
-### DeliveryStatus Enum
-
-Delivery pipeline status, used by TicketPackageTrack.
-
-| Value       |
-|-------------|
-| PENDING     |
-| IN_PROGRESS |
-| RELEASED    |
-
-### WorkflowType Enum
-
-| Value | Meaning                    | Example reference          |
-|-------|----------------------------|----------------------------|
-| ibs   | IBS project (traditional)  | `SUSE:SLE-15-SP6:Update`  |
-| git   | Git branch on src.suse.de  | `slfo-main`, `slfo-1.2`   |
-
-### User
-
-Platform users with role-based access. Users are populated from an
-external identity provider (see
-`docs/features/identity/identity-provisioning.md`) or created locally via
-CLI. Users can hold zero, one, or multiple roles via the UserRole
-junction table. Authenticated users with no roles have an effective scope
-of `non_confidential` and no capabilities; unlike unauthenticated users,
-they can access specific confidential tickets via `TicketAccessGrant` or
-bugowner matching.
-
-| Column           | Type        | Constraints              | Description                      |
-|------------------|-------------|--------------------------|----------------------------------|
-| id               | UUID        | PK                       | Internal identifier              |
-| username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username. Updated by external sync if changed at the provider |
-| email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
-| full_name        | VARCHAR(255) |                          | Display name                     |
-| active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active. For external users, synced from the identity provider |
-| password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
-| external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
-| manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
-| synced_at        | TIMESTAMPTZ   | nullable                 | When this record was last synced from the external provider |
-| last_login_at    | TIMESTAMPTZ   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
-| created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp        |
-| updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record update timestamp          |
-
-**Check constraint**: `chk_user_auth_exclusive` —
-`(external_id IS NOT NULL AND password_hash IS NULL) OR (external_id IS NULL AND password_hash IS NOT NULL)`
-— enforces mutual exclusivity: external users cannot have a password,
-local users must have a password. See
-`docs/features/identity/user-management.md` (Business Rule 5) and
-`docs/features/identity/local-authentication.md`.
-
-### UserRole
-
-Junction table linking users to roles. A user may have zero, one, or
-multiple roles assigned. The `group_name` column tracks the origin of
-each role assignment: if it contains an external group name, the role
-was derived from that group's RoleMapping; if it contains the sentinel
-value `_manual`, the role was assigned directly by an admin or CLI.
-Roles with `group_name != '_manual'` are managed by the external sync
-process and cannot be removed via the API. See
-`docs/features/identity/identity-provisioning.md`.
-
-| Column       | Type        | Constraints                  | Description                      |
-|--------------|-------------|------------------------------|----------------------------------|
-| id           | UUID        | PK                           | Internal identifier              |
-| user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
-| role         | VARCHAR(30) | NOT NULL                     | Role: Admin, Vulnerability Analyst, Restricted Analyst |
-| group_name   | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | External group name that granted this role, or `_manual` for manual assignments |
-| assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (external sync, CLI) |
-| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
-
-**Unique constraint**: (user_id, role, group_name)
-
-**Role enum values**:
-
-| Value             | Description                                      |
-|-------------------|--------------------------------------------------|
-| Admin             | Platform administration (users, settings, fetchers) |
-| Vulnerability Analyst  | CVE triage and assessment (tickets, packages, CVSS) |
-| Restricted Analyst | Ticket operations with restricted scope (same capabilities as VA except confidentiality management); scope limited to non-confidential tickets |
-
-The capability-to-role mapping and scope-to-role mapping are static
-definitions in code (not stored in the database). See
-`docs/features/identity/rbac.md` for the full authorization model.
-
-**group_name semantics**:
-
-| Value       | Meaning                                                        |
-|-------------|----------------------------------------------------------------|
-| `_manual`   | Role assigned manually by an admin via API or CLI              |
-| Any other value | External group name — role derived from that group's RoleMapping rule |
-
-### RoleMapping
-
-Stores the mapping rules between external identity provider groups and
-Sentinel roles. Configured by admins via the UI or API. When a mapping
-is created or deleted, roles are applied or revoked immediately. During
-external provisioning sync, existing mappings are re-evaluated against
-current group membership. See
-`docs/features/identity/identity-provisioning.md`.
-
-| Column       | Type        | Constraints                  | Description                        |
-|--------------|-------------|------------------------------|------------------------------------|
-| id           | UUID        | PK                           | Internal identifier                |
-| group_name   | VARCHAR(256) | NOT NULL                     | External group name (e.g., `SecurityTeam`) |
-| role         | VARCHAR(30) | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Restricted Analyst` |
-| created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
-| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
-
-**Unique constraint**: (group_name, role)
-
-### Session
-
-Tracks active user sessions. Every login (SSO or local) creates a
-session record. The JWT references the session via the `session_id`
-claim. On every authenticated request, the middleware verifies that the
-session is still active. The maximum session lifetime
-(`SESSION_MAX_LIFETIME_DAYS`, default 30 days) is enforced via the
-`session_deadline` claim in the JWT, not in this table.
-See `docs/features/identity/authentication.md` (Session Management).
-
-| Column       | Type        | Constraints               | Description                                |
-|--------------|-------------|---------------------------|--------------------------------------------|
-| id           | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
-| user_id      | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
-| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the session was created (login time)  |
-| updated_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
-| is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
-
-**Indexes**:
-
-- (user_id, is_active) — for efficient bulk invalidation on user
-  deactivation.
-
-**Cleanup**: inactive sessions (`is_active = false`) and sessions older
-than `SESSION_MAX_LIFETIME_DAYS + 1` days
-(`created_at < now() - (SESSION_MAX_LIFETIME_DAYS + 1) days`) are
-deleted weekly by a Celery Beat maintenance task. No session history is
-retained.
-
-### ApiKey
-
-API keys for programmatic access. Every user (SSO or local) can create
-API keys for non-interactive authentication (bots, AI agents, CI
-pipelines). The full key value is shown only once at creation; only the
-hash is stored. See `docs/features/identity/authentication.md` (API Keys).
-
-| Column        | Type        | Constraints               | Description                                |
-|---------------|-------------|---------------------------|--------------------------------------------|
-| id            | UUID        | PK                        | Internal identifier                        |
-| user_id       | UUID        | FK(user.id), NOT NULL     | User who owns this key                     |
-| key_hash      | VARCHAR(64) | NOT NULL, UNIQUE          | SHA-256 hex digest of the full key         |
-| prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9`) for display |
-| name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
-| created_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the key was created                   |
-| last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
-| expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
-| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means active |
-| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
-
-**Indexes**:
-
-- (user_id, revoked_at) — for efficient listing of active keys per user.
-- UNIQUE (user_id, name) WHERE revoked_at IS NULL — prevents duplicate
-  names among non-revoked keys for the same user.
-
-### Ticket
+#### Ticket
 
 Represents the internal workflow unit for a security issue. A ticket may
 optionally be associated with a CVE (0..1:1 relationship). Tickets track
@@ -1084,7 +823,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | id                | UUID        | PK                           | Internal identifier                  |
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{id}/associate-cve` |
-| status            | VARCHAR(20) | NOT NULL, DEFAULT New        | New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
+| status            | VARCHAR(20) | NOT NULL, DEFAULT New        | TicketStatus: New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | assignee_id       | UUID        | FK(user.id), nullable        | VA currently assigned to this ticket |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the target ticket when status is Duplicated. Always references a non-Duplicated ticket (enforced by the transactional locking protocol in `mark_as_duplicate`). See `docs/features/tickets/tickets.md` (Duplicate Handling) |
@@ -1145,7 +884,25 @@ further to `Analyzed` or `Resolved` if gate conditions are satisfied.
   `Duplicated`. These are no longer monitored: CVSS sync and
    recalculation chains skip inactive tickets.
 
-### TicketReference
+#### TicketStatus Enum
+
+Ticket lifecycle status. Category A — state-machine (VARCHAR + CHECK
+constraint `chk_ticket_status_valid`). Adding a value requires an
+Alembic migration.
+
+| Value | Description |
+|-------|-------------|
+| `New` | Newly created ticket, no analysis started |
+| `Analysis` | Under active analysis by a VA |
+| `Analyzed` | All analysis gates met; awaiting resolution |
+| `Resolved` | All tracks resolution-complete |
+| `Ignored` | Ticket dismissed (e.g., not applicable, CVE rejected) |
+| `Duplicated` | Ticket marked as duplicate of another ticket |
+
+See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the full
+transition diagram, gates, and rules.
+
+#### TicketReference
 
 Stores external links associated with a ticket. References are created
 automatically by CVE fetchers during ingestion and can also be added
@@ -1166,10 +923,11 @@ manually by users with the `manage_references` capability. See
 
 **Unique constraint**: (ticket_id, url)
 
-### ReferenceType Enum
+#### ReferenceType Enum
 
 Classifies the content that a reference URL points to. Used by the
-`TicketReference.type` column.
+`TicketReference.type` column. Category B — classification (Python Enum
+only). Adding a value requires only a code change.
 
 | Value      | Description                                              |
 |------------|----------------------------------------------------------|
@@ -1182,25 +940,7 @@ A `NULL` type means the reference could not be classified. See
 `docs/features/tickets/ticket-references.md` (Type Auto-Classification)
 for the three-tier classification mechanism.
 
-### AuditEventMixin
-
-Shared SQLAlchemy mixin inherited by all audit event models. Provides
-the common columns for every audit trail table. See
-`docs/features/platform/audit-trail-infrastructure.md` for the full
-specification.
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| id | UUID | PK | Internal identifier |
-| created_at | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
-| user_id | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
-
-**Location**: `backend/app/models/mixins.py`
-
-All audit event models below inherit these columns from the mixin and
-add their own domain-specific columns.
-
-### TicketAuditEvent
+#### TicketAuditEvent
 
 Audit log of all changes to a ticket. Inherits `id`, `created_at`, and
 `user_id` from `AuditEventMixin`. Each event represents a discrete
@@ -1219,7 +959,11 @@ system action).
 | detail      | JSONB       | nullable               | Additional structured context. Schema validated per event type — see `docs/features/tickets/ticket-audit-log.md` (detail JSONB Schema Contract) |
 | created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT      | Inherited from AuditEventMixin             |
 
-### TicketAuditEventType Enum
+#### TicketAuditEventType Enum
+
+Classifies the action recorded in a `TicketAuditEvent`. Category B —
+classification (Python Enum only). Adding a value requires only a code
+change.
 
 | Value                      | Description                                        |
 |----------------------------|----------------------------------------------------|
@@ -1252,7 +996,7 @@ system action).
 | reference_title_changed     | Manual reference title changed. `user_id` is the acting user. `old_value` is the previous title (or NULL). `new_value` is the new title (or NULL). `detail` carries `{"url": "..."}` locator. |
 | reference_description_changed | Manual reference description changed. `user_id` is the acting user. `old_value` is the previous description (or NULL). `new_value` is the new description (or NULL). `detail` carries `{"url": "..."}` locator. |
 
-### TicketAccessGrant
+#### TicketAccessGrant
 
 Explicit access grants for confidential tickets. Each record represents
 a manual grant from a VA to a specific user. Composite primary key on
@@ -1271,7 +1015,313 @@ specification.
 *Note: ON DELETE RESTRICT is used because tickets are never deleted from
 the database; users are deactivated, not deleted.*
 
-### IdentityAuditEvent
+### Package Model
+#### TicketPackage
+
+Anchors a source package within a ticket. Provides an explicit grouping
+entity for tracks and products. See
+`docs/features/packages/package-model.md` for full specification.
+
+| Column       | Type      | Constraints                  | Description                        |
+|--------------|-----------|------------------------------|------------------------------------|
+| id           | UUID      | PK                           | Internal identifier                |
+| ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
+| package_name | VARCHAR(255) | NOT NULL                     | Source package name                |
+| deleted_at   | TIMESTAMPTZ | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record update timestamp            |
+
+**Unique constraint**: (ticket_id, package_name)
+
+#### TicketPackageTrack
+
+Records the affectedness and delivery status of a source package in a
+specific maintenance track within the context of a ticket. The VA sets
+the affectedness status at this level. The delivery status is maintained
+by the system based on IBS SR/RR tracking data. See
+`docs/features/packages/package-model.md` for the three orthogonal
+dimensions (affectedness, eligibility, delivery).
+
+| Column            | Type      | Constraints                           | Description                        |
+|-------------------|-----------|---------------------------------------|------------------------------------|
+| id                | UUID      | PK                                    | Internal identifier                |
+| ticket_package_id | UUID      | FK(ticket_package.id), NOT NULL       | Parent package record              |
+| workflow_type     | VARCHAR(20) | NOT NULL                              | WorkflowType enum (`ibs` or `git`) |
+| reference         | VARCHAR(255) | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
+| status            | VARCHAR(20) | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
+| delivery_status   | VARCHAR(20) | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
+| deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
+| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record creation timestamp          |
+| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
+
+**Unique constraint**: (ticket_package_id, reference)
+
+#### TicketPackageProduct
+
+Records the eligibility and release confirmation of a source package
+for a specific product within the context of a ticket and track.
+Affectedness is determined exclusively at the track level. See
+`docs/features/packages/package-model.md` for the eligibility rules and
+override model.
+
+| Column                   | Type      | Constraints                                 | Description                        |
+|--------------------------|-----------|---------------------------------------------|------------------------------------|
+| id                       | UUID      | PK                                          | Internal identifier                |
+| ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL       | Parent track record                |
+| product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
+| eligible                 | BOOLEAN   | NOT NULL, DEFAULT true                      | Whether the product will receive the fix |
+| is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
+| released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
+| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
+| created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
+| updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |
+
+**Unique constraint**: (ticket_package_track_id, product_id)
+
+> **Soft-deletion semantics — package level**: Package/track/product-level `deleted_at`
+> does NOT block mutations on those child records — soft-deleted children
+> on operable tickets continue receiving updates (release detection,
+> eligibility recalculation) to stay current with reality. See
+> `docs/features/packages/package-service.md` (Soft-Deleted Records and
+> Mutations) for the full semantics.
+
+#### PackageStatus Enum
+
+Affectedness status, used by TicketPackageTrack. Category A —
+state-machine (VARCHAR + CHECK constraint
+`chk_ticket_package_track_status_valid`). Adding a value requires an
+Alembic migration.
+
+| Value        |
+|--------------|
+| ANALYSIS     |
+| AFFECTED     |
+| NOT_AFFECTED |
+| FIXED        |
+| WONT_FIX     |
+
+See `docs/features/packages/package-model.md` (Axis 1: Affectedness)
+for the semantic meaning of each value and the final/non-final
+classification.
+
+#### DeliveryStatus Enum
+
+Delivery pipeline status, used by TicketPackageTrack. Category A —
+state-machine (VARCHAR + CHECK constraint
+`chk_ticket_package_track_delivery_status_valid`). Adding a value
+requires an Alembic migration.
+
+| Value       |
+|-------------|
+| PENDING     |
+| IN_PROGRESS |
+| RELEASED    |
+
+#### WorkflowType Enum
+
+Workflow type assigned at track creation. Category B — classification
+(Python Enum only). Adding a value requires only a code change.
+
+| Value | Meaning                    | Example reference          |
+|-------|----------------------------|----------------------------|
+| ibs   | IBS project (traditional)  | `SUSE:SLE-15-SP6:Update`  |
+| git   | Git branch on src.suse.de  | `slfo-main`, `slfo-1.2`   |
+
+#### Product
+
+Represents a SUSE product (base products, LTSS variants, ESPOS variants,
+etc.). Each variant is a separate product with its own CPE. Synced
+periodically from SMELT (product list and repositories) and enriched with
+lifecycle data from AIMAAS. See `docs/features/packages/product-catalog.md` for
+full details.
+
+| Column               | Type         | Constraints          | Description                        |
+|----------------------|--------------|----------------------|------------------------------------|
+| id                   | UUID         | PK                   | Internal identifier                |
+| smelt_id             | INTEGER      | UNIQUE, NOT NULL     | Product ID in SMELT                |
+| name                 | VARCHAR(100) | NOT NULL             | Short product name from SMELT (e.g., `SLES-LTSS`) |
+| version              | VARCHAR(50)  | NOT NULL             | Product version from SMELT (e.g., `15-SP4`) |
+| display_name         | VARCHAR(255) | NOT NULL             | Human-readable full name from AIMAAS, used in the UI (e.g., `SUSE Linux Enterprise Server LTSS 15 SP4`) |
+| cpe                  | VARCHAR(255) | UNIQUE, NOT NULL     | CPE identifier — primary join key between SMELT and AIMAAS |
+| cvss_threshold       | DECIMAL(3,1) | nullable             | Minimum CVSS score for eligibility (from AIMAAS `cvss-threshold` endpoint). NULL means threshold is 0 (all CVEs eligible). |
+| fcs                  | DATE         | nullable             | First Customer Shipment date (from AIMAAS) |
+| end_of_gs            | DATE         | nullable             | End of General Support (from AIMAAS) |
+| end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
+| end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
+| end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, products have `eligible = false` regardless of CVSS score. |
+| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/packages/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
+| smelt_synced_at      | TIMESTAMPTZ    |                      | Last sync from SMELT               |
+| aimaas_synced_at     | TIMESTAMPTZ    |                      | Last sync from AIMAAS              |
+| created_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp            |
+
+**Unique constraint**: (name, version)
+
+#### ProductRepository
+
+Maps SMELT repository project names to products. Used to resolve the
+`target` values returned by SMELT's `maintainedpackage` endpoint to local
+Product records. Synced from SMELT alongside products.
+
+| Column     | Type      | Constraints                  | Description                        |
+|------------|-----------|------------------------------|------------------------------------|
+| id         | UUID      | PK                           | Internal identifier                |
+| product_id | UUID      | FK(product.id), NOT NULL     | Related product                    |
+| repo_name  | VARCHAR(255) | UNIQUE, NOT NULL             | SMELT repository project name (e.g., `SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64`) |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
+
+### Identity
+#### User
+
+Platform users with role-based access. Users are populated from an
+external identity provider (see
+`docs/features/identity/identity-provisioning.md`) or created locally via
+CLI. Users can hold zero, one, or multiple roles via the UserRole
+junction table. Authenticated users with no roles have an effective scope
+of `non_confidential` and no capabilities; unlike unauthenticated users,
+they can access specific confidential tickets via `TicketAccessGrant` or
+bugowner matching.
+
+| Column           | Type        | Constraints              | Description                      |
+|------------------|-------------|--------------------------|----------------------------------|
+| id               | UUID        | PK                       | Internal identifier              |
+| username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username. Updated by external sync if changed at the provider |
+| email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
+| full_name        | VARCHAR(255) |                          | Display name                     |
+| active           | BOOLEAN     | NOT NULL, DEFAULT        | Whether the account is active. For external users, synced from the identity provider |
+| password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
+| external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
+| manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
+| synced_at        | TIMESTAMPTZ   | nullable                 | When this record was last synced from the external provider |
+| last_login_at    | TIMESTAMPTZ   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
+| created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp        |
+| updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record update timestamp          |
+
+**Check constraint**: `chk_user_auth_exclusive` —
+`(external_id IS NOT NULL AND password_hash IS NULL) OR (external_id IS NULL AND password_hash IS NOT NULL)`
+— enforces mutual exclusivity: external users cannot have a password,
+local users must have a password. See
+`docs/features/identity/user-management.md` (Business Rule 5) and
+`docs/features/identity/local-authentication.md`.
+
+#### UserRole
+
+Junction table linking users to roles. A user may have zero, one, or
+multiple roles assigned. The `group_name` column tracks the origin of
+each role assignment: if it contains an external group name, the role
+was derived from that group's RoleMapping; if it contains the sentinel
+value `_manual`, the role was assigned directly by an admin or CLI.
+Roles with `group_name != '_manual'` are managed by the external sync
+process and cannot be removed via the API. See
+`docs/features/identity/identity-provisioning.md`.
+
+| Column       | Type        | Constraints                  | Description                      |
+|--------------|-------------|------------------------------|----------------------------------|
+| id           | UUID        | PK                           | Internal identifier              |
+| user_id      | UUID        | FK(user.id), NOT NULL        | Associated user                  |
+| role         | VARCHAR(30) | NOT NULL                     | Role: Admin, Vulnerability Analyst, Restricted Analyst. See Role Enum |
+| group_name   | VARCHAR(256) | NOT NULL, DEFAULT `'_manual'` | External group name that granted this role, or `_manual` for manual assignments |
+| assigned_by  | UUID        | FK(user.id), nullable        | User who assigned the role. NULL for system actions (external sync, CLI) |
+| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | When the role was assigned       |
+
+**Unique constraint**: (user_id, role, group_name)
+
+#### Role Enum
+
+Sentinel platform roles. Category A — state-machine (VARCHAR + CHECK
+constraints: `chk_user_role_role_valid` on `user_role`,
+`chk_role_mapping_role_valid` on `role_mapping`). Adding a value
+requires an Alembic migration.
+
+| Value | Description |
+|-------|-------------|
+| `Admin` | Platform administration (users, settings, fetchers) |
+| `Vulnerability Analyst` | CVE triage and assessment (tickets, packages, CVSS) |
+| `Restricted Analyst` | Ticket operations with restricted scope (same capabilities as VA except confidentiality management); scope limited to non-confidential tickets |
+
+The capability-to-role mapping and scope-to-role mapping are static
+definitions in code (not stored in the database). See
+`docs/features/identity/rbac.md` for the full authorization model.
+
+**group_name semantics**:
+
+| Value       | Meaning                                                        |
+|-------------|----------------------------------------------------------------|
+| `_manual`   | Role assigned manually by an admin via API or CLI              |
+| Any other value | External group name — role derived from that group's RoleMapping rule |
+
+#### RoleMapping
+
+Stores the mapping rules between external identity provider groups and
+Sentinel roles. Configured by admins via the UI or API. When a mapping
+is created or deleted, roles are applied or revoked immediately. During
+external provisioning sync, existing mappings are re-evaluated against
+current group membership. See
+`docs/features/identity/identity-provisioning.md`.
+
+| Column       | Type        | Constraints                  | Description                        |
+|--------------|-------------|------------------------------|------------------------------------|
+| id           | UUID        | PK                           | Internal identifier                |
+| group_name   | VARCHAR(256) | NOT NULL                     | External group name (e.g., `SecurityTeam`) |
+| role         | VARCHAR(30) | NOT NULL                     | Sentinel role to assign: `Admin`, `Vulnerability Analyst`, or `Restricted Analyst` |
+| created_by   | UUID        | FK(user.id), NOT NULL        | Admin who created this mapping     |
+| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp          |
+
+**Unique constraint**: (group_name, role)
+
+#### Session
+
+Tracks active user sessions. Every login (SSO or local) creates a
+session record. The JWT references the session via the `session_id`
+claim. On every authenticated request, the middleware verifies that the
+session is still active. The maximum session lifetime
+(`SESSION_MAX_LIFETIME_DAYS`, default 30 days) is enforced via the
+`session_deadline` claim in the JWT, not in this table.
+See `docs/features/identity/authentication.md` (Session Management).
+
+| Column       | Type        | Constraints               | Description                                |
+|--------------|-------------|---------------------------|--------------------------------------------|
+| id           | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
+| user_id      | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
+| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the session was created (login time)  |
+| updated_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
+| is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
+
+**Indexes**:
+
+- (user_id, is_active) — for efficient bulk invalidation on user
+  deactivation.
+
+See `docs/features/identity/authentication.md` (Session cleanup) for
+retention policy.
+
+#### ApiKey
+
+API keys for programmatic access. Every user (SSO or local) can create
+API keys for non-interactive authentication (bots, AI agents, CI
+pipelines). The full key value is shown only once at creation; only the
+hash is stored. See `docs/features/identity/authentication.md` (API Keys).
+
+| Column        | Type        | Constraints               | Description                                |
+|---------------|-------------|---------------------------|--------------------------------------------|
+| id            | UUID        | PK                        | Internal identifier                        |
+| user_id       | UUID        | FK(user.id), NOT NULL     | User who owns this key                     |
+| key_hash      | VARCHAR(64) | NOT NULL, UNIQUE          | SHA-256 hex digest of the full key         |
+| prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9`) for display |
+| name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
+| created_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the key was created                   |
+| last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
+| expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
+| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means active |
+| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
+
+**Indexes**:
+
+- (user_id, revoked_at) — for efficient listing of active keys per user.
+- UNIQUE (user_id, name) WHERE revoked_at IS NULL — prevents duplicate
+  names among non-revoked keys for the same user.
+
+#### IdentityAuditEvent
 
 Audit trail for identity-related operations: user lifecycle, role
 assignments, API key management, and role mapping administration.
@@ -1288,7 +1338,11 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | detail | JSONB | nullable | Additional structured context |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
-### IdentityAuditEventType Enum
+#### IdentityAuditEventType Enum
+
+Classifies the action recorded in an `IdentityAuditEvent`. Category B —
+classification (Python Enum only). Adding a value requires only a code
+change.
 
 | Value | Description |
 |---|---|
@@ -1310,7 +1364,25 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 See `docs/features/identity/identity-audit-log.md` for the full event
 type contract with field values.
 
-### SettingAuditEvent
+### Platform Infrastructure
+#### SystemSetting
+
+Key-value store for system-wide configuration. See
+`docs/features/platform/system-settings.md` for details.
+
+| Column     | Type        | Constraints        | Description                      |
+|------------|-------------|--------------------|----------------------------------|
+| key        | VARCHAR(100) | PK                 | Setting identifier (e.g., `default_cvss_version`) |
+| value      | VARCHAR(255) | NOT NULL           | Setting value                    |
+| updated_at | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp      |
+
+**Initial data**:
+
+| Key                    | Initial Value |
+|------------------------|---------------|
+| `default_cvss_version` | `3.1`         |
+
+#### SettingAuditEvent
 
 Audit trail for system setting modifications. Inherits `id`,
 `created_at`, and `user_id` from `AuditEventMixin`.
@@ -1325,7 +1397,11 @@ Audit trail for system setting modifications. Inherits `id`,
 | new_value | TEXT | NOT NULL | New value |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
 
-### SettingAuditEventType Enum
+#### SettingAuditEventType Enum
+
+Classifies the action recorded in a `SettingAuditEvent`. Category B —
+classification (Python Enum only). Adding a value requires only a code
+change.
 
 | Value | Description |
 |---|---|
@@ -1333,74 +1409,23 @@ Audit trail for system setting modifications. Inherits `id`,
 
 See `docs/features/platform/system-settings.md` for the full specification.
 
-### CodestreamPackageChecksum
+#### FetcherConfig
 
-Operational cache table shared by the `IBSEventConsumer` (real-time) and
-the `IBSTrackReleaseDetector` (periodic catch-up) to track source MD5
-checksums of packages in IBS codestream projects. By comparing the
-current `srcmd5` from IBS with the cached value, both mechanisms
-identify which packages have changed and need a diff analysis. The shared
-cache prevents duplicate work between the two detection paths. See
-`docs/features/integrations/ibs-rabbitmq-integration.md`.
+Per-fetcher configuration managed by admins. Auto-created at process
+startup by `bootstrap_fetcher_configs()` if not present (runs in worker,
+Beat, and API server).
 
-This table contains no domain data — it is purely an operational artifact
-of the release detection mechanism.
+| Column            | Type        | Constraints        | Description                        |
+|-------------------|-------------|--------------------|------------------------------------|
+| fetcher_name      | VARCHAR(100) | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
+| enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
+| schedule_override | VARCHAR(50)  | nullable           | Cron expression to override the default schedule |
+| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds (hard ceiling). Also used to derive the soft time limit (×0.95) and stale detection threshold (+60s). Valid range: 60–604800 (enforced by API validation). |
+| request_delay     | FLOAT       | NOT NULL, DEFAULT 0  | Minimum inter-request delay in seconds. 0 = no delay. Valid range: 0–300 (enforced by API validation). |
+| custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
+| updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp        |
 
-| Column          | Type        | Constraints          | Description                        |
-|-----------------|-------------|----------------------|------------------------------------|
-| id              | UUID        | PK                   | Internal identifier                |
-| codestream_name | VARCHAR(255) | NOT NULL             | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) |
-| package_name    | VARCHAR(255) | NOT NULL             | Source package name                |
-| srcmd5          | VARCHAR(32)  | NOT NULL             | MD5 checksum of the package source revision from IBS |
-| last_seen_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT    | When this checksum was last observed |
-
-**Unique constraint**: (codestream_name, package_name)
-
-### PackageBugowner
-
-Caches the current IBS bugowner for each source package actively tracked
-in Sentinel tickets. Shared across all tickets — all `TicketPackage`
-records with the same `package_name` reference the same bugowner. Records
-are created on-demand when a package is first added to a ticket, maintained
-by the `sync_ibs_bugowners` fetcher, and removed when the package no
-longer appears in any active ticket. See
-`docs/features/packages/package-bugowner.md` for the full specification.
-
-| Column         | Type        | Constraints          | Description                        |
-|----------------|-------------|----------------------|------------------------------------|
-| id             | UUID        | PK                   | Internal identifier                |
-| package_name   | VARCHAR(255) | UNIQUE, NOT NULL     | Source package name (matches `TicketPackage.package_name`) |
-| bugowner_type  | VARCHAR(20) | nullable             | BugownerType: `person` or `group`. NULL if the bugowner could not be resolved from IBS |
-| bugowner_name  | VARCHAR(100) | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
-| bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group (stored as lowercase). NULL if unresolved |
-| created_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record update timestamp            |
-
-**BugownerType enum values**:
-
-| Value   | Description                                  |
-|---------|----------------------------------------------|
-| person  | Individual IBS user                          |
-| group   | IBS group with collective email and members  |
-
-### PackageBugownerMember
-
-Stores the individual members of group bugowners. Populated only when
-the parent `PackageBugowner.bugowner_type` is `group`. Each record
-represents one member of the IBS group. See
-`docs/features/packages/package-bugowner.md` for the full specification.
-
-| Column               | Type        | Constraints                          | Description                        |
-|----------------------|-------------|--------------------------------------|------------------------------------|
-| id                   | UUID        | PK                                   | Internal identifier                |
-| package_bugowner_id  | UUID        | FK(package_bugowner.id), NOT NULL    | Parent bugowner record             |
-| userid               | VARCHAR(64)  | NOT NULL                             | IBS username of the group member   |
-| email                | VARCHAR(255) | NOT NULL                             | Email of the group member (stored as lowercase) |
-| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT                    | Record creation timestamp          |
-
-**Unique constraint**: (package_bugowner_id, userid)
-
-### FetcherRun
+#### FetcherRun
 
 Records every execution of a fetcher. Primary data source for the fetcher
 dashboard charts. Records are retained indefinitely (no retention policy).
@@ -1431,23 +1456,30 @@ Growth rate is approximately 20,000 rows per year. See
 - (fetcher_name, started_at) — composite index supporting timeline
   queries at any date range.
 
-### FetcherConfig
+#### FetcherRunStatus Enum
 
-Per-fetcher configuration managed by admins. Auto-created at process
-startup by `bootstrap_fetcher_configs()` if not present (runs in worker,
-Beat, and API server).
+Execution outcome of a fetcher run. Category A — state-machine (VARCHAR
++ CHECK constraint `chk_fetcher_run_status_valid`). Adding a value
+requires an Alembic migration.
 
-| Column            | Type        | Constraints        | Description                        |
-|-------------------|-------------|--------------------|------------------------------------|
-| fetcher_name      | VARCHAR(100) | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
-| enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
-| schedule_override | VARCHAR(50)  | nullable           | Cron expression to override the default schedule |
-| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds (hard ceiling). Also used to derive the soft time limit (×0.95) and stale detection threshold (+60s). Valid range: 60–604800 (enforced by API validation). |
-| request_delay     | FLOAT       | NOT NULL, DEFAULT 0  | Minimum inter-request delay in seconds. 0 = no delay. Valid range: 0–300 (enforced by API validation). |
-| custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
-| updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp        |
+| Value | Description |
+|-------|-------------|
+| `running` | Fetcher is currently executing |
+| `success` | Fetcher completed with no errors |
+| `failure` | Fetcher failed (unrecoverable error) |
+| `partial` | Fetcher completed but some items failed processing |
 
-### FetcherAuditEvent
+#### FetcherRunTriggeredBy Enum
+
+How the fetcher run was initiated. Category B — classification (Python
+Enum only). Adding a value requires only a code change.
+
+| Value | Description |
+|-------|-------------|
+| `schedule` | Triggered by Celery Beat on its regular schedule |
+| `manual` | Triggered manually by an admin via API |
+
+#### FetcherAuditEvent
 
 Audit trail for administrative actions on fetchers. Inherits `id`,
 `created_at`, and `user_id` from `AuditEventMixin`.
@@ -1466,7 +1498,91 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 See `docs/features/platform/fetcher-infrastructure.md` for the event
 type contract with field values and the one-event-per-field rule.
 
-### SubmissionRequest
+#### FetcherAuditEventType Enum
+
+Classifies the action recorded in a `FetcherAuditEvent`. Category B —
+classification (Python Enum only). Adding a value requires only a code
+change.
+
+| Value | Description |
+|-------|-------------|
+| `disabled` | Fetcher was disabled by an admin |
+| `enabled` | Fetcher was enabled by an admin |
+| `triggered` | Fetcher run was manually triggered by an admin |
+| `config_changed` | Fetcher configuration was modified by an admin |
+
+### IBS Integration
+#### CodestreamPackageChecksum
+
+Operational cache table shared by the `IBSEventConsumer` (real-time) and
+the `IBSTrackReleaseDetector` (periodic catch-up) to track source MD5
+checksums of packages in IBS codestream projects. By comparing the
+current `srcmd5` from IBS with the cached value, both mechanisms
+identify which packages have changed and need a diff analysis. The shared
+cache prevents duplicate work between the two detection paths. See
+`docs/features/integrations/ibs-rabbitmq-integration.md`.
+
+This table contains no domain data — it is purely an operational artifact
+of the release detection mechanism.
+
+| Column          | Type        | Constraints          | Description                        |
+|-----------------|-------------|----------------------|------------------------------------|
+| id              | UUID        | PK                   | Internal identifier                |
+| codestream_name | VARCHAR(255) | NOT NULL             | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) |
+| package_name    | VARCHAR(255) | NOT NULL             | Source package name                |
+| srcmd5          | VARCHAR(32)  | NOT NULL             | MD5 checksum of the package source revision from IBS |
+| last_seen_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT    | When this checksum was last observed |
+
+**Unique constraint**: (codestream_name, package_name)
+
+#### PackageBugowner
+
+Caches the current IBS bugowner for each source package actively tracked
+in Sentinel tickets. Shared across all tickets — all `TicketPackage`
+records with the same `package_name` reference the same bugowner. Records
+are created on-demand when a package is first added to a ticket, maintained
+by the `sync_ibs_bugowners` fetcher, and removed when the package no
+longer appears in any active ticket. See
+`docs/features/packages/package-bugowner.md` for the full specification.
+
+| Column         | Type        | Constraints          | Description                        |
+|----------------|-------------|----------------------|------------------------------------|
+| id             | UUID        | PK                   | Internal identifier                |
+| package_name   | VARCHAR(255) | UNIQUE, NOT NULL     | Source package name (matches `TicketPackage.package_name`) |
+| bugowner_type  | VARCHAR(20) | nullable             | BugownerType: `person`, `group`. NULL if the bugowner could not be resolved from IBS |
+| bugowner_name  | VARCHAR(100) | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
+| bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group (stored as lowercase). NULL if unresolved |
+| created_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record creation timestamp          |
+| updated_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record update timestamp            |
+
+#### BugownerType Enum
+
+Classifies the type of IBS bugowner. Category B — classification
+(Python Enum only). Adding a value requires only a code change.
+
+| Value | Description |
+|-------|-------------|
+| `person` | Individual IBS user |
+| `group` | IBS group with collective email and members |
+
+#### PackageBugownerMember
+
+Stores the individual members of group bugowners. Populated only when
+the parent `PackageBugowner.bugowner_type` is `group`. Each record
+represents one member of the IBS group. See
+`docs/features/packages/package-bugowner.md` for the full specification.
+
+| Column               | Type        | Constraints                          | Description                        |
+|----------------------|-------------|--------------------------------------|------------------------------------|
+| id                   | UUID        | PK                                   | Internal identifier                |
+| package_bugowner_id  | UUID        | FK(package_bugowner.id), NOT NULL    | Parent bugowner record             |
+| userid               | VARCHAR(64)  | NOT NULL                             | IBS username of the group member   |
+| email                | VARCHAR(255) | NOT NULL                             | Email of the group member (stored as lowercase) |
+| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT                    | Record creation timestamp          |
+
+**Unique constraint**: (package_bugowner_id, userid)
+
+#### SubmissionRequest
 
 Tracks an IBS submission request (type `maintenance_incident`) relevant
 to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
@@ -1477,41 +1593,28 @@ to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
 | request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
 | package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
 | codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
-| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | SubmissionRequestState (see below)       |
+| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | SubmissionRequestState: `open`, `accepted`, `declined`, `revoked`, `superseded` |
 | author             | VARCHAR(64)  | nullable                 | IBS username who created the request     |
 | incident_number    | INTEGER      | nullable                 | Populated when state becomes `accepted`  |
 | superseded_by      | INTEGER      | nullable                 | Request number of the superseding request |
 | created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
 | updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
 
-**SubmissionRequestState enum**: `open`, `accepted`, `declined`,
-`revoked`, `superseded`. `open` maps to IBS states `new` and `review`.
-`declined` is non-final (can revert to `open` on reopen).
+#### SubmissionRequestState Enum
 
-### ReleaseRequest
+IBS submission request lifecycle state. Category A — state-machine
+(VARCHAR + CHECK constraint `chk_submission_request_state_valid`).
+Adding a value requires an Alembic migration.
 
-Tracks an IBS release request (type `maintenance_release`) relevant
-to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
+| Value | Description |
+|-------|-------------|
+| `open` | Request is pending (maps to IBS states `new` and `review`) |
+| `accepted` | Request was accepted |
+| `declined` | Request was declined. Non-final — can revert to `open` on reopen |
+| `revoked` | Request was revoked |
+| `superseded` | Request was superseded by a newer request |
 
-| Column             | Type         | Constraints              | Description                              |
-|--------------------|--------------|--------------------------|------------------------------------------|
-| id                 | UUID         | PK                       | Internal identifier                      |
-| request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
-| package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
-| codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
-| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | ReleaseRequestState (see below)          |
-| incident_number    | INTEGER      | NOT NULL                 | Maintenance incident number              |
-| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
-| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
-
-**ReleaseRequestState enum**: `open`, `accepted`, `declined`, `revoked`.
-`open` maps to IBS states `new` and `review`. `declined` is non-final.
-
-**Implicit link**: `SubmissionRequest.incident_number =
-ReleaseRequest.incident_number` — the maintenance incident is not a
-separate entity but an implicit linking concept.
-
-### SubmissionRequestTrack
+#### SubmissionRequestTrack
 
 Links a `SubmissionRequest` to the specific `TicketPackageTrack`
 records whose CVEs are mentioned in the request's diff.
@@ -1525,6 +1628,39 @@ records whose CVEs are mentioned in the request's diff.
 
 **Unique constraint**: (submission_request_id, ticket_package_track_id)
 
+#### ReleaseRequest
+
+Tracks an IBS release request (type `maintenance_release`) relevant
+to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
+
+| Column             | Type         | Constraints              | Description                              |
+|--------------------|--------------|--------------------------|------------------------------------------|
+| id                 | UUID         | PK                       | Internal identifier                      |
+| request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
+| package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
+| codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
+| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | ReleaseRequestState: `open`, `accepted`, `declined`, `revoked` |
+| incident_number    | INTEGER      | NOT NULL                 | Maintenance incident number              |
+| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
+| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
+
+**Implicit link**: `SubmissionRequest.incident_number =
+ReleaseRequest.incident_number` — the maintenance incident is not a
+separate entity but an implicit linking concept.
+
+#### ReleaseRequestState Enum
+
+IBS release request lifecycle state. Category A — state-machine
+(VARCHAR + CHECK constraint `chk_release_request_state_valid`). Adding
+a value requires an Alembic migration.
+
+| Value | Description |
+|-------|-------------|
+| `open` | Request is pending (maps to IBS states `new` and `review`) |
+| `accepted` | Request was accepted |
+| `declined` | Request was declined. Non-final — can revert to `open` on reopen |
+| `revoked` | Request was revoked |
+
 ## Notes
 
 - All tables use UUID primary keys (exceptions: `SystemSetting` uses a
@@ -1533,7 +1669,7 @@ records whose CVEs are mentioned in the request's diff.
   `(ticket_id, user_id)`)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
-  `CodestreamPackageChecksum`, `UserRole`, `ProductRepository`,
+  `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
   `SubmissionRequestTrack`, `RoleMapping`,
   and `CVEAffectedVersion`
@@ -1544,7 +1680,12 @@ records whose CVEs are mentioned in the request's diff.
   `ProductRepository` and `CVEAffectedVersion` records are
   replaced via delete-and-reinsert during sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
-  group membership changes)
+  group membership changes;
+  `SystemSetting` and `FetcherConfig` have only `updated_at` (auto-created
+  at startup; creation time is not tracked);
+  `CodestreamPackageChecksum` uses `last_seen_at` instead of standard
+  timestamp columns (operational cache — the timestamp records when the
+  checksum was last observed, not when the record was created))
 - Sentinel does not use PostgreSQL ENUM types. All enumerated columns
   use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
   DeliveryStatus, CveState, Role, FetcherRunStatus,
