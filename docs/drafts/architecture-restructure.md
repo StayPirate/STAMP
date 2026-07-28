@@ -223,7 +223,7 @@ Section names in `architecture.md` referenced by other files:
 | Section name | Referenced by | Action |
 |---|---|---|
 | "Singleton Processes" | `docs/deployment.md:408` | Unchanged |
-| "Container Images" | `docs/conventions.md:1013`, `docs/features/platform/logging.md` (x3) | Unchanged |
+| "Container Images" | `docs/conventions.md:1013`, `docs/features/platform/logging.md` (x3), `docs/deployment.md` (lines 210, 243, 389, 465) | Unchanged |
 | "Runtime State" | `docs/features/platform/logging.md` (x2) | Unchanged |
 | "Clock Synchronization" | `docs/features/identity/sso-authentication.md:175` | Unchanged |
 | "Health And Readiness" | `docs/features/platform/health-endpoints.md:187` | → "Health and Readiness" (Phase 1) |
