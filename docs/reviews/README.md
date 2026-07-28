@@ -7,8 +7,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 
 | Spec | GAP | COH | DES | SEC | API | Open | Last Review | Stale |
 |------|-----|-----|-----|-----|-----|------|-------------|-------|
-| [architecture](architecture.md) | — | — | — | — | — | 0/0 |  |  |
-|  |  |  |  |  |  |  |  |  |
+| [architecture](architecture.md) | 3 | 2 | 🟢 | 🟢 | 🟢 | 5/5 | 2026-07-28 |  |
+| | 2:🟠 1:🟡 | 1:🟠 1:🟡 |  |  |  |  |  |  |
 | [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [api-spec](api-spec.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-27 |  |
@@ -99,8 +99,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **4** | **2** | **1** | **🟢** | **🟢** | **7/820** |  |  |
-| | 4:🟠 | 2:🟡 | 1:🟠 |  |  |  |  |  |
+| **Total** | **7** | **4** | **1** | **🟢** | **🟢** | **12/825** |  |  |
+| | 6:🟠 1:🟡 | 1:🟠 3:🟡 | 1:🟠 |  |  |  |  |  |
 
 ### Disabled specs
 
