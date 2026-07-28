@@ -4,16 +4,19 @@ Centralized index of all environment variables and runtime settings
 required to deploy and operate Sentinel. Each setting is defined
 authoritatively in the feature specification linked in the "Defined in"
 column — this document is an aggregated reference, not the source of
-truth.
+truth. Exception: core infrastructure variables with no owning feature
+spec (connection strings, application identity, CORS) are
+authoritatively defined in this document directly — their "Defined in"
+column shows `—`.
 
 ## Required Secrets
 
 These must be provided in every environment. The application refuses to
 start if any is missing.
 
-| Env Var | Type | Description | Defined in |
-|---------|------|-------------|------------|
-| `JWT_SECRET_KEY` | string (>=32 chars) | Symmetric key for signing JWTs | `docs/features/identity/authentication.md` |
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `JWT_SECRET_KEY` | string (>=32 chars) | — (required) | Symmetric key for signing JWTs | `docs/features/identity/authentication.md` |
 
 ## Required Connection Settings
 
@@ -22,9 +25,9 @@ explicitly in staging/production.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `DATABASE_URL` | string | `postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel` | PostgreSQL async connection string | `docs/architecture.md` |
-| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | `docs/architecture.md` |
-| `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | `docs/architecture.md` |
+| `DATABASE_URL` | string | `postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel` | PostgreSQL async connection string | — |
+| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | — |
+| `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | — |
 
 All application-level Redis operations (session caching, login lockout,
 deduplication, distributed locking) use `REDIS_URL`. The Celery broker
@@ -41,67 +44,32 @@ design — all Redis state is volatile and reconstructible. See
 the full operational requirements including `maxmemory`, `noeviction`
 policy, and container resource limits.
 
-## Celery Worker Configuration
-
-These settings control the Celery worker and Beat scheduler behavior.
-The timezone settings are **fixed** — they MUST NOT be overridden.
+## Application
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `CELERY_TIMEZONE` | string | `UTC` | Timezone for Celery Beat cron interpretation. MUST remain `UTC` — all fetcher schedules are expressed in UTC. Overriding this value causes all scheduled fetchers to run at incorrect times | `docs/conventions.md` |
-| `CELERY_ENABLE_UTC` | bool | `true` | Forces Celery internal message timestamps to UTC. MUST remain `true` | `docs/conventions.md` |
+| `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | — |
+| `DEBUG` | bool | `false` | Enable verbose error responses (stack traces in API errors). Does not affect logging — see `docs/features/platform/logging.md` | — |
+| `CORS_ORIGINS` | list (JSON array) | `["http://localhost:5173"]` | Allowed CORS origins for API consumers | — |
 
-**Startup validation**: the Celery app factory
-(`backend/app/celery_app.py`) MUST validate these settings at module
-import time — immediately after the `Celery()` application object is
-configured. If `app.conf.timezone != "UTC"` or
-`app.conf.enable_utc is not True`, the factory MUST raise a
-`RuntimeError` with message: `"FATAL: Celery timezone must be UTC.
-Current value: timezone={timezone}, enable_utc={enable_utc}. All fetcher
-schedules assume UTC — see docs/conventions.md."`
+## Logging
 
-Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
-imports the app object, this validation covers all processes
-automatically — no per-process signal handlers are needed. The exception
-prevents any process from completing initialization.
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `LOG_LEVEL` | enum | `INFO` | Log verbosity (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`), applies to all loggers uniformly | `docs/features/platform/logging.md` |
+| `LOG_FORMAT` | enum | `auto` | Log output format (`auto`\|`json`\|`console`) | `docs/features/platform/logging.md` |
 
-Additionally, `task_ignore_result = True` is a fixed Celery application
-setting — task return values are never stored. Task outcomes are tracked
-in PostgreSQL (`FetcherRun`). See
-`docs/features/platform/fetcher-infrastructure.md` (Result handling).
+`LOG_LEVEL` controls all logging and is independent of `DEBUG` — see
+`docs/features/platform/logging.md`.
 
-**Redbeat scheduler**: `celery-redbeat` (the dynamic Beat scheduler)
-uses the same Redis instance as the Celery broker (`CELERY_BROKER_URL`)
-by default. No separate `redbeat_redis_url` environment variable is
-needed or supported. The scheduler class is configured in the Celery
-application settings (`beat_scheduler = 'redbeat.RedBeatScheduler'`).
-Redbeat stores schedule entries under the `redbeat:` key prefix in the
-broker database. See
-`docs/features/platform/fetcher-infrastructure.md` (Celery Beat Schedule
-Synchronization) for the full synchronization mechanism between
-PostgreSQL (source of truth for fetcher schedules) and redbeat
-(execution layer).
+## Authentication
 
-**Beat tick interval**: `beat_max_loop_interval = 60` is a fixed
-application-level setting (not an environment variable). It controls the
-maximum time Beat sleeps between scheduler ticks. This value determines:
-
-- The worst-case latency for detecting Redis data loss (≤60s)
-- The derived `lock_timeout` for the redbeat distributed lock (300s =
-  `max_interval × 5`), which bounds how long a stale lock persists
-  after a Beat crash before a replacement can start
-
-This setting MUST NOT be exposed as an environment variable. It is a
-system-level tuning constant with no deployment-specific variance.
-
-**`retry_period` (redbeat)**: NOT configured. When unset (the default),
-Redis operations raise immediately on failure without internal retries.
-This preserves the fail-fast behavior that enables automatic recovery
-via the lock sentinel mechanism. Setting `retry_period` to any value
-would allow Beat to silently reconnect to empty Redis after a restart,
-bypassing the lock sentinel detection. See
-`docs/features/platform/fetcher-infrastructure.md` (Runtime: Redis Data
-Loss).
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
+| `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/identity/authentication.md` |
+| `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. After this period from login, the session expires unconditionally regardless of activity. Must be >= 1; values > 365 log a warning | `docs/features/identity/authentication.md` |
+| `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1; values below minimum fall back to default with a startup warning | `docs/features/identity/local-authentication.md` |
+| `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1; values below minimum fall back to default with a startup warning | `docs/features/identity/local-authentication.md` |
 
 ## SSO Configuration
 
@@ -129,15 +97,70 @@ At startup, the application logs an INFO message indicating SSO status:
 | `SSO_REDIRECT_URI` | string | — | OAuth2 callback URL. Required for SSO. | `docs/features/identity/sso-authentication.md` |
 | `SSO_USER_CLAIM` | string | `sub` | OIDC ID token claim used to identify the user (matched against `username` for externally-provisioned users). Only relevant when SSO is enabled. | `docs/features/identity/sso-authentication.md` |
 
-## Authentication
+## Celery Worker Configuration
+
+These settings control the Celery worker and Beat scheduler behavior.
+The timezone settings are **fixed** — they MUST NOT be overridden.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/identity/authentication.md` |
-| `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. After this period from login, the session expires unconditionally regardless of activity. Must be >= 1; values > 365 log a warning | `docs/features/identity/authentication.md` |
-| `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1 | `docs/features/identity/local-authentication.md` |
-| `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1 | `docs/features/identity/local-authentication.md` |
+| `CELERY_TIMEZONE` | string | `UTC` | Timezone for Celery Beat cron interpretation. MUST remain `UTC` — all fetcher schedules are expressed in UTC. Overriding this value causes all scheduled fetchers to run at incorrect times | `docs/conventions.md` |
+| `CELERY_ENABLE_UTC` | bool | `true` | Forces Celery internal message timestamps to UTC. MUST remain `true` | `docs/conventions.md` |
 
+### Timezone Enforcement
+
+The Celery app factory validates these values at import time and refuses
+to start if either is overridden — see
+`docs/features/platform/fetcher-infrastructure.md` (Startup Validation)
+for the exact validation logic.
+
+Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
+imports the app object, this validation covers all processes
+automatically — no per-process signal handlers are needed.
+
+### Result Handling
+
+`task_ignore_result = True` is a fixed Celery application setting — task
+return values are never stored. Task outcomes are tracked in PostgreSQL
+(`FetcherRun`). See
+`docs/features/platform/fetcher-infrastructure.md` (Result handling).
+
+### Redbeat Scheduler
+
+`celery-redbeat` (the dynamic Beat scheduler) uses the same Redis
+instance as the Celery broker (`CELERY_BROKER_URL`) by default. No
+separate `redbeat_redis_url` environment variable is needed or
+supported. The scheduler class is configured in the Celery application
+settings (`beat_scheduler = 'redbeat.RedBeatScheduler'`). Redbeat stores
+schedule entries under the `redbeat:` key prefix in the broker database.
+See `docs/features/platform/fetcher-infrastructure.md` (Celery Beat
+Schedule Synchronization) for the full synchronization mechanism between
+PostgreSQL (source of truth for fetcher schedules) and redbeat
+(execution layer).
+
+### Beat Tick Interval
+
+`beat_max_loop_interval = 60` is a fixed application-level setting (not
+an environment variable). It controls the maximum time Beat sleeps
+between scheduler ticks. The worst-case latency for detecting Redis data
+loss is ≤60s. This value also determines the derived `lock_timeout` for
+the redbeat distributed lock — see
+`docs/features/platform/fetcher-infrastructure.md` (Redbeat
+Configuration) for the derivation and crash-recovery rationale.
+
+This setting MUST NOT be exposed as an environment variable. It is a
+system-level tuning constant with no deployment-specific variance.
+
+### retry_period (redbeat)
+
+NOT configured. When unset (the default), Redis operations raise
+immediately on failure without internal retries. This preserves the
+fail-fast behavior that enables automatic recovery via the lock sentinel
+mechanism. Setting `retry_period` to any value would allow Beat to
+silently reconnect to empty Redis after a restart, bypassing the lock
+sentinel detection. See
+`docs/features/platform/fetcher-infrastructure.md` (Runtime: Redis Data
+Loss).
 
 ## IBS (Internal Build Service)
 
@@ -180,7 +203,7 @@ here.
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay` from 6.0s to ~0.6s via the fetcher admin dashboard | `docs/features/tickets/cve-sync-nvd.md` |
-| `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Without token: 60 req/hour (insufficient for production). With token: 5,000 req/hour. The fetcher refuses to execute if this is empty or unset | `docs/features/tickets/cve-sync-ghsa.md` |
+| `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Required for production rate limits (see `docs/data-sources.md`). The fetcher refuses to execute if this is empty or unset | `docs/features/tickets/cve-sync-ghsa.md` |
 
 ## Git-Based Fetchers
 
@@ -188,32 +211,14 @@ here.
 |---------|------|---------|-------------|------------|
 | `GIT_CLONE_BASE_DIR` | string (path) | `/var/lib/sentinel/git` | Base directory for persistent bare clones used by git-based fetchers (`sync_mitre_cves`, `sync_kernel_cves`). Must be backed by persistent storage in containerized deployments | `docs/features/platform/git-fetcher-infrastructure.md` |
 
-## Application
-
-| Env Var | Type | Default | Description | Defined in |
-|---------|------|---------|-------------|------------|
-| `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | `docs/architecture.md` |
-| `DEBUG` | bool | `false` | Enable verbose error responses (stack traces in API errors). Does not affect logging — see `docs/features/platform/logging.md` | `docs/architecture.md` |
-| `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for API consumers | `docs/architecture.md` |
-
-## Logging
-
-| Env Var | Type | Default | Description | Defined in |
-|---------|------|---------|-------------|------------|
-| `LOG_LEVEL` | enum | `INFO` | Log verbosity (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`), applies to all loggers uniformly | `docs/features/platform/logging.md` |
-| `LOG_FORMAT` | enum | `auto` | Log output format (`auto`\|`json`\|`console`) | `docs/features/platform/logging.md` |
-
-`LOG_LEVEL` controls all logging and is independent of `DEBUG` — see
-`docs/features/platform/logging.md`.
-
-### Standard Environment Variables (Non-Sentinel)
+## Standard Environment Variables (Non-Sentinel)
 
 These are standard system-level variables respected by the HTTP client
 library (httpx). They are NOT Sentinel-specific and are typically set at
 the container or system level.
 
-| Variable | Type | Default | Description | Defined in |
-|----------|------|---------|-------------|------------|
+| Env Var | Type | Default | Description | Defined in |
+|---------|------|---------|-------------|------------|
 | `HTTPS_PROXY` | string | (none) | Proxy URL for outgoing HTTPS connections. Respected by all HTTP clients | `docs/features/platform/networking.md` |
 | `HTTP_PROXY` | string | (none) | Proxy URL for outgoing HTTP connections | `docs/features/platform/networking.md` |
 | `NO_PROXY` | string | (none) | Comma-separated hosts that bypass the proxy | `docs/features/platform/networking.md` |

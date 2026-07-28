@@ -39,6 +39,9 @@ If any required setting is missing, **SSO is disabled entirely**:
   missing settings: {list of missing setting names}"` (secret values
   are never logged; only setting names appear)
 
+When all required settings are present, the application logs at startup:
+`"SSO authentication enabled (issuer: {SSO_ISSUER_URL})"`
+
 This allows the same application build to be deployed in both
 SSO-capable and SSO-less environments without any code changes.
 
