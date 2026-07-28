@@ -528,9 +528,9 @@ admin's user ID.
 sentinel api-key list --username <username>
 ```
 
-Lists all API keys (active and revoked) for the given user. Output
-includes: prefix, name, created_at, last_used_at, expires_at, status
-(active/revoked/expired).
+Lists all API keys (active, revoked, and expired) for the given user.
+Output includes: prefix, name, created_at, last_used_at, expires_at,
+status (active/revoked/expired).
 
 **Output**: table with fixed-width columns on stdout.
 
