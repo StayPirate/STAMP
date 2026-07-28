@@ -25,6 +25,16 @@ and logical grouping. Fix content accuracy issues identified during review.
   when the actual behavior is a graceful fallback (the surprising case).
   Restating the hard-fail default adds no information and is
   over-documentation
+- **Verify owner and inbound references before every trim or move**:
+  before removing or relocating information from `configuration.md`,
+  two checks are mandatory: (1) confirm the correct owning document
+  already contains the information (do not assume — verify with a
+  search; if the owner doesn't have it yet, add it there, don't
+  duplicate elsewhere); (2) search the whole project for documents that
+  point *into* the section being trimmed (e.g., `docs/conventions.md`
+  referencing `configuration.md` for a specific detail) and redirect
+  those references to the actual owner. Skipping either check turns a
+  fix into a new placement bug
 
 ## Current Issues
 
@@ -40,17 +50,38 @@ and logical grouping. Fix content accuracy issues identified during review.
 
 6. **Finding A**: SSO "enabled" startup log message exists only in
    `configuration.md` (lines 118-119) — not in the owning feature spec
-   `sso-authentication.md`. This inverts the authority chain
+   `sso-authentication.md`. This inverts the authority chain.
+   **Re-verified (round 5)**: confirmed this is not a leftover from a
+   deprecated LDAP-based authentication spec. `authentication.md` and
+   `sso-authentication.md` are current, stable specs (OIDC SSO via
+   `id.suse.com` + local credentials) — LDAP only appears in
+   `identity-provisioning.md`, a separate, unrelated concern (user
+   provisioning, currently WIP, planned to move to SCIM/Authentik). The
+   "enabled" message is the legitimate counterpart to the existing
+   "disabled" message and is provider-agnostic (uses `SSO_ISSUER_URL`).
+   Fix confirmed unchanged
 7. **Finding B**: Celery startup validation (lines 54-66) duplicated
    nearly verbatim from `fetcher-infrastructure.md` (lines 2381-2394).
    The detail level (exact code paths, RuntimeError string) exceeds what
-   a configuration reference needs
+   a configuration reference needs. **Extended (round 5)**: applying the
+   "verify inbound references" check above surfaced that
+   `conventions.md:182-183` points to `docs/configuration.md` (Celery
+   Worker Configuration) specifically for this validation detail. Once
+   the detail is trimmed from `configuration.md`, that reference would
+   become misleading (pointing to a section that no longer has the
+   answer). The fix must also redirect `conventions.md:182-183` to
+   `fetcher-infrastructure.md` (Startup Validation) — see Phase 4
 8. **Finding D**: `LOGIN_MAX_ATTEMPTS` and `LOGIN_LOCKOUT_MINUTES`
    descriptions say "Must be >= 1", implying hard failure. The owning
    spec (`local-authentication.md:298-301`) specifies graceful fallback
    to defaults with a warning. An operator reading only `configuration.md`
    would expect the app to refuse to start. This is a genuine deviation
-   from the reasonable default expectation, and therefore must be stated
+   from the reasonable default expectation, and therefore must be stated.
+   **Re-verified (round 5)**: confirmed these variables are real and
+   actively specified, not leftover/unused. They implement the local
+   authentication account-lockout mechanism (brute-force protection) in
+   `local-authentication.md` (Redis counter `login_attempts:{username}`,
+   lockout after N failed attempts). Fix confirmed unchanged
 9. **Finding 3**: `CORS_ORIGINS` is documented as
    `list (comma-separated)`, but `config.py:39` (`cors_origins:
    list[str]`) and `.env.example:17`
@@ -72,6 +103,33 @@ and logical grouping. Fix content accuracy issues identified during review.
      `` `https://sentinel-staging.suse.de` `` (Value column)
    - `deployment.md:235`, Production configuration checklist:
      `` `https://sentinel.suse.de` `` (Value column)
+10. **Finding NEW-1**: `GITHUB_TOKEN`'s description in
+    `configuration.md:183` states specific rate-limit figures ("Without
+    token: 60 req/hour... With token: 5,000 req/hour"). Applying the
+    "verify owner" check: these figures are **already owned** by
+    `docs/data-sources.md` (GHSA section, line 173-174, and the Fetcher
+    Registry table, line 973) — they are not exclusive to
+    `configuration.md`, so there is no authority-chain inversion, but
+    there is duplication of a fact whose natural owner is
+    `data-sources.md` (external data source integration facts, per the
+    Guardrail 21 mapping), not a fetcher spec and not the config index.
+    For comparison, the sibling row `NVD_API_KEY` (`configuration.md:182`)
+    already avoids repeating specific rate-limit numbers, deferring them
+    to `data-sources.md` — `GITHUB_TOKEN` is the inconsistent outlier.
+    Fix: remove the specific figures from `configuration.md:183`,
+    matching the `NVD_API_KEY` row's style. No addition to
+    `data-sources.md` needed (it already has the figures) and no
+    addition to `cve-sync-ghsa.md` (the fetcher spec is not the owner of
+    external rate-limit facts)
+11. **Finding NEW-2**: the Celery Beat tick interval paragraph
+    (`configuration.md:89-92`) reproduces the `lock_timeout` derivation
+    (`= max_interval × 5 = 300s`) and its crash-recovery rationale,
+    already specified in `fetcher-infrastructure.md:1545,1551,1553`
+    (Redbeat Configuration). Same duplication class as Finding B, same
+    owner. The operational fact worth keeping in `configuration.md` is
+    that `beat_max_loop_interval = 60` is fixed and MUST NOT be exposed
+    as an environment variable — the derivation math and its rationale
+    belong to `fetcher-infrastructure.md`
 
 ### Content accuracy — evaluated and discarded
 
@@ -79,7 +137,7 @@ The following candidate fixes were proposed in earlier review rounds and
 discarded after verification. They are recorded here to prevent
 re-introduction in a future round.
 
-10. **Discarded — "Finding E" / IBS routing keys type change**: an
+12. **Discarded — "Finding E" / IBS routing keys type change**: an
     earlier round proposed changing `IBS_RABBITMQ_ROUTING_KEYS` from
     `string` to `list (comma-separated)` to "match" `CORS_ORIGINS`'s
     notation. This was based on a false premise: the two variables use
@@ -93,13 +151,13 @@ re-introduction in a future round.
     Relabeling it `list (comma-separated)` would be actively misleading,
     implying JSON-array parsing semantics it does not have. **No change
     needed.**
-11. **Discarded — cross-file update to `ibs-rabbitmq-integration.md`
-    (dependent on item 10)**: a follow-up finding proposed updating
+13. **Discarded — cross-file update to `ibs-rabbitmq-integration.md`
+    (dependent on item 12)**: a follow-up finding proposed updating
     `ibs-rabbitmq-integration.md:437` to keep it "in sync" with the
-    `configuration.md` change from item 10. Since item 10 itself is
+    `configuration.md` change from item 12. Since item 12 itself is
     discarded, this dependent fix is also discarded. No change to
     `ibs-rabbitmq-integration.md` is needed for this restructuring.
-12. **Discarded — JWT/session hard-failure restatement**: a follow-up
+14. **Discarded — JWT/session hard-failure restatement**: a follow-up
     finding proposed adding "(application refuses to start on invalid
     values)" to the `JWT_EXPIRY_HOURS` and `SESSION_MAX_LIFETIME_DAYS`
     descriptions in `configuration.md`, arguing that the contrast with
@@ -196,18 +254,26 @@ from H3 to H2, removing its false nesting under "Logging".
   - `deployment.md:235`: `` `https://sentinel.suse.de` `` →
     `` `["https://sentinel.suse.de"]` ``
 - **No change to `IBS_RABBITMQ_ROUTING_KEYS`** — see "Content accuracy
-  — evaluated and discarded" (items 10-11) above. It remains `string`
+  — evaluated and discarded" (items 12-13) above. It remains `string`
   with "Comma-separated" in the description, in both `configuration.md`
   and `ibs-rabbitmq-integration.md` (already consistent)
+- **Finding NEW-1 fix**: remove the specific rate-limit figures ("60
+  req/hour" / "5,000 req/hour") from the `GITHUB_TOKEN` description in
+  `configuration.md:183`, matching the `NVD_API_KEY` row's style
+  (defers rate-limit specifics to `docs/data-sources.md`, which already
+  documents them). Keep the operational fact ("required for
+  `sync_ghsa_advisories`", "fetcher refuses to execute if empty")
 
 **Changes**: Table modifications in `docs/configuration.md` and
 `docs/deployment.md`.
 
 **Verification**: diff shows only column header additions/renames and
 the `CORS_ORIGINS` type/Default correction in `configuration.md`, plus
-the three `CORS_ORIGINS` value corrections in `deployment.md`. No other
-row content changes. Confirm `IBS_RABBITMQ_ROUTING_KEYS` is untouched
-in both `configuration.md` and `ibs-rabbitmq-integration.md`. Grep for
+the three `CORS_ORIGINS` value corrections in `deployment.md`, plus the
+`GITHUB_TOKEN` description trim. No other row content changes. Confirm
+`IBS_RABBITMQ_ROUTING_KEYS` is untouched in both `configuration.md` and
+`ibs-rabbitmq-integration.md`. Confirm `data-sources.md` still has the
+GHSA rate-limit figures (untouched — it is the owner). Grep for
 `CORS_ORIGINS` in both `configuration.md` and `deployment.md` to
 confirm every occurrence (outside of prose descriptions) uses JSON
 array syntax.
@@ -228,13 +294,21 @@ No text is added or removed — only block-level reordering.
 **Prose references to update** (section names cited in other files):
 - `docs/deployment.md` line 474: "Celery Worker Configuration" — no
   rename, no update needed
-- `docs/conventions.md` line 183: "Celery Worker Configuration" — no
-  rename, no update needed
+- `docs/conventions.md` line 183: "Celery Worker Configuration" — the
+  section name itself is not renamed by this phase, so no update is
+  needed *for the reordering*. Note: this same line receives a
+  different, unrelated fix in Phase 4 (redirecting the reference to
+  `fetcher-infrastructure.md` because the specific validation detail it
+  points to is being trimmed out of `configuration.md` — see Finding B,
+  extended). The two fixes are independent; do not conflate them
 - `docs/features/platform/fetcher-infrastructure.md` line 1484: "Celery
-  Worker Configuration" — no rename, no update needed
+  Worker Configuration" — no rename, no update needed (this reference
+  points to the environment variable catalog, which is unaffected by
+  reordering or by Phase 4 — see Phase 4's explicit note not to modify
+  this line)
 
 Since no section is being renamed in this phase, only reordered, the
-prose references remain valid.
+prose references remain valid for the purpose of this phase.
 
 **Verification**: `diff --stat` shows only `docs/configuration.md`
 changed. Line count remains identical. Content grep for every env var
@@ -242,12 +316,14 @@ name confirms no loss.
 
 ---
 
-### Phase 4 — Sub-section Celery prose + Finding B fix
+### Phase 4 — Sub-section Celery prose + Finding B and NEW-2 fixes
 
 **Scope**: Introduce `###` sub-headings within the "Celery Worker
 Configuration" section to organize the existing prose into navigable
-units. Simultaneously, replace the verbatim-duplicated startup
-validation prose with a brief cross-reference.
+units. Simultaneously, replace two instances of verbatim-duplicated
+prose (startup validation, `lock_timeout` derivation) with brief
+cross-references, and redirect one dangling inbound reference in
+`conventions.md` uncovered by the Finding B extension.
 
 **Sub-sections**:
 - `### Timezone Enforcement` — wraps the "fixed" paragraph. The
@@ -260,7 +336,15 @@ validation prose with a brief cross-reference.
 - `### Result Handling` — wraps the `task_ignore_result` paragraph
 - `### Redbeat Scheduler` — wraps the redbeat paragraph
 - `### Beat Tick Interval` — wraps the `beat_max_loop_interval`
-  paragraph
+  paragraph. The `lock_timeout` derivation and its crash-recovery
+  rationale (currently lines 89-92: "`= max_interval × 5`... bounds how
+  long a stale lock persists...") is replaced by a one-sentence
+  cross-reference: "This value also determines the derived
+  `lock_timeout` for the redbeat distributed lock — see
+  `docs/features/platform/fetcher-infrastructure.md` (Redbeat
+  Configuration) for the derivation and crash-recovery rationale." The
+  operational fact that `beat_max_loop_interval = 60` is fixed and MUST
+  NOT be exposed as an environment variable is retained
 - `### retry_period (redbeat)` — wraps the `retry_period` paragraph
 
 **Finding B fix detail**: the current text (lines 54-66) reproduces
@@ -271,8 +355,33 @@ all of which are implementation specifics already specified in
 operational fact (app refuses to start) while eliminating the
 duplicated implementation detail.
 
-**Verification**: diff shows inserted heading lines and the replaced
-startup validation paragraph. All other prose text appears unchanged.
+**Finding B fix, extended — dangling reference in `conventions.md`**:
+`conventions.md:182-183` currently reads "...the Celery app factory
+validates them at module import time and refuses to start any process
+if they are incorrect (see `docs/configuration.md`, Celery Worker
+Configuration)" — pointing to the exact detail being trimmed above.
+Update this cross-reference to point to
+`docs/features/platform/fetcher-infrastructure.md` (Startup Validation)
+instead, which is the actual owner of the validation mechanism.
+**Do not** modify `fetcher-infrastructure.md:1478-1484` — its own "See
+`docs/conventions.md` ... and `docs/configuration.md` (Celery Worker
+Configuration)" reference points to the environment variable catalog
+(the `CELERY_TIMEZONE` / `CELERY_ENABLE_UTC` table row), which remains
+valid in `configuration.md` after this phase — that reference is not
+about the validation mechanism and does not become dangling.
+
+**Finding NEW-2 fix detail**: the current text (lines 89-92) reproduces
+the `lock_timeout` derivation math and crash-recovery rationale already
+specified in `fetcher-infrastructure.md:1545,1551,1553` (Redbeat
+Configuration). The replacement retains the operational fact
+(`beat_max_loop_interval` is fixed, not configurable) while eliminating
+the duplicated derivation.
+
+**Verification**: diff shows inserted heading lines, the replaced
+startup validation paragraph, the replaced `lock_timeout` derivation
+paragraph, and the one-line cross-reference update in `conventions.md`.
+All other prose text appears unchanged. Confirm
+`fetcher-infrastructure.md` is untouched by this phase.
 
 ---
 
@@ -299,7 +408,7 @@ and align `configuration.md` with the owning feature specs.
   `local-authentication.md:298-301`
 - **No corresponding change to `JWT_EXPIRY_HOURS` or
   `SESSION_MAX_LIFETIME_DAYS`** — see "Content accuracy — evaluated and
-  discarded" (item 12) above. Their existing "Must be >= 1" wording
+  discarded" (item 14) above. Their existing "Must be >= 1" wording
   already correctly conveys hard-fail behavior; that is the
   default-conforming case, not the exception
 
@@ -316,17 +425,23 @@ specs exactly.
 
 **Scope**: Full-project search for any broken references to
 `docs/configuration.md` (with or without anchors), to the modified
-section of `sso-authentication.md`, and to the modified `CORS_ORIGINS`
-examples in `deployment.md`. Since no section was renamed, this phase
-is expected to be a no-op verification for anchors; the `deployment.md`
-check is a content-correctness re-verification, not an anchor check.
+section of `sso-authentication.md`, to the modified `CORS_ORIGINS`
+examples in `deployment.md`, and to the redirected cross-reference in
+`conventions.md`. Since no section was renamed, this phase is expected
+to be a no-op verification for anchors; the `deployment.md` check is a
+content-correctness re-verification, not an anchor check.
 
 **Verification**: grep for `configuration.md` and
 `sso-authentication.md` across the project to confirm all textual
 section references still match actual heading text. Separately, grep
 for `CORS_ORIGINS` in `deployment.md` to confirm all three corrected
 lines use JSON array syntax and no other bare-string occurrence
-remains.
+remains. Confirm `conventions.md:182-183` now points to
+`fetcher-infrastructure.md` (Startup Validation) and no other document
+still points to `configuration.md` for the Celery startup validation
+mechanism. Confirm `fetcher-infrastructure.md:1478-1484` is unchanged.
+Confirm `data-sources.md` GHSA rate-limit figures are unchanged (still
+the sole owner after the `GITHUB_TOKEN` trim in Phase 2).
 
 ---
 
@@ -338,6 +453,8 @@ Invoke the following reviewers on the final state:
 - `@spec-coherence-reviewer` on `docs/configuration.md`
 - `@spec-coherence-reviewer` on `docs/features/identity/sso-authentication.md`
   (due to Finding A addition)
+- `@docs-reviewer` on `docs/conventions.md` (due to the cross-reference
+  redirect in Finding B, extended)
 
 Address any issues rated "Needs revision" before proceeding.
 
@@ -352,10 +469,10 @@ Remove `docs/drafts/configuration-restructure.md` and commit.
 | Phase | Risk | Mitigation |
 |-------|------|-----------|
 | 1 | Minimal | Single character change |
-| 2 | Low | Column additions, one type fix, and CORS_ORIGINS bare-string fixes across two files; row content otherwise unchanged |
+| 2 | Low | Column additions, one type fix, CORS_ORIGINS bare-string fixes across two files, and one GITHUB_TOKEN description trim; row content otherwise unchanged |
 | 3 | Medium | Block reordering; verified by line count + env var grep |
-| 4 | Medium | Heading insertions + one paragraph replacement; verified by diff |
-| 5 | Low | Two small content fixes aligned with owning specs |
+| 4 | Medium | Two paragraph replacements (timezone validation, lock_timeout derivation) + one cross-reference redirect in `conventions.md`; verified by diff and confirmation that `fetcher-infrastructure.md` is untouched |
+| 5 | Low | Two small content fixes aligned with owning specs (re-verified against LDAP/Authentik confusion and LOGIN_* usage — both confirmed valid) |
 | 6 | Low | Verification pass; likely no-op |
 | 7 | None | Read-only review |
 | 8 | None | Cleanup |
