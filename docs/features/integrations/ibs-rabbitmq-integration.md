@@ -150,7 +150,7 @@ startup. It does not read or write `FetcherConfig` records — that
 responsibility belongs to the API server, Celery workers, and Beat.
 
 Configuration:
-- `IBS_RABBITMQ_URL`: broker URL (default: `amqps://suse:suse@rabbit.suse.de`)
+- `IBS_RABBITMQ_URL`: broker URL (default: `amqps://suse:suse@rabbit.suse.de` — well-known infrastructure defaults, not sensitive credentials)
 - `IBS_RABBITMQ_ENABLED`: boolean to enable/disable the consumer
   (default: `true`). See [Process Startup](#process-startup) for the
   process-level behavior when disabled.
@@ -432,7 +432,7 @@ The two mechanisms are fully independent:
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL |
+| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL (default credentials are well-known infrastructure defaults, not sensitive) |
 | `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer |
 | `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys for binding |
 | `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay in seconds |

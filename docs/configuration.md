@@ -52,6 +52,11 @@ policy, and container resource limits.
 | `DEBUG` | bool | `false` | Enable verbose error responses (stack traces in API errors). Does not affect logging — see `docs/features/platform/logging.md` | — |
 | `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for API consumers | — |
 
+CORS is configured with `allow_credentials=True`, restricted methods
+(`GET`, `POST`, `PATCH`, `DELETE`), and restricted headers
+(`Authorization`, `Content-Type`, `X-Request-ID`). These values are
+application constants, not configurable via environment variables.
+
 ## Logging
 
 | Env Var | Type | Default | Description | Defined in |
@@ -68,14 +73,14 @@ policy, and container resource limits.
 |---------|------|---------|-------------|------------|
 | `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/identity/authentication.md` |
 | `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. After this period from login, the session expires unconditionally regardless of activity. Must be >= 1; values > 365 log a warning | `docs/features/identity/authentication.md` |
-| `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1; values below minimum fall back to default with a startup warning | `docs/features/identity/local-authentication.md` |
-| `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1; values below minimum fall back to default with a startup warning | `docs/features/identity/local-authentication.md` |
+| `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1; the application refuses to start if the value is below 1 | `docs/features/identity/local-authentication.md` |
+| `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1; the application refuses to start if the value is below 1 | `docs/features/identity/local-authentication.md` |
 
 ## SSO Configuration
 
 All SSO settings are **optional**. If any of the required SSO settings
 (`SSO_ISSUER_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`,
-`SSO_REDIRECT_URI`) is missing, the application starts with **SSO
+`SSO_REDIRECT_URI`) is empty or unset, the application starts with **SSO
 disabled**: the login page shows only the local credentials form (the
 "Login with SUSE SSO" button is not rendered), and the SSO endpoints
 (`/api/v1/auth/sso/authorize`, `/api/v1/auth/sso/callback`) return
@@ -85,7 +90,7 @@ At startup, the application logs an INFO message indicating SSO status:
 
 - All SSO settings present: `"SSO authentication enabled
   (issuer: {SSO_ISSUER_URL})"`
-- One or more settings missing: `"SSO authentication disabled — missing
+- One or more settings empty or unset: `"SSO authentication disabled — missing
   settings: {list of missing setting names}"` (secret values are never
   logged; only the setting names appear)
 
@@ -167,7 +172,7 @@ Loss).
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `IBS_API_URL` | string | `https://api.suse.de` | IBS API base URL | `docs/features/integrations/ibs-integration.md` |
-| `IBS_USERNAME` | string | `""` | IBS HTTP Basic Auth username. Empty default allows app startup without IBS credentials; IBS-dependent fetchers will fail at runtime | `docs/features/integrations/ibs-integration.md` |
+| `IBS_USERNAME` | string | `""` | IBS HTTP Basic Auth username. Empty or unset: app starts without IBS credentials; IBS-dependent fetchers will fail at runtime | `docs/features/integrations/ibs-integration.md` |
 | `IBS_PASSWORD` | string | `""` | IBS HTTP Basic Auth password. Same rationale as `IBS_USERNAME` | `docs/features/integrations/ibs-integration.md` |
 | `IBS_DOWNLOAD_BASE_URL` | string | `https://download.suse.de/ibs` | HTTP download base for repository data | `docs/features/integrations/ibs-integration.md` |
 
@@ -175,7 +180,7 @@ Loss).
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL (default credentials are well-known infrastructure defaults, not sensitive) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 | `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer process | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 | `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 | `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
@@ -202,7 +207,7 @@ here.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When configured, consider reducing the `sync_nvd_cves` fetcher's `request_delay` from 6.0s to ~0.6s via the fetcher admin dashboard | `docs/features/tickets/cve-sync-nvd.md` |
+| `NVD_API_KEY` | string | `""` (optional) | NVD API key for higher rate limits on CVE fetching. When non-empty, consider reducing the `sync_nvd_cves` fetcher's `request_delay` from 6.0s to ~0.6s via the fetcher admin dashboard | `docs/features/tickets/cve-sync-nvd.md` |
 | `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Required for production rate limits (see `docs/data-sources.md`). The fetcher refuses to execute if this is empty or unset | `docs/features/tickets/cve-sync-ghsa.md` |
 
 ## Git-Based Fetchers

@@ -296,9 +296,9 @@ attempts per username using a Redis counter.
   Redis outage should not lock all users out of the system. The Redis
   connection failure should be logged as a warning for operators.
 - **Configuration bounds**: `LOGIN_MAX_ATTEMPTS` must be >= 1.
-  `LOGIN_LOCKOUT_MINUTES` must be >= 1. Values of 0 or negative are
-  treated as their defaults (5 and 10 respectively) with a startup
-  warning logged.
+  `LOGIN_LOCKOUT_MINUTES` must be >= 1. Values of 0 or negative cause
+  the application to refuse to start with an explicit error message
+  indicating which variable has an invalid value.
 - **Redis key namespace safety**: the key format
   `login_attempts:{normalized_username}` is safe from namespace
   collisions because usernames are restricted to `[a-z0-9._-]` at

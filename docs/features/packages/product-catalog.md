@@ -286,12 +286,19 @@ TBD
 
 - Listing products is publicly accessible (no authentication required)
 - SMELT and AIMAAS base URLs are configured via environment variables
-  (`SMELT_API_URL`, `AIMAAS_API_URL`). See `docs/configuration.md`
+  (`SMELT_API_URL`, `AIMAAS_API_URL`). See [Configuration](#configuration)
 - Authentication requirements for SMELT and AIMAAS are TBD (see
   `docs/data-sources.md`). When defined, credentials will be provided
   via environment variables, never in code
 
 ---
+
+## Configuration
+
+- `SMELT_API_URL`: SMELT API base URL for product catalog sync and
+  package resolution (default: `https://smelt.suse.de/api`)
+- `AIMAAS_API_URL`: AIMAAS API base URL for product lifecycle and CVSS
+  threshold sync (default: `https://aimaas.suse.de/api`)
 
 ## Cross-references
 

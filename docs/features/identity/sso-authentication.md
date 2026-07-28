@@ -30,7 +30,7 @@ the local login endpoint — see `docs/features/identity/local-authentication.md
 | `sso_user_claim`    | string | `sub`   | `SSO_USER_CLAIM`      |
 
 All settings except `sso_user_claim` are required for SSO to function.
-If any required setting is missing, **SSO is disabled entirely**:
+If any required setting is empty or unset, **SSO is disabled entirely**:
 
 - SSO authentication is unavailable to the user
 - The SSO endpoints (`/api/v1/auth/sso/authorize`,
@@ -188,7 +188,7 @@ see `docs/deployment.md`, Clock Synchronization.
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
+| 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are empty or unset) |
 | 503 | `SSO_UNAVAILABLE` | OIDC discovery document unreachable and no cached version available |
 
 The frontend then redirects the browser to this URL.
@@ -306,7 +306,7 @@ callback URL with an authorization `code` and `state` parameter.
 | 401 | `AUTH_SSO_FAILED` | Token exchange failed or ID token validation failed (transient/infrastructure) |
 | 401 | `AUTH_SSO_USER_NOT_FOUND` | User authenticated by IdP does not exist in the Sentinel User table |
 | 401 | `AUTH_SSO_USER_INACTIVE` | User exists but has been deactivated |
-| 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are missing) |
+| 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are empty or unset) |
 | 503 | `SSO_UNAVAILABLE` | SSO service temporarily unavailable (IdP discovery unreachable) |
 
 Error response format:

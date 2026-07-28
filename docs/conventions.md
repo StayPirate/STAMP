@@ -238,6 +238,22 @@ JSON arrays. The `config.py` field uses a `CommaSeparated` type alias
 (defined in the same module via `NoDecode` + `BeforeValidator`) to
 parse the value. Example: `CORS_ORIGINS=http://a.com,http://b.com`.
 
+**Optional string variable semantics**: for every optional string
+environment variable (one whose absence or empty value does not prevent
+application startup), the default interpretation is that **empty string
+is equivalent to unset** — both mean "not configured." The canonical
+phrase in specifications is "empty or unset."
+
+If a variable intentionally treats empty string as a distinct valid
+value (different from unset), the owning feature spec MUST declare this
+explicitly. In the absence of such a declaration, the default (empty =
+unset) applies.
+
+Implementation rule: Pydantic's `Settings` class treats `""` as a valid
+non-None `str`. Code that checks whether an optional string variable is
+configured MUST use `if not value` (or equivalent), never
+`if value is not None`.
+
 ## Python (Backend)
 
 ### Style

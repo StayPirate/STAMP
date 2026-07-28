@@ -19,8 +19,8 @@ and release detection. Sentinel interacts with two separate OBS instances:
 - Credentials are stored as environment variables, never in code
 - Configuration:
   - `IBS_API_URL`: IBS API base URL (default: `https://api.suse.de`)
-  - `IBS_USERNAME`: IBS API username (default: `""` — app starts without IBS credentials; IBS-dependent fetchers fail at runtime)
-  - `IBS_PASSWORD`: IBS API password (default: `""` — same rationale as `IBS_USERNAME`)
+  - `IBS_USERNAME`: IBS API username (default: `""` — empty or unset: app starts without IBS credentials; IBS-dependent fetchers fail at runtime)
+  - `IBS_PASSWORD`: IBS API password (default: `""` — empty or unset: same rationale as `IBS_USERNAME`)
   - `IBS_DOWNLOAD_BASE_URL`: HTTP download base URL for repository data
     (default: `https://download.suse.de/ibs`). Used by the
     `ProductReleaseDetector` — see `docs/features/packages/ibs-product-release-detection.md`.
@@ -257,7 +257,7 @@ Full procedure is documented in
 
 ### Business Rules
 
-1. IBS credentials are validated at startup; warn if not configured
+1. IBS credentials are validated at startup; warn if empty or unset
 2. All IBS operations are logged for audit purposes
 3. The `IBSTrackReleaseDetector` only modifies records with status
    `AFFECTED` or `ANALYSIS` (soft-deleted tracks in these statuses are
