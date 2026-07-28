@@ -117,15 +117,23 @@ changing the semantic content of the document.
 ### Phase 3 — Content balancing
 
 **Changes to `docs/architecture.md` — High-Level Architecture diagram:**
-- Simplify the IBSEventConsumer box (lines 47-50): remove specific
-  event names (`package.commit`, `request.create`, `request.state_change`).
-  Replace with generic description:
+- Rename the box title from `IBSEventConsumer` to `IBS Event Consumer`
+  (descriptive form, consistent with Container Images section naming
+  and the trimming philosophy of removing class names)
+- Simplify the box content (lines 47-50): remove specific event names
+  (`package.commit`, `request.create`, `request.state_change`).
+  Replace with generic description. Full target box:
   ```
-  │  Consumes IBS events for         │
-  │  release & submission tracking.  │
+  ┌──────────────────┐     ┌──────────────────────────────────┐
+  │  IBS RabbitMQ    │────▶│      IBS Event Consumer           │
+  │ (rabbit.suse.de) │     │                                  │
+  └──────────────────┘     │  Consumes IBS events for         │
+                           │  release & submission tracking.  │
+                           └──────────────────────────────────┘
   ```
   Rationale: same trimming philosophy as the text sections — event
-  names are implementation detail documented in the feature spec.
+  names and class names are implementation detail documented in the
+  feature spec.
 
 **Changes to `docs/architecture.md` — External Integrations:**
 - **IBS** — per-bullet decisions:
@@ -147,13 +155,38 @@ changing the semantic content of the document.
   >   downtime. See `docs/features/integrations/ibs-rabbitmq-integration.md`
   >   for the full specification.
 
-- **SMELT**: keep role (what it is, what it provides). Remove: specific
-  endpoint URLs, query parameters, pagination detail. Keep cross-refs
-  to `package-model.md` and `product-catalog.md`.
-- **AIMAAS**: same as SMELT — remove endpoint URLs and CPE matching
-  detail. Keep cross-refs. Add explicit cross-reference:
-  `See docs/features/packages/product-catalog.md for the full AIMAAS
-  integration specification.`
+- **SMELT** — replace current section (lines 151-165) with:
+  > #### SMELT
+  >
+  > - Internal SUSE aggregator service (REST API at `smelt.suse.de/api`)
+  > - SMELT internally reads from IBS, channel files, and other sources
+  > - Sentinel uses SMELT for two purposes: periodic product catalog
+  >   sync, and on-demand package-to-track resolution when adding a
+  >   package to a ticket
+  > - See `docs/features/packages/product-catalog.md` and
+  >   `docs/features/packages/package-model.md` for full integration
+  >   details
+
+  Removes: endpoint URLs, query parameters, pagination detail,
+  `ProductRepository` table name. Keeps: what SMELT is, the two
+  architectural use cases, cross-refs.
+
+- **AIMAAS** — replace current section (lines 167-180) with:
+  > #### AIMAAS
+  >
+  > - Internal SUSE service (REST API at `aimaas.suse.de/api`) for
+  >   product lifecycle data and CVSS thresholds
+  > - Sentinel uses AIMAAS for two purposes: product lifecycle phase
+  >   dates (used for product phase determination) and CVSS eligibility
+  >   thresholds (used for product eligibility evaluation)
+  > - When thresholds or lifecycle dates change, Sentinel re-evaluates
+  >   eligibility for active tickets referencing the affected products
+  > - See `docs/features/packages/product-catalog.md` for the full
+  >   AIMAAS integration specification
+
+  Removes: endpoint URLs, field name lists, CPE matching detail, entry
+  count. Keeps: what AIMAAS is, the two architectural use cases,
+  re-evaluation behavior, cross-ref.
 
 **Changes to `docs/architecture.md` — Data Flow:**
 - Remove `### Manual Ticket Creation` as standalone subsection
