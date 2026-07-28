@@ -19,8 +19,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cli-infrastructure](cli-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-22 |  |
 |  |  |  |  |  |  |  |  |  |
-| [cli-reference](cli-reference.md) | — | — | — | — | — | 0/0 |  |  |
-|  |  |  |  |  |  |  |  |  |
+| [cli-reference](cli-reference.md) | 2 | 2 | 1 | 🟢 | 🟢 | 5/5 | 2026-07-28 |  |
+| | 2:🟠 | 2:🟡 | 1:🟠 |  |  |  |  |  |
 | [configuration](configuration.md) | — | — | — | — | — | 0/0 |  |  |
 |  |  |  |  |  |  |  |  |  |
 | [conventions](conventions.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/1 | 2026-07-27 | ⚠️ |
@@ -99,8 +99,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **2** | **🟢** | **🟢** | **🟢** | **🟢** | **2/815** |  |  |
-| | 2:🟠 |  |  |  |  |  |  |  |
+| **Total** | **4** | **2** | **1** | **🟢** | **🟢** | **7/820** |  |  |
+| | 4:🟠 | 2:🟡 | 1:🟠 |  |  |  |  |  |
 
 ### Disabled specs
 
