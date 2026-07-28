@@ -23,8 +23,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [configuration](configuration.md) | — | — | — | — | — | 0/0 |  |  |
 |  |  |  |  |  |  |  |  |  |
-| [conventions](conventions.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1/2 | 2026-07-27 | ⚠️ |
-| | | 1:🟡 |  |  |  |  |  |  |
+| [conventions](conventions.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/2 | 2026-07-27 | ⚠️ |
+| | |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
 | [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | ⚠️ |
@@ -99,8 +99,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 | | 2:🟠 |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **7** | **4** | **1** | **🟢** | **🟢** | **12/830** |  |  |
-| | 6:🟠 1:🟡 | 1:🟠 3:🟡 | 1:🟠 |  |  |  |  |  |
+| **Total** | **7** | **3** | **1** | **🟢** | **🟢** | **11/830** |  |  |
+| | 6:🟠 1:🟡 | 1:🟠 2:🟡 | 1:🟠 |  |  |  |  |  |
 
 ### Disabled specs
 

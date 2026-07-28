@@ -259,7 +259,38 @@
       "enabled": true,
       "abbr": "CFG",
       "path": "docs/configuration.md",
-      "cache": null
+      "cache": {
+        "last_review": "2026-07-28T15:13:56+0200",
+        "open": {
+          "GAP": {
+            "H": 0,
+            "M": 2,
+            "L": 0
+          },
+          "COH": {
+            "H": 0,
+            "M": 1,
+            "L": 0
+          },
+          "DES": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          },
+          "SEC": {
+            "H": 0,
+            "M": 2,
+            "L": 0
+          },
+          "API": {
+            "H": 0,
+            "M": 0,
+            "L": 0
+          }
+        },
+        "resolved": 1,
+        "not_reviewed": []
+      }
     },
     "conventions": {
       "enabled": true,
@@ -276,7 +307,7 @@
           "COH": {
             "H": 0,
             "M": 0,
-            "L": 1
+            "L": 0
           },
           "DES": {
             "H": 0,
@@ -294,7 +325,7 @@
             "L": 0
           }
         },
-        "resolved": 1,
+        "resolved": 2,
         "not_reviewed": []
       }
     },

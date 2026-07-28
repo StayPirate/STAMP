@@ -822,7 +822,7 @@ still receiving diagnostics on stderr.
 
 | Code | Meaning | Examples |
 |------|---------|----------|
-| 0    | Success (includes idempotent no-ops) | Command completed, or state already reached |
+| 0    | Success (includes idempotent no-ops and user-cancelled confirmations) | Command completed, or state already reached, operator declined a confirmation prompt |
 | 1    | User error | Bad input, validation failure, concurrency conflict, unknown resource |
 | 2    | System error | Database unreachable, Redis unreachable, unhandled exception |
 | 130  | Interrupted by SIGINT (Ctrl+C) | Operator cancelled a long-running command |
