@@ -130,6 +130,30 @@ and logical grouping. Fix content accuracy issues identified during review.
     that `beat_max_loop_interval = 60` is fixed and MUST NOT be exposed
     as an environment variable — the derivation math and its rationale
     belong to `fetcher-infrastructure.md`
+12. **Finding NEW-3** (surfaced by `@docs-reviewer` during pre-execution
+    review, round 6): six variables — `DATABASE_URL`, `REDIS_URL`,
+    `CELERY_BROKER_URL`, `APP_NAME`, `DEBUG`, `CORS_ORIGINS` — list
+    `docs/architecture.md` in the "Defined in" column. Verification
+    confirmed `architecture.md` contains no formal definition for any of
+    them: no table, no type/default/constraint — only a generic
+    architectural statement ("This includes database and Redis
+    connection strings, CORS settings..."). No feature spec defines them
+    either (confirmed by a full-project search: none of the six names
+    appear in any `docs/features/**/*.md` definition table; some are
+    referenced operationally — e.g., `REDIS_URL` in
+    `health-endpoints.md` — but never formally defined).
+    `configuration.md` is, in practice, the sole authority for these six
+    variables, contradicting its own intro claim that "this document is
+    an aggregated reference, not the source of truth." `architecture.md`
+    was confirmed to be a high-level system-overview document (component
+    relationships, data flows, deployment model) — it is not the right
+    place to add a formal variable-definition table, so the fix is not
+    to populate `architecture.md` but to make `configuration.md` honest
+    about its own dual role. Fix: change "Defined in" to `—` for these
+    six rows, and add a sentence to the intro acknowledging that core
+    infrastructure variables (connection strings, application identity,
+    CORS) have no owning feature spec and are authoritatively defined in
+    `configuration.md` itself
 
 ### Content accuracy — evaluated and discarded
 
@@ -137,7 +161,7 @@ The following candidate fixes were proposed in earlier review rounds and
 discarded after verification. They are recorded here to prevent
 re-introduction in a future round.
 
-12. **Discarded — "Finding E" / IBS routing keys type change**: an
+13. **Discarded — "Finding E" / IBS routing keys type change**: an
     earlier round proposed changing `IBS_RABBITMQ_ROUTING_KEYS` from
     `string` to `list (comma-separated)` to "match" `CORS_ORIGINS`'s
     notation. This was based on a false premise: the two variables use
@@ -151,13 +175,13 @@ re-introduction in a future round.
     Relabeling it `list (comma-separated)` would be actively misleading,
     implying JSON-array parsing semantics it does not have. **No change
     needed.**
-13. **Discarded — cross-file update to `ibs-rabbitmq-integration.md`
-    (dependent on item 12)**: a follow-up finding proposed updating
+14. **Discarded — cross-file update to `ibs-rabbitmq-integration.md`
+    (dependent on item 13)**: a follow-up finding proposed updating
     `ibs-rabbitmq-integration.md:437` to keep it "in sync" with the
-    `configuration.md` change from item 12. Since item 12 itself is
+    `configuration.md` change from item 13. Since item 13 itself is
     discarded, this dependent fix is also discarded. No change to
     `ibs-rabbitmq-integration.md` is needed for this restructuring.
-14. **Discarded — JWT/session hard-failure restatement**: a follow-up
+15. **Discarded — JWT/session hard-failure restatement**: a follow-up
     finding proposed adding "(application refuses to start on invalid
     values)" to the `JWT_EXPIRY_HOURS` and `SESSION_MAX_LIFETIME_DAYS`
     descriptions in `configuration.md`, arguing that the contrast with
@@ -254,7 +278,7 @@ from H3 to H2, removing its false nesting under "Logging".
   - `deployment.md:235`: `` `https://sentinel.suse.de` `` →
     `` `["https://sentinel.suse.de"]` ``
 - **No change to `IBS_RABBITMQ_ROUTING_KEYS`** — see "Content accuracy
-  — evaluated and discarded" (items 12-13) above. It remains `string`
+  — evaluated and discarded" (items 13-14) above. It remains `string`
   with "Comma-separated" in the description, in both `configuration.md`
   and `ibs-rabbitmq-integration.md` (already consistent)
 - **Finding NEW-1 fix**: remove the specific rate-limit figures ("60
@@ -263,6 +287,19 @@ from H3 to H2, removing its false nesting under "Logging".
   (defers rate-limit specifics to `docs/data-sources.md`, which already
   documents them). Keep the operational fact ("required for
   `sync_ghsa_advisories`", "fetcher refuses to execute if empty")
+- **Finding NEW-3 fix**: change the "Defined in" column from
+  `docs/architecture.md` to `—` for the six rows: `DATABASE_URL`,
+  `REDIS_URL`, `CELERY_BROKER_URL` (Required Connection Settings table),
+  and `APP_NAME`, `DEBUG`, `CORS_ORIGINS` (Application table). Add one
+  sentence to the document's intro paragraph, immediately after the
+  existing "this document is an aggregated reference, not the source of
+  truth" statement: "Exception: core infrastructure variables with no
+  owning feature spec (connection strings, application identity, CORS)
+  are authoritatively defined in this document directly — their
+  'Defined in' column shows `—`." No change to `architecture.md` — it
+  is a high-level system-overview document (component relationships,
+  data flows, deployment model) and is not the right place for a
+  formal variable-definition table
 
 **Changes**: Table modifications in `docs/configuration.md` and
 `docs/deployment.md`.
@@ -270,13 +307,17 @@ from H3 to H2, removing its false nesting under "Logging".
 **Verification**: diff shows only column header additions/renames and
 the `CORS_ORIGINS` type/Default correction in `configuration.md`, plus
 the three `CORS_ORIGINS` value corrections in `deployment.md`, plus the
-`GITHUB_TOKEN` description trim. No other row content changes. Confirm
-`IBS_RABBITMQ_ROUTING_KEYS` is untouched in both `configuration.md` and
-`ibs-rabbitmq-integration.md`. Confirm `data-sources.md` still has the
-GHSA rate-limit figures (untouched — it is the owner). Grep for
-`CORS_ORIGINS` in both `configuration.md` and `deployment.md` to
-confirm every occurrence (outside of prose descriptions) uses JSON
-array syntax.
+`GITHUB_TOKEN` description trim, plus the six "Defined in" corrections
+and the one-sentence intro addition. No other row content changes.
+Confirm `IBS_RABBITMQ_ROUTING_KEYS` is untouched in both
+`configuration.md` and `ibs-rabbitmq-integration.md`. Confirm
+`architecture.md` is untouched by this phase. Confirm `data-sources.md`
+still has the GHSA rate-limit figures (untouched — it is the owner).
+Grep for `CORS_ORIGINS` in both `configuration.md` and `deployment.md`
+to confirm every occurrence (outside of prose descriptions) uses JSON
+array syntax. Grep for `docs/architecture.md` in the "Defined in"
+column of `configuration.md` to confirm no remaining occurrence for
+the six corrected rows.
 
 ---
 
@@ -408,7 +449,7 @@ and align `configuration.md` with the owning feature specs.
   `local-authentication.md:298-301`
 - **No corresponding change to `JWT_EXPIRY_HOURS` or
   `SESSION_MAX_LIFETIME_DAYS`** — see "Content accuracy — evaluated and
-  discarded" (item 14) above. Their existing "Must be >= 1" wording
+  discarded" (item 15) above. Their existing "Must be >= 1" wording
   already correctly conveys hard-fail behavior; that is the
   default-conforming case, not the exception
 
@@ -469,7 +510,7 @@ Remove `docs/drafts/configuration-restructure.md` and commit.
 | Phase | Risk | Mitigation |
 |-------|------|-----------|
 | 1 | Minimal | Single character change |
-| 2 | Low | Column additions, one type fix, CORS_ORIGINS bare-string fixes across two files, and one GITHUB_TOKEN description trim; row content otherwise unchanged |
+| 2 | Low | Column additions, one type fix, CORS_ORIGINS bare-string fixes across two files, one GITHUB_TOKEN description trim, and six "Defined in" corrections + one intro sentence; row content otherwise unchanged |
 | 3 | Medium | Block reordering; verified by line count + env var grep |
 | 4 | Medium | Two paragraph replacements (timezone validation, lock_timeout derivation) + one cross-reference redirect in `conventions.md`; verified by diff and confirmation that `fetcher-infrastructure.md` is untouched |
 | 5 | Low | Two small content fixes aligned with owning specs (re-verified against LDAP/Authentik confusion and LOGIN_* usage — both confirmed valid) |
