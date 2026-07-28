@@ -82,15 +82,20 @@ changing the semantic content of the document.
 
 **Changes to `docs/architecture.md`:**
 - Add `## Contents` (TOC) after `# Architecture`
-- Rename `## Deployment Portability` to `## Deployment`
+- Rename `## Deployment Portability` to `## Deployment`. Preserve the
+  introductory paragraph (lines 277-282, the portability rationale) as
+  the intro to the renamed section — it must NOT be dropped
 - Normalize heading casing:
   - "Configuration And Secrets" → "Configuration and Secrets"
   - "Health And Readiness" → "Health and Readiness"
-- Absorb `## Environments` section as `### Target Environments` inside
-  `## Deployment` (positioned as first subsection, before "Deployment
-  Target" which becomes "Container Images" predecessor — actually,
-  merge both "Deployment Target" and "Environments" into a single
-  "### Target Environments" subsection)
+- Merge `### Deployment Target` and `## Environments` into a single
+  `### Target Environments` subsection inside `## Deployment`
+  (positioned as first subsection). Structure of the merged content:
+  1. First: the portability principle from "Deployment Target" (the
+     bullet list and the closing paragraph about runtime differences)
+  2. Then: the concrete environment list from "Environments" (dev,
+     staging, production bullets)
+- Remove the now-empty `## Environments` section
 
 **Cross-reference updates:**
 - `docs/features/platform/health-endpoints.md:187` — update "Health And
@@ -110,6 +115,17 @@ changing the semantic content of the document.
 **Verification:** commit, then diff to confirm no content lost.
 
 ### Phase 3 — Content balancing
+
+**Changes to `docs/architecture.md` — High-Level Architecture diagram:**
+- Simplify the IBSEventConsumer box (lines 47-50): remove specific
+  event names (`package.commit`, `request.create`, `request.state_change`).
+  Replace with generic description:
+  ```
+  │  Consumes IBS events for         │
+  │  release & submission tracking.  │
+  ```
+  Rationale: same trimming philosophy as the text sections — event
+  names are implementation detail documented in the feature spec.
 
 **Changes to `docs/architecture.md` — External Integrations:**
 - **IBS**: keep architectural role (what it is, why we integrate).
