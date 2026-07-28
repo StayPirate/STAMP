@@ -128,9 +128,25 @@ changing the semantic content of the document.
   names are implementation detail documented in the feature spec.
 
 **Changes to `docs/architecture.md` — External Integrations:**
-- **IBS**: keep architectural role (what it is, why we integrate).
-  Remove: specific event names, fetcher schedule times, fetcher class
-  names. Keep cross-references to feature specs.
+- **IBS** — per-bullet decisions:
+
+  | # | Current bullet | Decision | Result |
+  |---|---|---|---|
+  | 1 | "Internal OBS instance at build.suse.de..." | KEEP as-is | Architectural definition |
+  | 2 | "Source packages are maintained in codestream projects..." | KEEP as-is | Architectural context |
+  | 3 | "Sentinel queries IBS to detect when security fixes..." | KEEP as-is | Architectural role |
+  | 4 | "Real-time event consumer: Sentinel connects to..." (7 lines) | TRIM | See target text below |
+  | 5 | "Submission tracking: the same RabbitMQ consumer..." (4 lines) | REMOVE | Absorbed into trimmed bullet 4 |
+  | 6 | "Package bugowner resolution: Sentinel queries IBS..." (3 lines) | KEEP as-is | Already at architectural level |
+  | 7 | "See `docs/features/packages/package-model.md`..." | KEEP as-is | Pure cross-ref |
+
+  **Bullet 4 target text** (replaces current bullets 4+5):
+  > - **Real-time event consumer**: Sentinel connects to the IBS RabbitMQ
+  >   message bus for near-real-time release and submission detection. A
+  >   periodic fetcher serves as catch-up for events missed during
+  >   downtime. See `docs/features/integrations/ibs-rabbitmq-integration.md`
+  >   for the full specification.
+
 - **SMELT**: keep role (what it is, what it provides). Remove: specific
   endpoint URLs, query parameters, pagination detail. Keep cross-refs
   to `package-model.md` and `product-catalog.md`.
@@ -144,17 +160,25 @@ changing the semantic content of the document.
 - Add one sentence in the `## Data Flow` intro: "Tickets can also be
   created manually without a CVE — see
   `docs/features/tickets/tickets.md`."
-- **Release Tracking Flow**: trim implementation details (fetcher class
-  names, schedule times, MD5 cache detail) that duplicate what is in
-  the feature specs. Replace with architectural description plus
-  cross-references. Specifically:
-  - Point 1: remove `detect_ibs_track_releases`, "every 24 hours at
-    02:00 UTC", "MD5 cache" — replace with "a periodic catch-up
-    fetcher" + cross-ref
-  - Point 2: remove `TicketPackageTrack.status` field name detail if
-    it goes beyond architectural level (keep the concept)
-  - Point 3: keep as-is (describes the architectural mechanism without
-    implementation names)
+- **Release Tracking Flow**: replace points 1 and 2 with the target
+  text below. Points 3-5 remain unchanged (already at architectural
+  level).
+
+  **Point 1 target text** (replaces current lines 247-251):
+  > 1. Track-level detection uses two complementary mechanisms: a
+  >    real-time event consumer (via IBS RabbitMQ) and a periodic
+  >    catch-up fetcher. See
+  >    `docs/features/integrations/ibs-rabbitmq-integration.md` and
+  >    `docs/features/packages/ibs-track-release-detection.md`.
+
+  **Point 2 target text** (replaces current lines 252-259):
+  > 2. **Track level**: the consumer or fetcher queries IBS to detect
+  >    whether the fix for the ticket's CVE has landed in the codestream
+  >    project. When detected, the track is marked as fixed. Separately,
+  >    delivery status transitions to released when the Release Request
+  >    (RR) is accepted. The two axes are independent. See
+  >    `docs/features/packages/ibs-track-release-detection.md` and
+  >    `docs/features/packages/ibs-submission-tracking.md`.
 
 **Verification for removed detail:** all 9 items confirmed to exist in:
 - `docs/features/integrations/ibs-rabbitmq-integration.md` (items 1)
