@@ -148,6 +148,20 @@
 
 **Status**: RESOLVED — Added `sentinel manage-user list` (with --active/--inactive, --role, --type filters, tabular output, no pagination limit) and `sentinel manage-user show` (detailed single-user view with role origins) CLI commands to `docs/features/identity/user-management.md`. (2026-05-06)
 
+### USM-GAP-036 — Multiple --role filter semantics on manage-user list (Medium)
+
+**Category**: Boundary conditions
+**Status**: OPEN
+
+The `sentinel manage-user list` command accepts repeatable `--role` parameters but neither `cli-reference.md` nor the owning spec `user-management.md` specifies whether multiple values are combined with OR logic (show users who have ANY of the specified roles) or AND logic (show users who have ALL specified roles). Two implementers could plausibly choose different behaviors. OR is more conventional for filters, but AND is also defensible for a "show me power users" use case. The API List Users endpoint uses a singular `role` parameter (not repeatable), so there's no API precedent to derive from.
+
+### USM-GAP-037 — No --role validation for invalid values on manage-user list (Medium)
+
+**Category**: Error paths
+**Status**: OPEN
+
+The `manage-user list` command accepts a `--role` filter parameter but its behavior section has no validation step for the role value. In contrast, the `create` and `update` commands in the same group explicitly validate role values and exit with `"Error: Invalid role '{value}'. Valid roles are: {list}."` An implementer might either (a) validate against the role enum and reject invalid values with exit 1 (consistent with sibling commands), or (b) pass the invalid value through to the query, returning zero results silently (consistent with the spec as written). Silent empty results for a typo'd role name would be surprising to operators.
+
 ---
 
 ## Coherence

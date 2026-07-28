@@ -15,16 +15,16 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [audit-trail-infrastructure](audit-trail-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/18 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [authentication](authentication.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/64 | 2026-05-18 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [authentication](authentication.md) | 🟢 | 1 | 1 | 🟢 | 🟢 | 2/66 | 2026-05-18 | ⚠️ |
+| | | 1:🟡 | 1:🟠 |  |  |  |  |  |
 | [cli-infrastructure](cli-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-22 |  |
 |  |  |  |  |  |  |  |  |  |
-| [cli-reference](cli-reference.md) | 2 | 2 | 1 | 🟢 | 🟢 | 5/5 | 2026-07-28 |  |
-| | 2:🟠 | 2:🟡 | 1:🟠 |  |  |  |  |  |
+| [cli-reference](cli-reference.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-28 |  |
+|  |  |  |  |  |  |  |  |  |
 | [configuration](configuration.md) | — | — | — | — | — | 0/0 |  |  |
 |  |  |  |  |  |  |  |  |  |
-| [conventions](conventions.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/1 | 2026-07-27 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [conventions](conventions.md) | 🟢 | 1 | 🟢 | 🟢 | 🟢 | 1/2 | 2026-07-27 | ⚠️ |
+| | | 1:🟡 |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
 | [cve-fetcher-infrastructure](cve-fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/11 | 2026-06-29 | ⚠️ |
@@ -95,11 +95,11 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/93 | 2026-05-09 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [user-management](user-management.md) | 2 | 🟢 | 🟢 | 🟢 | 🟢 | 2/95 | 2026-05-09 | ⚠️ |
+| | 2:🟠 |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **7** | **4** | **1** | **🟢** | **🟢** | **12/825** |  |  |
+| **Total** | **7** | **4** | **1** | **🟢** | **🟢** | **12/830** |  |  |
 | | 6:🟠 1:🟡 | 1:🟠 3:🟡 | 1:🟠 |  |  |  |  |  |
 
 ### Disabled specs

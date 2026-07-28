@@ -14,7 +14,12 @@ No findings.
 
 ## Coherence
 
-No findings.
+### CONV-COH-001 — Exit code 0 description drift vs cli-reference.md (Low)
+
+**Category**: Source-of-truth conflict
+**Status**: OPEN
+
+`cli-reference.md` states exit codes are "defined in `docs/conventions.md`, Exit Codes" and then defines exit code 0 as "Success (includes idempotent no-ops and user-cancelled confirmations)." However, `conventions.md` defines exit code 0 as "Success (includes idempotent no-ops)" without the "user-cancelled confirmations" addition. The extension is semantically correct (backed by `cli-infrastructure.md` which defines that declining a confirmation prompt exits with code 0), but `cli-reference.md` claims to restate the `conventions.md` table while silently extending it.
 
 ---
 

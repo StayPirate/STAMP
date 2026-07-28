@@ -157,6 +157,13 @@
 
 **Status**: RESOLVED — Replaced hardcoded "30 days" with SESSION_MAX_LIFETIME_DAYS reference in sso-authentication.md (2026-05-18)
 
+### AUT-COH-012 — API key states terminology inconsistency (Low)
+
+**Category**: Terminology
+**Status**: OPEN
+
+`cli-reference.md` describes `api-key list` as listing "active, revoked, and expired" keys, while `authentication.md` describes the same command as listing "active and revoked" keys. However, `authentication.md` itself then includes "expired" as a distinct status in its output format line: `status (active/revoked/expired)`. `cli-reference.md` is actually more accurate by including all three states. The inconsistency is internal to `authentication.md` (its description omits "expired" despite including it in the output format).
+
 ---
 
 ## Design
@@ -192,6 +199,13 @@
 ### AUTH-DES-08 — Session model missing `updated_at` column referenced by cleanup logic (Low)
 
 **Status**: RESOLVED — Cross-agent duplicate of AUTH-COH-08 (2026-05-18)
+
+### AUT-DES-009 — No CLI command for API key creation — headless bootstrapping gap (Medium)
+
+**Category**: Operational completeness
+**Status**: OPEN
+
+The `sentinel api-key` group defines only `list` and `revoke` commands, but no `create` command. In a headless environment (container, CI staging, server without a browser), there is no CLI way to create API keys for programmatic access. The only path is a multi-step curl sequence: `POST /api/v1/auth/login` to get a session cookie, then `POST /api/v1/auth/api-keys`. The CLI already has the mutating `api-key revoke` command, so adding `api-key create --username <username> [--name <label>] [--expires-at <datetime>]` would be consistent. The `authentication.md` self-replication security concern ("API-key-authenticated requests cannot create new API keys") doesn't apply to CLI where shell access implies maximum trust.
 
 ---
 
