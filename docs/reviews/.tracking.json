@@ -1,5 +1,11 @@
 {
   "specs": {
+    "architecture": {
+      "enabled": true,
+      "abbr": "ARCH",
+      "path": "docs/architecture.md",
+      "cache": null
+    },
     "api-key-service": {
       "enabled": true,
       "abbr": "AKS",

@@ -7,6 +7,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 
 | Spec | GAP | COH | DES | SEC | API | Open | Last Review | Stale |
 |------|-----|-----|-----|-----|-----|------|-------------|-------|
+| [architecture](architecture.md) | — | — | — | — | — | 0/0 |  |  |
+|  |  |  |  |  |  |  |  |  |
 | [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [api-spec](api-spec.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-27 |  |
