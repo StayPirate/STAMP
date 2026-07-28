@@ -179,9 +179,9 @@ Sentinel follows the **"UTC everywhere, local display"** convention:
   configured with `timezone = "UTC"` and `enable_utc = True` (the
   Celery 4+ defaults). These settings MUST NOT be overridden in any
   environment — the Celery app factory validates them at module import
-   time and refuses to start any process if they are incorrect (see
-   `docs/features/platform/fetcher-infrastructure.md`, Startup
-   Validation)
+  time and refuses to start any process if they are incorrect (see
+  `docs/features/platform/fetcher-infrastructure.md`, Startup
+  Validation)
 - **API responses**: all datetime values are serialized in UTC with the
   `Z` suffix (e.g., `2025-03-15T10:30:00Z`)
 - **API inputs**: datetime filter parameters (e.g., `from_date`,
