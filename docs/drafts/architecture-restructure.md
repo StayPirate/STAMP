@@ -1,0 +1,172 @@
+# Architecture Restructure Plan
+
+## Objective
+
+Reorganize `docs/architecture.md` to improve structural consistency,
+reduce section imbalance, and fix misplaced subsections — without
+changing the semantic content of the document.
+
+## Current Problems
+
+1. **"Deployment Portability" is oversized and misnamed** — 9 subsections
+   (~150 lines, one-third of the file), several of which are not about
+   portability (Repository Scope, Clock Synchronization, API Routing)
+2. **Orphaned tail sections** — "Environments" (3 bullets), "Security
+   Considerations" (4 bullets), "Observability" (1 paragraph) give the
+   impression of an unfinished document
+3. **Missing Table of Contents** — 459 lines with deep nesting, no TOC
+4. **Data Flow asymmetry** — "Manual Ticket Creation" is a single
+   paragraph, not a flow, and already documented in `tickets.md`
+5. **External Integrations detail asymmetry** — IBS gets 22 lines with
+   implementation details (event names, schedules) while others get 3-5
+   lines; all detail already lives in feature specs
+6. **Inconsistent heading casing** — "Configuration And Secrets",
+   "Health And Readiness" capitalize conjunctions
+
+## Decisions Made
+
+- "Clock Synchronization" stays in Deployment (operational requirement)
+- "Security Considerations" and "Observability" remain as placeholders
+  for future expansion
+- Implementation detail removed from External Integrations is confirmed
+  to exist in feature specs (all 9 items verified)
+
+## Target Structure
+
+```
+# Architecture
+├── Contents (TOC)
+├── System Overview
+├── High-Level Architecture (diagram)
+├── Components
+│   ├── Backend (FastAPI) [absorbs API Routing]
+│   │   └── Backend Layers
+│   ├── Task Queue (Celery)
+│   ├── Database (PostgreSQL)
+│   └── External Integrations
+│       ├── CVE Sources
+│       ├── IBS (trimmed)
+│       ├── SMELT (trimmed)
+│       ├── AIMAAS (trimmed)
+│       ├── OBS
+│       └── External Identity Provider
+├── Data Flow
+│   ├── CVE Ingestion Flow
+│   ├── Package Affectedness Flow
+│   └── Release Tracking Flow
+├── Deployment [renamed from "Deployment Portability"]
+│   ├── Target Environments [merged from "Environments"]
+│   ├── Container Images
+│   ├── Runtime State
+│   ├── Configuration and Secrets [casing fix]
+│   ├── Database Migrations
+│   ├── Singleton Processes
+│   ├── Clock Synchronization
+│   └── Health and Readiness [casing fix]
+├── Repository Scope [promoted to top-level]
+├── Observability
+└── Security Considerations
+```
+
+## Execution Phases
+
+### Phase 1 — Structural skeleton and headings
+
+**Changes to `docs/architecture.md`:**
+- Add `## Contents` (TOC) after `# Architecture`
+- Rename `## Deployment Portability` to `## Deployment`
+- Normalize heading casing:
+  - "Configuration And Secrets" → "Configuration and Secrets"
+  - "Health And Readiness" → "Health and Readiness"
+- Absorb `## Environments` section as `### Target Environments` inside
+  `## Deployment` (positioned as first subsection, before "Deployment
+  Target" which becomes "Container Images" predecessor — actually,
+  merge both "Deployment Target" and "Environments" into a single
+  "### Target Environments" subsection)
+
+**Cross-reference updates:**
+- `docs/features/platform/health-endpoints.md:187` — update "Health And
+  Readiness" → "Health and Readiness"
+
+**Verification:** commit, then diff to confirm no content lost.
+
+### Phase 2 — Relocate misplaced subsections
+
+**Changes to `docs/architecture.md`:**
+- Move `### Repository Scope` to top-level `## Repository Scope`
+  (between "Deployment" and "Observability")
+- Move content of `### API Routing` into `### Backend (FastAPI)` under
+  Components (as a bullet point)
+- Remove empty `### API Routing` subsection
+
+**Cross-reference updates:** none expected (no external file references
+these sections by name).
+
+**Verification:** commit, then diff to confirm no content lost.
+
+### Phase 3 — Content balancing
+
+**Changes to `docs/architecture.md` — External Integrations:**
+- **IBS**: keep architectural role (what it is, why we integrate).
+  Remove: specific event names, fetcher schedule times, fetcher class
+  names. Keep cross-references to feature specs.
+- **SMELT**: keep role (what it is, what it provides). Remove: specific
+  endpoint URLs, query parameters, pagination detail. Keep cross-refs
+  to `package-model.md` and `product-catalog.md`.
+- **AIMAAS**: same as SMELT — remove endpoint URLs and CPE matching
+  detail. Keep cross-refs.
+
+**Changes to `docs/architecture.md` — Data Flow:**
+- Remove `### Manual Ticket Creation` as standalone subsection
+- Add one sentence in the `## Data Flow` intro: "Tickets can also be
+  created manually without a CVE — see
+  `docs/features/tickets/tickets.md`."
+
+**Verification for removed detail:** all 9 items confirmed to exist in:
+- `docs/features/integrations/ibs-rabbitmq-integration.md` (items 1)
+- `docs/features/packages/ibs-track-release-detection.md` (item 2)
+- `docs/features/packages/ibs-submission-tracking.md` (item 3)
+- `docs/features/packages/package-bugowner.md` (item 4)
+- `docs/features/packages/product-catalog.md` (items 5, 8, 9)
+- `docs/features/packages/package-model.md` (items 6, 7)
+
+**Cross-reference updates:** verify no external file points to
+"Manual Ticket Creation" as a section name.
+
+**Verification:** commit, then diff to confirm no information lost
+(all removed detail exists in referenced specs).
+
+### Phase 4 — Final cross-reference audit
+
+- Full grep of all `.md` files for references to `architecture.md`
+  with section names
+- Verify each textual reference matches an existing heading
+- Fix any remaining broken references
+
+**Verification:** commit only if fixes are needed.
+
+### Final step 1 — Reviewers
+
+Run the following reviewers on `docs/architecture.md`:
+- `@docs-reviewer`
+- `@docs-placement-reviewer`
+- `@spec-coherence-reviewer`
+
+Address any "Needs revision" findings before proceeding.
+
+### Final step 2 — Delete this draft
+
+Remove `docs/drafts/architecture-restructure.md` and commit.
+
+## Cross-Reference Inventory
+
+Section names in `architecture.md` referenced by other files:
+
+| Section name | Referenced by | Action |
+|---|---|---|
+| "Singleton Processes" | `docs/deployment.md:408` | Unchanged |
+| "Container Images" | `docs/conventions.md:1013`, `docs/features/platform/logging.md` (x3) | Unchanged |
+| "Runtime State" | `docs/features/platform/logging.md` (x2) | Unchanged |
+| "Clock Synchronization" | `docs/features/identity/sso-authentication.md:175` | Unchanged |
+| "Health And Readiness" | `docs/features/platform/health-endpoints.md:187` | → "Health and Readiness" (Phase 1) |
+| "Deployment Portability" | `docs/reviews/sso-authentication.md:33` | Historical review note, no update needed |
