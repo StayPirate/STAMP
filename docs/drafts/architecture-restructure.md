@@ -117,15 +117,15 @@ changing the semantic content of the document.
 ### Phase 3 — Content balancing
 
 **Changes to `docs/architecture.md` — High-Level Architecture diagram:**
-- Rename the box title from `IBSEventConsumer` to `IBS Event Consumer`
-  (descriptive form, consistent with Container Images section naming
-  and the trimming philosophy of removing class names)
+- Rename the box title from `IBSEventConsumer` to `IBS RabbitMQ Consumer`
+  (matches the canonical process role name in Container Images section;
+  diagram uses title case for box labels)
 - Simplify the box content (lines 47-50): remove specific event names
   (`package.commit`, `request.create`, `request.state_change`).
   Replace with generic description. Full target box:
   ```
   ┌──────────────────┐     ┌──────────────────────────────────┐
-  │  IBS RabbitMQ    │────▶│      IBS Event Consumer           │
+  │  IBS RabbitMQ    │────▶│     IBS RabbitMQ Consumer         │
   │ (rabbit.suse.de) │     │                                  │
   └──────────────────┘     │  Consumes IBS events for         │
                            │  release & submission tracking.  │
@@ -193,9 +193,9 @@ changing the semantic content of the document.
 - Add one sentence in the `## Data Flow` intro: "Tickets can also be
   created manually without a CVE — see
   `docs/features/tickets/tickets.md`."
-- **Release Tracking Flow**: replace points 1 and 2 with the target
-  text below. Points 3-5 remain unchanged (already at architectural
-  level).
+- **Release Tracking Flow**: replace points 1, 2, and 3 with the
+  target text below. Points 4-5 remain unchanged (already at
+  architectural level).
 
   **Point 1 target text** (replaces current lines 247-251):
   > 1. Track-level detection uses two complementary mechanisms: a
@@ -213,13 +213,27 @@ changing the semantic content of the document.
   >    `docs/features/packages/ibs-track-release-detection.md` and
   >    `docs/features/packages/ibs-submission-tracking.md`.
 
-**Verification for removed detail:** all 9 items confirmed to exist in:
-- `docs/features/integrations/ibs-rabbitmq-integration.md` (items 1)
-- `docs/features/packages/ibs-track-release-detection.md` (item 2)
-- `docs/features/packages/ibs-submission-tracking.md` (item 3)
-- `docs/features/packages/package-bugowner.md` (item 4)
-- `docs/features/packages/product-catalog.md` (items 5, 8, 9)
-- `docs/features/packages/package-model.md` (items 6, 7)
+  **Point 3 target text** (replaces current lines 260-265):
+  > 3. **Product level**: workers query product update repositories to
+  >    detect advisories that reference the ticket's CVE. A multi-step
+  >    package match identifies the specific source package fixed by the
+  >    advisory. When matched, the product is recorded with the
+  >    advisory's issue date. See
+  >    `docs/features/packages/ibs-product-release-detection.md`.
+
+  Removes from point 3: file names (`updateinfo.xml`, `primary.xml`),
+  model field name (`TicketPackageProduct.released_at`), cascade step
+  names, XML element name. Keeps: the architectural mechanism (query
+  repos → find advisories → match packages → record date).
+
+**Verification for removed detail:** all items confirmed to exist in:
+- `docs/features/integrations/ibs-rabbitmq-integration.md` (IBS events)
+- `docs/features/packages/ibs-track-release-detection.md` (track fetcher)
+- `docs/features/packages/ibs-submission-tracking.md` (submission fetcher)
+- `docs/features/packages/ibs-product-release-detection.md` (product detection)
+- `docs/features/packages/package-bugowner.md` (bugowner)
+- `docs/features/packages/product-catalog.md` (SMELT/AIMAAS endpoints)
+- `docs/features/packages/package-model.md` (SMELT maintainedpackage)
 
 **Cross-reference updates:** verify no external file points to
 "Manual Ticket Creation" as a section name.
