@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated, Any
 
-from pydantic import Field, SecretStr, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BeforeValidator, Field, SecretStr, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+def _split_comma(value: Any) -> Any:
+    """Split a comma-separated string into a list of stripped, non-empty items."""
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return value
+
+
+CommaSeparated = Annotated[list[str], NoDecode, BeforeValidator(_split_comma)]
 
 
 class Settings(BaseSettings):
@@ -36,7 +47,7 @@ class Settings(BaseSettings):
     celery_broker_url: str = Field(default="redis://localhost:6379/1", repr=False)
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins: CommaSeparated = ["http://localhost:5173"]
 
     # IBS Integration
     ibs_api_url: str = "https://api.suse.de"

@@ -232,6 +232,12 @@ it for local development. Variables excluded:
 3. Implement the field in `config.py` when the feature is implemented
 4. Add to `.env.example` only if it meets the inclusion criteria
 
+**List-type environment variables**: environment variables whose
+application type is a list of strings use comma-separated format — not
+JSON arrays. The `config.py` field uses a `CommaSeparated` type alias
+(defined in the same module via `NoDecode` + `BeforeValidator`) to
+parse the value. Example: `CORS_ORIGINS=http://a.com,http://b.com`.
+
 ## Python (Backend)
 
 ### Style

@@ -50,7 +50,7 @@ policy, and container resource limits.
 |---------|------|---------|-------------|------------|
 | `APP_NAME` | string | `sentinel` | Application name (used in logs, health endpoint) | — |
 | `DEBUG` | bool | `false` | Enable verbose error responses (stack traces in API errors). Does not affect logging — see `docs/features/platform/logging.md` | — |
-| `CORS_ORIGINS` | list (JSON array) | `["http://localhost:5173"]` | Allowed CORS origins for API consumers | — |
+| `CORS_ORIGINS` | list (comma-separated) | `http://localhost:5173` | Allowed CORS origins for API consumers | — |
 
 ## Logging
 

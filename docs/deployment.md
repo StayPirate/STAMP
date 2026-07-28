@@ -163,7 +163,7 @@ SSO_CLIENT_SECRET=<your-client-secret>
 SSO_REDIRECT_URI=http://localhost:5173/auth/callback
 
 # CORS
-CORS_ORIGINS=["http://localhost:5173"]
+CORS_ORIGINS=http://localhost:5173
 
 # Debug
 DEBUG=true
@@ -193,7 +193,7 @@ cd backend && uv run python -m sentinel manage-user create \
 | `SSO_CLIENT_ID` | Same as production | Single client registration |
 | `SSO_CLIENT_SECRET` | Same as production | Single client registration |
 | `SSO_REDIRECT_URI` | `https://sentinel-staging.suse.de/auth/callback` | Must match IdP registration |
-| `CORS_ORIGINS` | `["https://sentinel-staging.suse.de"]` | |
+| `CORS_ORIGINS` | `https://sentinel-staging.suse.de` | |
 | `DEBUG` | `false` | Never enable debug in staging |
 | `IBS_API_URL` | `https://api.suse.de` | |
 | `IBS_USERNAME` / `IBS_PASSWORD` | Service account credentials | |
@@ -232,7 +232,7 @@ Same as staging, with these differences:
 | Setting | Value | Notes |
 |---------|-------|-------|
 | `SSO_REDIRECT_URI` | `https://sentinel.suse.de/auth/callback` | Production URI |
-| `CORS_ORIGINS` | `["https://sentinel.suse.de"]` | |
+| `CORS_ORIGINS` | `https://sentinel.suse.de` | |
 | `JWT_SECRET_KEY` | Unique production secret | Different from staging |
 
 #### Deployment Steps
