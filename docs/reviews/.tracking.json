@@ -187,6 +187,12 @@
         "not_reviewed": []
       }
     },
+    "cli-reference": {
+      "enabled": true,
+      "abbr": "CLIR",
+      "path": "docs/cli-reference.md",
+      "cache": null
+    },
     "configuration": {
       "enabled": true,
       "abbr": "CFG",

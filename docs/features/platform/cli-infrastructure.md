@@ -44,7 +44,7 @@ explicit per-command opt-in.
 | `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the `asyncio.run()` session mechanism defined here for its read-only queries. |
 | `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the async service contracts invoked from within the `asyncio.run()` mechanism defined here. |
 | `docs/features/platform/system-settings.md` | Defines the system settings mechanism consumed by the Configuration Guard decorator. |
-| `docs/cli-reference.md` | Catalog: index table of all CLI commands, cross-referencing this spec for the shared mechanism. |
+| `docs/cli-reference.md` | Catalog: quick-reference index of all CLI commands with synopses, cross-referencing owning feature specs for full details. |
 
 ## Package Entry Point & Invocation
 
