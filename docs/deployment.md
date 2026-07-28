@@ -562,6 +562,62 @@ alembic revision --autogenerate -m "description"
 - In Kubernetes: use a Job that runs before the Deployment rollout
 - In Docker/Podman: run as a one-shot container before starting services
 
+#### Migration Failure Recovery
+
+**Recovery strategy: fix-forward.** Sentinel does not support `alembic
+downgrade` in production. When a migration fails, the operator corrects
+the root cause (network issue, disk space, code bug) and re-runs
+`alembic upgrade head`. Migrations are not required to implement a
+functional `downgrade()` function.
+
+**PostgreSQL transactional DDL.** PostgreSQL executes DDL statements
+(`CREATE TABLE`, `ALTER TABLE`, `DROP COLUMN`, etc.) inside
+transactions. If a migration fails for any reason, the transaction is
+rolled back automatically — the schema returns to its pre-migration
+state. This eliminates the most dangerous failure mode (partially
+applied schema changes) that affects other databases.
+
+**Diagnostics.** After a migration failure, run `alembic current` to
+determine the database state. If it reports the pre-migration revision,
+the transactional rollback succeeded and the schema is intact. If it
+reports an unexpected state, compare the `alembic_version` table
+contents against the actual schema objects to assess the situation
+before re-running.
+
+**Deployment model: stop-the-world.** All application processes (API
+server, Celery workers, Celery Beat, IBS consumer) must be stopped
+before running migrations, then restarted with the new code version.
+There is no requirement for backward compatibility between the schema
+of version N and the application code of version N-1. This simplifies
+migration authoring — schema changes do not need to be split across
+multiple releases to maintain compatibility with running code.
+
+#### Post-Deployment Recovery
+
+When a deployment succeeds (migrations applied, new code running) but a
+critical application bug is discovered afterward, the recovery strategy
+is also fix-forward:
+
+1. **Immediate mitigation**: stop all application processes
+   (stop-the-world) to prevent the bug from causing further damage.
+   The system is unavailable during this window
+2. **Prepare a hotfix**: create a patch release that fixes the bug.
+   This is a new forward version, not a rollback to a previous one
+3. **Deploy the hotfix**: run any pending migrations (if any) and
+   restart services with the hotfix version
+
+**Do not deploy a previous container image.** Because the database
+schema is not required to be backward-compatible with older code
+versions, deploying an older image against the current schema may cause
+query failures, data corruption, or silent data loss. The only safe
+recovery direction is forward.
+
+**Pre-deployment database backup.** Before every production deployment,
+take a database backup (e.g., `pg_dump`) so that in the extreme case
+where a bug has already corrupted data, the database can be restored to
+a consistent pre-deployment state. The backup is a safety net, not the
+primary recovery mechanism — fix-forward remains the standard path.
+
 ### Health Checks
 
 The API exposes lightweight liveness and readiness checks so

@@ -387,6 +387,13 @@ strategies:
 | **State-machine** | `VARCHAR(N)` + `CHECK` constraint | Alembic migration (reversible) |
 | **Classification** | `VARCHAR(N)` + Python `StrEnum` in `app/core/enums.py` | Code change only |
 
+**Migration reversibility note**: "reversible" in the table above means
+the migration file contains both `upgrade()` and `downgrade()` functions
+so that the CHECK constraint change can be rolled back during
+development. It does not imply that `alembic downgrade` is supported in
+production — see `docs/deployment.md` (Migration Failure Recovery) for
+the production recovery policy (fix-forward only).
+
 **Classification criterion**: a column uses a CHECK constraint if and
 only if (a) the value is part of a state machine whose transitions are
 managed by application code, or (b) the value has direct security
