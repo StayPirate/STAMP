@@ -70,7 +70,19 @@ and logical grouping. Fix content accuracy issues identified during review.
    the detail is trimmed from `configuration.md`, that reference would
    become misleading (pointing to a section that no longer has the
    answer). The fix must also redirect `conventions.md:182-183` to
-   `fetcher-infrastructure.md` (Startup Validation) — see Phase 4
+   `fetcher-infrastructure.md` (Startup Validation) — see Phase 4.
+   **Extended further (round 6)**: `deployment.md:469-474` has the same
+   reference pattern — "(see `docs/configuration.md`, Celery Worker
+   Configuration)" in the same context (Celery timezone startup
+   validation). Lower severity than the `conventions.md` case, because
+   `deployment.md`'s surrounding paragraph already states the full
+   operational fact (app factory, module import time, RuntimeError) —
+   the reference is a one-hop redirect to a still-relevant section
+   (env var table + forward cross-reference), not a dangling pointer to
+   an empty answer. For consistency with the "verify inbound references"
+   principle, redirect it in the same phase to
+   `fetcher-infrastructure.md` (Startup Validation), same as
+   `conventions.md`
 8. **Finding D**: `LOGIN_MAX_ATTEMPTS` and `LOGIN_LOCKOUT_MINUTES`
    descriptions say "Must be >= 1", implying hard failure. The owning
    spec (`local-authentication.md:298-301`) specifies graceful fallback
@@ -363,8 +375,9 @@ name confirms no loss.
 Configuration" section to organize the existing prose into navigable
 units. Simultaneously, replace two instances of verbatim-duplicated
 prose (startup validation, `lock_timeout` derivation) with brief
-cross-references, and redirect one dangling inbound reference in
-`conventions.md` uncovered by the Finding B extension.
+cross-references, and redirect two inbound references (one dangling in
+`conventions.md`, one non-dangling but inconsistent in `deployment.md`)
+uncovered by the Finding B extension.
 
 **Sub-sections**:
 - `### Timezone Enforcement` — wraps the "fixed" paragraph. The
@@ -411,6 +424,19 @@ Configuration)" reference points to the environment variable catalog
 valid in `configuration.md` after this phase — that reference is not
 about the validation mechanism and does not become dangling.
 
+**Finding B fix, extended further — same pattern in `deployment.md`
+(round 6)**: `deployment.md:469-474` contains the same reference
+pattern: "...this prevents any Celery-based process from starting with
+incorrect timezone configuration (see `docs/configuration.md`, Celery
+Worker Configuration)". Update this cross-reference the same way, to
+`docs/features/platform/fetcher-infrastructure.md` (Startup
+Validation). Unlike the `conventions.md` case, this is not a dangling
+reference (the surrounding paragraph in `deployment.md` already states
+the full operational fact independently, and `configuration.md`'s
+section still has relevant content after the trim), but redirecting it
+keeps the two fixes consistent with the "verify inbound references"
+principle and points the reader directly at the actual owner.
+
 **Finding NEW-2 fix detail**: the current text (lines 89-92) reproduces
 the `lock_timeout` derivation math and crash-recovery rationale already
 specified in `fetcher-infrastructure.md:1545,1551,1553` (Redbeat
@@ -420,9 +446,10 @@ the duplicated derivation.
 
 **Verification**: diff shows inserted heading lines, the replaced
 startup validation paragraph, the replaced `lock_timeout` derivation
-paragraph, and the one-line cross-reference update in `conventions.md`.
-All other prose text appears unchanged. Confirm
-`fetcher-infrastructure.md` is untouched by this phase.
+paragraph, and the one-line cross-reference updates in both
+`conventions.md` and `deployment.md`. All other prose text appears
+unchanged. Confirm `fetcher-infrastructure.md` is untouched by this
+phase.
 
 ---
 
@@ -467,22 +494,24 @@ specs exactly.
 **Scope**: Full-project search for any broken references to
 `docs/configuration.md` (with or without anchors), to the modified
 section of `sso-authentication.md`, to the modified `CORS_ORIGINS`
-examples in `deployment.md`, and to the redirected cross-reference in
-`conventions.md`. Since no section was renamed, this phase is expected
-to be a no-op verification for anchors; the `deployment.md` check is a
-content-correctness re-verification, not an anchor check.
+examples in `deployment.md`, and to the redirected cross-references in
+`conventions.md` and `deployment.md`. Since no section was renamed,
+this phase is expected to be a no-op verification for anchors; the
+`deployment.md` checks are content-correctness re-verifications, not
+anchor checks.
 
 **Verification**: grep for `configuration.md` and
 `sso-authentication.md` across the project to confirm all textual
 section references still match actual heading text. Separately, grep
 for `CORS_ORIGINS` in `deployment.md` to confirm all three corrected
 lines use JSON array syntax and no other bare-string occurrence
-remains. Confirm `conventions.md:182-183` now points to
-`fetcher-infrastructure.md` (Startup Validation) and no other document
-still points to `configuration.md` for the Celery startup validation
-mechanism. Confirm `fetcher-infrastructure.md:1478-1484` is unchanged.
-Confirm `data-sources.md` GHSA rate-limit figures are unchanged (still
-the sole owner after the `GITHUB_TOKEN` trim in Phase 2).
+remains. Confirm `conventions.md:182-183` and `deployment.md:469-474`
+both now point to `fetcher-infrastructure.md` (Startup Validation) and
+no other document still points to `configuration.md` for the Celery
+startup validation mechanism. Confirm `fetcher-infrastructure.md:1478-1484`
+is unchanged. Confirm `data-sources.md` GHSA rate-limit figures are
+unchanged (still the sole owner after the `GITHUB_TOKEN` trim in
+Phase 2).
 
 ---
 
@@ -496,6 +525,8 @@ Invoke the following reviewers on the final state:
   (due to Finding A addition)
 - `@docs-reviewer` on `docs/conventions.md` (due to the cross-reference
   redirect in Finding B, extended)
+- `@docs-reviewer` on `docs/deployment.md` (due to the cross-reference
+  redirect in Finding B, extended further — round 6)
 
 Address any issues rated "Needs revision" before proceeding.
 
@@ -512,7 +543,7 @@ Remove `docs/drafts/configuration-restructure.md` and commit.
 | 1 | Minimal | Single character change |
 | 2 | Low | Column additions, one type fix, CORS_ORIGINS bare-string fixes across two files, one GITHUB_TOKEN description trim, and six "Defined in" corrections + one intro sentence; row content otherwise unchanged |
 | 3 | Medium | Block reordering; verified by line count + env var grep |
-| 4 | Medium | Two paragraph replacements (timezone validation, lock_timeout derivation) + one cross-reference redirect in `conventions.md`; verified by diff and confirmation that `fetcher-infrastructure.md` is untouched |
+| 4 | Medium | Two paragraph replacements (timezone validation, lock_timeout derivation) + cross-reference redirects in `conventions.md` and `deployment.md`; verified by diff and confirmation that `fetcher-infrastructure.md` is untouched |
 | 5 | Low | Two small content fixes aligned with owning specs (re-verified against LDAP/Authentik confusion and LOGIN_* usage — both confirmed valid) |
 | 6 | Low | Verification pass; likely no-op |
 | 7 | None | Read-only review |
