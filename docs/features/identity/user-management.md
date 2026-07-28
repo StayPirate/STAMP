@@ -437,9 +437,20 @@ provided, all users are shown regardless of status.
 
 **Behavior**:
 
-1. Query all users matching the provided filters
-2. Sort results alphabetically by username
-3. Print a table to stdout with columns:
+1. For each `--role` value provided, validate that it is a recognized
+   role. If any value is invalid, exit with error:
+   `"Error: Invalid role '{value}'. Valid roles are: {list}."`
+   The list of valid roles is derived from the system's role definitions
+   at runtime
+2. If `--type` is provided, validate that the value is `local` or
+   `external`. If invalid, exit with error:
+   `"Error: Invalid type '{value}'. Valid types are: local, external."`
+3. Query all users matching the provided filters. When multiple
+   `--role` values are provided, return users with at least one of the
+   specified roles (OR semantics per `docs/conventions.md`, Repeatable
+   filter semantics)
+4. Sort results alphabetically by username
+5. Print a table to stdout with columns:
 
 ```
 USERNAME        FULL NAME            EMAIL                    TYPE       STATUS    ROLES
@@ -456,8 +467,9 @@ specified criteria."` and exits with code 0.
 
 **Idempotency**: Idempotent. Read-only command, no state changes.
 
-**Exit codes**: 0 on success (including empty results), 2 on system
-error (database unreachable).
+**Exit codes**: 0 on success (including empty results), 1 on validation
+error (invalid role or type value), 2 on system error (database
+unreachable).
 
 **Output channels**: table to stdout. `"Error: ..."` messages to stderr.
 
@@ -533,7 +545,10 @@ Query parameters:
 - `type` (enum, optional): filter by authentication type. Values:
   `local`, `external`
 - `active` (boolean, optional): filter by active status
-- `role` (enum, optional): filter by role (`admin`, `vulnerability_analyst`, `restricted_analyst`)
+- `role` (enum, repeatable, optional): filter by role (`admin`,
+  `vulnerability_analyst`, `restricted_analyst`). Multiple values use
+  OR semantics — returns users with at least one of the specified
+  roles (e.g., `?role=admin&role=vulnerability_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
   least one role, `false` for users with no roles
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,

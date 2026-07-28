@@ -696,7 +696,7 @@ Returns the audit trail of admin actions for a fetcher.
 |---|---|---|---|
 | `page` | int | 1 | Page number |
 | `per_page` | int | 20 | Items per page (max 100) |
-| `event_type` | string | -- | Comma-separated list of event types (e.g., `disabled,enabled`) |
+| `event_type` | string (repeatable) | -- | Filter by event type. Multiple values use OR semantics (e.g., `?event_type=disabled&event_type=enabled`). See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
 | `actor` | string | -- | Filter by actor: user UUID or username. Follows User Identifier Resolution (see `docs/api-spec.md`). Returns events performed by the specified user. |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |

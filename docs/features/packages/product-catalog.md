@@ -174,7 +174,7 @@ List all products synced from SMELT. Paginated.
 | `sort_order` | string | `asc` | Sort direction: `asc` or `desc` |
 | `search` | string | -- | Filter by name (case-insensitive substring match) |
 | `active` | boolean | -- | Filter by active status. If omitted, returns all products |
-| `lifecycle_phase` | string | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `espos`, `ltss`, `reactive_ltss`, `eol` |
+| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `espos`, `ltss`, `reactive_ltss`, `eol`. Multiple values use OR semantics (e.g., `?lifecycle_phase=general_support&lifecycle_phase=ltss`) |
 
 **Response** (200 OK):
 

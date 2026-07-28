@@ -286,7 +286,7 @@ always displayed in reverse chronological order).
 |---|---|---|---|
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
-| `event_type` | string | -- | Comma-separated list of event types (currently only `setting_changed`) |
+| `event_type` | string (repeatable) | -- | Filter by event type (currently only `setting_changed`). Multiple values use OR semantics (e.g., `?event_type=setting_changed`). See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
 | `setting_key` | string | -- | Filter by setting key |
 | `actor` | string | -- | Filter by actor: user UUID or username. `system` is accepted but will return no results (all setting changes are user-initiated) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |

@@ -119,7 +119,7 @@ entries are always displayed in reverse chronological order).
 |---|---|---|---|
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
-| `event_type` | string | -- | Comma-separated list of event types. See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
+| `event_type` | string (repeatable) | -- | Filter by event type. Multiple values use OR semantics (e.g., `?event_type=role_added&event_type=user_deactivated`). See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
 | `actor` | string | -- | Filter by actor: user UUID, username, or `system` for automated events |
 | `target_user` | string | -- | Filter by target user (UUID or username) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
@@ -180,7 +180,7 @@ Sorting is fixed at `created_at` descending — client-controlled
 |---|---|---|---|
 | `page` | int | 1 | Page number (1-indexed) |
 | `per_page` | int | 20 | Items per page (max 100) |
-| `event_type` | string | -- | Comma-separated list of event types. See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
+| `event_type` | string (repeatable) | -- | Filter by event type. Multiple values use OR semantics (e.g., `?event_type=role_added&event_type=user_deactivated`). See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 

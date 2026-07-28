@@ -793,6 +793,11 @@ handling, signal handling) backing the contract defined in this section.
   options
 - Repeatable options use multiple `--option` flags (e.g.,
   `--role admin --role vulnerability_analyst`)
+- **Repeatable filter semantics**: when a CLI command accepts a
+  repeatable filter option, multiple values are combined with **OR**
+  logic — the result includes resources matching ANY of the provided
+  values. This is consistent with the multi-value query parameter
+  semantics defined in `docs/api-spec.md`
 - **Username normalization**: all CLI commands that accept a username
   argument MUST normalize it (trim whitespace, lowercase) before lookup.
   See Username Format (above) for the full format specification

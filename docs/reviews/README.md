@@ -95,12 +95,12 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [tickets](tickets.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/25 | 2026-07-25 |  |
 |  |  |  |  |  |  |  |  |  |
-| [user-management](user-management.md) | 2 | 🟢 | 🟢 | 🟢 | 🟢 | 2/95 | 2026-05-09 | ⚠️ |
-| | 2:🟠 |  |  |  |  |  |  |  |
+| [user-management](user-management.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/95 | 2026-05-09 | ⚠️ |
+|  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **9** | **3** | **🟢** | **2** | **🟢** | **14/836** |  |  |
-| | 8:🟠 1:🟡 | 2:🟠 1:🟡 |  | 2:🟠 |  |  |  |  |
+| **Total** | **7** | **3** | **🟢** | **2** | **🟢** | **12/836** |  |  |
+| | 6:🟠 1:🟡 | 2:🟠 1:🟡 |  | 2:🟠 |  |  |  |  |
 
 ### Disabled specs
 

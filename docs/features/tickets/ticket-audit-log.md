@@ -154,7 +154,7 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 |--------------|--------|---------|-------------|
 | `page`       | int    | 1       | Page number (1-indexed) |
 | `per_page`   | int    | 20      | Items per page (max 100) |
-| `event_type` | string | —       | Comma-separated list of event types to include (e.g., `status_change,assignment`). If omitted, all types are returned. |
+| `event_type` | string (repeatable) | —       | Filter by event type. Multiple values use OR semantics (e.g., `?event_type=status_change&event_type=assignment`). See `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values |
 | `actor`      | string | —       | Filter by actor: user UUID, username, or `system` for automated events (where `user_id IS NULL`). If omitted, all actors are returned. |
 | `search`     | string | —       | Case-insensitive substring search across `comment`, `old_value`, `new_value`, and `detail` (cast to text). Matches on any field are included (OR logic). If omitted, no text filtering is applied. |
 | `from_date`  | string | —       | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
@@ -195,8 +195,6 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 - `actor` is `null` for system-generated events (where `user_id IS NULL`).
 - `actor` contains `id`, `username`, and `full_name` for user-initiated
   events.
-- The `event_type` filter accepts multiple values separated by commas. See
-  `docs/api-spec.md` (Enum Filter Validation) for handling of invalid values.
 - The `search` filter performs a case-insensitive `ILIKE '%term%'` on
   `comment`, `old_value`, `new_value`, and `detail::text` (OR). This allows
   searching for product names, track names, statuses, or any contextual data
