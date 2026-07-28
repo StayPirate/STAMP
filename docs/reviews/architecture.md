@@ -10,17 +10,11 @@
 
 ### ARCH-GAP-001 — "HTTP APIs only" constraint heading contradicts git-based fetcher infrastructure (Medium)
 
-**Category**: Scope inconsistency
-**Status**: OPEN
-
-The Design Constraints section uses the heading "HTTP APIs only" and states: "When integrating with external services (IBS, SMELT, AIMAAS, Bugzilla, etc.), Sentinel uses their HTTP/REST APIs directly. Command-line tools (`osc`, `secbox`, etc.) are for ad-hoc exploratory testing only and must not be used in application code or background tasks." However, the same document describes `BaseGitFetcher` in the Integration Patterns section, which uses delta-flow (clone + fetch + diff) via the `git` binary through `asyncio.create_subprocess_exec`. The `git-fetcher-infrastructure.md` confirms that `git_operations.py` invokes the `git` binary via subprocess — a command-line tool used in application code. The heading implies a blanket prohibition on non-HTTP integrations, but git-based fetchers (MITRE, Linux Kernel) have no REST API alternative. The constraint needs to either explicitly carve out the git exception or clarify that the prohibition targets external service CLI wrappers (like `osc`) rather than transport-protocol clients (like `git`).
+**Status**: RESOLVED — Renamed heading to "HTTP APIs for external services" in architecture.md and added disambiguation clause distinguishing service-wrapper CLIs (prohibited) from transport-protocol clients like git (permitted). Applied matching clarification in conventions.md. (2026-07-28)
 
 ### ARCH-GAP-002 — CLI entry point not addressed in layer architecture table (Medium)
 
-**Category**: Coverage gap
-**Status**: OPEN
-
-The Backend Layer Architecture section defines six layers (API, Service, Model, Schema, Core, Task) with explicit "May depend on" rules. CLI commands live in `app/cli/` (per the project structure in AGENTS.md) and serve as a distinct entry point alongside API handlers and Celery tasks. The architecture document mentions CLI in passing under "Async-only database layer" but the layer architecture table does not include CLI as an entry point and does not specify which layers CLI commands may depend on. The Task layer (which is analogous — both are entry points that call services) lists "Service, Core" as dependencies, and CLI likely follows the same pattern, but this is not stated. An implementer building a CLI command cannot determine from this document which layers they may import from.
+**Status**: RESOLVED — Added CLI row to Backend Layer Architecture table with dependency rules and key rule (2026-07-28)
 
 ### ARCH-GAP-003 — Cross-Reference Index incomplete (Low)
 

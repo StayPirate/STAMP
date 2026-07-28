@@ -172,11 +172,21 @@ third-party integrations) must be achievable through the API, with
 equivalent filtering, pagination, and sorting capabilities. The API must remain
 independent of any specific client or hosting strategy.
 
-**HTTP APIs only.** When integrating with external services (IBS, SMELT,
-AIMAAS, Bugzilla, etc.), Sentinel uses their HTTP/REST APIs directly.
-Command-line tools (`osc`, `secbox`, etc.) are for ad-hoc exploratory
-testing only and must not be used in application code or background
-tasks.
+**HTTP APIs for external services.** When integrating with external
+services that expose HTTP/REST APIs (IBS, SMELT, AIMAAS, Bugzilla,
+etc.), Sentinel uses those APIs directly. Service-wrapper CLI tools
+(`osc`, `secbox`, etc.) add an unnecessary process dependency on top
+of APIs that are already directly usable, and must not be used in
+application code or background tasks.
+
+This constraint does not apply to transport-protocol clients where the
+data source has no HTTP API equivalent. The `git` binary is the
+transport protocol for cloning and diffing repositories (MITRE
+cvelistV5, Linux Kernel vulns.git) — there is no REST API alternative
+for these data sources. Git-based fetchers invoke `git` via
+`asyncio.create_subprocess_exec` through the `BaseGitFetcher`
+infrastructure (see Integration Patterns below and
+`docs/features/platform/git-fetcher-infrastructure.md`).
 
 **Environment-variable configuration.** Deployment and infrastructure
 configuration is provided through environment variables. Secrets must
@@ -191,13 +201,14 @@ model.
 
 ## Backend Layer Architecture
 
-The backend is organized into six layers with strict dependency
+The backend is organized into seven layers with strict dependency
 direction. Upper layers may depend on lower layers; lower layers must
 not import from upper layers.
 
 | Layer | Location | Responsibility | May depend on |
 |---|---|---|---|
 | **API** | `app/api/v1/` | Thin endpoint handlers: validate input, call services, return responses. No business logic. | Service, Schema, Model (for DI type annotations), Core |
+| **CLI** | `app/cli/` | Thin command handlers: parse arguments, call services, format output. No business logic. | Service, Model (direct queries limited to read-only; writes go through Service), Core |
 | **Service** | `app/services/` | All business logic. Accept typed parameters, perform database operations, return typed results. | Model, Core |
 | **Model** | `app/models/` | SQLAlchemy ORM models: tables, columns, relationships, constraints. | Core (for enums only) |
 | **Schema** | `app/schemas/` | Pydantic models for request/response validation and serialization. | Model (for `from_attributes`), Core |
@@ -208,6 +219,9 @@ not import from upper layers.
 
 - API handlers must not contain business logic — they validate, delegate
   to a service, and format the response
+- CLI commands must not contain business logic — they parse arguments,
+  delegate to a service (or perform direct read-only queries), and
+  format the output
 - Task definitions must not contain business logic — they are thin
   wrappers that call service-layer functions
 - Service modules are the only layer that performs database operations

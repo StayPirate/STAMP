@@ -7,8 +7,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 
 | Spec | GAP | COH | DES | SEC | API | Open | Last Review | Stale |
 |------|-----|-----|-----|-----|-----|------|-------------|-------|
-| [architecture](architecture.md) | 3 | 2 | 🟢 | 🟢 | 🟢 | 5/5 | 2026-07-28 |  |
-| | 2:🟠 1:🟡 | 1:🟠 1:🟡 |  |  |  |  |  |  |
+| [architecture](architecture.md) | 1 | 2 | 🟢 | 🟢 | 🟢 | 3/5 | 2026-07-28 |  |
+| | 1:🟡 | 1:🟠 1:🟡 |  |  |  |  |  |  |
 | [api-key-service](api-key-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-17 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [api-spec](api-spec.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/15 | 2026-07-27 |  |
@@ -57,8 +57,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [data-model](data-model.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-27 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| [deployment](deployment.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/3 | 2026-07-27 | ⚠️ |
-|  |  |  |  |  |  |  |  |  |
+| [deployment](deployment.md) | 1 | 🟢 | 🟢 | 🟢 | 🟢 | 1/4 | 2026-07-27 | ⚠️ |
+| | 1:🟠 |  |  |  |  |  |  |  |
 | [fetcher-infrastructure](fetcher-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/31 | 2026-06-29 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [fetcher-operations](fetcher-operations.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/24 | 2026-05-28 | ⚠️ |
@@ -99,8 +99,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [user-service](user-service.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/23 | 2026-05-08 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
-| **Total** | **5** | **2** | **🟢** | **🟢** | **🟢** | **7/837** |  |  |
-| | 4:🟠 1:🟡 | 1:🟠 1:🟡 |  |  |  |  |  |  |
+| **Total** | **4** | **2** | **🟢** | **🟢** | **🟢** | **6/838** |  |  |
+| | 3:🟠 1:🟡 | 1:🟠 1:🟡 |  |  |  |  |  |  |
 
 ### Disabled specs
 

@@ -24,7 +24,11 @@
   directly. Command-line tools (`osc`, `secbox`, etc.) are available on the
   development machine for ad-hoc exploratory testing only (e.g., verifying an
   API response format) and MUST NOT be used in application code or background
-  tasks
+  tasks. This prohibition targets service-wrapper CLIs that add a process
+  dependency on top of APIs already directly usable — it does not apply to
+  transport-protocol clients where the data source has no HTTP API equivalent
+  (e.g., the `git` binary for cloning MITRE cvelistV5 and Linux Kernel
+  vulns.git repositories)
 
 ## Terminology
 
