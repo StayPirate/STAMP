@@ -17,6 +17,8 @@ Summary of specification reviews conducted by the 5-reviewer pipeline
 |  |  |  |  |  |  |  |  |  |
 | [cli-infrastructure](cli-infrastructure.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/5 | 2026-07-22 |  |
 |  |  |  |  |  |  |  |  |  |
+| [configuration](configuration.md) | — | — | — | — | — | 0/0 |  |  |
+|  |  |  |  |  |  |  |  |  |
 | [conventions](conventions.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/1 | 2026-07-27 | ⚠️ |
 |  |  |  |  |  |  |  |  |  |
 | [cpe-package-mapping](cpe-package-mapping.md) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 0/13 | 2026-07-25 |  |

@@ -181,6 +181,12 @@
         "not_reviewed": []
       }
     },
+    "configuration": {
+      "enabled": true,
+      "abbr": "CFG",
+      "path": "docs/configuration.md",
+      "cache": null
+    },
     "conventions": {
       "enabled": true,
       "abbr": "CONV",
