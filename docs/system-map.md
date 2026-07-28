@@ -21,7 +21,8 @@ documents.
 ## System Components
 
 How the main components of Sentinel connect to each other and to external
-services. See [architecture.md](architecture.md) for full details.
+services. See [architecture.md](architecture.md) for architectural
+decisions and design constraints.
 
 ```mermaid
 flowchart TB

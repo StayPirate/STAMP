@@ -679,7 +679,7 @@ Cross-cutting document mapping:
 | Code patterns, naming, style conventions | `docs/conventions.md` |
 | API envelope format, errors, pagination, shared behaviors | `docs/api-spec.md` |
 | Entities, columns, relationships, DB constraints | `docs/data-model.md` |
-| External system integration (protocols, URLs, auth) | `docs/data-sources.md` / `docs/architecture.md` |
+| External system integration (protocols, URLs, auth) | `docs/data-sources.md` |
 | Configuration patterns, environment variables | `docs/configuration.md` |
 | Shared business behaviors owned by no single feature | Dedicated feature spec, referenced by others |
 

@@ -45,7 +45,7 @@ RUN update-ca-certificates
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code needed at runtime (Alembic migrations run from
-# this same image via a one-shot job — see docs/architecture.md,
+# this same image via a one-shot job — see docs/deployment.md,
 # Database Migrations)
 COPY app/ app/
 COPY alembic/ alembic/

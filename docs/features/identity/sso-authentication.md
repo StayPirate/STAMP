@@ -172,7 +172,7 @@ No server-side storage (Redis or database) is required. The state is
 self-contained and its authenticity is verified by the HMAC signature.
 In a multi-instance deployment, all instances must have synchronized
 clocks (NTP) for the 10-minute TTL window to be enforced correctly —
-see `docs/architecture.md`, Clock Synchronization.
+see `docs/deployment.md`, Clock Synchronization.
 
 **Response** (200):
 

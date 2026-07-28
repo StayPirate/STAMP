@@ -4,7 +4,7 @@ Operational guide for deploying and configuring Sentinel across
 environments: local development, staging, and production.
 
 For environment variable reference, see `docs/configuration.md`.
-For architectural decisions and portability constraints, see
+For architectural decisions and design constraints, see
 `docs/architecture.md`.
 
 ## Contents
@@ -28,10 +28,12 @@ For architectural decisions and portability constraints, see
   - [Configuration Files](#configuration-files)
   - [Repository Secret](#repository-secret)
 - [Process Architecture](#process-architecture)
+  - [Container Images](#container-images)
   - [Singleton Processes](#singleton-processes)
   - [Startup Ordering](#startup-ordering)
   - [Git Worker Volume](#git-worker-volume)
   - [Timezone and Locale Requirements](#timezone-and-locale-requirements)
+  - [Clock Synchronization](#clock-synchronization)
 - [Operations](#operations)
   - [Database Migrations](#database-migrations)
   - [Health Checks](#health-checks)
@@ -207,8 +209,9 @@ cd backend && uv run python -m sentinel manage-user create \
     docker run --rm --env-file .env sentinel:latest \
      alembic upgrade head
    ```
-4. **Start all runtime processes** defined in `docs/architecture.md`
-   (Container Images) — each as a separate container/process
+4. **Start all runtime processes** defined in
+   [Container Images](#container-images) — each as a separate
+   container/process
 5. **Verify health**:
    - `GET /health` — liveness (API process is running)
    - `GET /ready` — readiness (PostgreSQL + Redis reachable)
@@ -240,8 +243,8 @@ Same as staging, with these differences:
 1. **Database migrations**: run as a one-shot job BEFORE deploying new
    application containers. Never run migrations automatically on API
    startup (multiple replicas could conflict).
-2. **Deploy all runtime processes** defined in `docs/architecture.md`
-   (Container Images)
+2. **Deploy all runtime processes** defined in
+   [Container Images](#container-images)
 3. **Health checks**: configure orchestrator to use `/health` (liveness)
    and `/ready` (readiness)
 4. **Verify**: confirm all services are healthy, check logs for errors
@@ -386,27 +389,37 @@ be used because tags created by it do not trigger downstream workflows
 
 ## Process Architecture
 
-Sentinel's process roles are defined in `docs/architecture.md`
-(Container Images). This section documents their operational properties
-for deployment.
+### Container Images
+
+All runtime processes run from the same OCI image with different
+entrypoint commands — see `docs/architecture.md` (Single Docker image,
+multiple entrypoints) for the rationale. This is the canonical
+enumeration of all process roles.
+
+**Runtime processes** (long-running):
 
 | Process | Role | Scalable |
 |---------|------|----------|
 | API server (uvicorn) | HTTP request handling | Yes (multiple replicas) |
 | Celery worker | Background task execution | Yes (multiple workers) |
-| Git worker (Celery) | Background git-based fetcher execution | No (single volume affinity) |
+| Git worker (Celery) | Git-based fetcher execution | No (single, volume affinity — see [Git Worker Volume](#git-worker-volume)) |
 | Celery Beat | Periodic task scheduling | No (singleton) |
-| IBS RabbitMQ consumer | Real-time event consumption | No (singleton — see spec) |
+| IBS RabbitMQ consumer | Real-time event consumption | No (singleton — see `docs/features/integrations/ibs-rabbitmq-integration.md`) |
 
-Alembic migration jobs are one-shot processes, not runtime services —
-see Database Migrations (below) for operational details.
+**One-shot jobs:**
+
+- Alembic migration job — see [Database Migrations](#database-migrations)
 
 ### Singleton Processes
 
-Celery Beat and the IBS RabbitMQ consumer must run as single instances.
-Running multiple replicas causes duplicate task scheduling or duplicate
-event processing. See `docs/architecture.md` (Singleton Processes) for
-the architectural constraint.
+Celery Beat and the IBS RabbitMQ consumer are singleton processes.
+Running multiple instances causes duplicate task scheduling or duplicate
+event processing. The git worker is constrained to a single instance by
+volume affinity (ReadWriteOnce), not by a logical singleton requirement.
+
+Local environments run one instance of each. Kubernetes deployments must
+enforce singleton constraints unless a future design introduces
+distributed locking or leader election.
 
 ### Startup Ordering
 
@@ -462,8 +475,8 @@ procedures, and worker affinity configuration.
 
 ### Timezone and Locale Requirements
 
-All Sentinel runtime processes (see `docs/architecture.md`, Container
-Images) MUST operate with UTC as the system timezone. This is enforced
+All Sentinel runtime processes (see [Container Images](#container-images))
+MUST operate with UTC as the system timezone. This is enforced
 at two levels:
 
 1. **Celery configuration**: the application sets `timezone = "UTC"` and
@@ -504,6 +517,26 @@ LC_ALL=C
 GIT_TERMINAL_PROMPT=0
 ```
 
+### Clock Synchronization
+
+All application instances in a multi-instance deployment must have their
+system clocks synchronized via NTP (or an equivalent time
+synchronization protocol). Sentinel relies on timestamps for several
+security and correctness mechanisms:
+
+- SSO state parameter validation (10-minute TTL window)
+- JWT `exp` and `iat` claim verification
+- Session expiration enforcement
+- Cache TTL calculations (discovery document, JWKS)
+
+Clock skew between instances can shorten or lengthen time-based windows
+unpredictably. For example, if the instance generating an SSO state has
+a clock 2 minutes ahead of the instance processing the callback, the
+effective validity window shrinks from 10 minutes to 8 minutes. While
+modern NTP-synced servers typically maintain sub-second accuracy (making
+this negligible in practice), operators must ensure NTP is configured
+and running on all hosts.
+
 ---
 
 ## Operations
@@ -531,7 +564,10 @@ alembic revision --autogenerate -m "description"
 
 ### Health Checks
 
-See `docs/features/platform/health-endpoints.md` for the authoritative
+The API exposes lightweight liveness and readiness checks so
+orchestrators can distinguish between a running process and a service
+ready to handle traffic. See
+`docs/features/platform/health-endpoints.md` for the authoritative
 endpoint specification (response schemas, failure semantics, design
 decisions).
 

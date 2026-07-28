@@ -184,8 +184,8 @@ timeouts:
 
 ## Cross-references
 
-- `docs/architecture.md` — Health And Readiness (architectural intent)
-- `docs/deployment.md` — Health Checks (operational configuration guide)
+- `docs/deployment.md` — Health Checks (architectural intent and
+  operational configuration)
 - `docs/features/platform/networking.md` — TLS Trust Store (SUSE CA
   deliberately excluded from readiness checks)
 - `docs/api-spec.md` — Response Conventions (explains why these endpoints

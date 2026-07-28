@@ -38,9 +38,9 @@ here.
    not orphaned in a separate, inconsistent format.
 2. **stdout/stderr only, never files.** The application never writes
    log files, never rotates files, never manages log backup. This is
-   the only choice consistent with `docs/architecture.md` (Runtime
-   State: "Application containers are stateless... must not rely on
-   local persistent filesystem state for correctness") and 12-factor
+   the only choice consistent with `docs/architecture.md` (Design
+   Constraints: "Application containers must not rely on local
+   persistent filesystem state for correctness") and 12-factor
    app logging (treat logs as event streams, not files). Rotation,
    aggregation, retention, and backup of log *output* are the
    deployment platform's responsibility — see `docs/deployment.md`
@@ -144,7 +144,7 @@ unit of work — they are never serialized as `null`.
 
 **No process-role field.** The record does not include a field
 identifying which of the 5 runtime roles (`api`, `celery-worker`,
-`git-worker`, `beat`, `ibs-consumer` — per `docs/architecture.md`,
+`git-worker`, `beat`, `ibs-consumer` — per `docs/deployment.md`,
 Container Images) emitted it. Role identification is the log
 collector's responsibility via platform-provided container/pod
 metadata (Kubernetes pod/container labels, or the Docker Compose
@@ -257,7 +257,7 @@ using it.
 ### Known gap: IBS RabbitMQ consumer
 
 The IBS RabbitMQ consumer (a fifth first-class runtime role — see
-`docs/architecture.md`, Container Images) performs per-message
+`docs/deployment.md`, Container Images) performs per-message
 processing and inline mutations with none of the three correlation IDs
 above applicable to it. This is a real gap, deliberately scoped to the
 consumer's own specification rather than resolved here — see
@@ -430,9 +430,10 @@ are expected to be tested as follows:
 
 - `docs/api-spec.md` (Request Tracing) — the `X-Request-ID` contract
   this specification implements.
-- `docs/architecture.md` (Runtime State, Container Images) — the
-  stateless-container principle and the 5 runtime roles referenced
-  throughout this document.
+- `docs/architecture.md` (Design Constraints) — the
+  stateless-container principle.
+- `docs/deployment.md` (Container Images) — the 5 runtime roles
+  referenced throughout this document.
 - `docs/conventions.md` (Timestamps & Timezones, Secret Field Typing,
   Logging) — the UTC convention and secret-handling rules this
   specification builds on.

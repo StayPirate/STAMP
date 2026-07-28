@@ -1010,7 +1010,7 @@ takes full effect.
 #### Why Single Version
 
 All runtime process roles (see above) run from the same Docker image
-with different entrypoints (see `docs/architecture.md`, Container
+with different entrypoints (see `docs/deployment.md`, Container
 Images). They cannot be deployed at different versions. Per-component
 versioning (e.g., per-fetcher) would add overhead without practical
 benefit since fetchers are built-in classes, not independently

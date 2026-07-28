@@ -8,9 +8,9 @@ lifecycle information, detect security update releases, and coordinate the
 patch management workflow. This document catalogs all known data sources,
 including those not yet integrated but potentially useful in the future.
 
-For details on how Sentinel architecturally integrates with each active source,
-see `docs/architecture.md` and the relevant feature specifications in
-`docs/features/`.
+For integration patterns (fetcher hierarchy, scheduled vs event-driven),
+see `docs/architecture.md`. For per-source specifications, see the
+relevant feature specifications in `docs/features/`.
 
 ### Summary
 
