@@ -49,10 +49,9 @@ file.
 
 ## Supersedes
 
-This draft supersedes `docs/drafts/architecture-restructure.md`, which
-planned an incremental restructure of the existing file. The approach
-here is a clean rewrite — the old draft will be deleted as part of
-execution.
+This draft supersedes the previous `docs/drafts/architecture-restructure.md`
+(already deleted), which planned an incremental restructure of the
+existing file. The approach here is a clean rewrite.
 
 ## Information Loss Analysis
 
@@ -259,7 +258,7 @@ infrastructure target is decided.
 **API-first.** The REST API is the primary interface. Every operation
 that could be needed by any consumer (web UI, CLI, scripts,
 third-party integrations) must be achievable through the API, with
-appropriate filtering, pagination, and sorting. The API must remain
+equivalent filtering, pagination, and sorting capabilities. The API must remain
 independent of any specific client or hosting strategy.
 
 **HTTP APIs only.** When integrating with external services (IBS, SMELT,
@@ -284,7 +283,7 @@ not import from upper layers.
 
 | Layer | Location | Responsibility | May depend on |
 |---|---|---|---|
-| **API** | `app/api/v1/` | Thin endpoint handlers: validate input, call services, return responses. No business logic. | Service, Schema, Core |
+| **API** | `app/api/v1/` | Thin endpoint handlers: validate input, call services, return responses. No business logic. | Service, Schema, Model (for DI type annotations), Core |
 | **Service** | `app/services/` | All business logic. Accept typed parameters, perform database operations, return typed results. | Model, Core |
 | **Model** | `app/models/` | SQLAlchemy ORM models: tables, columns, relationships, constraints. | Core (for enums only) |
 | **Schema** | `app/schemas/` | Pydantic models for request/response validation and serialization. | Model (for `from_attributes`), Core |
@@ -308,8 +307,8 @@ not import from upper layers.
 Sentinel integrates with 12+ external services (see `docs/data-sources.md`
 for the full catalog). All integrations follow one of two patterns:
 
-**Polling (scheduled fetchers).** The majority of integrations use
-periodic polling via Celery Beat. Every polling integration is
+**Scheduled (periodic fetchers).** The majority of integrations use
+periodic fetching via Celery Beat. Every scheduled integration is
 implemented as a `BaseFetcher` subclass, which provides automatic
 execution tracking, metric collection, and registry. The fetcher class
 hierarchy is:
@@ -328,7 +327,7 @@ hierarchy is:
 **Event-driven (message consumer).** The IBS integration additionally
 uses a real-time AMQP consumer connected to the IBS RabbitMQ message
 bus. This provides near-real-time detection of package commits and
-submission state changes. A periodic polling fetcher runs alongside as
+submission state changes. A periodic fetcher runs alongside as
 a catch-up mechanism for events missed during consumer downtime. See
 `docs/features/integrations/ibs-rabbitmq-integration.md`.
 
@@ -725,7 +724,7 @@ see `docs/architecture.md` and the relevant feature specifications in
 `docs/features/`.
 
 AFTER:
-For integration patterns (fetcher hierarchy, polling vs event-driven),
+For integration patterns (fetcher hierarchy, scheduled vs event-driven),
 see `docs/architecture.md`. For per-source specifications, see the
 relevant feature specifications in `docs/features/`.
 ```
@@ -742,9 +741,18 @@ AFTER:
 | External system integration (protocols, URLs, auth) | `docs/data-sources.md` |
 ```
 
-### Step 9 — Delete `docs/drafts/architecture-restructure.md`
+### Step 9 — Update `docs/system-map.md`
 
-Delete the old restructure plan. It is superseded by this rewrite.
+**Change** (line 24):
+
+```
+BEFORE:
+services. See [architecture.md](architecture.md) for full details.
+
+AFTER:
+services. See [architecture.md](architecture.md) for architectural
+decisions and design constraints.
+```
 
 ### Step 10 — Verify no broken anchors
 
@@ -758,7 +766,8 @@ reference matches an existing heading in the new file.
 |---|---|---|
 | `architecture.md` (Design Constraints) | `logging.md` (×1) | Created by Step 3a — matches new heading |
 | `architecture.md` (Single Docker image, multiple entrypoints) | `deployment.md` (×1) | Created by Change A — matches new heading |
-| `architecture.md` (generic, no section) | `AGENTS.md` (×3), `.opencode/` (×8), `system-map.md` (×1) | File path unchanged — OK |
+| `architecture.md` (generic, no section) | `AGENTS.md` (×3), `.opencode/` (×8) | File path unchanged — OK |
+| `architecture.md` "for full details" | `system-map.md` (×1) | Updated by Step 9 — contextual text corrected |
 | `architecture.md` in `docs/reviews/` | 4 review files | Historical notes — no update needed |
 | `deployment.md` (Container Images) | `logging.md` (×2), `conventions.md` (×1) | Created by Steps 3b, 3c, 6 — matches new heading in deployment.md |
 | `deployment.md` (Clock Synchronization) | `sso-authentication.md` (×1) | Created by Step 5 — matches new heading in deployment.md |
@@ -773,15 +782,17 @@ all steps (they were moved):**
 - `Clock Synchronization` → updated to `deployment.md`
 - `Health And Readiness` / `Health and Readiness` → updated to `deployment.md`
 - `Runtime State` → updated to `Design Constraints`
-- `Database Migrations` → updated to `deployment.md` (was already stale)
+- `Database Migrations` → updated to `deployment.md`
 
 ### Step 11 — Update `backend/Dockerfile`
 
 The Dockerfile has a comment (line 48) referencing
-`docs/architecture.md, Database Migrations`. This reference was already
-stale before this rewrite — the Database Migrations section has always
-lived in `deployment.md`. Fix it for consistency with the rest of the
-cross-reference cleanup.
+`docs/architecture.md, Database Migrations`. The current
+`architecture.md` does have this section (lines 351–359), but the
+authoritative and more complete version has always been in
+`deployment.md` (Operations > Database Migrations). After this rewrite
+removes the section from `architecture.md`, the reference becomes
+stale. Update it to point to `deployment.md`.
 
 **Change** (line 48):
 
