@@ -30,6 +30,13 @@ changing the semantic content of the document.
   for future expansion
 - Implementation detail removed from External Integrations is confirmed
   to exist in feature specs (all 9 items verified)
+- "API Routing" stays in Deployment (deployment topology concern, not
+  app code) — reviewer feedback confirmed it would be miscategorized
+  under Backend
+- AIMAAS section must have an explicit cross-ref to
+  `product-catalog.md` after trimming (consistency with IBS/SMELT)
+- Release Tracking Flow must also be trimmed (same detail that is
+  removed from External Integrations appears there too)
 
 ## Target Structure
 
@@ -39,7 +46,7 @@ changing the semantic content of the document.
 ├── System Overview
 ├── High-Level Architecture (diagram)
 ├── Components
-│   ├── Backend (FastAPI) [absorbs API Routing]
+│   ├── Backend (FastAPI)
 │   │   └── Backend Layers
 │   ├── Task Queue (Celery)
 │   ├── Database (PostgreSQL)
@@ -62,6 +69,7 @@ changing the semantic content of the document.
 │   ├── Database Migrations
 │   ├── Singleton Processes
 │   ├── Clock Synchronization
+│   ├── API Routing [kept here — deployment topology]
 │   └── Health and Readiness [casing fix]
 ├── Repository Scope [promoted to top-level]
 ├── Observability
@@ -95,12 +103,9 @@ changing the semantic content of the document.
 **Changes to `docs/architecture.md`:**
 - Move `### Repository Scope` to top-level `## Repository Scope`
   (between "Deployment" and "Observability")
-- Move content of `### API Routing` into `### Backend (FastAPI)` under
-  Components (as a bullet point)
-- Remove empty `### API Routing` subsection
 
 **Cross-reference updates:** none expected (no external file references
-these sections by name).
+"Repository Scope" by name).
 
 **Verification:** commit, then diff to confirm no content lost.
 
@@ -114,13 +119,26 @@ these sections by name).
   endpoint URLs, query parameters, pagination detail. Keep cross-refs
   to `package-model.md` and `product-catalog.md`.
 - **AIMAAS**: same as SMELT — remove endpoint URLs and CPE matching
-  detail. Keep cross-refs.
+  detail. Keep cross-refs. Add explicit cross-reference:
+  `See docs/features/packages/product-catalog.md for the full AIMAAS
+  integration specification.`
 
 **Changes to `docs/architecture.md` — Data Flow:**
 - Remove `### Manual Ticket Creation` as standalone subsection
 - Add one sentence in the `## Data Flow` intro: "Tickets can also be
   created manually without a CVE — see
   `docs/features/tickets/tickets.md`."
+- **Release Tracking Flow**: trim implementation details (fetcher class
+  names, schedule times, MD5 cache detail) that duplicate what is in
+  the feature specs. Replace with architectural description plus
+  cross-references. Specifically:
+  - Point 1: remove `detect_ibs_track_releases`, "every 24 hours at
+    02:00 UTC", "MD5 cache" — replace with "a periodic catch-up
+    fetcher" + cross-ref
+  - Point 2: remove `TicketPackageTrack.status` field name detail if
+    it goes beyond architectural level (keep the concept)
+  - Point 3: keep as-is (describes the architectural mechanism without
+    implementation names)
 
 **Verification for removed detail:** all 9 items confirmed to exist in:
 - `docs/features/integrations/ibs-rabbitmq-integration.md` (items 1)
