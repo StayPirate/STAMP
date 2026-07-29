@@ -520,8 +520,8 @@ tests require no application `REDIS_URL` or `CELERY_BROKER_URL`; leaving
 ### Pre-Commit Hooks (Local Automation)
 
 Repository-level git hooks provide fast feedback before commits reach
-CI. Configured as shell scripts in `.githooks/`, activated via
-`git config core.hooksPath .githooks`:
+CI. Configured as shell scripts in `.githooks/` and activated
+per-repository via `core.hooksPath` (see activation steps below):
 
 - **pre-commit**: ruff check + ruff format check + `pytest -m unit`
   (fast gate, < 15 seconds)
@@ -535,7 +535,20 @@ circumstances but CI cannot.
 To activate after cloning:
 
 ```bash
-git config core.hooksPath .githooks
+git config --local core.hooksPath .githooks
+```
+
+The `--local` scope writes to this repository's `.git/config`, so the
+setting applies only to the Sentinel working tree. If you already have a
+global `core.hooksPath` (`git config --global core.hooksPath ...`), this
+local setting takes precedence inside Sentinel while leaving your global
+hooks untouched in every other repository. Git uses a single hooks
+directory at a time — it does not merge the two — so your global hooks do
+not run inside Sentinel while the local setting is active. To revert and
+fall back to your global hooks here, run:
+
+```bash
+git config --local --unset core.hooksPath
 ```
 
 ### CI Pipeline

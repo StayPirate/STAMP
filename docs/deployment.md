@@ -131,6 +131,11 @@ All environments share the same `SSO_CLIENT_ID` and `SSO_CLIENT_SECRET`
 # backend/.venv automatically if not already present)
 cd backend && uv sync
 
+# (Optional) Enable the repository's local git hooks for fast pre-commit
+# feedback. Scoped to this repo via --local; does not affect other repos.
+# See docs/features/platform/testing-strategy.md (Pre-Commit Hooks).
+git config --local core.hooksPath .githooks
+
 # Start PostgreSQL + Redis containers
 ./scripts/dev-env.sh up
 

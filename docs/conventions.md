@@ -1049,8 +1049,8 @@ script from the workflow.
   tooling) that does not import the `app` package
 - `backend/scripts/` — backend utilities that import `app` (these are
   Python, not shell)
-- `.githooks/` — Git hooks activated via
-  `git config core.hooksPath .githooks`
+- `.githooks/` — Git hooks (activation covered in
+  `docs/features/platform/testing-strategy.md`, Pre-Commit Hooks)
 
 See the file placement map in `AGENTS.md` (Guardrail 2) for the
 authoritative mapping.
