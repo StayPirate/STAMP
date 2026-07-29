@@ -45,11 +45,11 @@ log_success() {
 }
 
 log_warn() {
-    echo -e "${YELLOW}[Sentinel]${NC} $1"
+    echo -e "${YELLOW}[Sentinel]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[Sentinel]${NC} $1"
+    echo -e "${RED}[Sentinel]${NC} $1" >&2
 }
 
 # --- Runtime Detection ---
@@ -86,15 +86,17 @@ detect_runtime() {
             return 0
         else
             log_error "Podman is installed but no Compose tool was found."
-            echo ""
-            echo "  Install one of the following:"
-            echo ""
-            echo "    Option A: Podman Compose plugin (if available for your Podman version)"
-            echo "      Check your distribution's package manager for 'podman-plugins' or similar."
-            echo ""
-            echo "    Option B: podman-compose (Python package)"
-            echo "      pip install podman-compose"
-            echo ""
+            {
+                echo ""
+                echo "  Install one of the following:"
+                echo ""
+                echo "    Option A: Podman Compose plugin (if available for your Podman version)"
+                echo "      Check your distribution's package manager for 'podman-plugins' or similar."
+                echo ""
+                echo "    Option B: podman-compose (Python package)"
+                echo "      pip install podman-compose"
+                echo ""
+            } >&2
             return 1
         fi
     fi
@@ -115,32 +117,37 @@ detect_runtime() {
             return 0
         else
             log_error "Docker is installed but no Compose tool was found."
-            echo ""
-            echo "  Install Docker Compose:"
-            echo "    https://docs.docker.com/compose/install/"
-            echo ""
+            {
+                echo ""
+                echo "  Install Docker Compose:"
+                echo "    https://docs.docker.com/compose/install/"
+                echo ""
+            } >&2
             return 1
         fi
     fi
 
     # Nothing found
     log_error "No container runtime found."
-    echo ""
-    echo "  To run the Sentinel development environment, install one of the following:"
-    echo ""
-    echo "    Option 1 (recommended): Podman + Compose (rootless)"
-    echo "      https://podman.io/getting-started/installation"
-    echo "      pip install podman-compose"
-    echo ""
-    echo "    Option 2: Docker + Docker Compose"
-    echo "      https://docs.docker.com/engine/install/"
-    echo ""
+    {
+        echo ""
+        echo "  To run the Sentinel development environment, install one of the following:"
+        echo ""
+        echo "    Option 1 (recommended): Podman + Compose (rootless)"
+        echo "      https://podman.io/getting-started/installation"
+        echo "      pip install podman-compose"
+        echo ""
+        echo "    Option 2: Docker + Docker Compose"
+        echo "      https://docs.docker.com/engine/install/"
+        echo ""
+    } >&2
     return 1
 }
 
 # --- Commands ---
 
 compose_exec() {
+    # shellcheck disable=SC2086
     ${COMPOSE_CMD} -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" "$@"
 }
 
