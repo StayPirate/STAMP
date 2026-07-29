@@ -98,6 +98,7 @@ compose() {
     ${COMPOSE_CMD} -p "${PROJECT_NAME}" -f "${SMOKE_COMPOSE}" "$@"
 }
 
+# shellcheck disable=SC2317,SC2329  # reachable + invoked indirectly via 'trap teardown EXIT'
 teardown() {
     echo "[image-smoke] Tearing down..."
     compose down -v --remove-orphans || true
@@ -120,11 +121,11 @@ compose up -d --wait
 echo "[image-smoke] Running image test suite..."
 set +e
 (
-    cd "${ROOT_DIR}/backend" && \
-    IMAGE_SMOKE_BASE_URL="${IMAGE_SMOKE_BASE_URL}" \
-    COMPOSE_CMD="${COMPOSE_CMD}" \
-    COMPOSE_FILES="${SMOKE_COMPOSE}" \
-    uv run pytest -m image tests/image/
+    cd "${ROOT_DIR}/backend" &&
+        IMAGE_SMOKE_BASE_URL="${IMAGE_SMOKE_BASE_URL}" \
+            COMPOSE_CMD="${COMPOSE_CMD}" \
+            COMPOSE_FILES="${SMOKE_COMPOSE}" \
+            uv run pytest -m image tests/image/
 )
 PYTEST_EXIT=$?
 set -e

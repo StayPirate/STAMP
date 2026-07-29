@@ -7,6 +7,7 @@
 - [Cross-Cutting Rules](#cross-cutting-rules)
 - [Python (Backend)](#python-backend)
 - [CLI Conventions](#cli-conventions)
+- [Shell Scripting](#shell-scripting)
 - [Git Conventions](#git-conventions)
 - [Specification Writing](#specification-writing)
 
@@ -954,6 +955,122 @@ cover:
 
 This is preferred over a manual review agent because the rules are
 deterministic and mechanically verifiable.
+
+## Shell Scripting
+
+This section governs standalone shell scripts and shell embedded in CI
+workflows. It is distinct from the CLI Conventions above, which cover the
+Python (Click) `sentinel` command. Shell scripts in Sentinel are limited
+to repository orchestration and developer/CI tooling — application and
+background-task logic MUST be Python (see Backend Layer Architecture in
+`docs/architecture.md`), never shell.
+
+### Scope
+
+These rules apply to:
+
+- Standalone scripts under `scripts/` (repo-level orchestration) and
+  `backend/scripts/` when they are shell (Python utilities there follow
+  the Python conventions instead)
+- Git hooks under `.githooks/`
+- Shell embedded in `run:` steps of `.github/workflows/*.yml`
+
+### Interpreter and Safety
+
+- **Shebang**: `#!/usr/bin/env bash`. Sentinel scripts target Bash and
+  use Bash features (`[[ ]]`, `BASH_SOURCE`, arrays); POSIX `sh` is not
+  assumed
+- **Strict mode**: every script MUST start with `set -euo pipefail`
+  immediately after the shebang/header comment, so failures, unset
+  variables, and broken pipes abort the script instead of propagating
+  silently
+- **Quoting**: quote all variable expansions (`"${var}"`). The only
+  accepted exception is an intentional word-split of an assembled command
+  string, which MUST carry a narrowly-scoped, justified
+  `# shellcheck disable=SC2086` directive (see `scripts/dev-env.sh` and
+  `scripts/image-smoke.sh` for the canonical pattern)
+- **Diagnostics and exit codes**: write error and warning messages to
+  stderr; reserve stdout for results. Return a non-zero exit code on
+  failure and propagate the exit code of the meaningful inner command
+  when the script is a wrapper (e.g., `scripts/image-smoke.sh` exits with
+  the pytest exit code)
+
+### Static Analysis — shellcheck
+
+All shell scripts MUST pass `shellcheck` with no findings. This is the
+shell equivalent of `ruff check` for Python.
+
+- Suppressions MUST be **inline**, **narrowly scoped** (a single check
+  ID, applied to the smallest possible span — a command or a function),
+  and **justified** with a trailing comment explaining why the finding is
+  a false positive or an accepted trade-off. Example:
+
+  ```bash
+  # shellcheck disable=SC2317  # body is reachable: invoked indirectly via 'trap teardown EXIT'
+  teardown() {
+      ...
+  }
+  ```
+
+- Blanket, file-level, or unexplained disables are not allowed. A
+  repository-wide `.shellcheckrc` MUST NOT be used to hide findings
+  globally
+
+### Formatting — shfmt
+
+All shell scripts MUST be formatted with `shfmt` using the flags
+`-i 4 -ci` (4-space indentation, indented switch cases). This is the
+shell equivalent of `ruff format` for Python. CI runs `shfmt -d` (diff
+mode) and fails if any file is not already formatted; run `shfmt -i 4
+-ci -w <files>` locally to fix.
+
+### Workflow Shell — actionlint
+
+Shell embedded in GitHub Actions `run:` steps is validated by
+`actionlint`, which checks workflow syntax and runs `shellcheck` on each
+`run:` block. Keep embedded shell short; when a `run:` block grows beyond
+simple orchestration, extract it into a script under `scripts/` (which is
+then covered by the standalone `shellcheck`/`shfmt` gate) and invoke that
+script from the workflow.
+
+### Naming and Structure
+
+- **Files**: `kebab-case.sh` for standalone scripts (e.g.,
+  `dev-env.sh`, `image-smoke.sh`). Git hooks use the fixed names Git
+  requires (`pre-commit`, `commit-msg`, `pre-push`) with no extension
+- **Functions**: `snake_case`; **constants/globals**: `UPPER_SNAKE_CASE`
+- Provide a header comment describing purpose and usage, and route
+  subcommand dispatch through a `main` function (see `scripts/dev-env.sh`)
+- **English only** (Guardrail 4) applies to all comments and messages
+
+### File Placement
+
+- `scripts/` — repo-level orchestration (compose wrappers, dev/CI
+  tooling) that does not import the `app` package
+- `backend/scripts/` — backend utilities that import `app` (these are
+  Python, not shell)
+- `.githooks/` — Git hooks activated via
+  `git config core.hooksPath .githooks`
+
+See the file placement map in `AGENTS.md` (Guardrail 2) for the
+authoritative mapping.
+
+### Enforcement
+
+- **CI** (`.github/workflows/ci.yml`) is the authoritative gate: a
+  dedicated job discovers all tracked standalone scripts and git hooks
+  (via `git ls-files`, so newly added scripts and hooks are covered
+  automatically) and runs `shellcheck` + `shfmt -d` over them, plus
+  `actionlint` over the workflows. Tool versions are pinned in the
+  workflow, consistent with how Python tools (`ruff`, `bandit`) are
+  pinned
+- **Pre-commit hook** (`.githooks/pre-commit`) runs the same
+  `shellcheck` + `shfmt` checks on staged shell files as a fast local
+  safety net. Because these tools are not part of the Python
+  environment, the hook degrades gracefully with a warning when they are
+  not installed (matching the supplementary-safety-net philosophy in
+  `docs/features/platform/testing-strategy.md`). Install `shellcheck` and
+  `shfmt` locally to get pre-commit coverage
 
 ## Git Conventions
 

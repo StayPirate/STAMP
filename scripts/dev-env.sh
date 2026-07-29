@@ -156,7 +156,7 @@ cmd_up() {
     compose_exec up -d
     log_success "Development services are running."
     echo ""
-    echo   "  PostgreSQL: localhost:5432 (user: sentinel, password: sentinel, db: sentinel)"
+    echo "  PostgreSQL: localhost:5432 (user: sentinel, password: sentinel, db: sentinel)"
     echo "  Redis:      localhost:6379"
     echo ""
 }
@@ -214,10 +214,10 @@ main() {
     fi
 
     case "${command}" in
-        up)     cmd_up ;;
-        down)   cmd_down ;;
-        logs)   cmd_logs ;;
-        ps)     cmd_ps ;;
+        up) cmd_up ;;
+        down) cmd_down ;;
+        logs) cmd_logs ;;
+        ps) cmd_ps ;;
         status) cmd_status ;;
         *)
             log_error "Unknown command: ${command}"

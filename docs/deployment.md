@@ -55,6 +55,9 @@ For architectural decisions and design constraints, see
 | Redis | 7+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.11+ | Manages the Python 3.13 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
+| [shellcheck](https://www.shellcheck.net/) | match `ci.yml` (shell-lint) | Optional, development only — lints shell scripts via the pre-commit hook; CI enforces regardless. See `docs/conventions.md` (Shell Scripting) |
+| [shfmt](https://github.com/mvdan/sh) | match `ci.yml` (shell-lint) | Optional, development only — formats shell scripts via the pre-commit hook. Match the CI version to avoid formatting drift. See `docs/conventions.md` (Shell Scripting) |
+| [actionlint](https://github.com/rhysd/actionlint) | match `ci.yml` (shell-lint) | Optional, development only — validates GitHub Actions workflows locally before pushing. See `docs/conventions.md` (Shell Scripting) |
 
 ### Network Access (Staging/Production)
 
