@@ -223,7 +223,13 @@ contributor is not required to install Docker locally. **CI uses
 Docker** as its runtime (the GitHub Actions runner already has the
 Docker daemon and `docker/build-push-action` available); the CI gate
 in [4. CI Gate](#4-ci-gate) is Docker-specific by necessity, but it
-invokes this same runtime-agnostic script for the smoke test step.
+invokes this same runtime-agnostic script for the smoke test step. To
+force the runtime deterministically the gate exports
+`COMPOSE_CMD="docker compose"`, which the script honors in preference to
+auto-detection — necessary because the runner has podman installed but
+its socket is not running, and the image is loaded into the Docker
+daemon (`buildx --load`), so the default podman-first detection would
+select an unusable runtime.
 
 Steps (all against the single self-contained file, project name
 `sentinel-smoke`):

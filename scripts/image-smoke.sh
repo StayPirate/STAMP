@@ -27,6 +27,12 @@
 #                digest) and passes SENTINEL_IMAGE + --no-build.
 #
 # Environment:
+#   COMPOSE_CMD           Explicit compose invocation (e.g. "docker compose"
+#                         or "podman compose"). When set, it overrides the
+#                         auto-detection below. CI sets this to
+#                         "docker compose" because the image is loaded into
+#                         the Docker daemon (buildx --load) and the podman
+#                         socket is not running on the runner.
 #   SENTINEL_IMAGE        Image ref used by docker-compose.smoke.yml
 #                         (default: sentinel-backend:smoke).
 #   IMAGE_SMOKE_PORT      Host port the api service is published on
@@ -61,8 +67,11 @@ for arg in "$@"; do
 done
 
 # --- Runtime detection (same pattern as scripts/dev-env.sh) ---
+#
+# An explicit COMPOSE_CMD from the environment takes precedence and skips
+# auto-detection (see detect_compose call below).
 
-COMPOSE_CMD=""
+COMPOSE_CMD="${COMPOSE_CMD:-}"
 
 detect_compose() {
     if command -v podman &>/dev/null; then
@@ -90,7 +99,11 @@ detect_compose() {
     return 1
 }
 
-detect_compose
+# Respect an explicit COMPOSE_CMD override (e.g. CI forcing docker compose);
+# otherwise auto-detect.
+if [[ -z "${COMPOSE_CMD}" ]]; then
+    detect_compose
+fi
 
 # Assemble the compose invocation once.
 compose() {

@@ -608,8 +608,12 @@ separately-built artifact, not against the instrumented local venv.
 The suite runs **exclusively** via `scripts/image-smoke.sh`, used
 identically in local development and in CI (single source of truth for
 "how to smoke-test the image"). The script is runtime-agnostic (Docker
-or Podman, auto-detected with the same pattern as `scripts/dev-env.sh`)
-and:
+or Podman, auto-detected with the same pattern as `scripts/dev-env.sh`).
+Auto-detection can be overridden by exporting `COMPOSE_CMD` (e.g.
+`docker compose`): the CI gate sets it to `docker compose` because the
+image is loaded into the Docker daemon (`buildx --load`) and the podman
+socket is not running on the runner, so the default podman-first
+detection would otherwise pick an unusable runtime. The script:
 
 1. Builds the image once from `backend/Dockerfile` (skippable with
    `--no-build` when a pre-built image is supplied via `SENTINEL_IMAGE`).
