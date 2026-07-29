@@ -18,10 +18,7 @@
 
 ### DEP-GAP-003 — CLI operational access pattern undocumented (Medium)
 
-**Category**: Coverage gap
-**Status**: OPEN
-
-The deployment documentation tells operators that CLI commands "require direct shell access to the host or container running the backend" (prerequisite from cli-reference.md) but does not document the recommended pattern for obtaining that access in staging or production environments. The `sentinel` console script is available in PATH inside any container (all process roles share the same Docker image), but the documentation does not specify whether operators should: (a) `docker exec` into a running API container, (b) launch a one-off container (`docker run --rm --env-file .env sentinel:latest sentinel <command>`), or (c) use a dedicated CLI pod/container. The one-off container pattern is demonstrated in the "Database Migrations" section for Alembic migrations but is not generalized for CLI commands. Given that CLI commands need database access and potentially Redis access (for some operations), and that the deployment target (Kubernetes vs Docker Compose) remains undecided (noted in deployment.md's staging section), documenting at least the Docker Compose and the future Kubernetes patterns would allow operators to use CLI commands without guessing.
+**Status**: RESOLVED — Added "CLI Operational Access" subsection to deployment.md (Operations chapter) documenting the execution model (container-only in staging/production), environment dependencies (PostgreSQL always, Redis only for `manage-user unlock`), Docker/Podman one-off container and `docker exec` patterns, and the Kubernetes `kubectl exec`/Job pattern; cli-reference.md's prerequisite sentence updated to cross-reference the new section (2026-07-29)
 
 ---
 

@@ -1,8 +1,12 @@
 # CLI Reference
 
 Sentinel provides a command-line interface via the `sentinel` entry
-point, registered as a console script in `pyproject.toml`. All commands
-require direct shell access to the host or container running the backend.
+point, registered as a console script in `pyproject.toml`. Host-level
+execution (e.g., `uv run python -m sentinel ...`) applies only to local
+development; in deployed environments (staging/production), commands are
+executed via container shell access. See
+[CLI Operational Access](deployment.md#cli-operational-access) in
+`docs/deployment.md` for the operational access patterns.
 
 For the CLI design contract (output format, channel separation,
 idempotency rules), see `docs/conventions.md` (CLI Conventions). For the

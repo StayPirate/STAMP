@@ -36,6 +36,7 @@ For architectural decisions and design constraints, see
   - [Clock Synchronization](#clock-synchronization)
 - [Operations](#operations)
   - [Database Migrations](#database-migrations)
+  - [CLI Operational Access](#cli-operational-access)
   - [Health Checks](#health-checks)
   - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
   - [Log Aggregation](#log-aggregation)
@@ -617,6 +618,63 @@ take a database backup (e.g., `pg_dump`) so that in the extreme case
 where a bug has already corrupted data, the database can be restored to
 a consistent pre-deployment state. The backup is a safety net, not the
 primary recovery mechanism — fix-forward remains the standard path.
+
+### CLI Operational Access
+
+The `sentinel` console script is available on `PATH` inside every
+container image, because all process roles share the same Docker image
+(see [Container Images](#container-images)). See `docs/cli-reference.md`
+for the full command catalog.
+
+**Execution model.** In staging and production, CLI commands are
+executed **exclusively via container shell access** — there is no
+supported host-level execution path in these environments. (Running the
+CLI directly on the host via `uv run python -m sentinel ...` is a
+local-development-only pattern — see [Local Development](#local-development)
+above. It relies on a local `uv`-managed virtual environment that does
+not exist in staging/production containers.)
+
+**Environment dependencies.** Run CLI commands in an environment where
+both PostgreSQL and Redis are reachable — the same dependencies already
+required by the API and worker processes. Most commands only need
+PostgreSQL; the sole exception is `sentinel manage-user unlock`, which
+clears the login lockout counter stored in Redis and therefore requires
+Redis connectivity to have a practical effect. This is operational
+guidance about environment provisioning, not a new runtime hard
+dependency — it does not change the fail-open behavior already
+specified for login lockout and session liveness (see
+`docs/conventions.md`, Redis Error Handling).
+
+**Docker / Podman Compose pattern.** The recommended pattern generalizes
+the one-off container approach already used for Alembic migrations
+(see [Database Migrations](#database-migrations)):
+
+```bash
+# Recommended: one-off container
+docker run --rm -it --env-file .env sentinel:latest \
+  sentinel <group> <command> ...
+
+# Alternative: exec into an already-running container
+docker exec -it <container> sentinel <group> <command> ...
+```
+
+Interactive commands (`manage-user create`, `manage-user set-password`)
+prompt for a hidden password and require a TTY — the `-it` flags shown
+above are mandatory for these commands.
+
+**Kubernetes pattern.** The deployment target (Kubernetes, Docker
+Compose, or another orchestrator) remains undecided (see
+[Staging-Specific Notes](#staging-specific-notes)). The Kubernetes
+pattern below is documented so operators are not blocked regardless of
+which target is eventually chosen:
+
+```bash
+# Ad hoc: exec into a running pod
+kubectl exec -it <pod> -- sentinel <group> <command> ...
+
+# Recommended for one-off operations: a dedicated Job/pod built from
+# the same image, analogous to the Alembic migration Job
+```
 
 ### Health Checks
 
