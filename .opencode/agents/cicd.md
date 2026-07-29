@@ -14,10 +14,11 @@ permission:
     ".release-please-manifest.json": allow
     "*": deny
   bash:
-    "docker *": allow
-    "gh workflow *": allow
-    "gh run *": allow
-    "*": ask
+    "*": allow
+  external_directory:
+    "*": deny
+    "/tmp": allow
+    "/tmp/**": allow
 ---
 
 ## Role
