@@ -15,7 +15,9 @@ docs/drafts/image-testing-setup.md (Growth Model).
 
 from __future__ import annotations
 
+import subprocess
 import time
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -49,3 +51,26 @@ def test_api_container_stays_up(http_client: httpx.Client) -> None:
 
     second = http_client.get("/openapi.json")
     assert second.status_code == 200
+
+
+@pytest.mark.image
+def test_compose_exec_runs_in_api_container(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """``compose exec`` reaches the running ``api`` container.
+
+    Also exercises the ``compose_exec`` fixture end-to-end, which requires
+    the compose project name to match the one the runner brought the stack
+    up with (``sentinel-smoke``). If the project name were wrong, compose
+    would target the default project and fail to find the container.
+
+    The command imports the ``app`` package inside the container, which
+    doubles as a smoke check that the application code is importable in the
+    built image (not just reachable over HTTP).
+    """
+    result = compose_exec("api", "python", "-c", "import app; print('exec-ok')")
+    assert result.returncode == 0, (
+        f"compose exec failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "exec-ok" in result.stdout

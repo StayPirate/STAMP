@@ -52,8 +52,17 @@ def compose_exec():
 
     Used by later-phase assertions (e.g. running a ``sentinel`` CLI
     command inside the container). The compose invocation is read from
-    the COMPOSE_CMD env var exported by scripts/image-smoke.sh; it
-    defaults to ``docker compose`` for direct/manual use.
+    env vars exported by scripts/image-smoke.sh:
+
+    - ``COMPOSE_CMD`` — the compose binary (defaults to ``docker compose``
+      for direct/manual use).
+    - ``COMPOSE_FILES`` — colon-separated compose file paths (defaults to
+      ``docker-compose.smoke.yml``).
+    - ``COMPOSE_PROJECT`` — the compose project name (defaults to
+      ``sentinel-smoke``). This MUST match the project name the runner
+      brought the stack up with (``scripts/image-smoke.sh`` uses
+      ``-p sentinel-smoke``); otherwise ``compose exec`` would target the
+      default project and fail to find the running containers.
 
     Returns a callable ``(service, *args) -> subprocess.CompletedProcess``.
     """
@@ -61,12 +70,13 @@ def compose_exec():
     compose_files = os.environ.get("COMPOSE_FILES", "docker-compose.smoke.yml").split(
         ":"
     )
+    project = os.environ.get("COMPOSE_PROJECT", "sentinel-smoke")
     file_args: list[str] = []
     for compose_file in compose_files:
         file_args.extend(["-f", compose_file])
 
     def _exec(service: str, *args: str) -> subprocess.CompletedProcess[str]:
-        cmd = [*compose_cmd, *file_args, "exec", "-T", service, *args]
+        cmd = [*compose_cmd, "-p", project, *file_args, "exec", "-T", service, *args]
         return subprocess.run(
             cmd,
             capture_output=True,

@@ -138,6 +138,7 @@ set +e
         IMAGE_SMOKE_BASE_URL="${IMAGE_SMOKE_BASE_URL}" \
             COMPOSE_CMD="${COMPOSE_CMD}" \
             COMPOSE_FILES="${SMOKE_COMPOSE}" \
+            COMPOSE_PROJECT="${PROJECT_NAME}" \
             uv run pytest -m image tests/image/
 )
 PYTEST_EXIT=$?
