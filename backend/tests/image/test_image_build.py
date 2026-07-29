@@ -7,10 +7,9 @@ time this test runs, the compose ``--wait`` has already blocked until the
 ``api`` healthcheck passed, so a reachable, non-erroring app confirms the
 image booted correctly.
 
-Per-feature assertions (health endpoints, worker startup, migrations,
-CLI, git worker) are added incrementally by their owning phase — see
-docs/features/platform/testing-strategy.md (Growth rule) and
-docs/drafts/image-testing-setup.md (Growth Model).
+Further assertions (health endpoints, worker startup, migrations, CLI,
+git worker) are added by the change that introduces the corresponding
+behavior — see docs/features/platform/testing-strategy.md (Growth Rule).
 """
 
 from __future__ import annotations

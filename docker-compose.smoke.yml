@@ -21,14 +21,16 @@
 # ${SENTINEL_IMAGE}. CI sets SENTINEL_IMAGE to a pre-built, already-loaded
 # tag and runs the runner with --no-build so the tested artifact is
 # byte-identical to the published one (see
-# docs/drafts/image-testing-setup.md, CI Gate).
+# docs/features/platform/testing-strategy.md, Image / Container Smoke
+# Testing).
 #
-# GROWTH MODEL: services whose underlying code does not yet exist are
-# commented out and uncommented by the phase that introduces them,
-# together with their smoke assertion (see
-# docs/drafts/image-testing-setup.md, Growth Model). Keeping them
-# commented lets the argument-free `up --wait` stay green so the CI gate
-# does not block `latest` publication before those phases land.
+# PHASED SERVICES: services whose underlying code does not yet exist are
+# commented out and are uncommented by the change that implements the
+# corresponding process role, together with its smoke assertion (see
+# docs/features/platform/testing-strategy.md, Image / Container Smoke
+# Testing — Growth Rule). Keeping them commented lets the argument-free
+# `up --wait` stay green so the CI gate does not block `latest`
+# publication before those services land.
 
 x-app-common: &app-common
   image: ${SENTINEL_IMAGE:-sentinel-backend:smoke}

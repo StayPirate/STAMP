@@ -12,11 +12,14 @@ behavior — it sequences the implementation of specs that already exist
 under `docs/features/`. When a phase or piece is completed, update its
 status in the tracking tables below.
 
-**Prerequisite**: before Phase 0 begins, the prep effort described in
-`docs/drafts/image-testing-setup.md` must be completed. It establishes
-the mechanism for testing built Docker images (compose file, pytest
-suite, CI gate) that this plan's phases extend incrementally — see the
-[Prep Effort](#prep-effort--image-testing-setup) section below.
+**Prerequisite**: the image-testing prep effort — which established the
+mechanism for testing built Docker images (compose file, pytest suite,
+CI gate) that this plan's phases extend incrementally — is **complete**
+(2026-07-29). The durable convention now lives in
+`docs/features/platform/testing-strategy.md` (Image / Container Smoke
+Testing). See the [Prep Effort](#prep-effort--image-testing-setup)
+section below for the completed deliverables and the phase-by-phase
+growth model that subsequent phases follow.
 
 ## Contents
 
@@ -107,15 +110,26 @@ only when ALL of the following are satisfied:
    introduces new container-observable behavior (a new endpoint, a new
    process role, a new startup validation, a new runtime dependency
    such as the `git` binary), the corresponding assertion is added to
-   `backend/tests/image/` per the growth model in
-   `docs/drafts/image-testing-setup.md` (Growth Model), and
-   `scripts/image-smoke.sh` passes locally. If the piece has no
+   `backend/tests/image/` per the growth model in the
+   [Prep Effort](#prep-effort--image-testing-setup) section below (which
+   restates the durable Growth Rule from
+   `docs/features/platform/testing-strategy.md`, Image / Container Smoke
+   Testing), and `scripts/image-smoke.sh` passes locally. If the piece has no
    container-observable effect (e.g., a pure function), this step is
    a no-op — state so explicitly in the Progress Log entry.
 8. **Progress log updated.** The [Progress Log](#progress-log) records
    what was completed, the date, and any stub/seam introduced.
+9. **No dangling reference to this plan.** Because this document is
+   temporary and will be deleted once all phases are complete, no file
+   created or modified by this piece may reference
+   `docs/drafts/implementation-plan.md` (by path or by a concept that
+   lives only here, e.g. phase numbers or the phase→assertion growth
+   model). Any durable convention was first migrated to its owning
+   permanent document (per the cross-cutting mapping in `AGENTS.md`,
+   Guardrail 21) and only that permanent location is referenced. Verify
+   with a repository-wide search for the draft path.
 
-Only after all eight conditions are met does the next piece begin.
+Only after all nine conditions are met does the next piece begin.
 
 ## WIP Boundary
 
@@ -182,7 +196,8 @@ run on `master`, per `build-images.yml`) is sufficient at that stage.
 applicable phase below): merge the release-please Release PR → confirm
 the resulting `v0.x.0` tag triggers `build-images.yml` → confirm the
 semver-tagged image passes the image smoke test gate (see
-`docs/drafts/image-testing-setup.md`) before it is published.
+`docs/features/platform/testing-strategy.md`, Image / Container Smoke
+Testing) before it is published.
 
 **Prerequisite status**: the `RELEASE_TOKEN` repository secret
 (required for the `v*` tag to trigger `build-images.yml` — the default
@@ -198,7 +213,7 @@ work begins.
 
 | Phase | Focus | Status |
 |---|---|---|
-| Prep | Image testing setup (mechanism + minimal assertion) | Not started |
+| Prep | Image testing setup (mechanism + minimal assertion) | Completed (2026-07-29) |
 | 0 | Infrastructure completion and validation | Not started |
 | 1 | Cross-cutting platform foundations | Not started |
 | 2 | Local identity and admin platform | Not started |
@@ -212,14 +227,48 @@ work begins.
 
 ## Prep Effort — Image Testing Setup
 
-See `docs/drafts/image-testing-setup.md` for the full specification of
-this prep effort. Summary: before Phase 0 begins, establish (a) a
-full-stack Docker Compose file, (b) a black-box pytest suite under
-`backend/tests/image/` (marker `image`, excluded from the default test
-run), (c) a single runner script (`scripts/image-smoke.sh`) used both
-locally and in CI, and (d) a blocking CI gate in `build-images.yml`
-(build → smoke test → push, only on success). This is infrastructure
-shared by every phase below and is built once, upfront.
+**Status: Completed (2026-07-29).** This prep effort established the
+mechanism for testing built Docker images as a black-box artifact. It
+was executed once, before Phase 0. The durable convention is documented
+in `docs/features/platform/testing-strategy.md` (Image / Container Smoke
+Testing) — the authoritative home for this cross-cutting testing
+convention.
+
+Delivered artifacts:
+
+- `docker-compose.smoke.yml` — self-contained full-stack (own
+  `postgres`/`redis` with no host ports; `api` published on
+  `IMAGE_SMOKE_PORT`, default 18000). All five application services are
+  represented; `api` and `migrate` are active, `worker`/`beat`/
+  `git-worker` are commented out and uncommented by the phase that
+  introduces them.
+- `backend/tests/image/` — black-box pytest suite (marker `image`,
+  excluded from the default run and from coverage).
+- `scripts/image-smoke.sh` — single runtime-agnostic runner
+  (build → `up --wait` → `pytest -m image` → teardown), used identically
+  locally and in CI.
+- `.github/workflows/build-images.yml` — blocking CI gate
+  (build once → load → smoke test → push the same image digest).
+- `docs/features/platform/testing-strategy.md` — new "Image / Container
+  Smoke Testing" section (durable convention + Growth Rule).
+
+### Image Smoke Test Growth Model
+
+The suite started with a single minimal assertion and grows alongside
+this plan. Each phase that introduces new container-observable behavior
+uncomments its compose service **and** adds the corresponding smoke
+assertion together, as part of that phase's Definition of Done (item 7).
+This mapping is indicative — the owning phase decides the exact
+assertions when it is implemented:
+
+| Phase | New assertion(s) added to `backend/tests/image/` |
+|---|---|
+| Prep (done) | `test_image_build.py`: image builds, `api` container starts, no crash |
+| Phase 1 | `test_api_image.py`: `GET /health` and `GET /ready` return 200 |
+| Phase 2 | `test_cli_image.py`: a `sentinel manage-user ...` command runs inside the container and exits 0 |
+| Phase 3 | `test_worker_image.py`: `worker` and `beat` containers start and stay up; log lines confirm UTC/redbeat validation passed |
+| Phase 4 | `test_migrations_image.py`: `migrate` one-shot service runs `alembic upgrade head` against the real schema and exits 0 |
+| Phase 5 | `test_git_worker_image.py`: `git-worker` container has the `git` binary available and can clone a throwaway repository |
 
 ---
 
@@ -546,15 +595,24 @@ completed — dependencies may shift):
 **Resolved**:
 
 - ~~Whether the `RELEASE_TOKEN` repository secret is configured~~ —
-  confirmed present (verified manually, see Release Strategy and
-  `docs/drafts/image-testing-setup.md`, Prerequisites).
+  confirmed present (verified manually, see Release Strategy).
 - ~~Whether/how to test built Docker images~~ — addressed by the
-  dedicated prep effort in `docs/drafts/image-testing-setup.md`,
-  executed before Phase 0.
+  image-testing prep effort (completed 2026-07-29, see the
+  [Prep Effort](#prep-effort--image-testing-setup) section); the durable
+  convention lives in `docs/features/platform/testing-strategy.md`
+  (Image / Container Smoke Testing).
 
 ## Progress Log
 
 Record completed pieces here, in chronological order, including any
 stub/seam introduced and the spec that will eventually replace it.
 
-_No entries yet — implementation has not started._
+- **2026-07-29 — Prep Effort (Image Testing Setup) completed.**
+  Delivered `docker-compose.smoke.yml`, `backend/tests/image/`
+  (marker `image`, excluded from default run and coverage),
+  `scripts/image-smoke.sh`, and the blocking build → smoke → push gate
+  in `.github/workflows/build-images.yml`. The durable convention was
+  added to `docs/features/platform/testing-strategy.md` (Image /
+  Container Smoke Testing). No stubs/seams introduced. See the
+  [Prep Effort](#prep-effort--image-testing-setup) section for the
+  phase-by-phase growth model that subsequent phases follow.

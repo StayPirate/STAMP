@@ -8,7 +8,7 @@ transport and a test database into the in-process app). Here the app
 runs inside a container started by ``scripts/image-smoke.sh``.
 
 See docs/features/platform/testing-strategy.md (Image / Container Smoke
-Testing) and docs/drafts/image-testing-setup.md.
+Testing).
 """
 
 from __future__ import annotations

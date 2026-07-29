@@ -584,7 +584,7 @@ missing OS-level binaries, a broken entrypoint/`CMD`, non-root
 permission issues, or process-role startup failures. The **image smoke
 suite** is a distinct, black-box suite (outside the three-tier pyramid)
 that fills this gap by running the actual image as a container and
-asserting against it over HTTP (and, in later phases, via
+asserting against it over HTTP (and, where a check requires it, via
 `compose exec`).
 
 ### Location and Marker
@@ -634,9 +634,6 @@ compose network only) and the `api` service is published on a non-8000
 host port (`IMAGE_SMOKE_PORT`, default 18000). This lets the smoke stack
 run even while `scripts/dev-env.sh` (which owns host ports 5432/6379) and
 a local `uvicorn` dev server (port 8000) are running — no port conflict.
-Services whose underlying code does not yet exist are commented out and
-uncommented by the phase that introduces them, so the argument-free
-`up --wait` only waits on services that can become healthy.
 
 ### CI Gate
 
@@ -650,12 +647,16 @@ artifacts are guaranteed identical — no second build is performed.
 
 ### Growth Rule
 
-The suite starts with a single minimal assertion (the image builds and
-the `api` container starts and stays up) and grows alongside the
-implementation. **Each phase that introduces new container-observable
-behavior — a new endpoint, a new process role, a new startup validation —
-extends this suite with a corresponding assertion (and uncomments the
-relevant compose service) as part of that phase's Definition of Done.**
+The image smoke suite is not a fixed set of checks — it grows with the
+system. **Whenever a change introduces new container-observable
+behavior — a new endpoint, a new process role, a new startup validation,
+or a new runtime dependency (e.g. an OS binary) — the same change MUST
+add a corresponding assertion under `backend/tests/image/` (and, if it
+introduces a new process role, the corresponding service in
+`docker-compose.smoke.yml`).** This is the container-level counterpart of
+the Mandatory Test Scenarios rule for in-process tests (see Guardrail 6
+in `AGENTS.md`): container-observable behavior is not done until the
+image suite covers it.
 
 ---
 
