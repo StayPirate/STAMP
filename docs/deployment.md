@@ -129,7 +129,7 @@ All environments share the same `SSO_CLIENT_ID` and `SSO_CLIENT_SECRET`
 cd backend && uv sync
 
 # Start PostgreSQL + Redis containers
-./dev-env.sh up
+./scripts/dev-env.sh up
 
 # Run database migrations
 cd backend && uv run alembic upgrade head
@@ -154,7 +154,7 @@ Create `backend/.env` for local development:
 # Required (app refuses to start without this)
 JWT_SECRET_KEY=local-development-secret-minimum-32-characters
 
-# Connection settings (defaults work with dev-env.sh)
+# Connection settings (defaults work with scripts/dev-env.sh)
 DATABASE_URL=postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/1
@@ -304,8 +304,12 @@ process is driven entirely by Conventional Commit messages on the
 5. On merge, release-please:
    - Creates a git tag (`v<major>.<minor>.<patch>`)
    - Creates a GitHub Release with release notes
-6. The tag triggers `build-images.yml`, which builds and pushes the
-   Docker image to `ghcr.io` with semver tags
+6. The tag triggers `build-images.yml`, which builds the Docker image
+   once, runs a **blocking image smoke-test gate** against that exact
+   artifact, and only on success pushes the same image digest to
+   `ghcr.io` with semver tags. A failing smoke test prevents publication
+   (see `docs/features/platform/testing-strategy.md`, Image / Container
+   Smoke Testing)
 
 ### Creating a Release
 
@@ -347,7 +351,8 @@ release-please.yml → creates/updates Release PR
 creates git tag (v*) + GitHub Release
      │
      ▼
-build-images.yml → builds and pushes Docker image to ghcr.io
+build-images.yml → builds image once → image smoke-test gate
+                   → pushes same digest to ghcr.io (only if gate passes)
      │
      ▼
 manual deployment from tag (staging/production)

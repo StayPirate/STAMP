@@ -1,0 +1,124 @@
+# Self-contained full-stack for black-box image smoke testing.
+#
+# Unlike docker-compose.yml (the local dev-infra stack used by
+# scripts/dev-env.sh), this file is SELF-CONTAINED: it defines its own
+# postgres + redis alongside the application services, and is run on its
+# own (not merged as an overlay):
+#
+#   docker compose -f docker-compose.smoke.yml up -d --wait
+#
+# or, runtime-agnostic, via scripts/image-smoke.sh.
+#
+# Why self-contained: postgres/redis here publish NO host ports — the
+# services reach each other over the compose network only. This lets the
+# smoke test run even while the dev-infra stack (scripts/dev-env.sh) is
+# up on the standard host ports 5432/6379, with no conflict. The only
+# published port is the api service, and it defaults to a non-8000 host
+# port (IMAGE_SMOKE_PORT, default 18000) so it does not clash with a
+# uvicorn dev server a developer may be running locally on 8000.
+#
+# The application image is built once from ./backend and tagged as
+# ${SENTINEL_IMAGE}. CI sets SENTINEL_IMAGE to a pre-built, already-loaded
+# tag and runs the runner with --no-build so the tested artifact is
+# byte-identical to the published one (see
+# docs/drafts/image-testing-setup.md, CI Gate).
+#
+# GROWTH MODEL: services whose underlying code does not yet exist are
+# commented out and uncommented by the phase that introduces them,
+# together with their smoke assertion (see
+# docs/drafts/image-testing-setup.md, Growth Model). Keeping them
+# commented lets the argument-free `up --wait` stay green so the CI gate
+# does not block `latest` publication before those phases land.
+
+x-app-common: &app-common
+  image: ${SENTINEL_IMAGE:-sentinel-backend:smoke}
+  build:
+    context: ./backend
+  # Minimum configuration app/config.py requires to start without
+  # crashing. JWT_SECRET_KEY is a fictional, fixed test value (>=32
+  # chars) — NOT a real secret; safe to commit.
+  environment:
+    JWT_SECRET_KEY: image-smoke-test-secret-key-not-for-production
+    DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@postgres:5432/sentinel
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  # Dedicated infra for the smoke stack. No host ports are published, so
+  # this coexists with scripts/dev-env.sh (which owns 5432/6379 on the
+  # host) without conflict.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    <<: *app-common
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Published on a non-8000 host port by default to avoid clashing with
+    # a local uvicorn dev server. pytest reaches it via
+    # IMAGE_SMOKE_BASE_URL, so the host port number is transparent.
+    ports:
+      - "${IMAGE_SMOKE_PORT:-18000}:8000"
+    # Liveness probe: the runtime image is python:slim (no curl). Until
+    # /health exists (Phase 1), probe the always-present /openapi.json
+    # route, which confirms the ASGI app booted successfully.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # One-shot schema migration. A no-op until Phase 4 introduces real
+  # migrations; exits 0 against an empty revision set. `restart: no` so
+  # `up --wait` treats a clean exit as success rather than a crash loop.
+  migrate:
+    <<: *app-common
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  # --- Uncomment in Phase 3 (fetcher framework: requires app.celery_app) ---
+  # worker:
+  #   <<: *app-common
+  #   command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+  #   healthcheck:
+  #     test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
+  #
+  # beat:
+  #   <<: *app-common
+  #   command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+
+  # --- Uncomment in Phase 5 (git-based CVE fetchers) ---
+  # git-worker:
+  #   <<: *app-common
+  #   command: ["celery", "-A", "app.celery_app", "worker", "-Q", "git", "--loglevel=info"]

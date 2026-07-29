@@ -100,7 +100,7 @@ only when ALL of the following are satisfied:
    `@api-parity-reviewer`, `@docs-reviewer`. Issues rated "Needs
    revision" (or High/Critical severity) are fixed before moving on.
 6. **Joint manual verification.** The stack is run locally
-   (`./dev-env.sh up`, API server, Celery worker/Beat as applicable);
+   (`./scripts/dev-env.sh up`, API server, Celery worker/Beat as applicable);
    the new behavior is exercised manually (API call, CLI command, or
    fetcher run) and the resulting database state is inspected together.
 7. **Image smoke tests extended where applicable.** If the piece
@@ -243,7 +243,7 @@ savepoint rollback, e2e client fixture) are already in place.
    vector parsing, required by `cvss-scoring.md`), `celery-redbeat`
    (Beat scheduler, required by `fetcher-infrastructure.md`).
 2. Validate the existing infrastructure end-to-end:
-   - `./dev-env.sh up` → PostgreSQL + Redis healthy
+   - `./scripts/dev-env.sh up` → PostgreSQL + Redis healthy
    - `cd backend && uv sync` → environment resolves cleanly
    - `uv run pytest` → baseline green (including the `xfail` on `/health`)
    - `uv run ruff check . && uv run ruff format --check .` → clean

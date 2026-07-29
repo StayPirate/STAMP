@@ -4,7 +4,7 @@
 # Auto-detects Podman or Docker and manages development services
 # (PostgreSQL, Redis) defined in docker-compose.yml.
 #
-# Usage: ./dev-env.sh <command>
+# Usage: ./scripts/dev-env.sh <command>
 #
 # Commands:
 #   up       Start development services in the background
@@ -17,7 +17,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
 PROJECT_NAME="sentinel"
 
 # Colors for output (disabled if not a terminal)

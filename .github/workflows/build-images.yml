@@ -15,6 +15,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  SMOKE_IMAGE: sentinel-backend:smoke
 
 jobs:
   build-backend:
@@ -53,12 +54,45 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/build-push-action@v7
+      # Build the image ONCE into the local Docker daemon (push: false,
+      # load: true). This is the single build invocation; the smoke gate
+      # tests this exact artifact and the push step below re-tags and
+      # publishes the very same local image (identical digest).
+      - name: Build backend image (load only, no push)
+        uses: docker/build-push-action@v7
         with:
           context: backend
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          push: false
+          load: true
+          tags: ${{ env.SMOKE_IMAGE }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: PYTHON_VERSION=${{ steps.python-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      # Blocking smoke gate: brings up the full stack against the loaded
+      # image, runs the `image`-marked pytest suite, tears down. A failure
+      # here fails the job (fail-fast, no continue-on-error) and prevents
+      # any push below.
+      - name: Image smoke test (blocking gate)
+        env:
+          SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}
+        run: ./scripts/image-smoke.sh --no-build
+
+      # Only reached if the smoke gate passed. Publish the SAME local
+      # image artifact by re-tagging it with each metadata-action tag and
+      # pushing. No second docker/build-push-action build is performed, so
+      # the published digest is identical to the tested one.
+      - name: Push tested image (same digest)
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "Tagging and pushing $tag"
+            docker tag "${SMOKE_IMAGE}" "$tag"
+            docker push "$tag"
+          done

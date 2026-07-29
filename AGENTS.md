@@ -28,8 +28,11 @@ For full architecture details, read `docs/architecture.md`.
 sentinel/
 ├── AGENTS.md                    # Project instructions for OpenCode
 ├── opencode.json                # OpenCode configuration
-├── dev-env.sh                   # Local dev stack launcher (Podman/Docker)
-├── docker-compose.yml           # Local development environment
+├── docker-compose.yml           # Local dev-infra stack (PostgreSQL + Redis)
+├── docker-compose.smoke.yml     # Self-contained stack for image smoke tests
+├── scripts/                     # Repo-level orchestration scripts
+│   ├── dev-env.sh               # Local dev stack launcher (Podman/Docker)
+│   └── image-smoke.sh           # Black-box image smoke-test runner
 ├── docs/                        # Specifications and documentation
 │   ├── architecture.md          # System architecture
 │   ├── api-spec.md              # API specifications
@@ -58,7 +61,7 @@ sentinel/
 │   ├── pyproject.toml           # Python dependencies and config
 │   ├── alembic.ini              # Alembic configuration
 │   ├── alembic/                 # Database migrations
-│   ├── scripts/                 # Utility scripts
+│   ├── scripts/                 # Backend-specific utility scripts (import app)
 │   ├── app/
 │   │   ├── main.py              # FastAPI application entry point
 │   │   ├── config.py            # Application configuration
@@ -80,7 +83,8 @@ sentinel/
 - **Backend lint**: `cd backend && uv run ruff check . && uv run ruff format --check .`
 - **DB migrations**: `cd backend && uv run alembic upgrade head`
 - **New migration**: `cd backend && uv run alembic revision --autogenerate -m "description"`
-- **Local dev stack**: `./dev-env.sh up` (PostgreSQL + Redis, auto-detects Podman or Docker)
+- **Local dev stack**: `./scripts/dev-env.sh up` (PostgreSQL + Redis, auto-detects Podman or Docker)
+- **Image smoke test**: `./scripts/image-smoke.sh` (builds the image, runs black-box container tests; see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing)
 
 ## Local Environment
 
@@ -169,7 +173,8 @@ the location is correct according to this map:
 | Background tasks           | `backend/app/tasks/`              |
 | Auth and permissions       | `backend/app/core/`               |
 | DB migrations              | `backend/alembic/versions/`       |
-| Utility scripts            | `backend/scripts/`                |
+| Backend utility scripts (import `app`) | `backend/scripts/`    |
+| Repo-level orchestration scripts (compose, dev/CI tooling) | `scripts/` |
 | TLS certificates           | `backend/certs/`                  |
 | Backend tests              | `backend/tests/`                  |
 | CLI commands               | `backend/app/cli/`                |

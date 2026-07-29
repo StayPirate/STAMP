@@ -68,7 +68,7 @@ are added incrementally as each corresponding phase in
 - `backend/tests/` — unit/integration/e2e tests only, all running
   in-process against the local venv (see `conftest.py`). No black-box
   container tests exist.
-- `dev-env.sh` — already implements Docker/Podman runtime
+- `scripts/dev-env.sh` — already implements Docker/Podman runtime
   auto-detection (`detect_runtime()` → `COMPOSE_CMD`) for
   `docker-compose.yml`. `scripts/image-smoke.sh` (see
   [3. Runner Script](#3-runner-script)) reuses this same pattern rather
@@ -80,42 +80,62 @@ are added incrementally as each corresponding phase in
 
 ### 1. Full-Stack Compose File
 
-A new compose file — `docker-compose.app.yml` — that extends the
-existing `docker-compose.yml` (postgres + redis) with application
+A new, **self-contained** compose file — `docker-compose.smoke.yml` —
+that defines its own `postgres` + `redis` **plus** the application
 services built from the local `backend/Dockerfile`, using the
 process-role entrypoints defined in `docs/deployment.md` (Container
-Images):
+Images). It is run on its own (not merged as an overlay with
+`docker-compose.yml`):
 
-| Service | Entrypoint | Introduced when tested (phase) |
+| Service | Entrypoint | Active from phase |
 |---|---|---|
-| `api` | `uvicorn app.main:app` | Phase 1 (health endpoints) |
+| `api` | `uvicorn app.main:app` | Prep (this effort) |
+| `migrate` | `alembic upgrade head` (one-shot) | Prep (no-op until Phase 4 schema) |
 | `worker` | `celery -A app.celery_app worker` | Phase 3 (fetcher framework) |
 | `beat` | `celery -A app.celery_app beat` | Phase 3 (fetcher framework) |
 | `git-worker` | `celery -A app.celery_app worker -Q git` | Phase 5 (git-based CVE fetchers) |
-| `migrate` | `alembic upgrade head` (one-shot) | Phase 4 (real schema) |
 
-All services use the same image (per `docs/architecture.md`, Single
-Docker image, multiple entrypoints), built once per run via
+All application services use the same image (per `docs/architecture.md`,
+Single Docker image, multiple entrypoints), built once per run via
 `compose build`. The file is usable both locally (via
 `scripts/image-smoke.sh`, or directly with `docker compose`/
-`podman compose -f docker-compose.yml -f docker-compose.app.yml up`)
-and in CI. See [3. Runner Script](#3-runner-script) for the
-runtime-agnostic invocation used by automation.
+`podman compose -f docker-compose.smoke.yml up`) and in CI. See
+[3. Runner Script](#3-runner-script) for the runtime-agnostic invocation
+used by automation.
 
-**The file is created complete (all 5 services) at prep time.** This is
-a deliberate choice: it is acceptable, and expected, that services
-whose underlying code does not exist yet fail to start when exercised
-at prep time — `worker`/`beat`/`git-worker` depend on `app.celery_app`,
-which is not introduced until Phase 3; `migrate` has no real schema to
-apply until Phase 4. Only `api` (and `migrate` as a no-op against an
-empty schema) are expected to start successfully at prep time. This
-is consistent with the [Growth Model](#growth-model): the compose
-topology is complete from day one, but the corresponding smoke
-assertions — and therefore the gate's ability to certify each service —
-are added incrementally as each phase lands the underlying code. A
-service failing to start before its phase does not block the prep
-effort or the image's `latest` publication, since no smoke assertion
-yet exercises that service.
+**Why self-contained (no overlay).** The smoke stack defines its own
+`postgres`/`redis` and publishes **no host ports** for them — the
+services reach each other over the compose network only. This is
+deliberate: it lets the smoke stack run even while `scripts/dev-env.sh`
+(the local dev-infra stack) is up on the standard host ports 5432/6379,
+with no conflict. The only published port is `api`, on a non-8000 host
+port (`IMAGE_SMOKE_PORT`, default 18000) so it does not clash with a
+`uvicorn` dev server a developer may be running locally on 8000. An
+overlay merged with `docker-compose.yml` was rejected because Compose
+cannot *remove* the base file's host port publications, so the conflict
+would persist.
+
+**All 5 services are present in the file, but services whose underlying
+code does not yet exist are commented out** and uncommented by the
+phase that introduces them. At prep time only `api` and `migrate`
+(a no-op against an empty schema) are active; `worker`/`beat`/
+`git-worker` — which depend on `app.celery_app`, not introduced until
+Phase 3 — are present as commented-out blocks with a note indicating
+the enabling phase.
+
+This is a deliberate choice over defining all 5 services active from
+day one: a Celery service that crashes on startup (missing
+`app.celery_app`) would make the runner's `compose up --wait` step fail,
+which would turn the CI gate red and **block publication of the `latest`
+image** for every phase before Phase 3 — defeating the purpose of the
+gate, which exists precisely to protect (and allow) the first `latest`
+image published during Phase 0. Keeping unimplemented services commented
+out lets the argument-free `up --wait` (see
+[3. Runner Script](#3-runner-script)) stay green while still recording
+the full topology in one place. This is consistent with the
+[Growth Model](#growth-model): each phase uncomments its service **and**
+adds the corresponding smoke assertion together, as part of that phase's
+Definition of Done.
 
 **Environment variables**: every application service MUST receive, via
 the compose file's `environment` block, the minimum configuration
@@ -126,8 +146,9 @@ the compose file's `environment` block, the minimum configuration
   — see `app/config.py`). Not a real secret; safe to commit as a fixed
   test value.
 - `DATABASE_URL` — `postgresql+asyncpg://sentinel:sentinel@postgres:5432/sentinel`
-  (hostname resolves via the compose network to the `postgres` service).
-- `REDIS_URL` — `redis://redis:6379/0`.
+  (hostname resolves via the compose network to the in-stack `postgres`
+  service).
+- `REDIS_URL` — `redis://redis:6379/0` (in-stack `redis` service).
 - `CELERY_BROKER_URL` — `redis://redis:6379/1`.
 
 Without these, the `api` container crashes immediately on startup
@@ -136,7 +157,7 @@ minimal assertion ("the container starts and stays up") fail for the
 wrong reason.
 
 **Readiness**: each application service defines a `healthcheck` (same
-pattern already used by `postgres`/`redis` in `docker-compose.yml`).
+pattern used by the in-stack `postgres`/`redis`).
 The exact healthcheck command evolves with the Growth Model — initially
 a process-liveness check (e.g., `CMD-SHELL` process probe), from Phase
 1 onward `curl`/equivalent against `/health`.
@@ -150,7 +171,7 @@ distinct from the in-process suite:
 backend/tests/image/
   conftest.py            # HTTP client pointed at the running container
                           # (base URL from IMAGE_SMOKE_BASE_URL env var,
-                          # default http://localhost:8000); helper for
+                          # default http://localhost:18000); helper for
                           # `docker compose exec` calls. Does NOT reuse
                           # the in-process db_session/client fixtures
                           # from backend/tests/conftest.py.
@@ -194,7 +215,7 @@ development and in CI (no logic duplicated between the two).
 
 **Runtime-agnostic**: the script MUST work with either Docker or
 Podman, reusing the same detection pattern already implemented in
-`dev-env.sh` (`detect_runtime()` → `COMPOSE_CMD`, preferring the native
+`scripts/dev-env.sh` (`detect_runtime()` → `COMPOSE_CMD`, preferring the native
 `podman compose`/`docker compose` plugin, falling back to
 `podman-compose`/`docker-compose` standalone). This keeps the script
 consistent with the project's existing Podman-first local tooling — a
@@ -204,18 +225,27 @@ Docker daemon and `docker/build-push-action` available); the CI gate
 in [4. CI Gate](#4-ci-gate) is Docker-specific by necessity, but it
 invokes this same runtime-agnostic script for the smoke test step.
 
-Steps:
+Steps (all against the single self-contained file, project name
+`sentinel-smoke`):
 
-1. `${COMPOSE_CMD} -f docker-compose.yml -f docker-compose.app.yml build`
-2. `${COMPOSE_CMD} -f docker-compose.yml -f docker-compose.app.yml up -d --wait`
-   — blocks until all started services report healthy per their
-   `healthcheck` (see [1. Full-Stack Compose File](#1-full-stack-compose-file)),
-   or fails after the compose-defined timeout. `--wait` is supported by
-   both the Docker Compose plugin and the local Podman Compose plugin
-   used in this project — no custom polling loop is implemented.
-3. `cd backend && IMAGE_SMOKE_BASE_URL=http://localhost:8000 uv run pytest -m image tests/image/`
+1. `${COMPOSE_CMD} -f docker-compose.smoke.yml build` (skipped with
+   `--no-build`)
+2. `${COMPOSE_CMD} -f docker-compose.smoke.yml up -d --wait`
+   — argument-free (starts every service defined in the file) and blocks
+   until all of them report healthy per their `healthcheck` (see
+   [1. Full-Stack Compose File](#1-full-stack-compose-file)), or fails
+   after the compose-defined timeout. Because unimplemented services are
+   commented out of `docker-compose.smoke.yml`, this step only waits on
+   services that can actually become healthy — no per-service selection
+   list is needed. `--wait` is supported by both the Docker Compose
+   plugin and the local Podman Compose plugin used in this project — no
+   custom polling loop is implemented.
+3. `cd backend && IMAGE_SMOKE_BASE_URL=http://localhost:${IMAGE_SMOKE_PORT} uv run pytest -m image tests/image/`
+   (the runner derives `IMAGE_SMOKE_BASE_URL` from `IMAGE_SMOKE_PORT`,
+   default 18000)
 4. Capture the pytest exit code
-5. `${COMPOSE_CMD} -f docker-compose.yml -f docker-compose.app.yml down -v` (always, even on failure)
+5. `${COMPOSE_CMD} -f docker-compose.smoke.yml down -v` (always, even on
+   failure)
 6. Exit with the captured pytest exit code
 
 This script is the single source of truth for "how to smoke-test the
@@ -230,11 +260,10 @@ and only pushed on success** — a blocking gate:
 
 1. `docker/build-push-action` with `push: false, load: true` (builds
    the image **once**, into the local Docker daemon, does not push).
-2. Run `scripts/image-smoke.sh` against the freshly built image (the
-   script's `compose build` step should be skippable when the image is
-   already loaded — the exact mechanism, e.g. an `--image-tag` argument
-   or a pre-set `IMAGE` env var consumed by `docker-compose.app.yml`,
-   is decided during implementation).
+2. Run `scripts/image-smoke.sh --no-build` against the freshly built
+   image (the `--no-build` flag skips `compose build`; the pre-built tag
+   is supplied via the `SENTINEL_IMAGE` env var consumed by
+   `docker-compose.smoke.yml`).
 3. Only if step 2 exits 0: `docker push` the **exact same image
    loaded in step 1** (same digest) with the tags computed by
    `docker/metadata-action` — never a second `docker/build-push-action`
@@ -316,9 +345,9 @@ a reference back to this table.
 - A container runtime with a Compose implementation supporting
   `up --wait` available in the local development environment — Docker
   or Podman, auto-detected by `scripts/image-smoke.sh` following the
-  same pattern as `dev-env.sh`. No specific engine needs to be
+  same pattern as `scripts/dev-env.sh`. No specific engine needs to be
   installed beyond what the developer already uses for
-  `./dev-env.sh up`.
+  `./scripts/dev-env.sh up`.
 - Docker available in the GitHub Actions runner (already the case —
   `docker/build-push-action` is already in use). The CI gate is
   Docker-specific by design (see [4. CI Gate](#4-ci-gate)).
@@ -336,20 +365,26 @@ a reference back to this table.
 
 ## Definition of Done for This Prep Effort
 
-1. `docker-compose.app.yml` created complete (all 5 services) with
-   `environment` wiring per [1. Full-Stack Compose File](#1-full-stack-compose-file)
-   and per-service `healthcheck` definitions. Validated locally: `api`
-   (and `migrate` as a no-op) start and pass their healthcheck against
-   the current — near-empty — application. `worker`/`beat`/`git-worker`
-   are expected to fail to start at this point (no `app.celery_app`
-   until Phase 3) — this is documented as expected, not a defect.
+1. `docker-compose.smoke.yml` created, self-contained (own
+   `postgres`/`redis` with no host ports; `api` published on
+   `IMAGE_SMOKE_PORT`, default 18000), with all 5 application services
+   present — `api` and `migrate` active, `worker`/`beat`/`git-worker`
+   commented out with a note indicating the enabling phase — with
+   `environment` wiring per
+   [1. Full-Stack Compose File](#1-full-stack-compose-file) and
+   per-service `healthcheck` definitions on the active services.
+   Validated locally: `api` (and `migrate` as a no-op) start and pass
+   their healthcheck against the current — near-empty — application, and
+   argument-free `up --wait` stays green **even while `scripts/dev-env.sh`
+   and a local `uvicorn` on 8000 are running** (no port conflict).
 2. `backend/tests/image/` created with `conftest.py` and
    `test_image_build.py`; `image` marker registered and excluded from
    the default `pytest` run; confirmed not to affect the coverage
    measurement.
 3. `scripts/image-smoke.sh` created, executable, runtime-agnostic
-   (Docker or Podman via `dev-env.sh`-style detection), and produces
-   identical results when run locally and when invoked from a CI job.
+   (Docker or Podman via `scripts/dev-env.sh`-style detection), and
+   produces identical results when run locally and when invoked from a
+   CI job.
 4. `build-images.yml` modified (via `@cicd`) to build-once → load →
    test → push (same digest), with the gate confirmed blocking (a
    deliberately broken image fails the workflow before any push

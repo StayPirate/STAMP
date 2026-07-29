@@ -134,7 +134,7 @@ Two provisioning modes, selected automatically:
    — the developer just runs `pytest`.
 
    Prerequisite: Docker or Podman must be available locally (already
-   required by `dev-env.sh`).
+   required by `scripts/dev-env.sh`).
 
 ### Schema Setup
 
@@ -561,6 +561,87 @@ fails if model definitions and migration scripts are out of sync.
 
 ---
 
+## Image / Container Smoke Testing
+
+The three-tier pyramid above runs **in-process** against the local
+virtual environment. It never exercises the built Docker image, so it
+cannot catch failures that only manifest when the image runs as a
+container: files not copied into the image (`alembic/`, `certs/`),
+missing OS-level binaries, a broken entrypoint/`CMD`, non-root
+permission issues, or process-role startup failures. The **image smoke
+suite** is a distinct, black-box suite (outside the three-tier pyramid)
+that fills this gap by running the actual image as a container and
+asserting against it over HTTP (and, in later phases, via
+`compose exec`).
+
+### Location and Marker
+
+| Property | Value |
+|----------|-------|
+| Location | `backend/tests/image/` (one file per concern/role) |
+| Marker | `@pytest.mark.image` |
+| Isolation | Black-box: talks to a running container over the network. Does NOT use the in-process `db_session` / `client` fixtures |
+| Default run | **Excluded** — `pyproject.toml` sets `addopts = "-m 'not image'"` |
+
+Because the marker is excluded from the default invocation, `cd backend
+&& uv run pytest` never attempts to start containers, and — since
+coverage is measured on that same default invocation — the image suite
+**does not contribute to, and is not counted toward, the ≥85% coverage
+gate**. This is intentional: it is a black-box suite running against a
+separately-built artifact, not against the instrumented local venv.
+
+### Execution
+
+The suite runs **exclusively** via `scripts/image-smoke.sh`, used
+identically in local development and in CI (single source of truth for
+"how to smoke-test the image"). The script is runtime-agnostic (Docker
+or Podman, auto-detected with the same pattern as `scripts/dev-env.sh`)
+and:
+
+1. Builds the image once from `backend/Dockerfile` (skippable with
+   `--no-build` when a pre-built image is supplied via `SENTINEL_IMAGE`).
+2. Brings up the self-contained smoke stack — `docker-compose.smoke.yml`
+   — with `compose up -d --wait`, blocking until every active service
+   passes its `healthcheck` (or, for one-shot services like `migrate`
+   that have no healthcheck, exits cleanly).
+3. Runs `uv run pytest -m image tests/image/` against the running stack.
+4. Tears the stack down (`down -v`) unconditionally and exits with the
+   pytest exit code.
+
+`docker-compose.smoke.yml` is **self-contained**: it defines one service
+per process role (`api`, `migrate`, `worker`, `beat`, `git-worker`), all
+sharing the same image per the "single Docker image, multiple
+entrypoints" architecture, **plus its own `postgres` + `redis`**. The
+infra services publish **no host ports** (they are reached over the
+compose network only) and the `api` service is published on a non-8000
+host port (`IMAGE_SMOKE_PORT`, default 18000). This lets the smoke stack
+run even while `scripts/dev-env.sh` (which owns host ports 5432/6379) and
+a local `uvicorn` dev server (port 8000) are running — no port conflict.
+Services whose underlying code does not yet exist are commented out and
+uncommented by the phase that introduces them, so the argument-free
+`up --wait` only waits on services that can become healthy.
+
+### CI Gate
+
+`.github/workflows/build-images.yml` wraps the smoke suite as a
+**blocking gate** between build and publish: the image is built once and
+loaded locally (`push: false, load: true`), the smoke script runs
+against that exact artifact, and only on success is the **same image
+digest** re-tagged and pushed. A failing smoke test prevents `latest`
+and semver tags from ever being published. The tested and published
+artifacts are guaranteed identical — no second build is performed.
+
+### Growth Rule
+
+The suite starts with a single minimal assertion (the image builds and
+the `api` container starts and stays up) and grows alongside the
+implementation. **Each phase that introduces new container-observable
+behavior — a new endpoint, a new process role, a new startup validation —
+extends this suite with a corresponding assertion (and uncomments the
+relevant compose service) as part of that phase's Definition of Done.**
+
+---
+
 ## Mandatory Test Scenarios
 
 Beyond the general obligation to test every implemented function (see
@@ -681,6 +762,10 @@ comprehensive test coverage:
 
 - `docs/conventions.md` — Testing Conventions (style rules, naming),
   Transaction and Locking (pessimistic locking pattern)
+- `docs/architecture.md` — Single Docker image, multiple entrypoints
+  (shared by the image smoke suite's compose services)
+- `docs/deployment.md` — Container Images (process roles), Release
+  Process (build/publish pipeline gated by the image smoke suite)
 - `docs/features/platform/audit-trail-infrastructure.md` — Audit Trail
   Index, `BaseAuditLog`, atomicity rules, immutability
 - `docs/features/tickets/ticket-audit-log.md` — TicketAuditEvent

@@ -67,10 +67,15 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# Exclude the black-box container smoke suite from the default run. It
+# requires a running container (started by scripts/image-smoke.sh) and
+# must not be pulled into `uv run pytest` or the coverage measurement.
+addopts = "-m 'not image'"
 markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
+    "image: Black-box container smoke tests (require Docker/Podman; excluded from default run)",
 ]
 
 [tool.coverage.run]
