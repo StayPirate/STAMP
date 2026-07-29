@@ -36,7 +36,9 @@ flowchart TB
     subgraph taskqueue["Task Queue"]
         BEAT["Celery Beat<br/>(scheduler)"]
         WORKER["Celery Workers<br/>(background tasks)"]
+        GITWORKER["Git Worker<br/>(git-based fetchers)"]
         BEAT -->|triggers| WORKER
+        BEAT -->|triggers| GITWORKER
     end
 
     subgraph datastores["Data Stores"]
@@ -48,26 +50,34 @@ flowchart TB
 
     subgraph external["External Services"]
         NVD["NVD<br/>(services.nvd.nist.gov)"]
-        MITRE["MITRE<br/>(cveawg.mitre.org)"]
+        MITRE["MITRE cvelistV5<br/>(github.com)"]
+        KERNEL["Linux Kernel<br/>(git.kernel.org)"]
         REDHAT["Red Hat<br/>(access.redhat.com)"]
         IBS["IBS<br/>(build.suse.de)"]
         SMELT["SMELT<br/>(smelt.suse.de)"]
         AIMAAS["AIMAAS<br/>(aimaas.suse.de)"]
         RABBIT["IBS RabbitMQ<br/>(rabbit.suse.de)"]
+        IDP["SUSE IdP<br/>(id.suse.com)"]
     end
 
     MDL --> PG
     WORKER --> PG
     WORKER <--> RD
+    GITWORKER --> PG
+    GITWORKER <--> RD
     BEAT <--> RD
     CONSUMER --> PG
 
+    API -->|"OIDC/SSO"| IDP
+
     WORKER -->|"REST API"| NVD
-    WORKER -->|"REST API"| MITRE
     WORKER -->|"REST API"| REDHAT
     WORKER -->|"REST API"| IBS
     WORKER -->|"REST API"| SMELT
     WORKER -->|"REST API"| AIMAAS
+
+    GITWORKER -->|"Git (clone/fetch)"| MITRE
+    GITWORKER -->|"Git (clone/fetch)"| KERNEL
 
     CONSUMER -->|"AMQP"| RABBIT
     CONSUMER -->|"REST API"| IBS

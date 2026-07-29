@@ -275,4 +275,7 @@ a catch-up mechanism for events missed during consumer downtime. See
 | CLI commands reference | `docs/cli-reference.md` |
 | Identity and access control | `docs/features/identity/rbac.md` |
 | Fetcher infrastructure | `docs/features/platform/fetcher-infrastructure.md` |
+| CVE fetcher infrastructure | `docs/features/platform/cve-fetcher-infrastructure.md` |
+| Git-based fetcher infrastructure | `docs/features/platform/git-fetcher-infrastructure.md` |
+| IBS RabbitMQ integration (event-driven) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
 | Operational logging | `docs/features/platform/logging.md` |
