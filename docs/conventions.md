@@ -1157,12 +1157,13 @@ a dependent work unit only after every direct blocker PR has merged, then
 branch from the updated `origin/master`.
 
 **Issue linkage**: every non-exempt pull request uses `Closes #<issue>` in
-its Issue linkage field so merge completion closes the tracking issue.
-Exempt human-authored PRs use `N/A - <specific reason>` instead; approved
-automated PRs (Dependabot, release-please) omit the field requirement
-entirely. If a specification gap blocks implementation, resolve it in a
-separate documentation issue, branch, and merged PR before creating or
-resuming the implementation branch.
+its body so merge completion closes the tracking issue. Exempt
+human-authored PRs declare `N/A - <specific reason>` instead; approved
+automated PRs (Dependabot, release-please) are exempt entirely. See
+Pull Request Requirements below for the accepted formats. If a
+specification gap blocks implementation, resolve it in a separate
+documentation issue, branch, and merged PR before creating or resuming
+the implementation branch.
 
 **No direct pushes to `master`**: all changes arrive via squash merge
 of a reviewed PR. The pre-push hook enforces this locally.
@@ -1171,22 +1172,14 @@ of a reviewed PR. The pre-push hook enforces this locally.
 
 **No manual tags**: tags are created exclusively by release-please.
 
-**Squash merge**: the only allowed merge method. The PR title (which
-must follow Conventional Commits format) becomes the commit message on
-`master`.
+**Squash merge**: the only allowed merge method. The PR title becomes
+the commit message on `master`.
 
 **PR title**: must follow the Conventional Commits format
 (`type[(scope)][!]: description`) and remain under 72 characters because it
 becomes the squash commit subject. Format and length are validated by CI.
 
 **Branch deletion**: branches are deleted automatically after merge.
-
-**Workflow initiation**: a concrete modification request in natural
-language is sufficient to start the workflow — no dedicated command or
-manual issue or branch creation is required. The agent's step-by-step
-procedure (preconditions, issue search/reuse/creation, spec-first
-sequencing, commit/push cadence, merge gate) is defined in `AGENTS.md`
-(Guardrail 25).
 
 ### Pull Request Requirements
 
@@ -1197,9 +1190,10 @@ sequencing, commit/push cadence, merge gate) is defined in `AGENTS.md`
   results, manual verification notes.
 - **Issue linkage**: `Closes #<issue>` for normal work, `N/A - <specific
   reason>` for an exempt human-authored PR under "Issues and work units"
-  above. Approved automated PRs (Dependabot, release-please) are exempt
-  from this field. Validated by CI (see Pull Request Metadata Validation
-  below).
+  above. Use the template's `- Issue linkage:` field, or a standalone
+  `Closes #<issue>` line anywhere in the body. Approved automated PRs
+  (Dependabot, release-please) are exempt from this field. Validated by
+  CI.
 - **Manual verification**: record the exercised behavior and observed result.
   If no meaningful manual path exists, record `N/A` with a reason.
 - **External contracts**: when an external integration is changed, record the
@@ -1211,25 +1205,6 @@ sequencing, commit/push cadence, merge gate) is defined in `AGENTS.md`
   findings addressed (per existing guardrails).
 - **Human approval**: the repository owner must explicitly authorize
   the merge by referencing the PR number.
-
-#### Pull Request Metadata Validation
-
-The `PR Metadata` CI check validates on every open, edit, reopen, and
-push event:
-
-- the title matches the Conventional Commits pattern
-  (`type[(scope)][!]: description`) and is under 72 characters;
-- the body contains exactly one Issue linkage field, formatted as either
-  `Closes #<issue>` or `N/A - <specific reason>`, unless the PR author is
-  `dependabot[bot]` (branch prefix `dependabot/`) or the release-please
-  automation (branch prefix `release-please--`), which are exempt from
-  the linkage requirement only — their title is still validated.
-
-The check re-runs automatically whenever the PR title or body is edited,
-so a merge cannot proceed with metadata that later drifted out of
-compliance. It does not attempt to verify that an issue was actually
-searched before branch creation, or that a claimed cosmetic exemption is
-genuinely cosmetic — that judgment remains with human reviewers.
 
 ### Branch Naming
 
