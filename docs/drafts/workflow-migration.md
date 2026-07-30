@@ -15,6 +15,7 @@ No permanent artifact created during execution may reference this file.
 
 - [Context](#context)
 - [Decisions](#decisions)
+- [Illustrative Flow (Future Steady-State)](#illustrative-flow-future-steady-state)
 - [Action Plan](#action-plan)
   - [Step 0 — Push Current Commit](#step-0--push-current-commit)
   - [Step 1 — GitHub Repository Settings](#step-1--github-repository-settings)
@@ -77,6 +78,79 @@ after receiving explicit human confirmation referencing the specific PR.
 | D13 | Add Dependabot version updates | Automated dependency freshness for Python, Actions, Docker, npm |
 | D14 | Repository stays private | Public visibility deferred to a future audit; not part of this change |
 | D15 | Single GitHub account for OpenCode | No bot account; agent instructions and hooks provide the safety layer |
+| D16 | Natural-language initiation, no dedicated command | A normal implementation request triggers the workflow automatically; no `/start-feature` or similar command exists or is needed |
+| D17 | Agent owns branch creation | OpenCode creates, names, and pushes the branch; the user intervenes only at spec approval and merge |
+
+---
+
+## Illustrative Flow (Future Steady-State)
+
+After this migration is complete, a typical implementation request
+follows this sequence:
+
+```
+User: "Implement the health endpoints defined in the spec."
+  │
+  ▼
+Agent: verify spec exists and is sufficient
+  │
+  ▼
+Agent: git fetch origin && git switch -c feature/health-endpoints origin/master
+  │
+  ▼
+Agent: implement, test, commit on branch
+  │
+  ▼
+Agent: (first push) report branch name + scope → push → open draft PR
+  │
+  ▼
+Agent: complete Definition of Done (tests, lint, reviewers)
+  │
+  ▼
+Agent: mark PR ready, present merge gate summary to user
+  │
+  ▼
+User: "Merge PR #12"
+  │
+  ▼
+Agent: gh pr merge 12 --squash --delete-branch
+  │
+  ▼
+Agent: sync local master, verify post-merge CI
+```
+
+When the spec is missing or incomplete:
+
+```
+User: "Implement feature X."
+  │
+  ▼
+Agent: spec not found → STOP
+  │
+  ▼
+Agent: "No spec for X. Shall I create one first?"
+  │
+  ▼
+User: "Yes"
+  │
+  ▼
+Agent: git switch -c docs/feature-x origin/master
+  │
+  ▼
+Agent: write spec → push → open PR
+  │
+  ▼
+User: "Merge PR #13" (spec PR)
+  │
+  ▼
+Agent: merge spec PR → git fetch origin
+  │
+  ▼
+Agent: git switch -c feature/feature-x origin/master
+  │
+  ▼
+Agent: implement (now spec is merged) → ... → merge gate
+```
 
 ---
 
@@ -177,6 +251,39 @@ Insert a new subsection **Workflow** at the beginning of the existing
   (`type[(scope)][!]: description`). This is validated by CI.
 - **Branch deletion**: branches are deleted automatically after merge.
 
+- **Workflow initiation**: a concrete modification request in natural
+  language (e.g., "implement feature X", "fix bug Y") is sufficient
+  to start the workflow. No dedicated command or manual branch
+  creation is required. The agent determines whether a request is
+  operational (triggers the workflow) or exploratory (no branch
+  created). Exploratory requests include questions, analysis,
+  brainstorming, and spec review.
+
+- **Branch creation responsibility**: the agent creates the topic
+  branch automatically when all preconditions are met:
+  1. The request is a concrete modification (not exploratory).
+  2. The owning spec exists and is sufficient for the requested
+     scope (Guardrail 1).
+  3. The local worktree is clean or has no conflicting state.
+  4. `origin/master` has been fetched.
+  If any precondition fails, the agent stops and reports the
+  blocker instead of creating the branch.
+
+- **Spec-first branch sequencing**: when the owning spec does not
+  exist or is incomplete for the requested change:
+  1. First: a `docs/<feature>` branch and PR to create or update
+     the spec. Merge requires user approval.
+  2. Then: a `feature/<feature>` (or `fix/...`) branch created
+     from the updated `origin/master` for the implementation.
+  The agent never starts implementation on a branch where the spec
+  has not yet been approved and merged.
+
+- **Local-to-remote lifecycle**: the branch starts local. The agent
+  may commit freely. After the first coherent set of changes, the
+  agent pushes and opens a draft PR without waiting for explicit
+  push authorization. Subsequent commits are pushed incrementally.
+  The only mandatory human gate is the merge.
+
 Expand the **Branch Naming** list to include all conventional commit
 types:
 
@@ -247,6 +354,30 @@ without per-commit approval. Before the first push of a new branch,
 the agent reports the branch name and initial scope. Before opening
 a PR, the agent reports the intended title and description.
 
+**Automatic workflow initiation**: when the user issues a concrete
+modification request, the agent MUST autonomously:
+
+1. Fetch `origin/master`.
+2. Verify a clean worktree (or stash/report conflicts).
+3. Verify the owning spec exists and covers the request (Guardrail 1).
+4. Create a topic branch from `origin/master` with the appropriate
+   naming prefix.
+5. Proceed with implementation.
+
+No dedicated command or explicit "create branch" instruction from the
+user is required. The agent does NOT create a branch for exploratory
+requests (questions, analysis, brainstorming, spec review without
+implementation intent).
+
+**Spec-first sequencing**: if the spec is absent or insufficient:
+
+1. The agent stops implementation intent.
+2. Creates a `docs/<name>` branch for the spec work.
+3. After spec PR is approved and merged, creates a new
+   implementation branch from the updated `origin/master`.
+4. Never mixes unmerged spec changes with implementation on the
+   same branch.
+
 #### 3d. `docs/deployment.md` — Update Release Process
 
 The existing "Squash Merge" subsection already recommends squash
@@ -309,6 +440,21 @@ Add a **Git Safety** section after "Non-Feature Work". Content:
   summary, and list of changed files.
 - Before requesting merge approval, present: PR number, CI status,
   reviewer summary, and any unresolved items.
+
+Add a **Workflow Initiation** section after "Git Safety". Content:
+
+- When the user requests a concrete modification (implementation,
+  fix, refactor), recognize this as an operational request and
+  start the branch workflow automatically.
+- Do NOT wait for an explicit "create a branch" instruction or a
+  slash command. Natural-language intent is sufficient.
+- Before creating the branch: verify spec exists (Guardrail 1),
+  fetch `origin/master`, confirm clean worktree.
+- If the spec is missing or incomplete: stop, inform the user, and
+  propose creating the spec first via a separate `docs/` branch
+  and PR. Do not begin implementation until the spec PR is merged.
+- If all preconditions are met: create the branch, announce name
+  and scope, and proceed.
 
 ---
 
