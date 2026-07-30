@@ -298,7 +298,7 @@ process is driven entirely by Conventional Commit messages on the
 ### How It Works
 
 1. Developers merge PRs to `master` using conventional commits
-   (`feat:`, `fix:`, etc.). Squash merge is recommended so the PR title
+   (`feat:`, `fix:`, etc.). Squash merge is required so the PR title
    becomes the commit message (see Squash Merge below)
 2. The `release-please` GitHub Action
    (`.github/workflows/release-please.yml`) analyzes new commits and

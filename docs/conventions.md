@@ -1107,40 +1107,14 @@ must follow Conventional Commits format) becomes the commit message on
 **Branch deletion**: branches are deleted automatically after merge.
 
 **Workflow initiation**: a concrete modification request in natural
-language (e.g., "implement feature X", "fix bug Y") is sufficient to
-start the workflow. No dedicated command or manual branch creation is
-required. The agent determines whether a request is operational
-(triggers the workflow) or exploratory (no branch created). Exploratory
-requests include questions, analysis, brainstorming, and spec review.
-
-**Branch creation responsibility**: the agent creates the topic branch
-automatically when all preconditions are met:
-
-1. The request is a concrete modification (not exploratory).
-2. The owning spec exists and is sufficient for the requested scope
-   (Guardrail 1).
-3. The local worktree is clean or has no conflicting state.
-4. `origin/master` has been fetched.
-
-If any precondition fails, the agent stops and reports the blocker
-instead of creating the branch.
-
-**Spec-first branch sequencing**: when the owning spec does not exist
-or is incomplete for the requested change:
-
-1. First: a `docs/<feature>` branch and PR to create or update the
-   spec. Merge requires user approval.
-2. Then: a `feature/<feature>` (or `fix/...`) branch created from the
-   updated `origin/master` for the implementation.
-
-The agent never starts implementation on a branch where the spec has
-not yet been approved and merged.
-
-**Local-to-remote lifecycle**: the branch starts local. The agent may
-commit freely. After the first coherent set of changes, the agent
-pushes and opens a draft PR without waiting for explicit push
-authorization. Subsequent commits are pushed incrementally. The only
-mandatory human gate is the merge.
+language is sufficient to start the workflow — no dedicated command or
+manual branch creation is required. The agent creates the topic branch
+automatically when preconditions are met (spec exists, clean worktree,
+`origin/master` fetched). When the owning spec is missing, the spec is
+created and merged first via a separate `docs/` branch before
+implementation begins. The agent's step-by-step procedure
+(preconditions, spec-first sequencing, commit/push cadence, merge gate)
+is defined in `AGENTS.md` (Guardrail 25).
 
 ### Pull Request Requirements
 
