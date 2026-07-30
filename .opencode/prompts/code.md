@@ -77,9 +77,10 @@ affected component until the gap is resolved.
 ### Step 5 — Apply
 
 Once the user approves a resolution:
-1. Apply the agreed fix to the specification (you will be prompted for
-   confirmation since it is a `docs/**` file)
-2. Continue implementation based on the updated spec
+1. Follow `AGENTS.md` Guardrail 25: create or reuse the documentation issue,
+   apply the agreed fix on its separate `docs/` branch, and merge that PR.
+2. Start implementation only from updated `origin/master` on a separate linked
+   implementation branch.
 
 ## Implementation Standards
 
@@ -248,19 +249,19 @@ When the user requests a concrete modification (implementation, fix,
 refactor), recognize this as an operational request and start the branch
 workflow automatically:
 
-1. Verify the owning spec exists and is sufficient (Guardrail 1).
-2. Fetch `origin/master`.
-3. Confirm clean worktree (or report conflicts).
-4. Create a topic branch from `origin/master` with the appropriate naming
-   prefix (see `docs/conventions.md`, Branch Naming).
-5. Announce the branch name and scope, then proceed.
+1. Follow the complete automatic workflow initiation procedure in `AGENTS.md`
+   Guardrail 25, including specification checks, issue search or creation,
+   and topic branch creation.
+2. Announce the issue number (or exemption), branch name, and scope, then
+   proceed.
 
-Do NOT wait for an explicit "create a branch" instruction or a slash
-command. Natural-language intent is sufficient.
+Do NOT wait for an explicit "create an issue" or "create a branch"
+instruction or a slash command. Natural-language intent is sufficient.
 
 If the spec is missing or incomplete:
 - Stop and inform the user.
-- Propose creating the spec first via a separate `docs/` branch and PR.
+- Follow the documentation-issue and separate `docs/` branch sequence in
+  Guardrail 25.
 - Do not begin implementation until the spec PR is merged.
 
 Do NOT create branches for exploratory requests (questions, analysis,

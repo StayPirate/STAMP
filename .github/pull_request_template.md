@@ -2,7 +2,8 @@
 
 <!-- What does this PR do? Link the tracking issue and owning spec. -->
 
-- Closes:
+<!-- Required: enter `Closes #N`. Use `N/A - a specific reason` only for a qualifying cosmetic exemption under docs/conventions.md. -->
+- Issue linkage:
 - Owning spec:
 - Roadmap piece ID (if applicable):
 

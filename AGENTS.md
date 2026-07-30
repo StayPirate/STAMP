@@ -902,21 +902,28 @@ modification request, the agent MUST autonomously:
 1. Fetch `origin/master`.
 2. Verify a clean worktree (or stash/report conflicts).
 3. Verify the owning spec exists and covers the request (Guardrail 1).
-4. Create a topic branch from `origin/master` with the appropriate
+4. Search open issues in this repository. Reuse a suitable issue only if it
+   meets the reuse criteria in `docs/conventions.md` (Issues and work
+   units). Otherwise create a new issue via the "Work item" issue form,
+   unless the request qualifies for one of the exemptions listed there.
+5. Create a topic branch from `origin/master` with the appropriate
    naming prefix.
-5. Proceed with implementation.
+6. Proceed with implementation.
 
-No dedicated command or explicit "create branch" instruction from the
-user is required. The agent does NOT create a branch for exploratory
-requests (questions, analysis, brainstorming, spec review without
-implementation intent).
+No dedicated command or explicit "create an issue" or "create a branch"
+instruction is required. The agent does NOT create an issue or a branch
+for exploratory requests (questions, analysis, brainstorming, spec review
+without implementation intent).
 
 **Spec-first sequencing**: if the spec is absent or insufficient:
 
 1. The agent stops implementation intent.
-2. Creates a `docs/<name>` branch for the spec work.
-3. After spec PR is approved and merged, creates a new
-   implementation branch from the updated `origin/master`.
+2. After the user approves the proposed specification fix, the agent
+   creates or reuses a documentation issue, then creates its `docs/<name>`
+   branch for the spec work.
+3. After the spec PR is approved and merged, creates a new implementation
+   issue (if none suitable exists) and a new implementation branch from
+   the updated `origin/master`.
 4. Never mixes unmerged spec changes with implementation on the
    same branch.
 

@@ -1,0 +1,58 @@
+name: PR Metadata
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: PR Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate title and issue linkage
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          title_pattern='^(feat|fix|docs|refactor|test|chore|ci)(\([a-z0-9 _-]+\))?\!?: .{1,}'
+          if ! [[ "${PR_TITLE}" =~ ${title_pattern} ]]; then
+            echo "::error::PR title '${PR_TITLE}' does not follow Conventional Commits format."
+            echo "::error::Expected pattern: type[(scope)][!]: description (e.g. 'feat: add X', 'fix(auth)!: correct Y')"
+            exit 1
+          fi
+          if [[ ${#PR_TITLE} -gt 71 ]]; then
+            echo "::error::PR title is ${#PR_TITLE} characters; maximum is 71 (it becomes the squash commit subject, limited to 72)."
+            exit 1
+          fi
+
+          # Approved automation is exempt from issue linkage only; its title
+          # is still validated above.
+          if [[ "${PR_AUTHOR}" == "dependabot[bot]" && "${PR_HEAD_REF}" == dependabot/* ]]; then
+            exit 0
+          fi
+          if [[ "${PR_HEAD_REF}" == release-please--* ]]; then
+            exit 0
+          fi
+
+          linkage_lines=$(grep -c '^- Issue linkage:' <<<"${PR_BODY}" || true)
+          if [[ "${linkage_lines}" -ne 1 ]]; then
+            echo "::error::PR body must contain exactly one 'Issue linkage:' field (found ${linkage_lines})."
+            exit 1
+          fi
+          linkage_value=$(grep '^- Issue linkage:' <<<"${PR_BODY}" | sed 's/^- Issue linkage:[[:space:]]*//')
+          if [[ "${linkage_value}" =~ ^Closes\ \#[1-9][0-9]*$ ]]; then
+            exit 0
+          fi
+          if [[ "${linkage_value}" =~ ^N/A\ -\ .+$ ]]; then
+            exit 0
+          fi
+          echo "::error::Issue linkage must be 'Closes #N' or 'N/A - <specific reason>' (found '${linkage_value}')."
+          exit 1

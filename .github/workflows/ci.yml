@@ -169,23 +169,6 @@ jobs:
           set -euo pipefail
           actionlint
 
-  pr-title:
-    name: PR Title Convention
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate title follows Conventional Commits format
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          set -euo pipefail
-          pattern='^(feat|fix|docs|refactor|test|chore|ci)(\([a-z0-9 _-]+\))?\!?: .{1,}'
-          if ! [[ "${PR_TITLE}" =~ ${pattern} ]]; then
-            echo "::error::PR title '${PR_TITLE}' does not follow Conventional Commits format."
-            echo "::error::Expected pattern: type[(scope)][!]: description (e.g. 'feat: add X', 'fix(auth)!: correct Y')"
-            exit 1
-          fi
-
   image-smoke:
     name: Image Smoke Test
     if: github.event_name == 'pull_request'
