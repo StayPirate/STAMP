@@ -1,0 +1,60 @@
+name: Work item
+description: Track a substantive repository change before implementation begins.
+title: ""
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome or problem
+      description: Describe the outcome to achieve or the problem to solve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: owning-specifications
+    attributes:
+      label: Owning specifications
+      description: >-
+        Link the authoritative specification(s) and relevant section(s), or
+        explain why no feature specification applies.
+      placeholder: |-
+        - `docs/features/<domain>/<feature>.md` — Section name
+        - N/A — repository workflow change
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: State what this work item includes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List externally verifiable outcomes.
+      placeholder: |-
+        - [ ] First verifiable outcome
+        - [ ] Second verifiable outcome
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: List the expected automated and manual verification.
+    validations:
+      required: true
+
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Direct blockers
+      description: Link direct blocking issues, or write "None".
+      placeholder: None
+    validations:
+      required: true

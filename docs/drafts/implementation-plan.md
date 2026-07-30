@@ -124,8 +124,9 @@ A piece is complete only when all applicable conditions below are satisfied:
    `docs/features/platform/testing-strategy.md` in the introducing piece; the
    PR records the result or why it is not applicable.
 9. **PR and merge gates passed.** The PR satisfies `docs/conventions.md` and
-   Guardrail 25, is squash-merged, closes its issue, and reaches Done in the
-   GitHub Project.
+   Guardrail 25, is squash-merged, and closes its issue. Project automation
+   should then reflect Done; Project status is presentation, not an additional
+   completion gate.
 
 ## Specification and WIP Boundary
 

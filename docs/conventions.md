@@ -1109,6 +1109,41 @@ a draft PR early, mark ready when implementation, verification evidence,
 and applicable reviewer work are complete, squash-merge after approval,
 branch auto-deleted.
 
+#### Issues and work units
+
+GitHub Issues are the canonical work item for every substantive,
+human-directed repository change — including work an automation agent
+performs on a person's request. Specifications, issues, pull requests, and
+Projects each own a distinct concern:
+
+| Owner | Owns |
+|---|---|
+| Specifications (`docs/features/`, cross-cutting docs) | Behavioral and structural contracts |
+| Issues | The problem or outcome, bounded scope, acceptance criteria, owning-specification links, direct blockers |
+| Pull requests | Implementation evidence: tests, manual verification, reviewer results, risks |
+| Projects | Optional, initiative-scoped presentation of live status — never an additional completion gate |
+
+Before creating a topic branch, search open issues in this repository.
+Reuse a suitable issue only when all of the following hold: its outcome,
+scope, acceptance criteria, and owning specifications cover the requested
+change; it is a concrete work item and not a phase/initiative/parent issue;
+it has no active linked branch or pull request; and its direct blockers are
+resolved. Otherwise create a new issue using the "Work item" issue form —
+no separate approval is needed merely to create the tracking object.
+
+**Exemptions** — an issue is not required for:
+
+- a pull request generated and maintained exclusively by Dependabot or
+  release-please (human-directed scope added to such a PR removes the
+  exemption);
+- pure exploration that creates no retained branch, commit, PR, or
+  tracked-file change; or
+- a genuinely cosmetic change limited to spelling, punctuation,
+  whitespace, comments, or formatting, with no change to behavior,
+  requirements, identifiers, commands, paths, or configuration.
+
+When uncertain, create an issue.
+
 **Single active domain branch**: develop one dependent domain work unit at a
 time. Multiple branches may exist for genuinely independent concerns
 (for example, a dependency update and a domain feature), but dependent
@@ -1121,13 +1156,13 @@ work units; it is never itself a long-lived implementation branch. Start
 a dependent work unit only after every direct blocker PR has merged, then
 branch from the updated `origin/master`.
 
-**Issue linkage**: implementation PRs use `Closes #<issue>` in the PR
-description so merge completion closes the tracking issue. The issue
-owns scope and acceptance criteria; the PR owns implementation evidence
-(tests, manual verification, reviewer results, risks). If a specification
-gap blocks implementation, resolve it in a separate documentation issue,
-branch, and merged PR before creating or resuming the implementation
-branch.
+**Issue linkage**: every non-exempt pull request uses `Closes #<issue>` in
+its Issue linkage field so merge completion closes the tracking issue.
+Exempt human-authored PRs use `N/A - <specific reason>` instead; approved
+automated PRs (Dependabot, release-please) omit the field requirement
+entirely. If a specification gap blocks implementation, resolve it in a
+separate documentation issue, branch, and merged PR before creating or
+resuming the implementation branch.
 
 **No direct pushes to `master`**: all changes arrive via squash merge
 of a reviewed PR. The pre-push hook enforces this locally.
@@ -1142,27 +1177,29 @@ must follow Conventional Commits format) becomes the commit message on
 
 **PR title**: must follow the Conventional Commits format
 (`type[(scope)][!]: description`) and remain under 72 characters because it
-becomes the squash commit subject. Format is validated by CI; length is
-enforced during review until CI gains an equivalent check.
+becomes the squash commit subject. Format and length are validated by CI.
 
 **Branch deletion**: branches are deleted automatically after merge.
 
 **Workflow initiation**: a concrete modification request in natural
 language is sufficient to start the workflow — no dedicated command or
-manual branch creation is required. The agent creates the topic branch
-automatically when preconditions are met (spec exists, clean worktree,
-`origin/master` fetched). When the owning spec is missing, the spec is
-created and merged first via a separate `docs/` branch before
-implementation begins. The agent's step-by-step procedure
-(preconditions, spec-first sequencing, commit/push cadence, merge gate)
-is defined in `AGENTS.md` (Guardrail 25).
+manual issue or branch creation is required. The agent's step-by-step
+procedure (preconditions, issue search/reuse/creation, spec-first
+sequencing, commit/push cadence, merge gate) is defined in `AGENTS.md`
+(Guardrail 25).
 
 ### Pull Request Requirements
 
-- **Title**: Conventional Commits format (validated by CI).
-- **Description**: use the repository PR template. At minimum: owning
-  spec reference, scope summary, test evidence, reviewer results,
-  manual verification notes.
+- **Title**: Conventional Commits format, under 72 characters (validated
+  by CI).
+- **Description**: use the repository PR template. At minimum: issue
+  linkage, owning spec reference, scope summary, test evidence, reviewer
+  results, manual verification notes.
+- **Issue linkage**: `Closes #<issue>` for normal work, `N/A - <specific
+  reason>` for an exempt human-authored PR under "Issues and work units"
+  above. Approved automated PRs (Dependabot, release-please) are exempt
+  from this field. Validated by CI (see Pull Request Metadata Validation
+  below).
 - **Manual verification**: record the exercised behavior and observed result.
   If no meaningful manual path exists, record `N/A` with a reason.
 - **External contracts**: when an external integration is changed, record the
@@ -1174,6 +1211,25 @@ is defined in `AGENTS.md` (Guardrail 25).
   findings addressed (per existing guardrails).
 - **Human approval**: the repository owner must explicitly authorize
   the merge by referencing the PR number.
+
+#### Pull Request Metadata Validation
+
+The `PR Metadata` CI check validates on every open, edit, reopen, and
+push event:
+
+- the title matches the Conventional Commits pattern
+  (`type[(scope)][!]: description`) and is under 72 characters;
+- the body contains exactly one Issue linkage field, formatted as either
+  `Closes #<issue>` or `N/A - <specific reason>`, unless the PR author is
+  `dependabot[bot]` (branch prefix `dependabot/`) or the release-please
+  automation (branch prefix `release-please--`), which are exempt from
+  the linkage requirement only — their title is still validated.
+
+The check re-runs automatically whenever the PR title or body is edited,
+so a merge cannot proceed with metadata that later drifted out of
+compliance. It does not attempt to verify that an issue was actually
+searched before branch creation, or that a claimed cosmetic exemption is
+genuinely cosmetic — that judgment remains with human reviewers.
 
 ### Branch Naming
 
