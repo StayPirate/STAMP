@@ -71,7 +71,7 @@ after receiving explicit human confirmation referencing the specific PR.
 | D6 | No manual tags | Tags are created exclusively by release-please |
 | D7 | No force pushes | Enforced by agent instructions; server-side enforcement deferred to public visibility |
 | D8 | Remove redundant OpenCode commands | `/run-tests` and `/check-spec` duplicate Code agent, CI, and reviewer capabilities |
-| D9 | Remove auto-commit from `/idea` and `new-feature` skill | Commands edit files; commits are a separate explicit step |
+| D9 | Remove auto-commit from `/idea` | Commands edit files; commits are a separate explicit step |
 | D10 | Remove `workflow_dispatch` from publishing workflows | Prevents unreviewed image publication; CI `workflow_dispatch` (diagnostic) is kept |
 | D11 | Gate release-please behind CI success | Prevents release PR updates or tag creation from commits that fail CI |
 | D12 | Add image smoke test to PR CI | Catches container defects before merge |
@@ -80,6 +80,7 @@ after receiving explicit human confirmation referencing the specific PR.
 | D15 | Single GitHub account for OpenCode | No bot account; agent instructions and hooks provide the safety layer |
 | D16 | Natural-language initiation, no dedicated command | A normal implementation request triggers the workflow automatically; no `/start-feature` or similar command exists or is needed |
 | D17 | Agent owns branch creation | OpenCode creates, names, and pushes the branch; the user intervenes only at spec approval and merge |
+| D18 | Delete `new-feature` skill | Mixes spec and implementation in one flow, conflicts with two-PR sequencing, duplicates guardrails; not updated — removed |
 
 ---
 
@@ -416,19 +417,43 @@ Replace step 4 with: "Report what was added. Do NOT commit
 automatically — the file edit is staged and committed by the caller
 as part of the normal workflow."
 
-#### 4d. Modify `.opencode/skills/new-feature/SKILL.md`
+#### 4d. Delete `.opencode/skills/new-feature/`
 
-In Step 0 (Check ideas list), item 4: remove the instruction to
-stage and commit `docs/drafts/ideas.md` automatically. Replace with:
-"Edit the file to remove the bullet point. Do NOT commit
-automatically."
+This skill mixes spec authoring and implementation in a single
+sequential flow. Under the new process:
 
-#### 4e. Update `.opencode/README.md`
+- Spec and implementation require separate branches and PRs.
+- The Spec agent handles spec authoring; the Code agent handles
+  implementation.
+- Guardrails 1, 25, the Definition of Done, and the reviewer
+  infrastructure already govern the full lifecycle.
+- Natural-language requests replace the skill's step-by-step
+  orchestration (D16).
+
+Delete the entire `.opencode/skills/new-feature/` directory.
+
+#### 4e. Update `.opencode/skills/new-api-endpoint/SKILL.md`
+
+This skill remains useful (specialized technical checklist for
+schema → service → endpoint → tests → reviewers). Update it:
+
+- Remove references to the deleted `new-feature` skill.
+- Add a brief note at the top clarifying that the skill assumes a
+  topic branch already exists. Branch creation, push, PR opening,
+  and merge follow the global workflow defined in
+  `docs/conventions.md` (Git Conventions) and Guardrail 25. The
+  skill does NOT handle branch or PR lifecycle — only the
+  implementation sequence within an already-active branch.
+
+#### 4f. Update `.opencode/README.md`
 
 Remove the rows for `/check-spec` and `/run-tests` from the Commands
 table. The remaining commands are `/idea` and `/review-spec`.
 
-#### 4f. Update `.opencode/prompts/code.md`
+Remove the `new-feature` row from the Skills table. The remaining
+skill is `new-api-endpoint`.
+
+#### 4g. Update `.opencode/prompts/code.md`
 
 Add a **Git Safety** section after "Non-Feature Work". Content:
 
@@ -766,9 +791,10 @@ This is the final step. No permanent artifact references this file.
 | `.opencode/commands/run-tests.md` | Delete | 4a |
 | `.opencode/commands/check-spec.md` | Delete | 4b |
 | `.opencode/commands/idea.md` | Modify (remove auto-commit) | 4c |
-| `.opencode/skills/new-feature/SKILL.md` | Modify (remove auto-commit) | 4d |
-| `.opencode/README.md` | Modify (remove deleted commands) | 4e |
-| `.opencode/prompts/code.md` | Modify (add Git Safety) | 4f |
+| `.opencode/skills/new-feature/` | Delete (entire directory) | 4d |
+| `.opencode/skills/new-api-endpoint/SKILL.md` | Modify (add workflow reference) | 4e |
+| `.opencode/README.md` | Modify (remove deleted commands and skill) | 4f |
+| `.opencode/prompts/code.md` | Modify (add Git Safety) | 4g |
 | `.githooks/pre-push` | Modify (add master/tag guard) | 5a |
 | `.github/workflows/ci.yml` | Modify (add pr-title, image-smoke) | 6a |
 | `.github/workflows/build-images.yml` | Modify (remove workflow_dispatch) | 6b |
