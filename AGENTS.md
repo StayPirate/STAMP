@@ -919,3 +919,60 @@ implementation intent).
    implementation branch from the updated `origin/master`.
 4. Never mixes unmerged spec changes with implementation on the
    same branch.
+
+### 26. Reviewer proportionality and design simplicity
+
+CRITICAL: Reviewer findings are inputs to engineering judgment, not an
+automatic mandate to add code or documentation. Correctness, security, and
+explicit specification requirements remain mandatory, but their resolution
+MUST use the smallest change that fully addresses the real problem.
+
+Before reporting a finding, every reviewer MUST apply this filter:
+
+1. **Real problem**: Is there a concrete, realistic scenario in which the
+   issue causes incorrect behavior, data loss, a security vulnerability, an
+   explicit contract violation, or a meaningful maintenance problem? If not,
+   omit the finding.
+2. **Necessary documentation**: Would the proposed resolution only document
+   behavior that is already unambiguous and that an implementer does not need
+   in order to choose a correct implementation? If so, omit the finding.
+3. **Necessary resolution**: Is a change required for correctness, security,
+   data integrity, an explicit specification or guardrail, or a realistic
+   operational need? If not, do not recommend it merely for theoretical
+   completeness or future flexibility.
+4. **Proportionality**: Is the implementation and maintenance cost
+   proportionate to the likelihood and impact of the problem? If not, discard
+   the finding as disproportionate. It does not affect the review verdict.
+5. **Structural complexity**: Would the resolution add a table, state,
+   abstraction, dependency, configuration option, exception hierarchy,
+   workflow branch, or substantial specification machinery? If so, the agent
+   MUST NOT apply it autonomously. Present the finding, smallest viable
+   resolution, cost, and recommendation to the user and wait for a decision.
+
+Reviewers MUST prefer removal, reuse, and simplification over adding new
+mechanisms. A discarded finding is not a deferred requirement and MUST NOT be
+implemented. The primary agent MAY mention materially important discarded
+findings in its final or PR summary, but minor discarded findings need not be
+surfaced. This filter does not permit ignoring a confirmed defect, concrete
+vulnerability, or explicit specification/guardrail violation.
+
+#### Mandatory design review
+
+Invoke `@design-reviewer` when:
+
+- A new feature specification is created in `docs/features/`
+- An existing feature specification receives substantial changes to business
+  rules, state machines, data flows, operations, architecture, or component
+  boundaries
+
+Skip the review for cosmetic edits, clarifications that do not alter design,
+and examples added to an already reviewed design. The reviewer evaluates
+whether the design solves the present requirement with the fewest justified
+moving parts and identifies opportunities to remove unnecessary complexity.
+
+Design findings that recommend adding complexity follow the filter above.
+Purely stylistic simplifications and other unnecessary recommendations are
+omitted. Existing complexity is a finding only when it causes a concrete
+maintenance or operational problem that passes the filter. A structural
+simplification that would change specified behavior or scope MUST be presented
+to the user before the specification is changed.

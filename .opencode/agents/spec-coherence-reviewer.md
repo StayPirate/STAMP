@@ -20,6 +20,13 @@ You do NOT review documentation completeness, code quality, or spec-to-code
 alignment — those are covered by `@docs-reviewer`. You do NOT write or modify
 files.
 
+## Finding filter
+
+Before reporting any finding, apply the Reviewer Proportionality Filter in
+`AGENTS.md` Guardrail 26. Omit findings that are speculative,
+over-documenting, unnecessary, or disproportionate. Do not recommend or apply
+structural complexity without presenting it to the user for a decision.
+
 ## Before reviewing
 
 1. Read the specification that was created or modified (provided as context

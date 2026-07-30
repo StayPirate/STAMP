@@ -71,19 +71,25 @@ questions are answered (see "Function Specification Completeness" in
 4. When modifying existing specs, understand the full document before making
    changes — do not introduce contradictions with other sections
 
-## Reviewer Suggestions
+## Reviewer Invocation
 
-After significant spec work, consider suggesting that the user invoke
-relevant reviewers:
+After significant spec work, invoke the reviewers required by the applicable
+guardrails:
 
-- **New or substantially modified spec** → suggest `@spec-gap-analyzer`
-- **Changes affecting multiple specs** → suggest `@spec-coherence-reviewer`
-- **Architectural decisions** → suggest `@design-reviewer`
-- **New API endpoints defined** → suggest `@api-convention-reviewer`
-- **Data model changes** → suggest `@data-model-reviewer`
-- **New rules/patterns added** → suggest `@docs-placement-reviewer`
+- **New or substantially modified feature spec** → invoke
+  `@spec-gap-analyzer` and `@design-reviewer`
+- **New feature spec or cross-spec semantic changes** → invoke
+  `@spec-coherence-reviewer`
+- **New or modified API endpoint definitions** → invoke
+  `@api-convention-reviewer`
+- **Data model changes** → invoke `@data-model-reviewer`
+- **New rules/patterns added** → invoke `@docs-placement-reviewer`
+- **New or updated feature specs** → invoke `@docs-reviewer`
+- **Ticket or identity operations** → invoke the applicable integrity reviewer
 
-Do not invoke reviewers autonomously — suggest them and let the user decide.
+Apply the Reviewer Proportionality Filter in `AGENTS.md` Guardrail 26 to every
+finding. Never resolve a finding that adds structural complexity without first
+presenting it to the user and receiving a decision.
 
 ## Conventions
 

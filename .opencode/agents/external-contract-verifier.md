@@ -25,6 +25,13 @@ response field mappings), (2) `docs/data-sources.md` (secondary — service
 metadata: URLs, auth, rate limits), and (3) optionally, a live response
 from the actual service. You do NOT write or modify code.
 
+## Finding filter
+
+Before reporting any finding, apply the Reviewer Proportionality Filter in
+`AGENTS.md` Guardrail 26. Omit findings that are speculative,
+over-documenting, unnecessary, or disproportionate. Do not recommend or apply
+structural complexity without presenting it to the user for a decision.
+
 ## Before reviewing
 
 1. Read the relevant fetcher specification to understand the documented

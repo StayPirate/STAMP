@@ -111,7 +111,7 @@ Once the user approves a resolution:
 1. Write tests covering: happy path, validation errors, auth/permissions,
    edge cases
 2. Run the test suite and fix failures
-3. Evaluate whether to suggest reviewer invocation (see below)
+3. Invoke all reviewers required by the applicable guardrails (see below)
 
 ## Definition of Done
 
@@ -119,7 +119,7 @@ A slice is complete ONLY when ALL of the following are satisfied:
 
 1. **Guardrails met**: all applicable AGENTS.md Guardrails are satisfied
    (tests pass and cover happy/error/permission paths per G6, lint clean,
-   reviewers invoked per G8–G17, no spec deviations per G1, Gap Protocol
+   all applicable reviewers invoked, no spec deviations per G1, Gap Protocol
    followed if deviations were needed)
 2. **External contracts verified** (if the slice integrates with an
    external service): the External Contract Verification protocol below
@@ -186,17 +186,24 @@ implementation — not assumed from documentation alone.
 
 ## Reviewer Invocation
 
-After implementation, evaluate and suggest relevant reviewers:
+After implementation, invoke all reviewers required by the applicable
+guardrails:
 
-- **New API endpoints** → suggest `@security-reviewer`, `@api-parity-reviewer`
-- **New models/migrations** → suggest `@data-model-reviewer`
-- **New tests** → suggest `@test-reviewer`
-- **New/modified fetchers** → suggest `@fetcher-compliance-reviewer`
-- **Ticket mutations** → suggest `@ticket-integrity-reviewer`
-- **Identity mutations** → suggest `@identity-integrity-reviewer`
-- **Doc changes (gap fixes)** → suggest `@docs-reviewer`
-- **External service integration** → suggest `@external-contract-verifier`
-- **New external integration involving credentials, response parsing, or a new parser dependency** → also suggest `@security-reviewer`
+Apply the Reviewer Proportionality Filter in `AGENTS.md` Guardrail 26 to every
+finding. Never resolve a finding that adds structural complexity without first
+presenting it to the user and receiving a decision.
+
+- **New or modified API endpoints** → `@security-reviewer`; evaluate
+  `@api-parity-reviewer` per Guardrail 12
+- **New models/migrations** → `@data-model-reviewer`
+- **New feature/module tests or bug regression tests** → `@test-reviewer`
+- **New/modified fetchers** → `@fetcher-compliance-reviewer`
+- **Ticket mutations** → `@ticket-integrity-reviewer`
+- **Identity mutations** → `@identity-integrity-reviewer`
+- **Behavioral documentation changes** → `@docs-reviewer`
+- **External service integration** → `@external-contract-verifier` when the
+  change consumes or produces an external contract
+- **New external integration involving credentials, response parsing, or a new parser dependency** → also `@security-reviewer`
 
 ## Non-Feature Work
 
