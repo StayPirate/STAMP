@@ -15,7 +15,18 @@ jobs:
       packages: write
     steps:
       # Removes untagged image digests left behind when :master/:latest
-      # get re-tagged on every push (see build-images.yml).
+      # get re-tagged on every push (see build-images.yml). Tagged images
+      # (release tags, latest, master) are never affected by
+      # keep-n-untagged — the two pools are independent, so this only
+      # bounds the untagged pool, regardless of how many tagged images
+      # exist.
+      #
+      # No older-than filter: retagging on every push to master keeps
+      # producing untagged versions younger than any reasonable age
+      # threshold, so an age filter would leave the untagged pool
+      # effectively unbounded between runs. keep-n-untagged alone bounds
+      # it to a fixed ceiling (the 10 most recent untagged versions)
+      # regardless of age.
       #
       # keep-n-untagged already implies deleting all untagged versions
       # beyond the N most recent — delete-untagged must NOT be set
@@ -23,5 +34,4 @@ jobs:
       - uses: dataaxiom/ghcr-cleanup-action@v1
         with:
           keep-n-untagged: 10
-          older-than: 7 days
           token: ${{ secrets.GITHUB_TOKEN }}
