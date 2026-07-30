@@ -77,9 +77,10 @@ affected component until the gap is resolved.
 ### Step 5 — Apply
 
 Once the user approves a resolution:
-1. Apply the agreed fix to the specification (you will be prompted for
-   confirmation since it is a `docs/**` file)
-2. Continue implementation based on the updated spec
+1. Follow `AGENTS.md` Guardrail 25: create or reuse the documentation issue,
+   apply the agreed fix on its separate `docs/` branch, and merge that PR.
+2. Start implementation only from updated `origin/master` on a separate linked
+   implementation branch.
 
 ## Implementation Standards
 
@@ -111,7 +112,7 @@ Once the user approves a resolution:
 1. Write tests covering: happy path, validation errors, auth/permissions,
    edge cases
 2. Run the test suite and fix failures
-3. Evaluate whether to suggest reviewer invocation (see below)
+3. Invoke all reviewers required by the applicable guardrails (see below)
 
 ## Definition of Done
 
@@ -119,7 +120,7 @@ A slice is complete ONLY when ALL of the following are satisfied:
 
 1. **Guardrails met**: all applicable AGENTS.md Guardrails are satisfied
    (tests pass and cover happy/error/permission paths per G6, lint clean,
-   reviewers invoked per G8–G17, no spec deviations per G1, Gap Protocol
+   all applicable reviewers invoked, no spec deviations per G1, Gap Protocol
    followed if deviations were needed)
 2. **External contracts verified** (if the slice integrates with an
    external service): the External Contract Verification protocol below
@@ -186,17 +187,18 @@ implementation — not assumed from documentation alone.
 
 ## Reviewer Invocation
 
-After implementation, evaluate and suggest relevant reviewers:
+After implementation, invoke all reviewers required by the applicable
+guardrails. Common mappings include:
 
-- **New API endpoints** → suggest `@security-reviewer`, `@api-parity-reviewer`
-- **New models/migrations** → suggest `@data-model-reviewer`
-- **New tests** → suggest `@test-reviewer`
-- **New/modified fetchers** → suggest `@fetcher-compliance-reviewer`
-- **Ticket mutations** → suggest `@ticket-integrity-reviewer`
-- **Identity mutations** → suggest `@identity-integrity-reviewer`
-- **Doc changes (gap fixes)** → suggest `@docs-reviewer`
-- **External service integration** → suggest `@external-contract-verifier`
-- **New external integration involving credentials, response parsing, or a new parser dependency** → also suggest `@security-reviewer`
+- **New API endpoints** → `@security-reviewer`, `@api-parity-reviewer`
+- **New models/migrations** → `@data-model-reviewer`
+- **New tests** → `@test-reviewer`
+- **New/modified fetchers** → `@fetcher-compliance-reviewer`
+- **Ticket mutations** → `@ticket-integrity-reviewer`
+- **Identity mutations** → `@identity-integrity-reviewer`
+- **Doc changes (gap fixes)** → `@docs-reviewer`
+- **External service integration** → `@external-contract-verifier`
+- **New external integration involving credentials, response parsing, or a new parser dependency** → also `@security-reviewer`
 
 ## Non-Feature Work
 
@@ -241,19 +243,18 @@ When the user requests a concrete modification (implementation, fix,
 refactor), recognize this as an operational request and start the branch
 workflow automatically:
 
-1. Verify the owning spec exists and is sufficient (Guardrail 1).
-2. Fetch `origin/master`.
-3. Confirm clean worktree (or report conflicts).
-4. Create a topic branch from `origin/master` with the appropriate naming
-   prefix (see `docs/conventions.md`, Branch Naming).
-5. Announce the branch name and scope, then proceed.
+1. Follow the complete automatic workflow initiation procedure in `AGENTS.md`
+   Guardrail 25, including specification checks, issue search or creation,
+   blocker verification, and native linked-branch creation.
+2. Announce the issue number, branch name, and scope, then proceed.
 
-Do NOT wait for an explicit "create a branch" instruction or a slash
-command. Natural-language intent is sufficient.
+Do NOT wait for an explicit "create issue" or "create branch" instruction or
+a slash command. Natural-language intent is sufficient.
 
 If the spec is missing or incomplete:
 - Stop and inform the user.
-- Propose creating the spec first via a separate `docs/` branch and PR.
+- Follow the documentation-issue and separate `docs/` branch sequence in
+  Guardrail 25.
 - Do not begin implementation until the spec PR is merged.
 
 Do NOT create branches for exploratory requests (questions, analysis,

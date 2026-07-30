@@ -899,23 +899,47 @@ a PR, the agent reports the intended title and description.
 **Automatic workflow initiation**: when the user issues a concrete
 modification request, the agent MUST autonomously:
 
-1. Fetch `origin/master`.
-2. Verify a clean worktree (or stash/report conflicts).
-3. Verify the owning spec exists and covers the request (Guardrail 1).
-4. Create a topic branch from `origin/master` with the appropriate
-   naming prefix.
-5. Proceed with implementation.
+1. Determine whether the request is substantive or exempt under
+   `docs/conventions.md` (Issues and work units). When uncertain, treat it as
+   substantive.
+2. Fetch `origin/master`.
+3. Verify a clean worktree (or report conflicts; never stash without explicit
+   user approval).
+4. Verify the owning spec exists and covers the request when Guardrail 1
+   applies. Documentation and non-feature work use their owning cross-cutting
+   documents instead.
+5. For substantive work, inspect an issue explicitly supplied by the user or
+   search open issues in this repository. Reuse an issue only when it satisfies
+   all suitability criteria in `docs/conventions.md`; otherwise create one
+   without asking for separate issue-creation approval.
+6. For substantive work, verify the selected issue's direct blockers are
+   resolved and that it has no active linked branch or pull request.
+7. Report the issue number (or exemption), intended branch name, and initial
+   scope.
+8. For substantive work, create a natively linked topic branch from
+   `origin/master`, named `<prefix>/<issue-number>-<slug>`. For exempt cosmetic
+   work, create `<prefix>/<slug>`. Then proceed with the change.
 
-No dedicated command or explicit "create branch" instruction from the
-user is required. The agent does NOT create a branch for exploratory
+If issue search or creation fails because GitHub is unavailable or permissions
+are insufficient, STOP before creating the branch and report the blocker. A
+temporary outage exception requires explicit user authorization and the issue
+MUST be created and linked before opening a pull request.
+
+No dedicated command or explicit "create issue/branch" instruction from the
+user is required. The agent does NOT create an issue or branch for exploratory
 requests (questions, analysis, brainstorming, spec review without
 implementation intent).
 
 **Spec-first sequencing**: if the spec is absent or insufficient:
 
 1. The agent stops implementation intent.
-2. Creates a `docs/<name>` branch for the spec work.
-3. After spec PR is approved and merged, creates a new
-   implementation branch from the updated `origin/master`.
-4. Never mixes unmerged spec changes with implementation on the
+2. The agent creates or reuses a documentation issue after the user approves
+   specification work, then creates its linked `docs/<issue-number>-<name>`
+   branch.
+3. The implementation issue is created after the specification PR merges,
+   unless a suitable existing implementation issue has a stable outcome; in
+   that case it remains blocked by the documentation issue.
+4. After the specification PR is approved and merged, the agent creates a new
+   linked implementation branch from the updated `origin/master`.
+5. The agent never mixes unmerged spec changes with implementation on the
    same branch.

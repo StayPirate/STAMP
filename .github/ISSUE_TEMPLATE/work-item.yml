@@ -1,0 +1,91 @@
+name: Work item
+description: Track a substantive repository change before implementation begins.
+title: ""
+body:
+  - type: checkboxes
+    id: existing-issue-search
+    attributes:
+      label: Existing issue search
+      description: Avoid duplicate or overlapping work items.
+      options:
+        - label: I searched open issues and found no suitable existing work item.
+          required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome or problem
+      description: Describe the outcome to achieve or the problem to solve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: owning-specifications
+    attributes:
+      label: Owning specifications
+      description: Link the authoritative specifications and relevant sections, or explain why no feature specification applies.
+      placeholder: |-
+        - `docs/features/<domain>/<feature>.md` — Section name
+        - N/A — repository workflow change
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: State what this work item includes and explicitly excludes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tracking-context
+    attributes:
+      label: Tracking context
+      description: Link any parent issue, milestone, roadmap piece ID, or Project membership label, or write "None".
+      placeholder: None
+
+  - type: textarea
+    id: expected-artifacts
+    attributes:
+      label: Expected artifacts
+      description: List the implementation, test, migration, documentation, or workflow artifacts expected from this work item.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List externally verifiable outcomes without duplicating specification behavior.
+      placeholder: |-
+        - [ ] First verifiable outcome
+        - [ ] Second verifiable outcome
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: List the expected automated and manual verification.
+    validations:
+      required: true
+
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Direct blockers
+      description: Link direct blocking issues, or write "None".
+      placeholder: None
+    validations:
+      required: true
+
+  - type: textarea
+    id: reviewers
+    attributes:
+      label: Applicable reviewers
+      description: List the reviewer agents required by the owning guardrails, or write "None".
+      placeholder: None
+    validations:
+      required: true

@@ -1109,25 +1109,97 @@ a draft PR early, mark ready when implementation, verification evidence,
 and applicable reviewer work are complete, squash-merge after approval,
 branch auto-deleted.
 
+#### Issues and work units
+
+GitHub Issues are the canonical work items for substantive, human-directed
+repository changes, including work performed by an automation agent on a
+person's request. Before creating a topic branch, search for a suitable open
+issue in this repository. Reuse it only when all of the following are true:
+
+- its outcome, scope, acceptance criteria, and owning specifications cover the
+  requested change;
+- it is a concrete work item, not a phase, initiative, or other parent issue;
+- it has no active linked branch or pull request; and
+- its direct blockers are resolved.
+
+Otherwise, create a new issue without requiring a separate approval merely to
+create the tracking object. Issue creation happens only after the request is
+clear, the worktree is ready, and any specification required for implementation
+has passed its gate. Documentation issues that resolve a failed specification
+gate are created after the gap and proposed resolution are confirmed. If issue
+search or creation fails, stop before creating the branch. A maintainer may
+explicitly authorize a temporary exception during a GitHub outage, but the
+issue must exist and be linked before a pull request is opened.
+
+The ownership boundary is:
+
+1. **Specifications** own behavioral and structural contracts.
+2. **Issues** own the problem or outcome, bounded scope, externally verifiable
+   acceptance criteria, owning-specification links, and direct blockers.
+3. **Pull requests** own the implementation and its test, review, manual
+   verification, and risk evidence.
+4. **Projects** present live initiative status; they do not override an issue
+   or specification.
+
+Issue acceptance criteria reference specifications rather than copying their
+detailed behavior. Revalidate the issue and its owning specifications before
+starting work. A material, independently deliverable scope expansion requires
+a separate issue; smaller adjustments must be recorded in the existing issue
+before implementation continues.
+
+The normal work unit is one issue, one active topic branch, one completing
+pull request, and one squash merge. If an outcome must be delivered through
+multiple independently mergeable changes, create child work-unit issues. Each
+pull request closes only its completed child issue and references, but does not
+close, the parent.
+
+An issue is not required for:
+
+- a pull request generated and maintained exclusively by Dependabot or
+  release-please; human-directed scope added to such a pull request removes the
+  exemption;
+- pure exploration that creates no retained branch, commit, pull request, or
+  tracked-file change; or
+- a genuinely cosmetic correction affecting at most three files and 50
+  changed lines, limited to spelling, punctuation, whitespace, comments, or
+  canonical formatting, with no change to behavior, requirements,
+  identifiers, commands, paths, URLs, numeric values, configuration,
+  lockfiles, generated artifacts, or test expectations.
+
+When uncertain, create an issue. A human-authored exempt pull request must
+state `N/A - <specific reason>` in its Issue linkage field. The metadata check
+enforces the cosmetic exemption's size boundary; reviewers verify that its
+content is genuinely cosmetic. For automated pull requests, the metadata check
+verifies the expected automation identity, branch, label, and repository;
+reviewers verify that no human-directed scope was added.
+
+GitHub Projects are optional and initiative-scoped. An issue joins a Project
+only through the membership mechanism documented by that initiative, normally
+an initiative-specific label and Project auto-add workflow. Repository issues
+must not be added to a Project merely because the Project exists. Issue and
+pull-request state remain authoritative when a Project field drifts.
+
 **Single active domain branch**: develop one dependent domain work unit at a
 time. Multiple branches may exist for genuinely independent concerns
 (for example, a dependency update and a domain feature), but dependent
 domain work is not stacked across unmerged branches.
 
-**Work unit boundary**: the normal implementation unit is one tracking
-issue, one topic branch created from the current `origin/master`, and one
-squash-merged pull request. A milestone or roadmap phase groups multiple
-work units; it is never itself a long-lived implementation branch. Start
-a dependent work unit only after every direct blocker PR has merged, then
-branch from the updated `origin/master`.
+**Dependency sequencing**: a milestone or roadmap phase groups multiple work
+units; it is never itself a long-lived implementation branch. Start a
+dependent work unit only after every direct blocker PR has merged, then branch
+from the updated `origin/master`.
 
-**Issue linkage**: implementation PRs use `Closes #<issue>` in the PR
-description so merge completion closes the tracking issue. The issue
-owns scope and acceptance criteria; the PR owns implementation evidence
-(tests, manual verification, reviewer results, risks). If a specification
-gap blocks implementation, resolve it in a separate documentation issue,
-branch, and merged PR before creating or resuming the implementation
-branch.
+**Issue linkage**: every non-exempt pull request uses `Closes #<issue>` in its
+Issue linkage field so merge to the default branch closes the work item. If a
+specification gap blocks implementation, create or reuse a separate
+documentation issue and complete its documentation branch and PR before
+creating the implementation issue. An already-existing implementation issue
+may instead remain blocked by the documentation issue when its outcome is
+stable and non-speculative.
+
+Non-exempt topic branches are named `<prefix>/<issue-number>-<slug>`, and the
+issue number must match the PR's closing reference. Exempt human-authored work
+uses `<prefix>/<slug>` and the same branch prefixes defined below.
 
 **No direct pushes to `master`**: all changes arrive via squash merge
 of a reviewed PR. The pre-push hook enforces this locally.
@@ -1143,19 +1215,15 @@ must follow Conventional Commits format) becomes the commit message on
 **PR title**: must follow the Conventional Commits format
 (`type[(scope)][!]: description`) and remain under 72 characters because it
 becomes the squash commit subject. Format is validated by CI; length is
-enforced during review until CI gains an equivalent check.
+also validated by CI.
 
 **Branch deletion**: branches are deleted automatically after merge.
 
-**Workflow initiation**: a concrete modification request in natural
-language is sufficient to start the workflow — no dedicated command or
-manual branch creation is required. The agent creates the topic branch
-automatically when preconditions are met (spec exists, clean worktree,
-`origin/master` fetched). When the owning spec is missing, the spec is
-created and merged first via a separate `docs/` branch before
-implementation begins. The agent's step-by-step procedure
-(preconditions, spec-first sequencing, commit/push cadence, merge gate)
-is defined in `AGENTS.md` (Guardrail 25).
+**Workflow initiation**: a concrete modification request in natural language
+is sufficient to start the workflow; no dedicated command or manual issue or
+branch creation is required. The executable agent procedure, including
+preconditions, issue creation, branch creation, and specification-gap
+sequencing, is defined in `AGENTS.md` (Guardrail 25).
 
 ### Pull Request Requirements
 
@@ -1163,6 +1231,9 @@ is defined in `AGENTS.md` (Guardrail 25).
 - **Description**: use the repository PR template. At minimum: owning
   spec reference, scope summary, test evidence, reviewer results,
   manual verification notes.
+- **Issue linkage**: use `Closes #<issue>` for normal work. Exempt
+  human-authored PRs use `N/A - <specific reason>` under the Issues and work
+  units exemption rules; approved automated PRs are exempt from this field.
 - **Manual verification**: record the exercised behavior and observed result.
   If no meaningful manual path exists, record `N/A` with a reason.
 - **External contracts**: when an external integration is changed, record the
