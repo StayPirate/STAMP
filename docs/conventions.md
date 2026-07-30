@@ -1074,12 +1074,98 @@ authoritative mapping.
 
 ## Git Conventions
 
+### Workflow
+
+Sentinel uses GitHub Flow: `master` is always the stable, deployable
+branch. All changes are developed on short-lived topic branches and
+merged via pull request.
+
+**Branch lifecycle**: create from `origin/master`, push regularly, open
+a draft PR early, mark ready when Definition of Done is met,
+squash-merge after approval, branch auto-deleted.
+
+**Single active branch**: one implementation piece at a time (per the
+implementation plan's "one piece at a time" principle). Multiple
+branches may exist for independent concerns (e.g., a spec fix and an
+implementation piece), but parallel domain-logic branches within the
+same phase are avoided.
+
+**No direct pushes to `master`**: all changes arrive via squash merge
+of a reviewed PR. The pre-push hook enforces this locally.
+
+**No force pushes**: never rewrite published branch history.
+
+**No manual tags**: tags are created exclusively by release-please.
+
+**Squash merge**: the only allowed merge method. The PR title (which
+must follow Conventional Commits format) becomes the commit message on
+`master`.
+
+**PR title**: must follow the Conventional Commits format
+(`type[(scope)][!]: description`). This is validated by CI.
+
+**Branch deletion**: branches are deleted automatically after merge.
+
+**Workflow initiation**: a concrete modification request in natural
+language (e.g., "implement feature X", "fix bug Y") is sufficient to
+start the workflow. No dedicated command or manual branch creation is
+required. The agent determines whether a request is operational
+(triggers the workflow) or exploratory (no branch created). Exploratory
+requests include questions, analysis, brainstorming, and spec review.
+
+**Branch creation responsibility**: the agent creates the topic branch
+automatically when all preconditions are met:
+
+1. The request is a concrete modification (not exploratory).
+2. The owning spec exists and is sufficient for the requested scope
+   (Guardrail 1).
+3. The local worktree is clean or has no conflicting state.
+4. `origin/master` has been fetched.
+
+If any precondition fails, the agent stops and reports the blocker
+instead of creating the branch.
+
+**Spec-first branch sequencing**: when the owning spec does not exist
+or is incomplete for the requested change:
+
+1. First: a `docs/<feature>` branch and PR to create or update the
+   spec. Merge requires user approval.
+2. Then: a `feature/<feature>` (or `fix/...`) branch created from the
+   updated `origin/master` for the implementation.
+
+The agent never starts implementation on a branch where the spec has
+not yet been approved and merged.
+
+**Local-to-remote lifecycle**: the branch starts local. The agent may
+commit freely. After the first coherent set of changes, the agent
+pushes and opens a draft PR without waiting for explicit push
+authorization. Subsequent commits are pushed incrementally. The only
+mandatory human gate is the merge.
+
+### Pull Request Requirements
+
+- **Title**: Conventional Commits format (validated by CI).
+- **Description**: use the repository PR template. At minimum: owning
+  spec reference, scope summary, test evidence, reviewer results,
+  manual verification notes.
+- **CI**: all checks must pass on the latest commit before merge is
+  requested.
+- **Reviewers**: applicable reviewer agents must be invoked and
+  findings addressed (per existing guardrails).
+- **Human approval**: the repository owner must explicitly authorize
+  the merge by referencing the PR number.
+
 ### Branch Naming
 
-- `feature/<short-description>` — new features
-- `fix/<short-description>` — bug fixes
-- `docs/<short-description>` — documentation changes
-- `refactor/<short-description>` — code refactoring
+| Prefix | Use |
+|--------|-----|
+| `feature/` | New features |
+| `fix/` | Bug fixes |
+| `docs/` | Documentation changes |
+| `refactor/` | Code refactoring |
+| `chore/` | Infrastructure, configuration, dependencies |
+| `ci/` | CI/CD pipeline changes |
+| `test/` | Test-only changes |
 
 ### Commit Messages
 
