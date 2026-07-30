@@ -893,9 +893,12 @@ perform local cleanup:
 1. Synchronize and prune: `git fetch origin --prune && git branch -f
    master origin/master` (updates local master and removes stale
    remote-tracking references in one step).
-2. Delete the merged topic branch: `git branch -d <merged-branch>`
-   (`-d` refuses deletion if the branch is not fully merged —
-   safe by design).
+2. Delete the merged topic branch: `git branch -D <merged-branch>`.
+   Note: `-D` (force) is required because squash merges produce a new
+   commit SHA on `master` — git's `-d` (safe) does not recognize the
+   branch as merged. This is safe because the agent only runs this
+   step immediately after a successful `gh pr merge --squash`,
+   confirming the work is on `master`.
 
 **Commit discipline**: agents may commit and push to topic branches
 without per-commit approval. Before the first push of a new branch,
