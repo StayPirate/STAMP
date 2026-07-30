@@ -27,7 +27,7 @@ dev = [
     "httpx>=0.28.0",
     "ruff>=0.16.0",
     "factory-boy>=3.3.0",
-    "testcontainers[postgres]>=4.9.0",
+    "testcontainers[postgres]>=4.15.0",
 ]
 
 [build-system]
