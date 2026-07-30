@@ -43,16 +43,31 @@ jobs:
           fi
 
           linkage_lines=$(grep -c '^- Issue linkage:' <<<"${PR_BODY}" || true)
-          if [[ "${linkage_lines}" -ne 1 ]]; then
-            echo "::error::PR body must contain exactly one 'Issue linkage:' field (found ${linkage_lines})."
+          if [[ "${linkage_lines}" -gt 1 ]]; then
+            echo "::error::PR body must contain at most one '- Issue linkage:' field (found ${linkage_lines})."
             exit 1
           fi
-          linkage_value=$(grep '^- Issue linkage:' <<<"${PR_BODY}" | sed 's/^- Issue linkage:[[:space:]]*//')
-          if [[ "${linkage_value}" =~ ^Closes\ \#[1-9][0-9]*$ ]]; then
+
+          if [[ "${linkage_lines}" -eq 1 ]]; then
+            # Template format: validate the value after the label.
+            linkage_value=$(grep '^- Issue linkage:' <<<"${PR_BODY}" | sed 's/^- Issue linkage:[[:space:]]*//')
+            if [[ "${linkage_value}" =~ ^Closes\ \#[1-9][0-9]*$ ]]; then
+              exit 0
+            fi
+            if [[ "${linkage_value}" =~ ^N/A\ -\ .*[[:graph:]].*$ ]]; then
+              exit 0
+            fi
+            echo "::error::Issue linkage must be 'Closes #N' or 'N/A - <specific reason>' (found '${linkage_value}')."
+            exit 1
+          fi
+
+          # Standalone format: a bare 'Closes #N' line anywhere in the body
+          # (GitHub's native issue-closing syntax). N/A is not accepted here
+          # — an exemption without the 'Issue linkage:' label is not
+          # self-explanatory outside the template's structure.
+          standalone_lines=$(grep -cE '^Closes #[1-9][0-9]*$' <<<"${PR_BODY}" || true)
+          if [[ "${standalone_lines}" -eq 1 ]]; then
             exit 0
           fi
-          if [[ "${linkage_value}" =~ ^N/A\ -\ .*[[:graph:]].*$ ]]; then
-            exit 0
-          fi
-          echo "::error::Issue linkage must be 'Closes #N' or 'N/A - <specific reason>' (found '${linkage_value}')."
+          echo "::error::PR body must contain exactly one issue linkage, as either '- Issue linkage: Closes #N' / '- Issue linkage: N/A - <reason>' (template format) or a standalone 'Closes #N' line (found ${standalone_lines} standalone match(es))."
           exit 1

@@ -1197,9 +1197,11 @@ sequencing, commit/push cadence, merge gate) is defined in `AGENTS.md`
   results, manual verification notes.
 - **Issue linkage**: `Closes #<issue>` for normal work, `N/A - <specific
   reason>` for an exempt human-authored PR under "Issues and work units"
-  above. Approved automated PRs (Dependabot, release-please) are exempt
-  from this field. Validated by CI (see Pull Request Metadata Validation
-  below).
+  above. Either the template's `- Issue linkage:` field or a standalone
+  `Closes #<issue>` line in the body satisfies this requirement (see
+  Pull Request Metadata Validation below for the exact accepted
+  formats). Approved automated PRs (Dependabot, release-please) are
+  exempt from this field.
 - **Manual verification**: record the exercised behavior and observed result.
   If no meaningful manual path exists, record `N/A` with a reason.
 - **External contracts**: when an external integration is changed, record the
@@ -1225,11 +1227,29 @@ push event:
   automation (branch prefix `release-please--`), which are exempt from
   the linkage requirement only — their title is still validated.
 
+The Issue linkage field is recognized in two formats:
+
+1. **Template format**: a `- Issue linkage: Closes #<issue>` or
+   `- Issue linkage: N/A - <specific reason>` line, as pre-filled by
+   `.github/pull_request_template.md`. This is the only format that
+   accepts the `N/A - <reason>` exemption.
+2. **Standalone format**: a `Closes #<issue>` line appearing anywhere
+   else in the body, using GitHub's native issue-closing syntax. This
+   format does not accept `N/A` — a bare exemption without the
+   `Issue linkage:` label is not self-explanatory outside the template's
+   structure.
+
+The template format is checked first; if absent, the check falls back
+to the standalone format. Exactly one recognized linkage must be present.
+
 The check re-runs automatically whenever the PR title or body is edited,
 so a merge cannot proceed with metadata that later drifted out of
 compliance. It does not attempt to verify that an issue was actually
 searched before branch creation, or that a claimed cosmetic exemption is
-genuinely cosmetic — that judgment remains with human reviewers.
+genuinely cosmetic — that judgment remains with human reviewers. It also
+does not verify that any other section of the PR template (tests,
+verification checklist, reviewers) is present or complete — that remains
+a human reviewer responsibility.
 
 ### Branch Naming
 

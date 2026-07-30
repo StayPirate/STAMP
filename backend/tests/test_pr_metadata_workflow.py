@@ -92,7 +92,7 @@ def test_pr_metadata_missing_issue_linkage_fails() -> None:
     result = _validate_metadata(body="No issue linkage")
 
     assert result.returncode == 1
-    assert "must contain exactly one 'Issue linkage:' field" in result.stdout
+    assert "must contain exactly one issue linkage" in result.stdout
 
 
 @pytest.mark.unit
@@ -102,7 +102,53 @@ def test_pr_metadata_duplicate_issue_linkage_fails() -> None:
     )
 
     assert result.returncode == 1
-    assert "must contain exactly one 'Issue linkage:' field" in result.stdout
+    assert "at most one '- Issue linkage:' field" in result.stdout
+
+
+@pytest.mark.unit
+def test_pr_metadata_standalone_closes_line_passes() -> None:
+    result = _validate_metadata(body="## Summary\nSome free-form body.\n\nCloses #42")
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.unit
+def test_pr_metadata_standalone_na_is_rejected() -> None:
+    result = _validate_metadata(body="## Summary\nN/A - cosmetic fix\n")
+
+    assert result.returncode == 1
+    assert "must contain exactly one issue linkage" in result.stdout
+
+
+@pytest.mark.unit
+def test_pr_metadata_duplicate_standalone_closes_fails() -> None:
+    result = _validate_metadata(body="Closes #29\nCloses #30")
+
+    assert result.returncode == 1
+    assert "must contain exactly one issue linkage" in result.stdout
+
+
+@pytest.mark.unit
+def test_pr_metadata_inline_closes_mention_is_not_matched() -> None:
+    result = _validate_metadata(
+        body="This eventually closes #29 once merged. See also Closes #30 text."
+    )
+
+    assert result.returncode == 1
+    assert "must contain exactly one issue linkage" in result.stdout
+
+
+@pytest.mark.unit
+def test_pr_metadata_template_format_takes_precedence_over_standalone() -> None:
+    # A template field with an invalid value must fail even if a valid
+    # standalone `Closes #N` line is also present elsewhere in the body.
+    result = _validate_metadata(body="- Issue linkage: not-a-valid-value\n\nCloses #42")
+
+    assert result.returncode == 1
+    assert "Issue linkage must be 'Closes #N' or 'N/A - <specific reason>'" in (
+        result.stdout
+    )
 
 
 @pytest.mark.unit
