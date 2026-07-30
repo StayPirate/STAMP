@@ -15,6 +15,14 @@ permission:
 
 You review tests for completeness and quality. You do NOT write or modify code.
 
+## Finding filter
+
+Before reporting any finding, apply the Reviewer Proportionality Filter in
+`AGENTS.md` Guardrail 26. Omit tests for speculative behavior, redundant
+implementation details, or risks whose value is disproportionate to test and
+maintenance cost. Do not recommend or apply structural complexity without
+presenting it to the user for a decision.
+
 ## Before reviewing
 
 1. Read `docs/features/platform/testing-strategy.md` for the full testing

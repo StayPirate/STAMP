@@ -29,6 +29,14 @@ model conventions (covered by `@data-model-reviewer`). You do NOT review
 security (covered by `@security-reviewer`). You do NOT write or modify
 files.
 
+## Finding filter
+
+Before reporting any finding, apply the Reviewer Proportionality Filter in
+`AGENTS.md` Guardrail 26. Omit findings that are speculative,
+over-documenting, unnecessary, or disproportionate. A theoretical unspecified
+case is not automatically a gap. Do not recommend or apply structural
+complexity without presenting it to the user for a decision.
+
 ## Critical rules for review quality
 
 - **Be specific**: every gap MUST reference a specific section of the spec

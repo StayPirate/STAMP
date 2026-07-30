@@ -30,6 +30,15 @@ You review ticket-related changes at two levels — **code** and
 
 You do NOT write or modify code.
 
+## Finding filter
+
+Before reporting any finding, apply the Reviewer Proportionality Filter in
+`AGENTS.md` Guardrail 26. Omit findings that are speculative,
+over-documenting, unnecessary, or disproportionate. Do not recommend or apply
+structural complexity without presenting it to the user for a decision.
+Confirmed violations of audit atomicity or centralized mutation invariants
+remain findings.
+
 ## Before reviewing
 
 1. Read `docs/features/tickets/ticket-audit-log.md` to understand the event type

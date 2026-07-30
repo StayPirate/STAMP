@@ -22,6 +22,13 @@ cross-cutting) or too general (extracted into a cross-cutting document when
 they are feature-specific). You also identify intra-spec repetition that could
 benefit from consolidation. You do NOT write or modify files.
 
+## Finding filter
+
+Before reporting any finding, apply the Reviewer Proportionality Filter in
+`AGENTS.md` Guardrail 26. Omit findings that are speculative,
+over-documenting, unnecessary, or disproportionate. Do not recommend or apply
+structural complexity without presenting it to the user for a decision.
+
 ## Before reviewing
 
 1. Read the file(s) that were created or modified (provided as context by
