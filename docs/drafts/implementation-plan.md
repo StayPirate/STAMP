@@ -1,629 +1,485 @@
 # Implementation Plan
 
-**Status**: Living document — updated as each phase/piece is completed.
-**Purpose**: Define a progressive, dependency-ordered, incrementally-tested
-implementation sequence for the Sentinel backend. Implementation proceeds
-one piece at a time within each phase; a piece is not considered done
-until it passes the Definition of Done (below) and is verified jointly
-(automated tests + manual verification).
+**Status**: Living execution roadmap — updated as implementation pieces are
+merged.
 
-This document is a planning aid, not a specification. It does not define
-behavior — it sequences the implementation of specs that already exist
-under `docs/features/`. When a phase or piece is completed, update its
-status in the tracking tables below.
+**Purpose**: Define a dependency-ordered sequence for implementing the
+Sentinel backend in small, independently reviewable increments. This document
+is a planning aid, not a feature specification: behavior remains authoritative
+only in `docs/features/` and the cross-cutting documents they reference.
 
-**Prerequisite**: the image-testing prep effort — which established the
-mechanism for testing built Docker images (compose file, pytest suite,
-CI gate) that this plan's phases extend incrementally — is **complete**
-(2026-07-29). The durable convention now lives in
-`docs/features/platform/testing-strategy.md` (Image / Container Smoke
-Testing). See the [Prep Effort](#prep-effort--image-testing-setup)
-section below for the completed deliverables and the phase-by-phase
-growth model that subsequent phases follow.
+The operational source of truth for execution is GitHub. This document owns
+the roadmap, phase boundaries, dependency rationale, and stable piece IDs.
+GitHub owns the live status of each piece, its branch, pull request, blockers,
+and completion evidence.
 
 ## Contents
 
+- [Planning Model](#planning-model)
 - [Guiding Principles](#guiding-principles)
-- [Definition of Done](#definition-of-done)
-- [WIP Boundary](#wip-boundary)
+- [Piece Definition of Done](#piece-definition-of-done)
+- [Specification and WIP Boundary](#specification-and-wip-boundary)
 - [Release Strategy](#release-strategy)
 - [Phase Overview](#phase-overview)
+- [GitHub Tracking Model](#github-tracking-model)
 - [Prep Effort — Image Testing Setup](#prep-effort--image-testing-setup)
 - [Phase 0 — Infrastructure Completion and Validation](#phase-0--infrastructure-completion-and-validation)
-- [Phase 1 — Cross-Cutting Platform Foundations](#phase-1--cross-cutting-platform-foundations)
-- [Phase 2 — Local Identity and Admin Platform](#phase-2--local-identity-and-admin-platform)
-- [Phase 3 — Fetcher Framework](#phase-3--fetcher-framework)
-- [Phase 4 — CVE/Ticket Domain Core (Phase-1 Ingestion, No WIP)](#phase-4--cveticket-domain-core-phase-1-ingestion-no-wip)
-- [Phase 5 — CVE Fetchers (Real Ingestion)](#phase-5--cve-fetchers-real-ingestion)
-- [Phase 6 — Ticket/CVE API and Package Gate Logic (No SMELT)](#phase-6--ticketcve-api-and-package-gate-logic-no-smelt)
-- [Phase 7+ — Unblocked Only After WIP Specs Are Completed](#phase-7--unblocked-only-after-wip-specs-are-completed)
+- [Phase 1 — Cross-Cutting and Identity Roots](#phase-1--cross-cutting-and-identity-roots)
+- [Phase 2 — Local Identity Foundation](#phase-2--local-identity-foundation)
+- [Phase 3 — Generic Fetcher Platform](#phase-3--generic-fetcher-platform)
+- [Phase 4 — Ticket, CVE, and Package Domain Core](#phase-4--ticket-cve-and-package-domain-core)
+- [Phase 5 — CVE Fetcher Infrastructure and Ingestion](#phase-5--cve-fetcher-infrastructure-and-ingestion)
+- [Phase 6 — Domain Operational Completion](#phase-6--domain-operational-completion)
+- [Phase 7+ — Integrations Requiring WIP Specifications](#phase-7--integrations-requiring-wip-specifications)
 - [Open Questions to Revisit](#open-questions-to-revisit)
 - [Progress Log](#progress-log)
 
 ---
 
+## Planning Model
+
+### Phase
+
+A **phase** is a cohesive program increment with an outcome and an optional
+release checkpoint. A phase is represented by a GitHub milestone and a parent
+issue. It is never an implementation branch or a pull request.
+
+### Piece
+
+A **piece** is the smallest dependency-complete unit that can be implemented,
+tested, reviewed, and merged independently while leaving `master` deployable.
+Each piece has a stable ID (`P<phase>-<sequence>`, for example `P1-03`) and is
+represented by one GitHub sub-issue.
+
+Execution follows `docs/conventions.md` (Git Conventions). The roadmap-specific
+mapping is:
+
+```
+one piece = one issue = one topic branch = one pull request = one squash merge
+```
+
+This is a default rather than an artificial size rule. A small specification
+may fit in one piece; a large specification may require several pieces. A
+model, its migration, and its direct model tests normally remain together
+because separating them would leave an unusable intermediate state.
+
+### Completion boundary
+
+A piece is complete only after its pull request is squash-merged into
+`master`. Passing tests on an unmerged branch is not completion.
+
+### Progressive elaboration
+
+The roadmap lists candidate pieces for all phases, but only the next executable
+phase is expanded into detailed GitHub sub-issues. Later phases are refined
+when their prerequisites are nearly complete. This prevents stale issue trees
+while specifications and dependencies continue to evolve.
+
 ## Guiding Principles
 
-1. **Layered, dependency-ordered implementation.** Infrastructure before
-   frameworks, frameworks before features. No piece is started before
-   its dependencies (models, services, infrastructure) are implemented
-   and verified.
-2. **One piece at a time.** Within a phase, implement and fully verify
-   one spec/module before starting the next. Do not parallelize domain
-   logic across unrelated pieces in the same working session.
-3. **Test before proceeding.** Every piece must satisfy the
-   [Definition of Done](#definition-of-done) — automated tests plus a
-   joint manual verification — before the next piece begins.
-4. **No implementation without a specification** (Guardrail 1). Every
-   piece implemented in this plan maps to an existing, `enabled` spec
-   under `docs/features/`. Where an enabled spec is itself incomplete
-   (see [WIP Boundary](#wip-boundary)), the incomplete portion is
-   deferred, not implemented against guesswork.
-5. **Seam/stub strategy for WIP boundaries.** Where a fully-specified
-   piece has an optional or asynchronous dependency on a WIP spec, the
-   boundary is implemented as an explicit, self-healing stub (e.g., a
-   no-op dispatch) rather than skipped silently or blocked entirely.
-   This keeps the system correct and allows the WIP dependency to be
-   "plugged in" later without revisiting the completed piece. Every
-   stub introduced this way MUST be recorded in the
-   [Progress Log](#progress-log) with a pointer to the spec that will
-   replace it.
-6. **Timeboxing is not a goal.** Phases may take days or weeks. Correct
-   sequencing and verification take priority over speed.
+1. **Dependency order over document order.** Models and leaf infrastructure
+   precede services; services precede API handlers and task wrappers.
+2. **One domain piece at a time.** Dependent domain work is not developed in
+   parallel. Independent maintenance work may continue through its own PRs.
+3. **Specs first.** Every implementation piece maps to an approved and
+   sufficient specification. A missing or insufficient contract is resolved
+   in a separate `docs/` branch and merged before implementation starts.
+4. **No planning-document behavior.** This plan may defer behavior, but it
+   cannot invent a stub, fallback, or partial semantic contract absent from
+   the owning specification.
+5. **Incremental verification.** Every merge leaves the repository green and
+   the implemented slice independently testable.
+6. **No deadline-driven coupling.** Dates and estimates may be tracked for
+   operational planning, but timeboxing never justifies combining unrelated
+   pieces or bypassing verification.
 
-## Definition of Done
+## Piece Definition of Done
 
-A "piece" (a spec, a service module, a fetcher, an API surface) is done
-only when ALL of the following are satisfied:
+A piece is complete only when all applicable conditions below are satisfied:
 
-1. **Spec re-read.** The owning specification under `docs/features/`
-   has been (re-)read in full immediately before implementation
-   (Guardrail 1).
-2. **Data model first.** If the piece introduces or modifies database
-   schema, `docs/data-model.md` is updated *before* the SQLAlchemy
-   model is implemented (Guardrail 8), and an Alembic migration is
-   created and verified (`alembic upgrade head`, `alembic check` — no
-   autogenerate drift).
-3. **Implementation + tests.** The code is implemented per
-   `docs/conventions.md`, with tests added under `backend/tests/`
-   mirroring the `app/` structure, using the correct markers (`unit`,
-   `integration`, `e2e`) per `docs/features/platform/testing-strategy.md`.
-   Audit trail coverage is included wherever the piece touches a
-   mutation covered by an audit trail (Guardrail 6).
-4. **Automated verification green.**
-   - `cd backend && uv run pytest` — all tests pass, coverage ≥ 85%
-   - `cd backend && uv run ruff check . && uv run ruff format --check .`
+1. **Tracking issue ready.** The issue identifies the stable piece ID, owning
+   specification(s), direct blockers, acceptance criteria, expected artifacts,
+   and applicable reviewers.
+2. **Specification gate passed.** The owning specification has been re-read in
+   full and any prerequisite documentation PR has already merged.
+3. **Data model first.** If schema changes are required,
+   `docs/data-model.md` already contains the approved contract. The piece
+   includes the SQLAlchemy model, Alembic migration, and model/migration tests.
+4. **Implementation and tests.** Code follows `docs/conventions.md`; tests
+   cover happy paths, validation and error paths, permissions, edge cases, and
+   audit atomicity where applicable.
+5. **Automated verification green.** At minimum:
+   - `cd backend && uv run pytest`
+   - `cd backend && uv run ruff check .`
+   - `cd backend && uv run ruff format --check .`
    - `cd backend && uv run alembic upgrade head && uv run alembic check`
-   - `cd backend && uvx bandit -r app/` (for security-sensitive pieces)
-5. **Relevant reviewer agents invoked**, per the guardrails triggered by
-   the change (non-exhaustive, evaluate per piece):
-   `@data-model-reviewer`, `@security-reviewer`, `@test-reviewer`,
-   `@ticket-integrity-reviewer`, `@identity-integrity-reviewer`,
-   `@fetcher-compliance-reviewer`, `@api-convention-reviewer`,
-   `@api-parity-reviewer`, `@docs-reviewer`. Issues rated "Needs
-   revision" (or High/Critical severity) are fixed before moving on.
-6. **Joint manual verification.** The stack is run locally
-   (`./scripts/dev-env.sh up`, API server, Celery worker/Beat as applicable);
-   the new behavior is exercised manually (API call, CLI command, or
-   fetcher run) and the resulting database state is inspected together.
-7. **Image smoke tests extended where applicable.** If the piece
-   introduces new container-observable behavior (a new endpoint, a new
-   process role, a new startup validation, a new runtime dependency
-   such as the `git` binary), the corresponding assertion is added to
-   `backend/tests/image/` per the growth model in the
-   [Prep Effort](#prep-effort--image-testing-setup) section below (which
-   restates the durable Growth Rule from
-   `docs/features/platform/testing-strategy.md`, Image / Container Smoke
-   Testing), and `scripts/image-smoke.sh` passes locally. If the piece has no
-   container-observable effect (e.g., a pure function), this step is
-   a no-op — state so explicitly in the Progress Log entry.
-8. **Progress log updated.** The [Progress Log](#progress-log) records
-   what was completed, the date, and any stub/seam introduced.
-9. **No dangling reference to this plan.** Because this document is
-   temporary and will be deleted once all phases are complete, no file
-   created or modified by this piece may reference
-   `docs/drafts/implementation-plan.md` (by path or by a concept that
-   lives only here, e.g. phase numbers or the phase→assertion growth
-   model). Any durable convention was first migrated to its owning
-   permanent document (per the cross-cutting mapping in `AGENTS.md`,
-   Guardrail 21) and only that permanent location is referenced. Verify
-   with a repository-wide search for the draft path.
+     when database artifacts exist or change
+   - security and image checks required by the owning spec or CI
+6. **Applicable reviewer agents passed.** Findings rated Needs revision,
+   Critical, or High are resolved before merge; applicable minor findings are
+   fixed in the same PR.
+7. **Manual verification addressed.** The PR satisfies the manual verification
+   evidence requirement in `docs/conventions.md` (Pull Request Requirements).
+8. **Image smoke coverage addressed.** Apply the Growth Rule in
+   `docs/features/platform/testing-strategy.md` in the introducing piece; the
+   PR records the result or why it is not applicable.
+9. **PR and merge gates passed.** The PR satisfies `docs/conventions.md` and
+   Guardrail 25, is squash-merged, closes its issue, and reaches Done in the
+   GitHub Project.
 
-Only after all nine conditions are met does the next piece begin.
+## Specification and WIP Boundary
 
-## WIP Boundary
+Implementation readiness is a versioned roadmap decision, not a property of
+the local review cache in `docs/reviews/.tracking.json`. The cache's `enabled`
+field controls review tooling only and MUST NOT authorize implementation.
 
-The following specs are `enabled: false` in `docs/reviews/.tracking.json`
-and are **out of scope** until they are completed and reviewed:
+The groups below are currently classified as WIP by this roadmap because their
+own documents contain placeholders, unresolved review findings, or missing
+contracts. Their GitHub issues remain Blocked until a dedicated documentation
+PR resolves those deficiencies, passes the applicable reviews, and merges.
 
-| Domain | Specs |
+Current blocked groups:
+
+| Domain | Specifications |
 |---|---|
 | IBS integration | `ibs-integration`, `ibs-rabbitmq-integration`, `ibs-submission-tracking`, `ibs-track-release-detection`, `ibs-product-release-detection` |
-| Git-based release detection | `git-track-release-detection`, `git-product-release-detection` |
+| Git release detection | `git-track-release-detection`, `git-product-release-detection` |
 | Products | `product-catalog`, `product-lifecycle-transitions` |
 | Package ownership | `package-bugowner`, `maintainer` |
 | Advanced identity | `sso-authentication`, `identity-provisioning` |
 
-**Additional case — `package-service`** (`enabled: true` but treated as
-partially WIP): as of the last review (2026-06-03) it has 2 open
-Medium-severity gap findings, and its orchestration function
-(`add_package_to_ticket`) hard-depends on SMELT product resolution,
-which in turn depends on the disabled `product-catalog` spec. Decision
-(confirmed with the user): **split** —
-- The gate/mutation portion (`set_track_status`, `set_track_delivery_status`,
-  `set_product_eligibility`, `set_product_released_at`, soft-delete/restore
-  functions, orphan cleanup invariants, query functions) does **not**
-  depend on SMELT or any WIP spec and is implemented in **Phase 6**.
-- The orchestration portion (`add_package_to_ticket`, SMELT query,
-  bugowner resolution, submission discovery enqueue) and the fix for the
-  2 open gaps are deferred to **Phase 7**, after `product-catalog` is
-  completed and reviewed.
+### Mandatory roadmap specification gate (`RG-01`)
 
-**Rule for any other enabled spec found to be similarly stale/incomplete
-during implementation**: stop, report the finding to the user, and
-propose scheduling the affected piece after the spec is revised —
-following the same pattern as `package-service`.
+The previous version of this plan proposed a no-op
+`resolve_ticket_packages` task so CVE ingestion could precede SMELT-backed
+package resolution. That seam is not authorized by the owning specifications:
+`cve-service.md` and `cve-fetcher-infrastructure.md` require real post-ingest
+dispatch to `package_service.add_package_to_ticket()`.
+
+`RG-01` is an immediate documentation work item, not a Phase 4 implementation
+piece. It should be resolved after this planning PR and before Phase 4 is
+elaborated into GitHub sub-issues. It must choose and specify one of these
+coherent paths:
+
+1. complete the product catalog and package orchestration prerequisites, or
+2. explicitly define a supported deferred package-resolution mode and its
+   recovery semantics in the owning specifications.
+
+It must also resolve these related contract conflicts and dependencies:
+
+- Product/ProductRepository ownership and synchronization timing;
+- the `add_package_to_ticket()` ordering conflict between `package-model.md`
+  and `package-service.md` (database creation before SMELT versus I/O first);
+- bugowner resolution and submission-discovery side effects whose owning specs
+  are WIP;
+- bugowner-based visibility for confidential tickets required by `rbac.md`,
+  including whether PackageBugowner persistence/resolution must precede scoped
+  Ticket/CVE APIs or the visibility contract is explicitly deferred;
+- whether the package-add API and real CVE ingestion can exist before a
+  populated product catalog.
+
+The implementation plan does not choose those behaviors. Until `RG-01` merges,
+package orchestration, full CVE ingestion, and all real CVE fetchers remain
+blocked. Independent CVE/Ticket schemas and pure domain logic are not blocked.
+
+### Partially implementable specifications
+
+Some approved specifications contain functions with later domain dependencies.
+Their pieces may implement only complete, independently specified functions;
+they must not weaken a function's contract to make it fit an earlier phase.
+Examples:
+
+- `user_service.update_roles()` and `deactivate_user()` require Ticket models,
+  Ticket audit events, and ticket unassignment logic. They are deferred from
+  Phase 2 to Phase 4 rather than implemented without those side effects.
+- System-setting mutation and recalculation endpoints require Ticket/CVSS
+  services. Phase 2 implements storage/bootstrap and read behavior; mutation
+  behavior completes in Phase 4.
+- `BaseCVEFetcher` requires CVE/Ticket models and CVE services. Only generic
+  `BaseFetcher` infrastructure belongs in Phase 3.
+- The IBS consumer status endpoint in `fetcher-operations.md` remains deferred
+  with the disabled IBS RabbitMQ specification.
 
 ## Release Strategy
 
-Sentinel is pre-1.0 (`0.x.y`, currently `0.1.0` per
-`.release-please-manifest.json`). Per `docs/conventions.md`
-(Versioning, Pre-1.0 Rules), the API is not considered stable and
-breaking changes may occur in minor bumps — this is compatible with,
-and does not require changing, the plan's phase-by-phase approach.
+Release-please derives versions from merged Conventional Commits. The plan
+does not predict version numbers. Release mechanics are authoritative in
+`docs/deployment.md` (Release Process).
 
-**Cadence**: one minor release (`0.x.0`) at the end of each deployable
-phase (Phases 1 through 6; Phase 0 and Phase 7+ are handled
-differently — see below). A patch release (`0.x.y`) MAY be cut between
-phases if a fix needs to be validated as a tagged, semver-addressable
-image (e.g., to test a hotfix against a specific environment) — this is
-the exception, not the rule.
+At the end of a deployable phase, evaluate a **release checkpoint**:
 
-**Mechanism**: release-please (`.github/workflows/release-please.yml`)
-already maintains an up-to-date Release PR automatically, driven by
-Conventional Commits on `master`. "Cutting a release" at the end of a
-phase means: merge the open Release PR. No manual version bumping,
-tagging, or changelog editing.
+1. verify every required piece issue in the milestone is closed by a merged PR;
+2. inspect the current release-please PR and its computed version;
+3. follow the release and explicit merge procedures in `docs/deployment.md`
+   and `AGENTS.md`.
 
-**Phase 0 exception**: the work in Phase 0 (adding dependencies,
-validating existing infrastructure) is expected to land as `chore:` /
-`build:` / `ci:` commits, which do not trigger a version bump on their
-own (per `docs/conventions.md`, Versioning). No release is expected at
-the end of Phase 0 — the `latest` image tag (produced on every green CI
-run on `master`, per `build-images.yml`) is sufficient at that stage.
-
-**Release checkpoint procedure** (referenced at the end of each
-applicable phase below): merge the release-please Release PR → confirm
-the resulting `v0.x.0` tag triggers `build-images.yml` → confirm the
-semver-tagged image passes the image smoke test gate (see
-`docs/features/platform/testing-strategy.md`, Image / Container Smoke
-Testing) before it is published.
-
-**Prerequisite status**: the `RELEASE_TOKEN` repository secret
-(required for the `v*` tag to trigger `build-images.yml` — the default
-`GITHUB_TOKEN` does not trigger downstream workflows on tags it
-creates) has been confirmed present.
-
-**1.0.0 graduation**: unaffected by this plan — the criteria in
-`docs/conventions.md` (1.0.0 Graduation Criteria) require a production
-deployment and are evaluated separately, likely well after Phase 7+
-work begins.
+Phase 0 is infrastructure-only and does not require a release. A phase may also
+defer its release checkpoint when it contains foundations with no useful
+deployable behavior; that decision is recorded in the phase parent issue.
 
 ## Phase Overview
 
 | Phase | Focus | Status |
 |---|---|---|
-| Prep | Image testing setup (mechanism + minimal assertion) | Completed (2026-07-29) |
-| 0 | Infrastructure completion and validation | **Completed** (2026-07-30) |
-| 1 | Cross-cutting platform foundations | Not started |
-| 2 | Local identity and admin platform | Not started |
-| 3 | Fetcher framework | Not started |
-| 4 | CVE/Ticket domain core (Phase-1 ingestion, no WIP) | Not started |
-| 5 | CVE fetchers (real ingestion) | Not started |
-| 6 | Ticket/CVE API and package gate logic (no SMELT) | Not started |
-| 7+ | Unblocked only after WIP specs are completed | Blocked (pending spec work) |
+| Prep | Image testing setup | Completed (2026-07-29) |
+| 0 | Infrastructure completion and validation | Completed (2026-07-30) |
+| 1 | Cross-cutting platform foundations and identity roots | Not started |
+| 2 | Local identity foundation | Not started |
+| 3 | Generic fetcher platform | Not started |
+| RG-01 | Resolve product/package/CVE contract boundary | Not started — immediate documentation work |
+| 4 | Ticket, CVE, and conditional package domain core | Not started; package orchestration blocked by `RG-01` |
+| 5 | CVE fetcher infrastructure and real ingestion | Blocked by Phase 4 |
+| 6 | Domain operational completion | Blocked by Phases 4-5 |
+| 7+ | WIP integrations and advanced identity | Blocked by specification work |
+
+## GitHub Tracking Model
+
+After this plan is merged, create the following operational structure:
+
+- **Project**: `Sentinel Backend Implementation`, covering the entire plan.
+- **Milestone per phase**: phases are repository milestones without artificial
+  due dates unless a real external deadline exists.
+- **Parent issue per phase**: owns the outcome, phase entry/exit criteria,
+  candidate pieces, and release-checkpoint decision.
+- **Sub-issue per piece**: owns implementation acceptance and closes through
+  its PR.
+- **Native dependencies**: use `blocked by` / `blocking` relationships for
+  direct dependencies. Do not encode the dependency graph only in prose.
+- **Label**: `implementation-plan` enables Project auto-add and focused issue
+  queries.
+
+Recommended Project statuses:
+
+`Backlog` → `Ready` → `In progress` → `In review` → `Done`, with `Blocked` for
+items that cannot advance. Built-in automation should move merged PRs/closed
+issues to Done. The Project tracks issues, not a duplicate row for every linked
+PR.
+
+Initial views:
+
+1. **Table — Execution**: grouped by milestone, sorted by piece ID.
+2. **Board — Current work**: grouped by status.
+3. **Blocked**: filtered to blocked issues and visible dependency relations.
+
+A roadmap/date view is intentionally deferred until real scheduling needs
+exist. Create all phase parent issues after this plan merges, but create
+detailed sub-issues only for Phase 1. Elaborate Phase 2 when Phase 1 approaches
+completion.
 
 ---
 
 ## Prep Effort — Image Testing Setup
 
-**Status: Completed (2026-07-29).** This prep effort established the
-mechanism for testing built Docker images as a black-box artifact. It
-was executed once, before Phase 0. The durable convention is documented
-in `docs/features/platform/testing-strategy.md` (Image / Container Smoke
-Testing) — the authoritative home for this cross-cutting testing
-convention.
+**Status: Completed (2026-07-29).** Established black-box testing of the built
+OCI image. The durable contract lives in
+`docs/features/platform/testing-strategy.md` (Image / Container Smoke
+Testing).
 
 Delivered artifacts:
 
-- `docker-compose.smoke.yml` — self-contained full-stack (own
-  `postgres`/`redis` with no host ports; `api` published on
-  `IMAGE_SMOKE_PORT`, default 18000). All five application services are
-  represented; `api` and `migrate` are active, `worker`/`beat`/
-  `git-worker` are commented out and uncommented by the phase that
-  introduces them.
-- `backend/tests/image/` — black-box pytest suite (marker `image`,
-  excluded from the default run and from coverage).
-- `scripts/image-smoke.sh` — single runtime-agnostic runner
-  (build → `up --wait` → `pytest -m image` → teardown), used identically
-  locally and in CI.
-- `.github/workflows/build-images.yml` — blocking CI gate
-  (build once → load → smoke test → push the same image digest).
-- `docs/features/platform/testing-strategy.md` — new "Image / Container
-  Smoke Testing" section (durable convention + Growth Rule).
+- `docker-compose.smoke.yml`
+- `backend/tests/image/`
+- `scripts/image-smoke.sh`
+- blocking build → smoke → push gate in `.github/workflows/build-images.yml`
 
-### Image Smoke Test Growth Model
-
-The suite started with a single minimal assertion and grows alongside
-this plan. Each phase that introduces new container-observable behavior
-uncomments its compose service **and** adds the corresponding smoke
-assertion together, as part of that phase's Definition of Done (item 7).
-This mapping is indicative — the owning phase decides the exact
-assertions when it is implemented:
-
-| Phase | New assertion(s) added to `backend/tests/image/` |
-|---|---|
-| Prep (done) | `test_image_build.py`: image builds, `api` container starts, no crash |
-| Phase 1 | `test_api_image.py`: `GET /health` and `GET /ready` return 200 |
-| Phase 2 | `test_cli_image.py`: a `sentinel manage-user ...` command runs inside the container and exits 0 |
-| Phase 3 | `test_worker_image.py`: `worker` and `beat` containers start and stay up; log lines confirm UTC/redbeat validation passed |
-| Phase 4 | `test_migrations_image.py`: `migrate` one-shot service runs `alembic upgrade head` against the real schema and exits 0 |
-| Phase 5 | `test_git_worker_image.py`: `git-worker` container has the `git` binary available and can clone a throwaway repository |
-
----
+Image-suite growth follows the authoritative Growth Rule in
+`docs/features/platform/testing-strategy.md`.
 
 ## Phase 0 — Infrastructure Completion and Validation
 
-**Goal**: a solid, green, fully verified infrastructure baseline. No
-domain logic in this phase.
+**Status: Completed (2026-07-30).** Added the runtime dependencies required by
+later specifications (`structlog`, `cvss`, `celery-redbeat`) and validated the
+baseline: dependency resolution, tests, lint, Alembic environment, image build,
+and Python-version drift check. No domain logic or seam was introduced.
 
-**Current state** (as of last audit): Docker Compose (PostgreSQL 16 +
-Redis 7), `backend/Dockerfile` (multi-stage, non-root, SUSE CA), CI
-(`ci.yml`: lint + test + security scan, Python-version drift check),
-`release-please` + `build-images` + `deploy-api-docs` workflows,
-`app/config.py` (Settings), `app/database.py` (async engine/session),
-`app/main.py` (FastAPI + CORS), `conftest.py` (async session with
-savepoint rollback, e2e client fixture) are already in place.
+## Phase 1 — Cross-Cutting and Identity Roots
 
-**Gaps to close**:
+**Outcome**: platform leaf infrastructure is operational, and the minimum
+identity root required by foreign keys and audit trails exists.
 
-1. Add missing dependencies to `backend/pyproject.toml` (and update
-   `uv.lock`): `structlog` (required by `logging.md`), `cvss` (CVSS
-   vector parsing, required by `cvss-scoring.md`), `celery-redbeat`
-   (Beat scheduler, required by `fetcher-infrastructure.md`).
-2. Validate the existing infrastructure end-to-end:
-   - `./scripts/dev-env.sh up` → PostgreSQL + Redis healthy
-   - `cd backend && uv sync` → environment resolves cleanly
-   - `uv run pytest` → baseline green (including the `xfail` on `/health`)
-   - `uv run ruff check . && uv run ruff format --check .` → clean
-   - Build `backend/Dockerfile` → succeeds; Python-version drift check passes
-   - `uv run alembic upgrade head` (no-op, no migrations yet) → Alembic
-     environment works
-3. Report status and any issues found before writing any domain logic.
+| ID | Piece | Direct blockers | Primary contract |
+|---|---|---|---|
+| `P1-01` | Structured logging and request correlation | Phase 0 | `platform/logging.md` |
+| `P1-02` | Shared networking and TLS client | `P1-01` | `platform/networking.md` |
+| `P1-03` | Health/readiness endpoints and image assertions | `P1-01` | `platform/health-endpoints.md` |
+| `P1-04` | Identity root: User/UserRole models, role/capability enums, migration and migration image smoke | Phase 0 | `identity/rbac.md`, `data-model.md` |
+| `P1-05` | AuditEventMixin and BaseAuditLog | `P1-04` | `platform/audit-trail-infrastructure.md` |
+| `P1-06` | Celery application bootstrap and UTC/redbeat startup validation | `P1-01` | `platform/fetcher-infrastructure.md` startup contracts |
 
-**Definition of Done for this phase**: all checks above pass; no domain
-code has been written.
+`P1-04` deliberately precedes audit infrastructure because
+`AuditEventMixin.user_id` is an FK to `user.id`. It owns only the identity
+root and static authorization types, not authentication endpoints or user
+lifecycle services.
 
----
+**Release checkpoint**: first observable health/readiness behavior; evaluate
+the current release PR rather than targeting a predetermined version.
 
-## Phase 1 — Cross-Cutting Platform Foundations
+## Phase 2 — Local Identity Foundation
 
-**Goal**: leaf infrastructure with zero WIP dependencies, needed by
-every subsequent phase.
+**Outcome**: local users can authenticate, bootstrap an administrator, use API
+keys, and access the ticket-independent identity management surface.
 
-**Order**:
+| ID | Piece | Direct blockers | Primary contract |
+|---|---|---|---|
+| `P2-01` | Session/ApiKey models, JWT/session service, current-user dependency, session cleanup task | Phase 1 | `identity/authentication.md` |
+| `P2-02` | IdentityAuditEvent and IdentityAuditLog | `P2-01`, `P1-05` | `identity/identity-audit-log.md` |
+| `P2-03` | API-key service and self/admin API-key endpoints | `P2-02` | `identity/api-key-service.md`, `identity/authentication.md` |
+| `P2-04` | Local login, password hashing, Redis lockout | `P2-01` | `identity/local-authentication.md` |
+| `P2-05` | Ticket-independent user lifecycle functions | `P2-02`, `P2-04` | `identity/user-service.md` |
+| `P2-06` | CLI infrastructure; manage-user create, set-password, unlock, list, and show | `P2-05` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
+| `P2-07` | Public user list/detail, self profile, and completed admin user operations | `P2-05` | `identity/user-management.md`, `identity/rbac.md` |
+| `P2-08` | SystemSetting persistence/bootstrap, SettingAuditEvent/Log, settings read and audit APIs | `P2-02` | `platform/system-settings.md` |
 
-1. `docs/features/platform/logging.md` — structlog → stdlib pipeline,
-   correlation ID (`X-Request-ID`) middleware, Celery task binders.
-2. `docs/features/platform/networking.md` — shared HTTP client factory,
-   TLS trust store, retry/backoff classification helpers.
-3. `docs/features/platform/health-endpoints.md` — `GET /health`,
-   `GET /ready`. Removes the `xfail` marker on `test_health.py`.
-4. Core cross-cutting modules: `app/core/enums.py`, `app/core/errors.py`,
-   `app/core/identifiers.py` (CVE-ID pattern, etc.) — introduced as
-   needed by the specs above and by
-   `docs/conventions.md` (Enum Storage Strategy).
-5. `docs/features/platform/audit-trail-infrastructure.md` —
-   `AuditEventMixin` (`app/models/mixins.py`) and `BaseAuditLog`
-   (`app/services/base_audit_log.py`). Requires the `User` model to
-   exist as an FK target for the mixin — the minimal `User`/`UserRole`
-   tables are introduced here if not already present from Phase 2
-   planning (coordinate with Phase 2's first piece).
-6. Celery app factory (`app/celery_app.py`) — UTC/`enable_utc`
-   validation at import time, `task_ignore_result = True`, `redbeat`
-   scheduler configuration, lock sentinel. No fetchers registered yet.
+`P2-05` includes only functions whose complete specified side effects are
+available (for example user creation, field update, reactivation, password
+reset, and unlock). Ticket-coupled role removal and deactivation are not
+weakened; they complete in Phase 4. The composite `manage-user update` command,
+role-management endpoint, and deactivation command/endpoint are deferred in
+their entirety rather than exposed with a partial option set. `P2-07` must list
+its exact endpoint inventory in its tracking issue before becoming Ready.
 
-**WIP dependency**: none.
+The image suite adds a CLI bootstrap assertion in the piece that introduces
+the runnable `sentinel` command.
 
-**Release checkpoint**: see [Release Strategy](#release-strategy)
-(`0.2.0` — first release with observable behavior: `/health`, `/ready`).
+## Phase 3 — Generic Fetcher Platform
 
----
+**Outcome**: non-domain-specific fetchers can register, schedule, run, report
+metrics, and be operated through generic API/CLI surfaces.
 
-## Phase 2 — Local Identity and Admin Platform
+| ID | Piece | Direct blockers | Primary contract |
+|---|---|---|---|
+| `P3-01` | FetcherConfig/FetcherRun/FetcherAuditEvent models and migration | Phase 2 | `platform/fetcher-infrastructure.md` |
+| `P3-02` | BaseFetcher lifecycle, registry, metrics, sanitization, settings schema | `P3-01`, `P1-02` | `platform/fetcher-infrastructure.md` |
+| `P3-03` | CPE package mapping loader, pure resolution, startup validation, and fixtures | `P1-02` | `packages/cpe-package-mapping.md` |
+| `P3-04` | Generic task wrapper, config bootstrap, redbeat reconciliation, worker/Beat image smoke | `P3-02`, `P3-03`, `P1-06` | `platform/fetcher-infrastructure.md` |
+| `P3-05` | Generic fetcher API operations | `P3-04`, `P2-03` | `platform/fetcher-operations.md` |
+| `P3-06` | Fetcher diagnostic CLI | `P3-04`, `P2-06` | `platform/fetcher-operations.md` |
+| `P3-07` | Test-only no-op fetcher end-to-end validation | `P3-04`, `P3-05` | `platform/testing-strategy.md` |
 
-**Goal**: full local-user identity stack (login, sessions, API keys,
-RBAC, audit, CLI bootstrap), with the `external_id` branch of every
-module built as a guarded, dormant seam (no SSO, no external
-provisioning yet).
+`P3-05` excludes the IBS RabbitMQ consumer status endpoint; that endpoint is
+implemented with its disabled owning integration in Phase 7+. `P3-07` proves
+schedule → run → FetcherRun → operational visibility without adding a
+production no-op fetcher.
 
-**Order** (topological, per dependency analysis):
+## Phase 4 — Ticket, CVE, and Package Domain Core
 
-1. `User` / `UserRole` models (data model authoritative in
-   `docs/data-model.md`; described in `rbac.md`).
-2. `docs/features/identity/authentication.md` (core) — `Session` and
-   `ApiKey` models, `session_service`, JWT issuance, `get_current_user`.
-3. `docs/features/identity/rbac.md` (core) — `Capability`/`Role`/`Scope`
-   enums, `require_capability()`. External-provisioning-only endpoints
-   (role-mapping) left as documented-but-unimplemented seams.
-4. `docs/features/identity/identity-audit-log.md` — `IdentityAuditEvent`
-   model + `IdentityAuditLog` (`BaseAuditLog` subclass). All 14 event
-   types buildable now; externally-sourced event values simply remain
-   unemitted until Phase 7+.
-5. `docs/features/identity/api-key-service.md` — `create_key`,
-   `revoke_key`, `revoke_all_user_keys`.
-6. `docs/features/identity/local-authentication.md` — login endpoint,
-   bcrypt hashing, Redis-backed lockout.
-7. `docs/features/identity/user-service.md` — local operations
-   (`create_user`, `update_user`, `update_roles`, `deactivate_user`,
-   `reactivate_user`, `reset_password`, `unlock_user`).
-   `sync_role_mapping()` / `delete_role_mapping_roles()` implemented as
-   dormant (no callers until Phase 7+ per the spec itself).
-8. `docs/features/platform/cli-infrastructure.md` — Click root group,
-   exit-code mapping, signal handling, one-`asyncio.run()` DB bridge.
-9. `docs/features/identity/user-management.md` — `manage-user` CLI +
-   admin/public user API endpoints (local-user operations only).
-10. `docs/features/platform/system-settings.md` — `SystemSetting`,
-    `SettingAuditEvent`, settings service (`default_cvss_version`),
-    admin endpoints.
+**Outcome**: consumers can create, inspect, and mutate tickets and CVE/package
+data through permission-tested APIs before any production fetcher begins
+automatic ingestion.
 
-**Unlocks**: admin bootstrap (`sentinel manage-user create --role admin`),
-login, API keys, `require_capability()` for every future endpoint,
-`default_cvss_version` resolution for CVSS scoring (Phase 4).
+| ID | Piece | Direct blockers | Primary contract |
+|---|---|---|---|
+| `P4-01` | CVE/CVESource core models and migration | Phase 3 | `tickets/cve-service.md`, `data-model.md` |
+| `P4-02` | CVE enrichment child models and migration | `P4-01` | CVE and CVSS specs, `data-model.md` |
+| `P4-03` | Ticket, TicketAuditEvent, reference/access models and migration | `P4-01`, `P1-05` | ticket specs, `data-model.md` |
+| `P4-04` | Pure CVSS resolution | `P2-08`, `P4-02` | `tickets/cvss-scoring.md` |
+| `P4-05` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
+| `P4-06` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
+| `P4-07` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
+| `P4-08` | Ticket audit service and pure gate predicates | `P4-03`, `P4-04`, `P4-07` | `tickets/ticket-audit-log.md`, `tickets/ticket-mutations.md` |
+| `P4-09` | Status reconciliation plus CVSS mutation/recalculation chain | `P4-08` | `tickets/ticket-mutations.md`, `tickets/cvss-scoring.md` |
+| `P4-10` | CVSS assessment and severity APIs | `P4-09` | `tickets/cvss-scoring.md` |
+| `P4-11` | Manual-zone ticket mutations | `P4-09` | `tickets/ticket-mutations.md` |
+| `P4-12` | Ticket creation and CVE-association service functions | `P4-06`, `P4-09` | `tickets/ticket-service.md` |
+| `P4-13` | Ticket assignment/lifecycle service and APIs | `P4-11`, `P4-12` | ticket service/mutation specs |
+| `P4-14` | Ticket confidentiality/access service, APIs, and stale-grant cleanup task | `P4-12` | `tickets/ticket-service.md`, `tickets/tickets.md` |
+| `P4-15` | Internal package record creation and state mutation services/APIs | `P4-07`, `P4-09` | package model/service specs |
+| `P4-16` | Package exclusion/restore services and APIs | `P4-15` | package model/service specs |
+| `P4-17` | Package query services and read APIs | `P4-15` | package model/service specs |
+| `P4-18` | Ticket reference service and APIs | `P4-03`, `P4-12` | `tickets/ticket-references.md` |
+| `P4-19` | Ticket/CVE list/detail and audit read APIs | `RG-01`, `P4-12`, `P4-17`, `P4-18` | `tickets/tickets.md`, `tickets/cve-tracking.md` |
+| `P4-20` | Full package orchestration and package-add API | `RG-01`, `P4-15` | package model/service specs plus `RG-01` resolution |
+| `P4-21` | Complete CVE ingestion transaction | `P4-02`, `P4-05`, `P4-09`, `P4-12`, `P4-18`, `P4-20` | `tickets/cve-service.md` |
+| `P4-22` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-21`, `P3-02` | `platform/cve-fetcher-infrastructure.md` |
+| `P4-23` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-19`, `P4-22` | ticket and CVE API specs |
+| `P4-24` | Resolve identity role-removal audit contradiction | Phase 3 | Documentation PR for `user-service.md` / `user-management.md` |
+| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-05` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
+| `P4-26` | Ticket-coupled role-removal service, commands, and APIs | `P4-24`, `P4-25` | identity service/management specs |
+| `P4-27` | User deactivation/impact service, commands, and APIs | `P4-25` | identity service/management specs |
+| `P4-28` | Settings PATCH/recalculation endpoints and CVSS batch task | `P4-09`, `P2-08` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
-**WIP kept out**: SSO endpoints, external provisioning sync, and the
-`RoleMapping` CRUD API are not implemented — only guarded seams are
-left where the spec explicitly anticipates them.
+The candidate pieces above are intentionally more granular than the old
+service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate
+the exact functions/endpoints it owns and preserve complete contracts. Package
+pieces blocked by `RG-01` remain Blocked while independent CVE/Ticket pieces
+may proceed. Migration and endpoint image assertions remain with the pieces
+that introduce them under the testing-strategy Growth Rule.
 
-**Release checkpoint**: see [Release Strategy](#release-strategy).
+## Phase 5 — CVE Fetcher Infrastructure and Ingestion
 
----
+**Outcome**: verified external CVE data flows through the generic fetcher
+platform and the complete CVE ingestion service.
 
-## Phase 3 — Fetcher Framework
+| ID | Piece | Direct blockers | Primary contract |
+|---|---|---|---|
+| `P5-01` | BaseGitFetcher, git operations, git-worker runtime and image smoke | `P4-22` | `platform/git-fetcher-infrastructure.md` |
+| `P5-02` | NVD fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-nvd.md` |
+| `P5-03` | Red Hat fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-redhat.md` |
+| `P5-04` | GHSA fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-ghsa.md` |
+| `P5-05` | OSV fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-osv.md` |
+| `P5-06` | EPSS fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-epss.md` |
+| `P5-07` | CISA KEV fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-kev.md` |
+| `P5-08` | MITRE fetcher | `P5-01`, `P4-23` | `tickets/cve-sync-mitre.md` |
+| `P5-09` | Linux Kernel fetcher | `P5-01`, `P4-23` | `tickets/cve-sync-kernel.md` |
+| `P5-10` | CVE source failure retry fetcher | `P5-02` through `P5-09` | `platform/cve-source-failure-retry.md` |
 
-**Goal**: the generic background-task infrastructure that all data
-fetchers (CVE and, later, product/IBS) build on.
+Each external integration piece satisfies the mandatory external-contract
+verification requirements of the implementation workflow. One fetcher per PR
+keeps upstream contract risk and rollback scope isolated.
 
-**Order**:
+## Phase 6 — Domain Operational Completion
 
-1. `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`,
-   `FetcherConfig`/`FetcherRun`/`FetcherAuditEvent` models, registry,
-   `run()` lifecycle, error-message sanitization, custom settings
-   schema, Beat schedule reconciliation, `bootstrap_fetcher_configs()`.
-2. `docs/features/platform/cve-fetcher-infrastructure.md` —
-   `BaseCVEFetcher` (CVE source type identity, `fetch_single()`,
-   default `catch_up()`).
-3. `docs/features/platform/git-fetcher-infrastructure.md` —
-   `BaseGitFetcher`, `git_operations.py` (requires git worker + volume
-   — validate locally with a throwaway repo before wiring real
-   fetchers).
-4. `docs/features/platform/fetcher-operations.md` — monitoring
-   dashboard (API endpoints + CLI diagnostics).
+**Outcome**: cross-surface operational behavior is validated after real
+ingestion, and remaining non-WIP administrative surfaces are completed.
 
-**Validation**: implement one throwaway/no-op test fetcher end-to-end
-(Beat schedule → `run()` → `FetcherRun` row → dashboard visibility)
-before moving to Phase 4.
+| ID | Piece | Direct blockers | Primary contract |
+|---|---|---|---|
+| `P6-01` | Real-ingestion CVE → Ticket → package-tree E2E verification | Phase 5 | ingestion and package specs |
+| `P6-02` | Fetcher-to-CVE source failure drill-down E2E verification | Phase 5, `P3-05` | fetcher operations and CVE service specs |
+| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-26`, `P4-27` | identity and ticket specs |
+| `P6-04` | Cross-surface image smoke assertions not naturally owned by one introducing piece | `P6-01` through `P6-03` | `platform/testing-strategy.md` |
+| `P6-05` | Operational release checkpoint and manual acceptance | `P6-04` | deployment and testing docs |
 
-**WIP dependency**: none.
+Every endpoint is introduced with its owning service slice in Phase 4, before
+real fetchers are enabled in Phase 5. Phase 6 does not postpone endpoint smoke
+coverage that belongs to an earlier introducing PR; it contains only scenarios
+that genuinely span multiple already-merged surfaces.
 
-**Release checkpoint**: see [Release Strategy](#release-strategy).
+## Phase 7+ — Integrations Requiring WIP Specifications
 
----
+Each item requires specification completion and merge before implementation.
+The candidate order is provisional and must be recalculated when contracts are
+approved:
 
-## Phase 4 — CVE/Ticket Domain Core (Phase-1 Ingestion, No WIP)
+1. product catalog synchronization and lifecycle transitions;
+2. remaining SMELT/package orchestration not resolved by `RG-01`;
+3. IBS integration, RabbitMQ consumer, submission tracking, and release
+   detection;
+4. git-based track/product release detection;
+5. package bugowner and maintainer workflows;
+6. SSO authentication and external identity provisioning.
 
-**Goal**: "CVE fetched → stored → severity computed → ticket
-auto-created" working end-to-end, with the package-resolution
-sub-flow (SMELT-dependent) stubbed as a self-healing no-op.
-
-**Models**: `CVE` + child tables (`CVESource`, `CVECVSSAssessment`,
-`CVEExternalIdentifier`, `CVEAffectedVersion`, `CVECWE`,
-`CVESSVCAssessment`, `CVEKEVEntry`, `CVEEPSSScore`); `Ticket`,
-`TicketAuditEvent`, `TicketReference`; `TicketPackage`,
-`TicketPackageTrack`, `TicketPackageProduct` (created but populated
-later); `Product` (created empty — sole FK target, no sync logic yet).
-
-**Order**:
-
-1. `docs/features/tickets/cvss-scoring.md` (pure resolution functions
-   in `app/services/cvss.py`: `resolve_severity_score`,
-   `resolve_eligibility_score`, vector validation).
-2. `docs/features/platform/cve-record-parser.md` (pure CVE JSON 5.x
-   parsing, consumed by MITRE/kernel fetchers in Phase 5).
-3. `docs/features/tickets/ticket-audit-log.md` (`TicketAuditEvent`
-   model + event type contract).
-4. `docs/features/tickets/ticket-mutations.md` — subset needed for
-   ingestion: `upsert_cvss_assessment()`, `recalculate_cvss_chain()`,
-   `reconcile_ticket_status()`, `auto_assign_actor()`,
-   `ensure_ticket_operable()`. (Full mutation surface — package gates,
-   duplicate handling — completes in Phase 6.)
-5. `docs/features/tickets/ticket-service.md` — `create_ticket()`.
-6. `docs/features/tickets/ticket-references.md` — `reference_service`
-   (automatic reference creation from fetchers).
-7. `docs/features/tickets/cve-service.md` — `upsert_cve()`,
-   `ensure_cve_exists()`. **Phase 1** (synchronous: CVE + ticket +
-   severity, same transaction) fully implemented.
-   **Phase 2** (`resolve_ticket_packages` — CPE/package resolution via
-   SMELT) is stubbed: `commit_and_dispatch()` is implemented, but the
-   dispatched task is a documented no-op until Phase 7. Record this
-   stub explicitly in the [Progress Log](#progress-log).
-
-**Boundary respected**: `reconcile_ticket_status()` operates correctly
-with an empty package set (gate conditions evaluate against zero
-tracks/products; tickets remain in `New`/`Analysis` as expected — no
-special-casing needed, this is the natural behavior of the gate logic).
-
-**WIP dependency**: none (the empty `Product` table is a schema-only
-touchpoint with `product-catalog`, not a logic dependency).
-
-**Release checkpoint**: see [Release Strategy](#release-strategy)
-(first release where `migrate` one-shot image smoke test applies).
-
----
-
-## Phase 5 — CVE Fetchers (Real Ingestion)
-
-**Goal**: real CVE data flowing into the system via the fetcher
-framework (Phase 3) and the ingestion core (Phase 4).
-
-**Order** (REST fetchers first, git fetchers require worker + volume):
-
-1. `docs/features/tickets/cve-sync-nvd.md`
-2. `docs/features/tickets/cve-sync-redhat.md`
-3. `docs/features/tickets/cve-sync-ghsa.md`
-4. `docs/features/tickets/cve-sync-osv.md`
-5. `docs/features/tickets/cve-sync-epss.md`
-6. `docs/features/tickets/cve-sync-kev.md`
-7. `docs/features/tickets/cve-sync-mitre.md` (git-based — validate git
-   worker + persistent volume setup first)
-8. `docs/features/tickets/cve-sync-kernel.md` (git-based, shares infra
-   with MITRE)
-9. `docs/features/platform/cve-source-failure-retry.md`
-
-**Per-fetcher verification**: run the fetcher against the real external
-source (or a recorded fixture), inspect the resulting `CVE`/`Ticket`/
-`CVESource` rows, confirm severity computation and audit events.
-Consider `@external-contract-verifier` for at least one REST and one
-git-based fetcher to confirm payload assumptions against the live
-service.
-
-**WIP dependency**: none for ingestion. Package resolution remains
-stubbed per Phase 4.
-
-**Release checkpoint**: see [Release Strategy](#release-strategy)
-(first release where the `git-worker` image smoke test applies, once
-the MITRE/kernel fetchers land).
-
----
-
-## Phase 6 — Ticket/CVE API and Package Gate Logic (No SMELT)
-
-**Goal**: a usable API surface for vulnerability analysts, plus the
-package-domain gate/mutation logic that does not require SMELT.
-
-**Order**:
-
-1. `docs/features/tickets/tickets.md` — full ticket API (list, detail,
-   ignore/reopen, assign, mark/revert duplicate, associate-cve,
-   severity, confidentiality, audit-log endpoint).
-2. `docs/features/tickets/ticket-mutations.md` — complete the mutation
-   surface not covered in Phase 4 (duplicate handling, confidentiality
-   grants, remaining gate logic).
-3. `docs/features/packages/package-model.md` — track/product concepts,
-   hierarchical exclusion model, gate contribution, API endpoints for
-   read/manual operations.
-4. `docs/features/packages/package-service.md` — **gate/mutation
-   portion only**: `set_track_status`, `set_track_delivery_status`,
-   `set_product_eligibility`, `set_product_released_at`,
-   soft-delete/restore functions, orphan cleanup invariants, query
-   functions (`get_ticket_packages`, `search_packages`).
-   `add_package_to_ticket` (SMELT orchestration) explicitly excluded —
-   deferred to Phase 7.
-5. `docs/features/packages/cpe-package-mapping.md` — pure lookup
-   module built and unit-tested now (no live consumer until Phase 7
-   re-enables Phase 2 CVE ingestion dispatch).
-
-**Known limitation at the end of this phase**: packages cannot yet be
-*added* to a ticket through the normal orchestration flow (no SMELT).
-Existing tickets have empty package trees except where test data is
-seeded directly. This is expected and resolved in Phase 7.
-
-**WIP dependency**: none (by construction — SMELT-dependent pieces
-excluded).
-
-**Release checkpoint**: see [Release Strategy](#release-strategy).
-
----
-
-## Phase 7+ — Unblocked Only After WIP Specs Are Completed
-
-Each item below requires: (a) the owning spec completed to the
-"insufficiency test" standard, (b) `@spec-gap-analyzer` and
-`@spec-coherence-reviewer` passes, (c) then implementation following
-the same Definition of Done as every other phase.
-
-Proposed order (subject to revision once the specs are actually
-completed — dependencies may shift):
-
-1. `docs/features/packages/product-catalog.md` — complete the "TBD"
-   fetcher algorithms (`sync_smelt_products`, `sync_aimaas_lifecycle`,
-   `sync_aimaas_thresholds`), then implement.
-2. `docs/features/packages/package-service.md` — remaining portion:
-   `add_package_to_ticket()` (SMELT orchestration), fix for the 2 open
-   Medium-severity gap findings from the 2026-06-03 review.
-3. Un-stub Phase 4's `cve-service.md` Phase-2 dispatch
-   (`resolve_ticket_packages`) now that SMELT resolution is real.
-4. IBS domain: `docs/features/integrations/ibs-integration.md`,
-   `docs/features/integrations/ibs-rabbitmq-integration.md`,
-   `docs/features/packages/ibs-submission-tracking.md`,
-   `docs/features/packages/ibs-track-release-detection.md`,
-   `docs/features/packages/ibs-product-release-detection.md`.
-5. Git-based release detection: `docs/features/packages/git-track-release-detection.md`,
-   `docs/features/packages/git-product-release-detection.md`.
-6. `docs/features/packages/product-lifecycle-transitions.md`,
-   `docs/features/packages/package-bugowner.md`,
-   `docs/features/packages/maintainer.md`.
-7. Advanced identity: `docs/features/identity/sso-authentication.md`,
-   `docs/features/identity/identity-provisioning.md` (activates the
-   dormant seams left in Phase 2: `sync_role_mapping`, external-user
-   guards, `RoleMapping` CRUD API).
-
----
+Each large integration becomes its own milestone or a later numbered phase if
+its implementation requires multiple independently deployable pieces. The
+single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
 
 ## Open Questions to Revisit
 
-- Exact sequencing within Phase 7+ may change once the WIP specs are
-  actually revised — this section is a placeholder, not a commitment.
-- Whether a dedicated OP (open point) should be filed for "periodic
-  ticket status reconciliation as drift detection" (OP-6 in
-  `docs/drafts/open-points.md`) as part of Phase 6 or deferred further.
-- Confirm whether `RoleMapping` table should be created (empty, schema
-  only) during Phase 2 as an FK-target/forward-compat measure, similar
-  to the `Product` table treatment in Phase 4, or deferred entirely to
-  Phase 7. Not yet decided — evaluate when Phase 2 starts.
-
-**Resolved**:
-
-- ~~Whether the `RELEASE_TOKEN` repository secret is configured~~ —
-  confirmed present (verified manually, see Release Strategy).
-- ~~Whether/how to test built Docker images~~ — addressed by the
-  image-testing prep effort (completed 2026-07-29, see the
-  [Prep Effort](#prep-effort--image-testing-setup) section); the durable
-  convention lives in `docs/features/platform/testing-strategy.md`
-  (Image / Container Smoke Testing).
+- Exact Phase 7+ decomposition after its specifications are approved.
+- Whether OP-6 (periodic ticket status reconciliation as drift detection)
+  should become a Phase 6 operational piece or a separate later milestone.
+- Whether `RoleMapping` persistence should be introduced only with external
+  provisioning or earlier for a demonstrated dependency. No schema-only
+  forward-compatibility table is created without a current consumer.
 
 ## Progress Log
 
-Record completed pieces here, in chronological order, including any
-stub/seam introduced and the spec that will eventually replace it.
-
-- **2026-07-29 — Prep Effort (Image Testing Setup) completed.**
-  Delivered `docker-compose.smoke.yml`, `backend/tests/image/`
-  (marker `image`, excluded from default run and coverage),
-  `scripts/image-smoke.sh`, and the blocking build → smoke → push gate
-  in `.github/workflows/build-images.yml`. The durable convention was
-  added to `docs/features/platform/testing-strategy.md` (Image /
-  Container Smoke Testing). No stubs/seams introduced. See the
-  [Prep Effort](#prep-effort--image-testing-setup) section for the
-  phase-by-phase growth model that subsequent phases follow.
-
-- **2026-07-30 — Phase 0 (Infrastructure Completion and Validation)
-  completed.** Added missing runtime dependencies to
-  `backend/pyproject.toml`: `structlog>=26.1.0` (logging pipeline,
-  Phase 1), `cvss>=3.6` (CVSS vector parsing, Phase 4),
-  `celery-redbeat>=2.4.2` (Beat scheduler, Phase 3). Validated the
-  full infrastructure baseline end-to-end: `uv sync` resolves cleanly,
-  `pytest` green (25 passed, 1 xfail), `ruff check/format` clean,
-  `alembic upgrade head` + `alembic check` no-op, Docker image builds
-  successfully, Python-version drift check passes (3.13). No domain
-  code written. No stubs/seams introduced.
+- **2026-07-29 — Prep Effort completed.** Added image smoke compose,
+  black-box tests, runner, and blocking build/publish gate. No seam introduced.
+- **2026-07-30 — Phase 0 completed.** Added `structlog`, `cvss`, and
+  `celery-redbeat`; validated tests, lint, Alembic, image build, and Python 3.13
+  drift checks. No domain code or seam introduced.
+- **2026-07-30 — Planning workflow realignment started.** Replaced phase-wide
+  execution assumptions with piece-level issue/branch/PR boundaries and
+  corrected cross-phase dependencies. GitHub tracking objects are created only
+  after this documentation change is merged.

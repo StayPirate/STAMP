@@ -688,6 +688,30 @@ Style rules (kept here for proximity with other Python conventions):
   `docs/features/platform/testing-strategy.md` (Mandatory Test
   Scenarios, User Identifier Resolution) for the required test cases
 
+### External Integration Contract Verification
+
+Code that parses responses from or sends requests to an external service MUST
+verify the consumed contract against a real upstream response during
+implementation. Documentation alone is not sufficient when the service is
+reachable.
+
+The implementing PR MUST:
+
+1. obtain a representative real response from the upstream service;
+2. compare every field consumed by the code, including names, nesting,
+   nullability, collection shapes, pagination, and date formats;
+3. sanitize all personal identifiers and save the result under
+   `backend/tests/fixtures/<service_name>/`;
+4. add contract tests that load the fixture before implementing the parser;
+5. use a typed response model where practical; and
+6. record the verification source and result in the PR.
+
+If the upstream service is unreachable or credentials are unavailable, the PR
+MUST identify the unverified fields and state that verification was
+documentation-only. If the real response contradicts an owning specification,
+stop implementation and resolve the discrepancy in a documentation PR before
+continuing.
+
 ### Runtime Version
 
 Sentinel targets a single Python minor version for all runtime
@@ -1081,14 +1105,29 @@ branch. All changes are developed on short-lived topic branches and
 merged via pull request.
 
 **Branch lifecycle**: create from `origin/master`, push regularly, open
-a draft PR early, mark ready when Definition of Done is met,
-squash-merge after approval, branch auto-deleted.
+a draft PR early, mark ready when implementation, verification evidence,
+and applicable reviewer work are complete, squash-merge after approval,
+branch auto-deleted.
 
-**Single active branch**: one implementation piece at a time (per the
-implementation plan's "one piece at a time" principle). Multiple
-branches may exist for independent concerns (e.g., a spec fix and an
-implementation piece), but parallel domain-logic branches within the
-same phase are avoided.
+**Single active domain branch**: develop one dependent domain work unit at a
+time. Multiple branches may exist for genuinely independent concerns
+(for example, a dependency update and a domain feature), but dependent
+domain work is not stacked across unmerged branches.
+
+**Work unit boundary**: the normal implementation unit is one tracking
+issue, one topic branch created from the current `origin/master`, and one
+squash-merged pull request. A milestone or roadmap phase groups multiple
+work units; it is never itself a long-lived implementation branch. Start
+a dependent work unit only after every direct blocker PR has merged, then
+branch from the updated `origin/master`.
+
+**Issue linkage**: implementation PRs use `Closes #<issue>` in the PR
+description so merge completion closes the tracking issue. The issue
+owns scope and acceptance criteria; the PR owns implementation evidence
+(tests, manual verification, reviewer results, risks). If a specification
+gap blocks implementation, resolve it in a separate documentation issue,
+branch, and merged PR before creating or resuming the implementation
+branch.
 
 **No direct pushes to `master`**: all changes arrive via squash merge
 of a reviewed PR. The pre-push hook enforces this locally.
@@ -1102,7 +1141,9 @@ must follow Conventional Commits format) becomes the commit message on
 `master`.
 
 **PR title**: must follow the Conventional Commits format
-(`type[(scope)][!]: description`). This is validated by CI.
+(`type[(scope)][!]: description`) and remain under 72 characters because it
+becomes the squash commit subject. Format is validated by CI; length is
+enforced during review until CI gains an equivalent check.
 
 **Branch deletion**: branches are deleted automatically after merge.
 
@@ -1122,6 +1163,11 @@ is defined in `AGENTS.md` (Guardrail 25).
 - **Description**: use the repository PR template. At minimum: owning
   spec reference, scope summary, test evidence, reviewer results,
   manual verification notes.
+- **Manual verification**: record the exercised behavior and observed result.
+  If no meaningful manual path exists, record `N/A` with a reason.
+- **External contracts**: when an external integration is changed, record the
+  live verification evidence, sanitized fixture, and any unverified fields per
+  External Integration Contract Verification above.
 - **CI**: all checks must pass on the latest commit before merge is
   requested.
 - **Reviewers**: applicable reviewer agents must be invoked and
