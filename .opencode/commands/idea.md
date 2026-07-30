@@ -30,7 +30,6 @@ Follow these steps strictly:
    non-English language, translate it to English while preserving the original
    meaning. Do not add unnecessary embellishment or summarize it.
 
-4. **Commit the file alone**: stage ONLY `docs/drafts/ideas.md` and create a
-   commit. Use the message format: `docs: add idea - <short summary>` (max 72
-   chars). Do NOT include any other file in this commit — the ideas file must
-   never pollute other commits.
+4. **Report**: tell the user what was added. Do NOT commit automatically —
+   the file edit is staged and committed by the caller as part of the normal
+   workflow.

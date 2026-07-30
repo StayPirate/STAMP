@@ -14,10 +14,9 @@ Follow these steps in order when adding a new feature to Sentinel.
 3. If a matching idea is found, ask the user:
    "The idea '<idea text>' in docs/drafts/ideas.md seems to correspond to this
    feature. Should I remove it from the ideas list?"
-4. If the user confirms, remove the bullet point from the file, stage ONLY
-   `docs/drafts/ideas.md`, and commit with message:
-   `docs: remove idea promoted to spec - <feature-name>`
-   Do NOT include any other file in this commit.
+4. If the user confirms, remove the bullet point from the file. Do NOT
+   commit automatically — the edit is staged and committed by the caller
+   as part of the normal workflow.
 5. If no matching idea is found, or the user declines, proceed to Step 1
 
 ### Step 1: Write the specification

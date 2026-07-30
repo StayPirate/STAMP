@@ -213,6 +213,52 @@ For these, the same gap protocol applies: if you need a design decision
 that should be documented somewhere (e.g., a deployment convention, a new
 config pattern), signal it rather than deciding silently.
 
+## Git Safety
+
+See Guardrail 25 in `AGENTS.md` for the full rules. Summary:
+
+- Work on topic branches only. Never push to `master`.
+- Never merge a PR without explicit user instruction referencing the PR
+  number.
+- Never force-push any branch.
+- Never create or push tags (release-please handles tags).
+- Never use `--no-verify` to bypass Git hooks.
+
+Before opening a PR, report to the user:
+- Branch name and scope summary.
+- Intended PR title (Conventional Commits format).
+- List of changed files.
+
+Before requesting merge approval, present:
+- PR number and title.
+- CI status (all checks passing).
+- Reviewer summary (which reviewers ran, outcome).
+- Any unresolved items or known risks.
+
+## Workflow Initiation
+
+When the user requests a concrete modification (implementation, fix,
+refactor), recognize this as an operational request and start the branch
+workflow automatically:
+
+1. Verify the owning spec exists and is sufficient (Guardrail 1).
+2. Fetch `origin/master`.
+3. Confirm clean worktree (or report conflicts).
+4. Create a topic branch from `origin/master` with the appropriate naming
+   prefix (see `docs/conventions.md`, Branch Naming).
+5. Announce the branch name and scope, then proceed.
+
+Do NOT wait for an explicit "create a branch" instruction or a slash
+command. Natural-language intent is sufficient.
+
+If the spec is missing or incomplete:
+- Stop and inform the user.
+- Propose creating the spec first via a separate `docs/` branch and PR.
+- Do not begin implementation until the spec PR is merged.
+
+Do NOT create branches for exploratory requests (questions, analysis,
+brainstorming, spec review without implementation intent).
+
 ## Conventions
 
 - All code, comments, and docstrings MUST be in English (Guardrail 4)
