@@ -1,0 +1,28 @@
+name: Cleanup Container Images
+
+on:
+  # Weekly cadence keeps the ghcr-cleanup-action's manifest cache warm —
+  # GitHub evicts cache entries unused for 7+ days.
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    name: Cleanup Untagged Images
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      # Removes untagged image digests left behind when :master/:latest
+      # get re-tagged on every push (see build-images.yml).
+      #
+      # Before relying on the schedule, validate the configuration with a
+      # manual `workflow_dispatch` run that temporarily sets `dry-run: true`
+      # on this step, review the logs, then revert before merging.
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          delete-untagged: true
+          keep-n-untagged: 10
+          older-than: 7 days
+          token: ${{ secrets.GITHUB_TOKEN }}
