@@ -7,7 +7,6 @@ on:
     types: [completed]
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 concurrency:
   group: build-${{ github.event.workflow_run.head_branch || github.ref_name }}

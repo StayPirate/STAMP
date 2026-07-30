@@ -1074,12 +1074,72 @@ authoritative mapping.
 
 ## Git Conventions
 
+### Workflow
+
+Sentinel uses GitHub Flow: `master` is always the stable, deployable
+branch. All changes are developed on short-lived topic branches and
+merged via pull request.
+
+**Branch lifecycle**: create from `origin/master`, push regularly, open
+a draft PR early, mark ready when Definition of Done is met,
+squash-merge after approval, branch auto-deleted.
+
+**Single active branch**: one implementation piece at a time (per the
+implementation plan's "one piece at a time" principle). Multiple
+branches may exist for independent concerns (e.g., a spec fix and an
+implementation piece), but parallel domain-logic branches within the
+same phase are avoided.
+
+**No direct pushes to `master`**: all changes arrive via squash merge
+of a reviewed PR. The pre-push hook enforces this locally.
+
+**No force pushes**: never rewrite published branch history.
+
+**No manual tags**: tags are created exclusively by release-please.
+
+**Squash merge**: the only allowed merge method. The PR title (which
+must follow Conventional Commits format) becomes the commit message on
+`master`.
+
+**PR title**: must follow the Conventional Commits format
+(`type[(scope)][!]: description`). This is validated by CI.
+
+**Branch deletion**: branches are deleted automatically after merge.
+
+**Workflow initiation**: a concrete modification request in natural
+language is sufficient to start the workflow — no dedicated command or
+manual branch creation is required. The agent creates the topic branch
+automatically when preconditions are met (spec exists, clean worktree,
+`origin/master` fetched). When the owning spec is missing, the spec is
+created and merged first via a separate `docs/` branch before
+implementation begins. The agent's step-by-step procedure
+(preconditions, spec-first sequencing, commit/push cadence, merge gate)
+is defined in `AGENTS.md` (Guardrail 25).
+
+### Pull Request Requirements
+
+- **Title**: Conventional Commits format (validated by CI).
+- **Description**: use the repository PR template. At minimum: owning
+  spec reference, scope summary, test evidence, reviewer results,
+  manual verification notes.
+- **CI**: all checks must pass on the latest commit before merge is
+  requested.
+- **Reviewers**: applicable reviewer agents must be invoked and
+  findings addressed (per existing guardrails).
+- **Human approval**: the repository owner must explicitly authorize
+  the merge by referencing the PR number.
+
 ### Branch Naming
 
-- `feature/<short-description>` — new features
-- `fix/<short-description>` — bug fixes
-- `docs/<short-description>` — documentation changes
-- `refactor/<short-description>` — code refactoring
+| Prefix | Use |
+|--------|-----|
+| `feature/` | New features |
+| `fix/` | Bug fixes |
+| `docs/` | Documentation changes |
+| `refactor/` | Code refactoring |
+| `chore/` | Infrastructure, configuration, dependencies |
+| `ci/` | CI/CD pipeline changes |
+| `test/` | Test-only changes |
 
 ### Commit Messages
 

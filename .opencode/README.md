@@ -58,10 +58,8 @@ Commands are defined in `.opencode/commands/` and invoked with `/command-name`.
 
 | Command | Purpose |
 |---------|---------|
-| `/check-spec` | Verify that implementation code conforms to its feature specification |
 | `/idea` | Add a new idea to the brainstorming list in `docs/drafts/ideas.md` |
 | `/review-spec` | Interactive spec review and finding resolution workflow |
-| `/run-tests` | Run the full test suite (backend tests and linting) |
 
 ## Skills
 

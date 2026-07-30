@@ -168,3 +168,56 @@ jobs:
         run: |
           set -euo pipefail
           actionlint
+
+  pr-title:
+    name: PR Title Convention
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate title follows Conventional Commits format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          pattern='^(feat|fix|docs|refactor|test|chore|ci)(\([a-z0-9 _-]+\))?\!?: .{1,}'
+          if ! [[ "${PR_TITLE}" =~ ${pattern} ]]; then
+            echo "::error::PR title '${PR_TITLE}' does not follow Conventional Commits format."
+            echo "::error::Expected pattern: type[(scope)][!]: description (e.g. 'feat: add X', 'fix(auth)!: correct Y')"
+            exit 1
+          fi
+
+  image-smoke:
+    name: Image Smoke Test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      SMOKE_IMAGE: sentinel-backend:smoke
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+      - name: Read Python version from .python-version
+        id: python-version
+        run: echo "version=$(cat backend/.python-version)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: Build backend image (load only, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: ${{ env.SMOKE_IMAGE }}
+          build-args: PYTHON_VERSION=${{ steps.python-version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Image smoke test (blocking gate)
+        env:
+          SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}
+          # Force Docker: the image is loaded into the Docker daemon
+          # (buildx --load) and the podman socket is not running on the
+          # runner, so the script's auto-detection (podman first) would
+          # fail. See scripts/image-smoke.sh (COMPOSE_CMD).
+          COMPOSE_CMD: "docker compose"
+        run: ./scripts/image-smoke.sh --no-build

@@ -857,3 +857,65 @@ computation is skipped for records where the result is provably
 inconsequential within the same dimension (e.g., skipping release
 detection for tracks already in `FIXED` status) — are not
 cross-dimensional couplings and do not trigger this guardrail.
+
+### 25. Git operations safety
+
+CRITICAL: agents MUST NOT perform any of the following operations
+without explicit user authorization in the current conversation:
+
+- Push to the default branch (`master`).
+- Execute `gh pr merge` or any operation that merges a PR.
+- Create or push Git tags.
+- Force-push any branch (`--force`, `--force-with-lease`, `-f`).
+- Execute `git reset --hard`, `git clean -fd`, or any destructive Git
+  operation.
+- Use `--no-verify` to bypass Git hooks.
+
+**Merge gate procedure**: when all PR requirements are satisfied
+(CI green, reviewers completed, no blocking findings), the agent
+MUST present the following to the user and wait for explicit
+authorization:
+
+1. PR number and title.
+2. Summary of CI status (all checks passing).
+3. Summary of reviewer results (which reviewers ran, outcome).
+4. Any unresolved items or known risks.
+
+The agent proceeds with the merge ONLY after the user responds with
+an explicit instruction referencing the PR (e.g., "merge PR #12",
+"esegui il merge della #12"). Implicit or assumed approval is not
+sufficient.
+
+**Branch workflow**: agents work exclusively on topic branches.
+`master` is never checked out for editing. After merge, agents
+synchronize local `master` with `git fetch origin && git branch -f
+master origin/master` without checking it out.
+
+**Commit discipline**: agents may commit and push to topic branches
+without per-commit approval. Before the first push of a new branch,
+the agent reports the branch name and initial scope. Before opening
+a PR, the agent reports the intended title and description.
+
+**Automatic workflow initiation**: when the user issues a concrete
+modification request, the agent MUST autonomously:
+
+1. Fetch `origin/master`.
+2. Verify a clean worktree (or stash/report conflicts).
+3. Verify the owning spec exists and covers the request (Guardrail 1).
+4. Create a topic branch from `origin/master` with the appropriate
+   naming prefix.
+5. Proceed with implementation.
+
+No dedicated command or explicit "create branch" instruction from the
+user is required. The agent does NOT create a branch for exploratory
+requests (questions, analysis, brainstorming, spec review without
+implementation intent).
+
+**Spec-first sequencing**: if the spec is absent or insufficient:
+
+1. The agent stops implementation intent.
+2. Creates a `docs/<name>` branch for the spec work.
+3. After spec PR is approved and merged, creates a new
+   implementation branch from the updated `origin/master`.
+4. Never mixes unmerged spec changes with implementation on the
+   same branch.

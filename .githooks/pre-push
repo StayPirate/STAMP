@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# --- Guard: block direct pushes to master and local tag pushes ---
+while IFS=' ' read -r local_ref _local_sha remote_ref _remote_sha; do
+    if [[ "${remote_ref}" == "refs/heads/master" ]]; then
+        echo "Error: direct push to master is not allowed. Use a pull request." >&2
+        exit 1
+    fi
+    if [[ "${local_ref}" == refs/tags/* ]]; then
+        echo "Error: local tag push is not allowed. Tags are created by release-please." >&2
+        exit 1
+    fi
+done
+
 echo "Running pre-push checks..."
 
 echo "  full test suite..."

@@ -298,7 +298,7 @@ process is driven entirely by Conventional Commit messages on the
 ### How It Works
 
 1. Developers merge PRs to `master` using conventional commits
-   (`feat:`, `fix:`, etc.). Squash merge is recommended so the PR title
+   (`feat:`, `fix:`, etc.). Squash merge is required so the PR title
    becomes the commit message (see Squash Merge below)
 2. The `release-please` GitHub Action
    (`.github/workflows/release-please.yml`) analyzes new commits and
@@ -335,11 +335,13 @@ Release-As: 1.0.0
 
 ### Squash Merge
 
-All PRs to `master` SHOULD use squash merge. This keeps the git history
-linear and gives release-please a clean, single commit to analyze per
-PR. With squash merge, the PR title becomes the commit message — ensure
-it follows the Conventional Commits format defined in
-`docs/conventions.md` (Git Conventions).
+All PRs to `master` MUST use squash merge — it is the only allowed
+merge method (merge commits and rebase merge are disabled at the
+repository level). This keeps the git history linear and gives
+release-please a clean, single commit to analyze per PR. With squash
+merge, the PR title becomes the commit message — ensure it follows the
+Conventional Commits format defined in `docs/conventions.md` (Git
+Conventions).
 
 ### Changelog
 
@@ -350,17 +352,22 @@ release-please. Do not edit it manually. It groups changes by type
 ### Pipeline Chain
 
 ```
-master branch commits
+master branch commits (via squash-merge PR)
      │
      ▼
-release-please.yml → creates/updates Release PR
+CI (ci.yml) — lint, test, security scan, shell lint
+     │ (on success)
+     ▼
+release-please.yml (workflow_run, gated behind CI)
+     → creates/updates Release PR
      │ (on merge)
      ▼
 creates git tag (v*) + GitHub Release
      │
      ▼
-build-images.yml → builds image once → image smoke-test gate
-                   → pushes same digest to ghcr.io (only if gate passes)
+build-images.yml (workflow_run, gated behind CI on master; also push tags)
+     → builds image once → image smoke-test gate
+     → pushes same digest to ghcr.io (only if gate passes)
      │
      ▼
 manual deployment from tag (staging/production)
