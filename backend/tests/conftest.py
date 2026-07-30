@@ -39,7 +39,7 @@ def _database_url() -> str:
         return url
 
     # Lazy import — testcontainers is only needed when no URL is provided
-    from testcontainers.postgres import PostgresContainer
+    from testcontainers.community.postgres import PostgresContainer
 
     # Module-level container — started once per session, reused across tests
     if not hasattr(_database_url, "_container"):
