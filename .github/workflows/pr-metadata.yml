@@ -51,7 +51,7 @@ jobs:
           if [[ "${linkage_value}" =~ ^Closes\ \#[1-9][0-9]*$ ]]; then
             exit 0
           fi
-          if [[ "${linkage_value}" =~ ^N/A\ -\ .+$ ]]; then
+          if [[ "${linkage_value}" =~ ^N/A\ -\ .*[[:graph:]].*$ ]]; then
             exit 0
           fi
           echo "::error::Issue linkage must be 'Closes #N' or 'N/A - <specific reason>' (found '${linkage_value}')."
