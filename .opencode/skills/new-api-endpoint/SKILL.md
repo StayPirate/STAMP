@@ -1,9 +1,15 @@
 ---
 name: new-api-endpoint
-description: Guided workflow for adding or modifying an API endpoint in an existing Sentinel feature (schema, service, thin route, tests, reviews). For brand-new features with new data models, use new-feature.
+description: Guided workflow for adding or modifying an API endpoint in an existing Sentinel feature (schema, service, thin route, tests, reviews).
 ---
 
 ## Workflow: Adding or Modifying an API Endpoint
+
+This skill assumes a topic branch already exists. Branch creation, push,
+PR opening, and merge follow the global workflow defined in
+`docs/conventions.md` (Git Conventions) and `AGENTS.md` (Guardrail 25).
+This skill covers only the implementation sequence within an
+already-active branch.
 
 Follow these steps when adding or modifying an API endpoint for a feature
 that already has a specification in `docs/features/`.
@@ -16,9 +22,9 @@ that already has a specification in `docs/features/`.
 
 **Do NOT use this skill when:**
 
-- The feature requires new database tables or models — use `new-feature`
-  instead (it covers the full lifecycle: spec → model → migration → service
-  → endpoint → tests)
+- The feature requires new database tables or models — follow the standard
+  workflow: write the spec first (Guardrail 1), then implement models,
+  services, and endpoints in sequence
 - The endpoint is not yet defined in any specification — first complete the
   spec work (Guardrail 1: specs-first), then return here
 
