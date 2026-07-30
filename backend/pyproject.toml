@@ -5,7 +5,7 @@ description = "Security update management platform for SUSE/openSUSE distributio
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
-    "uvicorn[standard]>=0.32.0",
+    "uvicorn[standard]>=0.52.0",
     "sqlalchemy[asyncio]>=2.0.51",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
