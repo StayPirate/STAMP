@@ -1,9 +1,10 @@
 ## Summary
 
-<!-- What does this PR do? Link the owning spec and implementation plan piece (if applicable). -->
+<!-- What does this PR do? Link the tracking issue and owning spec. -->
 
+- Closes:
 - Owning spec:
-- Implementation plan piece:
+- Roadmap piece ID (if applicable):
 
 ## Changes
 
@@ -25,11 +26,24 @@ None
 
 ## Verification checklist
 
-- [ ] `uv run pytest` passes
-- [ ] `uv run ruff check .` / `uv run ruff format --check .` pass
-- [ ] `alembic upgrade head` / `alembic check` pass (if migrations changed)
-- [ ] Manual verification performed (describe below, if applicable)
-- [ ] Image smoke test passes (if Docker/deployment-relevant change)
+- [ ] `cd backend && uv run pytest` passes
+- [ ] `cd backend && uv run ruff check . && uv run ruff format --check .` passes
+- [ ] `cd backend && uv run alembic upgrade head && uv run alembic check` passes (if database artifacts exist or changed)
+- [ ] Manual verification is recorded below (or marked N/A with a reason)
+- [ ] Image smoke coverage follows the testing-strategy Growth Rule (or is marked N/A below)
+
+## Manual / image verification
+
+<!-- Record commands and observed results, or explain why each item is N/A. -->
+
+- Manual verification:
+- Image smoke verification:
+
+## External contract verification
+
+<!-- For external integrations, record the live source, fixture, and fields verified. Otherwise write "N/A". -->
+
+- Evidence / fixture / unverified fields:
 
 ## Reviewers
 
