@@ -152,6 +152,14 @@ compose_exec() {
 }
 
 cmd_up() {
+    # Ensure backend/.env exists for local development
+    local env_file="${ROOT_DIR}/backend/.env"
+    local env_example="${ROOT_DIR}/backend/.env.example"
+    if [[ ! -f "${env_file}" ]] && [[ -f "${env_example}" ]]; then
+        cp "${env_example}" "${env_file}"
+        log_info "Created backend/.env from .env.example (customize as needed)"
+    fi
+
     log_info "Starting development services..."
     compose_exec up -d
     log_success "Development services are running."
