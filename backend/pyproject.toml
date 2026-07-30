@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Security update management platform for SUSE/openSUSE distributions"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.115.0",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.32.0",
     "sqlalchemy[asyncio]>=2.0.35",
     "asyncpg>=0.30.0",
@@ -25,7 +25,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
-    "ruff>=0.8.0",
+    "ruff>=0.16.0",
     "factory-boy>=3.3.0",
     "testcontainers[postgres]>=4.9.0",
 ]
