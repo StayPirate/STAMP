@@ -888,8 +888,14 @@ sufficient.
 
 **Branch workflow**: agents work exclusively on topic branches.
 `master` is never checked out for editing. After merge, agents
-synchronize local `master` with `git fetch origin && git branch -f
-master origin/master` without checking it out.
+perform local cleanup:
+
+1. Synchronize and prune: `git fetch origin --prune && git branch -f
+   master origin/master` (updates local master and removes stale
+   remote-tracking references in one step).
+2. Delete the merged topic branch: `git branch -d <merged-branch>`
+   (`-d` refuses deletion if the branch is not fully merged —
+   safe by design).
 
 **Commit discipline**: agents may commit and push to topic branches
 without per-commit approval. Before the first push of a new branch,
