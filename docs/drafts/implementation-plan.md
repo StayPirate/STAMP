@@ -214,7 +214,7 @@ work begins.
 | Phase | Focus | Status |
 |---|---|---|
 | Prep | Image testing setup (mechanism + minimal assertion) | Completed (2026-07-29) |
-| 0 | Infrastructure completion and validation | Not started |
+| 0 | Infrastructure completion and validation | **Completed** (2026-07-30) |
 | 1 | Cross-cutting platform foundations | Not started |
 | 2 | Local identity and admin platform | Not started |
 | 3 | Fetcher framework | Not started |
@@ -616,3 +616,14 @@ stub/seam introduced and the spec that will eventually replace it.
   Container Smoke Testing). No stubs/seams introduced. See the
   [Prep Effort](#prep-effort--image-testing-setup) section for the
   phase-by-phase growth model that subsequent phases follow.
+
+- **2026-07-30 — Phase 0 (Infrastructure Completion and Validation)
+  completed.** Added missing runtime dependencies to
+  `backend/pyproject.toml`: `structlog>=26.1.0` (logging pipeline,
+  Phase 1), `cvss>=3.6` (CVSS vector parsing, Phase 4),
+  `celery-redbeat>=2.4.2` (Beat scheduler, Phase 3). Validated the
+  full infrastructure baseline end-to-end: `uv sync` resolves cleanly,
+  `pytest` green (25 passed, 1 xfail), `ruff check/format` clean,
+  `alembic upgrade head` + `alembic check` no-op, Docker image builds
+  successfully, Python-version drift check passes (3.13). No domain
+  code written. No stubs/seams introduced.
