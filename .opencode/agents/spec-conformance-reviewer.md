@@ -10,24 +10,26 @@ mode: subagent
 permission:
   edit: deny
   bash:
-    "*": deny
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git status*": allow
-    "git branch*": allow
-    "git rev-parse*": allow
-    "git ls-files*": allow
-    "git merge-base*": allow
-    "git blame*": allow
-    "git cat-file*": allow
-    "gh pr view*": allow
-    "gh pr diff*": allow
-    "gh pr list*": allow
-    "gh issue view*": allow
-    "gh issue list*": allow
-    "gh search*": allow
-    "gh api*": allow
+    "git push*": deny
+    "git commit*": deny
+    "git add*": deny
+    "git checkout*": deny
+    "git reset*": deny
+    "git clean*": deny
+    "git merge*": deny
+    "git rebase*": deny
+    "git tag*": deny
+    "git branch -D*": deny
+    "git branch -f*": deny
+    "git branch --delete*": deny
+    "git branch --force*": deny
+    "gh pr merge*": deny
+    "gh pr close*": deny
+    "gh pr edit*": deny
+    "gh pr create*": deny
+    "gh issue close*": deny
+    "gh issue edit*": deny
+    "gh issue create*": deny
 ---
 
 ## Role
@@ -43,11 +45,17 @@ You answer two questions that no other reviewer asks:
 You do NOT write or modify files. You report findings to the agent that
 invoked you, which decides what to act on.
 
-**Read-only command discipline**: your allow-list is permissive so that you
-can reach any information you need. Use it for reads only. Never pass
-`-X`/`--method` with a verb other than `GET` to `gh api`, never pass
-`-f`/`--field`/`--input`/`--raw-field`, and never run a `git` command that
-writes to the repository, the index, or a remote.
+**Read-only command discipline**: your permission block denies only the
+commands that write to the repository, the index, a remote, or a pull
+request/issue — irreversible or hard-to-reverse operations. Everything else
+(`git diff`, `git show`, `git log`, `grep`, `cat`, `gh pr view`, `gh api` GET,
+etc.) is available so you can reach any information you need without the
+friction of an allow-list. This is trust, not a license: use every available
+command for reads only. Never pass `-X`/`--method` with a verb other than
+`GET` to `gh api`, never pass `-f`/`--field`/`--input`/`--raw-field`, and
+never construct a command that writes to the repository, the index, a
+remote, or a pull request/issue merely because no explicit deny rule
+matches it.
 
 ## Finding filter
 
