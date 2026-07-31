@@ -86,6 +86,11 @@ guardrails:
 - **New rules/patterns added** → invoke `@docs-placement-reviewer`
 - **New or updated feature specs** → invoke `@docs-reviewer`
 - **Ticket or identity operations** → invoke the applicable integrity reviewer
+- **Modified obligations in an already-implemented area** → invoke
+  `@spec-conformance-reviewer`. It runs in inverse direction: for each changed
+  obligation it locates the implementing code and reports where that code
+  becomes inconsistent with the new wording. Skip it when the specification
+  has no implementation yet — an unimplemented specification is not drift
 
 Apply the Reviewer Proportionality Filter in `AGENTS.md` Guardrail 26 to every
 finding. Never resolve a finding that adds structural complexity without first

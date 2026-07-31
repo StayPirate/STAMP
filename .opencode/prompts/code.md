@@ -122,11 +122,15 @@ A slice is complete ONLY when ALL of the following are satisfied:
    (tests pass and cover happy/error/permission paths per G6, lint clean,
    all applicable reviewers invoked, no spec deviations per G1, Gap Protocol
    followed if deviations were needed)
-2. **External contracts verified** (if the slice integrates with an
+2. **Spec conformance verified**: `@spec-conformance-reviewer` has run on the
+   change and its class A, class B, and contract-touching class D findings are
+   resolved. Non-blocking findings are either resolved or explicitly dismissed
+   with a reason
+3. **External contracts verified** (if the slice integrates with an
    external service): the External Contract Verification protocol below
    has been followed
 
-Do NOT inform the user that a slice is "done" until both criteria are
+Do NOT inform the user that a slice is "done" until all criteria are
 met. If any criterion cannot be satisfied (e.g., a test environment is
 unavailable), explicitly state which criterion is unmet and why.
 
@@ -194,6 +198,22 @@ Apply the Reviewer Proportionality Filter in `AGENTS.md` Guardrail 26 to every
 finding. Never resolve a finding that adds structural complexity without first
 presenting it to the user and receiving a decision.
 
+### Unconditional — before every pull request
+
+`@spec-conformance-reviewer` runs on EVERY change, regardless of what the
+change touches. Unlike the reviewers below, its trigger is not the kind of
+modification but the moment: invoke it before opening a pull request, and
+again before marking a draft pull request ready after substantive changes.
+
+It verifies that the change implements what its tracking issue and owning
+specifications require, and that it introduces no behavior no specification
+authorizes. Report its verdict in the pre-PR summary you give the user.
+
+You may also invoke it on demand with an explicit pull request reference
+(URL, number, or `owner/repo#n`), including on closed pull requests.
+
+### Conditional — by kind of change
+
 - **New or modified API endpoints** → `@security-reviewer`; evaluate
   `@api-parity-reviewer` per Guardrail 12
 - **New models/migrations** → `@data-model-reviewer`
@@ -236,6 +256,7 @@ Before opening a PR, report to the user:
 - Branch name and scope summary.
 - Intended PR title (Conventional Commits format).
 - List of changed files.
+- `@spec-conformance-reviewer` verdict and any unresolved findings.
 
 Before requesting merge approval, present:
 - PR number and title.

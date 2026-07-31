@@ -52,10 +52,18 @@ into project requirements.
 | `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies fetchers inherit from BaseFetcher (or BaseCVEFetcher for CVE fetchers), report metrics correctly, and exclude `SoftTimeLimitExceeded` from per-item catches |
 | `@security-reviewer` | Reviewer | Guardrail 10 | Reviews code for security vulnerabilities and insecure patterns |
 | `@spec-coherence-reviewer` | Reviewer | Guardrail 15 | Detects contradictions and inconsistencies across feature specifications |
+| `@spec-conformance-reviewer` | Reviewer | Pre-PR (unconditional) | Verifies a pull request implements what its issue and owning specs require, and introduces no unspecified behavior |
 | `@spec-gap-analyzer` | Reviewer | Guardrail 17 | Identifies uncovered functional cases and missing edge-case handling in specs |
 | `@test-reviewer` | Reviewer | Guardrail 6 | Reviews test quality, coverage, audit trail assertions, and adherence to testing conventions |
 | `@identity-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies IdentityAuditEvent audit trail compliance and detail JSONB schema completeness for identity mutations |
 | `@ticket-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies TicketAuditEvent audit trail and ticket_mutations module compliance |
+
+`@spec-conformance-reviewer` is the only subagent whose trigger is a moment
+rather than a kind of change: it runs on every pull request, before the pull
+request is opened or marked ready. It can also be invoked manually with an
+explicit pull request reference, including on closed pull requests. It is not
+yet backed by a guardrail — it is under calibration, and its invocation is
+declared in `.opencode/prompts/code.md` and `.opencode/prompts/spec.md`.
 
 ## Commands
 
