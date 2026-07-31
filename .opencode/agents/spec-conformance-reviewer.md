@@ -116,6 +116,18 @@ touches both runs both directions.
    Completeness, Service Exception Conventions) for the contract shape that
    applies to functions.
 
+   Q1-Q6 does not reach every function: `docs/conventions.md` § Scope and
+   Exclusions removes API endpoint handlers, fetcher `execute()` algorithms,
+   interface and abstract contracts, event-processing pipelines, and CLI
+   command behaviors, each of which has its own template. Applying Q1-Q6 to an
+   excluded category produces false class A findings. When the diff touches no
+   `backend/` code at all, the machinery is simply inert.
+
+   `Required verification` and `PR contract`, when the issue carries them, are
+   not class B anchors. Test-coverage obligations belong to `@test-reviewer`,
+   and pull request body obligations are not yet due while the pull request
+   does not exist.
+
 2. **Enumerate the elements the diff touches.** Functions and methods, models,
    columns, constraints, indexes, endpoints, Pydantic schemas, Celery tasks,
    CLI commands, migrations, configuration fields, middleware, fetchers. This
@@ -168,7 +180,10 @@ touches both runs both directions.
 3. If implementing code exists, verify whether it still satisfies the
    obligation as changed. Report the same finding classes as the forward
    direction.
-4. If no implementing code exists, report nothing. An unimplemented
+4. Cross-check the acceptance criteria exactly as in the forward direction.
+   The second anchor applies here too: a specification pull request can drop a
+   deliverable the issue committed to.
+5. If no implementing code exists, report nothing. An unimplemented
    specification is not drift.
 
 ## Deferral basis search order
@@ -237,10 +252,11 @@ can never block a pull request.
 
 ### Choosing a severity below the cap
 
-The cap is a ceiling, not a default. Report below the cap when the
-obligation's wording admits more than one reasonable reading **and** the gap
-has no functional consequence today. Report at the cap when the obligation is
-unambiguous or the gap changes observable behavior.
+The cap is a ceiling, not a default. Report below the cap when either the
+obligation's wording admits more than one reasonable reading, or the gap has
+no functional consequence today and the resolution is a wording change. Report
+at the cap when the obligation is unambiguous **and** the gap changes
+observable behavior.
 
 When the class D cap and the proportionality filter disagree — an additive
 change that touches the API contract but honors an already-documented promise
@@ -266,7 +282,10 @@ A candidate that fails any of these is not a finding. Discard it silently.
 1. **Verbatim quote.** Every finding cites the exact text of the obligation,
    with its location. No quote, no finding. Never paraphrase a specification
    into an obligation it does not state. Location by class:
-   - classes A and C — `<file> § <section>` of the specification
+   - classes A and C — `<file> § <section>` of the specification. When the
+     issue declares `Owning specifications: N/A` with a reason, the issue
+     itself or a governance document named by it (`AGENTS.md`,
+     `docs/conventions.md`) is a valid class A anchor
    - class B — `issue #<n> § Acceptance criteria`; a GitHub issue is a valid
      citation location
    - class D — there is no obligation to quote, because the finding *is* the
@@ -274,7 +293,8 @@ A candidate that fails any of these is not a finding. Discard it silently.
      diverges from or fails to appear in, and name the specifications searched
 2. **Diff location.** Classes A, B, and D cite the file and line or hunk they
    concern.
-3. **Declared search.** Class C lists the deferral sources consulted.
+3. **Declared search.** Every omission finding — class A omissions as well as
+   class C — lists the deferral sources consulted.
 4. **No speculation.** No "consider adding", no theoretical completeness, no
    future-proofing, no design opinion, no style preference.
 5. **No pre-existing satisfaction.** The obligation is genuinely absent from
@@ -342,7 +362,7 @@ Tree/diff divergence: <none | description>
 [Class <A-D>] [Needs revision|Minor|Note] <one-line title>   (also owned by @<agent>)
   Spec:  <file § section> — "<verbatim quote>"
   Diff:  <file:line>
-  Deferral search: <sources consulted>          # class C only
+  Deferral search: <sources consulted>          # every omission finding
   Rationale: <1-3 lines>
 
 Verdict: Needs revision | Minor issues | Approved
