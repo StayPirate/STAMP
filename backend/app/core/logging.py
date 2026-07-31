@@ -25,10 +25,16 @@ if TYPE_CHECKING:
 # Third-party loggers captured via the stdlib bridge. Explicitly reset
 # to NOTSET + propagate=True so they defer to the root logger's level
 # and handler uniformly — no per-logger overrides, no conditional pins.
+# NOTE: both "sqlalchemy" (the parent) and "sqlalchemy.engine" (the
+# child that actually gates SQL statement/parameter echoing) must be
+# reset: SQLAlchemy's own `log.py` pins the parent "sqlalchemy" logger
+# to WARNING at import time, which would otherwise cap the effective
+# level of "sqlalchemy.engine" regardless of the root logger's level.
 _THIRD_PARTY_LOGGERS = (
     "uvicorn",
     "uvicorn.error",
     "uvicorn.access",
+    "sqlalchemy",
     "sqlalchemy.engine",
     "httpx",
     "httpcore",

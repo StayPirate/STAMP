@@ -235,3 +235,31 @@ class TestRequestIDCorrelationBinding:
         await client.get("/ok", headers={"X-Request-ID": "request-two"})
         assert test_app.state.captured_logs[0]["request_id"] == "request-one"
         assert test_app.state.captured_logs[1]["request_id"] == "request-two"
+
+
+@pytest.mark.e2e
+class TestRequestIDOnRealApp:
+    """Confirms the actual `app.main` wiring (real middleware stack
+    ordering relative to CORSMiddleware, real settings) also carries
+    X-Request-ID. The classes above exercise the middleware's internal
+    behavior in an isolated app; this complements that by guarding the
+    real registration in `main.py`, which unit tests cannot observe.
+    """
+
+    async def test_real_app_response_carries_request_id(self, client):
+        response = await client.get("/nonexistent-request-id-wiring-check")
+        assert response.status_code == 404
+        assert _UUID_RE.match(response.headers["x-request-id"])
+
+    async def test_real_app_exposes_header_via_cors(self, client):
+        """A cross-origin browser client must be able to read
+        X-Request-ID via Access-Control-Expose-Headers — otherwise the
+        documented "clients should log or display the request ID"
+        promise (docs/api-spec.md, Request Tracing) cannot be fulfilled
+        by the primary web UI consumer."""
+        response = await client.get(
+            "/nonexistent-request-id-wiring-check",
+            headers={"Origin": "http://localhost:5173"},
+        )
+        exposed = response.headers.get("access-control-expose-headers", "")
+        assert "x-request-id" in exposed.lower()

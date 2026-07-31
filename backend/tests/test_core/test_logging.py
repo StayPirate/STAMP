@@ -13,6 +13,7 @@ import pytest
 
 from app.config import Settings
 from app.core.logging import (
+    _THIRD_PARTY_LOGGERS,
     configure_cli_logging,
     configure_logging,
     resolve_log_format,
@@ -47,18 +48,9 @@ def _reset_logging_state():
     original_handlers = list(root_logger.handlers)
     original_level = root_logger.level
 
-    third_party_names = (
-        "uvicorn",
-        "uvicorn.error",
-        "uvicorn.access",
-        "sqlalchemy.engine",
-        "httpx",
-        "httpcore",
-        "celery",
-    )
     original_third_party = {
         name: (logging.getLogger(name).level, logging.getLogger(name).propagate)
-        for name in third_party_names
+        for name in _THIRD_PARTY_LOGGERS
     }
 
     yield
@@ -243,14 +235,30 @@ class TestConfigureLoggingLevel:
         settings = _settings(log_level="ERROR")
         configure_logging(settings, stream=stream)
 
-        for name in ("uvicorn", "sqlalchemy.engine", "httpx", "celery"):
+        for name in _THIRD_PARTY_LOGGERS:
             logger = logging.getLogger(name)
             assert logger.level == logging.NOTSET
             assert logger.propagate is True
 
+    def test_sqlalchemy_parent_logger_does_not_cap_engine_level(self):
+        """SQLAlchemy pins the parent "sqlalchemy" logger to WARNING at
+        import time; it must also be reset so it doesn't cap the
+        effective level of "sqlalchemy.engine" below the configured
+        LOG_LEVEL (see docs/features/platform/logging.md, third-party
+        logger integration)."""
+        stream = _FakeStream(isatty=False)
+        settings = _settings(log_level="DEBUG")
+        configure_logging(settings, stream=stream)
+
+        assert (
+            logging.getLogger("sqlalchemy.engine").getEffectiveLevel() == logging.DEBUG
+        )
+
     def test_third_party_logger_captured_in_same_pipeline(self):
         stream = _FakeStream(isatty=False)
-        settings = _settings(log_level="INFO", log_format="json")
+        settings = _settings(
+            log_level="INFO", log_format="json", app_name="sentinel-third-party"
+        )
         configure_logging(settings, stream=stream)
 
         stdlib_logger = logging.getLogger("uvicorn.access")
@@ -260,6 +268,8 @@ class TestConfigureLoggingLevel:
         assert record["logger"] == "uvicorn.access"
         assert record["event"] == "GET / HTTP/1.1 200"
         assert record["level"] == "info"
+        assert record["app"] == "sentinel-third-party"
+        assert record["timestamp"].endswith("Z")
 
 
 @pytest.mark.unit
