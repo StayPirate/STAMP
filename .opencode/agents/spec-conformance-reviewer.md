@@ -10,6 +10,7 @@ mode: subagent
 permission:
   edit: deny
   bash:
+    "*": deny
     "git diff*": allow
     "git log*": allow
     "git show*": allow
@@ -27,7 +28,6 @@ permission:
     "gh issue list*": allow
     "gh search*": allow
     "gh api*": allow
-    "*": deny
 ---
 
 ## Role
