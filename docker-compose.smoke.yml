@@ -97,9 +97,12 @@ services:
       retries: 5
       start_period: 20s
 
-  # One-shot schema migration. A no-op until Phase 4 introduces real
-  # migrations; exits 0 against an empty revision set. `restart: no` so
-  # `up --wait` treats a clean exit as success rather than a crash loop.
+  # One-shot schema migration, run as the image's non-root user (no
+  # `user:` override here — same as `api`). `restart: no` so `up --wait`
+  # treats a clean exit as success rather than a crash loop. See
+  # backend/tests/image/test_migration.py for the smoke assertions this
+  # step's outcome is verified against (non-root, no drift, tables and
+  # named constraints present).
   migrate:
     <<: *app-common
     command: ["alembic", "upgrade", "head"]
