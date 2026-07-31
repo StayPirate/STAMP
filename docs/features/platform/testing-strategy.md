@@ -291,10 +291,6 @@ expected patterns:
 | `db_session_factory` | function | integration, e2e | First concurrency/locking test (pessimistic locking pattern) |
 | `redis_client` | function | integration, e2e | First Redis-dependent feature; follows Redis Strategy |
 
-Factory fixtures use `factory-boy` (already in dev dependencies) and
-follow the pattern: `<model>_factory` returns a callable that creates a
-model instance with sensible defaults, accepting keyword overrides.
-
 The planned `redis_client` fixture yields an asynchronous
 `redis.asyncio.Redis` client configured with decoded string responses.
 Its session-scoped provisioning layer selects the worker database and
@@ -316,6 +312,67 @@ explicitly. If the database is unreachable or cleanup fails, the test
 fails (never skips). This fixture is used exclusively for concurrency
 and locking tests; all other integration tests continue using
 `db_session`.
+
+### Model Factory Fixtures
+
+A model factory fixture creates persisted model instances with sensible
+defaults, so that each test specifies only the fields relevant to the
+behavior under test.
+
+**Canonical shape**: `<model>_factory` is a synchronous pytest fixture
+that returns an **async callable**. The callable accepts keyword
+overrides and returns a flushed model instance:
+
+```python
+@pytest.fixture
+def user_factory(db_session: AsyncSession):
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> User:
+        n = next(counter)
+        defaults: dict[str, Any] = {
+            "username": f"user{n}",
+            "email": f"user{n}@example.com",
+        }
+        defaults.update(overrides)
+        instance = User(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+```
+
+Rules:
+
+| Rule | Rationale |
+|------|-----------|
+| The fixture is `def`; the callable it returns is `async def` | pytest resolves the fixture synchronously; the test awaits each creation |
+| Persist with `flush()`, never `commit()` | `flush()` emits the INSERT and populates server-side values (primary key, timestamps) while leaving transaction control to the test and to the code under test |
+| Defaults for columns with a UNIQUE constraint derive from a per-fixture counter | multiple calls within one test must not collide |
+| Keyword overrides always take precedence over defaults | the caller's intent is authoritative |
+| Defaults MUST produce a row that satisfies every constraint on the model; when the valid default set depends on the overrides supplied (e.g. mutually exclusive columns governed by a CHECK constraint), the factory adjusts its defaults accordingly | avoids opaque `IntegrityError` failures that obscure the behavior under test |
+
+**Composition**: a factory for an entity with required foreign keys
+requests the factories of its dependencies as fixtures and calls them to
+populate any foreign key the caller did not override:
+
+```python
+@pytest.fixture
+def ticket_factory(db_session: AsyncSession, user_factory):
+    async def _create(**overrides: Any) -> Ticket:
+        if "assignee_id" not in overrides:
+            overrides["assignee_id"] = (await user_factory()).id
+        ...  # same defaults / add / flush shape as above
+
+    return _create
+```
+
+This keeps each factory responsible for a single model while allowing
+tests to create deep object graphs in one call.
+
+The default values of an individual factory are documented in that
+fixture's docstring, not in a feature specification.
 
 ### Fixture Location
 
@@ -751,9 +808,9 @@ comprehensive test coverage:
    for e2e tests, `redis_client` for integration or e2e paths that
    use Redis, and `db_session_factory` ONLY for concurrency/locking
    tests (all other integration tests continue using `db_session`).
-   Create test data using factories (when available) or
-   direct model instantiation. Do not connect test fixtures through
-   application `REDIS_URL` or `CELERY_BROKER_URL`.
+   Create test data using factories (when available, see Model Factory
+   Fixtures) or direct model instantiation. Do not connect test fixtures
+   through application `REDIS_URL` or `CELERY_BROKER_URL`.
 
 5. **Test audit events**: for every mutation covered by an audit trail,
    assert event creation with correct fields (see Audit Trail Testing).
