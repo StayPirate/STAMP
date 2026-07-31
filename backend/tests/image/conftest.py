@@ -64,7 +64,12 @@ def compose_exec():
       ``-p sentinel-smoke``); otherwise ``compose exec`` would target the
       default project and fail to find the running containers.
 
-    Returns a callable ``(service, *args) -> subprocess.CompletedProcess``.
+    Returns a callable ``(service, *args, env=None) -> CompletedProcess``.
+    ``env``, when given, overrides/adds environment variables for that
+    single invocation only (via ``compose exec -e KEY=VAL``) — it does
+    not persist across calls or affect the long-running service process.
+    Used to exercise startup validation (e.g. an invalid ``LOG_LEVEL``)
+    in a fresh process without restarting the service.
     """
     compose_cmd = shlex.split(os.environ.get("COMPOSE_CMD", "docker compose"))
     compose_files = os.environ.get("COMPOSE_FILES", "docker-compose.smoke.yml").split(
@@ -75,8 +80,23 @@ def compose_exec():
     for compose_file in compose_files:
         file_args.extend(["-f", compose_file])
 
-    def _exec(service: str, *args: str) -> subprocess.CompletedProcess[str]:
-        cmd = [*compose_cmd, "-p", project, *file_args, "exec", "-T", service, *args]
+    def _exec(
+        service: str, *args: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        env_args: list[str] = []
+        for key, value in (env or {}).items():
+            env_args.extend(["-e", f"{key}={value}"])
+        cmd = [
+            *compose_cmd,
+            "-p",
+            project,
+            *file_args,
+            "exec",
+            "-T",
+            *env_args,
+            service,
+            *args,
+        ]
         return subprocess.run(
             cmd,
             capture_output=True,
