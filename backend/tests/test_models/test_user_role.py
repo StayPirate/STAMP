@@ -145,6 +145,22 @@ class TestUserRoleForeignKeys:
 
 
 @pytest.mark.integration
+class TestUserRoleNotNullConstraints:
+    async def test_missing_role_rejected(
+        self, db_session: AsyncSession, user_factory
+    ) -> None:
+        user = await user_factory()
+        db_session.add(UserRole(user_id=user.id))
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
+
+    async def test_missing_user_id_rejected(self, db_session: AsyncSession) -> None:
+        db_session.add(UserRole(role=Role.ADMIN.value))
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
+
+
+@pytest.mark.integration
 class TestUserRoleRelationships:
     async def test_user_roles_relationship(
         self, db_session: AsyncSession, user_factory
@@ -169,6 +185,27 @@ class TestUserRoleRelationships:
 
         assert role.assigning_user is not None
         assert role.assigning_user.id == admin.id
+
+    async def test_deleting_user_cascades_to_roles(
+        self, db_session: AsyncSession, user_factory
+    ) -> None:
+        """User.roles uses cascade="all, delete-orphan": deleting a User
+        via the ORM removes its UserRole rows (see user_role.py comment).
+        This is a hypothetical path in production (users are deactivated,
+        not deleted, per docs/data-model.md) but is a deliberate,
+        documented cascade choice worth pinning down with a test.
+        """
+        user = await user_factory()
+        db_session.add(UserRole(user_id=user.id, role=Role.ADMIN.value))
+        await db_session.flush()
+        await db_session.refresh(user, attribute_names=["roles"])
+        role_id = user.roles[0].id
+
+        await db_session.delete(user)
+        await db_session.flush()
+
+        remaining = await db_session.get(UserRole, role_id)
+        assert remaining is None
 
 
 @pytest.mark.integration
