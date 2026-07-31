@@ -91,6 +91,24 @@ Apply the Reviewer Proportionality Filter in `AGENTS.md` Guardrail 26 to every
 finding. Never resolve a finding that adds structural complexity without first
 presenting it to the user and receiving a decision.
 
+### Unconditional — before every pull request
+
+`@spec-conformance-reviewer` runs on EVERY change, regardless of what the
+change touches — including pull requests that modify only `.opencode/` or
+`AGENTS.md`. Its trigger is not the kind of modification but the moment:
+invoke it before opening a pull request, and again before marking a draft
+pull request ready after substantive changes.
+
+On a pull request that modifies `docs/features/**`, it runs in inverse
+direction: for each changed obligation it locates the implementing code and
+reports where that code becomes inconsistent with the new wording. Do not skip
+the invocation when a specification has no implementation yet — the reviewer
+handles that case itself and reports nothing, because an unimplemented
+specification is not drift.
+
+Report its verdict in the pre-PR summary you give the user, together with the
+branch name, intended PR title, and list of changed files.
+
 ## Conventions
 
 - All content MUST be in English (Guardrail 4)
