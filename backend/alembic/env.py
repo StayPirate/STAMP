@@ -8,12 +8,11 @@ from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Import all models here so Alembic can detect them.
+import app.models  # noqa: F401
 from alembic import context
 from app.config import settings
 from app.database import Base
-
-# Import all models here so Alembic can detect them
-# from app.models import cve, distribution, package, update, user  # noqa: F401
 
 config = context.config
 

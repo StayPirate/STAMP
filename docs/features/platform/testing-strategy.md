@@ -274,6 +274,7 @@ inject a client that raises `RedisError` instead.
 |---------|-------|------|-------------|
 | `db_session` | function | integration, e2e | Async SQLAlchemy session with per-test rollback |
 | `client` | function | e2e | `httpx.AsyncClient` with ASGI transport, `get_db` overridden to use `db_session` |
+| `user_factory` | function | integration, e2e | Creates `User` instances with sensible defaults; see `docs/features/identity/user-management.md` |
 
 ### Planned Fixtures (added with their features)
 
@@ -285,7 +286,6 @@ expected patterns:
 |---------|-------|------|--------------|
 | `authenticated_client` | function | e2e | Authentication feature (`local-authentication.md`) |
 | `admin_client` | function | e2e | RBAC feature (`rbac.md`) |
-| `user_factory` | function | integration, e2e | User model implementation (`user-management.md`) |
 | `ticket_factory` | function | integration, e2e | Ticket model implementation (`tickets.md`) |
 | `cve_factory` | function | integration, e2e | CVE model implementation (`cve-tracking.md`) |
 | `db_session_factory` | function | integration, e2e | First concurrency/locking test (pessimistic locking pattern) |

@@ -6,8 +6,10 @@ See docs/features/platform/testing-strategy.md for the full testing strategy.
 from __future__ import annotations
 
 import atexit
+import itertools
 import os
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -25,6 +27,12 @@ os.environ.setdefault(
 
 from app.database import Base, get_db
 from app.main import app
+from app.models.user import User
+
+# Fictional bcrypt-shaped hash for local test users (60 chars, like a real
+# bcrypt digest) — NOT a real password hash. See docs/conventions.md
+# (Example Data in Documentation) and AGENTS.md Guardrail 23.
+_FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
 
 
 def _database_url() -> str:
@@ -113,3 +121,38 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     ) as ac:
         yield ac
     app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture
+def user_factory(db_session: AsyncSession):
+    """Factory fixture for creating `User` instances with sensible defaults.
+
+    Returns an async callable `user_factory(**overrides) -> User`. Each
+    call creates a distinct local user (unique username/email) with a
+    fictional password hash and flushes it to the session. Pass
+    `external_id=<uuid>` to create an external user instead — the
+    fictional `password_hash` default is omitted automatically since
+    `chk_user_auth_exclusive` requires external users to have no
+    password hash.
+
+    See docs/features/platform/testing-strategy.md (Fixture Catalog).
+    """
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> User:
+        n = next(counter)
+        defaults: dict[str, Any] = {
+            "username": f"user{n}",
+            "email": f"user{n}@example.com",
+            "full_name": f"Test User {n}",
+        }
+        is_external = overrides.get("external_id") is not None
+        if not is_external and "password_hash" not in overrides:
+            defaults["password_hash"] = _FICTIONAL_PASSWORD_HASH
+        defaults.update(overrides)
+        user = User(**defaults)
+        db_session.add(user)
+        await db_session.flush()
+        return user
+
+    return _create
