@@ -324,6 +324,10 @@ that returns an **async callable**. The callable accepts keyword
 overrides and returns a flushed model instance:
 
 ```python
+# Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
+_FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
+
+
 @pytest.fixture
 def user_factory(db_session: AsyncSession):
     counter = itertools.count(1)
@@ -335,6 +339,10 @@ def user_factory(db_session: AsyncSession):
             "email": f"user{n}@example.com",
         }
         defaults.update(overrides)
+        # chk_user_auth_exclusive: a local user has a password hash and no
+        # external_id; an external user has the inverse.
+        if not defaults.get("external_id"):
+            defaults.setdefault("password_hash", _FICTIONAL_PASSWORD_HASH)
         instance = User(**defaults)
         db_session.add(instance)
         await db_session.flush()
@@ -348,7 +356,7 @@ Rules:
 | Rule | Rationale |
 |------|-----------|
 | The fixture is `def`; the callable it returns is `async def` | pytest resolves the fixture synchronously; the test awaits each creation |
-| Persist with `flush()`, never `commit()` | `flush()` emits the INSERT and populates server-side values (primary key, timestamps) while leaving transaction control to the test and to the code under test |
+| Persist with `flush()`, never `commit()` | `flush()` emits the INSERT and populates the primary key while leaving transaction control to the test and to the code under test |
 | Defaults for columns with a UNIQUE constraint derive from a per-fixture counter | multiple calls within one test must not collide |
 | Keyword overrides always take precedence over defaults | the caller's intent is authoritative |
 | Defaults MUST produce a row that satisfies every constraint on the model; when the valid default set depends on the overrides supplied (e.g. mutually exclusive columns governed by a CHECK constraint), the factory adjusts its defaults accordingly | avoids opaque `IntegrityError` failures that obscure the behavior under test |
@@ -359,10 +367,10 @@ populate any foreign key the caller did not override:
 
 ```python
 @pytest.fixture
-def ticket_factory(db_session: AsyncSession, user_factory):
-    async def _create(**overrides: Any) -> Ticket:
-        if "assignee_id" not in overrides:
-            overrides["assignee_id"] = (await user_factory()).id
+def user_role_factory(db_session: AsyncSession, user_factory):
+    async def _create(**overrides: Any) -> UserRole:
+        if "user_id" not in overrides:
+            overrides["user_id"] = (await user_factory()).id
         ...  # same defaults / add / flush shape as above
 
     return _create
