@@ -6,8 +6,10 @@ See docs/features/platform/testing-strategy.md for the full testing strategy.
 from __future__ import annotations
 
 import atexit
+import itertools
 import os
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -25,6 +27,15 @@ os.environ.setdefault(
 
 from app.database import Base, get_db
 from app.main import app
+
+# Import the models package (not just the User class) so all model
+# tables — including ones only referenced via TYPE_CHECKING forward
+# refs, like UserRole — are registered on Base.metadata before
+# _engine's create_all runs.
+from app.models import User
+
+# Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
+_FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
 
 
 def _database_url() -> str:
@@ -113,3 +124,40 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     ) as ac:
         yield ac
     app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture
+def user_factory(db_session: AsyncSession):
+    """Factory fixture for User model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `username` / `email`: derived from a per-fixture counter, unique
+      within the test.
+    - `password_hash`: a fictional bcrypt-shaped hash, set only when the
+      caller does not supply `external_id` — satisfies
+      `chk_user_auth_exclusive` for the common case (local user).
+      Callers creating an external user must pass `external_id` and
+      leave `password_hash` unset (or explicitly `None`).
+    """
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> User:
+        n = next(counter)
+        defaults: dict[str, Any] = {
+            "username": f"user{n}",
+            "email": f"user{n}@example.com",
+        }
+        defaults.update(overrides)
+        # chk_user_auth_exclusive: a local user has a password hash and no
+        # external_id; an external user has the inverse.
+        if not defaults.get("external_id"):
+            defaults.setdefault("password_hash", _FICTIONAL_PASSWORD_HASH)
+        instance = User(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create

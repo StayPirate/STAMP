@@ -268,40 +268,38 @@ inject a client that raises `RedisError` instead.
 
 ## Fixture Catalog
 
-### Available Fixtures
+This catalog documents the contract of each shared, non-model-specific
+fixture: its scope, the test tier(s) that use it, and the feature it is
+tied to (if any). It defines what each fixture must do — not whether it
+has been implemented yet; implementation status is tracked by GitHub,
+not by this specification.
 
-| Fixture | Scope | Tier | Description |
-|---------|-------|------|-------------|
-| `db_session` | function | integration, e2e | Async SQLAlchemy session with per-test rollback |
-| `client` | function | e2e | `httpx.AsyncClient` with ASGI transport, `get_db` overridden to use `db_session` |
+Model factory fixtures (`<model>_factory`) are not enumerated
+individually here — they all follow the single generic contract in
+Model Factory Fixtures below. One such fixture exists per model that
+tests need to instantiate; consult that section for the pattern, not a
+per-model row.
 
-### Planned Fixtures (added with their features)
-
-The following fixtures will be created when the corresponding features
-are implemented. They are documented here so implementers know the
-expected patterns:
-
-| Fixture | Scope | Tier | Created with |
-|---------|-------|------|--------------|
+| Fixture | Scope | Tier | Feature dependency |
+|---------|-------|------|---------------------|
+| `db_session` | function | integration, e2e | Core infrastructure (no feature dependency) |
+| `client` | function | e2e | Core infrastructure (no feature dependency) |
 | `authenticated_client` | function | e2e | Authentication feature (`local-authentication.md`) |
 | `admin_client` | function | e2e | RBAC feature (`rbac.md`) |
-| `user_factory` | function | integration, e2e | User model implementation (`user-management.md`) |
-| `ticket_factory` | function | integration, e2e | Ticket model implementation (`tickets.md`) |
-| `cve_factory` | function | integration, e2e | CVE model implementation (`cve-tracking.md`) |
 | `db_session_factory` | function | integration, e2e | First concurrency/locking test (pessimistic locking pattern) |
 | `redis_client` | function | integration, e2e | First Redis-dependent feature; follows Redis Strategy |
 
-The planned `redis_client` fixture yields an asynchronous
-`redis.asyncio.Redis` client configured with decoded string responses.
-Its session-scoped provisioning layer selects the worker database and
-verifies connectivity with `PING`. Before yielding, it runs `FLUSHDB`
-and overrides applicable application Redis dependencies so all code in
-the test uses the same client. Teardown restores those overrides, runs
+The `redis_client` fixture yields an asynchronous `redis.asyncio.Redis`
+client configured with decoded string responses. Its session-scoped
+provisioning layer selects the worker database and verifies
+connectivity with `PING`. Before yielding, it runs `FLUSHDB` and
+overrides applicable application Redis dependencies so all code in the
+test uses the same client. Teardown restores those overrides, runs
 `FLUSHDB`, and closes the client. Provisioning, connectivity, isolation,
 or cleanup failures fail the test suite; they are never converted to
 skips.
 
-The planned `db_session_factory` fixture is an async callable
+The `db_session_factory` fixture is an async callable
 (`async def () -> AsyncSession`) that creates a new `AsyncSession` with
 an independent connection and transaction on each call. Internally, the
 factory uses the session-scoped `_engine` fixture (tests MUST NOT
