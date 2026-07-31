@@ -5,7 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, Field, SecretStr, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -20,6 +26,9 @@ def _split_comma(value: Any) -> Any:
 
 CommaSeparated = Annotated[list[str], NoDecode, BeforeValidator(_split_comma)]
 
+_VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+_VALID_LOG_FORMATS = ("auto", "json", "console")
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -33,6 +42,10 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "sentinel"
     debug: bool = False
+
+    # Logging
+    log_level: str = "INFO"
+    log_format: str = "auto"
 
     # Database
     database_url: str = Field(
@@ -61,6 +74,36 @@ class Settings(BaseSettings):
     # Security
     jwt_secret_key: SecretStr
     jwt_expiry_hours: int = 72
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _validate_log_level(cls, value: Any) -> Any:
+        """Normalize and validate LOG_LEVEL (case-insensitive)."""
+        if isinstance(value, str):
+            normalized = value.upper()
+            if normalized not in _VALID_LOG_LEVELS:
+                msg = (
+                    f"Invalid LOG_LEVEL: {value!r}. Must be one of "
+                    f"{', '.join(_VALID_LOG_LEVELS)} (case-insensitive)."
+                )
+                raise ValueError(msg)
+            return normalized
+        return value
+
+    @field_validator("log_format", mode="before")
+    @classmethod
+    def _validate_log_format(cls, value: Any) -> Any:
+        """Normalize and validate LOG_FORMAT (case-insensitive)."""
+        if isinstance(value, str):
+            normalized = value.lower()
+            if normalized not in _VALID_LOG_FORMATS:
+                msg = (
+                    f"Invalid LOG_FORMAT: {value!r}. Must be one of "
+                    f"{', '.join(_VALID_LOG_FORMATS)} (case-insensitive)."
+                )
+                raise ValueError(msg)
+            return normalized
+        return value
 
     @model_validator(mode="after")
     def _validate_security_settings(self) -> Settings:

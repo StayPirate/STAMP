@@ -73,6 +73,112 @@ class TestJwtExpiryValidation:
 
 
 @pytest.mark.unit
+class TestLogLevelValidation:
+    """LOG_LEVEL startup validation (docs/features/platform/logging.md)."""
+
+    @pytest.mark.parametrize("value", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    def test_valid_levels_accepted(self, monkeypatch, value):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_LEVEL", value)
+        s = Settings(_env_file=None)
+        assert s.log_level == value
+
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            ("debug", "DEBUG"),
+            ("Debug", "DEBUG"),
+            ("info", "INFO"),
+            ("WARNING", "WARNING"),
+            ("error", "ERROR"),
+            ("Critical", "CRITICAL"),
+        ],
+    )
+    def test_case_insensitive_normalization(self, monkeypatch, input_value, expected):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_LEVEL", input_value)
+        s = Settings(_env_file=None)
+        assert s.log_level == expected
+
+    def test_default_is_info(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        s = Settings(_env_file=None)
+        assert s.log_level == "INFO"
+
+    def test_invalid_value_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_LEVEL", "BOGUS")
+        with pytest.raises(ValidationError, match="Invalid LOG_LEVEL"):
+            Settings(_env_file=None)
+
+    def test_empty_value_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_LEVEL", "")
+        with pytest.raises(ValidationError, match="Invalid LOG_LEVEL"):
+            Settings(_env_file=None)
+
+
+@pytest.mark.unit
+class TestLogFormatValidation:
+    """LOG_FORMAT startup validation (docs/features/platform/logging.md)."""
+
+    @pytest.mark.parametrize("value", ["auto", "json", "console"])
+    def test_valid_formats_accepted(self, monkeypatch, value):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_FORMAT", value)
+        s = Settings(_env_file=None)
+        assert s.log_format == value
+
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            ("AUTO", "auto"),
+            ("Json", "json"),
+            ("CONSOLE", "console"),
+        ],
+    )
+    def test_case_insensitive_normalization(self, monkeypatch, input_value, expected):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_FORMAT", input_value)
+        s = Settings(_env_file=None)
+        assert s.log_format == expected
+
+    def test_default_is_auto(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("LOG_FORMAT", raising=False)
+        s = Settings(_env_file=None)
+        assert s.log_format == "auto"
+
+    def test_invalid_value_raises(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_FORMAT", "xml")
+        with pytest.raises(ValidationError, match="Invalid LOG_FORMAT"):
+            Settings(_env_file=None)
+
+
+@pytest.mark.unit
+class TestDebugLogLevelOrthogonality:
+    """DEBUG and LOG_LEVEL are fully independent configuration axes."""
+
+    def test_debug_true_does_not_change_log_level(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("DEBUG", "true")
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        s = Settings(_env_file=None)
+        assert s.log_level == "INFO"
+        assert s.debug is True
+
+    def test_log_level_debug_does_not_change_debug_flag(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        monkeypatch.delenv("DEBUG", raising=False)
+        s = Settings(_env_file=None)
+        assert s.log_level == "DEBUG"
+        assert s.debug is False
+
+
+@pytest.mark.unit
 class TestIbsCredentialWarning:
     """IBS credential startup warning."""
 
