@@ -607,13 +607,26 @@ CI. Configured as shell scripts in `.githooks/` and activated
 per-repository via `core.hooksPath` (see activation steps below):
 
 - **pre-commit**: ruff check + ruff format check + mypy strict type check +
-  `pytest -m unit` (fast gate, < 15 seconds)
+  `pytest -m unit` (fast gate, < 15 seconds) + `gitleaks git --staged`
+  (secret scan on staged changes)
 - **pre-push**: full test suite (`pytest`) including integration and
   e2e tests
 
 These hooks are a supplementary safety net. The CI pipeline is the
 authoritative enforcer — hooks can be bypassed in extraordinary
 circumstances but CI cannot.
+
+**Secret scanning (`gitleaks`)** is local-only by design: no CI job or
+GitHub Action performs secret scanning. The pre-commit hook runs
+`gitleaks git --staged` against staged changes only. Because
+`gitleaks` is not part of the Python environment, the hook degrades
+gracefully — if the binary is absent, it prints a warning and the
+commit proceeds — the same treatment already applied to `shellcheck`
+and `shfmt` (see `docs/conventions.md`, Shell Scripting). No specific
+version is pinned locally; any recent release is expected to behave
+consistently for this use case. Known false positives are allowlisted
+by regex pattern (never by path) in `.gitleaks.toml` at the repository
+root.
 
 To activate after cloning:
 
