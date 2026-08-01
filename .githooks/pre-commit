@@ -43,3 +43,16 @@ if [[ ${#shell_files[@]} -gt 0 ]]; then
         echo "Warning: shfmt not installed; skipping (CI will enforce)." >&2
     fi
 fi
+
+# --- Secret scanning (gitleaks) ---
+# Scans staged changes for secrets. Local-only: there is no CI job or
+# GitHub Action for secret scanning (see
+# docs/features/platform/testing-strategy.md, Pre-Commit Hooks), so
+# this hook is the only enforcement point. No version is pinned; any
+# recent release is expected to behave consistently for this use case.
+echo "  gitleaks..."
+if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --staged
+else
+    echo "Warning: gitleaks not installed; skipping (local-only check, no CI enforcement)." >&2
+fi

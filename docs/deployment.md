@@ -40,6 +40,7 @@ For architectural decisions and design constraints, see
   - [Health Checks](#health-checks)
   - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
   - [Log Aggregation](#log-aggregation)
+  - [Image Vulnerability Monitoring](#image-vulnerability-monitoring)
   - [Troubleshooting](#troubleshooting)
 
 ---
@@ -58,6 +59,7 @@ For architectural decisions and design constraints, see
 | [shellcheck](https://www.shellcheck.net/) | match `ci.yml` (shell-lint) | Optional, development only — lints shell scripts via the pre-commit hook; CI enforces regardless. See `docs/conventions.md` (Shell Scripting) |
 | [shfmt](https://github.com/mvdan/sh) | match `ci.yml` (shell-lint) | Optional, development only — formats shell scripts via the pre-commit hook. Match the CI version to avoid formatting drift. See `docs/conventions.md` (Shell Scripting) |
 | [actionlint](https://github.com/rhysd/actionlint) | match `ci.yml` (shell-lint) | Optional, development only — validates GitHub Actions workflows locally before pushing. See `docs/conventions.md` (Shell Scripting) |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | any recent release | Optional, development only — scans staged changes for secrets via the pre-commit hook. Local-only; no CI job performs secret scanning. See `docs/features/platform/testing-strategy.md` (Pre-Commit Hooks) |
 
 ### Network Access (Staging/Production)
 
@@ -916,6 +918,47 @@ tokens. See `docs/features/platform/logging.md` (Secrets and PII
 Discipline) for the full policy. Operators should use
 `LOG_LEVEL=DEBUG` in production only for time-bounded diagnostics and
 revert promptly.
+
+### Image Vulnerability Monitoring
+
+A weekly scheduled workflow (`.github/workflows/image-scan.yml`) scans
+the published `ghcr.io/<repo>:latest` backend image for OS-level
+vulnerabilities using Trivy. It also supports manual dispatch for
+on-demand checks between scheduled runs.
+
+**Why the OS layer needs its own visibility.** `pip-audit` (see
+Pipeline Chain above) gates Python dependencies on every merge, but the
+image is Debian-based (`python:3.13-slim`) and the OS package layer is
+not covered by any dependency scanner. Dependabot cannot help here
+either: `python:3.13-slim` is a moving tag whose string never changes,
+so it never triggers a Dependabot update PR.
+
+**Deliberately non-blocking.** This scan never fails the workflow run
+and is not part of the publish path (`build-images.yml` is untouched).
+Many Debian OS package CVEs are "will not fix" upstream, and even
+fixable ones require a rebuild of the base image — a remediation the
+project does not control on demand. Blocking image publication on a
+layer with no available immediate remediation would stall the release
+pipeline without a corresponding way to resolve it.
+
+**Fixable/unfixable split.** Each run produces two Trivy outputs:
+
+- A **fixable HIGH/CRITICAL** result — vulnerabilities with a known
+  upstream fix available. This result drives issue creation/update
+  (see below).
+- A **complete report** — every finding regardless of fix
+  availability, uploaded as a workflow artifact for awareness only.
+
+**Delivery.** A fixable finding opens a new GitHub issue labeled
+`security` (the label already exists in the repository), or updates
+the existing open one if a prior run already opened it — the workflow
+never creates a duplicate issue for the same ongoing condition.
+
+**Remediation path.** Because the scan does not trigger a rebuild,
+fixable findings are remediated on the next merge to `master` that
+produces a new image (which pulls the then-current `python:3.13-slim`
+base layer). This is intended behavior, not an oversight: the platform
+has no separate mechanism to force an out-of-band base image rebuild.
 
 ### Troubleshooting
 
