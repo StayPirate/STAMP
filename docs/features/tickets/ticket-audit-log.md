@@ -203,7 +203,7 @@ client-controlled `sort_by` / `sort_order` parameters are not supported
 **`Access: Authenticated`**
 
 Confidentiality filtering is enforced centrally — see `docs/api-spec.md`
-([Scoped Responses](docs/api-spec.md#scoped-responses)).
+([Scoped Responses](../../api-spec.md#scoped-responses)).
 
 ## Service Contract
 

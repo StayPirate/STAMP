@@ -508,6 +508,52 @@ negative assertions.
 
 ---
 
+## Structural Tests
+
+### Purpose and Governing Principle
+
+Some project rules require no judgement to verify — they are
+mechanically checkable facts about the codebase (a table has a UUID
+primary key, a module in `app/core/` does not import from
+`app/services/`, a Markdown link points at a file that exists).
+Rules of this kind are implemented as **structural tests**: deterministic
+`@pytest.mark.unit` tests that inspect code (SQLAlchemy metadata, AST
+import graphs, FastAPI route objects) or file contents (Markdown links)
+directly, instead of relying on a reviewer agent to notice a violation
+on every pull request.
+
+Structural tests are a Tier 1 (unit) test, not a separate tier — they
+run in-process, require no database or network I/O, and are part of the
+unit suite executed by the pre-commit fast gate.
+
+**Governing principle**: a structural test may read code; it must never
+impose a format on a specification. If verifying a rule would require a
+specification document to remain machine-parsable (fixed table columns,
+a rigid heading structure, a parseable sub-language), the rule is not a
+structural test candidate — it stays with the appropriate reviewer
+agent, which can apply judgement to prose that legitimately varies in
+shape.
+
+### Location and Modules
+
+| Module | Location | What it enforces |
+|---|---|---|
+| Model conventions | `backend/tests/test_architecture/test_model_conventions.py` | Over every table in `Base.metadata`: primary key column type is UUID (`docs/conventions.md`, SQLAlchemy Conventions); every `DateTime` column is timezone-aware, i.e. `DateTime(timezone=True)` (`docs/conventions.md`, Timestamps & Timezones); no PostgreSQL ENUM type (`sa.Enum`/`postgresql.ENUM`) is used (`docs/conventions.md`, Enum Storage Strategy) |
+| Layer dependencies | `backend/tests/test_architecture/test_layer_dependencies.py` | The dependency direction of the Backend Layer Architecture table in `docs/architecture.md` — a module in a given layer does not import a layer that is not listed as an allowed dependency for it. Both runtime and type-checking-only (`TYPE_CHECKING`-guarded) imports are checked, since either represents a coupling the architecture forbids |
+| Documentation links | `backend/tests/test_docs_links.py` | Every relative Markdown link (`[text](path)` or `[text](path#anchor)`) in a tracked `.md` file resolves to an existing file or directory. `http(s)://` and `mailto:` links and anchor-only links (`#section`) are out of scope. A link whose entire `[text](target)` construct is wrapped in inline code spans (`` `[text](target)` ``) is also out of scope — this is a literal, illustrative example of link syntax (e.g. in `AGENTS.md`, Endpoint Permission Map maintenance), not a real link, and is not meant to resolve to a file. The test only detects and reports broken links; resolving them (fixing the link, creating the missing file, or removing the reference) is a judgement call left to whoever introduced or is reviewing the change |
+| API route conventions | `backend/tests/test_api_conventions.py` | Over every registered FastAPI route (excluding the documented `/health` and `/ready` exemption, `docs/features/platform/health-endpoints.md`): path starts with `/api/v1/` (`docs/api-spec.md`, Base URL); the HTTP method is one of `GET`/`POST`/`PATCH`/`DELETE` — the only methods the documented mutation patterns (`docs/api-spec.md`, Mutation Patterns) and the application's own CORS configuration allow; OpenAPI documentation (`summary` or `description`) is present (`docs/conventions.md`, FastAPI Conventions); a path referencing audit trails ends with the `/audit-log` suffix (`docs/api-spec.md`, Audit Trail Endpoint Naming); a `response_model` is declared, unless the route returns `204 No Content` (`docs/conventions.md`, FastAPI Conventions); the response schema has a top-level `data` property, i.e. the standard envelope, checked via the generated OpenAPI schema (`docs/api-spec.md`, Response Format) — the `/health`/`/ready` exemption also applies to this last check, since those endpoints are outside the envelope contract by design. This test passes vacuously when no routes are registered yet — it starts enforcing automatically as soon as the first endpoint is added, with no further action required |
+
+### Excluded Invariant
+
+The `Settings` class (`backend/app/config.py`) ↔ `docs/configuration.md`
+invariant (every settings field has a corresponding registry entry) is
+deliberately **not** a structural test. Verifying it would require
+`docs/configuration.md` to remain machine-parsable — turning an
+operator-facing reference document into a disguised configuration file.
+This invariant is verified by `@docs-reviewer` by explicit decision.
+
+---
+
 ## Test Structure and Naming
 
 ### Directory Structure
@@ -518,6 +564,10 @@ Test files mirror the `backend/app/` directory structure:
 backend/tests/
 ├── conftest.py                 # Shared fixtures
 ├── test_api_conventions.py     # Structural API convention tests
+├── test_docs_links.py          # Structural documentation link tests
+├── test_architecture/          # Structural model and layer tests
+│   ├── test_model_conventions.py   # Invariants over Base.metadata
+│   └── test_layer_dependencies.py  # Layer dependency direction (AST)
 ├── test_api/                   # E2e tests for API endpoints
 │   ├── conftest.py             # API-specific fixtures (authenticated clients)
 │   └── test_<resource>.py      # One file per API resource/router
@@ -882,7 +932,10 @@ comprehensive test coverage:
 - `docs/conventions.md` — Testing Conventions (style rules, naming),
   Transaction and Locking (pessimistic locking pattern)
 - `docs/architecture.md` — Single Docker image, multiple entrypoints
-  (shared by the image smoke suite's compose services)
+  (shared by the image smoke suite's compose services); Backend Layer
+  Architecture (dependency direction enforced by structural tests)
+- `docs/api-spec.md` — Base URL, Mutation Patterns, Audit Trail
+  Endpoint Naming (route conventions enforced by structural tests)
 - `docs/deployment.md` — Container Images (process roles), Release
   Process (build/publish pipeline gated by the image smoke suite)
 - `docs/features/platform/audit-trail-infrastructure.md` — Audit Trail

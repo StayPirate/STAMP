@@ -589,7 +589,7 @@ out), the response returns `{"data": []}`.
 **`Access: Public`**
 
 Soft-deleted ticket protection is enforced centrally — see
-`docs/api-spec.md` ([Scoped Responses](docs/api-spec.md#scoped-responses)).
+`docs/api-spec.md` ([Scoped Responses](../../api-spec.md#scoped-responses)).
 
 ### Add Reference
 

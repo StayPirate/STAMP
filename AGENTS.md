@@ -50,7 +50,7 @@ sentinel/
 │   │   ├── packages/            # Package tracking
 │   │   ├── platform/            # Platform infrastructure
 │   │   └── tickets/             # Ticket management
-│   └── reviews/                 # Review findings (untracked)
+│   └── reviews/                 # Review findings
 ├── .opencode/                   # OpenCode agents, skills, commands
 │   ├── agents/                  # Subagent definitions
 │   ├── commands/                # Custom slash commands
@@ -110,7 +110,7 @@ When checking for existing files or directories, ALWAYS inspect the
 actual filesystem (using `ls`, `Read`, or `Glob` tools) rather than
 relying solely on git-tracked files. Files and directories listed in
 `.gitignore` are not versioned but may contain important local work
-products (e.g., review findings in `docs/reviews/`, build
+products (e.g., `docs/reviews/.tracking.json`, build
 artifacts, local configuration). Never assume a file does not exist
 just because it is untracked by git. When overwriting a file, first
 check its current content on disk to avoid losing existing data.

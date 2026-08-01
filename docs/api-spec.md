@@ -578,7 +578,7 @@ check because they manage the manual-zone exit lifecycle:
 
 Read endpoints (GET) are never subject to this guard.
 
-See `docs/features/tickets/tickets.md` ([Mutability Guard](docs/features/tickets/tickets.md#mutability-guard))
+See `docs/features/tickets/tickets.md` ([Mutability Guard](features/tickets/tickets.md#mutability-guard))
 for the full specification.
 
 ### Response Applicability Derivation
