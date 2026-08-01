@@ -930,7 +930,7 @@ on-demand checks between scheduled runs.
 Pipeline Chain above) gates Python dependencies on every merge, but the
 image is Debian-based (`python:3.13-slim`) and the OS package layer is
 not covered by any dependency scanner. Dependabot cannot help here
-either: `python:3.13-slim` is a moving tag that never changes string,
+either: `python:3.13-slim` is a moving tag whose string never changes,
 so it never triggers a Dependabot update PR.
 
 **Deliberately non-blocking.** This scan never fails the workflow run

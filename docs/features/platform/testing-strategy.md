@@ -624,9 +624,13 @@ gracefully — if the binary is absent, it prints a warning and the
 commit proceeds — the same treatment already applied to `shellcheck`
 and `shfmt` (see `docs/conventions.md`, Shell Scripting). No specific
 version is pinned locally; any recent release is expected to behave
-consistently for this use case. Known false positives are allowlisted
-by regex pattern (never by path) in `.gitleaks.toml` at the repository
-root.
+consistently for this use case. `.gitleaks.toml` at the repository
+root extends gitleaks' default rule set and defines no allowlist
+today — verification during implementation confirmed the fictional
+values already used in this repository (e.g., the fictional bcrypt
+hash, `not-for-production` markers) do not trigger any default rule.
+Should a real false positive be observed in the future, it must be
+allowlisted by regex pattern — never by path — in that file.
 
 To activate after cloning:
 

@@ -112,9 +112,9 @@ jobs:
             echo ""
             echo "<details><summary>Fixable HIGH/CRITICAL findings</summary>"
             echo ""
-            echo '```'
+            echo '````'
             head -c 60000 trivy-fixable.txt
-            echo '```'
+            echo '````'
             echo ""
             echo "</details>"
             echo ""
@@ -126,7 +126,7 @@ jobs:
               --json number,title \
               --jq ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" | head -n1)
 
-          if [ -n "${existing}" ]; then
+          if [[ -n "${existing}" ]]; then
               gh issue edit "${existing}" --repo "${{ github.repository }}" --body-file "${body_file}"
           else
               gh issue create --repo "${{ github.repository }}" \

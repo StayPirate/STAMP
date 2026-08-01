@@ -46,7 +46,7 @@ fi
 
 # --- Secret scanning (gitleaks) ---
 # Scans staged changes for secrets. Local-only: there is no CI job or
-# GitHub Action for secret scanning (see docs/conventions.md and
+# GitHub Action for secret scanning (see
 # docs/features/platform/testing-strategy.md, Pre-Commit Hooks), so
 # this hook is the only enforcement point. No version is pinned; any
 # recent release is expected to behave consistently for this use case.
