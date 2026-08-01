@@ -50,19 +50,19 @@ def _iter_broken_links() -> list[str]:
     broken: list[str] = []
     for md_file in _tracked_markdown_files():
         content = md_file.read_text(encoding="utf-8")
-        for line_number, line in enumerate(content.splitlines(), start=1):
-            for match in _LINK_RE.finditer(line):
-                target = match.group(1)
-                if _is_out_of_scope(target):
-                    continue
-                path_part = target.split("#", 1)[0]
-                resolved = (md_file.parent / path_part).resolve()
-                if not resolved.exists():
-                    broken.append(
-                        f"{md_file.relative_to(REPO_ROOT)}:{line_number}: "
-                        f"link target '{target}' does not resolve to an "
-                        f"existing file or directory (resolved: {resolved})"
-                    )
+        for match in _LINK_RE.finditer(content):
+            target = match.group(1)
+            if _is_out_of_scope(target):
+                continue
+            path_part = target.split("#", 1)[0]
+            resolved = (md_file.parent / path_part).resolve()
+            if not resolved.exists():
+                line_number = content.count("\n", 0, match.start()) + 1
+                broken.append(
+                    f"{md_file.relative_to(REPO_ROOT)}:{line_number}: "
+                    f"link target '{target}' does not resolve to an "
+                    f"existing file or directory (resolved: {resolved})"
+                )
     return broken
 
 

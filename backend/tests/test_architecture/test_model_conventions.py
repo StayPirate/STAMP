@@ -3,12 +3,21 @@
 Verifies invariants declared in `docs/conventions.md` (SQLAlchemy
 Conventions, Enum Storage Strategy) and
 `docs/features/platform/testing-strategy.md` (Structural Tests) across
-every table registered in `Base.metadata`. These invariants apply
-universally — with no per-table exceptions — so this module
-intentionally does not maintain any allowlist. See the Structural
-Tests section of the testing strategy for the invariants deliberately
-kept out of this module's scope (CHECK constraint naming,
-`created_at`/`updated_at` presence).
+every table registered in `Base.metadata`.
+
+Scope note: CHECK constraint naming and `created_at`/`updated_at`
+presence are deliberately NOT verified here, even though both are
+model-level invariants. `docs/data-model.md` (Notes) already documents
+a growing, per-table exception list for `created_at`/`updated_at`
+(append-only and auto-created tables); mirroring that list here would
+require hand-keeping a second copy in sync, since this module must not
+parse `data-model.md`. CHECK constraint naming has only two instances
+project-wide, one of which (`chk_user_auth_exclusive`) is a legitimate
+exception to the enum-check pattern — a case better served by human
+review in each rare PR that adds one than by a hard-coded rule (see
+issue #58 for the full rationale). The three invariants below apply
+universally, with zero per-table exceptions, which is what makes them
+good structural-test candidates.
 """
 
 from __future__ import annotations
@@ -39,15 +48,20 @@ class TestPrimaryKeyType:
     """
 
     def test_every_table_has_a_uuid_primary_key(self) -> None:
+        violations: list[str] = []
         for table in _mapped_tables():
             pk_columns = list(table.primary_key.columns)
-            assert pk_columns, f"Table '{table.name}' has no primary key"
+            if not pk_columns:
+                violations.append(f"Table '{table.name}' has no primary key")
+                continue
             for column in pk_columns:
-                assert isinstance(column.type, UUID), (
-                    f"Table '{table.name}' primary key column "
-                    f"'{column.name}' is not a UUID type "
-                    f"(got {type(column.type).__name__})"
-                )
+                if not isinstance(column.type, UUID):
+                    violations.append(
+                        f"Table '{table.name}' primary key column "
+                        f"'{column.name}' is not a UUID type "
+                        f"(got {type(column.type).__name__})"
+                    )
+        assert not violations, "\n".join(violations)
 
 
 @pytest.mark.unit
@@ -60,14 +74,19 @@ class TestDateTimeColumnsAreTimezoneAware:
     """
 
     def test_every_datetime_column_declares_timezone_true(self) -> None:
+        violations: list[str] = []
         for table in _mapped_tables():
             for column in table.columns:
-                if isinstance(column.type, DateTime):
-                    assert column.type.timezone is True, (
+                if (
+                    isinstance(column.type, DateTime)
+                    and column.type.timezone is not True
+                ):
+                    violations.append(
                         f"Table '{table.name}' column '{column.name}' "
                         "uses DateTime without timezone=True "
                         "(produces a naive TIMESTAMP column)"
                     )
+        assert not violations, "\n".join(violations)
 
 
 @pytest.mark.unit
@@ -85,11 +104,14 @@ class TestNoPostgresEnumTypes:
     """
 
     def test_no_column_uses_a_native_enum_type(self) -> None:
+        violations: list[str] = []
         for table in _mapped_tables():
             for column in table.columns:
-                assert not isinstance(column.type, SAEnum), (
-                    f"Table '{table.name}' column '{column.name}' uses "
-                    "a native ENUM type (forbidden — use VARCHAR(N) "
-                    "with a CHECK constraint or a Python StrEnum instead, "
-                    "per the Enum Storage Strategy)"
-                )
+                if isinstance(column.type, SAEnum):
+                    violations.append(
+                        f"Table '{table.name}' column '{column.name}' uses "
+                        "a native ENUM type (forbidden — use VARCHAR(N) "
+                        "with a CHECK constraint or a Python StrEnum instead, "
+                        "per the Enum Storage Strategy)"
+                    )
+        assert not violations, "\n".join(violations)

@@ -54,13 +54,43 @@ def _iter_python_files(directory: Path) -> list[Path]:
     return sorted(directory.rglob("*.py"))
 
 
-def _imported_app_modules(source: str) -> set[str]:
+def _containing_package(file_path: Path) -> str:
+    """The dotted package path containing `file_path` — its `__package__`
+    value if imported as part of the `app` package. Used to resolve
+    relative imports (`from . import x`, `from .. import x`) to an
+    absolute `app.*` module path. This is the dotted path of the file's
+    parent directory, which is correct both for a regular module and
+    for a package's `__init__.py`.
+    """
+    relative_dir = file_path.relative_to(APP_ROOT.parent).parent
+    return ".".join(relative_dir.parts)
+
+
+def _resolve_relative_import(package: str, node: ast.ImportFrom) -> str | None:
+    """Resolve a relative `ast.ImportFrom` (`node.level > 0`) to an
+    absolute dotted module path, following the same algorithm Python's
+    import system uses (see `importlib._bootstrap._resolve_name`).
+    Returns `None` if the relative import climbs above the top-level
+    package (invalid, would fail at runtime — not this test's concern).
+    """
+    bits = package.rsplit(".", node.level - 1)
+    if len(bits) < node.level:
+        return None
+    base = bits[0]
+    return f"{base}.{node.module}" if node.module else base
+
+
+def _imported_app_modules(source: str, package: str) -> set[str]:
     """Every `app.*` module path imported anywhere in `source`.
 
     Uses a full AST walk (`ast.walk`, not just top-level statements) so
     that imports guarded by `if TYPE_CHECKING:` or nested inside
     functions are still caught — a cross-layer coupling is a violation
-    whether it is a runtime dependency or a type-only one.
+    whether it is a runtime dependency or a type-only one. Relative
+    imports (`from . import x`, `from .. import x`) are resolved to
+    their absolute form using `package` (the dotted path of the
+    importing file's own package) before the `app.` prefix check, so a
+    cross-layer relative import cannot silently bypass this test.
     """
     tree = ast.parse(source)
     modules: set[str] = set()
@@ -69,10 +99,14 @@ def _imported_app_modules(source: str) -> set[str]:
             for alias in node.names:
                 if alias.name.startswith("app."):
                     modules.add(alias.name)
-        elif isinstance(node, ast.ImportFrom) and (
-            node.module and node.module.startswith("app.")
-        ):
-            modules.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            module = (
+                _resolve_relative_import(package, node)
+                if node.level > 0
+                else node.module
+            )
+            if module and module.startswith("app."):
+                modules.add(module)
     return modules
 
 
@@ -93,7 +127,8 @@ def _iter_layer_violations() -> list[str]:
     for dir_name, layer_prefix in LAYER_DIRS.items():
         for path in _iter_python_files(APP_ROOT / dir_name):
             source = path.read_text(encoding="utf-8")
-            for module in _imported_app_modules(source):
+            package = _containing_package(path)
+            for module in _imported_app_modules(source, package):
                 imported_layer = _layer_of(module)
                 if imported_layer is None:
                     continue  # shared infrastructure, always allowed

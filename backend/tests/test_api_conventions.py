@@ -51,12 +51,13 @@ class TestRoutePrefixConvention:
     """
 
     def test_every_route_has_api_v1_prefix_or_is_exempt(self) -> None:
-        for route in _api_routes():
-            if route.path in _PREFIX_EXEMPT_PATHS:
-                continue
-            assert route.path.startswith("/api/v1/"), (
-                f"Route '{route.path}' is missing the required '/api/v1/' prefix"
-            )
+        violations = [
+            f"Route '{route.path}' is missing the required '/api/v1/' prefix"
+            for route in _api_routes()
+            if route.path not in _PREFIX_EXEMPT_PATHS
+            and not route.path.startswith("/api/v1/")
+        ]
+        assert not violations, "\n".join(violations)
 
 
 @pytest.mark.unit
@@ -69,13 +70,16 @@ class TestRouteHttpMethods:
     """
 
     def test_every_route_uses_only_allowed_methods(self) -> None:
+        violations: list[str] = []
         for route in _api_routes():
             methods = route.methods or set()
             disallowed = methods - _ALLOWED_METHODS
-            assert not disallowed, (
-                f"Route '{route.path}' uses disallowed HTTP method(s) "
-                f"{disallowed} (allowed: {_ALLOWED_METHODS})"
-            )
+            if disallowed:
+                violations.append(
+                    f"Route '{route.path}' uses disallowed HTTP method(s) "
+                    f"{disallowed} (allowed: {_ALLOWED_METHODS})"
+                )
+        assert not violations, "\n".join(violations)
 
 
 @pytest.mark.unit
@@ -89,12 +93,13 @@ class TestRouteDocumentation:
     """
 
     def test_every_route_has_summary_or_description(self) -> None:
-        for route in _api_routes():
-            assert route.summary or route.description, (
-                f"Route '{route.path}' has no OpenAPI summary or "
-                "description (add a docstring or explicit summary/"
-                "description)"
-            )
+        violations = [
+            f"Route '{route.path}' has no OpenAPI summary or description "
+            "(add a docstring or explicit summary/description)"
+            for route in _api_routes()
+            if not (route.summary or route.description)
+        ]
+        assert not violations, "\n".join(violations)
 
 
 @pytest.mark.unit
@@ -107,9 +112,10 @@ class TestAuditLogEndpointNaming:
     """
 
     def test_audit_related_routes_end_with_audit_log_suffix(self) -> None:
-        for route in _api_routes():
-            if "audit" in route.path.lower():
-                assert route.path.endswith("/audit-log"), (
-                    f"Route '{route.path}' references audit trails but "
-                    "does not end with the required '/audit-log' suffix"
-                )
+        violations = [
+            f"Route '{route.path}' references audit trails but does not "
+            "end with the required '/audit-log' suffix"
+            for route in _api_routes()
+            if "audit" in route.path.lower() and not route.path.endswith("/audit-log")
+        ]
+        assert not violations, "\n".join(violations)

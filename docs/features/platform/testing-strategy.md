@@ -538,10 +538,10 @@ shape.
 
 | Module | Location | What it enforces |
 |---|---|---|
-| Model conventions | `backend/tests/test_architecture/test_model_conventions.py` | Over every table in `Base.metadata`: primary key column type is UUID; every `DateTime` column is timezone-aware (`DateTime(timezone=True)`); no PostgreSQL ENUM type (`sa.Enum`/`postgresql.ENUM`) is used — see `docs/conventions.md` (Enum Storage Strategy) |
+| Model conventions | `backend/tests/test_architecture/test_model_conventions.py` | Over every table in `Base.metadata`: primary key column type is UUID (`docs/conventions.md`, SQLAlchemy Conventions); every `DateTime` column is timezone-aware, i.e. `DateTime(timezone=True)` (`docs/conventions.md`, Timestamps & Timezones); no PostgreSQL ENUM type (`sa.Enum`/`postgresql.ENUM`) is used (`docs/conventions.md`, Enum Storage Strategy) |
 | Layer dependencies | `backend/tests/test_architecture/test_layer_dependencies.py` | The dependency direction of the Backend Layer Architecture table in `docs/architecture.md` — a module in a given layer does not import a layer that is not listed as an allowed dependency for it. Both runtime and type-checking-only (`TYPE_CHECKING`-guarded) imports are checked, since either represents a coupling the architecture forbids |
-| Documentation links | `backend/tests/test_docs_links.py` | Every relative Markdown link (`[text](path)` or `[text](path#anchor)`) in a tracked `.md` file resolves to an existing file. `http(s)://` and `mailto:` links, anchor-only links (`#section`), and paths written inside inline code spans (`` `path` ``) are out of scope — the latter intentionally reference not-yet-written files. The test only detects and reports broken links; resolving them (fixing the link, creating the missing file, or removing the reference) is a judgement call left to whoever introduced or is reviewing the change |
-| API route conventions | `backend/tests/test_api_conventions.py` | Over every registered FastAPI route (excluding the documented `/health` and `/ready` exemption): path starts with `/api/v1/`; the HTTP method is one of `GET`/`POST`/`PATCH`/`DELETE` (the only methods the documented mutation patterns and the application's own CORS configuration allow); OpenAPI documentation (`summary` or `description`) is present; a path referencing audit trails ends with the `/audit-log` suffix. This test passes vacuously when no routes are registered yet — it starts enforcing automatically as soon as the first endpoint is added, with no further action required |
+| Documentation links | `backend/tests/test_docs_links.py` | Every relative Markdown link (`[text](path)` or `[text](path#anchor)`) in a tracked `.md` file resolves to an existing file or directory. `http(s)://` and `mailto:` links and anchor-only links (`#section`) are out of scope. A link whose entire `[text](target)` construct is wrapped in inline code spans (`` `[text](target)` ``) is also out of scope — this is a literal, illustrative example of link syntax (e.g. in `AGENTS.md`, Endpoint Permission Map maintenance), not a real link, and is not meant to resolve to a file. The test only detects and reports broken links; resolving them (fixing the link, creating the missing file, or removing the reference) is a judgement call left to whoever introduced or is reviewing the change |
+| API route conventions | `backend/tests/test_api_conventions.py` | Over every registered FastAPI route (excluding the documented `/health` and `/ready` exemption, `docs/features/platform/health-endpoints.md`): path starts with `/api/v1/` (`docs/api-spec.md`, Base URL); the HTTP method is one of `GET`/`POST`/`PATCH`/`DELETE` — the only methods the documented mutation patterns (`docs/api-spec.md`, Mutation Patterns) and the application's own CORS configuration allow; OpenAPI documentation (`summary` or `description`) is present (`docs/conventions.md`, FastAPI Conventions); a path referencing audit trails ends with the `/audit-log` suffix (`docs/api-spec.md`, Audit Trail Endpoint Naming). This test passes vacuously when no routes are registered yet — it starts enforcing automatically as soon as the first endpoint is added, with no further action required |
 
 ### Excluded Invariant
 
@@ -932,7 +932,10 @@ comprehensive test coverage:
 - `docs/conventions.md` — Testing Conventions (style rules, naming),
   Transaction and Locking (pessimistic locking pattern)
 - `docs/architecture.md` — Single Docker image, multiple entrypoints
-  (shared by the image smoke suite's compose services)
+  (shared by the image smoke suite's compose services); Backend Layer
+  Architecture (dependency direction enforced by structural tests)
+- `docs/api-spec.md` — Base URL, Mutation Patterns, Audit Trail
+  Endpoint Naming (route conventions enforced by structural tests)
 - `docs/deployment.md` — Container Images (process roles), Release
   Process (build/publish pipeline gated by the image smoke suite)
 - `docs/features/platform/audit-trail-infrastructure.md` — Audit Trail
