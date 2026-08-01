@@ -461,7 +461,20 @@ specifications — use `VARCHAR(N)` as the column type for enumerated
 columns. The enum name and valid values are documented in the column
 description or in a dedicated enum section.
 
-**CHECK constraint naming**: `chk_{table}_{column}_valid`.
+**CHECK constraint naming**: every CHECK constraint name starts with the
+`chk_{table}_` prefix. Beyond the prefix, the suffix depends on what the
+constraint validates:
+
+- **Enum-validation constraints** (restrict a single column to the
+  values of a Category A `StrEnum`, as in the Enum Storage Strategy
+  above): `chk_{table}_{column}_valid`. Example: `chk_ticket_status_valid`.
+- **Logical/structural constraints** (any other invariant — typically
+  spanning multiple columns, such as mutual exclusivity between two
+  nullable columns): `chk_{table}_{semantic_description}`, where the
+  description names the invariant being enforced, not a column. Example:
+  `chk_user_auth_exclusive` (enforces that a `User` row has exactly one
+  of `external_id` or `password_hash` set — see `docs/data-model.md`,
+  `User`).
 
 **Implementation patterns**:
 
