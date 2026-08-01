@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+from collections.abc import Iterator
 
 import pytest
 
@@ -20,7 +21,7 @@ from app.core.logging import (
 )
 
 
-def _settings(**overrides) -> Settings:
+def _settings(**overrides: str) -> Settings:
     """Build a Settings instance for logging tests, bypassing env/file
     sources entirely so tests are hermetic."""
     defaults = {
@@ -30,11 +31,15 @@ def _settings(**overrides) -> Settings:
         "log_format": "json",
     }
     defaults.update(overrides)
-    return Settings(_env_file=None, **defaults)
+    # pydantic-settings' BaseSettings.__init__ exposes many strictly-typed
+    # special init kwargs (_cli_settings_source, etc.) beyond the model's
+    # own fields, so a **dict[str, str] spread cannot be matched precisely
+    # against every possible parameter slot.
+    return Settings(_env_file=None, **defaults)  # type: ignore[arg-type]
 
 
 @pytest.fixture(autouse=True)
-def _reset_logging_state():
+def _reset_logging_state() -> Iterator[None]:
     """Save/restore global logging state around every test.
 
     `configure_logging`/`configure_cli_logging` mutate the root logger
@@ -79,19 +84,19 @@ class _FakeStream(io.StringIO):
 class TestResolveLogFormat:
     """Pure function: auto-detection and explicit override behavior."""
 
-    def test_auto_resolves_to_console_when_tty(self):
+    def test_auto_resolves_to_console_when_tty(self) -> None:
         stream = _FakeStream(isatty=True)
         assert resolve_log_format("auto", stream=stream) == "console"
 
-    def test_auto_resolves_to_json_when_not_tty(self):
+    def test_auto_resolves_to_json_when_not_tty(self) -> None:
         stream = _FakeStream(isatty=False)
         assert resolve_log_format("auto", stream=stream) == "json"
 
-    def test_explicit_json_overrides_tty_stream(self):
+    def test_explicit_json_overrides_tty_stream(self) -> None:
         stream = _FakeStream(isatty=True)
         assert resolve_log_format("json", stream=stream) == "json"
 
-    def test_explicit_console_overrides_non_tty_stream(self):
+    def test_explicit_console_overrides_non_tty_stream(self) -> None:
         stream = _FakeStream(isatty=False)
         assert resolve_log_format("console", stream=stream) == "console"
 
@@ -100,7 +105,7 @@ class TestResolveLogFormat:
 class TestConfigureLoggingJsonSchema:
     """JSON renderer output matches the Standard Log Record Schema."""
 
-    def test_json_record_has_required_fields(self):
+    def test_json_record_has_required_fields(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(log_format="json", app_name="sentinel-schema-test")
         configure_logging(settings, stream=stream)
@@ -118,7 +123,7 @@ class TestConfigureLoggingJsonSchema:
         assert record["app"] == "sentinel-schema-test"
         assert record["timestamp"].endswith("Z")
 
-    def test_level_values_are_lowercase(self):
+    def test_level_values_are_lowercase(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(log_level="DEBUG")
         configure_logging(settings, stream=stream)
@@ -131,7 +136,7 @@ class TestConfigureLoggingJsonSchema:
         record = json.loads(stream.getvalue().strip())
         assert record["level"] == "warning"
 
-    def test_correlation_fields_omitted_when_not_bound(self):
+    def test_correlation_fields_omitted_when_not_bound(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings()
         configure_logging(settings, stream=stream)
@@ -146,7 +151,7 @@ class TestConfigureLoggingJsonSchema:
         assert "celery_task_id" not in record
         assert "fetcher_run_id" not in record
 
-    def test_correlation_field_present_when_bound(self):
+    def test_correlation_field_present_when_bound(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings()
         configure_logging(settings, stream=stream)
@@ -163,7 +168,7 @@ class TestConfigureLoggingJsonSchema:
         record = json.loads(stream.getvalue().strip())
         assert record["request_id"] == "req-123"
 
-    def test_exception_field_rendered_on_exception_log(self):
+    def test_exception_field_rendered_on_exception_log(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings()
         configure_logging(settings, stream=stream)
@@ -186,7 +191,7 @@ class TestConfigureLoggingJsonSchema:
 class TestConfigureLoggingConsole:
     """Console renderer produces human-readable, non-JSON output."""
 
-    def test_console_output_is_not_json(self):
+    def test_console_output_is_not_json(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(log_format="console")
         configure_logging(settings, stream=stream)
@@ -206,7 +211,7 @@ class TestConfigureLoggingConsole:
 class TestConfigureLoggingLevel:
     """LOG_LEVEL controls all loggers uniformly; no per-logger pins."""
 
-    def test_debug_below_configured_level_is_suppressed(self):
+    def test_debug_below_configured_level_is_suppressed(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(log_level="INFO")
         configure_logging(settings, stream=stream)
@@ -218,7 +223,7 @@ class TestConfigureLoggingLevel:
 
         assert stream.getvalue() == ""
 
-    def test_level_at_or_above_configured_level_is_emitted(self):
+    def test_level_at_or_above_configured_level_is_emitted(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(log_level="WARNING")
         configure_logging(settings, stream=stream)
@@ -230,7 +235,7 @@ class TestConfigureLoggingLevel:
 
         assert "should_appear" in stream.getvalue()
 
-    def test_third_party_loggers_deferred_to_root(self):
+    def test_third_party_loggers_deferred_to_root(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(log_level="ERROR")
         configure_logging(settings, stream=stream)
@@ -240,7 +245,7 @@ class TestConfigureLoggingLevel:
             assert logger.level == logging.NOTSET
             assert logger.propagate is True
 
-    def test_sqlalchemy_parent_logger_does_not_cap_engine_level(self):
+    def test_sqlalchemy_parent_logger_does_not_cap_engine_level(self) -> None:
         """SQLAlchemy pins the parent "sqlalchemy" logger to WARNING at
         import time; it must also be reset so it doesn't cap the
         effective level of "sqlalchemy.engine" below the configured
@@ -254,7 +259,7 @@ class TestConfigureLoggingLevel:
             logging.getLogger("sqlalchemy.engine").getEffectiveLevel() == logging.DEBUG
         )
 
-    def test_third_party_logger_captured_in_same_pipeline(self):
+    def test_third_party_logger_captured_in_same_pipeline(self) -> None:
         stream = _FakeStream(isatty=False)
         settings = _settings(
             log_level="INFO", log_format="json", app_name="sentinel-third-party"
@@ -276,7 +281,7 @@ class TestConfigureLoggingLevel:
 class TestConfigureLoggingIdempotency:
     """Calling configure_logging multiple times must not duplicate output."""
 
-    def test_second_call_replaces_handlers(self):
+    def test_second_call_replaces_handlers(self) -> None:
         stream1 = _FakeStream(isatty=False)
         stream2 = _FakeStream(isatty=False)
         settings = _settings()
@@ -298,7 +303,9 @@ class TestConfigureLoggingIdempotency:
 class TestConfigureCliLogging:
     """CLI logging: stderr, plain text, WARNING threshold, no correlation."""
 
-    def test_routes_to_stderr_not_stdout(self, capsys):
+    def test_routes_to_stderr_not_stdout(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure_cli_logging()
 
         logging.getLogger("app.test.cli").warning("cli_warning")
@@ -307,7 +314,9 @@ class TestConfigureCliLogging:
         assert captured.out == ""
         assert "cli_warning" in captured.err
 
-    def test_info_below_warning_is_suppressed(self, capsys):
+    def test_info_below_warning_is_suppressed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure_cli_logging()
 
         logging.getLogger("app.test.cli.info").info("cli_info_should_not_appear")
@@ -315,7 +324,9 @@ class TestConfigureCliLogging:
         captured = capsys.readouterr()
         assert captured.err == ""
 
-    def test_output_is_plain_text_not_json(self, capsys):
+    def test_output_is_plain_text_not_json(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure_cli_logging()
 
         logging.getLogger("app.test.cli.plain").warning("cli_plain_event")

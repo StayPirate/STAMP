@@ -278,6 +278,31 @@ configured MUST use `if not value` (or equivalent), never
 - Use `from __future__ import annotations` for modern annotation syntax
 - Use `Optional[X]` or `X | None` for nullable types
 
+### Static Type Checking
+
+Type hints are enforced, not just written. Static type checking in strict
+mode is a mandatory CI gate, equivalent in authority to linting — a pull
+request with type errors cannot merge.
+
+**Scope**: both application code (`app/`) and tests (`tests/`) are checked.
+Excluding tests from static type checking would allow type errors to
+accumulate silently in the test suite, which is exempt from this rule only
+where explicitly noted below.
+
+**Suppressing false positives**: an inline suppression MUST always name the
+specific error code it silences (e.g., a code suffix identifying the
+category of error being ignored). An unqualified suppression that silences
+every possible error category is forbidden, because it hides unrelated
+future errors under the same line.
+
+**Unstubbed third-party libraries**: a dependency that ships no type
+information may be exempted from import-resolution errors on a per-module
+basis. Each such exemption MUST be revisited when the dependency gains type
+support, or when the feature area that depends on it moves from stub/interim
+implementation to full implementation — whichever comes first. When a
+tracking issue for that feature area already exists, note the pending
+exemption removal there so it is not forgotten.
+
 ### Naming
 
 - **Files**: `snake_case.py`

@@ -29,6 +29,8 @@ dev = [
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
     "ruff>=0.16.0",
+    "mypy>=1.14.0",
+    "types-redis>=4.6.0",
     "testcontainers[postgres]>=4.15.0",
 ]
 
@@ -44,14 +46,20 @@ line-length = 88
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "N",    # pep8-naming
-    "UP",   # pyupgrade
-    "B",    # flake8-bugbear
-    "SIM",  # flake8-simplify
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "DTZ",   # flake8-datetimez (enforces UTC-aware datetimes)
+    "ASYNC", # flake8-async (async pitfalls)
+    "PT",    # flake8-pytest-style
+    "RUF",   # ruff-specific rules
+    "C4",    # flake8-comprehensions
+    "LOG",   # flake8-logging
 ]
 
 [tool.ruff.lint.isort]
@@ -64,6 +72,24 @@ known-first-party = ["app"]
 exclude_dirs = ["tests"]
 skips = ["B101"]  # skip assert warnings (used in tests/app code)
 
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+enable_error_code = ["unused-awaitable", "ignore-without-code"]
+
+# Libraries without bundled type stubs or py.typed markers. Each entry
+# MUST be revisited when the library gains type support, or when the
+# feature area that depends on it moves from stub/interim implementation
+# to full implementation — whichever comes first (see docs/conventions.md,
+# Static Type Checking).
+[[tool.mypy.overrides]]
+module = [
+    "celery.*",
+    "celery_redbeat.*",
+    "testcontainers.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
@@ -72,16 +98,24 @@ testpaths = ["tests"]
 # Exclude the black-box container smoke suite from the default run. It
 # requires a running container (started by scripts/image-smoke.sh) and
 # must not be pulled into `uv run pytest` or the coverage measurement.
-addopts = "-m 'not image'"
+# --strict-markers: an unregistered marker fails the run instead of
+# emitting a silent warning.
+# --strict-config: an unrecognized ini option fails the run instead of
+# being silently ignored.
+addopts = "-m 'not image' --strict-markers --strict-config"
 markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
     "image: Black-box container smoke tests (require Docker/Podman; excluded from default run)",
 ]
+filterwarnings = [
+    "error",
+]
 
 [tool.coverage.run]
 source = ["app"]
+branch = true
 omit = [
     "*/tests/*",
     "*/alembic/*",

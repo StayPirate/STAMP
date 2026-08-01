@@ -9,6 +9,7 @@ would not enforce identically.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 import pytest
@@ -275,18 +276,24 @@ class TestUserTimezoneAwareTimestamps:
 class TestUserFactoryFixture:
     """Sanity checks for the shared user_factory fixture."""
 
-    async def test_creates_local_user_by_default(self, user_factory) -> None:
+    async def test_creates_local_user_by_default(
+        self, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
         user = await user_factory()
         assert user.id is not None
         assert user.external_id is None
         assert user.password_hash is not None
 
-    async def test_overrides_take_precedence(self, user_factory) -> None:
+    async def test_overrides_take_precedence(
+        self, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
         user = await user_factory(username="specificname")
         assert user.username == "specificname"
 
     async def test_multiple_calls_do_not_collide(
-        self, user_factory, db_session: AsyncSession
+        self,
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
     ) -> None:
         first = await user_factory()
         second = await user_factory()
@@ -296,7 +303,9 @@ class TestUserFactoryFixture:
         result = await db_session.execute(select(User))
         assert len(result.scalars().all()) == 2
 
-    async def test_external_user_override(self, user_factory) -> None:
+    async def test_external_user_override(
+        self, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
         user = await user_factory(external_id=uuid.uuid4(), password_hash=None)
         assert user.external_id is not None
         assert user.password_hash is None

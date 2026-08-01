@@ -7,19 +7,21 @@ See docs/data-model.md (UserRole) and docs/features/identity/rbac.md
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import Role
+from app.models.user import User
 from app.models.user_role import UserRole
 
 
 @pytest.mark.integration
 class TestUserRoleCreation:
     async def test_create_manual_role(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         role = UserRole(user_id=user.id, role=Role.VULNERABILITY_ANALYST.value)
@@ -31,7 +33,7 @@ class TestUserRoleCreation:
         assert role.created_at is not None
 
     async def test_create_externally_derived_role(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         role = UserRole(
@@ -45,7 +47,7 @@ class TestUserRoleCreation:
         assert role.group_name == "SecurityTeam"
 
     async def test_create_with_assigning_user(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         admin = await user_factory()
         target = await user_factory()
@@ -60,7 +62,7 @@ class TestUserRoleCreation:
         assert role.assigned_by == admin.id
 
     async def test_assigned_by_nullable_for_system_actions(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         role = UserRole(user_id=user.id, role=Role.ADMIN.value)
@@ -74,7 +76,7 @@ class TestUserRoleValidCheck:
     """chk_user_role_role_valid: only the three Role enum values allowed."""
 
     async def test_invalid_role_value_rejected(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         role = UserRole(user_id=user.id, role="SuperAdmin")
@@ -84,7 +86,10 @@ class TestUserRoleValidCheck:
 
     @pytest.mark.parametrize("role_value", [r.value for r in Role])
     async def test_each_valid_role_value_accepted(
-        self, db_session: AsyncSession, user_factory, role_value: str
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        role_value: str,
     ) -> None:
         user = await user_factory()
         role = UserRole(user_id=user.id, role=role_value)
@@ -98,7 +103,7 @@ class TestUserRoleUniqueConstraint:
     """Unique constraint: (user_id, role, group_name)."""
 
     async def test_duplicate_origin_rejected(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         db_session.add(UserRole(user_id=user.id, role=Role.ADMIN.value))
@@ -109,7 +114,7 @@ class TestUserRoleUniqueConstraint:
             await db_session.flush()
 
     async def test_same_role_different_origin_allowed(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         """A user can hold the same role from multiple origins
         simultaneously (Coexistence Rules, rule 1)."""
@@ -133,7 +138,7 @@ class TestUserRoleForeignKeys:
             await db_session.flush()
 
     async def test_nonexistent_assigned_by_rejected(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         role = UserRole(
@@ -147,7 +152,7 @@ class TestUserRoleForeignKeys:
 @pytest.mark.integration
 class TestUserRoleNotNullConstraints:
     async def test_missing_role_rejected(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         db_session.add(UserRole(user_id=user.id))
@@ -163,7 +168,7 @@ class TestUserRoleNotNullConstraints:
 @pytest.mark.integration
 class TestUserRoleRelationships:
     async def test_user_roles_relationship(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         db_session.add(UserRole(user_id=user.id, role=Role.VULNERABILITY_ANALYST.value))
@@ -174,7 +179,7 @@ class TestUserRoleRelationships:
         assert user.roles[0].role == Role.VULNERABILITY_ANALYST.value
 
     async def test_assigning_user_relationship(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         admin = await user_factory()
         target = await user_factory()
@@ -187,7 +192,7 @@ class TestUserRoleRelationships:
         assert role.assigning_user.id == admin.id
 
     async def test_deleting_user_cascades_to_roles(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         """User.roles uses cascade="all, delete-orphan": deleting a User
         via the ORM removes its UserRole rows (see user_role.py comment).
@@ -211,7 +216,7 @@ class TestUserRoleRelationships:
 @pytest.mark.integration
 class TestUserRoleGroupNameDefault:
     async def test_default_group_name_is_manual(
-        self, db_session: AsyncSession, user_factory
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
         user = await user_factory()
         role = UserRole(user_id=user.id, role=Role.ADMIN.value)

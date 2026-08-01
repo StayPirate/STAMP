@@ -12,6 +12,8 @@ without depending on database/CORS/other application wiring.
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -36,26 +38,28 @@ def _build_test_app() -> FastAPI:
     test_app = FastAPI()
     test_app.add_middleware(RequestIDMiddleware)
 
-    captured_logs: list[dict] = []
-    background_calls: list[dict] = []
+    captured_logs: list[dict[str, Any]] = []
+    background_calls: list[dict[str, Any]] = []
     test_app.state.captured_logs = captured_logs
     test_app.state.background_calls = background_calls
 
     @test_app.get("/ok")
-    async def ok_endpoint():
+    async def ok_endpoint() -> dict[str, str]:
         captured_logs.append(dict(structlog.contextvars.get_contextvars()))
         return {"status": "ok"}
 
     @test_app.get("/boom")
-    async def boom_endpoint():
+    async def boom_endpoint() -> None:
         raise HTTPException(status_code=500, detail="boom")
 
     @test_app.post("/validate")
-    async def validate_endpoint(payload: _Payload):
+    async def validate_endpoint(payload: _Payload) -> dict[str, int]:
         return {"value": payload.value}
 
     @test_app.get("/background")
-    async def background_endpoint(background_tasks: BackgroundTasks):
+    async def background_endpoint(
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, str]:
         def _record() -> None:
             background_calls.append(dict(structlog.contextvars.get_contextvars()))
 
@@ -66,7 +70,7 @@ def _build_test_app() -> FastAPI:
 
 
 @pytest.fixture
-async def middleware_app_client():
+async def middleware_app_client() -> AsyncGenerator[tuple[AsyncClient, FastAPI]]:
     test_app = _build_test_app()
     async with AsyncClient(
         transport=ASGITransport(app=test_app), base_url="http://test"
@@ -78,10 +82,10 @@ async def middleware_app_client():
 class TestNonHttpScopePassthrough:
     """Non-HTTP ASGI scopes (websocket, lifespan) bypass the middleware."""
 
-    async def test_non_http_scope_calls_through_without_binding(self):
+    async def test_non_http_scope_calls_through_without_binding(self) -> None:
         inner_app = AsyncMock()
         middleware = RequestIDMiddleware(inner_app)
-        scope = {"type": "lifespan"}
+        scope: dict[str, Any] = {"type": "lifespan"}
         receive = AsyncMock()
         send = AsyncMock()
 
@@ -95,21 +99,25 @@ class TestNonHttpScopePassthrough:
 class TestRequestIDGeneration:
     """Adoption vs. generation of the X-Request-ID header."""
 
-    async def test_generates_uuid_when_header_absent(self, middleware_app_client):
+    async def test_generates_uuid_when_header_absent(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/ok")
         assert response.status_code == 200
         request_id = response.headers["x-request-id"]
         assert _UUID_RE.match(request_id)
 
-    async def test_adopts_valid_client_supplied_header(self, middleware_app_client):
+    async def test_adopts_valid_client_supplied_header(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/ok", headers={"X-Request-ID": "my-custom-id.123"})
         assert response.headers["x-request-id"] == "my-custom-id.123"
 
     async def test_two_requests_get_different_generated_ids(
-        self, middleware_app_client
-    ):
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         r1 = await client.get("/ok")
         r2 = await client.get("/ok")
@@ -121,40 +129,52 @@ class TestRequestIDValidation:
     """Client-supplied value validation per docs/api-spec.md."""
 
     async def test_rejects_invalid_characters_falls_back_to_uuid(
-        self, middleware_app_client
-    ):
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/ok", headers={"X-Request-ID": "has spaces!"})
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_rejects_value_exceeding_128_chars(self, middleware_app_client):
+    async def test_rejects_value_exceeding_128_chars(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         too_long = "a" * 129
         response = await client.get("/ok", headers={"X-Request-ID": too_long})
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_accepts_exactly_128_chars(self, middleware_app_client):
+    async def test_accepts_exactly_128_chars(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         exactly_128 = "a" * 128
         response = await client.get("/ok", headers={"X-Request-ID": exactly_128})
         assert response.headers["x-request-id"] == exactly_128
 
-    async def test_trims_leading_trailing_whitespace(self, middleware_app_client):
+    async def test_trims_leading_trailing_whitespace(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/ok", headers={"X-Request-ID": "  trimmed-id  "})
         assert response.headers["x-request-id"] == "trimmed-id"
 
-    async def test_rejects_empty_value_falls_back_to_uuid(self, middleware_app_client):
+    async def test_rejects_empty_value_falls_back_to_uuid(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/ok", headers={"X-Request-ID": ""})
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_rejects_whitespace_only_value(self, middleware_app_client):
+    async def test_rejects_whitespace_only_value(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/ok", headers={"X-Request-ID": "   "})
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_duplicate_headers_uses_first_occurrence(self, middleware_app_client):
+    async def test_duplicate_headers_uses_first_occurrence(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         # httpx allows building a request with multiple same-name headers
         # via a list of tuples.
@@ -167,8 +187,8 @@ class TestRequestIDValidation:
         assert response.headers["x-request-id"] == "first-id"
 
     async def test_invalid_first_occurrence_not_rescued_by_valid_second(
-        self, middleware_app_client
-    ):
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         request = client.build_request(
             "GET",
@@ -183,19 +203,25 @@ class TestRequestIDValidation:
 class TestRequestIDOnErrorResponses:
     """Every response carries X-Request-ID, including error responses."""
 
-    async def test_present_on_404(self, middleware_app_client):
+    async def test_present_on_404(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/nonexistent")
         assert response.status_code == 404
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_present_on_raised_http_exception(self, middleware_app_client):
+    async def test_present_on_raised_http_exception(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.get("/boom")
         assert response.status_code == 500
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_present_on_validation_error(self, middleware_app_client):
+    async def test_present_on_validation_error(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, _ = middleware_app_client
         response = await client.post("/validate", json={"value": "not-an-int"})
         assert response.status_code == 422
@@ -207,20 +233,24 @@ class TestRequestIDCorrelationBinding:
     """request_id is bound to the structlog context during processing."""
 
     async def test_request_id_bound_during_handler_execution(
-        self, middleware_app_client
-    ):
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, test_app = middleware_app_client
         response = await client.get("/ok", headers={"X-Request-ID": "bound-check-id"})
         assert response.headers["x-request-id"] == "bound-check-id"
         assert test_app.state.captured_logs[-1]["request_id"] == "bound-check-id"
 
-    async def test_context_reset_after_request_no_leakage(self, middleware_app_client):
-        client, test_app = middleware_app_client
+    async def test_context_reset_after_request_no_leakage(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
+        client, _test_app = middleware_app_client
         await client.get("/ok", headers={"X-Request-ID": "leak-check-id"})
         # After the request completes, the context var must not leak.
         assert structlog.contextvars.get_contextvars().get("request_id") is None
 
-    async def test_background_task_sees_same_request_id(self, middleware_app_client):
+    async def test_background_task_sees_same_request_id(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, test_app = middleware_app_client
         response = await client.get(
             "/background", headers={"X-Request-ID": "bg-task-id"}
@@ -229,7 +259,9 @@ class TestRequestIDCorrelationBinding:
         assert test_app.state.background_calls
         assert test_app.state.background_calls[-1]["request_id"] == "bg-task-id"
 
-    async def test_sequential_requests_do_not_leak_context(self, middleware_app_client):
+    async def test_sequential_requests_do_not_leak_context(
+        self, middleware_app_client: tuple[AsyncClient, FastAPI]
+    ) -> None:
         client, test_app = middleware_app_client
         await client.get("/ok", headers={"X-Request-ID": "request-one"})
         await client.get("/ok", headers={"X-Request-ID": "request-two"})
@@ -246,12 +278,14 @@ class TestRequestIDOnRealApp:
     real registration in `main.py`, which unit tests cannot observe.
     """
 
-    async def test_real_app_response_carries_request_id(self, client):
+    async def test_real_app_response_carries_request_id(
+        self, client: AsyncClient
+    ) -> None:
         response = await client.get("/nonexistent-request-id-wiring-check")
         assert response.status_code == 404
         assert _UUID_RE.match(response.headers["x-request-id"])
 
-    async def test_real_app_exposes_header_via_cors(self, client):
+    async def test_real_app_exposes_header_via_cors(self, client: AsyncClient) -> None:
         """A cross-origin browser client must be able to read
         X-Request-ID via Access-Control-Expose-Headers — otherwise the
         documented "clients should log or display the request ID"

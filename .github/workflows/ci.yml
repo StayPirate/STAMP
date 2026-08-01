@@ -39,6 +39,26 @@ jobs:
       - run: uvx ruff@0.15.22 check .
       - run: uvx ruff@0.15.22 format --check .
 
+  backend-typecheck:
+    name: Backend Type Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: actions/cache@v4
+        with:
+          path: backend/.mypy_cache
+          key: mypy-${{ hashFiles('backend/uv.lock') }}
+          restore-keys: mypy-
+      - run: uv run mypy app tests
+
   backend-test:
     name: Backend Tests
     runs-on: ubuntu-latest
