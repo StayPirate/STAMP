@@ -19,6 +19,8 @@ forbids. That cross-reference remains with `@docs-reviewer` /
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi.routing import APIRoute
 
@@ -26,7 +28,10 @@ from app.main import app
 
 # Endpoints intentionally outside the `/api/v1/` prefix — public,
 # non-versioned operational endpoints. See
-# `docs/features/platform/health-endpoints.md`.
+# `docs/features/platform/health-endpoints.md`. Their responses are
+# also exempt from the `{"data": ...}` envelope (e.g. `/health` returns
+# `{"status": "ok"}` directly) — see docs/api-spec.md Response Format,
+# which scopes the envelope to API endpoints.
 _PREFIX_EXEMPT_PATHS = {"/health", "/ready"}
 
 # The only HTTP methods used across the documented API surface — see
@@ -36,9 +41,48 @@ _PREFIX_EXEMPT_PATHS = {"/health", "/ready"}
 # configuration the application itself declares.
 _ALLOWED_METHODS = {"GET", "POST", "PATCH", "DELETE"}
 
+# Routes with this status code return no body — see docs/api-spec.md
+# Response Format. They are exempt from both the response_model
+# presence and the envelope-format checks below.
+_NO_BODY_STATUS_CODE = 204
+
 
 def _api_routes() -> list[APIRoute]:
     return [route for route in app.routes if isinstance(route, APIRoute)]
+
+
+def _resolve_schema_ref(
+    openapi_schema: dict[str, Any], node: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve a `$ref` pointer (e.g. `#/components/schemas/TicketDetail`)
+    to the schema object it points to. Returns `node` unchanged if it is
+    not a `$ref`.
+    """
+    ref = node.get("$ref")
+    if not ref:
+        return node
+    target: Any = openapi_schema
+    for part in ref.removeprefix("#/").split("/"):
+        target = target[part]
+    return target  # type: ignore[no-any-return]
+
+
+def _response_schema(
+    openapi_schema: dict[str, Any], route: APIRoute
+) -> dict[str, Any] | None:
+    """The resolved JSON schema for `route`'s primary success response
+    (`route.status_code`, default 200), or `None` if the OpenAPI
+    document does not describe a JSON body for it (e.g. no `response_model`
+    was declared and FastAPI could not infer one).
+    """
+    method = next(iter(route.methods or ()), "").lower()
+    operation = openapi_schema.get("paths", {}).get(route.path, {}).get(method, {})
+    status_code = str(route.status_code or 200)
+    response = operation.get("responses", {}).get(status_code, {})
+    schema = response.get("content", {}).get("application/json", {}).get("schema")
+    if schema is None:
+        return None
+    return _resolve_schema_ref(openapi_schema, schema)
 
 
 @pytest.mark.unit
@@ -118,4 +162,56 @@ class TestAuditLogEndpointNaming:
             for route in _api_routes()
             if "audit" in route.path.lower() and not route.path.endswith("/audit-log")
         ]
+        assert not violations, "\n".join(violations)
+
+
+@pytest.mark.unit
+class TestResponseModelPresence:
+    """Every route that returns a body declares a `response_model`.
+
+    See `docs/conventions.md` (FastAPI Conventions): "Use appropriate
+    HTTP status codes and response models." A route with status code
+    204 (No Content) is exempt — it has no body to model.
+    """
+
+    def test_every_body_returning_route_has_a_response_model(self) -> None:
+        violations = [
+            f"Route '{route.path}' has no response_model (and status "
+            f"code {route.status_code} is not 204 No Content)"
+            for route in _api_routes()
+            if route.status_code != _NO_BODY_STATUS_CODE
+            and route.response_model is None
+        ]
+        assert not violations, "\n".join(violations)
+
+
+@pytest.mark.unit
+class TestResponseEnvelopeFormat:
+    """Every route that returns a body wraps it in the standard
+    `{"data": ...}` envelope.
+
+    See `docs/api-spec.md` (Response Format): paginated list endpoints
+    return `{"data": [...], "meta": {...}}`; single-resource and
+    unpaginated list endpoints return `{"data": {...}}`. A route with
+    status code 204 (No Content) is exempt — it has no body. The
+    `/health` and `/ready` exemption (see `TestRoutePrefixConvention`)
+    also applies here — those endpoints are outside the API envelope
+    contract by design.
+    """
+
+    def test_every_body_returning_route_has_a_data_property(self) -> None:
+        openapi_schema = app.openapi()
+        violations: list[str] = []
+        for route in _api_routes():
+            if route.status_code == _NO_BODY_STATUS_CODE:
+                continue
+            if route.path in _PREFIX_EXEMPT_PATHS:
+                continue
+            schema = _response_schema(openapi_schema, route)
+            if schema is None or "data" not in schema.get("properties", {}):
+                violations.append(
+                    f"Route '{route.path}' response schema does not have "
+                    "a top-level 'data' property (required by the "
+                    "standard response envelope)"
+                )
         assert not violations, "\n".join(violations)
