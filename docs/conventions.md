@@ -289,6 +289,12 @@ Excluding tests from static type checking would allow type errors to
 accumulate silently in the test suite, which is exempt from this rule only
 where explicitly noted below.
 
+**Async-await verification**: type checking flags a coroutine that is
+never awaited or otherwise consumed. This catches a real class of bug in
+an async-only codebase (see Architecture, Async-only database layer) — a
+forgotten `await` that would otherwise silently skip the intended
+operation at runtime.
+
 **Suppressing false positives**: an inline suppression MUST always name the
 specific error code it silences (e.g., a code suffix identifying the
 category of error being ignored). An unqualified suppression that silences
