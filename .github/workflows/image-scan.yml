@@ -69,7 +69,7 @@ jobs:
           vuln-type: "os"
           scanners: "vuln"
           severity: "HIGH,CRITICAL"
-          version: "v0.70.0"
+          version: "v0.72.0"
 
       # Complete report: every OS-level finding regardless of fix
       # availability or severity, for awareness only. Never fails the
@@ -87,11 +87,14 @@ jobs:
           skip-setup-trivy: true
 
       - name: Upload complete vulnerability report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: trivy-image-report
           path: trivy-full.txt
           retention-days: 90
+          # Single-file direct upload (no zip): the artifact name
+          # matches the file name (trivy-full.txt) and is readable
+          # without downloading and extracting an archive first.
+          archive: false
 
       # Only reached when the fixable-only scan (above) found at least
       # one HIGH/CRITICAL vulnerability (exit-code 1, captured as
@@ -118,7 +121,7 @@ jobs:
             echo ""
             echo "</details>"
             echo ""
-            echo "The complete report (all severities, including unfixable) is attached to [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) as the \`trivy-image-report\` artifact."
+            echo "The complete report (all severities, including unfixable) is attached to [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) as the \`trivy-full.txt\` artifact."
           } >"${body_file}"
 
           existing=$(gh issue list --repo "${{ github.repository }}" \
