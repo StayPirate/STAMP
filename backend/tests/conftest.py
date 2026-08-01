@@ -8,8 +8,8 @@ from __future__ import annotations
 import atexit
 import itertools
 import os
-from collections.abc import AsyncGenerator
-from typing import Any
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     create_async_engine,
 )
+
+if TYPE_CHECKING:
+    from testcontainers.community.postgres import PostgresContainer
 
 # Provide required settings for test environment (must precede app imports)
 os.environ.setdefault(
@@ -37,6 +40,12 @@ from app.models import User
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
 _FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
 
+# Module-level cache for the auto-provisioned testcontainers PostgreSQL
+# instance (started once per session, reused across tests). Kept as a
+# module global — rather than function attributes — for clean typing.
+_container: PostgresContainer | None = None
+_container_url: str | None = None
+
 
 def _database_url() -> str:
     """Resolve the test database URL.
@@ -45,25 +54,27 @@ def _database_url() -> str:
     1. TEST_DATABASE_URL env var (set by CI or developer override)
     2. Auto-provisioned PostgreSQL via testcontainers (local dev)
     """
+    global _container, _container_url
+
     url = os.environ.get("TEST_DATABASE_URL")
     if url:
         return url
 
+    if _container_url is not None:
+        return _container_url
+
     # Lazy import — testcontainers is only needed when no URL is provided
     from testcontainers.community.postgres import PostgresContainer
 
-    # Module-level container — started once per session, reused across tests
-    if not hasattr(_database_url, "_container"):
-        container = PostgresContainer("postgres:16")
-        container.start()
-        atexit.register(container.stop)
-        # Build asyncpg URL from the container's connection params
-        url = container.get_connection_url().replace(
-            "postgresql+psycopg2://", "postgresql+asyncpg://"
-        )
-        _database_url._container = container
-        _database_url._url = url
-    return _database_url._url
+    container = PostgresContainer("postgres:16")
+    container.start()
+    atexit.register(container.stop)
+    # Build asyncpg URL from the container's connection params
+    _container_url = container.get_connection_url().replace(
+        "postgresql+psycopg2://", "postgresql+asyncpg://"
+    )
+    _container = container
+    return _container_url
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -79,7 +90,7 @@ async def _engine() -> AsyncGenerator[AsyncEngine]:
 
 
 @pytest.fixture
-async def db_session(_engine) -> AsyncGenerator[AsyncSession]:
+async def db_session(_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
     """Provide an async DB session with per-test transaction rollback.
 
     Uses the SQLAlchemy 2.0 recommended pattern: the session joins an
@@ -114,7 +125,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     session, ensuring e2e tests share the test transaction.
     """
 
-    async def _override_get_db():
+    async def _override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
@@ -127,7 +138,9 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
 
 
 @pytest.fixture
-def user_factory(db_session: AsyncSession):
+def user_factory(
+    db_session: AsyncSession,
+) -> Callable[..., Awaitable[User]]:
     """Factory fixture for User model instances.
 
     See docs/features/platform/testing-strategy.md (Model Factory

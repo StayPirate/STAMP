@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import httpx
 import pytest
@@ -47,7 +47,7 @@ def http_client(base_url: str) -> Iterator[httpx.Client]:
 
 
 @pytest.fixture(scope="session")
-def compose_exec():
+def compose_exec() -> Callable[..., subprocess.CompletedProcess[str]]:
     """Run a command inside a running compose service and return output.
 
     Used by later-phase assertions (e.g. running a ``sentinel`` CLI

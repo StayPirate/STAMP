@@ -21,7 +21,7 @@ os.environ.setdefault(
     "JWT_SECRET_KEY", "openapi-schema-generation-only-not-for-runtime-use"
 )
 
-from app.main import app  # noqa: E402
+from app.main import app
 
 
 def main() -> None:

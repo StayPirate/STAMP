@@ -14,22 +14,28 @@ from app.config import Settings
 class TestJwtSecretKeyValidation:
     """JWT_SECRET_KEY startup validation."""
 
-    def test_missing_jwt_secret_key_raises(self, monkeypatch):
+    def test_missing_jwt_secret_key_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
         with pytest.raises(ValidationError, match="jwt_secret_key"):
             Settings(_env_file=None)
 
-    def test_short_jwt_secret_key_raises(self, monkeypatch):
+    def test_short_jwt_secret_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "short")
         with pytest.raises(ValidationError, match="at least 32 characters"):
             Settings(_env_file=None)
 
-    def test_31_chars_jwt_secret_key_raises(self, monkeypatch):
+    def test_31_chars_jwt_secret_key_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 31)
         with pytest.raises(ValidationError, match="at least 32 characters"):
             Settings(_env_file=None)
 
-    def test_exactly_32_chars_accepted(self, monkeypatch):
+    def test_exactly_32_chars_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         s = Settings(_env_file=None)
         assert s.jwt_secret_key.get_secret_value() == "a" * 32
@@ -39,33 +45,41 @@ class TestJwtSecretKeyValidation:
 class TestJwtExpiryValidation:
     """JWT_EXPIRY_HOURS startup validation."""
 
-    def test_zero_expiry_raises(self, monkeypatch):
+    def test_zero_expiry_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "0")
         with pytest.raises(ValidationError, match="must be >= 1"):
             Settings(_env_file=None)
 
-    def test_negative_expiry_raises(self, monkeypatch):
+    def test_negative_expiry_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "-1")
         with pytest.raises(ValidationError, match="must be >= 1"):
             Settings(_env_file=None)
 
-    def test_excessive_expiry_warns(self, monkeypatch, caplog):
+    def test_excessive_expiry_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "721")
         with caplog.at_level(logging.WARNING):
             Settings(_env_file=None)
         assert ">720 hours" in caplog.text
 
-    def test_720_does_not_warn(self, monkeypatch, caplog):
+    def test_720_does_not_warn(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "720")
         with caplog.at_level(logging.WARNING):
             Settings(_env_file=None)
         assert ">720 hours" not in caplog.text
 
-    def test_expiry_1_accepted(self, monkeypatch):
+    def test_expiry_1_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("JWT_EXPIRY_HOURS", "1")
         s = Settings(_env_file=None)
@@ -77,7 +91,11 @@ class TestLogLevelValidation:
     """LOG_LEVEL startup validation (docs/features/platform/logging.md)."""
 
     @pytest.mark.parametrize("value", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
-    def test_valid_levels_accepted(self, monkeypatch, value):
+    def test_valid_levels_accepted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        value: str,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_LEVEL", value)
         s = Settings(_env_file=None)
@@ -94,25 +112,27 @@ class TestLogLevelValidation:
             ("Critical", "CRITICAL"),
         ],
     )
-    def test_case_insensitive_normalization(self, monkeypatch, input_value, expected):
+    def test_case_insensitive_normalization(
+        self, monkeypatch: pytest.MonkeyPatch, input_value: str, expected: str
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_LEVEL", input_value)
         s = Settings(_env_file=None)
         assert s.log_level == expected
 
-    def test_default_is_info(self, monkeypatch):
+    def test_default_is_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.delenv("LOG_LEVEL", raising=False)
         s = Settings(_env_file=None)
         assert s.log_level == "INFO"
 
-    def test_invalid_value_raises(self, monkeypatch):
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_LEVEL", "BOGUS")
         with pytest.raises(ValidationError, match="Invalid LOG_LEVEL"):
             Settings(_env_file=None)
 
-    def test_empty_value_raises(self, monkeypatch):
+    def test_empty_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_LEVEL", "")
         with pytest.raises(ValidationError, match="Invalid LOG_LEVEL"):
@@ -124,7 +144,11 @@ class TestLogFormatValidation:
     """LOG_FORMAT startup validation (docs/features/platform/logging.md)."""
 
     @pytest.mark.parametrize("value", ["auto", "json", "console"])
-    def test_valid_formats_accepted(self, monkeypatch, value):
+    def test_valid_formats_accepted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        value: str,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_FORMAT", value)
         s = Settings(_env_file=None)
@@ -138,19 +162,21 @@ class TestLogFormatValidation:
             ("CONSOLE", "console"),
         ],
     )
-    def test_case_insensitive_normalization(self, monkeypatch, input_value, expected):
+    def test_case_insensitive_normalization(
+        self, monkeypatch: pytest.MonkeyPatch, input_value: str, expected: str
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_FORMAT", input_value)
         s = Settings(_env_file=None)
         assert s.log_format == expected
 
-    def test_default_is_auto(self, monkeypatch):
+    def test_default_is_auto(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.delenv("LOG_FORMAT", raising=False)
         s = Settings(_env_file=None)
         assert s.log_format == "auto"
 
-    def test_invalid_value_raises(self, monkeypatch):
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_FORMAT", "xml")
         with pytest.raises(ValidationError, match="Invalid LOG_FORMAT"):
@@ -161,7 +187,10 @@ class TestLogFormatValidation:
 class TestDebugLogLevelOrthogonality:
     """DEBUG and LOG_LEVEL are fully independent configuration axes."""
 
-    def test_debug_true_does_not_change_log_level(self, monkeypatch):
+    def test_debug_true_does_not_change_log_level(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("DEBUG", "true")
         monkeypatch.delenv("LOG_LEVEL", raising=False)
@@ -169,7 +198,10 @@ class TestDebugLogLevelOrthogonality:
         assert s.log_level == "INFO"
         assert s.debug is True
 
-    def test_log_level_debug_does_not_change_debug_flag(self, monkeypatch):
+    def test_log_level_debug_does_not_change_debug_flag(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
         monkeypatch.delenv("DEBUG", raising=False)
@@ -182,7 +214,11 @@ class TestDebugLogLevelOrthogonality:
 class TestIbsCredentialWarning:
     """IBS credential startup warning."""
 
-    def test_empty_ibs_credentials_warns(self, monkeypatch, caplog):
+    def test_empty_ibs_credentials_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("IBS_USERNAME", "")
         monkeypatch.setenv("IBS_PASSWORD", "")
@@ -190,7 +226,11 @@ class TestIbsCredentialWarning:
             Settings(_env_file=None)
         assert "IBS credentials not configured" in caplog.text
 
-    def test_only_username_empty_warns(self, monkeypatch, caplog):
+    def test_only_username_empty_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("IBS_USERNAME", "")
         monkeypatch.setenv("IBS_PASSWORD", "secret")
@@ -198,7 +238,11 @@ class TestIbsCredentialWarning:
             Settings(_env_file=None)
         assert "IBS credentials not configured" in caplog.text
 
-    def test_only_password_empty_warns(self, monkeypatch, caplog):
+    def test_only_password_empty_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("IBS_USERNAME", "jdoe")
         monkeypatch.setenv("IBS_PASSWORD", "")
@@ -206,7 +250,11 @@ class TestIbsCredentialWarning:
             Settings(_env_file=None)
         assert "IBS credentials not configured" in caplog.text
 
-    def test_configured_ibs_credentials_no_warning(self, monkeypatch, caplog):
+    def test_configured_ibs_credentials_no_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("IBS_USERNAME", "jdoe")
         monkeypatch.setenv("IBS_PASSWORD", "secret-password-here")
@@ -227,28 +275,40 @@ class TestSecretFieldRedaction:
       only affects repr, not serialization).
     """
 
-    def test_repr_does_not_expose_jwt_secret_key(self, monkeypatch):
+    def test_repr_does_not_expose_jwt_secret_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         secret_value = "x" * 32
         monkeypatch.setenv("JWT_SECRET_KEY", secret_value)
         s = Settings(_env_file=None)
         assert secret_value not in repr(s)
         assert secret_value not in str(s)
 
-    def test_repr_does_not_expose_ibs_password(self, monkeypatch):
+    def test_repr_does_not_expose_ibs_password(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         secret_value = "super-secret-ibs-password"
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("IBS_PASSWORD", secret_value)
         s = Settings(_env_file=None)
         assert secret_value not in repr(s)
 
-    def test_repr_does_not_expose_nvd_api_key(self, monkeypatch):
+    def test_repr_does_not_expose_nvd_api_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         secret_value = "super-secret-nvd-api-key"
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv("NVD_API_KEY", secret_value)
         s = Settings(_env_file=None)
         assert secret_value not in repr(s)
 
-    def test_repr_does_not_expose_database_url_credentials(self, monkeypatch):
+    def test_repr_does_not_expose_database_url_credentials(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv(
             "DATABASE_URL",
@@ -258,7 +318,10 @@ class TestSecretFieldRedaction:
         assert "sentinel_pw" not in repr(s)
         assert "database_url" not in repr(s)
 
-    def test_repr_does_not_expose_redis_url_credentials(self, monkeypatch):
+    def test_repr_does_not_expose_redis_url_credentials(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv(
             "REDIS_URL",
@@ -268,7 +331,10 @@ class TestSecretFieldRedaction:
         assert "redis_secret_pw" not in repr(s)
         assert "redis_url" not in repr(s)
 
-    def test_repr_does_not_expose_celery_broker_url_credentials(self, monkeypatch):
+    def test_repr_does_not_expose_celery_broker_url_credentials(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
         monkeypatch.setenv(
             "CELERY_BROKER_URL",
@@ -278,7 +344,9 @@ class TestSecretFieldRedaction:
         assert "celery_secret_pw" not in repr(s)
         assert "celery_broker_url" not in repr(s)
 
-    def test_repr_exposes_non_secret_fields(self, monkeypatch):
+    def test_repr_exposes_non_secret_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Non-secret fields must remain visible in repr() — guards against
         over-broad redaction being applied by mistake in the future."""
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
@@ -286,7 +354,9 @@ class TestSecretFieldRedaction:
         s = Settings(_env_file=None)
         assert "sentinel-test-instance" in repr(s)
 
-    def test_model_dump_masks_secret_str_fields(self, monkeypatch):
+    def test_model_dump_masks_secret_str_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         secret_value = "x" * 32
         monkeypatch.setenv("JWT_SECRET_KEY", secret_value)
         s = Settings(_env_file=None)
@@ -295,14 +365,18 @@ class TestSecretFieldRedaction:
         assert secret_value not in repr(dumped["jwt_secret_key"])
         assert secret_value not in str(dumped)
 
-    def test_model_dump_json_masks_secret_str_fields(self, monkeypatch):
+    def test_model_dump_json_masks_secret_str_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         secret_value = "x" * 32
         monkeypatch.setenv("JWT_SECRET_KEY", secret_value)
         s = Settings(_env_file=None)
         dumped_json = s.model_dump_json()
         assert secret_value not in dumped_json
 
-    def test_model_dump_exposes_plain_repr_false_url_fields(self, monkeypatch):
+    def test_model_dump_exposes_plain_repr_false_url_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """`repr=False` only affects repr(); model_dump() must still return
         the plain string value for these fields (no masking on dump)."""
         monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)

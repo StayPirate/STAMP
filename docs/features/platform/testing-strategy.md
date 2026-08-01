@@ -103,6 +103,19 @@ markers = [
 ]
 ```
 
+An unregistered marker MUST fail the test run rather than emit a silent
+warning — this is enforced by pytest's strict-markers mode. Likewise, an
+unrecognized pytest configuration option MUST fail rather than be silently
+ignored — this is enforced by pytest's strict-config mode. Both prevent a
+typo (e.g., a mistyped marker name) from being accepted without effect.
+
+Similarly, warnings raised during test execution (e.g.,
+`DeprecationWarning`, `RuntimeWarning` from an unawaited coroutine) MUST be
+treated as test failures, not silently logged. Any warning that is a known,
+accepted condition (e.g., a warning raised by a third-party dependency that
+cannot be fixed locally) MUST be filtered explicitly with an inline
+justification for why it is safe to ignore.
+
 ---
 
 ## Database Strategy
@@ -435,6 +448,13 @@ Coverage is measured by `pytest-cov` with the following settings (in
 - Omissions: `*/tests/*`, `*/alembic/*`, `app/database.py` (infrastructure,
   tested via integration)
 - Report format: `term-missing` in CI (shows uncovered lines)
+- Mode: **branch coverage**, not line-only. Line coverage can report a
+  guard condition (e.g., an `if`/`else`) as covered when only one branch
+  ever executed, which understates untested behavior. Branch coverage
+  requires both outcomes of a conditional to be exercised, aligning the
+  metric with the project's convention of testing every guard condition
+  (see Mandatory Test Scenarios below). The coverage threshold applies to
+  the combined line+branch metric.
 
 ---
 
@@ -586,8 +606,8 @@ Repository-level git hooks provide fast feedback before commits reach
 CI. Configured as shell scripts in `.githooks/` and activated
 per-repository via `core.hooksPath` (see activation steps below):
 
-- **pre-commit**: ruff check + ruff format check + `pytest -m unit`
-  (fast gate, < 15 seconds)
+- **pre-commit**: ruff check + ruff format check + mypy strict type check +
+  `pytest -m unit` (fast gate, < 15 seconds)
 - **pre-push**: full test suite (`pytest`) including integration and
   e2e tests
 
@@ -623,6 +643,7 @@ provides the **non-bypassable enforcement layer**:
 | Job | What it checks |
 |-----|----------------|
 | `backend-lint` | `ruff check` + `ruff format --check` |
+| `backend-typecheck` | `mypy` static type checking in strict mode over both application code and tests |
 | `backend-test` | Full test suite with coverage gate (`--cov-fail-under=85`) |
 | `backend-security` | `bandit` static analysis + `pip-audit` dependency scan |
 

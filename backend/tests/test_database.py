@@ -23,13 +23,13 @@ from app.database import engine
 class TestEngineConstruction:
     """Structural regression guards on the module-level `engine`."""
 
-    def test_hide_parameters_is_enabled(self):
+    def test_hide_parameters_is_enabled(self) -> None:
         """Bound SQL parameters must never leak via exception messages,
         regardless of LOG_LEVEL — see security discipline in
         docs/conventions.md."""
         assert engine.sync_engine.hide_parameters is True
 
-    def test_echo_is_not_enabled_by_default(self):
+    def test_echo_is_not_enabled_by_default(self) -> None:
         """DEBUG must not control SQLAlchemy echo; echo must remain
         unset (falsy) regardless of the DEBUG setting."""
         assert not engine.sync_engine.echo

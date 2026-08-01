@@ -9,6 +9,9 @@ echo "  ruff check..."
 echo "  ruff format..."
 (cd backend && uv run ruff format --check .)
 
+echo "  mypy..."
+(cd backend && uv run mypy app tests)
+
 echo "  unit tests..."
 # Exit code 5 = "no tests collected" (no @pytest.mark.unit tests yet).
 # Treat it as success so the hook doesn't block commits before the
