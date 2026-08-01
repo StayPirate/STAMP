@@ -950,9 +950,9 @@ pipeline without a corresponding way to resolve it.
   availability, uploaded as a workflow artifact for awareness only.
 
 **Delivery.** A fixable finding opens a new GitHub issue labeled
-`security`, or updates the existing open one if a prior run already
-opened it — the workflow never creates a duplicate issue for the same
-ongoing condition.
+`security` (the label already exists in the repository), or updates
+the existing open one if a prior run already opened it — the workflow
+never creates a duplicate issue for the same ongoing condition.
 
 **Remediation path.** Because the scan does not trigger a rebuild,
 fixable findings are remediated on the next merge to `master` that
