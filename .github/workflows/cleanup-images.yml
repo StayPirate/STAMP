@@ -11,6 +11,7 @@ jobs:
   cleanup:
     name: Cleanup Untagged Images
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       packages: write
     steps:
@@ -32,7 +33,7 @@ jobs:
       # keep-n-untagged already implies deleting all untagged versions
       # beyond the N most recent — delete-untagged must NOT be set
       # alongside it, the action rejects the combination as conflicting.
-      - uses: dataaxiom/ghcr-cleanup-action@v1
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           keep-n-untagged: 10
           token: ${{ secrets.GITHUB_TOKEN }}
