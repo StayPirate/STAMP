@@ -35,7 +35,12 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 WORKDIR /app
 
 # Install SUSE internal CA certificate for TLS connections to internal
-# services (IBS, SMELT, AIMAAS, RabbitMQ)
+# services (IBS, SMELT, AIMAAS, RabbitMQ). Installed both in the system
+# trust store (for libraries that rely on it implicitly) and kept at its
+# repository-relative path (for build_tls_context(), which reads
+# SUSE_CA_CERT_PATH relative to the working directory — see
+# docs/features/platform/networking.md).
+COPY certs/ certs/
 COPY certs/SUSE_Trust_Root.crt /usr/local/share/ca-certificates/SUSE_Trust_Root.crt
 RUN update-ca-certificates
 

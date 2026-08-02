@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     jwt_secret_key: SecretStr
     jwt_expiry_hours: int = 72
 
+    # TLS / Networking
+    suse_ca_cert_path: str = "certs/SUSE_Trust_Root.crt"
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _validate_log_level(cls, value: Any) -> Any:
