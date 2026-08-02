@@ -60,7 +60,7 @@ def build_tls_context() -> ssl.SSLContext:
 
     try:
         context.load_verify_locations(cafile=ca_path)
-    except ssl.SSLError as exc:
+    except (ssl.SSLError, OSError) as exc:
         raise TLSConfigurationError(path=ca_path, detail=str(exc)) from exc
 
     return context

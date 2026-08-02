@@ -43,10 +43,18 @@ def _isolated_ca_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.unit
 class TestBuildTlsContext:
-    def test_valid_ca_returns_combined_context(self) -> None:
-        context = hc.build_tls_context()
+    def test_valid_ca_returns_combined_context(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            context = hc.build_tls_context()
         assert isinstance(context, ssl.SSLContext)
         assert context.verify_mode == ssl.CERT_REQUIRED
+        # Distinguishes "SUSE CA successfully loaded" from the "missing"
+        # fallback path below, which also returns a CERT_REQUIRED context
+        # (system-only) — the absence of the missing-CA warning is the
+        # signal that the combined trust store branch actually ran.
+        assert "suse_ca_cert_missing" not in caplog.text
 
     def test_missing_ca_warns_and_returns_system_only_context(
         self,
@@ -226,6 +234,51 @@ class TestCreateHttpClientOverrideSafety:
         client = hc.create_http_client("test_component", timeout=httpx.Timeout(5.0))
         try:
             assert client.timeout.connect == 5.0
+        finally:
+            await client.aclose()
+
+    async def test_limits_default(self) -> None:
+        client = hc.create_http_client("test_component")
+        try:
+            transport = client._transport
+            assert isinstance(transport, hc._RetryTransport)
+            pool = transport._inner._pool  # type: ignore[attr-defined]
+            assert pool._max_connections == 100
+            assert pool._max_keepalive_connections == 20
+        finally:
+            await client.aclose()
+
+    async def test_limits_overridable(self) -> None:
+        client = hc.create_http_client(
+            "test_component",
+            limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
+        )
+        try:
+            transport = client._transport
+            assert isinstance(transport, hc._RetryTransport)
+            pool = transport._inner._pool  # type: ignore[attr-defined]
+            assert pool._max_connections == 5
+            assert pool._max_keepalive_connections == 2
+        finally:
+            await client.aclose()
+
+    async def test_retry_transport_is_wired_into_client(self) -> None:
+        """The client returned by the factory actually uses
+        `_RetryTransport` — guards against a regression where the retry
+        policy silently stops being applied (e.g., accidentally
+        re-enabling httpx's built-in transport retry instead)."""
+        client = hc.create_http_client("test_component")
+        try:
+            assert isinstance(client._transport, hc._RetryTransport)
+        finally:
+            await client.aclose()
+
+    async def test_retry_non_idempotent_is_forwarded_to_transport(self) -> None:
+        client = hc.create_http_client("test_component", retry_non_idempotent=True)
+        try:
+            transport = client._transport
+            assert isinstance(transport, hc._RetryTransport)
+            assert transport._retry_non_idempotent is True
         finally:
             await client.aclose()
 
@@ -592,6 +645,41 @@ class TestRetryAfterGuidedPath:
         await transport.handle_async_request(_request("GET"))
 
         assert discarded.is_closed
+
+    async def test_guided_retry_propagates_exception_as_final_attempt(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        """If the single guided retry itself raises a connection error,
+        the exception propagates — this is the last attempt, there is no
+        further catch/retry around it."""
+        script = [
+            _response(429, {"Retry-After": "1"}),
+            httpx.ConnectError("boom"),
+        ]
+        inner = _ScriptedTransport(script)
+        transport = hc._RetryTransport(inner, retry_non_idempotent=False)
+
+        with pytest.raises(httpx.ConnectError):
+            await transport.handle_async_request(_request("GET"))
+
+        assert inner.calls == 2
+        assert mock_sleep.await_count == 1
+
+    async def test_502_with_retry_after_ignores_guided_path(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        """The guided Retry-After path is restricted to 429/503 per the
+        dispatch rule. A 502 carrying Retry-After does not qualify — it
+        falls through to the generic 5xx fixed-backoff rule instead."""
+        script = [_response(502, {"Retry-After": "5"}), _response(200)]
+        inner = _ScriptedTransport(script)
+        transport = hc._RetryTransport(inner, retry_non_idempotent=False)
+
+        response = await transport.handle_async_request(_request("GET"))
+
+        assert response.status_code == 200
+        assert inner.calls == 2
+        mock_sleep.assert_awaited_once_with(1.0)
 
 
 # ---------------------------------------------------------------------------
