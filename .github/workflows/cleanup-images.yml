@@ -14,12 +14,13 @@ jobs:
     permissions:
       packages: write
     steps:
-      # Removes untagged image digests left behind when :master/:latest
-      # get re-tagged on every push (see build-images.yml). Tagged images
-      # (release tags, latest, master) are never affected by
-      # keep-n-untagged — the two pools are independent, so this only
-      # bounds the untagged pool, regardless of how many tagged images
-      # exist.
+      # Removes untagged image digests left behind when :master gets
+      # re-tagged on every push to master, and when :latest gets re-tagged
+      # on every version-tag push (see build-images.yml, Image Tag
+      # Semantics in docs/deployment.md). Tagged images (release tags,
+      # latest, master) are never affected by keep-n-untagged — the two
+      # pools are independent, so this only bounds the untagged pool,
+      # regardless of how many tagged images exist.
       #
       # No older-than filter: retagging on every push to master keeps
       # producing untagged versions younger than any reasonable age
