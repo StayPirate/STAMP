@@ -460,13 +460,15 @@ internal CA.
   SMELT, AIMAAS, RabbitMQ). All connections use the same trust store —
   no host matching, no fallback, no host list to maintain
 - **If file does not exist**: combined trust store contains only system
-  CAs. A log warning is emitted when `create_http_client()` is invoked
+  CAs. A log warning is emitted when `build_tls_context()` is invoked
   (does not block startup). Whether this actually degrades connectivity
   to SUSE-internal services depends on the system CA bundle's own
   contents — see Trust Store Layering below. The file existence check
-  runs inside `create_http_client()` when constructing the SSL
-  context — the SSL context is built fresh on every invocation (no
-  module-level caching). Warning frequency per component type:
+  runs inside `build_tls_context()` itself (called by `create_http_client()`
+  for HTTP consumers, and directly by `IBSEventConsumer`) when
+  constructing the SSL context — the SSL context is built fresh on every
+  invocation (no module-level caching). Warning frequency per component
+  type:
   - Fetchers in batch mode (`execute()` loop): once per run — the client
     is created lazily on first access and reused for all `fetch_single()`
     calls within the same run
@@ -501,7 +503,7 @@ reason correctly about missing-CA behavior and certificate rotation.
 
 | Layer | Mechanism | Built | Consumers |
 |-------|-----------|-------|-----------|
-| 1 — System trust store | `update-ca-certificates` installs the SUSE CA into the OS-wide CA bundle (container image build step) | At image build time | Any component that resolves TLS verification via OpenSSL's default verify paths without receiving an explicit `ssl.SSLContext` — e.g., a future git subprocess cloning from a SUSE-internal host (`BaseGitFetcher`), or a database/AMQP client library configured to use system defaults. Also the mechanism for a TLS-intercepting proxy's CA (see Proxy Configuration above) |
+| 1 — System trust store | `update-ca-certificates` installs the SUSE CA into the OS-wide CA bundle (container image build step) | At image build time | Any component that resolves TLS verification via OpenSSL's default verify paths without receiving an explicit `ssl.SSLContext` — e.g., a future git subprocess cloning from a SUSE-internal host (`BaseGitFetcher`). Also the mechanism for a TLS-intercepting proxy's CA (see Proxy Configuration above). Sentinel's actual AMQP client, `IBSEventConsumer`, is a layer-2 consumer (see below) — it always receives an explicit context from `build_tls_context()` and never falls back to this layer |
 | 2 — `build_tls_context()` | Explicit `load_verify_locations(cafile=SUSE_CA_CERT_PATH)` on top of `ssl.create_default_context()` | Fresh on every invocation (no caching) | All Sentinel-controlled Python code that performs TLS (the shared HTTP client, `IBSEventConsumer`) |
 
 **Layer 2 is required regardless of layer 1.** httpx — the library behind
