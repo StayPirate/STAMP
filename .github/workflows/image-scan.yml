@@ -34,6 +34,7 @@ jobs:
   image-scan:
     name: Scan Published Image
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Compute lowercase image reference
         id: image

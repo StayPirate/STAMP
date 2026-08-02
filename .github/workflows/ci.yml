@@ -18,30 +18,37 @@ jobs:
   backend-lint:
     name: Backend Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - name: Verify Dockerfile Python version matches .python-version
-        working-directory: backend
+      - name: Verify Dockerfile and pyproject.toml Python version match .python-version
         run: |
           EXPECTED=$(cat .python-version)
-          ACTUAL=$(grep -oP '(?<=ARG PYTHON_VERSION=)\S+' Dockerfile)
-          if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL does not match .python-version=$EXPECTED"
+          ACTUAL_DOCKERFILE=$(grep -oP '(?<=ARG PYTHON_VERSION=)\S+' Dockerfile)
+          if [ "$EXPECTED" != "$ACTUAL_DOCKERFILE" ]; then
+            echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL_DOCKERFILE does not match .python-version=$EXPECTED"
+            exit 1
+          fi
+          ACTUAL_REQUIRES_PYTHON=$(grep -oP '(?<=requires-python = ">=)\S+(?=")' pyproject.toml)
+          if [ "$EXPECTED" != "$ACTUAL_REQUIRES_PYTHON" ]; then
+            echo "::error::pyproject.toml requires-python=>=$ACTUAL_REQUIRES_PYTHON does not match .python-version=$EXPECTED"
             exit 1
           fi
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: "0.11.29"
           enable-cache: true
-      - run: uvx ruff@0.15.22 check .
-      - run: uvx ruff@0.15.22 format --check .
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
 
   backend-typecheck:
     name: Backend Type Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -62,6 +69,7 @@ jobs:
   backend-test:
     name: Backend Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -106,10 +114,13 @@ jobs:
         run: |
           uv run alembic upgrade head
           uv run alembic check
+      - name: Verify OpenAPI schema generation
+        run: uv run python scripts/generate_openapi.py > /dev/null
 
   backend-security:
     name: Backend Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -127,6 +138,7 @@ jobs:
   shell-lint:
     name: Shell Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       SHELLCHECK_VERSION: "0.11.0"
       SHFMT_VERSION: "3.13.1"
@@ -193,6 +205,7 @@ jobs:
     name: Image Smoke Test
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       SMOKE_IMAGE: sentinel-backend:smoke
     steps:

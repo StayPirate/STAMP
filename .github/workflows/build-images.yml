@@ -23,6 +23,7 @@ jobs:
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -91,11 +92,21 @@ jobs:
       # image artifact by re-tagging it with each metadata-action tag and
       # pushing. No second docker/build-push-action build is performed, so
       # the published digest is identical to the tested one.
+      #
+      # IMAGE_TAGS is passed via env (not interpolated directly into the
+      # script) to avoid shell-injection risk from untrusted ref/tag
+      # content. set -euo pipefail ensures that a failed docker push
+      # aborts the step immediately instead of being masked by a later
+      # loop iteration's exit code. The here-string (<<<) avoids piping
+      # into a subshell so set -e inside the loop body works as expected.
       - name: Push tested image (same digest)
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+          set -euo pipefail
+          while read -r tag; do
             [ -z "$tag" ] && continue
             echo "Tagging and pushing $tag"
             docker tag "${SMOKE_IMAGE}" "$tag"
             docker push "$tag"
-          done
+          done <<<"${IMAGE_TAGS}"

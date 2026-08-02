@@ -8,10 +8,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: PR Metadata
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Validate title and issue linkage
         env:
