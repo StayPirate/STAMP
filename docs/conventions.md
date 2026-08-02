@@ -839,17 +839,10 @@ When upgrading to a new Python minor version:
 10. **Deploy**: staging first, observe for one cycle of all fetchers,
     then production.
 
-#### Forward Compatibility (recommended, deferred)
-
-To detect breakage early before the next bump:
-
-- A scheduled/manual CI workflow (`workflow_dispatch` + weekly cron)
-  that runs the test suite against the **next** Python version
-  (including pre-releases). Failures are informational, not blocking.
-- Periodic pytest runs with `-W error::DeprecationWarning` to surface
-  deprecated API usage before it becomes a hard break.
-
-These are deferred to a future PR.
+A scheduled, non-blocking workflow already provides part of this
+checklist's early-warning signal automatically, ahead of any bump
+decision — see `docs/deployment.md` (Python Forward-Compatibility
+Check).
 
 ## CLI Conventions
 

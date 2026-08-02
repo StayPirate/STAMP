@@ -44,6 +44,7 @@ For architectural decisions and design constraints, see
   - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
   - [Log Aggregation](#log-aggregation)
   - [Image Vulnerability Monitoring](#image-vulnerability-monitoring)
+  - [Python Forward-Compatibility Check](#python-forward-compatibility-check)
   - [Troubleshooting](#troubleshooting)
 
 ---
@@ -1005,6 +1006,62 @@ fixable findings are remediated on the next merge to `master` that
 produces a new image (which pulls the then-current `python:3.13-slim`
 base layer). This is intended behavior, not an oversight: the platform
 has no separate mechanism to force an out-of-band base image rebuild.
+
+### Python Forward-Compatibility Check
+
+A weekly scheduled workflow
+(`.github/workflows/python-forward-compat.yml`) runs the backend test
+suite against the **next** Python minor version — one above the
+current `backend/.python-version` target — using `uv python install`
+to fetch the interpreter (including the latest available pre-release
+build, if that is the newest published build for that minor) and `uv
+sync` / `uv run` with a `--python` override. It also supports manual
+dispatch for on-demand checks between scheduled runs.
+
+**Why this exists.** Python runtime bumps follow the Version Bump
+Checklist in `docs/conventions.md` (Runtime Version), which is a
+manual, reactive procedure: incompatibilities in the interpreter or in
+a dependency (particularly the Celery stack and packages with C/Rust
+extensions) only surface when someone actually executes the bump. This
+workflow turns that into an early-warning signal, surfacing breakage
+weeks or months before the bump PR is opened.
+
+**Deliberately non-blocking.** This run never fails the workflow in a
+way that blocks other work and is not part of the publish path
+(`build-images.yml` is untouched). The next Python minor version is
+frequently a pre-release during most of its development cycle, and
+failures are expected and uninteresting until close to that version's
+own stable release — the workflow is informational, not a merge gate,
+and is never a required status check.
+
+**Availability guard.** Right after a Runtime Version bump, the next
+minor may have no published build at all yet (not even an alpha). The
+workflow checks this first via `uv python list <next> --only-downloads`
+before attempting anything else. If no build is available, the run
+exits successfully with an informational `::notice::` — no test is
+attempted and no tracking issue is opened. This avoids a false-positive
+failure signal for a condition that carries no compatibility
+information.
+
+**Best-effort resolution.** Unlike the reproducible `backend-test` job
+in `ci.yml` (which uses `uv sync --locked` against the committed
+lockfile), this workflow runs `uv sync` without `--locked` — it
+intentionally allows dependency resolution to float against the new
+interpreter, since the goal is to detect whether the current
+dependency set *can* resolve and pass on the next version, not to
+reproduce a pinned environment.
+
+**Delivery.** Once a build is available, a failure at either remaining
+stage (dependency resolution or the test run itself) opens a new
+GitHub issue labeled `quality-tooling` (the label already exists in
+the repository) with a fixed, version-agnostic title, or updates the
+existing open one if a prior run already opened it — the workflow
+never creates a duplicate issue for the same ongoing condition, and
+never auto-closes it on a subsequent green run. A human triages and
+closes the issue once addressed or acknowledged.
+
+See `docs/conventions.md` (Version Bump Checklist) for the manual
+upgrade procedure this check complements.
 
 ### Troubleshooting
 
