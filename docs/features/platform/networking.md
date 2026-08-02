@@ -460,12 +460,13 @@ internal CA.
   SMELT, AIMAAS, RabbitMQ). All connections use the same trust store —
   no host matching, no fallback, no host list to maintain
 - **If file does not exist**: combined trust store contains only system
-  CAs. Connections to SUSE internal services fail with TLS error. A log
-  warning is emitted when `create_http_client()` is invoked (does not
-  block startup). The file existence check runs inside
-  `create_http_client()` when constructing the SSL context — the SSL
-  context is built fresh on every invocation (no module-level caching).
-  Warning frequency per component type:
+  CAs. A log warning is emitted when `create_http_client()` is invoked
+  (does not block startup). Whether this actually degrades connectivity
+  to SUSE-internal services depends on the system CA bundle's own
+  contents — see Trust Store Layering below. The file existence check
+  runs inside `create_http_client()` when constructing the SSL
+  context — the SSL context is built fresh on every invocation (no
+  module-level caching). Warning frequency per component type:
   - Fetchers in batch mode (`execute()` loop): once per run — the client
     is created lazily on first access and reused for all `fetch_single()`
     calls within the same run
@@ -488,18 +489,65 @@ internal CA.
   TLS handshake with verification enabled is an immediate error — never
   proceed with an unverified connection unless explicitly overridden
 - **Certificate rotation**: since the SSL context is built fresh per
-  `create_http_client()` invocation (not cached at module level):
-  - Fetchers pick up a rotated CA automatically on the next run without
-    process restart
-  - IBSEventConsumer rebuilds its AMQPS SSL context on each
-    reconnection attempt (see `ibs-rabbitmq-integration.md`), picking
-    up a rotated CA automatically after any connection loss without
-    process restart
-  - IBSClient requires a process restart to pick up a rotated CA
-    (long-lived HTTP client with no reconnection event that would
-    trigger a rebuild)
-  - Acceptable given CA rotations are infrequent (years between
-    rotations)
+  `create_http_client()` invocation (not cached at module level), rotation
+  behavior differs by trust store layer — see Trust Store Layering below
+  for the full breakdown.
+
+### Trust Store Layering
+
+The SUSE CA is present at two independent layers in a standard deployment.
+Understanding which layer a given consumer relies on is necessary to
+reason correctly about missing-CA behavior and certificate rotation.
+
+| Layer | Mechanism | Built | Consumers |
+|-------|-----------|-------|-----------|
+| 1 — System trust store | `update-ca-certificates` installs the SUSE CA into the OS-wide CA bundle (container image build step) | At image build time | Any component that resolves TLS verification via OpenSSL's default verify paths without receiving an explicit `ssl.SSLContext` — e.g., a future git subprocess cloning from a SUSE-internal host (`BaseGitFetcher`), or a database/AMQP client library configured to use system defaults. Also the mechanism for a TLS-intercepting proxy's CA (see Proxy Configuration above) |
+| 2 — `build_tls_context()` | Explicit `load_verify_locations(cafile=SUSE_CA_CERT_PATH)` on top of `ssl.create_default_context()` | Fresh on every invocation (no caching) | All Sentinel-controlled Python code that performs TLS (the shared HTTP client, `IBSEventConsumer`) |
+
+**Layer 2 is required regardless of layer 1.** httpx — the library behind
+the shared HTTP client — does not consult the system trust store for its
+default verification: `verify=True` (the default) builds its context from
+the `certifi` bundle, which does not include the SUSE CA. Without layer 2,
+every fetcher and `IBSClient` request to a SUSE-internal host would fail
+TLS verification regardless of what is installed system-wide. Layer 2 is
+also the only layer available outside containers (local development runs
+from `backend/` with no system-wide install).
+
+**The layers overlap by design inside the standard container image.**
+`build_tls_context()`'s base (`ssl.create_default_context()`) already
+reads the system trust store, so when layer 1 is present (the standard
+image), the explicit `load_verify_locations()` call in layer 2 is
+redundant for already-trusted hosts — but still required for consumers
+that bypass `build_tls_context()`'s base and construct their own context
+without it, and it remains the only layer present in non-container
+deployments (local development, custom images that skip the
+`update-ca-certificates` step).
+
+**Consequence for the "if file does not exist" behavior above**: the
+WARNING is always the reliable, observable signal. Whether the described
+connection failure actually occurs depends on layer 1: in the standard
+container image it does not (layer 1 already trusts the SUSE CA), so the
+warning indicates a misconfiguration to investigate rather than a live
+outage. In local development or a custom image without the
+`update-ca-certificates` step, layer 1 is absent and the failure is real.
+
+**Certificate rotation by layer**:
+
+| Consumer | Layer | Picks up a rotated CA |
+|----------|-------|------------------------|
+| Fetchers (httpx via `create_http_client()`) | 2 | Next run, no restart |
+| `IBSEventConsumer` (AMQPS) | 2 | Next reconnection attempt, no restart |
+| `IBSClient` (long-lived httpx client) | 2 | Process restart |
+| Git subprocess and other OpenSSL-default-verify clients | 1 | Image rebuild (`SUSE_CA_CERT_PATH` overrides only layer 2 — a mounted replacement file does not reach layer 1) |
+
+No git-based fetcher currently clones from a SUSE-internal host (both
+`sync_mitre_cves` and `sync_kernel_cves` clone public repositories), so
+the layer-1 git row above does not yet apply to any running fetcher. It
+is documented for the candidate SUSE-internal git sources already listed
+in `docs/data-sources.md` (`gitlab.suse.de`, `src.suse.de`).
+
+The layer-1 rebuild requirement is acceptable given CA rotations are
+infrequent (years between rotations).
 
 ### Shared Trust Store Function
 
@@ -534,6 +582,7 @@ by each component and documented in its respective spec.
 |----------|-----------|-------------------|
 | HTTPS | Shared HTTP client (all fetchers, IBSClient) | `build_tls_context()` via `create_http_client()` |
 | AMQPS | `IBSEventConsumer` | `build_tls_context()` passed to aio-pika/aiormq |
+| Git over HTTPS | `git` subprocess (`BaseGitFetcher`) | Container system trust store (layer 1 — see Trust Store Layering). Not yet exercised: no current git-based fetcher clones from a SUSE-internal host |
 
 ## Cross-references
 
@@ -547,6 +596,10 @@ by each component and documented in its respective spec.
 - `docs/features/integrations/ibs-integration.md` — IBSClient usage
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — AMQP TLS
   configuration
+- `docs/features/platform/git-fetcher-infrastructure.md` — `BaseGitFetcher`
+  git subprocess invocation (Trust Store Layering, layer 1 consumer)
+- `docs/data-sources.md` — candidate SUSE-internal git sources
+  (`gitlab.suse.de`, `src.suse.de`)
 - `docs/configuration.md` — environment variable index
 - RFC 9110 Section 9.2.2 — HTTP method idempotency semantics (normative
   basis for transport-level retry method safety)

@@ -42,6 +42,11 @@ def build_tls_context() -> ssl.SSLContext:
 
     Behavior:
     - `SUSE_CA_CERT_PATH` missing: log WARNING, return system-only context.
+      Whether this actually degrades connectivity to SUSE-internal
+      services depends on whether the system CA bundle itself already
+      trusts the SUSE CA (see `docs/features/platform/networking.md`,
+      Trust Store Layering) — in the standard container image it does,
+      so this path is a diagnostic signal, not necessarily a failure.
     - `SUSE_CA_CERT_PATH` corrupt/unparseable: raise `TLSConfigurationError`.
     - `SUSE_CA_CERT_PATH` valid: return combined context (system + SUSE CA).
     """
@@ -52,9 +57,8 @@ def build_tls_context() -> ssl.SSLContext:
         logger.warning(
             "suse_ca_cert_missing",
             path=ca_path,
-            detail="SUSE CA certificate not found; falling back to system "
-            "CA bundle only. Connections to SUSE internal services will "
-            "fail TLS verification.",
+            detail="SUSE CA certificate not found at the configured path; "
+            "using the system CA bundle only.",
         )
         return context
 

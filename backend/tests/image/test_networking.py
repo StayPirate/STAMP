@@ -2,11 +2,14 @@
 
 Verifies container-observable outcomes that only manifest inside the
 built image: the SUSE CA certificate file is present at the
-repository-relative path `build_tls_context()` reads, TLS context
-construction succeeds without a runtime error, and `create_http_client()`
-produces the specified defaults. These complement the in-process unit
-tests in `backend/tests/test_services/test_http_client.py`, which mock
-all I/O and never touch a real filesystem/container layout.
+repository-relative path `build_tls_context()` reads, the SUSE CA is
+also present in the container's system-wide trust store (layer 1 — see
+docs/features/platform/networking.md, Trust Store Layering), TLS
+context construction succeeds without a runtime error, and
+`create_http_client()` produces the specified defaults. These
+complement the in-process unit tests in
+`backend/tests/test_services/test_http_client.py`, which mock all I/O
+and never touch a real filesystem/container layout.
 
 See docs/features/platform/testing-strategy.md (Image / Container Smoke
 Testing, Growth Rule).
@@ -18,6 +21,32 @@ import subprocess
 from collections.abc import Callable
 
 import pytest
+
+# Inline Python snippet run inside the `api` container to confirm the
+# SUSE CA is present in the *system-wide* trust store (layer 1), i.e.
+# that `update-ca-certificates` ran successfully during the image build.
+# This does NOT verify build_tls_context() (layer 2) in isolation: since
+# build_tls_context()'s base (ssl.create_default_context()) already reads
+# the system trust store, layer 2's own explicit CA load is not
+# separately observable from inside a container where layer 1 is present
+# — asserting the SUSE CA appears in build_tls_context()'s output would
+# pass even if SUSE_CA_CERT_PATH were missing entirely (layer 1 alone
+# would already satisfy it). This test therefore targets
+# ssl.create_default_context() directly, which guards specifically
+# against `update-ca-certificates` silently being dropped from the
+# Dockerfile.
+_SYSTEM_TRUST_STORE_CHECK_SCRIPT = """
+import ssl
+
+context = ssl.create_default_context()
+subjects = [
+    dict(rdn[0] for rdn in cert.get("subject", ()))
+    for cert in context.get_ca_certs()
+]
+names = {s.get("commonName") for s in subjects}
+assert "SUSE Trust Root" in names, sorted(n for n in names if n)
+print("SYSTEM-TRUST-STORE-OK")
+"""
 
 # Inline Python snippet run inside the `api` container to exercise
 # build_tls_context() and create_http_client() against the real image
@@ -66,6 +95,27 @@ def test_suse_ca_certificate_present_at_expected_path(
         f"CA certificate missing at repository-relative path "
         f"(rc={result.returncode}): stderr={result.stderr!r}"
     )
+
+
+@pytest.mark.image
+def test_suse_ca_present_in_system_trust_store(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """The SUSE CA is present in the container's system-wide trust store
+    (Trust Store Layering, layer 1) — guards against the
+    `update-ca-certificates` Dockerfile step being silently dropped.
+
+    Layer 2 (`build_tls_context()`'s own explicit CA load) is not
+    separately verifiable from inside a container where layer 1 is
+    present — see the module-level comment on
+    `_SYSTEM_TRUST_STORE_CHECK_SCRIPT`.
+    """
+    result = compose_exec("api", "python", "-c", _SYSTEM_TRUST_STORE_CHECK_SCRIPT)
+    assert result.returncode == 0, (
+        f"system trust store check failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "SYSTEM-TRUST-STORE-OK" in result.stdout
 
 
 @pytest.mark.image
