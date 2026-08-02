@@ -86,18 +86,37 @@ jobs:
           version: "0.11.29"
           enable-cache: true
 
-      # Best-effort, informational run: any failure at any of the
-      # three stages below (interpreter unavailable, dependency
-      # resolution failure against the new interpreter, or an actual
-      # test failure) is treated uniformly as a single
-      # forward-compatibility signal via this step's outcome. Unlike
-      # ci.yml's reproducible backend-test job, this run intentionally
-      # allows re-resolution (`uv sync` without `--locked`) since the
-      # goal is to surface breakage against a still-unreleased
-      # interpreter, and coverage gating is not a concern here (no
-      # `--cov` flags).
+      # Guards against a false-positive forward-compatibility failure:
+      # right after a Runtime Version bump, the next minor may have no
+      # published build yet (no alpha/beta/rc available). That is not
+      # an incompatibility signal — it just means there is nothing to
+      # test yet. `--only-downloads` lists only installable builds, so
+      # empty output means the version does not exist for this
+      # platform/architecture.
+      - name: Check next Python version is available for download
+        id: availability
+        run: |
+          set -euo pipefail
+          next="${{ steps.python-version.outputs.next }}"
+          if uv python list "${next}" --only-downloads 2>/dev/null | grep -q .; then
+            echo "available=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "::notice::Python ${next} has no published build yet — skipping this run."
+            echo "available=false" >>"${GITHUB_OUTPUT}"
+          fi
+
+      # Best-effort, informational run: any failure at either of the
+      # two stages below (dependency resolution failure against the
+      # new interpreter, or an actual test failure) is treated
+      # uniformly as a single forward-compatibility signal via this
+      # step's outcome. Unlike ci.yml's reproducible backend-test job,
+      # this run intentionally allows re-resolution (`uv sync` without
+      # `--locked`) since the goal is to surface breakage against a
+      # still-unreleased interpreter, and coverage gating is not a
+      # concern here (no `--cov` flags).
       - name: Run test suite against next Python version
         id: forward-compat
+        if: steps.availability.outputs.available == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -105,8 +124,10 @@ jobs:
           uv sync --python "${{ steps.python-version.outputs.next }}"
           uv run --python "${{ steps.python-version.outputs.next }}" pytest -v
 
-      # Only reached when the run above failed (captured as
-      # `outcome: failure` because of continue-on-error). Opens a new
+      # Only reached when the run above actually executed and failed
+      # (captured as `outcome: failure` because of continue-on-error;
+      # skipped entirely, hence not 'failure', when the next version
+      # was unavailable per the availability check above). Opens a new
       # issue, or updates the existing open one so consecutive runs
       # never create a duplicate. The title is deliberately
       # version-agnostic (no version number embedded) since "next"

@@ -1034,6 +1034,15 @@ failures are expected and uninteresting until close to that version's
 own stable release — the workflow is informational, not a merge gate,
 and is never a required status check.
 
+**Availability guard.** Right after a Runtime Version bump, the next
+minor may have no published build at all yet (not even an alpha). The
+workflow checks this first via `uv python list <next> --only-downloads`
+before attempting anything else. If no build is available, the run
+exits successfully with an informational `::notice::` — no test is
+attempted and no tracking issue is opened. This avoids a false-positive
+failure signal for a condition that carries no compatibility
+information.
+
 **Best-effort resolution.** Unlike the reproducible `backend-test` job
 in `ci.yml` (which uses `uv sync --locked` against the committed
 lockfile), this workflow runs `uv sync` without `--locked` — it
@@ -1042,10 +1051,10 @@ interpreter, since the goal is to detect whether the current
 dependency set *can* resolve and pass on the next version, not to
 reproduce a pinned environment.
 
-**Delivery.** A failure at any stage (interpreter installation,
-dependency resolution, or the test run itself) opens a new GitHub
-issue labeled `quality-tooling` (the label already exists in the
-repository) with a fixed, version-agnostic title, or updates the
+**Delivery.** Once a build is available, a failure at either remaining
+stage (dependency resolution or the test run itself) opens a new
+GitHub issue labeled `quality-tooling` (the label already exists in
+the repository) with a fixed, version-agnostic title, or updates the
 existing open one if a prior run already opened it — the workflow
 never creates a duplicate issue for the same ongoing condition, and
 never auto-closes it on a subsequent green run. A human triages and
