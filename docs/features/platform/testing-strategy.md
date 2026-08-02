@@ -704,25 +704,37 @@ git config --local --unset core.hooksPath
 
 ### CI Pipeline
 
-The GitHub Actions CI workflow (`.github/workflows/ci.yml`) runs on
-every push to `master` and every pull request targeting `master`. It
-provides the **non-bypassable enforcement layer**:
+The CI pipeline runs on every push to `master` and every pull request
+targeting `master`. It provides the **non-bypassable enforcement layer**
+through the following required gates:
 
-| Job | What it checks |
-|-----|----------------|
-| `backend-lint` | `ruff check` + `ruff format --check` |
-| `backend-typecheck` | `mypy` static type checking in strict mode over both application code and tests |
-| `backend-test` | Full test suite with coverage gate (`--cov-fail-under=85`) |
-| `backend-security` | `bandit` static analysis + `pip-audit` dependency scan |
+1. **Python lint and format** — all application and test code MUST pass
+   the configured linter and formatter without findings.
+2. **Static type checking** — strict-mode type checking MUST pass over
+   both application code (`app/`) and tests (`tests/`).
+3. **Full test suite with coverage threshold** — the complete test suite
+   MUST pass with a minimum line-coverage percentage enforced as a
+   blocking gate.
+4. **Migration drift detection** — model definitions and migration
+   scripts MUST remain in sync; the build fails if they diverge.
+5. **OpenAPI schema verification** — the OpenAPI schema generation MUST
+   complete without error.
+6. **Static security analysis and dependency vulnerability scanning** —
+   static analysis of application code for insecure patterns MUST pass,
+   and all declared dependencies MUST be free of known vulnerabilities.
+7. **Shell script lint/format and workflow validation** — all tracked
+   shell scripts and git hooks MUST pass lint and format checks; all
+   GitHub Actions workflow files MUST pass syntax validation.
+8. **Container image smoke test** — on pull requests, the built Docker
+   image MUST pass a black-box smoke test that verifies the container
+   starts correctly and responds to health checks. This gate is blocking
+   on PRs only (not on pushes to `master`).
 
-The `backend-test` job uses PostgreSQL 16 and Redis 7 as GitHub Actions
-service containers, matching the production stack. The
-`TEST_DATABASE_URL` and `TEST_REDIS_URL` test-harness variables point to
-their respective service containers. The Redis service provides enough
-dedicated logical databases for all configured pytest workers.
-
-An additional CI step verifies Alembic migration drift — the build
-fails if model definitions and migration scripts are out of sync.
+The test execution environment MUST provide PostgreSQL 16 and Redis 7
+instances, exposed to the test harness via `TEST_DATABASE_URL` and
+`TEST_REDIS_URL` respectively. When the suite runs with parallel
+workers, the Redis instance MUST offer enough logical databases for one
+dedicated database per worker (see Worker and Test Isolation, above).
 
 ---
 

@@ -26,6 +26,8 @@ For architectural decisions and design constraints, see
   - [Pipeline Chain](#pipeline-chain)
   - [Version Locations](#version-locations)
   - [Image Tag Semantics](#image-tag-semantics)
+  - [API Documentation Publication](#api-documentation-publication)
+  - [Container Image Retention](#container-image-retention)
   - [Configuration Files](#configuration-files)
   - [Repository Secret](#repository-secret)
 - [Process Architecture](#process-architecture)
@@ -412,6 +414,23 @@ and leaving `latest` pointing at `master` HEAD after every subsequent
 merge instead of the last release. `latest` is therefore reliable for
 consumers (e.g., `image-scan.yml`, manual deployments) that expect it to
 track "the last release," not "the tip of master."
+
+### API Documentation Publication
+
+On every version release (version tag push), the OpenAPI contract and an
+interactive API documentation site are published to GitHub Pages. API
+consumers — including the frontend application developed in a separate
+repository — depend on this publication as the authoritative,
+machine-readable contract reference.
+
+### Container Image Retention
+
+Untagged container image versions in the package registry are subject to
+bounded retention: only a fixed number of the most recent untagged
+versions are kept; older untagged versions are removed on a weekly
+schedule. Tagged images (`master`, `latest`, semver release tags) are
+never subject to cleanup — only the pool of untagged versions (produced
+as a side effect of re-tagging on every push) is bounded.
 
 ### Configuration Files
 
