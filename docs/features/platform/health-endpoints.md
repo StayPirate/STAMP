@@ -78,8 +78,20 @@ independently.
 
 When multiple unique Redis instances are discovered, the `redis` check
 reports `"ok"` only if ALL instances respond successfully. If any
-instance fails, the check reports the worst result (`"unreachable"` or
-`"timeout"`).
+instance fails, the check reports the result with the highest severity
+among all instances, per the following total order:
+
+```
+ok (severity 0) < timeout (severity 1) < unreachable (severity 2)
+```
+
+This rule applies regardless of how many unique instances are
+discovered (one, two, or more). `"unreachable"` outranks `"timeout"`
+because it is a confirmed, deterministic failure (the connection
+attempt was actively refused or errored), while `"timeout"` only
+indicates that no response arrived within the check's time budget —
+a less certain condition that should not mask a confirmed failure on
+another instance.
 
 **Response** (503 Service Unavailable — at least one check fails):
 
