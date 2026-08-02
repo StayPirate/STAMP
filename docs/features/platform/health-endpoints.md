@@ -110,8 +110,8 @@ another instance.
 | Value | Meaning |
 |-------|---------|
 | `"ok"` | Check completed successfully |
-| `"unreachable"` | Connection refused or other non-timeout error |
 | `"timeout"` | No response within 2 seconds |
+| `"unreachable"` | Connection refused or other non-timeout error |
 
 **`Access: Public`**
 
