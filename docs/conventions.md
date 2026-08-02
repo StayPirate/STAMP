@@ -1175,6 +1175,14 @@ it has no active linked branch or pull request; and its direct blockers are
 resolved. Otherwise create a new issue using the "Work item" issue form —
 no separate approval is needed merely to create the tracking object.
 
+**Blocker linkage**: when an issue has direct blockers, declare them both
+in the issue template's free-text "Direct blockers" field and via GitHub's
+native `blocked_by` issue relationship (UI "Add blocked by" command, or the
+GraphQL `addBlockedBy` mutation). The free-text field keeps the blocker
+readable without leaving the issue body; the native relationship links
+both issues bidirectionally, surfaces in each issue's sidebar, and warns
+against closing an issue while an open blocker remains.
+
 **Exemptions** — an issue is not required for:
 
 - a pull request generated and maintained exclusively by Dependabot or
