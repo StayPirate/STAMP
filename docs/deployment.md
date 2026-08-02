@@ -25,6 +25,7 @@ For architectural decisions and design constraints, see
   - [Changelog](#changelog)
   - [Pipeline Chain](#pipeline-chain)
   - [Version Locations](#version-locations)
+  - [Image Tag Semantics](#image-tag-semantics)
   - [Configuration Files](#configuration-files)
   - [Repository Secret](#repository-secret)
 - [Process Architecture](#process-architecture)
@@ -385,6 +386,32 @@ manual deployment from tag (staging/production)
 | Docker image tag | Derived from git tag by `build-images.yml` |
 | GitHub Release | Created by release-please with changelog |
 | `backend/CHANGELOG.md` | Updated by release-please |
+
+### Image Tag Semantics
+
+`build-images.yml` publishes images to `ghcr.io/<repo>` under distinct
+tags depending on which trigger produced the build. Each tag has exactly
+one meaning — there is no overlap between what the `master` build
+produces and what a version-tag build produces:
+
+| Tag | Produced by | Meaning |
+|-----|-------------|---------|
+| `master` | Every merge to `master` (`workflow_run` trigger, via `type=ref,event=branch`) | Latest CI-green `master` HEAD. Not a release artifact — content changes on every merge |
+| `latest` | Highest semver tag pushed so far (`push: tags: v*` trigger, via `docker/metadata-action`'s default `flavor: latest=auto`) | The most recently published release. Only ever produced by a version-tag build |
+| `X.Y.Z` | Version tag push (`push: tags: v*`) | The exact release version |
+| `X.Y` | Version tag push (`push: tags: v*`) | Floating pointer to the latest patch release within that minor version |
+
+**Why `master` never produces `latest`**: `docker/metadata-action` derives
+`latest` exclusively from its semver `flavor: latest=auto` default, which
+only activates on the semver-tag trigger path. The `master`-triggered
+path only matches the `type=ref,event=branch` rule, producing the
+`master` tag alone. No explicit raw `latest` rule is declared in the
+`tags:` input — adding one would make both trigger paths produce
+`latest` independently, racing each other with no deterministic winner
+and leaving `latest` pointing at `master` HEAD after every subsequent
+merge instead of the last release. `latest` is therefore reliable for
+consumers (e.g., `image-scan.yml`, manual deployments) that expect it to
+track "the last release," not "the tip of master."
 
 ### Configuration Files
 
