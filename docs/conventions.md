@@ -848,10 +848,8 @@ To detect breakage early before the next bump:
   (including pre-releases). Failures are informational, not blocking.
 - Periodic pytest runs with `-W error::DeprecationWarning` to surface
   deprecated API usage before it becomes a hard break.
-- Renovate or Dependabot configured to auto-PR Docker base image
-  updates, GitHub Actions version bumps, and pip dependency updates.
 
-These are deferred to a future PR and not part of the current change.
+These are deferred to a future PR.
 
 ## CLI Conventions
 
