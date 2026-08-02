@@ -273,7 +273,11 @@ Before the first production deployment:
 - [ ] PostgreSQL provisioned and accessible
 - [ ] Redis provisioned and accessible
 - [ ] IBS service account created (`IBS_USERNAME` / `IBS_PASSWORD`)
-- [ ] SUSE Trust Root CA installed in container for TLS validation of *.suse.de services
+- [ ] SUSE Trust Root CA present in the built image, both at its
+      repository-relative path and installed into the system trust store
+      (automated by the Dockerfile build — see
+      `docs/features/platform/networking.md`, Trust Store Layering;
+      verified by `backend/tests/image/test_networking.py`)
 - [ ] DNS configured for `sentinel.suse.de`
 - [ ] TLS certificate provisioned for `sentinel.suse.de`
 - [ ] Reverse proxy / ingress configured to route `/api` to backend

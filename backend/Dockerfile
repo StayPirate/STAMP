@@ -34,8 +34,22 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 
 WORKDIR /app
 
-# Install SUSE internal CA certificate for TLS connections to internal
-# services (IBS, SMELT, AIMAAS, RabbitMQ)
+# Install the SUSE internal CA certificate at two layers (see
+# docs/features/platform/networking.md, Trust Store Layering):
+#
+# 1. Repository-relative path (this COPY): read by build_tls_context()
+#    via SUSE_CA_CERT_PATH. Required regardless of the system-wide
+#    install below because httpx does NOT read the system trust
+#    store — its default verify context is built from the certifi
+#    bundle, which does not include the SUSE CA. This is the layer all
+#    Sentinel-controlled Python code relies on, and the only layer
+#    available outside containers (local development).
+# 2. System-wide trust store (COPY + update-ca-certificates below): the
+#    trust source for consumers that resolve TLS via OpenSSL's default
+#    verify paths without an explicit context — e.g., a future git
+#    subprocess cloning from a SUSE-internal host. Baked at build time;
+#    rotating the CA at this layer requires an image rebuild.
+COPY certs/ certs/
 COPY certs/SUSE_Trust_Root.crt /usr/local/share/ca-certificates/SUSE_Trust_Root.crt
 RUN update-ca-certificates
 

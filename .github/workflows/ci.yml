@@ -131,7 +131,7 @@ jobs:
           version: "0.11.29"
           enable-cache: true
       - name: Run bandit (static analysis)
-        run: uvx bandit@1.9.4 -r app/
+        run: uvx bandit@1.9.4 -c pyproject.toml -r app/
       - name: Run pip-audit (dependency vulnerabilities)
         run: uvx pip-audit@2.10.1 --requirement <(uv export --no-hashes --no-dev --no-emit-project)
 
