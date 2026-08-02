@@ -1,0 +1,144 @@
+name: Python Forward-Compatibility Check
+
+# Weekly, non-blocking run of the backend test suite against the next
+# Python minor version (one above backend/.python-version). See
+# docs/deployment.md (Python Forward-Compatibility Check) for the full
+# rationale, and docs/conventions.md (Version Bump Checklist) for the
+# manual bump procedure this workflow provides early warning for.
+#
+# This workflow never fails the run because of a forward-compatibility
+# failure and never touches build-images.yml or the publish path. A
+# failure opens or updates a single tracking issue; it is informational
+# only and is never a required/blocking status check.
+
+on:
+  schedule:
+    # Every Monday at 07:00 UTC (one hour after image-scan.yml's 06:00
+    # UTC run, to avoid runner contention).
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: python-forward-compat
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ISSUE_LABEL: quality-tooling
+  ISSUE_TITLE: "Scheduled Python forward-compatibility check failed"
+
+jobs:
+  forward-compat:
+    name: Test Against Next Python Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
+      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      JWT_SECRET_KEY: ci-test-secret-key-not-for-production-min-32-chars
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute current and next Python minor version
+        id: python-version
+        run: |
+          set -euo pipefail
+          current=$(cat .python-version)
+          major="${current%%.*}"
+          minor="${current#*.}"
+          next="${major}.$((minor + 1))"
+          echo "current=${current}" >>"${GITHUB_OUTPUT}"
+          echo "next=${next}" >>"${GITHUB_OUTPUT}"
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      # Best-effort, informational run: any failure at any of the
+      # three stages below (interpreter unavailable, dependency
+      # resolution failure against the new interpreter, or an actual
+      # test failure) is treated uniformly as a single
+      # forward-compatibility signal via this step's outcome. Unlike
+      # ci.yml's reproducible backend-test job, this run intentionally
+      # allows re-resolution (`uv sync` without `--locked`) since the
+      # goal is to surface breakage against a still-unreleased
+      # interpreter, and coverage gating is not a concern here (no
+      # `--cov` flags).
+      - name: Run test suite against next Python version
+        id: forward-compat
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          uv python install "${{ steps.python-version.outputs.next }}"
+          uv sync --python "${{ steps.python-version.outputs.next }}"
+          uv run --python "${{ steps.python-version.outputs.next }}" pytest -v
+
+      # Only reached when the run above failed (captured as
+      # `outcome: failure` because of continue-on-error). Opens a new
+      # issue, or updates the existing open one so consecutive runs
+      # never create a duplicate. The title is deliberately
+      # version-agnostic (no version number embedded) since "next"
+      # shifts every time backend/.python-version is bumped. Never
+      # auto-closed by a subsequent green run — a human triages and
+      # closes it.
+      - name: Open or update tracking issue for forward-compatibility failure
+        if: steps.forward-compat.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          body_file=$(mktemp)
+          {
+            echo "Automated weekly run of the backend test suite against Python ${{ steps.python-version.outputs.next }} (current target: ${{ steps.python-version.outputs.current }}, per \`backend/.python-version\`) failed."
+            echo ""
+            echo "This run is non-blocking by design (see \`docs/deployment.md\`, Python Forward-Compatibility Check). It exists to surface interpreter and dependency incompatibilities early, before the actual Runtime Version bump described in \`docs/conventions.md\` (Version Bump Checklist)."
+            echo ""
+            echo "See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for full logs (interpreter install, dependency resolution, and test output)."
+            echo ""
+            echo "A human should triage this and close the issue once addressed or acknowledged — this workflow never auto-closes it."
+          } >"${body_file}"
+
+          existing=$(gh issue list --repo "${{ github.repository }}" \
+              --state open --label "${ISSUE_LABEL}" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" | head -n1)
+
+          if [[ -n "${existing}" ]]; then
+              gh issue edit "${existing}" --repo "${{ github.repository }}" --body-file "${body_file}"
+          else
+              gh issue create --repo "${{ github.repository }}" \
+                  --title "${ISSUE_TITLE}" --label "${ISSUE_LABEL}" \
+                  --body-file "${body_file}"
+          fi
