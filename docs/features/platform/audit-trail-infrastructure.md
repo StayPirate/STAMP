@@ -22,8 +22,8 @@ to all audit trail tables:
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | UUID | PK | Internal identifier |
-| `created_at` | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
-| `user_id` | UUID | FK(user.id, ON DELETE RESTRICT), nullable | Actor. NULL for system-initiated actions |
+| `created_at` | TIMESTAMPTZ | NOT NULL, server default, indexed | When the event occurred |
+| `user_id` | UUID | FK(user.id) ON DELETE RESTRICT, nullable, indexed | Actor. NULL for system-initiated actions |
 
 Sentinel only performs soft-delete (deactivation) on users, never
 hard-delete. The FK on `user_id` uses `ON DELETE RESTRICT` explicitly
@@ -44,7 +44,9 @@ defines:
 - **Auto-registration**: all subclasses are automatically registered in a
   global registry, keyed by `name`. If a subclass attempts to register
   with a `name` that already exists in the registry, a `ValueError` MUST
-  be raised at startup to prevent silent overwrites
+  be raised at startup to prevent silent overwrites. A subclass that
+  omits `name`, `description`, or `model_class` MUST raise `TypeError`
+  at class-definition time instead of registering incompletely
 - **Event creation**: `log_event()` class method inserts a record within
   the caller's database transaction. Subclasses may override to add
   domain-specific validation (e.g., ensuring `user_id` is provided for
@@ -279,6 +281,13 @@ Every audit event table MUST have indexes on:
    ticket audit events, `fetcher_name` for fetcher audit events)
 3. Every nullable FK column used as an optional filter (e.g.,
    `target_user_id`, `user_id`)
+
+Criteria 1 and 3's `user_id` case are satisfied automatically:
+`AuditEventMixin` declares `created_at` and `user_id` with `index=True`,
+so every concrete audit event table inherits both indexes without
+redeclaring them. Concrete tables only need to add indexes for their own
+mandatory scope columns (criterion 2) and any additional optional filter
+columns beyond `user_id` (e.g., `target_user_id`).
 
 The `event_type` column does NOT require a dedicated index — its low
 cardinality makes it ineffective as a standalone index. When filtered

@@ -456,8 +456,8 @@ specification.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| created_at | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
-| user_id | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
+| created_at | TIMESTAMPTZ | NOT NULL, server default, indexed | When the event occurred |
+| user_id | UUID | FK(user.id) ON DELETE RESTRICT, nullable, indexed | Actor who performed the action. NULL for system-initiated actions |
 
 **Location**: `backend/app/models/mixins.py`
 
