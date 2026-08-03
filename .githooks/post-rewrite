@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Argument: the command that triggered the rewrite (amend or rebase).
+command_name="${1:-}"
+
+# Drain stdin: git writes one '<old-sha> <new-sha> [extra-info]' line
+# per rewritten commit, which must be consumed regardless of whether
+# this hook acts on it.
+cat >/dev/null
+
+# Only a completed rebase can leave backend/uv.lock different from
+# what was on disk before it started; `git commit --amend` cannot.
+[[ "${command_name}" == "rebase" ]] || exit 0
+[[ -x "scripts/sync-backend-env.sh" ]] || exit 0
+scripts/sync-backend-env.sh

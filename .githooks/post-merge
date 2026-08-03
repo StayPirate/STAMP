@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Argument: squash-flag (1 for `git merge --squash`, 0 otherwise). Not
+# relevant here: any successful merge (including a fast-forward `git
+# pull`) can change which backend/uv.lock is on disk.
+[[ -x "scripts/sync-backend-env.sh" ]] || exit 0
+scripts/sync-backend-env.sh
