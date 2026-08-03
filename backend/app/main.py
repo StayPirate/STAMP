@@ -7,6 +7,7 @@ from importlib.metadata import version as get_version
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import health
 from app.config import settings
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware
@@ -29,3 +30,5 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 app.add_middleware(RequestIDMiddleware)
+
+app.include_router(health.router)

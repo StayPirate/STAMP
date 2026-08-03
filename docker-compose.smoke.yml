@@ -83,15 +83,16 @@ services:
     # IMAGE_SMOKE_BASE_URL, so the host port number is transparent.
     ports:
       - "${IMAGE_SMOKE_PORT:-18000}:8000"
-    # Liveness probe: the runtime image is python:slim (no curl). Until
-    # /health exists (Phase 1), probe the always-present /openapi.json
-    # route, which confirms the ASGI app booted successfully.
+    # Liveness probe: the runtime image is python:slim (no curl), so the
+    # probe uses urllib instead. Probes /health (see
+    # docs/features/platform/health-endpoints.md), which performs no
+    # dependency I/O and confirms the ASGI app booted successfully.
     healthcheck:
       test:
         - "CMD"
         - "python"
         - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
       interval: 10s
       timeout: 5s
       retries: 5
