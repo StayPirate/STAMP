@@ -224,7 +224,7 @@ deployable behavior; that decision is recorded in the phase parent issue.
 |---|---|---|
 | Prep | Image testing setup | Completed (2026-07-29) |
 | 0 | Infrastructure completion and validation | Completed (2026-07-30) |
-| 1 | Cross-cutting platform foundations and identity roots | Not started |
+| 1 | Cross-cutting platform foundations and identity roots | Completed (2026-08-03) |
 | 2 | Local identity foundation | Not started |
 | 3 | Generic fetcher platform | Not started |
 | RG-01 | Resolve product/package/CVE contract boundary | Not started — immediate documentation work |
@@ -295,6 +295,15 @@ and Python-version drift check. No domain logic or seam was introduced.
 
 ## Phase 1 — Cross-Cutting and Identity Roots
 
+**Status: Completed (2026-08-03).** All six pieces merged: structured logging
+and request correlation, the shared HTTP/TLS client, `/health` and `/ready`
+with their image-smoke assertions, the identity root (`User`/`UserRole`
+models, static role/capability enums, migration), `AuditEventMixin` and
+`BaseAuditLog`, and the Celery application bootstrap with UTC/redbeat startup
+validation. One spec gap surfaced and was resolved in-phase (`SG-01`, #28,
+mixed Redis readiness failure precedence). Native `blocked by` relationships
+were recorded on every piece issue and all were resolved before closure.
+
 **Outcome**: platform leaf infrastructure is operational, and the minimum
 identity root required by foreign keys and audit trails exists.
 
@@ -312,8 +321,10 @@ identity root required by foreign keys and audit trails exists.
 root and static authorization types, not authentication endpoints or user
 lifecycle services.
 
-**Release checkpoint**: first observable health/readiness behavior; evaluate
-the current release PR rather than targeting a predetermined version.
+**Release checkpoint**: taken. This phase's `/health` and `/ready` endpoints
+were the first observable behavior, so the pending release-please PR was
+evaluated and merged, releasing **v0.3.0** (tag, GitHub Release, and image
+publication all completed; see Progress Log).
 
 ## Phase 2 — Local Identity Foundation
 
@@ -484,3 +495,10 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
   execution assumptions with piece-level issue/branch/PR boundaries and
   corrected cross-phase dependencies. GitHub tracking objects are created only
   after this documentation change is merged.
+- **2026-08-03 — Phase 1 completed.** All six pieces (`P1-01`-`P1-06`) merged;
+  `SG-01` (mixed Redis readiness failure precedence) resolved in-phase. Release
+  checkpoint taken: release-please PR merged, releasing **v0.3.0** (tag,
+  GitHub Release, and image build/smoke/publish all succeeded). Phase 2
+  (`docs/drafts/implementation-plan.md` Phase 2) remains queued for detailed
+  sub-issue elaboration; `SG-02` (#90, shared Redis client infrastructure) is
+  already open as its blocker for session-liveness and login-lockout pieces.
