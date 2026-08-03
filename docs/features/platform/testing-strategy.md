@@ -301,6 +301,7 @@ per-model row.
 | `admin_client` | function | e2e | RBAC feature (`rbac.md`) |
 | `db_session_factory` | function | integration, e2e | First concurrency/locking test (pessimistic locking pattern) |
 | `redis_client` | function | integration, e2e | First Redis-dependent feature; follows Redis Strategy |
+| `real_session_factory` | function | integration, e2e | First feature needing a real `async_sessionmaker` rather than a single `AsyncSession` (readiness PostgreSQL check) |
 
 The `redis_client` fixture yields an asynchronous `redis.asyncio.Redis`
 client configured with decoded string responses. Its session-scoped
@@ -311,6 +312,19 @@ test uses the same client. Teardown restores those overrides, runs
 `FLUSHDB`, and closes the client. Provisioning, connectivity, isolation,
 or cleanup failures fail the test suite; they are never converted to
 skips.
+
+The `real_session_factory` fixture returns a real `async_sessionmaker`
+bound to the shared, session-scoped `_engine` fixture — mirroring the
+production shape in `app/database.py`. It is used by tests that need a
+session *factory* (something that opens its own fresh session per
+call) rather than a single shared `AsyncSession`, such as the
+readiness PostgreSQL check, which is exercised against a real,
+independently-connecting factory rather than the request-scoped
+`db_session`. Unlike `db_session` and `db_session_factory`, sessions
+opened through this factory are not covered by the per-test savepoint
+rollback: this fixture is intended for read-only checks; a test that
+commits writes through it would leak state into the shared test
+database across tests.
 
 The `db_session_factory` fixture is an async callable
 (`async def () -> AsyncSession`) that creates a new `AsyncSession` with

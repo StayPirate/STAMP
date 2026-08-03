@@ -101,6 +101,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: redis://localhost:6379/1
+      TEST_REDIS_URL: redis://localhost:6379/2
       JWT_SECRET_KEY: ci-test-secret-key-not-for-production-min-32-chars
     steps:
       - uses: actions/checkout@v7

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.enums import Capability, Role, Scope
+from app.core.enums import Capability, HealthCheckStatus, Role, Scope
 
 
 @pytest.mark.unit
@@ -58,3 +58,16 @@ class TestScopeEnum:
 
     def test_exact_members(self) -> None:
         assert {member.value for member in Scope} == {"all", "non_confidential"}
+
+
+@pytest.mark.unit
+class TestHealthCheckStatusEnum:
+    """HealthCheckStatus must have exactly the three members defined in
+    health-endpoints.md (Check result values)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in HealthCheckStatus} == {
+            "ok",
+            "timeout",
+            "unreachable",
+        }

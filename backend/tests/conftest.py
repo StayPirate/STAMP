@@ -10,24 +10,30 @@ import itertools
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 import pytest_asyncio
+import redis.asyncio as redis_asyncio
 from httpx import ASGITransport, AsyncClient
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
+    async_sessionmaker,
     create_async_engine,
 )
 
 if TYPE_CHECKING:
     from testcontainers.community.postgres import PostgresContainer
+    from testcontainers.community.redis import RedisContainer
 
 # Provide required settings for test environment (must precede app imports)
 os.environ.setdefault(
     "JWT_SECRET_KEY", "test-secret-key-not-for-production-min-32-chars"
 )
 
+from app.api.health import get_readiness_redis_urls
 from app.database import Base, get_db
 from app.main import app
 
@@ -78,6 +84,100 @@ def _database_url() -> str:
     return _container_url
 
 
+# Module-level cache for the auto-provisioned testcontainers Redis
+# instance (started once per session, reused across tests). Mirrors the
+# PostgreSQL pattern above.
+_redis_container: RedisContainer | None = None
+_redis_container_url: str | None = None
+
+# Standard Redis server logical database count (`databases 16` default
+# config). Used to validate worker-to-database allocation safety — see
+# docs/features/platform/testing-strategy.md (Worker and Test Isolation).
+_REDIS_LOGICAL_DB_COUNT = 16
+
+
+def _redis_base_url() -> str:
+    """Resolve the base Redis test-harness URL, before the per-worker
+    logical database offset is applied.
+
+    Priority:
+    1. TEST_REDIS_URL env var (set by CI or developer override)
+    2. Auto-provisioned Redis 7 via testcontainers (local dev)
+    """
+    global _redis_container, _redis_container_url
+
+    url = os.environ.get("TEST_REDIS_URL")
+    if url:
+        return url
+
+    if _redis_container_url is not None:
+        return _redis_container_url
+
+    # Lazy import — testcontainers is only needed when no URL is provided
+    from testcontainers.community.redis import RedisContainer
+
+    container = RedisContainer("redis:7")
+    container.start()
+    atexit.register(container.stop)
+    host = container.get_container_host_ip()
+    port = container.get_exposed_port(container.port)
+    _redis_container_url = f"redis://{host}:{port}/0"
+    _redis_container = container
+    return _redis_container_url
+
+
+def _redis_worker_db_index(base_index: int) -> int:
+    """This pytest worker's dedicated logical database index.
+
+    Workers are identified by `PYTEST_XDIST_WORKER` (`"gw0"`, `"gw1"`,
+    ...), set by pytest-xdist when parallel execution is active; absent
+    otherwise (single-process run). Each worker's index is
+    `base_index + worker_number`, so consecutive workers use consecutive
+    databases with no overlap. Raises explicitly — never silently
+    shares a database — if the resulting index would meet or exceed the
+    number of databases the server offers.
+    """
+    worker_input = os.environ.get("PYTEST_XDIST_WORKER")
+    offset = 0 if not worker_input else int(worker_input.removeprefix("gw"))
+    index = base_index + offset
+    if index >= _REDIS_LOGICAL_DB_COUNT:
+        raise RuntimeError(
+            f"Redis test harness requires logical database {index}, but the "
+            f"server only offers {_REDIS_LOGICAL_DB_COUNT} (0-"
+            f"{_REDIS_LOGICAL_DB_COUNT - 1}). Reduce the number of parallel "
+            "test workers or configure a server with more logical databases."
+        )
+    return index
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _redis_test_url() -> str:
+    """This test session's dedicated Redis URL.
+
+    Combines the harness's base host/port (see `_redis_base_url`) with
+    this worker's dedicated logical database (see
+    `_redis_worker_db_index`). Verifies connectivity with `PING` before
+    returning. Provisioning or connectivity failures raise rather than
+    skip the test suite (see docs/features/platform/testing-strategy.md,
+    Redis Strategy).
+    """
+    base_url = _redis_base_url()
+    parsed = urlsplit(base_url)
+    base_index = int((parsed.path or "/0").lstrip("/") or "0")
+    db_index = _redis_worker_db_index(base_index)
+    url = urlunsplit((parsed.scheme, parsed.netloc, f"/{db_index}", "", ""))
+
+    client = redis_asyncio.Redis.from_url(url)
+    try:
+        await client.ping()
+    except RedisError as exc:
+        raise RuntimeError(f"Redis test harness unreachable at {url}: {exc}") from exc
+    finally:
+        await client.aclose()
+
+    return url
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def _engine() -> AsyncGenerator[AsyncEngine]:
     """Create the async engine and tables once per session."""
@@ -88,6 +188,24 @@ async def _engine() -> AsyncGenerator[AsyncEngine]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+@pytest.fixture
+def real_session_factory(_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """A real `async_sessionmaker` bound to the shared test engine.
+
+    Mirrors the production shape in `app/database.py`. Used by tests
+    that need a session factory (rather than a single `AsyncSession`)
+    against a real database — e.g. the readiness PostgreSQL check,
+    which opens its own fresh session per invocation.
+
+    Unlike `db_session`/`db_session_factory`, sessions opened through
+    this factory are NOT covered by the per-test savepoint rollback:
+    use it for read-only checks only. A test that commits writes
+    through it would leak state into the shared test database across
+    tests.
+    """
+    return async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest.fixture
@@ -136,6 +254,34 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     ) as ac:
         yield ac
     app.dependency_overrides.pop(get_db, None)
+
+
+@pytest_asyncio.fixture
+async def redis_client(
+    _redis_test_url: str,
+) -> AsyncGenerator[redis_asyncio.Redis]:
+    """Provide an async Redis client bound to this test's dedicated
+    logical database.
+
+    See docs/features/platform/testing-strategy.md (Redis Strategy,
+    Fixture Catalog) for the full contract. Before yielding: flushes the
+    dedicated database (never `FLUSHALL` — other workers use other
+    databases) and overrides `get_readiness_redis_urls` — currently the
+    only application-owned Redis dependency — so readiness checks
+    exercised during the test observe this same instance. Teardown
+    restores the override, flushes again, and closes the client.
+    Cleanup/provisioning failures fail the test rather than skip.
+    """
+    client = redis_asyncio.Redis.from_url(_redis_test_url, decode_responses=True)
+    await client.flushdb()
+
+    app.dependency_overrides[get_readiness_redis_urls] = lambda: [_redis_test_url]
+    try:
+        yield client
+    finally:
+        app.dependency_overrides.pop(get_readiness_redis_urls, None)
+        await client.flushdb()
+        await client.aclose()
 
 
 @pytest.fixture

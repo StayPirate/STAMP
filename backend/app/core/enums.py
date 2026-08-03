@@ -62,3 +62,18 @@ class Scope(StrEnum):
 
     ALL = "all"
     NON_CONFIDENTIAL = "non_confidential"
+
+
+class HealthCheckStatus(StrEnum):
+    """Result value of a single readiness dependency check.
+
+    Category B — classification (Python Enum only; never stored in the
+    database — readiness results are never persisted). See
+    `docs/features/platform/health-endpoints.md` (Check result values,
+    Readiness — GET /ready) for the severity order used when aggregating
+    multiple Redis instance results: `OK < TIMEOUT < UNREACHABLE`.
+    """
+
+    OK = "ok"
+    TIMEOUT = "timeout"
+    UNREACHABLE = "unreachable"
