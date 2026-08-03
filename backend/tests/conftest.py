@@ -36,6 +36,7 @@ from app.main import app
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
 from app.models import User
+from tests.support.audit_models import SampleAuditEvent
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
 _FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
@@ -169,6 +170,30 @@ def user_factory(
         if not defaults.get("external_id"):
             defaults.setdefault("password_hash", _FICTIONAL_PASSWORD_HASH)
         instance = User(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def sample_audit_event_factory(
+    db_session: AsyncSession,
+) -> Callable[..., Awaitable[SampleAuditEvent]]:
+    """Factory fixture for `SampleAuditEvent` instances.
+
+    `SampleAuditEvent` (`tests/support/audit_models.py`) is the
+    test-only concrete `AuditEventMixin` subclass used to exercise the
+    mixin and `BaseAuditLog` without depending on a production audit
+    trail. Defaults: `event_type="sample_event"`; `user_id` is left
+    unset (NULL — a system-initiated event) unless overridden.
+    """
+
+    async def _create(**overrides: Any) -> SampleAuditEvent:
+        defaults: dict[str, Any] = {"event_type": "sample_event"}
+        defaults.update(overrides)
+        instance = SampleAuditEvent(**defaults)
         db_session.add(instance)
         await db_session.flush()
         return instance

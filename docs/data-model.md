@@ -456,8 +456,8 @@ specification.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
-| created_at | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
-| user_id | UUID | FK(user.id), nullable | Actor who performed the action. NULL for system-initiated actions |
+| created_at | TIMESTAMPTZ | NOT NULL, server default, indexed | When the event occurred |
+| user_id | UUID | FK(user.id) ON DELETE RESTRICT, nullable, indexed | Actor who performed the action. NULL for system-initiated actions |
 
 **Location**: `backend/app/models/mixins.py`
 
@@ -949,15 +949,15 @@ system action).
 
 | Column      | Type        | Constraints            | Description                                |
 |-------------|-------------|------------------------|--------------------------------------------|
-| id          | UUID        | PK                     | Inherited from AuditEventMixin             |
+| id          | UUID        | Inherited from AuditEventMixin | Internal identifier                |
 | ticket_id   | UUID        | FK(ticket.id), NOT NULL| Related ticket                             |
-| user_id     | UUID        | FK(user.id), nullable  | Inherited from AuditEventMixin. User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
+| user_id     | UUID        | Inherited from AuditEventMixin | User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
 | event_type  | VARCHAR(50) | NOT NULL               | See TicketAuditEventType enum below             |
 | old_value   | TEXT        | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | TEXT        | nullable               | New value (e.g., new status, new assignee username) |
 | comment     | TEXT        | nullable               | Human-readable system-generated description for automated events (e.g., creation source, deactivation reason). Not populated by user input. See `docs/features/tickets/ticket-audit-log.md` |
 | detail      | JSONB       | nullable               | Additional structured context. Schema validated per event type — see `docs/features/tickets/ticket-audit-log.md` (detail JSONB Schema Contract) |
-| created_at  | TIMESTAMPTZ   | NOT NULL, DEFAULT      | Inherited from AuditEventMixin             |
+| created_at  | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred            |
 
 #### TicketAuditEventType Enum
 
@@ -1329,14 +1329,14 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Inherited from AuditEventMixin |
+| id | UUID | Inherited from AuditEventMixin | Internal identifier |
 | event_type | VARCHAR(50) | NOT NULL | See IdentityAuditEventType enum below |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (external sync) |
+| user_id | UUID | Inherited from AuditEventMixin | Admin/user who performed the action. NULL for system actions (external sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
 | old_value | TEXT | nullable | Previous state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | new_value | TEXT | nullable | New state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | detail | JSONB | nullable | Additional structured context |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred |
 
 #### IdentityAuditEventType Enum
 
@@ -1389,13 +1389,13 @@ Audit trail for system setting modifications. Inherits `id`,
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Inherited from AuditEventMixin |
+| id | UUID | Inherited from AuditEventMixin | Internal identifier |
 | event_type | VARCHAR(50) | NOT NULL | See SettingAuditEventType enum below |
 | setting_key | VARCHAR(100) | FK(system_setting.key) ON DELETE RESTRICT, NOT NULL | Which setting was changed |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who changed the setting. Nullable at DB level; service validates presence |
+| user_id | UUID | Inherited from AuditEventMixin | Admin who changed the setting. Nullable at DB level; service validates presence |
 | old_value | TEXT | nullable | Previous value |
 | new_value | TEXT | NOT NULL | New value |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred |
 
 #### SettingAuditEventType Enum
 
@@ -1486,14 +1486,14 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
-| id                   | UUID        | PK                       | Inherited from AuditEventMixin     |
+| id                   | UUID        | Inherited from AuditEventMixin | Internal identifier          |
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier                 |
 | event_type           | VARCHAR(50) | NOT NULL                 | FetcherAuditEventType: `disabled`, `enabled`, `triggered`, `config_changed` |
-| user_id              | UUID        | FK(user.id), nullable    | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; service validates presence |
+| user_id              | UUID        | Inherited from AuditEventMixin | Admin who performed the action. Nullable at DB level; service validates presence |
 | old_value            | TEXT        | nullable                 | Previous value (e.g., old schedule expression) |
 | new_value            | TEXT        | nullable                 | New value (e.g., new schedule expression) |
 | detail               | JSONB       | nullable                 | Additional structured context (e.g., which config field changed) |
-| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Inherited from AuditEventMixin     |
+| created_at           | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred      |
 
 See `docs/features/platform/fetcher-infrastructure.md` for the event
 type contract with field values and the one-event-per-field rule.

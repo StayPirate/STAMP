@@ -500,11 +500,9 @@ For each audit-producing mutation, the test MUST assert:
 ### Immutability Testing
 
 Audit event tables are append-only. No application-level UPDATE or
-DELETE operations are permitted. Tests SHOULD verify the absence of
-UPDATE/DELETE operations on audit event models in the service layer.
-A structural test (inspecting service-layer code for prohibited
-operations on audit event classes) is preferred over per-function
-negative assertions.
+DELETE operations are permitted. This is enforced mechanically by a
+structural test rather than per-function negative assertions — see
+Structural Tests below ("Audit immutability").
 
 ---
 
@@ -539,6 +537,7 @@ shape.
 | Module | Location | What it enforces |
 |---|---|---|
 | Model conventions | `backend/tests/test_architecture/test_model_conventions.py` | Over every table in `Base.metadata`: primary key column type is UUID (`docs/conventions.md`, SQLAlchemy Conventions); every `DateTime` column is timezone-aware, i.e. `DateTime(timezone=True)` (`docs/conventions.md`, Timestamps & Timezones); no PostgreSQL ENUM type (`sa.Enum`/`postgresql.ENUM`) is used (`docs/conventions.md`, Enum Storage Strategy) |
+| Audit immutability | `backend/tests/test_architecture/test_audit_immutability.py` | Over every service module in `app/services/`: no `sqlalchemy.update()` or `sqlalchemy.delete()` call targets a model whose class inherits `AuditEventMixin` (`docs/features/platform/audit-trail-infrastructure.md`, Immutability). Discovers audit event models dynamically via `AuditEventMixin.__subclasses__()`, so it starts enforcing automatically as each concrete audit trail (ticket, identity, setting, fetcher) is implemented — no update to this test is needed when a new trail is added |
 | Layer dependencies | `backend/tests/test_architecture/test_layer_dependencies.py` | The dependency direction of the Backend Layer Architecture table in `docs/architecture.md` — a module in a given layer does not import a layer that is not listed as an allowed dependency for it. Both runtime and type-checking-only (`TYPE_CHECKING`-guarded) imports are checked, since either represents a coupling the architecture forbids |
 | Workflow job timeouts | `backend/tests/test_architecture/test_workflow_timeouts.py` | Every job across all `.github/workflows/*.yml` (or `.yaml`) files declares a job-level `timeout-minutes` — GitHub's 360-minute default could otherwise occupy a runner and its `concurrency` group for up to six hours on a hung step |
 | Documentation links | `backend/tests/test_docs_links.py` | Every relative Markdown link (`[text](path)` or `[text](path#anchor)`) in a tracked `.md` file resolves to an existing file or directory. `http(s)://` and `mailto:` links and anchor-only links (`#section`) are out of scope. A link whose entire `[text](target)` construct is wrapped in inline code spans (`` `[text](target)` ``) is also out of scope — this is a literal, illustrative example of link syntax (e.g. in `AGENTS.md`, Endpoint Permission Map maintenance), not a real link, and is not meant to resolve to a file. The test only detects and reports broken links; resolving them (fixing the link, creating the missing file, or removing the reference) is a judgement call left to whoever introduced or is reviewing the change |
@@ -566,6 +565,8 @@ backend/tests/
 ├── conftest.py                 # Shared fixtures
 ├── test_api_conventions.py     # Structural API convention tests
 ├── test_docs_links.py          # Structural documentation link tests
+├── support/                    # Test-only helpers with no app/ counterpart
+│   └── audit_models.py         # Concrete AuditEventMixin subclass for mixin/base-class tests
 ├── test_architecture/          # Structural model and layer tests
 │   ├── test_model_conventions.py   # Invariants over Base.metadata
 │   └── test_layer_dependencies.py  # Layer dependency direction (AST)
@@ -579,6 +580,13 @@ backend/tests/
 └── test_tasks/                 # Integration tests for Celery tasks
     └── test_<task>.py          # One file per task module
 ```
+
+`tests/support/` holds test-only production-shaped artifacts that have
+no corresponding `app/` module — for example, a minimal concrete
+SQLAlchemy model needed to exercise an abstract mixin
+(`AuditEventMixin`) that has no table of its own. It is distinct from
+`conftest.py`: fixtures live in `conftest.py`, while importable classes
+shared across multiple test modules live in `support/`.
 
 ### Naming Convention
 

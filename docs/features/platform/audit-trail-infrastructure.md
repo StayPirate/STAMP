@@ -22,8 +22,8 @@ to all audit trail tables:
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | UUID | PK | Internal identifier |
-| `created_at` | TIMESTAMPTZ | NOT NULL, server default | When the event occurred |
-| `user_id` | UUID | FK(user.id, ON DELETE RESTRICT), nullable | Actor. NULL for system-initiated actions |
+| `created_at` | TIMESTAMPTZ | NOT NULL, server default, indexed | When the event occurred |
+| `user_id` | UUID | FK(user.id) ON DELETE RESTRICT, nullable, indexed | Actor. NULL for system-initiated actions |
 
 Sentinel only performs soft-delete (deactivation) on users, never
 hard-delete. The FK on `user_id` uses `ON DELETE RESTRICT` explicitly
@@ -44,7 +44,9 @@ defines:
 - **Auto-registration**: all subclasses are automatically registered in a
   global registry, keyed by `name`. If a subclass attempts to register
   with a `name` that already exists in the registry, a `ValueError` MUST
-  be raised at startup to prevent silent overwrites
+  be raised at startup to prevent silent overwrites. A subclass that
+  omits `name`, `description`, or `model_class` MUST raise `TypeError`
+  at class-definition time instead of registering incompletely
 - **Event creation**: `log_event()` class method inserts a record within
   the caller's database transaction. Subclasses may override to add
   domain-specific validation (e.g., ensuring `user_id` is provided for
@@ -243,6 +245,11 @@ business mutation — MUST roll back. The caller MUST NOT catch exceptions
 from `log_event()` separately from the main transaction. No mutation can
 exist without its corresponding audit event.
 
+`log_event()` MUST force the pending insert to reach the database before
+returning, so constraint violations (FK, NOT NULL, CHECK) surface at the
+point of the call rather than at commit time. It MUST NOT commit — the
+caller's transaction governs durability.
+
 ## Actor Field
 
 - `user_id` is inherited from `AuditEventMixin` and is nullable at the
@@ -279,6 +286,13 @@ Every audit event table MUST have indexes on:
    ticket audit events, `fetcher_name` for fetcher audit events)
 3. Every nullable FK column used as an optional filter (e.g.,
    `target_user_id`, `user_id`)
+
+Criterion 1 and the `user_id` case of criterion 3 are satisfied by
+inheritance: every concrete audit event table has both indexes
+automatically from `AuditEventMixin`. Concrete tables declare indexes
+only for their own mandatory scope columns (criterion 2) and for any
+additional optional filter columns beyond `user_id` (e.g.,
+`target_user_id`).
 
 The `event_type` column does NOT require a dedicated index — its low
 cardinality makes it ineffective as a standalone index. When filtered
@@ -331,10 +345,10 @@ exposing cross-user data or actor identities.
 
 Audit event tables are append-only. No application-level UPDATE or DELETE
 operations are permitted on these tables. This is a project convention
-enforced via code review (guardrails) and automated tests. Tests should
-verify the absence of UPDATE/DELETE operations on audit event models in
-the service layer. There are no exceptions to this rule (see Retention
-Policy above).
+enforced via code review (guardrails) and mechanically by a structural
+test — see `docs/features/platform/testing-strategy.md` (Structural
+Tests, "Audit immutability"). There are no exceptions to this rule (see
+Retention Policy above).
 
 ## Scalability Considerations
 

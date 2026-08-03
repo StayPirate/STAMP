@@ -2782,14 +2782,14 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Inherited from AuditEventMixin |
+| id | UUID | Inherited from AuditEventMixin | Internal identifier |
 | fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL, indexed | Fetcher identifier |
 | event_type | VARCHAR(50) | NOT NULL | See FetcherAuditEventType enum |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
+| user_id | UUID | Inherited from AuditEventMixin | Admin who performed the action. Nullable at DB level; `FetcherAuditLog.log_event()` validates presence (all fetcher admin actions are human-initiated) |
 | old_value | TEXT | nullable | Previous value (e.g., old schedule expression) |
 | new_value | TEXT | nullable | New value (e.g., new schedule expression) |
 | detail | JSONB | nullable | Additional structured context (e.g., which config field changed) |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred |
 
 ### FetcherAuditEventType Enum
 
