@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/StayPirate/sentinel/compare/v0.2.0...v0.3.0) (2026-08-03)
+
+
+### Features
+
+* add AuditEventMixin and BaseAuditLog audit trail infrastructure ([#83](https://github.com/StayPirate/sentinel/issues/83)) ([8338a71](https://github.com/StayPirate/sentinel/commit/8338a71c2b239db49ee5b5f5ba19df6c7b6751c1))
+* add Celery application bootstrap with startup validation ([#80](https://github.com/StayPirate/sentinel/issues/80)) ([6db7ca5](https://github.com/StayPirate/sentinel/commit/6db7ca5e35a0b8dbec6087ed86c04253c6ccf4f1))
+* add health/readiness endpoints and image assertions ([#91](https://github.com/StayPirate/sentinel/issues/91)) ([0773f95](https://github.com/StayPirate/sentinel/commit/0773f95702cde6763452987d075b5f066fdce508))
+* add identity root models and static RBAC resolution ([#54](https://github.com/StayPirate/sentinel/issues/54)) ([373223b](https://github.com/StayPirate/sentinel/commit/373223b91f310198719798dcb8a24b2584dd3727))
+* add shared HTTP client and TLS trust store infrastructure ([#79](https://github.com/StayPirate/sentinel/issues/79)) ([5849f98](https://github.com/StayPirate/sentinel/commit/5849f983a28c8a30f37486150c0aff06f68e3f72))
+* add structured logging and request correlation ([#45](https://github.com/StayPirate/sentinel/issues/45)) ([63318c2](https://github.com/StayPirate/sentinel/commit/63318c2a974fe9abd1f5ca8b8386a2d3fbababfd))
+
+
+### Bug Fixes
+
+* eliminate release-please uv.lock race condition via extra-files ([#82](https://github.com/StayPirate/sentinel/issues/82)) ([e91b77f](https://github.com/StayPirate/sentinel/commit/e91b77f7436c9ac98213e39265220031e240c47a)), closes [#81](https://github.com/StayPirate/sentinel/issues/81)
+
+
+### Documentation
+
+* define async model factory fixture pattern ([#51](https://github.com/StayPirate/sentinel/issues/51)) ([a64a480](https://github.com/StayPirate/sentinel/commit/a64a4804ea2726eee3f7fecbbff053ada17e5099))
+
 ## [0.2.0](https://github.com/StayPirate/Sentinel/compare/v0.1.0...v0.2.0) (2026-07-30)
 
 
