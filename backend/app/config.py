@@ -58,6 +58,8 @@ class Settings(BaseSettings):
 
     # Celery
     celery_broker_url: str = Field(default="redis://localhost:6379/1", repr=False)
+    celery_timezone: str = "UTC"
+    celery_enable_utc: bool = True
 
     # CORS
     cors_origins: CommaSeparated = ["http://localhost:5173"]

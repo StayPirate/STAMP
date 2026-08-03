@@ -276,9 +276,18 @@ follow `LOG_LEVEL` unconditionally — no pins, no conditional levels.
 | `celery` | Task execution details | Low |
 | `uvicorn.access` | HTTP access log entries | Low |
 
-Celery MUST be configured with `worker_hijack_root_logger=False` so
-Celery's own logging setup does not override the structlog/stdlib
-pipeline configuration.
+Celery MUST be configured with `worker_hijack_root_logger=False`, but
+this alone is insufficient: Celery's `Logging.setup_logging_subsystem`
+(invoked by every Celery-based process during its own startup) still
+reconfigures the root logger's *level* whenever `worker_hijack_root_logger`
+is `False`, which would silently override `LOG_LEVEL` regardless of the
+structlog pipeline already configured by `configure_logging()`. Celery
+skips its entire built-in logging setup only when at least one receiver
+is connected to its `setup_logging` signal. The Celery app factory
+(`backend/app/celery_app.py`) therefore connects a `setup_logging`
+receiver that calls `configure_logging(settings)`, making the
+structlog/stdlib pipeline the sole logging configuration for every
+Celery-based process — Celery's own setup never runs.
 
 **Operational note** (see also `docs/deployment.md`, Log Aggregation):
 setting `LOG_LEVEL=DEBUG` in production causes third-party loggers to

@@ -109,8 +109,8 @@ The timezone settings are **fixed** — they MUST NOT be overridden.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `CELERY_TIMEZONE` | string | `UTC` | Timezone for Celery Beat cron interpretation. MUST remain `UTC` — all fetcher schedules are expressed in UTC. Overriding this value causes all scheduled fetchers to run at incorrect times | `docs/conventions.md` |
-| `CELERY_ENABLE_UTC` | bool | `true` | Forces Celery internal message timestamps to UTC. MUST remain `true` | `docs/conventions.md` |
+| `CELERY_TIMEZONE` | string | `UTC` | Timezone for Celery Beat cron interpretation. MUST remain `UTC` — all fetcher schedules are expressed in UTC. Overriding this value causes all scheduled fetchers to run at incorrect times | `docs/features/platform/fetcher-infrastructure.md` |
+| `CELERY_ENABLE_UTC` | bool | `true` | Forces Celery internal message timestamps to UTC. MUST remain `true` | `docs/features/platform/fetcher-infrastructure.md` |
 
 ### Timezone Enforcement
 
