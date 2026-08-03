@@ -65,6 +65,24 @@ explicit pull request reference, including on closed pull requests. It is not
 yet backed by a guardrail — it is under calibration, and its invocation is
 declared in `.opencode/prompts/code.md` and `.opencode/prompts/spec.md`.
 
+### Model Tiering
+
+Subagents have no `model` pinned by default: they inherit the model of the
+primary agent that invoked them (`spec` or `code`, see Primary Agents above).
+Subagents whose task involves deep analytical reasoning — finding subtle
+security flaws, evaluating architectural complexity, discovering unspecified
+scenarios, or reconciling nuanced cross-document/cross-diff detail — are
+pinned to a more capable model with extended thinking enabled, since GitHub
+Copilot prices all Claude Opus versions identically per token regardless of
+version. All other subagents keep the default inherited-model behavior,
+since their checks are comparatively structural and do not show the same
+sensitivity to reasoning depth.
+
+| Tier | Model | Agents |
+|------|-------|--------|
+| 1 (pinned) | `github-copilot/claude-opus-5`, extended thinking (`budgetTokens: 32000`) | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
+| 2 (inherited) | Invoking primary agent's model | All other subagents |
+
 ## Commands
 
 Commands are defined in `.opencode/commands/` and invoked with `/command-name`.

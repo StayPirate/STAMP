@@ -7,6 +7,11 @@ description: >
   opening or updating a pull request, or on demand with an explicit pull
   request reference. Read-only: does not modify files.
 mode: subagent
+model: github-copilot/claude-opus-5
+options:
+  thinking:
+    type: enabled
+    budgetTokens: 32000
 permission:
   edit: deny
   bash:
