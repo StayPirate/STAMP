@@ -80,8 +80,18 @@ sensitivity to reasoning depth.
 
 | Tier | Model | Agents |
 |------|-------|--------|
-| 1 (pinned) | `github-copilot/claude-opus-5`, extended thinking (`budgetTokens: 32000`) | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
+| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` (highest generally-supported reasoning-effort tier for this model) | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
 | 2 (inherited) | Invoking primary agent's model | All other subagents |
+
+Tier 1 agents use the top-level `variant` frontmatter field, not a raw
+`options.thinking` block. `variant` selects one of the model's
+provider-defined reasoning-effort presets, and OpenCode translates it into
+whatever wire-level thinking configuration the specific model/provider pair
+requires. Hand-crafting `options.thinking` directly is discouraged for
+adaptive-thinking models (Opus ≥ 4.7, including `claude-opus-5`): their wire
+protocol differs from older Opus versions and from the API contract accepted
+by this model, and a hand-written thinking block can silently target the
+wrong protocol version.
 
 ## Commands
 

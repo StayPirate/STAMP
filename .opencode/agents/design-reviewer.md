@@ -7,10 +7,7 @@ description: >
   Read-only: does not modify files.
 mode: subagent
 model: github-copilot/claude-opus-5
-options:
-  thinking:
-    type: enabled
-    budgetTokens: 32000
+variant: high
 permission:
   edit: deny
   bash:
