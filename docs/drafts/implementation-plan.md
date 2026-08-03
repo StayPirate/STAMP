@@ -300,10 +300,9 @@ and request correlation, the shared HTTP/TLS client, `/health` and `/ready`
 with their image-smoke assertions, the identity root (`User`/`UserRole`
 models, static role/capability enums, migration), `AuditEventMixin` and
 `BaseAuditLog`, and the Celery application bootstrap with UTC/redbeat startup
-validation. One spec gap surfaced and was resolved in-phase (`SG-01`, mixed
-Redis readiness failure precedence). Native `blocked by` relationships on
-every piece issue matched the table below and were all resolved before
-closure.
+validation. One spec gap surfaced and was resolved in-phase (`SG-01`, #28,
+mixed Redis readiness failure precedence). Native `blocked by` relationships
+were recorded on every piece issue and all were resolved before closure.
 
 **Outcome**: platform leaf infrastructure is operational, and the minimum
 identity root required by foreign keys and audit trails exists.
@@ -501,5 +500,5 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
   checkpoint taken: release-please PR merged, releasing **v0.3.0** (tag,
   GitHub Release, and image build/smoke/publish all succeeded). Phase 2
   (`docs/drafts/implementation-plan.md` Phase 2) remains queued for detailed
-  sub-issue elaboration; `SG-02` (shared Redis client infrastructure) is
+  sub-issue elaboration; `SG-02` (#90, shared Redis client infrastructure) is
   already open as its blocker for session-liveness and login-lockout pieces.
