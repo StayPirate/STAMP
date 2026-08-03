@@ -288,9 +288,12 @@ class TestReadinessEndpointFailure:
 @pytest.mark.e2e
 class TestRouting:
     async def test_registered_at_root_not_under_api_v1(
-        self, client: AsyncClient
+        self,
+        client: AsyncClient,
+        use_real_readiness_postgresql: None,
+        redis_client: redis_asyncio.Redis,
     ) -> None:
         assert (await client.get("/health")).status_code == 200
-        assert (await client.get("/ready")).status_code in (200, 503)
+        assert (await client.get("/ready")).status_code == 200
         assert (await client.get("/api/v1/health")).status_code == 404
         assert (await client.get("/api/v1/ready")).status_code == 404

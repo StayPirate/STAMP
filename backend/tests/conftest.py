@@ -198,6 +198,12 @@ def real_session_factory(_engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
     that need a session factory (rather than a single `AsyncSession`)
     against a real database — e.g. the readiness PostgreSQL check,
     which opens its own fresh session per invocation.
+
+    Unlike `db_session`/`db_session_factory`, sessions opened through
+    this factory are NOT covered by the per-test savepoint rollback:
+    use it for read-only checks only. A test that commits writes
+    through it would leak state into the shared test database across
+    tests.
     """
     return async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 

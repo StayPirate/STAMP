@@ -320,7 +320,11 @@ session *factory* (something that opens its own fresh session per
 call) rather than a single shared `AsyncSession`, such as the
 readiness PostgreSQL check, which is exercised against a real,
 independently-connecting factory rather than the request-scoped
-`db_session`.
+`db_session`. Unlike `db_session` and `db_session_factory`, sessions
+opened through this factory are not covered by the per-test savepoint
+rollback: this fixture is intended for read-only checks; a test that
+commits writes through it would leak state into the shared test
+database across tests.
 
 The `db_session_factory` fixture is an async callable
 (`async def () -> AsyncSession`) that creates a new `AsyncSession` with
