@@ -4,19 +4,19 @@ set -euo pipefail
 echo "Running pre-commit checks..."
 
 echo "  ruff check..."
-(cd backend && uv run ruff check .)
+(cd backend && uv run --locked ruff check .)
 
 echo "  ruff format..."
-(cd backend && uv run ruff format --check .)
+(cd backend && uv run --locked ruff format --check .)
 
 echo "  mypy..."
-(cd backend && uv run mypy app tests)
+(cd backend && uv run --locked mypy app tests)
 
 echo "  unit tests..."
 # Exit code 5 = "no tests collected" (no @pytest.mark.unit tests yet).
 # Treat it as success so the hook doesn't block commits before the
 # first unit test is added.
-(cd backend && uv run pytest -m unit --no-header -q) || [ $? -eq 5 ]
+(cd backend && uv run --locked pytest -m unit --no-header -q) || [ $? -eq 5 ]
 
 # --- Shell script checks (shellcheck + shfmt) ---
 # Run only on staged shell files. Because shellcheck and shfmt are not

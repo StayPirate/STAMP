@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Arguments: <prev-head> <new-head> <branch-flag>
+# The third argument is 1 for a branch checkout (git switch / git
+# checkout <branch>) and 0 for a file-level checkout (git checkout --
+# <file>). Only a branch checkout can change which backend/uv.lock is
+# on disk, so file-level checkouts are skipped.
+branch_flag="${3:-0}"
+[[ "${branch_flag}" == "1" ]] || exit 0
+
+# Skip the intermediate checkouts a rebase performs internally;
+# post-rewrite re-syncs once the rebase completes, avoiding repeated
+# work (and repeated network calls) per replayed commit.
+if [[ -d "$(git rev-parse --git-path rebase-merge)" ]] ||
+    [[ -d "$(git rev-parse --git-path rebase-apply)" ]]; then
+    exit 0
+fi
+
+[[ -x "scripts/sync-backend-env.sh" ]] || exit 0
+scripts/sync-backend-env.sh

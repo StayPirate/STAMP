@@ -667,9 +667,25 @@ per-repository via `core.hooksPath` (see activation steps below):
 
 - **pre-commit**: ruff check + ruff format check + mypy strict type check +
   `pytest -m unit` (fast gate, < 15 seconds) + `gitleaks git --staged`
-  (secret scan on staged changes)
+  (secret scan on staged changes). Tool invocations use `uv run --locked`,
+  so the hook never mutates `backend/uv.lock` as a side effect of running
+  a check.
 - **pre-push**: full test suite (`pytest`) including integration and
-  e2e tests
+  e2e tests. Also uses `uv run --locked`, for the same reason.
+- **post-checkout / post-merge / post-rewrite**: after switching
+  branches, pulling, merging, or completing a rebase, the backend
+  environment (`backend/.venv`) is automatically synchronized with
+  `backend/uv.lock` on the resulting branch. This applies uniformly
+  regardless of which branch is involved — there is no restriction to
+  `master`. A file-level checkout (e.g. `git checkout -- <file>`) does
+  not trigger this check. Synchronization never modifies
+  `backend/uv.lock` itself, and it is exact — a package installed
+  manually into `backend/.venv` outside the lockfile may be removed. If
+  `uv` is not installed, or if synchronization fails (e.g. no network
+  access when a new dependency needs downloading), the hook prints a
+  warning to stderr and does not block the underlying git operation; the
+  developer must then run `cd backend && uv sync` manually before
+  relying on the environment.
 
 These hooks are a supplementary safety net. The CI pipeline is the
 authoritative enforcer — hooks can be bypassed in extraordinary
