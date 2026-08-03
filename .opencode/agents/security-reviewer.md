@@ -5,6 +5,8 @@ description: >
   endpoints, authentication/authorization logic, input handling, or secret
   management. Read-only: does not modify files.
 mode: subagent
+model: github-copilot/claude-opus-5
+variant: high
 permission:
   edit: deny
   bash:

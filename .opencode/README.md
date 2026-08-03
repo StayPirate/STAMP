@@ -65,6 +65,34 @@ explicit pull request reference, including on closed pull requests. It is not
 yet backed by a guardrail — it is under calibration, and its invocation is
 declared in `.opencode/prompts/code.md` and `.opencode/prompts/spec.md`.
 
+### Model Tiering
+
+Subagents have no `model` pinned by default: they inherit the model of the
+primary agent that invoked them (`spec` or `code`, see Primary Agents above).
+Subagents whose task involves deep analytical reasoning — finding subtle
+security flaws, evaluating architectural complexity, discovering unspecified
+scenarios, or reconciling nuanced cross-document/cross-diff detail — are
+pinned to a more capable model with extended thinking enabled, since GitHub
+Copilot prices all Claude Opus versions identically per token regardless of
+version. All other subagents keep the default inherited-model behavior,
+since their checks are comparatively structural and do not show the same
+sensitivity to reasoning depth.
+
+| Tier | Model | Agents |
+|------|-------|--------|
+| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` (highest generally-supported reasoning-effort tier for this model) | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
+| 2 (inherited) | Invoking primary agent's model | All other subagents |
+
+Tier 1 agents use the top-level `variant` frontmatter field, not a raw
+`options.thinking` block. `variant` selects one of the model's
+provider-defined reasoning-effort presets, and OpenCode translates it into
+whatever wire-level thinking configuration the specific model/provider pair
+requires. Hand-crafting `options.thinking` directly is discouraged for
+adaptive-thinking models (Opus ≥ 4.7, including `claude-opus-5`): their wire
+protocol differs from older Opus versions and from the API contract accepted
+by this model, and a hand-written thinking block can silently target the
+wrong protocol version.
+
 ## Commands
 
 Commands are defined in `.opencode/commands/` and invoked with `/command-name`.
