@@ -21,38 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: googleapis/release-please-action@v5
-        id: release
+      # Pinned to an exact commit SHA (not the mobile `@v5` tag) for full
+      # determinism: the release PR's atomicity relies on release-please's
+      # internal generic-toml updater correctly resolving the `extra-files`
+      # jsonpath configured in release-please-config.json, so an unreviewed
+      # action upgrade must not silently change that behavior. Dependabot
+      # (.github/dependabot.yml) still proposes SHA bumps for new releases.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.RELEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-      # release-please bumps the version in backend/pyproject.toml but does
-      # not know about uv.lock. Regenerate it on the release PR branch so
-      # `uv sync --locked` in CI does not fail on the version mismatch.
-      - uses: actions/checkout@v7
-        if: steps.release.outputs.pr
-        with:
-          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
-          token: ${{ secrets.RELEASE_TOKEN }}
-
-      - uses: astral-sh/setup-uv@v9.0.0
-        if: steps.release.outputs.pr
-        with:
-          version: "0.11.29"
-
-      - name: Update lockfile
-        if: steps.release.outputs.pr
-        working-directory: backend
-        run: uv lock
-
-      - name: Commit updated lockfile
-        if: steps.release.outputs.pr
-        working-directory: backend
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add uv.lock
-          git diff --cached --quiet || git commit -m "chore: update uv.lock for release"
-          git push

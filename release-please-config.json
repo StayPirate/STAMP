@@ -4,7 +4,14 @@
     "backend": {
       "release-type": "python",
       "package-name": "sentinel",
-      "include-component-in-tag": false
+      "include-component-in-tag": false,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='sentinel')].version"
+        }
+      ]
     }
   }
 }
