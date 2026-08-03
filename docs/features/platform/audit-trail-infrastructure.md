@@ -245,6 +245,11 @@ business mutation — MUST roll back. The caller MUST NOT catch exceptions
 from `log_event()` separately from the main transaction. No mutation can
 exist without its corresponding audit event.
 
+`log_event()` MUST force the pending insert to reach the database before
+returning, so constraint violations (FK, NOT NULL, CHECK) surface at the
+point of the call rather than at commit time. It MUST NOT commit — the
+caller's transaction governs durability.
+
 ## Actor Field
 
 - `user_id` is inherited from `AuditEventMixin` and is nullable at the
@@ -282,12 +287,12 @@ Every audit event table MUST have indexes on:
 3. Every nullable FK column used as an optional filter (e.g.,
    `target_user_id`, `user_id`)
 
-Criteria 1 and 3's `user_id` case are satisfied automatically:
-`AuditEventMixin` declares `created_at` and `user_id` with `index=True`,
-so every concrete audit event table inherits both indexes without
-redeclaring them. Concrete tables only need to add indexes for their own
-mandatory scope columns (criterion 2) and any additional optional filter
-columns beyond `user_id` (e.g., `target_user_id`).
+Criterion 1 and the `user_id` case of criterion 3 are satisfied by
+inheritance: every concrete audit event table has both indexes
+automatically from `AuditEventMixin`. Concrete tables declare indexes
+only for their own mandatory scope columns (criterion 2) and for any
+additional optional filter columns beyond `user_id` (e.g.,
+`target_user_id`).
 
 The `event_type` column does NOT require a dedicated index — its low
 cardinality makes it ineffective as a standalone index. When filtered
@@ -340,10 +345,10 @@ exposing cross-user data or actor identities.
 
 Audit event tables are append-only. No application-level UPDATE or DELETE
 operations are permitted on these tables. This is a project convention
-enforced via code review (guardrails) and automated tests. Tests should
-verify the absence of UPDATE/DELETE operations on audit event models in
-the service layer. There are no exceptions to this rule (see Retention
-Policy above).
+enforced via code review (guardrails) and mechanically by a structural
+test — see `docs/features/platform/testing-strategy.md` (Structural
+Tests, "Audit immutability"). There are no exceptions to this rule (see
+Retention Policy above).
 
 ## Scalability Considerations
 

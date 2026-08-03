@@ -19,14 +19,14 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| id | UUID | PK | Inherited from AuditEventMixin |
+| id | UUID | Inherited from AuditEventMixin | Internal identifier |
 | event_type | VARCHAR(50) | NOT NULL | See IdentityAuditEventType |
-| user_id | UUID | FK(user.id), nullable | Inherited from AuditEventMixin. Admin/user who performed the action. NULL for system actions (external sync) |
+| user_id | UUID | Inherited from AuditEventMixin | Admin/user who performed the action. NULL for system actions (external sync) |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events (which affect configuration, not a specific user) |
 | old_value | TEXT | nullable | Previous state (human-readable) |
 | new_value | TEXT | nullable | New state (human-readable) |
 | detail | JSONB | nullable | Additional structured context when old_value/new_value are insufficient |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Inherited from AuditEventMixin |
+| created_at | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred |
 
 **Notes**:
 
