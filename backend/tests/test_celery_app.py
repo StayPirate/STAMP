@@ -97,7 +97,20 @@ def _reset_global_state() -> Iterator[None]:
 class TestCreateCeleryAppDefaults:
     """Complete default configuration and broker propagation."""
 
-    def test_broker_url_propagated_from_settings(self) -> None:
+    def test_broker_url_propagated_from_settings(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Celery's own `Settings.broker_url` property (celery/app/utils.py)
+        # reads `os.environ["CELERY_BROKER_URL"]` unconditionally *before*
+        # falling back to any value set via `.conf.update(...)` — this is
+        # native Celery behavior, not something this factory controls. In
+        # real deployments this never causes a divergence (our own
+        # `Settings.celery_broker_url` field is populated from the very
+        # same env var), but a CI job or shell that happens to export
+        # `CELERY_BROKER_URL` for unrelated reasons would otherwise shadow
+        # the override under test. Ensure a clean environment so this test
+        # verifies propagation from `Settings`, not the ambient process env.
+        monkeypatch.delenv("CELERY_BROKER_URL", raising=False)
         app = create_celery_app(
             _settings(celery_broker_url="redis://example.invalid:6380/2")
         )

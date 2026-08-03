@@ -94,6 +94,13 @@ def create_celery_app(app_settings: Settings) -> Celery:
     """
     app = Celery("sentinel")
     app.conf.update(
+        # NOTE: Celery's own `Settings.broker_url` property (see
+        # celery/app/utils.py) reads `os.environ["CELERY_BROKER_URL"]`
+        # unconditionally *before* this value — native Celery behavior,
+        # not overridable here. This never diverges in a real deployment
+        # (`app_settings.celery_broker_url` is itself populated from that
+        # same env var), so passing it explicitly keeps this value as the
+        # effective source of truth in every real invocation.
         broker_url=app_settings.celery_broker_url,
         result_backend=None,
         task_ignore_result=True,
