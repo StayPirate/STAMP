@@ -17,7 +17,12 @@ concurrency:
 
 jobs:
   release-please:
-    if: github.event.workflow_run.conclusion == 'success'
+    # See build-images.yml for why workflow_run.branches is insufficient
+    # on its own: it matches the triggering run's head branch, not the
+    # base branch it targeted. See issue #96.
+    if: >
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

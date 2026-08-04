@@ -510,6 +510,7 @@ manual deployment from tag (staging/production)
 | Docker image tag | Derived from git tag by `build-images.yml` |
 | GitHub Release | Created by release-please with changelog |
 | `backend/CHANGELOG.md` | Updated by release-please |
+| `backend/uv.lock` | Updated by release-please |
 
 ### Image Tag Semantics
 
@@ -564,8 +565,10 @@ root:
 - `.release-please-manifest.json` — current version tracking
 
 These files are managed by release-please and should not be edited
-manually except during initial setup or to force a version via
-`Release-As`.
+manually except during initial setup, to force a version via
+`Release-As`, or to maintain the hand-authored `extra-files` entry in
+`release-please-config.json` (see Version Locations above,
+`backend/uv.lock`).
 
 ### Repository Secret
 
