@@ -86,8 +86,7 @@ plausibly defeat the check rather than merely fail it:
 ### Secret handling
 
 - Is any credential written as a literal instead of referenced through
-  `${{ secrets.* }}`? No CI job performs secret scanning, so this check
-  has no automated backstop
+  `${{ secrets.* }}`? This check has no automated backstop in CI
 - Are literal values limited to obviously non-production fixtures
   consumed by ephemeral service containers?
 - Does a workflow expose a secret to an untrusted context — for example
@@ -99,26 +98,24 @@ plausibly defeat the check rather than merely fail it:
 
 ### Pipeline chain coherence
 
-- Does the change preserve the documented chain: `ci.yml` →
-  (`workflow_run`, gated on success) → `release-please.yml` and
-  `build-images.yml`, with the image smoke test as a blocking gate
+- Does the change preserve the chain documented in `docs/deployment.md`
+  (Pipeline Chain), including the image smoke test as a blocking gate
   before publication?
 - Does a new or modified trigger create a path that publishes an image,
   a tag, or a release without passing the gates that currently protect
   it?
-- Does a non-blocking workflow (`image-scan`, `python-forward-compat`,
-  `cleanup-images`) remain non-blocking and stay off the publish path?
-- Are `concurrency` groups still correct for the trigger — in
-  particular, does a release or publish workflow avoid
-  `cancel-in-progress`?
+- Does a workflow listed as non-blocking in the Workflow Inventory
+  remain non-blocking and stay off the publish path?
+- Are `concurrency` groups still correct for the trigger, per the
+  Concurrency convention?
 
 ### Container build
 
 - Are the `builder` and `runtime` stages kept separate, with no build
   tooling reaching the runtime layer?
 - Does the runtime stage still run as a non-root user?
-- Does the change introduce a per-role image variant? All process roles
-  must share one image with different entrypoints
+- Does the change introduce a per-role image variant? See
+  `docs/deployment.md` (Container Build Conventions)
 - Does the base image still derive from `ARG PYTHON_VERSION`?
 
 ### Registry and release configuration

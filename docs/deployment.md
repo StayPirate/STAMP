@@ -311,15 +311,16 @@ exist and for the conventions every workflow and container build must
 follow.
 
 Two closely related topics are owned elsewhere and are not repeated here:
-the order in which workflows trigger one another is documented in
-[Pipeline Chain](#pipeline-chain), and the deployment targets they feed
-are documented in [Environments](#environments).
+the full trigger chain — how a merge propagates to a release and to a
+published image — is documented in [Pipeline Chain](#pipeline-chain), and
+the deployment targets it feeds are documented in
+[Environments](#environments).
 
 ### Workflow Inventory
 
 | Workflow | Trigger | Purpose | Blocking |
 |----------|---------|---------|----------|
-| `ci.yml` | Push to `master`, pull request, manual | Backend lint, static type check, tests with coverage gate, security scan, shell lint, image smoke test | Yes |
+| `ci.yml` | Push to `master`, pull request, manual | Backend quality gates — see `docs/features/platform/testing-strategy.md` (CI Pipeline) for the authoritative gate composition | Yes |
 | `pr-metadata.yml` | Pull request opened, edited, reopened, or synchronized | Validates PR title format/length and issue linkage per `docs/conventions.md` (Pull Request Requirements) | Yes |
 | `release-please.yml` | `workflow_run` after a successful CI run on `master` | Creates and updates the Release PR; on merge creates the version tag and GitHub Release | Yes (release path) |
 | `build-images.yml` | `workflow_run` after a successful CI run on `master`; push of a `v*` tag | Builds the backend image once, runs the image smoke-test gate, publishes the same digest to `ghcr.io` | Yes (publish gate) |
@@ -329,8 +330,10 @@ are documented in [Environments](#environments).
 | `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
 
 **Blocking** means a failure prevents the merge, release, or publication
-that the workflow gates. Non-blocking workflows are early-warning
-mechanisms: they never fail a merge and never touch the publish path.
+that the workflow gates. Non-blocking workflows never fail a merge and
+never touch the publish path: `image-scan.yml` and
+`python-forward-compat.yml` are early-warning mechanisms, and
+`cleanup-images.yml` is scheduled registry maintenance.
 
 ### Workflow Conventions
 
@@ -345,10 +348,14 @@ use:
 | Exact release tag | Actions whose minor releases have changed behavior in ways that affected this repository | `astral-sh/setup-uv@v9.0.0` |
 | Full commit SHA with a trailing `# vX.Y.Z` comment | Actions performing destructive or release-critical operations | `googleapis/release-please-action@<sha> # v5.0.0` |
 
-An action pinned by commit SHA MUST carry an inline comment stating both
-the version the SHA corresponds to and why the stricter pin is required
-(currently: release PR atomicity for `release-please-action`, and
-irreversible registry deletion for `ghcr-cleanup-action`).
+An action pinned by commit SHA MUST carry an inline comment naming the
+version the SHA corresponds to, and SHOULD state why the stricter pin is
+required when that reason is not evident from the surrounding comments.
+
+The same principle applies to tools a workflow installs itself — whether
+downloaded directly or requested through an action's `version:` input.
+Their versions MUST be pinned explicitly and MUST NOT be left to resolve
+to the latest available release.
 
 **No secrets in workflow files.** Credentials MUST be supplied through
 GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
@@ -361,18 +368,28 @@ outside CI. No CI job performs secret scanning — the optional local
 [Software Requirements](#software-requirements)) — so this convention is
 enforced by review.
 
-**Service containers for test dependencies.** Jobs requiring PostgreSQL
-or Redis MUST declare them as GitHub Actions service containers with
-health-check options, never as externally hosted or shared instances.
-This keeps every run isolated and reproducible, and makes the test
-database lifecycle identical to the one described in
-`docs/features/platform/testing-strategy.md`.
+**Least-privilege permissions.** Every workflow MUST declare an explicit
+`permissions:` block scoped to what its jobs actually require, rather
+than relying on the repository default.
+
+**Concurrency.** Workflows on the release or publish path MUST NOT use
+`cancel-in-progress`. Cancelling a partially completed release or push
+leaves the Release PR or the registry in an indeterminate state.
+
+**Service containers for test dependencies.** Jobs that run the test
+suite in-process MUST obtain PostgreSQL and Redis from GitHub Actions
+service containers declared with health-check options, never from
+externally hosted or shared instances. This keeps every run isolated and
+reproducible. Black-box suites that exercise the built image are the
+exception: they supply their own stack through `docker-compose.smoke.yml`
+so that the container under test reaches its dependencies exactly as it
+would at runtime — see `docs/features/platform/testing-strategy.md`
+(Image / Container Smoke Testing).
 
 **Shell inside workflows.** Shell embedded in `run:` steps follows the
 Shell Scripting rules in `docs/conventions.md` — including `actionlint`
-validation, pinned versions for tools installed by download, and
-extraction into `scripts/` once a block grows beyond simple
-orchestration.
+validation and extraction into `scripts/` once a block grows beyond
+simple orchestration.
 
 ### Container Build Conventions
 
@@ -387,10 +404,9 @@ canonical role enumeration and `docs/architecture.md` for the rationale.
 Per-role image variants MUST NOT be introduced.
 
 **Base image version.** The Python base image version comes from the
-global `ARG PYTHON_VERSION`, whose default MUST match
-`backend/.python-version`. CI passes the value explicitly as a build
-argument and a drift-check step fails the build on mismatch. See
-`docs/conventions.md` (Runtime Version) for the source-of-truth rules.
+global `ARG PYTHON_VERSION`. See `docs/conventions.md` (Runtime Version)
+for the source-of-truth rules, the build-argument pass-through, and the
+CI drift check.
 
 ---
 
@@ -461,7 +477,7 @@ release-please. Do not edit it manually. It groups changes by type
 master branch commits (via squash-merge PR)
      │
      ▼
-CI (ci.yml) — lint, test, security scan, shell lint
+CI (ci.yml) — all quality gates
      │ (on success)
      ▼
 release-please.yml (workflow_run, gated behind CI)

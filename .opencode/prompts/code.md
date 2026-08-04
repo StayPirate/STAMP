@@ -226,8 +226,9 @@ You may also invoke it on demand with an explicit pull request reference
   change consumes or produces an external contract
 - **New external integration involving credentials, response parsing, or a new parser dependency** → also `@security-reviewer`
 - **CI/CD artifacts changed** (`.github/workflows/**`, `backend/Dockerfile`,
-  `docker-compose*.yml`, `.githooks/**`, CI-consumed `scripts/**`,
-  release-please configuration) → `@cicd-reviewer` per Guardrail 5
+  `.dockerignore`, `docker-compose*.yml`, `.githooks/**`, CI-consumed
+  `scripts/**`, release-please configuration) → `@cicd-reviewer` per
+  Guardrail 5
 
 ## Non-Feature Work
 
