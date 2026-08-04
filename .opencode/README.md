@@ -24,8 +24,9 @@ They are configured in `opencode.json`.
   configuration. Cannot modify implementation code. Prompt:
   `.opencode/prompts/spec.md`
 - **Code** — implements features from specifications, writes tests, and
-  maintains all executable artifacts. Must signal spec gaps and obtain user
-  approval before making design decisions. Prompt:
+  maintains all executable artifacts. Must signal unresolved behavioral or
+  contract gaps, while retaining freedom over compliant internal technical
+  choices. Prompt:
   `.opencode/prompts/code.md`
 
 ## Subagents

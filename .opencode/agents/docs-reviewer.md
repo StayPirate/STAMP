@@ -56,7 +56,10 @@ structural complexity without presenting it to the user for a decision.
   a corresponding specification in `docs/features/**/`?
 - Are feature specs up to date with the current implementation? Flag any
   behavior described in the spec that is not implemented, or implemented
-  behavior not reflected in the spec
+  behavior or guarantee that requires a contract but is not reflected in the
+  spec. Do not require documentation of internal technical mechanisms that
+  preserve all specified behavior and constraints; apply `docs/conventions.md`
+  (Function Specification Completeness)
 - Do feature specs follow a consistent structure (overview, requirements,
   API endpoints, data model references, UI description)?
 

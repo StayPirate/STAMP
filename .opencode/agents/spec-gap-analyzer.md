@@ -203,8 +203,13 @@ interface contracts, and CLI commands — per the convention's Scope and
 Exclusions), apply the **Insufficiency test**:
 
 > Could an implementer reading this function's specification be forced to
-> make an autonomous design decision because the spec does not specify the
-> answer?
+> choose between two plausible behaviors, guarantees, or contract semantics
+> because the specification does not provide the answer?
+
+Do not report a gap merely because multiple internal technical mechanisms
+could implement the same specified contract. Apply the full boundary and
+examples from the Function Specification Completeness section already loaded
+above rather than creating a separate local definition.
 
 Specifically check:
 

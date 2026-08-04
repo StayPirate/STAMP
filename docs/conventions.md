@@ -1386,10 +1386,25 @@ template, and the Fetcher Registry maintenance obligation.
 ### Function Specification Completeness
 
 Every function documented in a feature specification MUST provide enough
-information that an implementer can write a complete, correct
-implementation without making autonomous design decisions. If an
-implementer must choose between two plausible behaviors because the spec
-does not specify which, the spec is incomplete.
+information that an implementer can produce the required behavior without
+inventing product or contract semantics. If an implementer must choose
+between two plausible behaviors because the specification does not say which
+is required, the specification is incomplete.
+
+Specifications define **what the system must do**, including observable
+behavior, business rules, persisted state, side effects, audit events, error
+semantics, idempotency, concurrency guarantees, security and data-integrity
+requirements, and externally relevant operational constraints. A technical
+choice also belongs in a specification when choosing differently would alter
+one of those contracts or violate an established architectural boundary.
+
+Specifications do not normally prescribe **how equivalent behavior is
+implemented**. Internal module organization, private helper interfaces,
+dependency-injection mechanisms, interchangeable algorithms, connection
+pooling, resource-lifecycle mechanics, and library options remain
+implementation choices when they have no contract-level effect and do not
+violate an established architectural boundary. The existence of multiple
+technically valid implementations is not by itself a specification gap.
 
 #### Required Information (by function category)
 
@@ -1488,13 +1503,17 @@ the default.
 
 #### Decision rule
 
-**Insufficiency test**: if an implementer reading the spec must make a
-design decision (choose between two plausible behaviors), the spec fails
-the completeness requirement.
+**Insufficiency test**: if an implementer reading the specification must
+choose between two plausible behaviors, guarantees, or contract semantics,
+the specification fails the completeness requirement. A choice between
+internal technical mechanisms that preserve all specified behavior and
+constraints does not fail this test.
 
 **Excess test**: if the spec repeats information already obvious from
 the function's name and type signature alone, the documentation is
-excessive. Remove redundancy.
+excessive. Likewise, if a technical detail does not constrain behavior,
+interoperability, security, data integrity, operations, or an established
+architectural boundary, omit it unless it is necessary explanatory context.
 
 **Derivability rule**: a question's answer MAY be omitted when it is
 unambiguously derivable from:
@@ -1511,15 +1530,20 @@ unambiguously derivable from:
 3. **A module-level or section-level default** — see "Module-level
    defaults" above
 
-The Insufficiency test takes unconditional precedence: if there is *any*
-reasonable ambiguity about the answer, the spec MUST state it
-explicitly. When in doubt, state it — the cost of one redundant
-sentence is lower than the cost of one ambiguous omission.
+The Insufficiency test takes precedence for contract-level questions: if
+there is any reasonable ambiguity about required behavior or guarantees, the
+specification MUST resolve it explicitly. Do not resolve that ambiguity by
+prescribing unrelated implementation details, and do not add details merely
+to eliminate legitimate implementation freedom.
 
 #### Scope and Exclusions
 
 This convention applies to **service-layer functions, private helpers,
-and utility functions** documented in feature specifications. The
+and utility functions** documented in feature specifications. A specification
+need not document a private helper whose interface and behavior are entirely
+internal implementation choices. When a specification deliberately gives a
+private helper contract-level responsibilities, however, that documented
+contract follows this convention. The
 following categories use their own documentation patterns and are NOT
 subject to these completeness questions:
 

@@ -26,7 +26,7 @@
       }
     },
     "code": {
-      "description": "Implements features from specifications. Signals spec gaps before making autonomous design decisions.",
+      "description": "Implements features from specifications. Signals unresolved behavioral or contract gaps while choosing compliant internal technical mechanisms.",
       "model": "github-copilot/claude-sonnet-5",
       "mode": "primary",
       "color": "error",
