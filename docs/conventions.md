@@ -1249,6 +1249,25 @@ becomes the squash commit subject. Format and length are validated by CI.
 - **Human approval**: the repository owner must explicitly authorize
   the merge by referencing the PR number.
 
+### Issue and PR Body Formatting
+
+Issue descriptions and pull request bodies are rendered as HTML by
+GitHub's web UI, which wraps text to the viewport width automatically.
+Do NOT hard-wrap lines in issue or PR bodies at a fixed column width
+(72, 80, or any other limit) — let the browser handle wrapping. A
+paragraph should be written as a single unwrapped line (or with one
+sentence per line, if preferred for diff readability); it must not be
+manually broken into fixed-width lines.
+
+The 72-character hard-wrapping convention remains scoped to:
+
+- The first line (subject) of commit messages — a Git convention
+  respected by `git log`, terminal pagers, and `gh` output
+- Files in the repository read in editors or terminals (source code,
+  Markdown documentation, configuration) — see the 88-character line
+  length rule under Python (Backend) for code, and standard prose
+  wrapping for documentation files
+
 ### Branch Naming
 
 | Prefix | Use |

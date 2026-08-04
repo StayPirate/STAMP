@@ -1,6 +1,5 @@
 name: Work item
 description: Track a substantive repository change before implementation begins.
-title: ""
 body:
   - type: textarea
     id: outcome
