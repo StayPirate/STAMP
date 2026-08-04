@@ -85,7 +85,7 @@ Note: event counters retain the values from the last active connection
 (they are reset only when a new connection is successfully established,
 not on disconnection).
 
-**Response when Redis key is absent** (200 OK):
+**Response when Redis key is absent or Redis is unavailable** (200 OK):
 
 ```json
 {
@@ -102,6 +102,17 @@ not on disconnection).
   }
 }
 ```
+
+If reading the heartbeat raises any `RedisError` (including connection
+failure, timeout, OOM rejection, or protocol error), the endpoint returns the
+same `200 OK` `unreachable` response shown above. It does not distinguish a
+missing heartbeat from an unavailable heartbeat store because neither case
+can confirm that the consumer is alive. The failure is logged at WARNING for
+operators; exception details are not exposed in the public response.
+
+A heartbeat value that cannot be parsed as JSON or validated against the
+response fields is handled identically: return the `unreachable` response and
+log a WARNING without exposing the invalid value or parsing details.
 
 **Fields**:
 
