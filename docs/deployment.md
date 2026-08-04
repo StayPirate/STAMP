@@ -18,6 +18,10 @@ For architectural decisions and design constraints, see
   - [Local Development](#local-development)
   - [Staging Deployment](#staging-deployment)
   - [Production Deployment](#production-deployment)
+- [CI Pipeline](#ci-pipeline)
+  - [Workflow Inventory](#workflow-inventory)
+  - [Workflow Conventions](#workflow-conventions)
+  - [Container Build Conventions](#container-build-conventions)
 - [Release Process](#release-process)
   - [How It Works](#how-it-works)
   - [Creating a Release](#creating-a-release)
@@ -238,7 +242,8 @@ cd backend && uv run python -m sentinel manage-user create \
 - Staging auto-deployment from the `master` branch is deferred until
   the deployment target (Kubernetes, Docker Compose on VM, or cloud
   service) is decided. The current process is manual. When the target
-  is known, a deployment workflow will be created via the `@cicd` agent
+  is known, a deployment workflow will be added to the CI pipeline
+  following [Workflow Conventions](#workflow-conventions)
 - IBS/RabbitMQ integration is active — staging receives real events
 
 ### Production Deployment
@@ -295,6 +300,97 @@ Before the first production deployment:
 - `JWT_SECRET_KEY` rotation invalidates all active sessions (plan for
   off-peak maintenance window). In-flight SSO logins are also affected
   (max 10 minutes of disruption)
+
+---
+
+## CI Pipeline
+
+Continuous integration and delivery are implemented entirely with GitHub
+Actions. This section is the authoritative reference for which workflows
+exist and for the conventions every workflow and container build must
+follow.
+
+Two closely related topics are owned elsewhere and are not repeated here:
+the order in which workflows trigger one another is documented in
+[Pipeline Chain](#pipeline-chain), and the deployment targets they feed
+are documented in [Environments](#environments).
+
+### Workflow Inventory
+
+| Workflow | Trigger | Purpose | Blocking |
+|----------|---------|---------|----------|
+| `ci.yml` | Push to `master`, pull request, manual | Backend lint, static type check, tests with coverage gate, security scan, shell lint, image smoke test | Yes |
+| `pr-metadata.yml` | Pull request opened, edited, reopened, or synchronized | Validates PR title format/length and issue linkage per `docs/conventions.md` (Pull Request Requirements) | Yes |
+| `release-please.yml` | `workflow_run` after a successful CI run on `master` | Creates and updates the Release PR; on merge creates the version tag and GitHub Release | Yes (release path) |
+| `build-images.yml` | `workflow_run` after a successful CI run on `master`; push of a `v*` tag | Builds the backend image once, runs the image smoke-test gate, publishes the same digest to `ghcr.io` | Yes (publish gate) |
+| `deploy-api-docs.yml` | Push of a `v*` tag | Publishes the OpenAPI contract and API documentation site to GitHub Pages | Yes (release path) |
+| `image-scan.yml` | Weekly schedule, manual | Scans the published image for OS-level vulnerabilities and opens or updates a tracking issue | No |
+| `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and opens or updates a tracking issue | No |
+| `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
+
+**Blocking** means a failure prevents the merge, release, or publication
+that the workflow gates. Non-blocking workflows are early-warning
+mechanisms: they never fail a merge and never touch the publish path.
+
+### Workflow Conventions
+
+**Pinned action references.** Every `uses:` reference MUST resolve to an
+immutable or version-stable reference. Mutable references (`@main`,
+`@master`, or any branch name) MUST NOT be used. Three pin styles are in
+use:
+
+| Style | When to use | Example |
+|-------|-------------|---------|
+| Major version tag | Default for first-party and widely used actions | `actions/checkout@v7` |
+| Exact release tag | Actions whose minor releases have changed behavior in ways that affected this repository | `astral-sh/setup-uv@v9.0.0` |
+| Full commit SHA with a trailing `# vX.Y.Z` comment | Actions performing destructive or release-critical operations | `googleapis/release-please-action@<sha> # v5.0.0` |
+
+An action pinned by commit SHA MUST carry an inline comment stating both
+the version the SHA corresponds to and why the stricter pin is required
+(currently: release PR atomicity for `release-please-action`, and
+irreversible registry deletion for `ghcr-cleanup-action`).
+
+**No secrets in workflow files.** Credentials MUST be supplied through
+GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
+literals. Literal values are permitted only for obviously non-production
+test fixtures consumed by ephemeral service containers (for example the
+CI database password and the `JWT_SECRET_KEY` placeholder used by the
+`backend-test` job), and such values MUST be self-evidently unusable
+outside CI. No CI job performs secret scanning — the optional local
+`gitleaks` pre-commit hook is the only automated check (see
+[Software Requirements](#software-requirements)) — so this convention is
+enforced by review.
+
+**Service containers for test dependencies.** Jobs requiring PostgreSQL
+or Redis MUST declare them as GitHub Actions service containers with
+health-check options, never as externally hosted or shared instances.
+This keeps every run isolated and reproducible, and makes the test
+database lifecycle identical to the one described in
+`docs/features/platform/testing-strategy.md`.
+
+**Shell inside workflows.** Shell embedded in `run:` steps follows the
+Shell Scripting rules in `docs/conventions.md` — including `actionlint`
+validation, pinned versions for tools installed by download, and
+extraction into `scripts/` once a block grows beyond simple
+orchestration.
+
+### Container Build Conventions
+
+**Multi-stage builds.** `backend/Dockerfile` separates a `builder` stage
+from a `runtime` stage so that build tooling and build-time dependencies
+never reach the published runtime layer. The runtime stage MUST run as a
+non-root user.
+
+**Single image, multiple entrypoints.** All process roles are built from
+this one image — see [Container Images](#container-images) for the
+canonical role enumeration and `docs/architecture.md` for the rationale.
+Per-role image variants MUST NOT be introduced.
+
+**Base image version.** The Python base image version comes from the
+global `ARG PYTHON_VERSION`, whose default MUST match
+`backend/.python-version`. CI passes the value explicitly as a build
+argument and a drift-check step fails the build on mismatch. See
+`docs/conventions.md` (Runtime Version) for the source-of-truth rules.
 
 ---
 

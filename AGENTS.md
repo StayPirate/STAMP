@@ -223,7 +223,23 @@ that the release-please workflow
 (`.github/workflows/release-please.yml`) and the downstream
 `build-images.yml` pipeline are not affected.
 
-For CI/CD-specific changes, delegate to the `@cicd` subagent.
+The authoritative source for CI/CD conventions — the workflow inventory,
+action pinning, secret handling, service containers, and container build
+rules — is `docs/deployment.md` (CI Pipeline).
+
+After adding or modifying any CI/CD artifact, invoke `@cicd-reviewer`:
+
+- `.github/workflows/**`
+- `backend/Dockerfile`, `.dockerignore`
+- `docker-compose*.yml`
+- `.githooks/**`
+- `scripts/**` when consumed by a workflow
+- `release-please-config.json`, `.release-please-manifest.json`
+
+Skip the review when the change is purely cosmetic (comment or
+formatting changes with no effect on triggers, gates, permissions, or
+build behavior). If the reviewer identifies issues rated as "Needs
+revision", address them before considering the task complete.
 
 ### 6. Mandatory testing
 
