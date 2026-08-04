@@ -310,11 +310,12 @@ Actions. This section is the authoritative reference for which workflows
 exist and for the conventions every workflow and container build must
 follow.
 
-Two closely related topics are owned elsewhere and are not repeated here:
+Closely related topics are owned elsewhere and are not repeated here:
 the full trigger chain — how a merge propagates to a release and to a
-published image — is documented in [Pipeline Chain](#pipeline-chain), and
-the deployment targets it feeds are documented in
-[Environments](#environments).
+published image — is documented in [Pipeline Chain](#pipeline-chain),
+the tags those images carry in
+[Image Tag Semantics](#image-tag-semantics), and the deployment targets
+they feed in [Environments](#environments).
 
 ### Workflow Inventory
 
@@ -372,9 +373,13 @@ enforced by review.
 `permissions:` block scoped to what its jobs actually require, rather
 than relying on the repository default.
 
-**Concurrency.** Workflows on the release or publish path MUST NOT use
-`cancel-in-progress`. Cancelling a partially completed release or push
-leaves the Release PR or the registry in an indeterminate state.
+**Concurrency.** Workflows that create a release or publish an artifact
+— those marked `Yes (release path)` or `Yes (publish gate)` in the
+inventory above — MUST NOT use `cancel-in-progress`. Cancelling a
+partially completed release or push leaves the Release PR or the
+registry in an indeterminate state. `ci.yml` is deliberately exempt: it
+publishes nothing, and cancelling a superseded run simply means the
+downstream `workflow_run` never fires.
 
 **Service containers for test dependencies.** Jobs that run the test
 suite in-process MUST obtain PostgreSQL and Redis from GitHub Actions
