@@ -257,7 +257,7 @@ class _RetryTransport(httpx.AsyncBaseTransport):
 # HTTP client factory
 # ---------------------------------------------------------------------------
 
-_PROJECT_URL = "https://github.com/SUSE/sentinel"
+_PROJECT_URL = "https://github.com/StayPirate/sentinel"
 
 
 def _resolve_platform_version() -> str:

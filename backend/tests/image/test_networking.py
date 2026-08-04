@@ -67,7 +67,7 @@ async def main() -> None:
     try:
         ua = client.headers["user-agent"]
         assert ua.startswith("Sentinel/"), ua
-        assert "(image_smoke_test; +https://github.com/SUSE/sentinel)" in ua
+        assert "(image_smoke_test; +https://github.com/StayPirate/sentinel)" in ua
         assert client.follow_redirects is False
         assert client.timeout.connect == 10.0
         assert client.timeout.read == 30.0

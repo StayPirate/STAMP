@@ -99,7 +99,7 @@ class TestCreateHttpClientDefaults:
         try:
             ua = client.headers["user-agent"]
             assert ua.startswith("Sentinel/")
-            assert "(test_component; +https://github.com/SUSE/sentinel)" in ua
+            assert "(test_component; +https://github.com/StayPirate/sentinel)" in ua
         finally:
             await client.aclose()
 

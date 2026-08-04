@@ -77,7 +77,7 @@ Three settings receive special protection in the factory:
 
 | Setting | Default | Override mechanism |
 |---------|---------|-------------------|
-| User-Agent | `Sentinel/{version} ({name}; +https://github.com/SUSE/sentinel)` | Not overridable |
+| User-Agent | `Sentinel/{version} ({name}; +https://github.com/StayPirate/sentinel)` | Not overridable |
 | Connect timeout | 10 seconds | `http_client_options` |
 | Read timeout | 30 seconds | `http_client_options` |
 | Write timeout | 10 seconds | `http_client_options` |
@@ -100,15 +100,15 @@ with higher concurrency needs.
 
 #### User-Agent
 
-Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/SUSE/sentinel)`
+Format: `Sentinel/{version} ({fetcher.name}; +https://github.com/StayPirate/sentinel)`
 
 - Platform version from `importlib.metadata.version("sentinel")`. If
   `PackageNotFoundError` (running from source without installation),
   defaults to `"dev"`
 - Fetcher name automatic from `BaseFetcher.name` (mandatory, unique)
 - Project URL hardcoded — not configurable
-- Example: `Sentinel/1.0 (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
-- Example (dev): `Sentinel/dev (sync_nvd_cves; +https://github.com/SUSE/sentinel)`
+- Example: `Sentinel/1.0 (sync_nvd_cves; +https://github.com/StayPirate/sentinel)`
+- Example (dev): `Sentinel/dev (sync_nvd_cves; +https://github.com/StayPirate/sentinel)`
 
 For non-fetcher components (e.g., `IBSClient`), the `name` parameter
 is passed explicitly to the factory.
