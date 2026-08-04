@@ -836,7 +836,9 @@ require Redis connectivity for that effect to be immediate. This is
 operational guidance about environment provisioning, not a new runtime hard
 dependency. Feature-specific fallback behavior remains defined in
 `docs/features/identity/local-authentication.md` and
-`docs/features/identity/authentication.md`.
+`docs/features/identity/authentication.md`; the Redis cleanup behavior of the
+two commands named above is defined in
+`docs/features/identity/user-service.md`.
 
 **Docker / Podman Compose pattern.** The recommended pattern generalizes
 the one-off container approach already used for Alembic migrations
