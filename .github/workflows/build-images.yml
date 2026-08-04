@@ -19,9 +19,17 @@ env:
 jobs:
   build-backend:
     name: Build Backend Image
+    # workflow_run.branches matches the *head* branch of the triggering CI
+    # run, not the base branch it targeted — a CI run produced by a
+    # pull_request event whose head branch happens to be named "master"
+    # (e.g. a fork's default branch) would otherwise pass the filter. The
+    # explicit event == 'push' check ensures this job only builds and
+    # publishes a commit that actually landed on master via push, never a
+    # commit that only exists on a pull request head. See issue #96.
     if: >
       github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

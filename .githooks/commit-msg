@@ -33,9 +33,10 @@ if ! [[ "$commit_msg" =~ $pattern ]]; then
     exit 1
 fi
 
-# Validate first line length (72 chars max)
-if [ ${#commit_msg} -gt 72 ]; then
-    echo "Error: commit message first line exceeds 72 characters (${#commit_msg})." >&2
+# Validate first line length (must remain under 72 characters, matching
+# pr-metadata.yml's PR title check and docs/conventions.md, Commit Messages)
+if [ ${#commit_msg} -gt 71 ]; then
+    echo "Error: commit message first line exceeds 71 characters (${#commit_msg}); must remain under 72." >&2
     echo "  Got: $commit_msg" >&2
     exit 1
 fi
