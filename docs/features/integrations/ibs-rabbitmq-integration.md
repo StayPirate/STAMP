@@ -515,7 +515,7 @@ with a **TTL of 60 seconds**:
 | `connected` | Consumer is connected to RabbitMQ and processing events | Written every 30s |
 | `disconnected` | Connection was just lost; set immediately on connection loss, before the first reconnection attempt begins | Written every 30s |
 | `reconnecting` | First reconnection attempt has started; consumer is actively retrying with exponential backoff (5s → 10s → ... → 300s, then every 300s indefinitely) | Written every 30s |
-| `unreachable` | Redis key absent — consumer process is down, or consumer is alive but unable to write heartbeat (Redis unreachable from consumer) | Key absent |
+| `unreachable` | The API cannot confirm consumer liveness: the key is absent, the API cannot read Redis, or the stored heartbeat is invalid | Key absent, unreadable, or invalid |
 
 ### Metrics
 

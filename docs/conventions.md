@@ -655,23 +655,29 @@ All application-owned Redis operations (operations that access
 MUST catch **`RedisError`** (the base class from `redis.exceptions`),
 not narrower subclasses like `ConnectionError` or `TimeoutError`.
 
+Application-owned Redis I/O in async workflows MUST be non-blocking and
+awaited. Synchronous entry points such as CLI commands and Celery task wrappers
+bridge once into an async workflow via the standard sync-to-async pattern;
+they do not require a synchronous Redis client.
+
 **Rationale**: under `noeviction` memory policy, when Redis reaches
 `maxmemory`, write commands return an OOM error. The Python client
 raises `redis.exceptions.ResponseError` — a subclass of `RedisError`
 but NOT of `ConnectionError`. Catching only `ConnectionError` would
 leave OOM errors unhandled (resulting in HTTP 500 responses).
 
-By catching `RedisError`, all Redis failure modes (connection loss,
-timeout, OOM rejection, protocol errors) trigger the same graceful
-degradation path already specified per feature:
+By catching `RedisError`, each feature handles connection loss, timeout, OOM
+rejection, and protocol errors through its specified degradation path. The
+specification that owns the Redis operation MUST define that behavior;
+infrastructure shared by multiple consumers MUST propagate `RedisError` rather
+than selecting a fallback on their behalf. This keeps feature-specific
+outcomes—such as fail-open, database fallback, best-effort continuation, or
+request failure—in their natural owner and avoids a duplicated cross-feature
+matrix in this convention.
 
-| Feature | Degradation on `RedisError` |
-|---------|----------------------------|
-| Session liveness (`session_liveness:*`) | Fall back to direct PostgreSQL query |
-| Login lockout (`login_attempts:*`) | Fail-open (login proceeds without rate limiting) |
-| Fetch deduplication (`fetch_pending:*`) | Unconditional enqueue (idempotent) |
-| CVSS recalculation lock (`cvss_recalc_active`) | Return 503 `REDIS_UNAVAILABLE` |
-| IBS consumer heartbeat | Log WARNING, continue operating |
+Redis-dependent tests follow `docs/features/platform/testing-strategy.md`
+(Redis Strategy), including isolated worker databases and replaceable
+consumer boundaries for deterministic failure simulation.
 
 **Scope**: this convention applies to application code that directly
 calls the Redis client. It does NOT apply to:
@@ -683,15 +689,14 @@ calls the Redis client. It does NOT apply to:
   `docs/features/platform/fetcher-infrastructure.md`, "Runtime: Redis
   Data Loss")
 
-**Pattern**:
+**Illustrative async pattern**:
 
 ```python
 try:
-    redis.set(f"fetch_pending:{cve_id}:{source}", "1", nx=True, ex=600)
-except RedisError:
-    # Degrade gracefully per feature spec
-    logger.warning("Redis unavailable for dedup lock: %s", exc)
-    # proceed without deduplication (idempotent downstream)
+    await redis_operation()
+except RedisError as exc:
+    # Apply the degradation behavior defined by the owning feature spec.
+    logger.warning("redis_operation_failed", error=str(exc))
 ```
 
 ### Logging

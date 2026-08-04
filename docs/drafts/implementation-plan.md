@@ -500,5 +500,6 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
   checkpoint taken: release-please PR merged, releasing **v0.3.0** (tag,
   GitHub Release, and image build/smoke/publish all succeeded). Phase 2
   (`docs/drafts/implementation-plan.md` Phase 2) remains queued for detailed
-  sub-issue elaboration; `SG-02` (#90, shared Redis client infrastructure) is
-  already open as its blocker for session-liveness and login-lockout pieces.
+  sub-issue elaboration; `SG-02` (#90, Redis contracts and testability) is
+  already open as its documentation blocker for session-liveness and
+  login-lockout pieces.

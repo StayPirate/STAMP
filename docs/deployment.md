@@ -830,13 +830,15 @@ not exist in staging/production containers.)
 **Environment dependencies.** Run CLI commands in an environment where
 both PostgreSQL and Redis are reachable — the same dependencies already
 required by the API and worker processes. Most commands only need
-PostgreSQL; the sole exception is `sentinel manage-user unlock`, which
-clears the login lockout counter stored in Redis and therefore requires
-Redis connectivity to have a practical effect. This is operational
-guidance about environment provisioning, not a new runtime hard
-dependency — it does not change the fail-open behavior already
-specified for login lockout and session liveness (see
-`docs/conventions.md`, Redis Error Handling).
+PostgreSQL; `sentinel manage-user unlock` and `sentinel manage-user
+set-password` also clear login lockout state stored in Redis and therefore
+require Redis connectivity for that effect to be immediate. This is
+operational guidance about environment provisioning, not a new runtime hard
+dependency. Feature-specific fallback behavior remains defined in
+`docs/features/identity/local-authentication.md` and
+`docs/features/identity/authentication.md`; the Redis cleanup behavior of the
+two commands named above is defined in
+`docs/features/identity/user-service.md`.
 
 **Docker / Podman Compose pattern.** The recommended pattern generalizes
 the one-off container approach already used for Alembic migrations
@@ -983,10 +985,10 @@ buffers, internal data structures, and Lua script execution memory.
 **Behavior when `noeviction` triggers**: Redis returns
 `OOM command not allowed when used memory > 'maxmemory'` on write
 commands. Read commands continue normally. Application code handles this
-as a `RedisError` with graceful degradation (see `docs/conventions.md`,
-Redis Error Handling). For the Celery broker, OOM indicates a capacity
-issue — operators should investigate queue backlog growth (e.g., workers
-not consuming tasks).
+as a `RedisError` according to the behavior specified by each owning feature
+(see `docs/conventions.md`, Redis Error Handling). For the Celery broker, OOM
+indicates a capacity issue — operators should investigate queue backlog growth
+(e.g., workers not consuming tasks).
 
 **If the orchestrator imposes a memory limit lower than `maxmemory`**:
 the kernel OOM-kills Redis *before* the `noeviction` policy activates.

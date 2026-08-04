@@ -40,8 +40,8 @@ executes the following sequence:
 3. **Acquire recalculation slot**: `SET cvss_recalc_active <timestamp>
    NX EX 900` on Redis. This step serves as both a Redis liveness probe
    and a flip-flop guard:
-   - If Redis is unreachable → return 503 `REDIS_UNAVAILABLE` (nothing
-     committed)
+   - If slot acquisition raises any `RedisError` → return 503
+     `REDIS_UNAVAILABLE` (nothing committed)
    - If the key already exists (a recalculation is in progress) → return
      409 `CVSS_RECALC_ALREADY_IN_PROGRESS` (nothing committed)
 4. **Commit** the new setting value and a `SettingAuditEvent` record to
@@ -171,7 +171,7 @@ the response. This is a documented deviation from the
 | Status | Code | Condition |
 |--------|------|-----------|
 | 409 | `CVSS_RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (setting change blocked until current batch completes) |
-| 503 | `REDIS_UNAVAILABLE` | Redis broker is unreachable (setting change requires broker availability) |
+| 503 | `REDIS_UNAVAILABLE` | Redis rejected or could not complete slot acquisition (setting change requires Redis availability) |
 
 Response (200 OK): the settings object in the standard
 `{"data": ...}` envelope. The `recalculation_scheduled` boolean field
@@ -237,7 +237,7 @@ No setting change is made. No `SettingAuditEvent` is created.
 | Status | Code | Condition |
 |--------|------|-----------|
 | 409 | `CVSS_RECALC_ALREADY_IN_PROGRESS` | A recalculation batch is already running (slot occupied) |
-| 503 | `REDIS_UNAVAILABLE` | Redis is unreachable (slot acquisition failed) |
+| 503 | `REDIS_UNAVAILABLE` | Redis rejected or could not complete slot acquisition |
 | 503 | `CELERY_UNAVAILABLE` | Task could not be enqueued (slot released) |
 
 **Idempotency**: safe to call multiple times. If no derived values have

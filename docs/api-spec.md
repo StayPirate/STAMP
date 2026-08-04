@@ -394,6 +394,25 @@ dependency failed.
 
 Pattern: `<DEPENDENCY>_UNAVAILABLE` with HTTP 503.
 
+**Status-reporting exception**: an endpoint whose defined purpose is to
+report the operational state of a dependency or process may represent an
+unavailable dependency as a successful status observation rather than a
+request failure. The owning endpoint specification MUST define the response
+status and body explicitly. This exception applies only when the endpoint can
+still fulfill its monitoring contract without the dependency; it does not
+apply to domain operations that require the dependency to complete their
+work. For example, `GET /api/v1/ibs-consumer/status` returns `200` with
+`status = "unreachable"` when Redis cannot be read, because the endpoint has
+successfully reported that consumer liveness cannot be confirmed.
+
+A status endpoint that combines durable state with a best-effort transient
+overlay may likewise return the durable state when the overlay dependency is
+unavailable, provided its owning specification explicitly identifies which
+information may be stale or omitted. For example,
+`GET /api/v1/cves/{cve_id}/sources` continues to return persisted source
+status when Redis pending-key lookup fails; only the transient `pending`
+overlay is unavailable.
+
 Examples:
 
 | Code | Dependency |

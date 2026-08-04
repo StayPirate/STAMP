@@ -228,8 +228,11 @@ fixture.
 ## Redis Strategy
 
 Tier 2 tests and Tier 3 tests whose exercised request path uses Redis
-access Redis through the shared `redis_client` fixture. Tests MUST NOT
-create ad-hoc connections to application-configured Redis instances.
+use the Redis instance and worker database designated by the shared
+`redis_client` fixture. Tests MUST NOT create ad-hoc connections to
+application-configured Redis instances. Code under test MAY create additional
+client objects when its production lifecycle requires them, provided every
+client targets the same designated worker database.
 
 ### Provisioning
 
@@ -246,7 +249,10 @@ fixture. The test harness selects one of two modes:
 `TEST_REDIS_URL` is test-harness-only configuration, not Sentinel
 runtime configuration. Tests MUST never use `REDIS_URL` or
 `CELERY_BROKER_URL` as fixture storage, even when either variable points
-to a locally available server.
+to a locally available server. When configured, `TEST_REDIS_URL` MUST
+designate a logical-database range reserved exclusively for this test
+harness; providing an exclusive range is the environment owner's
+responsibility.
 
 ### Worker and Test Isolation
 
@@ -255,8 +261,10 @@ database encoded in `TEST_REDIS_URL` is the start of the test harness's
 designated range; additional workers use consecutive logical databases.
 The harness MUST verify that each worker maps to a distinct database and
 that the Redis server provides enough logical databases. It MUST fail
-explicitly if the range is insufficient or if the allocation could
-collide with another owner; it must not continue with unsafe sharing.
+explicitly if the configured range is insufficient; it must not continue
+with worker mappings that overlap one another. The harness cannot infer
+ownership by unrelated processes, so it relies on the exclusive-range
+contract of `TEST_REDIS_URL` above.
 
 All Redis clients and application processes created within one test MUST
 use that test's worker database. This intentionally preserves realistic
@@ -273,9 +281,18 @@ a test failure rather than a skip.
 Scenarios whose behavior is server-global and cannot safely share a
 server use a Redis 7 container dedicated to that test. This includes
 memory exhaustion or eviction, server restart or unavailability, and
-Pub/Sub scenarios where server lifecycle affects the result. Tests of
-application outage handling do not stop a shared Redis service; they
-inject a client that raises `RedisError` instead.
+Pub/Sub scenarios where server lifecycle affects the result. Tests of a
+feature's `RedisError` handling do not stop a shared Redis service; they
+replace the relevant Redis boundary with deterministic behavior that raises
+`RedisError`. Connectivity-probe tests may instead substitute an unreachable
+target because connectivity itself is the behavior under test.
+
+Every application-owned Redis consumer MUST expose a replaceable boundary
+appropriate to its execution context so tests can both route normal access to
+the designated worker database and simulate `RedisError` without changing
+shared infrastructure. The boundary may be a client, factory, dependency, URL
+provider, or equivalent mechanism. A single universal override mechanism and
+reuse of the fixture's exact Python client object are not required.
 
 ---
 
@@ -307,11 +324,17 @@ The `redis_client` fixture yields an asynchronous `redis.asyncio.Redis`
 client configured with decoded string responses. Its session-scoped
 provisioning layer selects the worker database and verifies
 connectivity with `PING`. Before yielding, it runs `FLUSHDB` and
-overrides applicable application Redis dependencies so all code in the
-test uses the same client. Teardown restores those overrides, runs
-`FLUSHDB`, and closes the client. Provisioning, connectivity, isolation,
-or cleanup failures fail the test suite; they are never converted to
-skips.
+overrides applicable Redis boundaries so application access targets the same
+designated worker database. Code under test may use the fixture client or
+create additional clients against that database. Teardown restores those
+overrides, runs `FLUSHDB`, and closes the fixture client. Provisioning,
+connectivity, isolation, or cleanup failures fail the test suite; they are
+never converted to skips.
+
+Once authentication session liveness uses Redis, `authenticated_client` and
+`admin_client` compose this Redis isolation automatically; tests using either
+client MUST NOT need to request `redis_client` separately merely to prevent
+access to application-configured Redis.
 
 The `real_session_factory` fixture returns a real `async_sessionmaker`
 bound to the shared, session-scoped `_engine` fixture — mirroring the
@@ -644,6 +667,15 @@ these tests provide the async session factory itself (for the code
 under test to wrap in its own `asyncio.run()` call), not a live
 `AsyncSession` via an async fixture.
 
+When such an entry point uses application-owned Redis, synchronous test
+fixtures obtain the designated worker-database URL from the provisioning
+layer and install the consumer's replaceable boundary without passing a live
+async Redis client into the test. The workflow under test creates or obtains
+its own async client inside the event loop established by its single
+`asyncio.run()` call. Redis arrangement and assertions happen outside that
+invocation through the test harness; no client object is shared across event
+loops.
+
 ---
 
 ## Execution Model
@@ -910,6 +942,14 @@ Every new or modified service function MUST be tested for:
   two-session pattern described in Database Strategy — Concurrency
   Testing
 
+### Application-Owned Redis Operations
+
+Every application-owned Redis operation, regardless of application layer or
+entry point, MUST have a test for the feature-specified `RedisError` behavior
+(for example database fallback, fail-open, best-effort continuation, or
+propagated service failure). The test uses the replaceable boundary defined in
+Redis Strategy; it does not stop the shared Redis service.
+
 ### Model Constraints
 
 New models MUST be tested for:
@@ -981,7 +1021,8 @@ comprehensive test coverage:
 ## Cross-references
 
 - `docs/conventions.md` — Testing Conventions (style rules, naming),
-  Transaction and Locking (pessimistic locking pattern)
+  Transaction and Locking (pessimistic locking pattern), Redis (error
+  ownership and async I/O)
 - `docs/architecture.md` — Single Docker image, multiple entrypoints
   (shared by the image smoke suite's compose services); Backend Layer
   Architecture (dependency direction enforced by structural tests)
