@@ -225,13 +225,18 @@ You may also invoke it on demand with an explicit pull request reference
 - **External service integration** → `@external-contract-verifier` when the
   change consumes or produces an external contract
 - **New external integration involving credentials, response parsing, or a new parser dependency** → also `@security-reviewer`
+- **CI/CD artifacts changed** (`.github/workflows/**`, `backend/Dockerfile`,
+  `.dockerignore`, `docker-compose*.yml`, `.githooks/**`, CI-consumed
+  `scripts/**`, release-please configuration) → `@cicd-reviewer` per
+  Guardrail 5
 
 ## Non-Feature Work
 
 Your scope includes all non-spec modifications:
 
-- CI/CD pipelines (`.github/workflows/`) — delegate to `@cicd` subagent
-  for complex changes
+- CI/CD pipelines (`.github/workflows/`) — you own these edits; the
+  conventions are in `docs/deployment.md` (CI Pipeline), and
+  `@cicd-reviewer` reviews the result
 - Docker and container configuration
 - Dependency management (`pyproject.toml`, `package.json`)
 - Database migrations
