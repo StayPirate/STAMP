@@ -157,7 +157,7 @@ touches both runs both directions.
    | `incomplete` | the element exists but an obligation for it is missing (name the missing question or rule) |
    | `contradicts` | the implementation does something the specification forbids or defines differently |
    | `unspecified` | the element has no contract in any owning specification |
-   | `infrastructure` | plumbing with no specification obligation (imports, wiring, formatting) |
+   | `infrastructure` | internal technical mechanism with no specification obligation (for example imports, wiring, private helpers, interchangeable algorithms, dependency injection, pooling, or formatting) |
 
    Test files are enumerated as a single aggregated `infrastructure` row —
    their quality, coverage, and markers belong to `@test-reviewer`.
@@ -258,7 +258,12 @@ can never block a pull request.
 | **A** — incomplete contract | element **present in the diff**, an obligation for *that element* is missing | `Needs revision` |
 | **B** — acceptance criterion not satisfied | criterion declared in the issue, no evidence in the diff | `Needs revision` |
 | **C** — obligation with no deferral basis | absent from the diff, no basis found in sources 1-5 | **`Minor` / `Note` — never blocking** |
-| **D** — unspecified behavior | element in the diff with no contract in any specification | `Needs revision` only if it touches the API or database contract; otherwise `Minor` |
+| **D** — unspecified contract behavior | element in the diff introduces behavior or guarantees requiring a contract but no specification provides one | `Needs revision` only if it touches the API or database contract; otherwise `Minor` |
+
+An internal technical mechanism that preserves all specified behavior and
+constraints is `infrastructure`, not class D. Do not require a specification
+merely because implementation code contains a private helper, dependency
+injection, lifecycle management, pooling, or an interchangeable algorithm.
 
 ### Choosing a severity below the cap
 

@@ -137,8 +137,11 @@ combining existing capabilities without modifying endpoint code. See
 
 Every feature must be specified in `docs/features/` before
 implementation begins. The specification must be complete enough that
-an implementer can write a correct implementation without making
-autonomous design decisions.
+an implementer does not need to invent product behavior, guarantees, or
+contract semantics, including required security and data-integrity properties.
+Internal technical choices remain with the implementation when multiple
+approaches satisfy the specified behavior and the project's established
+architectural constraints.
 
 **Rationale:** specifications serve as the contract between design and
 implementation. They enable parallel review (spec review before code

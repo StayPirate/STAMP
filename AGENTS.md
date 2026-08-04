@@ -150,6 +150,14 @@ CRITICAL: Before writing or modifying ANY implementation code (in `backend/`), y
 
 Do NOT make exceptions to this rule, not even for small changes.
 
+A specification gap exists when implementation would require inventing
+product behavior, guarantees, contract semantics, security or data-integrity
+requirements, or a technical decision that would establish or change an
+architectural boundary. Choosing among internal technical mechanisms that all
+satisfy the specification, established architecture, and conventions is
+normal implementation work and is not by itself a specification gap. See
+`docs/conventions.md` (Function Specification Completeness).
+
 ### 2. Correct file placement
 
 CRITICAL: Before writing or modifying ANY file in the repository, verify that
@@ -598,7 +606,10 @@ After creating or substantially modifying a feature specification in
 The goal is to ensure that specifications are functionally complete
 before implementation begins — every operation, state transition, and
 user scenario should have its error paths, boundary conditions, and
-concurrency considerations explicitly specified.
+concurrency considerations specified when they affect required behavior.
+Gap analysis MUST NOT demand private implementation details merely to remove
+legitimate technical choice; apply the specification boundary in
+`docs/conventions.md` (Function Specification Completeness).
 
 ### 18. OpenCode tooling documentation
 
