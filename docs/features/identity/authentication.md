@@ -173,7 +173,7 @@ deactivation, without waiting for JWT expiry.
 | `user_id`          | UUID (FK)    | No       | References `User.id`                |
 | `created_at`       | timestamptz  | No       | When the session was created        |
 | `updated_at`       | timestamptz  | No       | Last modification timestamp         |
-| `session_deadline` | timestamptz  | No       | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400` |
+| `expires_at`       | timestamptz  | No       | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400`. Maps to the JWT `session_deadline` claim. |
 | `is_active`        | boolean      | No       | `false` after logout or revocation  |
 
 ### Session liveness check
@@ -348,8 +348,8 @@ of these conditions:
   encounters a missing row receives HTTP 401 (see Session liveness
   check, cache-miss branch), which is the correct outcome for an
   already-invalidated session.
-- `session_deadline < now()` — sessions whose immutable deadline has
-  passed, regardless of active status. Because the `session_deadline`
+- `expires_at < now()` — sessions whose immutable deadline has
+  passed, regardless of active status. Because the `Session.expires_at`
   column and the JWT `session_deadline` claim originate from the same
   login operation, no clock-skew buffer is needed.
 

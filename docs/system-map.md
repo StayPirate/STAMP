@@ -255,6 +255,7 @@ erDiagram
     Session {
         UUID id PK
         UUID user_id FK
+        TIMESTAMPTZ expires_at
         BOOLEAN is_active
     }
 

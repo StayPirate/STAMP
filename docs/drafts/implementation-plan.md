@@ -333,23 +333,30 @@ keys, and access the ticket-independent identity management surface.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P2-01` | Session/ApiKey models and persistence | Phase 1, SG-03, SG-04 | `identity/authentication.md` |
-| `P2-02` | IdentityAuditEvent and IdentityAuditLog | `P2-01`, `P1-05` | `identity/identity-audit-log.md` |
-| `P2-03` | JWT session service, logout, and session cleanup | `P2-01` | `identity/authentication.md` |
-| `P2-04` | Local login, password hashing, Redis lockout | `P2-03` | `identity/local-authentication.md` |
-| `P2-05` | API-key service and self/admin API-key endpoints | `P2-01`, `P2-02` | `identity/api-key-service.md`, `identity/authentication.md` |
-| `P2-06` | Ticket-independent user lifecycle functions | `P2-02`, `P2-04` | `identity/user-service.md` |
-| `P2-07` | CLI infrastructure; manage-user create, set-password, unlock, list, and show | `P2-06` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
-| `P2-08` | Public user list/detail, self profile, and completed admin user operations | `P2-06` | `identity/user-management.md`, `identity/rbac.md` |
-| `P2-09` | SystemSetting persistence/bootstrap, SettingAuditEvent/Log, settings read and audit APIs | `P2-02` | `platform/system-settings.md` |
+| `P2-01` | Session and API key persistence | Phase 1, SG-03, SG-04 | `identity/authentication.md` |
+| `P2-02` | Identity audit persistence and service | SG-05 | `identity/identity-audit-log.md` |
+| `P2-03` | JWT session service, logout, and cleanup | SG-08, `P2-01` | `identity/authentication.md` |
+| `P2-04` | Local password authentication and lockout | `P2-03` | `identity/local-authentication.md` |
+| `P2-05` | API key lifecycle service and audit | `P2-01`, `P2-02` | `identity/api-key-service.md` |
+| `P2-06` | Unified authentication and capability dependencies | `P2-05`, `P2-03` | `identity/rbac.md`, `identity/authentication.md` |
+| `P2-07` | Self-service and admin API key endpoints | `P2-06` | `identity/api-key-service.md` |
+| `P2-08` | Ticket-independent user lifecycle services | `P2-02`, `P2-04` | `identity/user-service.md` |
+| `P2-09` | Password reset and account unlock services | `P2-08` | `identity/user-service.md` |
+| `P2-10` | User read, profile, and identity audit APIs | `P2-06` | `identity/user-management.md` |
+| `P2-11` | Ticket-independent admin user APIs | `P2-09`, `P2-10` | `identity/user-management.md`, `identity/rbac.md` |
+| `P2-12` | CLI infrastructure and user bootstrap commands | SG-06, `P2-08` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
+| `P2-13` | Remaining local identity CLI commands | `P2-05`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
+| `P2-14` | System settings persistence and bootstrap | SG-07 | `platform/system-settings.md` |
+| `P2-15` | System settings read and audit APIs | `P2-14`, `P2-06` | `platform/system-settings.md` |
 
-`P2-06` includes only functions whose complete specified side effects are
-available (for example user creation, field update, reactivation, password
-reset, and unlock). Ticket-coupled role removal and deactivation are not
-weakened; they complete in Phase 4. The composite `manage-user update` command,
-role-management endpoint, and deactivation command/endpoint are deferred in
-their entirety rather than exposed with a partial option set. `P2-08` must list
-its exact endpoint inventory in its tracking issue before becoming Ready.
+`P2-08` includes only functions whose complete specified side effects are
+available (for example user creation, field update, and reactivation).
+Password reset and unlock are split into `P2-09`. Ticket-coupled role
+removal and deactivation are not weakened; they complete in Phase 4. The
+composite `manage-user update` command, role-management endpoint, and
+deactivation command/endpoint are deferred in their entirety rather than
+exposed with a partial option set. `P2-11` must list its exact endpoint
+inventory in its tracking issue before becoming Ready.
 
 The image suite adds a CLI bootstrap assertion in the piece that introduces
 the runnable `sentinel` command.
@@ -366,7 +373,7 @@ metrics, and be operated through generic API/CLI surfaces.
 | `P3-03` | CPE package mapping loader, pure resolution, startup validation, and fixtures | `P1-02` | `packages/cpe-package-mapping.md` |
 | `P3-04` | Generic task wrapper, config bootstrap, redbeat reconciliation, worker/Beat image smoke | `P3-02`, `P3-03`, `P1-06` | `platform/fetcher-infrastructure.md` |
 | `P3-05` | Generic fetcher API operations | `P3-04`, `P2-05` | `platform/fetcher-operations.md` |
-| `P3-06` | Fetcher diagnostic CLI | `P3-04`, `P2-07` | `platform/fetcher-operations.md` |
+| `P3-06` | Fetcher diagnostic CLI | `P3-04`, `P2-12` | `platform/fetcher-operations.md` |
 | `P3-07` | Test-only no-op fetcher end-to-end validation | `P3-04`, `P3-05` | `platform/testing-strategy.md` |
 
 `P3-05` excludes the IBS RabbitMQ consumer status endpoint; that endpoint is
@@ -385,7 +392,7 @@ automatic ingestion.
 | `P4-01` | CVE/CVESource core models and migration | Phase 3 | `tickets/cve-service.md`, `data-model.md` |
 | `P4-02` | CVE enrichment child models and migration | `P4-01` | CVE and CVSS specs, `data-model.md` |
 | `P4-03` | Ticket, TicketAuditEvent, reference/access models and migration | `P4-01`, `P1-05` | ticket specs, `data-model.md` |
-| `P4-04` | Pure CVSS resolution | `P2-09`, `P4-02` | `tickets/cvss-scoring.md` |
+| `P4-04` | Pure CVSS resolution | `P2-14`, `P4-02` | `tickets/cvss-scoring.md` |
 | `P4-05` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
 | `P4-06` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
 | `P4-07` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
@@ -406,10 +413,10 @@ automatic ingestion.
 | `P4-22` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-21`, `P3-02` | `platform/cve-fetcher-infrastructure.md` |
 | `P4-23` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-19`, `P4-22` | ticket and CVE API specs |
 | `P4-24` | Resolve identity role-removal audit contradiction | Phase 3 | Documentation PR for `user-service.md` / `user-management.md` |
-| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-06` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
+| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
 | `P4-26` | Ticket-coupled role-removal service, commands, and APIs | `P4-24`, `P4-25` | identity service/management specs |
 | `P4-27` | User deactivation/impact service, commands, and APIs | `P4-25` | identity service/management specs |
-| `P4-28` | Settings PATCH/recalculation endpoints and CVSS batch task | `P4-09`, `P2-09` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
+| `P4-28` | Settings PATCH/recalculation endpoints and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
 The candidate pieces above are intentionally more granular than the old
 service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate

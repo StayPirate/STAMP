@@ -299,6 +299,7 @@ erDiagram
     Session {
         UUID id PK
         UUID user_id FK "NOT NULL"
+        TIMESTAMPTZ expires_at "NOT NULL"
         BOOLEAN is_active "DEFAULT true"
     }
     ApiKey {
@@ -1283,7 +1284,7 @@ See `docs/features/identity/authentication.md` (Session Management).
 | user_id          | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
 | created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT         | When the session was created (login time)  |
 | updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
-| session_deadline | TIMESTAMPTZ | NOT NULL                  | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400`. Never recomputed from the current setting — changes to `SESSION_MAX_LIFETIME_DAYS` affect only sessions created by subsequent logins |
+| expires_at       | TIMESTAMPTZ | NOT NULL                  | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400`. Never recomputed from the current setting — changes to `SESSION_MAX_LIFETIME_DAYS` affect only sessions created by subsequent logins. Maps to the JWT `session_deadline` claim |
 | is_active        | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
 
 **Indexes**:

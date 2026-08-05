@@ -958,11 +958,12 @@ scenarios are required:
 **Session and configuration:**
 
 - Changing `SESSION_MAX_LIFETIME_DAYS` does not invalidate existing
-  sessions or alter their persisted `session_deadline`
-- A session's `session_deadline` remains fixed regardless of subsequent
-  configuration changes — verify by creating a session, changing the
-  setting, and confirming the persisted deadline is unchanged
-- Session cleanup deletes sessions whose persisted `session_deadline`
+  sessions or alter their persisted `Session.expires_at`
+- A session's `Session.expires_at` (mapped to the JWT `session_deadline`
+  claim) remains fixed regardless of subsequent configuration changes —
+  verify by creating a session, changing the setting, and confirming
+  the persisted deadline is unchanged
+- Session cleanup deletes sessions whose persisted `Session.expires_at`
   has passed, not sessions derived from the current configuration value
 
 **Lockout concurrency:**
