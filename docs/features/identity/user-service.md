@@ -604,19 +604,22 @@ database transaction, in this specific order):
 **Side effects — Post-commit phase** (best-effort, after transaction
 commits and FOR UPDATE lock is released):
 
-5. Purge session cache: for each `session_id` returned by step 2,
-   delete the Redis cache entry `session_liveness:{session_id}`. If
+5. Purge session cache via
+   `session_service.purge_session_cache(invalidated_session_ids)`. If
    Redis is unreachable, log WARNING and proceed — entries expire
    naturally within the cache TTL (60 seconds). The database is the
    authoritative source for session validity; auth middleware verifies
-   against the database on cache miss.
+   against the database on cache miss. See
+   `docs/features/identity/authentication.md` (Session invalidation).
 
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
-user is marked as inactive (steps 1-2 before step 3). This ensures that
-if the process is interrupted at any point, a user who still appears
-active will have already lost access. The admin can safely retry the
-deactivation without risk of leaving a deactivated user with valid
-credentials. The Redis cache purge (step 5) is post-commit per
+user is marked as inactive (steps 1-2 before step 3). Under the
+single-transaction model, all database steps commit atomically — an
+interruption before commit rolls back everything. The ordering is
+significant for retry safety: if the transaction succeeds but the
+process crashes before the post-commit phase, the admin can verify that
+the user is already inactive and re-invoke the cache purge
+independently. The Redis cache purge (step 5) is post-commit per
 `docs/conventions.md` (Transaction Hygiene Rules) — it cannot be rolled
 back by a transaction failure and must not extend the FOR UPDATE lock
 hold time.
@@ -707,11 +710,10 @@ Resets the password for a local user and invalidates all active sessions.
 
 **Post-commit phase** (best-effort, after transaction commits):
 
-7. Purge session cache: for each `session_id` in
-   `invalidated_session_ids`, delete the Redis cache entry
-   `session_liveness:{session_id}`. If Redis is unreachable, log
-   WARNING and proceed — entries expire naturally within the cache TTL
-   (60 seconds).
+7. Purge session cache via
+   `session_service.purge_session_cache(invalidated_session_ids)`. If
+   Redis is unreachable, log WARNING and proceed — entries expire
+   naturally within the cache TTL (60 seconds).
 8. Clear the login lockout counter: delete the Redis key
    `login_attempts:{username}` if it exists. If Redis is unreachable,
    log WARNING and proceed — the counter will expire naturally via TTL.
@@ -790,6 +792,13 @@ Rules) ensures that:
    (database operations only)
 3. Redis failures or latency cannot extend lock hold time or block
    concurrent mutations on the same entity
+
+**Commit ownership**: operations with post-commit phases
+(`deactivate_user`, `reset_password`) own their transaction boundary —
+they commit on success, roll back on failure, and execute the
+post-commit phase themselves. Callers (API handlers, CLI commands, Celery
+tasks) do not manage the commit; they delegate entirely to the service
+function.
 
 Operations that conditionally produce side effects (`update_roles`,
 `sync_role_mapping`, `delete_role_mapping_roles`) MUST also execute within

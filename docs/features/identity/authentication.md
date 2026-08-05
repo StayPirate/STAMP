@@ -230,11 +230,12 @@ Invalidates a single session (used by the logout endpoint).
    the given `session_id`
 2. Return the `session_id` (for post-commit cache purge)
 
-**Post-commit phase** (best-effort, caller executes after commit):
+**Post-commit phase** (best-effort, caller executes after commit via
+`purge_session_cache([session_id])`):
 
 3. Delete the Redis cache entry `session_liveness:{session_id}`
-4. If Redis is unreachable, proceed — the entry expires naturally
-   within the cache TTL (60 seconds)
+4. If Redis is unreachable, log WARNING and proceed — the entry expires
+   naturally within the cache TTL (60 seconds)
 
 #### `invalidate_user_sessions(db, user_id) -> list[UUID]`
 
@@ -249,7 +250,8 @@ password reset).
 2. Return the list of invalidated `session_id`s (for post-commit cache
    purge)
 
-**Post-commit phase** (best-effort, caller executes after commit):
+**Post-commit phase** (best-effort, caller executes after commit via
+`purge_session_cache(session_ids)`):
 
 3. For each invalidated session, delete the Redis cache entry
    `session_liveness:{session_id}`
@@ -262,6 +264,22 @@ phase is omitted (e.g., due to process crash between commit and cache
 purge), the cache entries self-heal via TTL expiry. The database is
 always the authoritative source for session validity — Redis is a
 performance optimization.
+
+#### `purge_session_cache(session_ids: list[UUID]) -> None`
+
+Executes the post-commit cache purge for previously invalidated
+sessions. This is the named helper that callers invoke after their
+transaction commits — it encapsulates the Redis key format and error
+handling so that callers do not restate them.
+
+1. For each `session_id` in the list, delete
+   `session_liveness:{session_id}`
+2. If Redis is unreachable (`RedisError`), log WARNING and proceed —
+   entries expire naturally within the cache TTL (60 seconds)
+
+This function has no database dependency; it operates exclusively on
+Redis. It is safe to call multiple times with the same input
+(idempotent — deleting a non-existent key is a no-op).
 
 **Callers**:
 
@@ -291,20 +309,21 @@ regardless of activity.
 ### Deactivation ordering
 
 When a user is deactivated (via `user_service.deactivate_user()`), the
-operations execute in this order:
+database-phase operations execute atomically in this order:
 
 1. Revoke all API keys for the user via
    `api_key_service.revoke_all_user_keys(session, user_id,
    acting_user_id=None)`. See
    `docs/features/identity/api-key-service.md`
 2. Invalidate all active sessions via
-   `session_service.invalidate_user_sessions()` (DB + Redis)
+   `session_service.invalidate_user_sessions()` (DB only — cache purge
+   is post-commit; see Session invalidation above)
 3. Mark the user as inactive
 
-This ordering ensures that if the process is interrupted at any point,
-the user may still appear active but will have already lost access. The
-admin can retry the deactivation without risk of leaving a deactivated
-user with valid credentials.
+After the transaction commits, the post-commit phase purges the session
+liveness cache entries (best-effort). See
+`docs/features/identity/user-service.md` (`deactivate_user()`) for the
+full two-phase specification.
 
 ### Session cleanup
 
@@ -685,9 +704,12 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
 2. Extract `session_id` from the JWT claims
 3. Call `session_service.invalidate_session(db, session_id)` — this is
    idempotent: if the session is already inactive, no change is made
-4. Set a `Set-Cookie` header that clears the `sentinel_session` cookie:
+4. After the transaction commits, execute the post-commit phase:
+   `session_service.purge_session_cache([session_id])` (best-effort
+   cache purge — see Session invalidation above)
+5. Set a `Set-Cookie` header that clears the `sentinel_session` cookie:
    `Set-Cookie: sentinel_session=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
-5. Return HTTP 204
+6. Return HTTP 204
 
 ### List My API Keys
 
