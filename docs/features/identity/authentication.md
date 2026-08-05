@@ -215,36 +215,60 @@ resumes automatically when Redis becomes available again.
 ### Session invalidation
 
 Session invalidation is handled by `session_service`
-(`backend/app/services/session_service.py`), which provides two methods:
+(`backend/app/services/session_service.py`), which provides two methods.
+Each method separates database mutations (transactional) from Redis
+cache cleanup (post-commit, best-effort) per `docs/conventions.md`
+(Transaction Hygiene Rules).
 
-#### `invalidate_session(db, session_id)`
+#### `invalidate_session(db, session_id) -> UUID`
 
 Invalidates a single session (used by the logout endpoint).
 
-1. Set `Session.is_active = false` and `Session.updated_at = now()` for the given `session_id`
-2. Delete the Redis cache entry `session_liveness:{session_id}`
-3. If Redis is unreachable, proceed — the entry expires naturally
-   within the cache TTL
+**Database phase** (executes within the caller's transaction):
 
-#### `invalidate_user_sessions(db, user_id) -> int`
+1. Set `Session.is_active = false` and `Session.updated_at = now()` for
+   the given `session_id`
+2. Return the `session_id` (for post-commit cache purge)
+
+**Post-commit phase** (best-effort, caller executes after commit):
+
+3. Delete the Redis cache entry `session_liveness:{session_id}`
+4. If Redis is unreachable, proceed — the entry expires naturally
+   within the cache TTL (60 seconds)
+
+#### `invalidate_user_sessions(db, user_id) -> list[UUID]`
 
 Invalidates all active sessions for a user (used by deactivation and
 password reset).
 
-1. `UPDATE session SET is_active = false, updated_at = now() WHERE user_id = :user_id AND
-   is_active = true` — collect the list of invalidated `session_id`s
-2. For each invalidated session, delete the Redis cache entry
+**Database phase** (executes within the caller's transaction):
+
+1. `UPDATE session SET is_active = false, updated_at = now() WHERE
+   user_id = :user_id AND is_active = true` — collect the list of
+   invalidated `session_id`s
+2. Return the list of invalidated `session_id`s (for post-commit cache
+   purge)
+
+**Post-commit phase** (best-effort, caller executes after commit):
+
+3. For each invalidated session, delete the Redis cache entry
    `session_liveness:{session_id}`
-3. If Redis is unreachable, log WARNING and proceed — entries expire
+4. If Redis is unreachable, log WARNING and proceed — entries expire
    naturally within the cache TTL (60 seconds)
-4. Return the number of sessions invalidated
+
+**Caller contract**: the caller is responsible for executing the
+post-commit phase after its transaction commits. If the post-commit
+phase is omitted (e.g., due to process crash between commit and cache
+purge), the cache entries self-heal via TTL expiry. The database is
+always the authoritative source for session validity — Redis is a
+performance optimization.
 
 **Callers**:
 
 | Caller | Context |
 |--------|---------|
 | Logout endpoint (`POST /api/v1/auth/logout`) | Calls `invalidate_session()` for the current session |
-| `user_service.deactivate_user()` | Calls `invalidate_user_sessions()` as step 2 of deactivation |
+| `user_service.deactivate_user()` | Calls `invalidate_user_sessions()` as part of deactivation side effects |
 | `user_service.reset_password()` | Calls `invalidate_user_sessions()` after updating `password_hash` |
 
 ### Concurrent sessions

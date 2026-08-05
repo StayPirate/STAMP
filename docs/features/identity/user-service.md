@@ -579,20 +579,17 @@ Deactivates a user account and triggers all associated side effects.
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
-**Side effects** (executed atomically in the same database transaction,
-in this specific order):
+**Side effects — Database phase** (executed atomically in a single
+database transaction, in this specific order):
 
 1. Revoke all API keys belonging to this user via
    `api_key_service.revoke_all_user_keys(session, user_id,
    acting_user_id=None)`. Keys are not deleted — preserves audit trail.
    See `docs/features/identity/api-key-service.md`.
-2. Invalidate all active sessions for this user via
+2. Invalidate all active sessions for this user (DB only) via
    `session_service.invalidate_user_sessions(db, user_id)`. This sets
-   `Session.is_active = false` in the database AND deletes the
-   corresponding Redis cache entries. If Redis is unreachable during
-   cache deletion, log WARNING and proceed — the database is the
-   authoritative source for session validity. Auth middleware MUST
-   verify session status against the database on cache miss. See
+   `Session.is_active = false` in the database and returns the list of
+   invalidated `session_id`s (used by the post-commit phase). See
    `docs/features/identity/authentication.md` (Session invalidation) for the
    session service contract.
 3. Set `User.active = false`
@@ -604,11 +601,25 @@ in this specific order):
    not changed (see Architectural Invariant in `tickets.md`). See
    Private Helpers for the full contract.
 
+**Side effects — Post-commit phase** (best-effort, after transaction
+commits and FOR UPDATE lock is released):
+
+5. Purge session cache: for each `session_id` returned by step 2,
+   delete the Redis cache entry `session_liveness:{session_id}`. If
+   Redis is unreachable, log WARNING and proceed — entries expire
+   naturally within the cache TTL (60 seconds). The database is the
+   authoritative source for session validity; auth middleware verifies
+   against the database on cache miss.
+
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
-user is marked as inactive. This ensures that if the process is
-interrupted at any point, a user who still appears active will have
-already lost access. The admin can safely retry the deactivation
-without risk of leaving a deactivated user with valid credentials.
+user is marked as inactive (steps 1-2 before step 3). This ensures that
+if the process is interrupted at any point, a user who still appears
+active will have already lost access. The admin can safely retry the
+deactivation without risk of leaving a deactivated user with valid
+credentials. The Redis cache purge (step 5) is post-commit per
+`docs/conventions.md` (Transaction Hygiene Rules) — it cannot be rolled
+back by a transaction failure and must not extend the FOR UPDATE lock
+hold time.
 
 **IdentityAuditEvent**: `user_deactivated` — `user_id` = admin (or
 `NULL` for external sync), `target_user_id` = deactivated user, `detail`
@@ -677,26 +688,35 @@ Resets the password for a local user and invalidates all active sessions.
   `external_id` is set, raise `ExternalUserPasswordError`: "Cannot set
   password for external user. External users authenticate via SSO."
 
-**Behavior**:
+**Behavior — Database phase** (single transaction):
 
 1. Validate password length (16–128 characters). If invalid, raise
    `PasswordValidationError`
 2. Hash the password with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
 3. Update `User.password_hash` with the new hash
-4. Invalidate all active sessions via
-   `session_service.invalidate_user_sessions(db, user_id)` — this
-   forces re-login with the new password
-5. Clear the login lockout counter: delete the Redis key
-   `login_attempts:{username}` if it exists. If Redis is unreachable,
-   log WARNING and proceed — the counter will expire naturally via TTL.
-   This ensures that a locked-out user regains access immediately after
-   a password reset.
-6. Create `IdentityAuditEvent` with `event_type = password_reset` via
+4. Invalidate all active sessions (DB only) via
+   `session_service.invalidate_user_sessions(db, user_id)` — returns
+   `invalidated_session_ids`. This forces re-login with the new
+   password.
+5. Create `IdentityAuditEvent` with `event_type = password_reset` via
    `IdentityAuditLog.log_event()` — `user_id` = `acting_user_id`
    (admin), `target_user_id` = target user. Created in the same
    transaction as the password hash update.
-7. Return updated User
+6. Return updated User
+
+**Post-commit phase** (best-effort, after transaction commits):
+
+7. Purge session cache: for each `session_id` in
+   `invalidated_session_ids`, delete the Redis cache entry
+   `session_liveness:{session_id}`. If Redis is unreachable, log
+   WARNING and proceed — entries expire naturally within the cache TTL
+   (60 seconds).
+8. Clear the login lockout counter: delete the Redis key
+   `login_attempts:{username}` if it exists. If Redis is unreachable,
+   log WARNING and proceed — the counter will expire naturally via TTL.
+   This ensures that a locked-out user regains access immediately after
+   a password reset (or within the TTL window if Redis is unavailable).
 
 **TicketAuditEvent**: none (password reset does not affect tickets)
 
@@ -743,16 +763,33 @@ with no error. This is a no-op, not a failure.
   logging (INFO level) provides sufficient operational visibility.
 - No session invalidation (unlocking does not indicate compromise).
 - The `reset_password()` operation continues to clear the lockout
-  counter as a side effect (step 5), but `unlock_user()` provides
-  an independent path that does not force a password change.
+  counter as a post-commit side effect (step 8), but `unlock_user()`
+  provides an independent path that does not force a password change.
 
 ## Transactionality
 
 All operations that produce side effects (particularly `deactivate_user`)
-MUST execute within a single database transaction. If any step fails, the
-entire operation is rolled back. This ensures that a user is never left in
-a partially-deactivated state (e.g., marked inactive but tickets not
-unassigned).
+MUST execute their database mutations within a single transaction. If any
+database step fails, all database mutations are rolled back atomically.
+This ensures that a user is never left in a partially-deactivated state
+(e.g., marked inactive but tickets not unassigned).
+
+Redis operations (session cache purge, login lockout counter deletion)
+are NOT part of the PostgreSQL transaction boundary. They execute
+post-commit and are best-effort: if the process crashes between commit
+and Redis cleanup, or if Redis is unreachable, the affected cache
+entries expire naturally via TTL. The database is always the
+authoritative source — Redis is a performance optimization, not a
+correctness requirement.
+
+This two-phase pattern (see `docs/conventions.md`, Transaction Hygiene
+Rules) ensures that:
+
+1. A user is never left in a partially-deactivated database state
+2. The `FOR UPDATE` lock is held for the minimum necessary duration
+   (database operations only)
+3. Redis failures or latency cannot extend lock hold time or block
+   concurrent mutations on the same entity
 
 Operations that conditionally produce side effects (`update_roles`,
 `sync_role_mapping`, `delete_role_mapping_roles`) MUST also execute within
@@ -817,6 +854,16 @@ The `FOR UPDATE` lock on the User row in both operations serializes
 them. The first to commit performs the unassignment; the second finds no
 assigned tickets (or finds the user already inactive) and is a no-op. No
 duplicate TicketAuditEvents are created.
+
+### Redis operations and lock scope
+
+Redis cache cleanup (session liveness purge, login lockout counter
+deletion) executes after the transaction commits and the `FOR UPDATE`
+lock is released. This ensures that Redis latency or unreachability
+cannot extend the lock hold time or block concurrent mutations. See
+`docs/conventions.md` (Transaction Hygiene Rules) for the general rule
+and `docs/features/identity/authentication.md` (Session invalidation)
+for the two-phase session service contract.
 
 ## Service Exceptions
 
