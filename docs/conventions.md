@@ -596,21 +596,52 @@ commits or rolls back.
 The transaction that holds a `FOR UPDATE` lock MUST be kept as short
 as possible. Two categories of work are forbidden inside it:
 
-1. **No external service calls**: HTTP requests to external services
-   (IBS, SMELT, NVD, AIMAAS, or any network I/O) MUST happen
-   **before** the transaction that acquires the lock. The correct
-   pattern is:
+1. **No network I/O**: any operation that crosses a network boundary
+   — HTTP requests to external services (IBS, SMELT, NVD, AIMAAS),
+   Redis commands, Celery task enqueuing (which transits the Redis
+   broker), or any other socket I/O — MUST NOT execute while a
+   `FOR UPDATE` lock is held.
+
+   Rationale: network I/O cannot be rolled back by a PostgreSQL
+   transaction rollback. A `DEL` sent to Redis, a task published to
+   Celery, or an HTTP request to an external service cannot be undone
+   if the transaction later fails. Additionally, network latency or
+   timeouts extend the lock hold time, blocking all concurrent
+   mutations on the same entity.
+
+   The correct pattern separates work into phases:
 
    ```
-   1. Fetch data from external service (no lock held)
+   1. Fetch data from external services (no lock held)
    2. Open transaction → SELECT ... FOR UPDATE on root entity
-   3. Apply mutations + create audit events
+   3. Apply mutations + create audit events (DB only)
    4. Commit (lock released)
+   5. Post-commit side effects: cache invalidation, task enqueue (best-effort)
    ```
 
-   Holding a row lock while waiting for an external service response
-   (which may take seconds or time out entirely) blocks all other
-   mutations on the same entity for the duration.
+   Post-commit side effects (step 5) use data returned by the
+   transactional phase (e.g., a list of invalidated session IDs) to
+   perform the necessary Redis or broker operations. If the process
+   crashes between commit and post-commit side effects, TTL-based
+   expiry or periodic reconciliation provides eventual consistency.
+
+   **Pre-transaction guards** are a distinct pattern: a Redis
+   operation that serves as a distributed lock or precondition gate
+   (e.g., `SET key NX EX ttl` to prevent concurrent batch processing)
+   executes BEFORE the transaction — it gates entry into the
+   transaction, not as a side effect of it. If the guard fails, no
+   transaction is opened. This pattern is not subject to the
+   prohibition above.
+
+   **Acknowledged deviation**: `reconcile_ticket_status()` step 4.2
+   enqueues Celery `catch_up()` tasks before the caller's commit.
+   This deviation has an explicit safety analysis in
+   `docs/features/platform/fetcher-infrastructure.md` (Post-commit
+   enqueue, Exception) demonstrating that the operation is harmless:
+   the task is idempotent, does not read uncommitted state as a
+   precondition, and delegates mutations to service modules with
+   independent locks. New deviations require an equivalent per-case
+   safety analysis — the exception is not a general precedent.
 
 2. **No expensive queries**: analytical queries, aggregations over
    large tables, or computationally intensive operations MUST be
