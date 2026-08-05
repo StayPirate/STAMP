@@ -169,15 +169,23 @@ class TestReadinessEndpointSuccess:
         redis_client: redis_asyncio.Redis,
     ) -> None:
         """No caching: the same process must reflect a dependency
-        state change between two consecutive requests."""
+        state change between two consecutive requests.
+
+        Restores the override installed by the `redis_client` fixture
+        (rather than popping it) so the third request is not left to
+        fall through to the endpoint's default dependency
+        (`settings.redis_url`/`settings.celery_broker_url`), which
+        points at a real Redis instance outside the test harness'
+        control."""
         first = await client.get("/ready")
         assert first.status_code == 200
 
+        fixture_override = app.dependency_overrides[get_readiness_redis_urls]
         app.dependency_overrides[get_readiness_redis_urls] = lambda: [_CLOSED_PORT_URL]
         try:
             second = await client.get("/ready")
         finally:
-            app.dependency_overrides.pop(get_readiness_redis_urls, None)
+            app.dependency_overrides[get_readiness_redis_urls] = fixture_override
         assert second.status_code == 503
 
         third = await client.get("/ready")
