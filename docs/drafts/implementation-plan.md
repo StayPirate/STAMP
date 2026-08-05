@@ -365,8 +365,8 @@ metrics, and be operated through generic API/CLI surfaces.
 | `P3-02` | BaseFetcher lifecycle, registry, metrics, sanitization, settings schema | `P3-01`, `P1-02` | `platform/fetcher-infrastructure.md` |
 | `P3-03` | CPE package mapping loader, pure resolution, startup validation, and fixtures | `P1-02` | `packages/cpe-package-mapping.md` |
 | `P3-04` | Generic task wrapper, config bootstrap, redbeat reconciliation, worker/Beat image smoke | `P3-02`, `P3-03`, `P1-06` | `platform/fetcher-infrastructure.md` |
-| `P3-05` | Generic fetcher API operations | `P3-04`, `P2-03` | `platform/fetcher-operations.md` |
-| `P3-06` | Fetcher diagnostic CLI | `P3-04`, `P2-06` | `platform/fetcher-operations.md` |
+| `P3-05` | Generic fetcher API operations | `P3-04`, `P2-05` | `platform/fetcher-operations.md` |
+| `P3-06` | Fetcher diagnostic CLI | `P3-04`, `P2-07` | `platform/fetcher-operations.md` |
 | `P3-07` | Test-only no-op fetcher end-to-end validation | `P3-04`, `P3-05` | `platform/testing-strategy.md` |
 
 `P3-05` excludes the IBS RabbitMQ consumer status endpoint; that endpoint is
@@ -385,7 +385,7 @@ automatic ingestion.
 | `P4-01` | CVE/CVESource core models and migration | Phase 3 | `tickets/cve-service.md`, `data-model.md` |
 | `P4-02` | CVE enrichment child models and migration | `P4-01` | CVE and CVSS specs, `data-model.md` |
 | `P4-03` | Ticket, TicketAuditEvent, reference/access models and migration | `P4-01`, `P1-05` | ticket specs, `data-model.md` |
-| `P4-04` | Pure CVSS resolution | `P2-08`, `P4-02` | `tickets/cvss-scoring.md` |
+| `P4-04` | Pure CVSS resolution | `P2-09`, `P4-02` | `tickets/cvss-scoring.md` |
 | `P4-05` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
 | `P4-06` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
 | `P4-07` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
@@ -406,10 +406,10 @@ automatic ingestion.
 | `P4-22` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-21`, `P3-02` | `platform/cve-fetcher-infrastructure.md` |
 | `P4-23` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-19`, `P4-22` | ticket and CVE API specs |
 | `P4-24` | Resolve identity role-removal audit contradiction | Phase 3 | Documentation PR for `user-service.md` / `user-management.md` |
-| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-05` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
+| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-06` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
 | `P4-26` | Ticket-coupled role-removal service, commands, and APIs | `P4-24`, `P4-25` | identity service/management specs |
 | `P4-27` | User deactivation/impact service, commands, and APIs | `P4-25` | identity service/management specs |
-| `P4-28` | Settings PATCH/recalculation endpoints and CVSS batch task | `P4-09`, `P2-08` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
+| `P4-28` | Settings PATCH/recalculation endpoints and CVSS batch task | `P4-09`, `P2-09` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
 The candidate pieces above are intentionally more granular than the old
 service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate

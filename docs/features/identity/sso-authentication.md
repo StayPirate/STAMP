@@ -394,9 +394,10 @@ changes.
    this normalization prevents silent login failures
    if the IdP returns a differently-cased value (e.g., `JDoe` vs
    `jdoe`).
-2. Log the claim value at DEBUG level on every SSO login attempt
-   (accepted PII exposure under `LOG_LEVEL=DEBUG` — see
-   `docs/features/platform/logging.md`, Secrets and PII Discipline)
+2. Log the match outcome (matched/unmatched) at DEBUG level on every SSO
+   login attempt, with `request_id` for correlation. The claim value
+   itself is never logged — it is a username and therefore personal
+   data per `docs/features/platform/logging.md`.
 3. Log a WARNING when the claim value does not match any `username`
    (for external users). The log message includes the `request_id` for
    correlation but omits the unmatched claim value (it is a username

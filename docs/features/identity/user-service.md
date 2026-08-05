@@ -747,6 +747,7 @@ attempt local authentication.
    and proceed — the counter will expire naturally via TTL.
 3. Log an INFO message with `user_id` (UUID) — no username or other
    personal identifiers (per `docs/features/platform/logging.md`).
+
 **Idempotency:** if the user is not currently locked out (Redis key
 does not exist or counter is zero), the operation completes successfully
 with no error. This is a no-op, not a failure.
