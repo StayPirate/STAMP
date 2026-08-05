@@ -189,7 +189,7 @@ sentinel fetcher config <name>
 API key management for user accounts.
 
 Full specification:
-[authentication](features/identity/authentication.md#cli-commands)
+[api-key-management](features/identity/api-key-management.md#cli-commands)
 
 ### `sentinel api-key list`
 
@@ -203,10 +203,10 @@ sentinel api-key list --username <username>
 
 ### `sentinel api-key revoke`
 
-Revokes a specific API key for a user.
+Revokes a specific API key by its UUID.
 
 ```
-sentinel api-key revoke --username <username> --key-id <uuid>
+sentinel api-key revoke --key-id <uuid>
 ```
 
 **Idempotency**: Idempotent (no-op if already revoked).

@@ -15,7 +15,7 @@ code table, success/error message format, multi-step `✓`/`✗`/`—`
 reporting, idempotency declarations), and naming conventions remain owned
 by `docs/conventions.md`. This specification owns the shared *mechanism*
 that implements that contract, so that individual command specs
-(`user-management.md`, `authentication.md`, `fetcher-operations.md`) do
+(`user-management.md`, `api-key-management.md`, `fetcher-operations.md`) do
 not each need to re-derive it.
 
 **This specification does not define individual commands.** Each command's
@@ -40,7 +40,7 @@ explicit per-command opt-in.
 | `docs/features/platform/logging.md` (Scope of this pipeline) | Defines the minimal structlog-to-stderr configuration this spec's bootstrap sequence applies at root group initialization. |
 | `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → CLI Commands, Sync Entry-Point Tests) | Defines the mandatory CLI test scenarios and the synchronous test function requirement; this spec defines the harness those tests run against. |
 | `docs/features/identity/user-management.md` | Consumer: `manage-user` command group delegates to async services via the pattern defined here. |
-| `docs/features/identity/authentication.md` | Consumer: `api-key` command group delegates to async services via the pattern defined here. |
+| `docs/features/identity/api-key-management.md` | Consumer: `api-key` command group delegates to async services via the pattern defined here. |
 | `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the `asyncio.run()` session mechanism defined here for its read-only queries. |
 | `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the async service contracts invoked from within the `asyncio.run()` mechanism defined here. |
 | `docs/features/platform/system-settings.md` | Defines the system settings mechanism consumed by the Configuration Guard decorator. |
@@ -229,7 +229,7 @@ module for mutation (`manage-user create`, `manage-user update`,
 `manage-user deactivate`, `manage-user set-password`, `manage-user
 unlock`, `api-key revoke`). This documents the pattern each command
 already follows in its owning spec (`user-management.md`,
-`authentication.md`, `fetcher-operations.md`) — this section does not
+`api-key-management.md`, `fetcher-operations.md`) — this section does not
 change any existing command's behavior, it only defines the shared
 mechanism underlying all of them. This inventory is illustrative, not
 an exhaustive registry that must be updated per new command (the

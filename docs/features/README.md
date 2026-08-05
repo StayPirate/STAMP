@@ -24,7 +24,8 @@ Index of all feature specification domains.
 - [user-management.md](identity/user-management.md) — Admin CLI and API for user operations
 - [rbac.md](identity/rbac.md) — Role definitions and endpoint permission map
 - [identity-audit-log.md](identity/identity-audit-log.md) — Identity audit trail (IdentityAuditEvent)
-- [api-key-service.md](identity/api-key-service.md) — API key lifecycle management
+- [api-key-management.md](identity/api-key-management.md) — API key feature (data model, endpoints, CLI)
+- [api-key-service.md](identity/api-key-service.md) — API key lifecycle service contract
 
 ### Integrations
 

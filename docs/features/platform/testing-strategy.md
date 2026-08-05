@@ -1008,6 +1008,80 @@ scenarios are required:
 - Lockout events do NOT produce `IdentityAuditEvent` records (lockout
   is transient Redis-only state, not a persistent identity mutation)
 
+### API Key Management
+
+When the API key feature area is affected, the following scenarios are
+required. See `docs/features/identity/api-key-management.md` for the
+authoritative behavioral contract.
+
+**Name normalization and validation:**
+
+- Names with leading/trailing whitespace are trimmed before storage
+- Names are normalized to lowercase before storage and uniqueness check
+- Names with characters outside `[a-z0-9._-]` are rejected with
+  `ApiKeyNameValidationError`
+- Empty name after trim is rejected
+- Name exceeding 128 characters after normalization is rejected
+
+**Status derivation and boundary timestamps:**
+
+- A key with `revoked_at` set AND expired `expires_at` reports status
+  `revoked` (revocation takes precedence over expiration)
+- A key with `expires_at` exactly equal to `now()` reports status
+  `expired` (boundary: `<= now()`)
+- A key with no `revoked_at` and future/NULL `expires_at` reports
+  status `active`
+- Status filter on admin list endpoint returns correct keys for each
+  filter value (`active`, `revoked`, `expired`)
+
+**`last_used_at` NULL ordering:**
+
+- Ascending sort: keys with NULL `last_used_at` appear last (NULLS LAST)
+- Descending sort: keys with NULL `last_used_at` appear last (NULLS
+  LAST) — matches `api-spec.md` semantic sort field convention
+
+**Permission and ownership concealment:**
+
+- Self-service revoke of another user's key returns 404 (not 403) — key
+  existence is not disclosed
+- Self-service list returns only the caller's own keys
+- Admin list returns keys across all users (with `manage_users`
+  capability)
+
+**Transaction rollback and audit atomicity:**
+
+- If `create_key` transaction is rolled back, no `ApiKey` record and no
+  `IdentityAuditEvent` record persist
+- If `revoke_key` transaction is rolled back, `revoked_at` remains NULL
+  and no `IdentityAuditEvent` record persists
+
+**Safe logging:**
+
+- No username, email, key prefix, key secret, or source IP appears in
+  application logs for API key management operations (create, list,
+  revoke). `user_id` (UUID) is permitted
+- The authentication-time validation failure WARNING contains only
+  source IP (documented PII exception in `authentication.md`, API key
+  validation) — no key prefix, key material, or username
+- The anomaly detection WARNING (>20 active keys) contains only
+  `user_id` (UUID) and the count — no PII
+
+**Concurrent create (name race):**
+
+- Two concurrent `create_key` calls with the same normalized name for
+  the same user: exactly one succeeds, the other raises
+  `ApiKeyNameConflictError`
+- Verified using `db_session_factory` and the two-session pattern (see
+  Database Strategy — Concurrency Testing)
+
+**Concurrent/repeated revocation:**
+
+- Repeated `revoke_key` for an already-revoked key: no error, no new
+  `IdentityAuditEvent`, key returned unchanged
+- Concurrent `revoke_key` calls for the same active key: exactly one
+  produces an `IdentityAuditEvent`; the second observes `revoked_at`
+  set and returns early (serialized via FOR UPDATE on ApiKey row)
+
 ### Model Constraints
 
 New models MUST be tested for:

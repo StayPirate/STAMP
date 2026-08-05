@@ -1300,7 +1300,7 @@ retention policy.
 API keys for programmatic access. Every user (SSO or local) can create
 API keys for non-interactive authentication (bots, AI agents, CI
 pipelines). The full key value is shown only once at creation; only the
-hash is stored. See `docs/features/identity/authentication.md` (API Keys).
+hash is stored. See `docs/features/identity/api-key-management.md`.
 
 | Column        | Type        | Constraints               | Description                                |
 |---------------|-------------|---------------------------|--------------------------------------------|
@@ -1308,7 +1308,7 @@ hash is stored. See `docs/features/identity/authentication.md` (API Keys).
 | user_id       | UUID        | FK(user.id), NOT NULL     | User who owns this key                     |
 | key_hash      | VARCHAR(64) | NOT NULL, UNIQUE          | SHA-256 hex digest of the full key         |
 | prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9`) for display |
-| name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
+| name          | VARCHAR(128)| NOT NULL                  | Human-readable label. Normalized (trimmed, lowercased) before storage. Allowed characters: `[a-z0-9._-]`, length 1-128 after normalization. See `docs/features/identity/api-key-management.md` (API Key Name Rule) |
 | created_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the key was created                   |
 | last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
 | expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
@@ -1319,7 +1319,8 @@ hash is stored. See `docs/features/identity/authentication.md` (API Keys).
 
 - (user_id, revoked_at) — for efficient listing of active keys per user.
 - UNIQUE (user_id, name) WHERE revoked_at IS NULL — prevents duplicate
-  names among non-revoked keys for the same user.
+  names among non-revoked keys for the same user. Evaluated on the
+  normalized (trimmed, lowercased) value.
 
 #### IdentityAuditEvent
 
@@ -1672,7 +1673,7 @@ a value requires an Alembic migration.
   `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
   `SubmissionRequestTrack`, `RoleMapping`,
-  and `CVEAffectedVersion`
+  `ApiKey`, and `CVEAffectedVersion`
   only have `created_at` because they are immutable write-once records or are
   replaced rather than updated in place; `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for

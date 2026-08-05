@@ -2,20 +2,21 @@
 
 ## Purpose
 
-Centralize all API key lifecycle operations (creation, revocation,
-bulk revocation) in a single service module to ensure consistent
-enforcement of business rules and side effects regardless of the entry
-point (API self-service, admin API, CLI, or user deactivation).
+Centralize all API key operations (creation, revocation, bulk
+revocation, listing, retrieval) in a single service module to ensure
+consistent enforcement of business rules and side effects regardless of
+the entry point (API self-service, admin API, CLI, or user deactivation).
 
-Read-only operations (listing and retrieving API keys) are not
-centralized in this service because they carry no business logic, side
-effects, or audit trail requirements. They are implemented directly in
-API endpoint handlers (see `docs/features/identity/authentication.md`).
+This ensures that:
 
-Without this centralization, each entry point would need to independently
-implement the mutation logic and, once the audit trail redesign is
-applied, independently create the corresponding `IdentityAuditEvent`
-records — a fragile pattern prone to inconsistency.
+- The architecture rule "only services perform database operations" is
+  satisfied uniformly (see `docs/architecture.md`, Backend Layer
+  Architecture)
+- Ownership checks occur at the service boundary without leaking key
+  existence to unauthorized callers
+- Mutation operations (create, revoke) produce audit events atomically
+- Read operations apply consistent status derivation and ownership
+  filtering
 
 This service follows the same architectural pattern as `user_service`
 (`docs/features/identity/user-service.md`).
@@ -44,17 +45,22 @@ service via `asyncio.run()`.
 All operations accept an `acting_user_id: UUID | None` parameter:
 
 - `UUID` — action performed by an authenticated user (self-service or
-  admin). Stored as `revoked_by` on revocation, used for future audit
-  events.
-- `None` — system action (CLI, deactivation side effect). `revoked_by`
-  is set to `NULL`.
+  admin). Stored as `revoked_by` on revocation, used for audit events.
+- `None` — system action (CLI). `revoked_by` is set to `NULL`.
+
+Note: `deactivate_user()` passes its own `acting_user_id` through (the
+admin who triggered deactivation, or `None` for external sync), so
+deactivation-triggered revocations attribute to the correct actor.
 
 ### Transaction ownership
 
-The service does NOT commit or manage transactions. All mutations execute
-within the caller's database transaction. If the caller's transaction is
-rolled back, the API key mutation is rolled back with it. This is the
-same pattern used by `user_service` and `session_service`.
+The service does NOT commit or manage transactions. All operations
+(mutations and reads) execute within the caller's database transaction.
+The service flushes as needed (e.g., to obtain generated IDs or trigger
+unique constraint checks) but never commits. If the caller's transaction
+is rolled back, all mutations — including audit events — are rolled back
+with it. This is the same pattern used by `user_service` and
+`session_service`.
 
 ## Operations
 
@@ -74,19 +80,24 @@ Creates a new API key for a user.
 
 **Preconditions**:
 
-- User must exist. If not found, raise `UserNotFoundError`
+- User must exist and be loaded with `SELECT ... FOR UPDATE` on the
+  `User` row. This serializes against concurrent `deactivate_user()`
+  calls (see `api-key-management.md`, Create vs. deactivate race).
+  If not found, raise `UserNotFoundError`
 - User must be active. If `user.active = false`, raise
   `InactiveUserError`
 
 **Validation**:
 
-- `name` is normalized by trimming leading and trailing whitespace
-  before any other validation. After trimming, the name must be 1-128
-  characters. If empty or exceeds 128 characters, raise
-  `ApiKeyNameValidationError`
-- `name` must be unique among the user's non-revoked keys. If a
-  non-revoked key with the same name already exists, raise
-  `ApiKeyNameConflictError`
+- `name` is normalized per
+  `docs/features/identity/api-key-management.md` (API Key Name Rule):
+  trim leading/trailing whitespace, then convert to lowercase. After
+  normalization, validate: allowed characters `[a-z0-9._-]`, length
+  1-128 characters. If empty, exceeds 128 characters, or contains
+  invalid characters, raise `ApiKeyNameValidationError`
+- `name` must be unique among the user's non-revoked keys (evaluated on
+  the normalized value). If a non-revoked key with the same normalized
+  name already exists, raise `ApiKeyNameConflictError`
 - If `expires_at` is provided, it must be in the future. If in the past,
   raise `ApiKeyInvalidExpiryError`
 
@@ -101,7 +112,7 @@ Creates a new API key for a user.
    - `user_id` = provided user_id
    - `key_hash` = computed hash
    - `prefix` = first 12 characters of the full key
-   - `name` = provided name
+   - `name` = normalized name (after trim + lowercase)
    - `expires_at` = provided value or NULL
    - `revoked_at` = NULL
    - `revoked_by` = NULL
@@ -119,12 +130,14 @@ Creates a new API key for a user.
    `IdentityAuditLog.log_event()` — `user_id` = acting user,
    `target_user_id` = key owner, `new_value` = key name,
    `detail` = `{"key_id": "uuid"}`
-7. Return the created `ApiKey` record with the plaintext key accessible
-   as a transient attribute (not persisted to the database). The caller
-   is responsible for including the plaintext key in the API response
+7. Return the created `ApiKey` record and the plaintext secret wrapped
+   in `SecretStr`. The caller extracts the secret value via
+   `.get_secret_value()` for inclusion in the API response. The
+   plaintext must never be logged, serialized, or exposed outside the
+   201 response body
 
-**Returns**: `ApiKey` record (with transient `key` attribute containing
-the plaintext secret)
+**Returns**: `tuple[ApiKey, SecretStr]` — the created record and the
+wrapped plaintext secret
 
 ### `revoke_key()`
 
@@ -149,8 +162,10 @@ Idempotent No-ops).
 
 **Behavior**:
 
-1. Look up the key by `key_id`. If not found, raise
-   `ApiKeyNotFoundError`
+1. Look up the key by `key_id` with `SELECT ... FOR UPDATE`. If not
+   found, raise `ApiKeyNotFoundError`. The lock serializes concurrent
+   revocations on the same key (see `api-key-management.md`, Revoke
+   idempotency under concurrency)
 2. If `revoked_at` is already set, return the key unchanged (idempotent)
 3. Set `revoked_at = now()`
 4. Set `revoked_by = acting_user_id` (NULL for system actions)
@@ -166,20 +181,21 @@ Idempotent No-ops).
 is NOT performed by the service. Each caller handles authorization at its
 own boundary:
 
-- The self-revoke endpoint checks `key.user_id == current_user.id`
-  before calling the service (returns 404 if mismatch)
+- The self-revoke endpoint calls `get_key()` with `owner_user_id` to
+  verify ownership before calling `revoke_key()` (returns 404 if
+  mismatch)
 - The admin revoke endpoint skips the ownership check (requires
   `manage_users` capability)
-- `sentinel api-key revoke` skips the ownership check (system action
-  requiring shell access; `acting_user_id=None`)
+- `sentinel api-key revoke` operates on the key UUID directly (system
+  action requiring shell access; `acting_user_id=None`)
 - `deactivate_user()` does not call `revoke_key()` — it uses
   `revoke_all_user_keys()` directly (ownership is N/A; operates on all
   keys of the target user)
 
 ### `revoke_all_user_keys()`
 
-Revokes all active API keys for a user. Used as a side effect of user
-deactivation.
+Revokes all non-revoked API keys for a user (including expired ones).
+Used as a side effect of user deactivation.
 
 **Parameters**:
 
@@ -196,7 +212,8 @@ deactivation.
 **Behavior**:
 
 1. Validate that the user exists. If not found, raise `UserNotFoundError`
-2. Query all active (non-revoked) API keys for the user
+2. Query all non-revoked API keys for the user (`WHERE revoked_at IS
+   NULL`)
 3. For each key, set `revoked_at = now()` and `revoked_by =
    acting_user_id`
 4. For each revoked key, create `IdentityAuditEvent` with
@@ -206,11 +223,108 @@ deactivation.
    `detail` = `{"key_id": "uuid", "reason": "user_deactivated"}`
 5. Return the count of revoked keys
 
-**Returns**: `int` — number of keys revoked (0 if no active keys
+**Returns**: `int` — number of keys revoked (0 if no non-revoked keys
 existed)
 
-**Idempotency**: calling this function when the user has no active keys
-returns 0 without error.
+**Idempotency**: calling this function when the user has no non-revoked
+keys returns 0 without error.
+
+### `list_user_keys()`
+
+Lists all API keys belonging to a user. Used by the self-service list
+endpoint and by the CLI `api-key list` command.
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session` | `AsyncSession` | Yes | Database session (caller's transaction) |
+| `user_id` | `UUID` | Yes | Owner whose keys to list |
+
+**Behavior**:
+
+1. Query all `ApiKey` records where `user_id` matches
+2. Return results ordered by `created_at` descending (newest first)
+
+**Returns**: list of `ApiKey` records (all statuses: active, revoked,
+expired)
+
+### `list_all_keys()`
+
+Lists API keys across all users with filtering, sorting, and pagination.
+Used by the admin list endpoint.
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session` | `AsyncSession` | Yes | Database session (caller's transaction) |
+| `owner_user_id` | `UUID \| None` | No | Filter by owner (resolved by caller) |
+| `status` | `str \| None` | No | Filter: `active`, `revoked`, or `expired` (derived per `api-key-management.md`, Derived Status) |
+| `sort_by` | `str` | No | `created_at` (default) or `last_used_at` |
+| `sort_order` | `str` | No | `asc` or `desc` (default: `desc`) |
+| `page` | `int` | No | Page number (default 1) |
+| `per_page` | `int` | No | Items per page (default 20, max 100) |
+
+**Behavior**:
+
+1. Build query with optional filters:
+   - `owner_user_id`: exact match on `ApiKey.user_id`
+   - `status`: apply the derived status conditions from
+     `api-key-management.md` (Derived Status)
+2. Apply sorting. When `sort_by=last_used_at`, use deterministic NULL
+   ordering per `api-key-management.md` (`last_used_at` NULL Ordering)
+3. Apply pagination (offset/limit)
+4. Return paginated results with total count
+
+**Returns**: paginated result (list of `ApiKey` records + total count)
+
+### `get_key()`
+
+Retrieves a single API key by ID, with optional ownership validation.
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session` | `AsyncSession` | Yes | Database session (caller's transaction) |
+| `key_id` | `UUID` | Yes | ID of the key to retrieve |
+| `owner_user_id` | `UUID \| None` | No | If provided, verify the key belongs to this user |
+
+**Behavior**:
+
+1. Look up the key by `key_id`. If not found, raise
+   `ApiKeyNotFoundError`
+2. If `owner_user_id` is provided and `key.user_id != owner_user_id`,
+   raise `ApiKeyNotFoundError` (same error — conceals key existence
+   from non-owners)
+3. Return the `ApiKey` record
+
+**Returns**: `ApiKey` record
+
+This function is used by:
+
+- Self-service revoke endpoint: passes `owner_user_id=current_user.id`
+  to enforce ownership without leaking existence
+- Admin endpoints: passes `owner_user_id=None` to skip ownership check
+
+## Concurrency
+
+Concurrency behavior for all operations is defined in
+`docs/features/identity/api-key-management.md` (Concurrency and
+Locking). Summary:
+
+- **Create-name race**: the partial unique index serializes concurrent
+  creates with the same normalized name. `IntegrityError` is caught and
+  re-raised as `ApiKeyNameConflictError`. No `FOR UPDATE` on `ApiKey`
+  needed.
+- **Create vs. deactivate**: `create_key()` acquires `FOR UPDATE` on the
+  `User` row to serialize against concurrent `deactivate_user()` calls.
+  This prevents a key from surviving deactivation.
+- **Revoke idempotency**: `revoke_key()` acquires `FOR UPDATE` on the
+  `ApiKey` row. Concurrent revocations serialize: exactly one performs
+  the effective mutation and creates one audit event; subsequent callers
+  observe `revoked_at IS NOT NULL` and return early (no-op, no event).
 
 ## Service Exceptions
 
@@ -225,16 +339,18 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `ApiKeyNotFoundError` | 404 | `AUTH_API_KEY_NOT_FOUND` | API key ID does not exist |
 | `ApiKeyNameConflictError` | 409 | `AUTH_API_KEY_NAME_CONFLICT` | Key name already in use for this user |
 | `ApiKeyNameValidationError` | 422 | `AUTH_API_KEY_NAME_INVALID` | Key name does not meet format requirements |
-| `ApiKeyInvalidExpiryError` | 400 | `AUTH_API_KEY_INVALID_EXPIRY` | Expiry date is in the past or exceeds maximum |
+| `ApiKeyInvalidExpiryError` | 400 | `AUTH_API_KEY_INVALID_EXPIRY` | Expiry date is in the past |
 
 † Shared exception — inherits from `ServiceError`, not from
 `ApiKeyServiceError`. Handlers must catch it explicitly.
 
 ## Cross-references
 
-- `docs/features/identity/authentication.md` — API key data model, key
-  format, key visibility rules, endpoint definitions, anomaly detection
-  threshold
+- `docs/features/identity/api-key-management.md` — API key feature:
+  data model, name rules, status derivation, endpoints, CLI commands,
+  concurrency, security considerations (single source of truth)
+- `docs/features/identity/authentication.md` — authentication middleware,
+  API key validation sub-flow, deactivation ordering
 - `docs/features/identity/user-service.md` — `deactivate_user()` calls
   `revoke_all_user_keys()` as step 1 of the deactivation side effects
 - `docs/features/identity/identity-audit-log.md` — `api_key_created` and

@@ -584,8 +584,8 @@ database transaction, in this specific order):
 
 1. Revoke all API keys belonging to this user via
    `api_key_service.revoke_all_user_keys(session, user_id,
-   acting_user_id=None)`. Keys are not deleted — preserves audit trail.
-   See `docs/features/identity/api-key-service.md`.
+   acting_user_id=acting_user_id)`. Keys are not deleted — preserves
+   audit trail. See `docs/features/identity/api-key-service.md`.
 2. Invalidate all active sessions for this user (DB only) via
    `session_service.invalidate_user_sessions(db, user_id)`. This sets
    `Session.is_active = false` in the database and returns the list of
@@ -906,7 +906,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | Spec | Relationship |
 |---|---|
 | `docs/features/identity/api-key-service.md` | Centralized API key lifecycle service. `deactivate_user` calls `api_key_service.revoke_all_user_keys()` as step 1 of the deactivation side effects |
-| `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
+| `docs/features/identity/authentication.md` | Defines session model and `session_service`. `deactivate_user` calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
 | `docs/features/identity/identity-provisioning.md` | External sync process calls `create_user`, `update_user`, `sync_role_mapping`, `deactivate_user`, `reactivate_user`. Role mapping CRUD endpoints call `sync_role_mapping` and `delete_role_mapping_roles` |
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |

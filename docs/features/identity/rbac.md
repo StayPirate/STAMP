@@ -364,9 +364,9 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md#list-my-api-keys) |
-| POST | `/api/v1/api-keys` | Authenticated | [authentication](authentication.md#create-api-key) |
-| POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [authentication](authentication.md#revoke-my-api-key) |
+| GET | `/api/v1/api-keys` | Authenticated | [api-key-management](api-key-management.md#list-my-api-keys) |
+| POST | `/api/v1/api-keys` | Authenticated | [api-key-management](api-key-management.md#create-api-key) |
+| POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [api-key-management](api-key-management.md#revoke-my-api-key) |
 
 ### Tickets
 
@@ -475,8 +475,8 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/admin/settings/audit-log` | `manage_settings` | [system-settings](../platform/system-settings.md#list-settings-audit-events) |
 | POST | `/api/v1/admin/settings/default-cvss-version/recalculate` | `manage_settings` | [system-settings](../platform/system-settings.md#trigger-cvss-recalculation) |
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
-| GET | `/api/v1/admin/api-keys` | `manage_users` | [authentication](authentication.md#list-all-api-keys-admin) |
-| POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [authentication](authentication.md#revoke-api-key-admin) |
+| GET | `/api/v1/admin/api-keys` | `manage_users` | [api-key-management](api-key-management.md#list-all-api-keys-admin) |
+| POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [api-key-management](api-key-management.md#revoke-api-key-admin) |
 | PATCH | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#update-user-admin) |
 | POST | `/api/v1/admin/users/{user}/roles` | `manage_users` | [user-management](user-management.md#set-user-roles) |
 | POST | `/api/v1/admin/users/{user}/password` | `manage_users` | [user-management](user-management.md#reset-user-password) |
@@ -623,7 +623,7 @@ here with the required authorization level and a link to the owning spec.
 
 JWT with session-backed liveness checks. See
 `docs/features/identity/authentication.md` for the full design: token format,
-session management, API keys, and middleware behavior.
+session management, API key validation, and middleware behavior.
 
 ### Permission Checking
 

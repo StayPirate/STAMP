@@ -874,7 +874,7 @@ When the user is already inactive, the response contains zeroed counts:
 | Field                  | Type          | Description                                      |
 |------------------------|---------------|--------------------------------------------------|
 | `already_inactive`     | `bool`        | `true` if the user is already inactive (no-op deactivation) |
-| `api_keys_count`       | `int`         | Active API keys that will be revoked             |
+| `api_keys_count`       | `int`         | Non-revoked API keys that will be revoked            |
 | `sessions_count`       | `int`         | Active sessions that will be invalidated         |
 | `tickets_count`        | `int`         | Active tickets assigned to this user that will be unassigned |
 

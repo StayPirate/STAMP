@@ -333,13 +333,13 @@ keys, and access the ticket-independent identity management surface.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P2-01` | Session and API key persistence | Phase 1, SG-03, SG-04 | `identity/authentication.md` |
+| `P2-01` | Session and API key persistence | Phase 1, SG-03, SG-04 | `identity/authentication.md`, `identity/api-key-management.md` |
 | `P2-02` | Identity audit persistence and service | SG-05 | `identity/identity-audit-log.md` |
 | `P2-03` | JWT session service, logout, and cleanup | SG-08, `P2-01` | `identity/authentication.md` |
 | `P2-04` | Local password authentication and lockout | `P2-03` | `identity/local-authentication.md` |
 | `P2-05` | API key lifecycle service and audit | `P2-01`, `P2-02` | `identity/api-key-service.md` |
 | `P2-06` | Unified authentication and capability dependencies | `P2-05`, `P2-03` | `identity/rbac.md`, `identity/authentication.md` |
-| `P2-07` | Self-service and admin API key endpoints | `P2-06` | `identity/api-key-service.md` |
+| `P2-07` | Self-service and admin API key endpoints | `P2-06` | `identity/api-key-management.md` |
 | `P2-08` | Ticket-independent user lifecycle services | `P2-02`, `P2-04` | `identity/user-service.md` |
 | `P2-09` | Password reset and account unlock services | `P2-08` | `identity/user-service.md` |
 | `P2-10` | User read, profile, and identity audit APIs | `P2-06` | `identity/user-management.md` |

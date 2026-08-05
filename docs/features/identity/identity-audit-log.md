@@ -247,7 +247,9 @@ location for all API key mutations. Audit events are created inside the
 service functions, not in the calling endpoints:
 
 - `create_key()` → creates 1 `api_key_created` event
-- `revoke_key()` → creates 1 `api_key_revoked` event
+- `revoke_key()` → creates 1 `api_key_revoked` event (none on idempotent
+  no-op when key is already revoked — see
+  `audit-trail-infrastructure.md`, Idempotent No-ops)
 - `revoke_all_user_keys()` → creates N `api_key_revoked` events (one per
   revoked key). Each event includes `{"reason": "user_deactivated"}` in
   the `detail` JSONB field to distinguish bulk revocation during
@@ -255,6 +257,27 @@ service functions, not in the calling endpoints:
 
 Session invalidation during deactivation does NOT produce audit events
 (sessions are excluded from the audit trail scope).
+
+### Operational Metadata Exclusions
+
+The following fields are classified as **operational authentication
+metadata** and are explicitly excluded from `IdentityAuditEvent`
+coverage:
+
+- **`ApiKey.last_used_at`**: debounced update (at most once per minute
+  per key per instance) performed within the authentication middleware
+  boundary. Routine key usage would generate unmanageable audit event
+  volume without meaningful security value. See
+  `docs/features/identity/api-key-management.md` (Operational Metadata:
+  `last_used_at`).
+- **`User.last_login_at`**: updated on every session creation (login).
+  Login events are operational diagnostics, not identity mutations — see
+  `docs/features/identity/authentication.md` (Session operational
+  logging).
+
+These exclusions are intentional: the fields record operational usage
+patterns, not identity-affecting mutations. Their updates are bounded,
+high-frequency writes that serve diagnostic (not audit) purposes.
 
 **Field-change events**: the `user_service.update_user()` function
 produces one audit event per changed field. If a single `update_user()`
