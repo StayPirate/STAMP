@@ -950,6 +950,63 @@ entry point, MUST have a test for the feature-specified `RedisError` behavior
 propagated service failure). The test uses the replaceable boundary defined in
 Redis Strategy; it does not stop the shared Redis service.
 
+### Authentication and Session
+
+When the authentication or session feature area is affected, the following
+scenarios are required:
+
+**Session and configuration:**
+
+- Changing `SESSION_MAX_LIFETIME_DAYS` does not invalidate existing
+  sessions or alter their persisted `session_deadline`
+- A session's `session_deadline` remains fixed regardless of subsequent
+  configuration changes — verify by creating a session, changing the
+  setting, and confirming the persisted deadline is unchanged
+- Session cleanup deletes sessions whose persisted `session_deadline`
+  has passed, not sessions derived from the current configuration value
+
+**Lockout concurrency:**
+
+- Exactly `LOGIN_MAX_ATTEMPTS` password verifications are permitted
+  under concurrent load — never more. Use independent sessions and
+  concurrent tasks to prove the boundary
+- The atomic increment+TTL operation is indivisible — no counter exists
+  without a TTL after a failure mid-operation
+- A blocked attempt (counter >= limit) does not increment the counter
+  or renew the TTL
+- TTL is renewed only on actual failed verification, not on blocked
+  attempts
+
+**Anti-enumeration:**
+
+- Unknown-username and wrong-password paths produce indistinguishable
+  HTTP responses (same status code, error code, response body structure)
+- Unknown-username path executes dummy bcrypt — verified by observing
+  that the verification boundary is reached (e.g., the bcrypt function
+  is called), not by asserting wall-clock timing equivalence
+- Unknown-username advances the lockout counter identically to a failed
+  known-user verification
+- Lockout (429) is triggered identically for existing and non-existing
+  usernames after `LOGIN_MAX_ATTEMPTS` attempts
+
+**Log PII discipline:**
+
+- No username, email, session ID, password, or password hash appears in
+  application logs for any authentication path (success, failure,
+  lockout, Redis failure). IP addresses are prohibited except where a
+  documented PII exception exists (see
+  `docs/features/identity/authentication.md`, API key validation).
+  Capture logs via `caplog` and assert absence of personal identifiers
+- `user_id` (UUID) is present in session lifecycle logs when the actor
+  is known
+
+**Audit trail boundaries:**
+
+- Session lifecycle events (created, invalidated, cleanup) do NOT
+  produce `IdentityAuditEvent` records
+- Lockout events do NOT produce `IdentityAuditEvent` records (lockout
+  is transient Redis-only state, not a persistent identity mutation)
+
 ### Model Constraints
 
 New models MUST be tested for:

@@ -395,8 +395,12 @@ changes.
    if the IdP returns a differently-cased value (e.g., `JDoe` vs
    `jdoe`).
 2. Log the claim value at DEBUG level on every SSO login attempt
+   (accepted PII exposure under `LOG_LEVEL=DEBUG` — see
+   `docs/features/platform/logging.md`, Secrets and PII Discipline)
 3. Log a WARNING when the claim value does not match any `username`
-   (for external users), including the unmatched value for diagnostic purposes
+   (for external users). The log message includes the `request_id` for
+   correlation but omits the unmatched claim value (it is a username
+   and therefore personal data per `docs/features/platform/logging.md`)
 
 ### No auto-provisioning
 

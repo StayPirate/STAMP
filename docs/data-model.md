@@ -1274,18 +1274,17 @@ current group membership. See
 Tracks active user sessions. Every login (SSO or local) creates a
 session record. The JWT references the session via the `session_id`
 claim. On every authenticated request, the middleware verifies that the
-session is still active. The maximum session lifetime
-(`SESSION_MAX_LIFETIME_DAYS`, default 30 days) is enforced via the
-`session_deadline` claim in the JWT, not in this table.
+session is still active.
 See `docs/features/identity/authentication.md` (Session Management).
 
-| Column       | Type        | Constraints               | Description                                |
-|--------------|-------------|---------------------------|--------------------------------------------|
-| id           | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
-| user_id      | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
-| created_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the session was created (login time)  |
-| updated_at   | TIMESTAMPTZ   | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
-| is_active    | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
+| Column           | Type        | Constraints               | Description                                |
+|------------------|-------------|---------------------------|--------------------------------------------|
+| id               | UUID        | PK                        | Internal identifier (referenced as `session_id` in JWT claims) |
+| user_id          | UUID        | FK(user.id), NOT NULL     | User who owns this session                 |
+| created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT         | When the session was created (login time)  |
+| updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT now()   | Last modification timestamp; records when session was invalidated |
+| session_deadline | TIMESTAMPTZ | NOT NULL                  | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400`. Never recomputed from the current setting — changes to `SESSION_MAX_LIFETIME_DAYS` affect only sessions created by subsequent logins |
+| is_active        | BOOLEAN     | NOT NULL, DEFAULT true    | Set to `false` on logout or user deactivation |
 
 **Indexes**:
 

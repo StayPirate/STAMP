@@ -745,9 +745,8 @@ attempt local authentication.
 2. Delete the Redis key `login_attempts:{username}` (where `username`
    is the user's current username). If Redis is unreachable, log WARNING
    and proceed — the counter will expire naturally via TTL.
-3. Log an INFO message: `"User '{username}' unlocked by
-   {acting_user or 'system'}"`.
-
+3. Log an INFO message with `user_id` (UUID) — no username or other
+   personal identifiers (per `docs/features/platform/logging.md`).
 **Idempotency:** if the user is not currently locked out (Redis key
 does not exist or counter is zero), the operation completes successfully
 with no error. This is a no-op, not a failure.

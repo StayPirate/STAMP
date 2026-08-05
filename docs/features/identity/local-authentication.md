@@ -48,32 +48,49 @@ session, and returns a JWT.
 
 1. If the provided password exceeds 128 characters, return HTTP 401 with
    generic message immediately (reasonable UX limit — no database lookup
-   needed)
+   needed, no lockout counter created)
 2. Normalize the username: strip leading and trailing whitespace, then
-   convert to lowercase. All subsequent steps (lookup, lockout counter)
-   use the normalized value.
+   convert to lowercase. If the normalized username exceeds 64 characters
+   (the Username Format limit in `docs/conventions.md`), return HTTP 401
+   with generic message immediately — no database lookup or Redis counter
+   creation. All subsequent steps use the normalized value.
 3. If the normalized username is empty, return HTTP 401 with generic
    message (same as user not found — no lockout counter is created for
    empty usernames)
-4. Look up the user by normalized `username`
-5. If user not found, return HTTP 401 with generic message (see below)
-6. If the account is locked (see Rate Limiting), return HTTP 429 with
-   message: `"Account temporarily locked. Try again later."` and include
-   a `Retry-After` header with the number of seconds remaining until the
-   lockout expires
-7. If user is inactive (`active = false`), return HTTP 401 with generic
-   message
-8. If user has `external_id IS NOT NULL` (external user), return HTTP 401 with
-   generic message — external users cannot use local login
-9. If user has no `password_hash` set (local user without password),
-   return HTTP 401 with generic message
-10. Verify the provided password against the stored `password_hash`
-11. If verification fails, increment the failed attempt counter and
-    return HTTP 401 with generic message
-12. On success: reset the failed attempt counter, create a `Session`
-    record, update `user.last_login_at = now()`, issue a JWT (see
+4. Atomically execute the lockout guard-and-increment on the Redis
+   counter `login_attempts:{normalized_username}` (see Rate Limiting for
+   the atomicity contract). The operation returns one of two outcomes:
+   - **Blocked**: the counter was already at or above
+     `LOGIN_MAX_ATTEMPTS`. The remaining TTL is returned in the same
+     atomic operation. Return HTTP 429 with message: `"Account
+     temporarily locked. Try again later."` and include a `Retry-After`
+     header with the remaining TTL in seconds. No password verification,
+     no counter increment, no TTL renewal.
+   - **Admitted**: the counter was below `LOGIN_MAX_ATTEMPTS`. The
+     counter has been incremented and its TTL set/renewed to
+     `LOGIN_LOCKOUT_MINUTES`. The new counter value is returned.
+     Proceed to step 5.
+5. Look up the user by normalized `username`
+6. If user not found: perform dummy bcrypt verification (equivalent cost
+   to a real password check) — go to step 10 (failure)
+7. If user is inactive (`active = false`), has `external_id IS NOT NULL`
+   (external user), or has no `password_hash` set: perform dummy bcrypt
+   verification — go to step 10 (failure)
+8. Verify the provided password against the stored `password_hash`
+9. If verification fails, go to step 10 (failure)
+10. On failure (any of steps 6, 7, 9): return HTTP 401 with generic
+    message. The counter was already incremented at step 4. If the
+    counter has reached `LOGIN_MAX_ATTEMPTS` (transition from unlocked to
+    locked), emit the lockout transition event (see Rate Limiting,
+    Lockout transition logging) — `user_id` is available from step 5
+    when the username resolved to an existing user.
+11. On success: delete the failed attempt counter (best-effort — Redis
+    failure does not fail the login), create a `Session` record, update
+    `user.last_login_at = now()`, issue a JWT (see
     `docs/features/identity/authentication.md` for token format and claims),
-    return the token
+    return the token. A failed counter delete may leave a residual
+    counter that locks the account until TTL expiry; admin unlock and
+    natural TTL expiry are the recovery paths.
 
 **Success response** (200):
 
@@ -228,32 +245,70 @@ attempts per username using a Redis counter.
 
 **Behavior**:
 
-1. On each failed login attempt for a username, increment a Redis
-   counter: `login_attempts:{normalized_username}` (where
-   `normalized_username` is the lowercased, trimmed input) and reset the
-   TTL to `LOGIN_LOCKOUT_MINUTES`. This extends the counting window
-   under active attack — an attacker cannot bypass lockout by spacing
-   attempts just under the TTL
-2. The counter is also incremented for non-existent usernames. The login
-   flow performs a dummy bcrypt hash verification when the user is not
-   found, to equalize response time and eliminate timing side-channels
-   for username enumeration
-3. If the counter is already at or above `LOGIN_MAX_ATTEMPTS` when a new
-   attempt arrives (checked at login step 6, before password
-   verification), the attempt is rejected immediately with HTTP 429
-   (with `Retry-After` header). This means an attacker gets exactly
-   `LOGIN_MAX_ATTEMPTS` password verifications before lockout takes
-   effect — the Nth attempt is the last one that receives a full
-   password check. Attempts rejected at this step do **not** increment
-   the counter or reset the TTL — the lockout window expires naturally
-   from the last failed password verification (step 11). When the
-   counter first reaches `LOGIN_MAX_ATTEMPTS` (transition from unlocked
-   to locked), log an INFO message: `"User '{username}' locked after
-   {N} failed login attempts"`. Lockout events are tracked via
-   application logging only (not the identity audit trail) because
-   lockout is a transient Redis-only state, not a persistent identity
-   mutation
-4. On successful login, delete the counter
+1. On each login attempt that passes the lockout gate (login step 4,
+   "Admitted" outcome), the counter
+   `login_attempts:{normalized_username}` is atomically incremented and
+   its TTL is set/renewed to `LOGIN_LOCKOUT_MINUTES`. This extends the
+   counting window under active attack — an attacker cannot bypass
+   lockout by spacing attempts just under the TTL. Note: attempts
+   rejected at steps 1 and 3 (overlong password, empty username) do not
+   create or modify a counter.
+2. If the counter is already at or above `LOGIN_MAX_ATTEMPTS` when a new
+   attempt arrives (login step 4, "Blocked" outcome), the attempt is
+   rejected immediately with HTTP 429 (with `Retry-After` header).
+   Attempts rejected at this step do **not** verify a password, increment
+   the counter, or reset the TTL — the lockout window expires naturally
+   from the last admitted attempt
+3. On successful login, delete the counter (best-effort — Redis failure
+   does not fail the login)
+
+**Concurrency contract**:
+
+The lockout gate and the counter increment are a single atomic operation
+(login step 4). Concurrent requests collectively permit exactly
+`LOGIN_MAX_ATTEMPTS` password verifications before subsequent requests
+are treated as blocked. Specifically:
+
+- The guard-and-increment is indivisible: atomically, if the counter is
+  at or above `LOGIN_MAX_ATTEMPTS`, return the "Blocked" outcome without
+  modifying the counter or TTL; otherwise increment the counter, set or
+  renew the TTL to `LOGIN_LOCKOUT_MINUTES`, and return the "Admitted"
+  outcome with the new counter value. No intermediate state is
+  observable by other clients.
+- A request that receives the "Blocked" outcome MUST NOT verify a
+  password, increment the counter, or reset/renew the TTL. The lockout
+  window expires naturally from the last admitted attempt.
+- The transition from unlocked to locked (counter reaching
+  `LOGIN_MAX_ATTEMPTS`) happens exactly once — it is not possible for
+  two concurrent requests to both "be the Nth attempt" and both perform
+  a password verification that crosses the threshold.
+- A verification in progress (between step 4 "Admitted" and step 11
+  success/failure resolution) occupies a counter slot. A concurrent
+  request may receive the "Blocked" outcome while a valid verification
+  is in flight — this is accepted and self-clears within one bcrypt
+  duration when the successful login deletes the counter at step 11.
+
+This contract does not prescribe the internal mechanism (e.g., a Lua
+script) — only the observable behavior under concurrency.
+
+**Lockout transition logging**:
+
+The lockout transition event is emitted on the **failure path** (login
+step 10) when the counter value returned by step 4 equals exactly
+`LOGIN_MAX_ATTEMPTS`. It is NOT emitted on successful logins (which
+delete the counter at step 11). The log message follows the PII
+discipline in `docs/features/platform/logging.md` — it includes
+`user_id` (UUID) from the step-5 lookup when the username resolved to
+an existing user, and omits it when the username does not exist:
+
+```json
+{"event": "login_lockout_triggered", "attempt_count": 5, "user_id": "550e8400-..."}
+{"event": "login_lockout_triggered", "attempt_count": 5}
+```
+
+Lockout events are tracked via application logging only (not the
+identity audit trail) because lockout is a transient Redis-only state,
+not a persistent identity mutation.
 
 **Notes**:
 
@@ -284,7 +339,7 @@ attempts per username using a Redis counter.
   management page. Alternatively, the lockout expires automatically
   after the TTL. See `docs/features/identity/user-management.md`.
 - **Permanent lockout is not possible**: once the account is locked,
-  subsequent rejected attempts (step 6) do not increment the counter or
+  subsequent rejected attempts (step 4) do not increment the counter or
   reset the TTL. The lockout expires naturally after
   `LOGIN_LOCKOUT_MINUTES` from the last actual failed password
   verification, even under sustained attack.
@@ -301,9 +356,14 @@ attempts per username using a Redis counter.
   indicating which variable has an invalid value.
 - **Redis key namespace safety**: the key format
   `login_attempts:{normalized_username}` is safe from namespace
-  collisions because usernames are restricted to `[a-z0-9._-]` at
-  creation time (see `docs/conventions.md`, Username Format). No
-  characters in the allowed charset conflict with Redis key delimiters.
+  collisions because the `login_attempts:` prefix isolates it from
+  other application-owned Redis keys. On the login path, the
+  normalized username is bounded at 64 characters (step 2) before the
+  Redis key is created, preventing unbounded key growth from
+  attacker-controlled input. For paths that derive the key from an
+  existing `User` row (e.g., `unlock_user()`), the stored username is
+  additionally restricted to `[a-z0-9._-]` at creation time (see
+  `docs/conventions.md`, Username Format).
 - **Non-existent username counters (accepted risk)**: Redis counters are
   created for every non-existent username attempted (to prevent timing
   side-channels). A high-volume attack could create many short-lived

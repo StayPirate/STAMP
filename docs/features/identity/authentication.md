@@ -91,16 +91,23 @@ is not set.
 ### Token lifecycle
 
 - A token is issued at login with:
-  - `exp = now + JWT_EXPIRY_HOURS * 3600` (default 72 hours)
   - `session_deadline = now + SESSION_MAX_LIFETIME_DAYS * 86400` (default 30 days, never refreshed)
+  - `exp = min(now + JWT_EXPIRY_HOURS * 3600, session_deadline)` — capped
+    at `session_deadline` so the advertised `expires_at` never exceeds
+    the session's actual maximum lifetime (same rule as token refresh)
+- A change to `SESSION_MAX_LIFETIME_DAYS` applies only to sessions
+  created by subsequent successful logins. Each session's
+  `session_deadline` is calculated and persisted at login time and
+  remains fixed for the lifetime of that session — it is never
+  recomputed from the current setting.
 - The server transparently refreshes the token via **sliding session**
   (see Token refresh below). Active users never experience session
   expiration.
 - An inactive user whose token expires without renewal (no requests for
   longer than `JWT_EXPIRY_HOURS`) is redirected to the login page.
-- After 30 days from login (`session_deadline`), the session expires
-  unconditionally — the user must re-authenticate regardless of
-  activity. This provides a hard cap on session lifetime.
+- After `SESSION_MAX_LIFETIME_DAYS` from login (`session_deadline`), the
+  session expires unconditionally — the user must re-authenticate
+  regardless of activity. This provides a hard cap on session lifetime.
 - A token becomes invalid immediately if its associated session is
   deactivated (see Session Management below).
 
@@ -114,7 +121,7 @@ that transparently extends the token lifetime for active users:
    `refresh_threshold = JWT_EXPIRY_HOURS * 3600 * 0.5`
 2. If `session_deadline < now`: do not refresh. The session has exceeded
    its maximum lifetime — the current token remains valid until its `exp`
-   but no new token is issued. (In practice, step 5 of JWT validation
+   but no new token is issued. (In practice, step 4 of JWT validation
    catches this, but the explicit guard here prevents issuing a token
    with `exp` in the past if reached via edge cases like clock skew.)
 3. If `token_age >= refresh_threshold`:
@@ -160,12 +167,14 @@ deactivation, without waiting for JWT expiry.
 
 ### Data model: `Session`
 
-| Column       | Type         | Nullable | Description                         |
-|--------------|--------------|----------|-------------------------------------|
-| `id`         | UUID         | No       | Primary key                         |
-| `user_id`    | UUID (FK)    | No       | References `User.id`                |
-| `created_at` | timestamptz  | No       | When the session was created        |
-| `is_active`  | boolean      | No       | `false` after logout or revocation  |
+| Column             | Type         | Nullable | Description                         |
+|--------------------|--------------|----------|-------------------------------------|
+| `id`               | UUID         | No       | Primary key                         |
+| `user_id`          | UUID (FK)    | No       | References `User.id`                |
+| `created_at`       | timestamptz  | No       | When the session was created        |
+| `updated_at`       | timestamptz  | No       | Last modification timestamp         |
+| `session_deadline` | timestamptz  | No       | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400` |
+| `is_active`        | boolean      | No       | `false` after logout or revocation  |
 
 ### Session liveness check
 
@@ -199,6 +208,8 @@ cached. The lookup semantics are:
     `session_liveness:{session_id}` and TTL 60 seconds, then proceed.
   - If `is_active = false`: do NOT write to cache, reject the request
     (HTTP 401).
+  - If no `Session` row exists (deleted by `cleanup_sessions`): do NOT
+    write to cache, reject the request (HTTP 401).
 
 This ensures that only positive (active) state is ever cached, a cache miss
 always triggers a database verification, and a revoked session never pollutes
@@ -227,7 +238,9 @@ Invalidates a single session (used by the logout endpoint).
 **Database phase** (executes within the caller's transaction):
 
 1. Set `Session.is_active = false` and `Session.updated_at = now()` for
-   the given `session_id`
+   the given `session_id`. If no row exists for the `session_id`
+   (already deleted by `cleanup_sessions`), this is a no-op — no
+   exception is raised.
 2. Return the `session_id` (for post-commit cache purge)
 
 **Post-commit phase** (best-effort, caller executes after commit via
@@ -303,7 +316,7 @@ Sessions are only invalidated explicitly by:
 
 Orphaned sessions (e.g., from a browser where the user never explicitly
 logged out) are cleaned up by the weekly session cleanup task. All
-sessions expire unconditionally after `SESSION_MAX_LIFETIME_DAYS`
+sessions expire unconditionally when their `session_deadline` is reached,
 regardless of activity.
 
 ### Deactivation ordering
@@ -331,16 +344,14 @@ A Celery Beat task (`cleanup_sessions`) runs every **Sunday at 03:00 UTC**
 (fixed schedule, not configurable) and deletes session rows matching either
 of these conditions:
 
-- `is_active = false AND updated_at < now() - interval '1 hour'` —
-  invalidated sessions, with a 1-hour grace period. The grace period
-  protects against a race condition where a concurrent request has already
-  passed the Redis cache check (cache miss or token refresh) but has not
-  yet loaded the Session row from the database. Without the grace period,
-  the row could be deleted mid-flight, causing a 500 error.
-- `created_at < now() - (SESSION_MAX_LIFETIME_DAYS + 1) days` — sessions
-  that have exceeded the configured maximum lifetime plus a 1-day buffer,
-  regardless of active status. The buffer avoids cleaning up sessions
-  that are still within their validity window due to clock skew.
+- `is_active = false` — invalidated sessions. A request in flight that
+  encounters a missing row receives HTTP 401 (see Session liveness
+  check, cache-miss branch), which is the correct outcome for an
+  already-invalidated session.
+- `session_deadline < now()` — sessions whose immutable deadline has
+  passed, regardless of active status. Because the `session_deadline`
+  column and the JWT `session_deadline` claim originate from the same
+  login operation, no clock-skew buffer is needed.
 
 No session history is retained — invalidated and expired sessions are
 deleted without trace.
@@ -351,17 +362,25 @@ fetch data from external sources). It is registered as a static
 specified in `docs/features/platform/fetcher-infrastructure.md`
 ("Non-Fetcher Periodic Tasks").
 
-### Session audit logging
+### Session operational logging
 
-To compensate for session cleanup (which deletes historical records),
-session lifecycle events are logged at **INFO** level:
+Session lifecycle events are logged at **INFO** level for operational
+visibility. Log messages follow the PII discipline in
+`docs/features/platform/logging.md` — they use `user_id` (UUID) as a
+pseudonymous correlation identifier, never usernames or session IDs:
 
-- Session created: `"Session created for user {username} (session_id={id})"`
-- Session invalidated (logout): `"Session invalidated for user {username} (session_id={id}, reason=logout)"`
-- Sessions invalidated (bulk): `"Invalidated {count} sessions for user {username} (reason={deactivation|password_reset})"`
+- Session created: structured event with `user_id` and login reason
+- Session invalidated (logout): structured event with `user_id` and
+  reason
+- Sessions invalidated (bulk): structured event with `user_id`, count,
+  and reason (deactivation or password reset)
 
-These log entries provide a permanent audit trail (retained per log
-infrastructure policy) even after session rows are cleaned up.
+These are **operational diagnostic logs**, not a persistent audit trail.
+Session lifecycle events do not produce `IdentityAuditEvent` records —
+sessions are excluded from the identity audit trail scope (see
+`docs/features/identity/identity-audit-log.md`). The `last_login_at`
+field on the `User` table provides the queryable answer to "when did
+this user last log in?" without depending on log retention.
 
 ### `last_login_at` field
 
@@ -445,14 +464,12 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 1. Decode the token using `JWT_SECRET_KEY` with the `HS256` algorithm.
 2. Verify `exp` has not passed.
 3. Verify `iss` equals `"sentinel"`.
-4. Verify `session_deadline` has not passed. Additionally, verify that
-   `iat + SESSION_MAX_LIFETIME_DAYS * 86400 >= now` (using the current
-   configured value). This ensures that a reduction of
-   `SESSION_MAX_LIFETIME_DAYS` takes immediate effect on existing tokens
-   without requiring explicit session invalidation.
+4. Verify `session_deadline` has not passed.
 5. Look up the session by `session_id` claim.
-6. Verify the session passes the liveness check (active + not expired).
-   Use Redis cache when available.
+6. Verify the session passes the liveness check: the `Session` row must
+   exist **and** have `is_active = true`. A missing row or
+   `is_active = false` rejects the request (HTTP 401). Use Redis cache
+   when available (see Session liveness check).
 7. On success, return the `user_id` from the `sub` claim.
 
 ### API key validation
@@ -462,6 +479,14 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 2. Look up the `ApiKey` record by matching `key_hash` to the computed
    digest. If no record is found, log a WARNING with the key prefix
    (first 12 characters) and the source IP, and fail.
+
+   **PII exception**: the source IP is included in this log message as a
+   documented exception to the PII discipline in
+   `docs/features/platform/logging.md`. The IP identifies an attack
+   source (not a legitimate authenticated user), the log serves an
+   active defense purpose (brute-force detection and response), and
+   `request_id` correlation alone is insufficient because the rate
+   limiter aggregates hundreds of requests into a single log message.
 
    **Log rate limiting**: the WARNING emission is rate-limited to prevent
    log flooding from brute-force attacks. The HTTP 401 response is
@@ -1075,9 +1100,9 @@ attributed to the agent's own identity.
   - The tool operates on a trusted internal network, reducing the attack
     surface for cookie theft
   - Existing compensating controls: `Secure` flag (HTTPS only), `HttpOnly`
-    (no XSS access), `SameSite=Strict` (no cross-origin leakage), 30-day
-    maximum session lifetime, admin deactivation (invalidates all sessions
-    immediately)
+    (no XSS access), `SameSite=Strict` (no cross-origin leakage),
+    maximum session lifetime (`SESSION_MAX_LIFETIME_DAYS`), admin
+    deactivation (invalidates all sessions immediately)
   - Detection of session theft is not a goal for this tool; prevention
     via the cookie flags above is the primary defense
 - **OIDC state parameter not single-use (accepted risk)**: the OIDC

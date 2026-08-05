@@ -333,21 +333,22 @@ keys, and access the ticket-independent identity management surface.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P2-01` | Session/ApiKey models, JWT/session service, current-user dependency, session cleanup task | Phase 1 | `identity/authentication.md` |
+| `P2-01` | Session/ApiKey models and persistence | Phase 1, SG-03, SG-04 | `identity/authentication.md` |
 | `P2-02` | IdentityAuditEvent and IdentityAuditLog | `P2-01`, `P1-05` | `identity/identity-audit-log.md` |
-| `P2-03` | API-key service and self/admin API-key endpoints | `P2-02` | `identity/api-key-service.md`, `identity/authentication.md` |
-| `P2-04` | Local login, password hashing, Redis lockout | `P2-01` | `identity/local-authentication.md` |
-| `P2-05` | Ticket-independent user lifecycle functions | `P2-02`, `P2-04` | `identity/user-service.md` |
-| `P2-06` | CLI infrastructure; manage-user create, set-password, unlock, list, and show | `P2-05` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
-| `P2-07` | Public user list/detail, self profile, and completed admin user operations | `P2-05` | `identity/user-management.md`, `identity/rbac.md` |
-| `P2-08` | SystemSetting persistence/bootstrap, SettingAuditEvent/Log, settings read and audit APIs | `P2-02` | `platform/system-settings.md` |
+| `P2-03` | JWT session service, logout, and session cleanup | `P2-01` | `identity/authentication.md` |
+| `P2-04` | Local login, password hashing, Redis lockout | `P2-03` | `identity/local-authentication.md` |
+| `P2-05` | API-key service and self/admin API-key endpoints | `P2-01`, `P2-02` | `identity/api-key-service.md`, `identity/authentication.md` |
+| `P2-06` | Ticket-independent user lifecycle functions | `P2-02`, `P2-04` | `identity/user-service.md` |
+| `P2-07` | CLI infrastructure; manage-user create, set-password, unlock, list, and show | `P2-06` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
+| `P2-08` | Public user list/detail, self profile, and completed admin user operations | `P2-06` | `identity/user-management.md`, `identity/rbac.md` |
+| `P2-09` | SystemSetting persistence/bootstrap, SettingAuditEvent/Log, settings read and audit APIs | `P2-02` | `platform/system-settings.md` |
 
-`P2-05` includes only functions whose complete specified side effects are
+`P2-06` includes only functions whose complete specified side effects are
 available (for example user creation, field update, reactivation, password
 reset, and unlock). Ticket-coupled role removal and deactivation are not
 weakened; they complete in Phase 4. The composite `manage-user update` command,
 role-management endpoint, and deactivation command/endpoint are deferred in
-their entirety rather than exposed with a partial option set. `P2-07` must list
+their entirety rather than exposed with a partial option set. `P2-08` must list
 its exact endpoint inventory in its tracking issue before becoming Ready.
 
 The image suite adds a CLI bootstrap assertion in the piece that introduces
