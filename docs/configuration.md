@@ -72,7 +72,7 @@ application constants, not configurable via environment variables.
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `JWT_EXPIRY_HOURS` | int | `72` | JWT token lifetime in hours (3 days). Tokens are refreshed transparently via sliding session for active users. Must be >= 1; values > 720 log a warning | `docs/features/identity/authentication.md` |
-| `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. After this period from login, the session expires unconditionally regardless of activity. Must be >= 1; values > 365 log a warning | `docs/features/identity/authentication.md` |
+| `SESSION_MAX_LIFETIME_DAYS` | int | `30` | Maximum session lifetime in days. Each session's deadline is calculated at login and remains fixed for the life of that session. Changes to this setting affect only sessions created by subsequent logins — existing sessions retain their original deadline. Must be >= 1; values > 365 log a warning | `docs/features/identity/authentication.md` |
 | `LOGIN_MAX_ATTEMPTS` | int | `5` | Failed login attempts before account lockout. Must be >= 1; the application refuses to start if the value is below 1 | `docs/features/identity/local-authentication.md` |
 | `LOGIN_LOCKOUT_MINUTES` | int | `10` | Lockout duration in minutes. Must be >= 1; the application refuses to start if the value is below 1 | `docs/features/identity/local-authentication.md` |
 

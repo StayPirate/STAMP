@@ -543,8 +543,8 @@ here with the required authorization level and a link to the owning spec.
 6. All authentication events are logged (login, logout, failed attempts)
 7. Session duration: JWT expires after 72 hours of inactivity (refreshed
    transparently via sliding session for active users). Maximum session
-   lifetime is 30 days regardless of activity. See
-   `docs/features/identity/authentication.md`
+   lifetime is `SESSION_MAX_LIFETIME_DAYS` (default 30 days) regardless
+   of activity. See `docs/features/identity/authentication.md`
 8. Authenticated users with no roles have an effective scope of
    `non_confidential` and no capabilities. They can access specific
    confidential tickets via `TicketAccessGrant` or bugowner matching —

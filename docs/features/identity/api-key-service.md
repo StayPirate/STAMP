@@ -113,8 +113,8 @@ Creates a new API key for a user.
      concurrent race conditions produce the same typed error as the
      sequential application-level validation in the preconditions step.
 5. Check active key count for the user (non-revoked, non-expired). If
-   count exceeds 20, emit a WARNING log: `"User {username} has {count}
-   active API keys (anomaly threshold: 20)"`
+   count exceeds 20, emit a WARNING log with the `user_id` (UUID):
+   `"API key anomaly: user has {count} active keys (threshold: 20)"`
 6. Create `IdentityAuditEvent` with `event_type = api_key_created` via
    `IdentityAuditLog.log_event()` — `user_id` = acting user,
    `target_user_id` = key owner, `new_value` = key name,

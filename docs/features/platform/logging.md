@@ -353,6 +353,43 @@ Log statements MUST NEVER include:
   in `docs/conventions.md` ("Example Data in Documentation") and
   Guardrail #23.
 
+**Internal pseudonymous identifiers are not personal data.** UUIDs
+generated and managed by Sentinel as internal record identifiers (user
+IDs, fetcher run IDs) are internal pseudonymous identifiers — they
+require database access to resolve to a person and are not directly
+identifying. They are classified identically to `request_id` and
+`celery_task_id` and are always permitted in log records. Note: session
+IDs are excluded from this classification because they appear directly
+in the JWT authentication token — logging them would create a
+correlation path to active credentials.
+
+**Documented PII exceptions.** In narrowly scoped security-event
+scenarios where `request_id` correlation alone is insufficient and the
+log serves an active defense purpose, a feature specification MAY
+document an exception permitting a specific personal identifier (e.g.,
+source IP for brute-force detection). Each exception MUST be documented
+in the owning feature spec with the rationale and scope. See
+`docs/features/identity/authentication.md` (API key validation) for the
+canonical example.
+
+### Investigability
+
+Every log event related to authentication, authorization, or session
+lifecycle MUST carry at least one identifier that allows an
+administrator to correlate the event to a specific request or actor.
+Typically this is:
+
+- `request_id` — present automatically on all API request processing
+  (see Correlation IDs above)
+- `user_id` (UUID) — added as a structured field when the actor is
+  known
+
+Events where no actor can be identified (e.g., lockout triggered for a
+non-existent username) rely on `request_id` alone. The combination of
+`request_id` and platform-provided metadata (timestamps, process role)
+provides sufficient context for operational investigation without
+requiring personal identifiers in the log stream.
+
 This is a documentation-level rule for this phase (spec-first project,
 no implementation yet). The future implementation task is expected to
 additionally consider a redaction processor in the structlog pipeline,
