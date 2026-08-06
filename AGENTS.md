@@ -917,6 +917,13 @@ without per-commit approval. Before the first push of a new branch,
 the agent reports the branch name and initial scope. Before opening
 a PR, the agent reports the intended title and description.
 
+**GitHub body formatting**: when composing issue bodies or PR
+descriptions via `gh`, do NOT hard-wrap lines at any fixed column
+width (72, 80, or any other). Write each paragraph as a single
+unwrapped line — GitHub's web UI renders HTML and handles wrapping
+automatically. See `docs/conventions.md` (Issue and PR Body
+Formatting).
+
 **Automatic workflow initiation**: when the user issues a concrete
 modification request, the agent MUST autonomously:
 
