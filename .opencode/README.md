@@ -40,7 +40,9 @@ agents.
 All reviewer agents apply the proportionality filter in `AGENTS.md`
 Guardrail 26 before reporting findings. Speculative, unnecessary,
 over-documenting, or disproportionate findings are omitted rather than turned
-into project requirements.
+into project requirements. The agent that invoked a reviewer independently
+evaluates every received finding before acting on it, per the Finding
+Evaluation Procedure in the same guardrail.
 
 | Agent | Type | Trigger | Purpose |
 |-------|------|---------|---------|

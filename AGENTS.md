@@ -246,8 +246,7 @@ After adding or modifying any CI/CD artifact, invoke `@cicd-reviewer`:
 
 Skip the review when the change is purely cosmetic (comment or
 formatting changes with no effect on triggers, gates, permissions, or
-build behavior). If the reviewer identifies issues rated as "Needs
-revision", address them before considering the task complete.
+build behavior).
 
 ### 6. Mandatory testing
 
@@ -302,9 +301,7 @@ SQLAlchemy models, new Alembic migrations, or changes to `docs/data-model.md`):
    - No unnecessary tables, columns, or relationships were introduced
    - Naming conventions and structural conventions are followed
    - The implementation matches the specification
-3. If the reviewer identifies complexity concerns or issues rated as
-   "Needs revision", address them before considering the task complete
-4. Minor issues flagged by the reviewer should be fixed in the same PR
+3. Minor issues flagged by the reviewer should be fixed in the same PR
 
 The goal is to keep the database schema lean and comprehensible. Every table
 and column must justify its existence.
@@ -325,9 +322,7 @@ review is needed:
    - The change is purely cosmetic (typo fixes, formatting)
    - Only test files are modified with no behavioral changes
    - A single inline comment or docstring is added
-3. If the reviewer identifies issues rated as "Needs revision", address them
-   before considering the task complete
-4. Minor issues flagged by the reviewer should be fixed in the same PR
+3. Minor issues flagged by the reviewer should be fixed in the same PR
 
 The goal is to keep documentation accurate, complete, and in sync with the
 codebase at all times.
@@ -352,9 +347,9 @@ a security review is needed:
    - The change is purely cosmetic (typo fixes, formatting, comments)
    - Only test files are modified
    - Only documentation is updated
-3. If the reviewer identifies vulnerabilities rated as "Needs revision",
-   address them before considering the task complete
-4. Issues rated as Critical or High severity MUST be fixed before merging
+3. Confirmed security findings rated Critical or High severity are not
+   subject to the discard criteria in Guardrail 26 — they MUST be fixed
+   before merging
 
 The goal is to prevent security vulnerabilities from being introduced into
 the codebase. The `@security-reviewer` agent complements the automated
@@ -533,11 +528,8 @@ after modifying cross-cutting documents (`docs/data-model.md`,
    - The change is purely cosmetic (typo fixes, formatting, rewording without
      semantic change)
    - Only a single spec is affected and it does not reference other specs
-3. If the reviewer identifies issues rated as "Needs revision" (contradictory
-   rules or incompatible flows between specs), resolve them before considering
-   the task complete
-4. Issues rated as "Minor issues" should be fixed in the same PR
-5. When performing a full review across all specs (e.g., triggered manually
+3. Minor issues flagged by the reviewer should be fixed in the same PR
+4. When performing a full review across all specs (e.g., triggered manually
    by the user), invoke `@spec-coherence-reviewer` **once per spec** in
    independent sessions. Do not combine multiple specs into a single review
 
@@ -673,10 +665,7 @@ is needed:
    - The specification does not define any API endpoints
    - Only implementation code is modified (pytest handles convention
      enforcement at the code level)
-3. If the reviewer identifies issues rated as "Needs revision" (violations
-   that would cause implementation ambiguity or client incompatibility),
-   address them in the specification before proceeding with implementation
-4. Issues rated as "Minor issues" should be fixed in the same PR
+3. Minor issues flagged by the reviewer should be fixed in the same PR
 
 The goal is to catch API convention violations at the specification stage —
 before any implementation code is written — so that developers can implement
@@ -763,10 +752,6 @@ Skip the review when:
   has no meaning outside this feature)
 - Only cross-cutting documents (`data-model.md`, `api-spec.md`, etc.) are
   updated without impact on feature specs
-
-If the reviewer identifies issues rated as "Needs revision", propose the
-relocation/consolidation options to the user before considering the task
-complete.
 
 The goal is to keep each piece of information in the single most appropriate
 location — avoiding both fragmentation (same rule scattered across multiple
@@ -970,6 +955,8 @@ automatic mandate to add code or documentation. Correctness, security, and
 explicit specification requirements remain mandatory, but their resolution
 MUST use the smallest change that fully addresses the real problem.
 
+#### Reviewer pre-filter (before reporting)
+
 Before reporting a finding, every reviewer MUST apply this filter:
 
 1. **Real problem**: Is there a concrete, realistic scenario in which the
@@ -994,10 +981,48 @@ Before reporting a finding, every reviewer MUST apply this filter:
 
 Reviewers MUST prefer removal, reuse, and simplification over adding new
 mechanisms. A discarded finding is not a deferred requirement and MUST NOT be
-implemented. The primary agent MAY mention materially important discarded
-findings in its final or PR summary, but minor discarded findings need not be
-surfaced. This filter does not permit ignoring a confirmed defect, concrete
+implemented. This filter does not permit ignoring a confirmed defect, concrete
 vulnerability, or explicit specification/guardrail violation.
+
+#### Finding evaluation procedure (after receiving)
+
+Reviewer findings are hypotheses, not mandates. The agent that invoked a
+reviewer MUST independently evaluate every finding before acting on it,
+regardless of the finding's severity rating (including "Needs revision").
+
+1. **Verify independently**: re-read the relevant code or specification to
+   confirm the problem actually exists. Do not assume the reviewer's
+   characterization is correct — reviewers can misread context, overlook
+   existing handling, or flag already-covered behavior.
+
+2. **Apply discard criteria** — discard the finding if ANY of the following
+   hold:
+   - **Not a real problem**: the scenario is already handled (implicitly
+     or explicitly), or does not apply given actual system constraints
+   - **Over-documentation**: the resolution would add information that is
+     obvious, trivially derivable, or whose absence causes no ambiguity
+     for a competent implementer
+   - **Speculative**: the risk has no plausible path to manifesting given
+     the architecture and usage patterns
+   - **Disproportionate**: the fix cost exceeds the problem's realistic
+     impact
+
+3. **Evaluation standard**: "Would a competent implementer actually get
+   this wrong or be blocked by the absence of what the finding requests?"
+   If no, discard.
+
+4. **Disposition**:
+   - **Discard**: do not implement. Mention materially important discards
+     in the PR summary; omit minor ones
+   - **Accept**: implement using the smallest change that addresses the
+     real problem
+   - **Escalate**: if the finding recommends structural complexity,
+     present to the user with options before acting
+
+Never implement a finding without independently verifying it as a real
+problem. "The reviewer said so" is not sufficient justification. A
+discarded finding is not a deferred requirement and MUST NOT be
+implemented.
 
 #### Mandatory design review
 
