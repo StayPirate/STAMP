@@ -618,9 +618,9 @@ for the full specification.
 
 ### Response Applicability Derivation
 
-Global and scoped responses are mechanically derivable from the
-endpoint's access level and path pattern. Per-endpoint reference lines
-are **not required** and MUST NOT be added to new or existing endpoints.
+Global and scoped responses are mechanically derivable from the endpoint's
+access level, path pattern, and declared query shape. Per-endpoint reference
+lines are **not required** and MUST NOT be added to new or existing endpoints.
 The derivation tables below are the single normative source of truth.
 
 #### Global Response Derivation
@@ -640,6 +640,12 @@ The derivation tables below are the single normative source of truth.
 | Mutation (POST/PATCH/DELETE) under `/api/v1/tickets/{ticket_id}/**` | + `409 TICKET_NOT_MUTABLE` |
 | Mutation (POST/PATCH/DELETE) under `/api/v1/cves/{cve_id}/**` | + `409 TICKET_NOT_MUTABLE` (only when CVE has associated ticket) |
 | Any other path | None |
+
+#### Query-Shape Response Derivation
+
+| Declared query parameters | Applicable shared responses |
+|---|---|
+| Both `from_date` and `to_date` | `400 DATE_RANGE_INVERTED` when the normalized range is inverted |
 
 Note: `TICKET_NOT_MUTABLE` applies only to mutation endpoints
 (POST/PATCH/DELETE) under the scoped routers listed above. GET endpoints
