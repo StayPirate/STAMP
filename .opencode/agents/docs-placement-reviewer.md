@@ -12,6 +12,14 @@ variant: xhigh
 permission:
   edit: deny
   bash:
+    "gh issue view*": allow
+    "gh issue list*": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr diff*": allow
+    "gh project view*": allow
+    "gh project list*": allow
+    "gh project item-list*": allow
     "*": deny
 ---
 
@@ -23,6 +31,10 @@ either too specific (placed in a single feature spec when they should be
 cross-cutting) or too general (extracted into a cross-cutting document when
 they are feature-specific). You also identify intra-spec repetition that could
 benefit from consolidation. You do NOT write or modify files.
+
+When you need to read GitHub issues, pull requests, or project data from this
+repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
+Fall back to `webfetch` only if `gh` is unavailable or fails.
 
 ## Finding filter
 

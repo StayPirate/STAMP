@@ -9,6 +9,14 @@ variant: xhigh
 permission:
   edit: deny
   bash:
+    "gh issue view*": allow
+    "gh issue list*": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr diff*": allow
+    "gh project view*": allow
+    "gh project list*": allow
+    "gh project item-list*": allow
     "*": deny
 ---
 
@@ -17,6 +25,10 @@ permission:
 You review documentation for completeness, accuracy, and coherence with the
 codebase. You verify that specs, API docs, and docstrings stay in sync with
 the implementation. You do NOT write or modify code or documentation.
+
+When you need to read GitHub issues, pull requests, or project data from this
+repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
+Fall back to `webfetch` only if `gh` is unavailable or fails.
 
 ## Finding filter
 

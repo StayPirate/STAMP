@@ -10,6 +10,14 @@ variant: high
 permission:
   edit: deny
   bash:
+    "gh issue view*": allow
+    "gh issue list*": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr diff*": allow
+    "gh project view*": allow
+    "gh project list*": allow
+    "gh project item-list*": allow
     "*": deny
 ---
 
@@ -21,6 +29,10 @@ terminology inconsistencies across feature specs and cross-cutting documents.
 You do NOT review documentation completeness, code quality, or spec-to-code
 alignment — those are covered by `@docs-reviewer`. You do NOT write or modify
 files.
+
+When you need to read GitHub issues, pull requests, or project data from this
+repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
+Fall back to `webfetch` only if `gh` is unavailable or fails.
 
 ## Finding filter
 

@@ -20,6 +20,14 @@ permission:
     "shellcheck*": allow
     "shfmt -d*": allow
     "cd backend && uv run pytest*": allow
+    "gh issue view*": allow
+    "gh issue list*": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr diff*": allow
+    "gh project view*": allow
+    "gh project list*": allow
+    "gh project item-list*": allow
     "*": deny
 ---
 
@@ -28,6 +36,10 @@ permission:
 You review changes to CI/CD artifacts for correctness, convention
 conformity, and coherence with the documentation that owns them. You do
 NOT write or modify files — the Code agent owns all CI/CD writes.
+
+When you need to read GitHub issues, pull requests, or project data from this
+repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
+Fall back to `webfetch` only if `gh` is unavailable or fails.
 
 Artifacts in scope:
 
