@@ -108,6 +108,14 @@ Every string query parameter has an individual maximum length of 500
 characters, unless the endpoint specifies otherwise. Values exceeding the
 limit return `422 VALIDATION_ERROR`.
 
+### Undeclared Query Parameters
+
+Query parameters not declared by an endpoint are ignored and are absent from
+its OpenAPI contract. This preserves FastAPI's standard handling of undeclared
+query input. A parameter name used by another endpoint does not become valid
+globally; for example, an endpoint that declares fixed ordering but no
+`sort_by` parameter ignores a supplied `sort_by` value.
+
 ### Pagination
 
 List endpoints support pagination via query parameters:
@@ -174,6 +182,11 @@ provided and `from_date` is strictly after `to_date` (after timezone
 normalization), the endpoint returns **400 Bad Request** with error code
 `DATE_RANGE_INVERTED`. This validation applies globally to all endpoints
 that accept date range parameters.
+
+`DATE_RANGE_INVERTED` is a shared response derived from an endpoint declaring
+both date range parameters. Like global responses, it is not repeated in
+per-endpoint error tables. Malformed date/datetime values remain schema
+validation failures and produce the global `422 VALIDATION_ERROR` response.
 
 **Maximum range constraint**: endpoints that return unbounded datasets
 without pagination (e.g., chart/timeline data) SHOULD declare a maximum
@@ -464,8 +477,9 @@ of generic `AUTH_INSUFFICIENT_PERMISSION`).
 
 **Exclude**: generic `401 AUTH_NOT_AUTHENTICATED`, generic `403
 AUTH_INSUFFICIENT_PERMISSION`, generic `422 VALIDATION_ERROR` (Pydantic
-schema failures), and `500 INTERNAL_ERROR`. These are global and provide
-no endpoint-specific information.
+schema failures), `500 INTERNAL_ERROR`, and the shared
+`DATE_RANGE_INVERTED` response for endpoints that declare both date range
+parameters. These are derivable and provide no endpoint-specific information.
 
 **Conditional authorization**: when an endpoint has authorization logic
 beyond the base `require_capability()` guard (e.g., a secondary
@@ -604,9 +618,9 @@ for the full specification.
 
 ### Response Applicability Derivation
 
-Global and scoped responses are mechanically derivable from the
-endpoint's access level and path pattern. Per-endpoint reference lines
-are **not required** and MUST NOT be added to new or existing endpoints.
+Global and scoped responses are mechanically derivable from the endpoint's
+access level, path pattern, and declared query shape. Per-endpoint reference
+lines are **not required** and MUST NOT be added to new or existing endpoints.
 The derivation tables below are the single normative source of truth.
 
 #### Global Response Derivation
@@ -626,6 +640,12 @@ The derivation tables below are the single normative source of truth.
 | Mutation (POST/PATCH/DELETE) under `/api/v1/tickets/{ticket_id}/**` | + `409 TICKET_NOT_MUTABLE` |
 | Mutation (POST/PATCH/DELETE) under `/api/v1/cves/{cve_id}/**` | + `409 TICKET_NOT_MUTABLE` (only when CVE has associated ticket) |
 | Any other path | None |
+
+#### Query-Shape Response Derivation
+
+| Declared query parameters | Applicable shared responses |
+|---|---|
+| Both `from_date` and `to_date` | `400 DATE_RANGE_INVERTED` when the normalized range is inverted |
 
 Note: `TICKET_NOT_MUTABLE` applies only to mutation endpoints
 (POST/PATCH/DELETE) under the scoped routers listed above. GET endpoints

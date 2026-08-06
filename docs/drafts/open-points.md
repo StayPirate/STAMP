@@ -544,7 +544,7 @@ determination precedence).
 now documented as an explicit architectural invariant in
 `docs/deployment.md` (Startup Ordering). The invariant is guaranteed
 by `bootstrap_fetcher_configs()` running idempotently in every
-process, `system_settings` seeding using `ON CONFLICT DO NOTHING`,
+process, `system_setting` seeding using `ON CONFLICT DO NOTHING`,
 and the IBS consumer operating independently with retry semantics. A
 cross-reference in `docs/features/platform/fetcher-infrastructure.md`
 (Multi-Process Coordination → Startup Ordering) ensures discoverability

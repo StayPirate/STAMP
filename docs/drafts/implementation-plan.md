@@ -194,8 +194,9 @@ Examples:
   Ticket audit events, and ticket unassignment logic. They are deferred from
   Phase 2 to Phase 4 rather than implemented without those side effects.
 - System-setting mutation and recalculation endpoints require Ticket/CVSS
-  services. Phase 2 implements storage/bootstrap and read behavior; mutation
-  behavior completes in Phase 4.
+  services. `P2-14` implements persistence/startup foundations, `P2-15`
+  implements the two read APIs, and mutation/recalculation behavior completes
+  only in `P4-28`.
 - `BaseCVEFetcher` requires CVE/Ticket models and CVE services. Only generic
   `BaseFetcher` infrastructure belongs in Phase 3.
 - The IBS consumer status endpoint in `fetcher-operations.md` remains deferred
@@ -361,6 +362,19 @@ inventory in its tracking issue before becoming Ready.
 The image suite adds a CLI bootstrap assertion in the piece that introduces
 the runnable `sentinel` command.
 
+`P2-14` owns only the `SystemSetting` and `SettingAuditEvent` models,
+`SettingAuditEventType`, their migration and idempotent seed,
+`get_default_cvss_version()`, `SettingAuditLog`, lifespan bootstrap, the image
+startup dependency on successful migration, and their model/migration/service/
+lifespan/image tests. It does not introduce settings API routes.
+
+`P2-15` owns only `GET /api/v1/admin/settings` and
+`GET /api/v1/admin/settings/audit-log`, their schemas and read/query services,
+and their permission, validation, API, audit-read, OpenAPI, and image tests. It
+does not mutate settings or create audit events. The PATCH endpoint,
+recalculation endpoint, Redis/Celery coordination, mutation transaction and
+audit insertion, and recalculation task remain exclusively in `P4-28`.
+
 ## Phase 3 — Generic Fetcher Platform
 
 **Outcome**: non-domain-specific fetchers can register, schedule, run, report
@@ -416,7 +430,7 @@ automatic ingestion.
 | `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
 | `P4-26` | Ticket-coupled role-removal service, commands, and APIs | `P4-24`, `P4-25` | identity service/management specs |
 | `P4-27` | User deactivation/impact service, commands, and APIs | `P4-25` | identity service/management specs |
-| `P4-28` | Settings PATCH/recalculation endpoints and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
+| `P4-28` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
 The candidate pieces above are intentionally more granular than the old
 service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate

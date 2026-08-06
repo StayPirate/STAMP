@@ -617,9 +617,11 @@ distributed locking or leader election.
 
 ### Startup Ordering
 
-After Alembic migrations complete, all runtime processes (API server,
-Celery worker, Git worker, Celery Beat, IBS RabbitMQ consumer) MAY start
-in any order. No inter-process startup dependency exists.
+Successful completion of the external Alembic migration job is a hard
+prerequisite for every runtime process. A failed or incomplete migration MUST
+prevent runtime startup. After migrations complete, all runtime processes
+(API server, Celery worker, Git worker, Celery Beat, IBS RabbitMQ consumer)
+MAY start in any order. No inter-process startup dependency exists.
 
 This property is guaranteed by the following mechanisms:
 
@@ -630,9 +632,12 @@ This property is guaranteed by the following mechanisms:
   Beat's bootstrap is a no-op (records already exist); if all start
   simultaneously, the first `INSERT` wins and concurrent duplicates are
   no-ops.
-- **`system_settings` seeding** uses `ON CONFLICT DO NOTHING` (Alembic
+- **`system_setting` seeding** uses `ON CONFLICT DO NOTHING` (Alembic
   data migration is the primary mechanism; FastAPI lifespan is
-  defense-in-depth).
+  defense-in-depth). The API lifespan completes this bootstrap transaction
+  before serving requests. Database, schema, bootstrap, or commit failure
+  aborts API startup rather than allowing degraded request serving; see
+  `docs/features/platform/system-settings.md` (Bootstrap).
 - **The IBS RabbitMQ consumer** connects to RabbitMQ with retry semantics
   — it operates independently of Beat and workers.
 - **Each process fails fast** if infrastructure dependencies (PostgreSQL,
@@ -646,6 +651,13 @@ manifests (Docker Compose, Kubernetes) adjusted accordingly.
 See `docs/features/platform/fetcher-infrastructure.md` (Startup
 Reconciliation, Complete Beat Startup Sequence) for the Beat-specific
 startup sequence detail.
+
+The self-contained image-smoke stack MUST enforce the migration prerequisite
+directly: its API service depends on the one-shot `migrate` service reaching
+successful completion, in addition to infrastructure health. An unsuccessful
+migration therefore prevents the API container from starting; simple
+concurrent startup of `api` and `migrate` is not conformant. The work item that
+introduces system-setting persistence adds this dependency.
 
 ### Git Worker Volume
 

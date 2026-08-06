@@ -11,6 +11,11 @@ across all users and tickets.
 All administration endpoints and UI pages require the `manage_settings`
 capability.
 
+## Service Module
+
+System-setting persistence, bootstrap, reads, audit logging, and future
+mutations are implemented in `backend/app/services/settings.py`.
+
 ## Settings
 
 ### Default CVSS Version
@@ -88,15 +93,15 @@ guarantees existence via two complementary mechanisms:
 1. **Alembic data migration** (primary — runs before any process starts):
 
    ```sql
-   INSERT INTO system_settings (key, value)
+   INSERT INTO system_setting (key, value)
    VALUES ('default_cvss_version', '3.1')
    ON CONFLICT (key) DO NOTHING;
    ```
 
-2. **FastAPI lifespan event** (defense-in-depth, self-healing):
+2. **FastAPI lifespan bootstrap** (defense-in-depth, self-healing):
 
    ```sql
-   INSERT INTO system_settings (key, value)
+   INSERT INTO system_setting (key, value)
    VALUES ('default_cvss_version', '3.1')
    ON CONFLICT (key) DO NOTHING;
    ```
@@ -109,14 +114,81 @@ Properties:
   application restart restores the default
 - **Multi-replica safe**: `ON CONFLICT DO NOTHING` handles concurrent
   startup of multiple API server instances without race conditions
-- **Process-order independent**: the Alembic migration guarantees the
-  setting exists before any process (API server, Celery worker, RabbitMQ
-  consumer) starts. The FastAPI lifespan seed is redundant but harmless
+- **Process-order independent after migration**: the Alembic migration
+  guarantees the setting exists before any process (API server, Celery
+  worker, RabbitMQ consumer) starts. The FastAPI lifespan bootstrap also
+  restores a row deleted after migration before that API instance serves
+  requests; non-API processes continue to rely on the migration guarantee
 
-**Failure behavior invariant**: `get_default_cvss_version()` raises if
-the setting is absent — this indicates a deployment or data integrity
-error, not a recoverable condition. No hardcoded fallback is provided.
-A missing setting means migrations have not been applied correctly.
+Neither initialization mechanism creates a `SettingAuditEvent`. They establish
+or restore required baseline data idempotently; they are not administrative
+setting mutations and have no human actor.
+
+### Bootstrap Service
+
+```python
+async def bootstrap_system_settings(session: AsyncSession) -> None:
+    ...
+```
+
+`session` is the caller-owned asynchronous database session. The function:
+
+1. Inserts `default_cvss_version = "3.1"` with `ON CONFLICT (key) DO
+   NOTHING`.
+2. Flushes the insert before returning so database errors surface at this
+   boundary. It never commits; the caller owns the transaction.
+3. Returns `None` whether it inserted the row or found an existing row.
+
+The operation is idempotent. Repeated calls preserve the existing value,
+including an administrator-selected value of `"4.0"`. Concurrent calls are
+safe: at most one inserts the row and every successful caller observes a
+completed insert or conflict before returning. It creates no audit event.
+
+Database availability, missing-table/schema, constraint, and flush failures
+propagate to the caller. The function does not catch them, retry them, or
+return partial success.
+
+### Setting Read Service
+
+```python
+async def get_default_cvss_version(session: AsyncSession) -> str:
+    ...
+```
+
+The function reads the `default_cvss_version` row from `system_setting` and
+returns its stored value. If the row is absent, it raises
+`RequiredSystemSettingMissingError`; it never substitutes a hardcoded or
+environment-derived value. Database availability and schema errors propagate
+unchanged. The function performs no writes and creates no audit event.
+
+### Service Exceptions
+
+All exceptions defined by the settings service inherit from
+`SettingsServiceError`, which inherits from the shared `ServiceError` root.
+
+System-internal exceptions:
+
+| Exception | Raised when | Handling |
+|---|---|---|
+| `RequiredSystemSettingMissingError` | The required `default_cvss_version` row is absent | Propagates to the caller; API handlers do not catch it, so the framework returns the global `500 INTERNAL_ERROR` response |
+
+The public response uses the standard non-sensitive `INTERNAL_ERROR` detail;
+it does not disclose whether migration, bootstrap, or data corruption caused
+the missing row. Because `500 INTERNAL_ERROR` is a global response, endpoint
+error tables do not repeat it.
+
+### FastAPI Lifespan Ordering and Failure
+
+Database migration is an external deployment prerequisite and never runs in
+the application lifespan. During API startup, after application configuration
+is validated and before request serving begins, the lifespan opens a database
+transaction, invokes `bootstrap_system_settings()` with that transaction's
+session, and commits. Only a successful commit allows startup to complete.
+
+If database connection, schema access, bootstrap, flush, or commit fails, the
+transaction rolls back and the exception escapes the lifespan. FastAPI startup
+therefore fails and the API process MUST NOT begin serving requests. Startup
+does not continue in a degraded mode and does not use a fallback setting.
 
 ## API Endpoints
 
@@ -127,6 +199,15 @@ All endpoints in this section require the `manage_settings` capability.
 ```
 GET /api/v1/admin/settings
 ```
+
+**Request body**: none.
+
+**Query parameters**: none. The endpoint is not paginated.
+
+**Behavior**: call `get_default_cvss_version()` with the request session and
+return the persisted value. A missing required row propagates
+`RequiredSystemSettingMissingError` and is exposed through the standard `500
+INTERNAL_ERROR` response; no fallback value is returned.
 
 Response:
 
@@ -253,9 +334,10 @@ System settings are stored in a key-value configuration table. See
 
 ## Setting Audit Log
 
-Every modification to a system setting MUST produce a
+Every administrative modification to a system setting MUST produce a
 `SettingAuditEvent` record in the same database transaction as the
-setting update.
+setting update. Alembic seeding and lifespan bootstrap are initialization,
+not administrative modifications, and create no event.
 
 ### SettingAuditEvent Table
 
@@ -269,16 +351,60 @@ See `docs/data-model.md` for the full table definition. Key columns:
 | old_value | TEXT | Previous value |
 | new_value | TEXT | New value |
 
+### SettingAuditLog Service
+
+```python
+class SettingAuditLog(BaseAuditLog):
+    name = "setting"
+    description = "System setting modifications"
+    model_class = SettingAuditEvent
+
+    @classmethod
+    async def log_event(
+        cls,
+        session: AsyncSession,
+        *,
+        event_type: SettingAuditEventType,
+        setting_key: str,
+        user_id: UUID | None,
+        old_value: str | None,
+        new_value: str,
+    ) -> None:
+        ...
+```
+
+The method accepts only a `SettingAuditEventType` member; the currently valid
+member is `SETTING_CHANGED` (`"setting_changed"`). It validates the enum at
+the service boundary because this classification enum has no database CHECK
+constraint. It also requires a non-null `user_id`; a missing human actor raises
+`ValueError`. The database foreign key validates `setting_key`, and NOT NULL
+constraints validate required persisted fields.
+
+After validation, the method creates exactly one event and flushes it before
+returning. It never commits. Each invocation creates a new event and is
+therefore not idempotent; callers MUST invoke it only when a setting value
+actually changes. `ValueError` and all database/flush exceptions propagate to
+the caller.
+
+Setting mutations use a caller-owned transaction and pass the same
+`AsyncSession` to the setting update and `log_event()`. If audit validation or
+insertion fails, the exception remains part of the mutation transaction and
+the caller rolls back both changes. The caller MUST NOT commit the setting
+update independently or catch an audit failure and continue.
+
 ### List Settings Audit Events
 
 ```
 GET /api/v1/admin/settings/audit-log
 ```
 
+**Request body**: none.
+
 Returns a paginated list of setting changes, ordered by `created_at`
-descending. Sorting is fixed — client-controlled `sort_by` /
-`sort_order` parameters are not supported (audit trail entries are
-always displayed in reverse chronological order).
+descending, with deterministic secondary ordering as defined by
+`docs/api-spec.md` (Deterministic Pagination Ordering). Sorting is fixed —
+client-controlled `sort_by` / `sort_order` parameters are not supported
+(audit trail entries are always displayed in reverse chronological order).
 
 **Query parameters**:
 
@@ -291,6 +417,21 @@ always displayed in reverse chronological order).
 | `actor` | string | -- | Filter by actor: user UUID or username. `system` is accepted but will return no results (all setting changes are user-initiated) |
 | `from_date` | string | -- | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
+
+Different filter types combine with AND. Repeated `event_type` values combine
+with OR after invalid enum values are removed according to `docs/api-spec.md`.
+`setting_key` is an exact match; an unknown key returns an empty page. Actor
+resolution uses `BaseAuditLog.filter_by_actor()`: unknown UUIDs/usernames and
+the literal `system` return an empty page rather than 404.
+
+Pagination uses the global bounds without clamping, `meta.total` counts the
+filtered result set, and a page beyond the final page returns an empty `data`
+array with the requested page metadata. Date parsing and normalization follow
+`docs/api-spec.md` (Date Range Interpretation): malformed values produce the
+global `422 VALIDATION_ERROR`, while an inverted normalized range produces the
+shared `400 DATE_RANGE_INVERTED` response. Undeclared query parameters,
+including `sort_by` and `sort_order`, follow the global undeclared-query
+semantics and are ignored.
 
 **`Capability: manage_settings`**
 
@@ -321,6 +462,11 @@ always displayed in reverse chronological order).
   }
 }
 ```
+
+`created_at` is serialized in UTC with a `Z` suffix. Because setting audit
+events require a human actor and user rows cannot be hard-deleted, `actor` is
+always the complete current user reference object shown above and is never
+`null`.
 
 ### Data Retention
 

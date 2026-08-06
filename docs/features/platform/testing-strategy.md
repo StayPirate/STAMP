@@ -892,6 +892,40 @@ the Mandatory Test Scenarios rule for in-process tests (see Guardrail 6
 in `AGENTS.md`): container-observable behavior is not done until the
 image suite covers it.
 
+#### System Settings Growth Requirements
+
+The work item that introduces system-setting persistence and bootstrap adds
+image-smoke assertions that:
+
+- the one-shot migration completes before the API starts and seeds
+  `default_cvss_version = "3.1"`;
+- a failed migration prevents API startup;
+- deleting the required row and restarting the API restores `"3.1"` before
+  the API becomes healthy and creates no `SettingAuditEvent`;
+- restarting the API preserves an existing `"4.0"` value; and
+- a controlled bootstrap failure prevents the API from becoming healthy or
+  serving requests.
+
+One controlled image-level bootstrap failure is sufficient to prove the
+container-observable fail-fast contract. Database-unavailable and
+schema-unavailable propagation are covered by focused service/lifespan tests;
+separate image scenarios for every underlying failure are not required.
+
+The persistence/bootstrap work item also adds focused unit and integration
+coverage for first, repeated, and concurrent bootstrap; custom-value
+preservation; absent-row getter failure without fallback; database/schema
+exception propagation; zero initialization audit events; typed setting audit
+validation; flush visibility without commit; and mutation/audit rollback
+atomicity.
+
+The work item that introduces the two settings read APIs applies the standard
+API endpoint scenarios below and adds image-smoke assertions for representative
+authorized responses from both endpoints. Its focused coverage includes exact
+setting-key filtering, repeatable enum filtering, actor filtering, inclusive
+date normalization, inverted and malformed ranges, filtered totals, empty and
+out-of-range pages, equal-timestamp ordering, and the missing-required-setting
+`500 INTERNAL_ERROR` response.
+
 ---
 
 ## Mandatory Test Scenarios
