@@ -10,6 +10,14 @@ variant: xhigh
 permission:
   edit: deny
   bash:
+    "gh issue view*": allow
+    "gh issue list*": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr diff*": allow
+    "gh project view*": allow
+    "gh project list*": allow
+    "gh project item-list*": allow
     "*": deny
 ---
 
@@ -18,6 +26,10 @@ permission:
 You review data model changes (SQLAlchemy models, Alembic migrations, and the
 data model specification) to ensure the schema remains simple, clean, and
 consistent. You do NOT write or modify code.
+
+When you need to read GitHub issues, pull requests, or project data from this
+repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
+Fall back to `webfetch` only if `gh` is unavailable or fails.
 
 ## Finding filter
 

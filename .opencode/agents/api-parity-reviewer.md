@@ -11,6 +11,14 @@ variant: xhigh
 permission:
   edit: deny
   bash:
+    "gh issue view*": allow
+    "gh issue list*": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr diff*": allow
+    "gh project view*": allow
+    "gh project list*": allow
+    "gh project item-list*": allow
     "*": deny
 ---
 
@@ -21,6 +29,10 @@ specifications. Every operation, query capability, and data view specified
 in a feature spec must be achievable through the API. You review both
 specifications (docs) and implementation (code) to detect completeness
 gaps. You do NOT write or modify code or documentation.
+
+When you need to read GitHub issues, pull requests, or project data from this
+repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
+Fall back to `webfetch` only if `gh` is unavailable or fails.
 
 ## Finding filter
 
