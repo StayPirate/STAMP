@@ -924,6 +924,16 @@ unwrapped line — GitHub's web UI renders HTML and handles wrapping
 automatically. See `docs/conventions.md` (Issue and PR Body
 Formatting).
 
+**GitHub issue and PR reading**: when reading a GitHub issue or pull
+request for any purpose (tracking issue context, deferral basis
+search, scope resolution, implementation notes, or general context
+gathering), always include the comments — they often contain
+important decisions, clarifications, and notes added during the work.
+Use `gh issue view <n> --comments` or `gh pr view <n> --comments` to
+retrieve both the description and all comments. Reading only the
+body/description is insufficient; treat comments as part of the
+issue/PR content.
+
 **Automatic workflow initiation**: when the user issues a concrete
 modification request, the agent MUST autonomously:
 
