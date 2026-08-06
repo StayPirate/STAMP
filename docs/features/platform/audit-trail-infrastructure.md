@@ -173,6 +173,11 @@ class FetcherAuditLog(BaseAuditLog):
     model_class = FetcherAuditEvent
 ```
 
+`SettingAuditLog` overrides `log_event()` with the typed domain signature and
+validation defined in `docs/features/platform/system-settings.md`
+(`SettingAuditLog Service`). It inherits the flush-before-return, no-commit,
+exception propagation, and caller-owned transaction guarantees below.
+
 **Note**: these subclasses define only service-layer attributes (name,
 description, model reference, retention). Database columns (`id`,
 `created_at`, `user_id`, and domain-specific columns) are defined in the

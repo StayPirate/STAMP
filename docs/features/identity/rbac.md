@@ -34,7 +34,7 @@ Endpoints are protected by a single capability via the
 |---|---|
 | `manage_users` | Update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping |
-| `manage_settings` | View/update system settings, view settings audit log |
+| `manage_settings` | View/update system settings, trigger CVSS recalculation, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
 | `admin_ticket_ops` | Force track to FIXED status |
 

@@ -1371,6 +1371,8 @@ type contract with field values.
 ### Platform Infrastructure
 #### SystemSetting
 
+Physical table: `system_setting`.
+
 Key-value store for system-wide configuration. See
 `docs/features/platform/system-settings.md` for details.
 
@@ -1386,7 +1388,13 @@ Key-value store for system-wide configuration. See
 |------------------------|---------------|
 | `default_cvss_version` | `3.1`         |
 
+The Alembic seed and lifespan restoration behavior are defined by
+`docs/features/platform/system-settings.md` (Bootstrap); this section owns only
+the persisted schema and required initial row.
+
 #### SettingAuditEvent
+
+Physical table: `setting_audit_event`.
 
 Audit trail for system setting modifications. Inherits `id`,
 `created_at`, and `user_id` from `AuditEventMixin`.
@@ -1688,8 +1696,10 @@ a value requires an Alembic migration.
   `ApiKey` uses `last_used_at` and `revoked_at` as the authoritative
   timestamps for its only in-place changes, so a generic `updated_at` would
   be redundant;
-  `SystemSetting` and `FetcherConfig` have only `updated_at` (auto-created
-  at startup; creation time is not tracked);
+  `SystemSetting` and `FetcherConfig` have only `updated_at` (creation time is
+  not tracked). Required `SystemSetting` baseline rows are seeded by migration
+  and may be restored at API startup; `FetcherConfig` rows are created at
+  process startup;
   `CodestreamPackageChecksum` uses `last_seen_at` instead of standard
   timestamp columns (operational cache — the timestamp records when the
   checksum was last observed, not when the record was created))
