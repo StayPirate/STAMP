@@ -6,6 +6,8 @@ description: >
   HTTP clients, or parsers that interact with external APIs. Read-only:
   does not modify files.
 mode: subagent
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:

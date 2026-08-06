@@ -77,17 +77,20 @@ security flaws, evaluating architectural complexity, discovering unspecified
 scenarios, or reconciling nuanced cross-document/cross-diff detail — are
 pinned to a more capable model with extended thinking enabled, since GitHub
 Copilot prices all Claude Opus versions identically per token regardless of
-version. All other subagents keep the default inherited-model behavior,
-since their checks are comparatively structural and do not show the same
-sensitivity to reasoning depth.
+version. All other reviewer subagents are pinned to a mid-tier model with a
+high reasoning-effort preset, so their analytical depth is consistent
+regardless of the invoking primary agent, at lower cost/latency than the
+Opus 5 tier. Non-reviewer subagents keep the default inherited-model
+behavior.
 
 | Tier | Model | Agents |
 |------|-------|--------|
 | 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` (highest generally-supported reasoning-effort tier for this model) | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
-| 2 (inherited) | Invoking primary agent's model | All other subagents |
+| 2 (pinned) | `github-copilot/claude-sonnet-5`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
+| 3 (inherited) | Invoking primary agent's model | All other subagents |
 
-Tier 1 agents use the top-level `variant` frontmatter field, not a raw
-`options.thinking` block. `variant` selects one of the model's
+Tier 1 and Tier 2 agents use the top-level `variant` frontmatter field, not a
+raw `options.thinking` block. `variant` selects one of the model's
 provider-defined reasoning-effort presets, and OpenCode translates it into
 whatever wire-level thinking configuration the specific model/provider pair
 requires. Hand-crafting `options.thinking` directly is discouraged for

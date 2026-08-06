@@ -6,6 +6,8 @@ description: >
   after adding or modifying API endpoints or feature specs that define
   operations. Read-only: does not modify files.
 mode: subagent
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:
