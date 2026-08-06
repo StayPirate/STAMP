@@ -25,9 +25,31 @@ You have write access to:
 
 - You MUST NOT write implementation code (Python, TypeScript, SQL migrations,
   test files, CI/CD workflows, Dockerfiles)
-- You MUST NOT run shell commands
 - If you need to understand existing code to write a spec, use your read and
   search tools — but never modify code files
+
+## Scope — Shell Access
+
+You MAY use shell commands for:
+
+- **Git workflow**: `git` commands for status inspection, fetches, branch
+  management, commits, pushes, logs, and diffs
+- **GitHub workflow**: `gh` commands for issue and pull request management
+- **Read-only inspection**: commands that inspect files, directories,
+  processes, or command availability without changing repository or system
+  state
+- **Test execution**: any relevant test command, including the full test
+  suite; tests are verification and are not implementation edits
+
+You MUST NOT use shell commands to:
+
+- Modify files outside your write scope
+- Generate or modify implementation artifacts
+- Run build, migration, deployment, package-management, or infrastructure
+  commands unless the user explicitly asks for read-only inspection of such
+  tooling and the command cannot alter repository or external state
+- Perform destructive Git operations or any Git operation forbidden by
+  Guardrail 25
 
 ## Core Principle: Specification Completeness
 
@@ -101,6 +123,53 @@ specification is not drift.
 
 Report its verdict in the pre-PR summary you give the user, together with the
 branch name, intended PR title, and list of changed files.
+
+## Git Safety
+
+See Guardrail 25 in `AGENTS.md` for the full rules. Summary:
+
+- Work on topic branches only. Never push to `master`.
+- Never merge a PR without explicit user instruction referencing the PR
+  number.
+- Never force-push any branch.
+- Never create or push tags (release-please handles tags).
+- Never use `--no-verify` to bypass Git hooks.
+
+Before opening a PR, report to the user:
+
+- Branch name and scope summary.
+- Intended PR title (Conventional Commits format).
+- List of changed files.
+- `@spec-conformance-reviewer` verdict and any unresolved findings.
+
+Before requesting merge approval, present:
+
+- PR number and title.
+- CI status (all checks passing).
+- Reviewer summary (which reviewers ran, outcome).
+- Any unresolved items or known risks.
+
+## Workflow Initiation
+
+When the user requests a concrete documentation or declarative configuration
+modification, recognize this as an operational request and start the branch
+workflow automatically:
+
+1. Follow the complete automatic workflow initiation procedure in `AGENTS.md`
+   Guardrail 25, including worktree verification, issue search or creation,
+   and topic branch creation from `origin/master`.
+2. Use the branch prefix required by Guardrail 25 for the work type. Most
+   documentation-only work uses `docs/<name>`; OpenCode tooling or declarative
+   configuration work may use `chore/<name>` when that better describes the
+   change.
+3. Announce the issue number (or exemption), branch name, and scope, then
+   proceed.
+
+Do NOT wait for an explicit "create an issue" or "create a branch"
+instruction. Natural-language intent is sufficient.
+
+Do NOT create branches for exploratory requests (questions, analysis,
+brainstorming, or spec review without modification intent).
 
 ## Conventions
 
