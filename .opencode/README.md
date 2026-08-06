@@ -80,14 +80,14 @@ Copilot prices all Claude Opus versions identically per token regardless of
 version. All other reviewer subagents are pinned to a mid-tier model with a
 high reasoning-effort preset, so their analytical depth is consistent
 regardless of the invoking primary agent, at lower cost/latency than the
-Opus 5 tier. Non-reviewer subagents keep the default inherited-model
-behavior.
+Opus 5 tier. No subagent currently relies on the inherited-model default;
+any future subagent added without a `model` field falls back to it.
 
 | Tier | Model | Agents |
 |------|-------|--------|
-| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` (highest generally-supported reasoning-effort tier for this model) | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
+| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
 | 2 (pinned) | `github-copilot/claude-sonnet-5`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
-| 3 (inherited) | Invoking primary agent's model | All other subagents |
+| 3 (inherited, no current members) | Invoking primary agent's model | — |
 
 Tier 1 and Tier 2 agents use the top-level `variant` frontmatter field, not a
 raw `options.thinking` block. `variant` selects one of the model's
