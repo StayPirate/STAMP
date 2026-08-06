@@ -121,10 +121,10 @@ per-command path selection.
   into a single `asyncio.run(...)` call wrapping the **entire command
   workflow** — not just a service invocation. For read-only commands
   (`fetcher list`, `fetcher config`, `manage-user list`, `manage-user
-  show`, `api-key list`), the wrapped function performs the read(s)
+  show`), the wrapped function performs the read(s)
   directly. For commands that delegate to an async service module
   (`manage-user create`, `update`, `deactivate`, `set-password`,
-  `unlock`, and `api-key revoke`), the wrapped function calls the
+  `unlock`, `api-key list`, and `api-key revoke`), the wrapped function calls the
   service function, per the async pattern already declared in
   `user-service.md` ("Async pattern") and `api-key-service.md` ("Async
   pattern").
@@ -191,7 +191,12 @@ per-command path selection.
   ```python
   async def revoke_flow(session_factory, key_id):
       async with session_factory() as db:
-          await api_key_service.revoke_key(db, key_id, ...)
+          key, was_revoked = await api_key_service.revoke_key(db, key_id, ...)
+          await db.commit()
+      if was_revoked:
+          print(f"Revoked API key '{key.prefix}...' ({key.name}).")
+      else:
+          print(f"API key '{key.prefix}...' ({key.name}) is already revoked.")
 
   asyncio.run(revoke_flow(async_session_factory, key_id))
   ```
@@ -207,14 +212,15 @@ per-command path selection.
   asyncio.run(fetcher_list(async_session_factory))
   ```
 
-- Session and transaction lifecycle (commit on success, rollback on
-  exception) for mutation commands are the responsibility of the async
-  service function being called, per the transaction conventions
-  already defined in each service spec — this spec does not alter or
-  restate those contracts. Read-only commands require no explicit
-  commit (no writes occur — per `fetcher-operations.md` (CLI Commands),
-  the `fetcher` CLI group is read-only by design; all mutations are done
-  exclusively through the API).
+- Session and transaction lifecycle for mutation commands: the CLI flow
+  function is responsible for committing after the service call succeeds.
+  Services that follow the caller-committed pattern (e.g.,
+  `api_key_service`) flush but never commit — the CLI must commit
+  explicitly. Services that own their transaction boundary (e.g.,
+  `user_service.deactivate_user()`) commit internally — the CLI does not
+  commit again. Each service spec declares its commit convention; the CLI
+  author must read it. Read-only commands require no explicit commit (no
+  writes occur).
 - Per the sync-to-async bridging convention (`docs/conventions.md`,
   SQLAlchemy Conventions), exactly one `asyncio.run()` call occurs per
   command invocation, wrapping the extracted `async def` flow function.
@@ -222,12 +228,12 @@ per-command path selection.
   from the wrapped async call; see "Error Handling & Exit Code Mapping"
   below.
 
-As of this writing, of the 11 currently specified commands, 5 are
+As of this writing, of the 11 currently specified commands, 4 are
 read-only (`fetcher list`, `fetcher config`, `manage-user list`,
-`manage-user show`, `api-key list`) and 6 delegate to an async service
-module for mutation (`manage-user create`, `manage-user update`,
+`manage-user show`) and 7 delegate to an async service
+module for mutation or paginated reads (`manage-user create`, `manage-user update`,
 `manage-user deactivate`, `manage-user set-password`, `manage-user
-unlock`, `api-key revoke`). This documents the pattern each command
+unlock`, `api-key list`, `api-key revoke`). This documents the pattern each command
 already follows in its owning spec (`user-management.md`,
 `api-key-management.md`, `fetcher-operations.md`) — this section does not
 change any existing command's behavior, it only defines the shared

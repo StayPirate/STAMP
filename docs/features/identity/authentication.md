@@ -447,13 +447,24 @@ into all endpoints that require authentication.
    the sub-flows.
 5. Load the `User` record by the `user_id` returned from the credential
    sub-flow. If the user is inactive (`active = false`), return HTTP 401.
-6. Set `request.state.auth_method` to `"session"` (for JWT credentials)
+6. **API key only** — update `last_used_at` via
+   `api_key_service.update_last_used_at()`, debounced per
+   `docs/features/identity/api-key-management.md` (Operational Metadata:
+   `last_used_at`). The debounce decision is made by the middleware; the
+   database write is delegated to the service in a short-lived
+   independent transaction. Failures (connection error, lock timeout,
+   commit failure) are caught by the caller, logged as WARNING, and
+   swallowed — the authenticated request proceeds regardless. The
+   debounce cache is updated only after a successful commit.
+   This step executes after the active check so that `last_used_at`
+   records only genuinely successful authentications.
+7. Set `request.state.auth_method` to `"session"` (for JWT credentials)
    or `"api_key"` (for API key credentials) — the credential type
    determined at step 3. This allows downstream dependencies to enforce
    credential-type-specific restrictions without re-deriving the type
    from the raw request (e.g., `require_session_auth` for API key
    creation).
-7. Return the `User` model instance (the record loaded in step 5).
+8. Return the `User` model instance (the record loaded in step 5).
 
 All HTTP 401 responses return a generic body `{"code":
 "AUTH_NOT_AUTHENTICATED", "detail": "Authentication required"}` regardless
@@ -520,14 +531,7 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
      tool.
 3. Verify `revoked_at` is `NULL`.
 4. If `expires_at` is set, verify it has not passed.
-5. Update `last_used_at` via
-   `api_key_service.update_last_used_at()`, debounced per
-   `docs/features/identity/api-key-management.md` (Operational Metadata:
-   `last_used_at`). The debounce decision is made by the middleware; the
-   database write is delegated to the service in a short-lived
-   independent transaction. Failures are logged and swallowed — the
-   authenticated request proceeds regardless.
-6. On success, return the `user_id` from the `ApiKey` record.
+5. On success, return the `user_id` from the `ApiKey` record.
 
 API keys do **not** use sessions. They are validated directly against the
 `ApiKey` table on every request.

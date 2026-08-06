@@ -345,7 +345,7 @@ keys, and access the ticket-independent identity management surface.
 | `P2-10` | User read, profile, and identity audit APIs | `P2-06` | `identity/user-management.md` |
 | `P2-11` | Ticket-independent admin user APIs | `P2-09`, `P2-10` | `identity/user-management.md`, `identity/rbac.md` |
 | `P2-12` | CLI infrastructure and user bootstrap commands | SG-06, `P2-08` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
-| `P2-13` | Remaining local identity CLI commands | `P2-05`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
+| `P2-13` | Remaining local identity CLI commands | `P2-05`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md`, `identity/api-key-management.md` |
 | `P2-14` | System settings persistence and bootstrap | SG-07 | `platform/system-settings.md` |
 | `P2-15` | System settings read and audit APIs | `P2-14`, `P2-06` | `platform/system-settings.md` |
 

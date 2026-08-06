@@ -1312,7 +1312,7 @@ hash is stored. See `docs/features/identity/api-key-management.md`.
 | created_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the key was created                   |
 | last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
 | expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
-| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means active |
+| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means not revoked |
 | revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke, admin revoke, or admin-triggered deactivation |
 
 **Indexes**:

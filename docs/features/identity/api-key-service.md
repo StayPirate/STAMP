@@ -69,8 +69,18 @@ The service does NOT commit or manage transactions. All operations
 The service flushes as needed (e.g., to obtain generated IDs or trigger
 unique constraint checks) but never commits. If the caller's transaction
 is rolled back, all mutations — including audit events — are rolled back
-with it. This is the same pattern used by `user_service` and
-`session_service`.
+with it. This is the same pattern used by `session_service`.
+
+**Caller commit responsibility**: each caller owns the commit decision:
+
+- **API endpoint handlers**: the framework commits on successful response
+  (standard FastAPI/SQLAlchemy middleware pattern)
+- **CLI commands**: the wrapped async flow function commits explicitly
+  after the service call returns successfully (see
+  `cli-infrastructure.md`, Database Session Management)
+- **`user_service.deactivate_user()`**: owns its own transaction
+  boundary and commits after all side effects complete (see
+  `user-service.md`, Commit ownership)
 
 ## Operations
 
@@ -276,10 +286,10 @@ self-service list endpoint and by the CLI `api-key list` command.
 3. Apply pagination (offset/limit)
 4. Return paginated results with total count
 
-**Returns**: paginated result (list of `ApiKey` records + total count)
+**Returns**: `PaginatedResult[ApiKey]` (list of records + total count)
 
-The CLI `api-key list` command iterates over all pages to produce the
-complete table output.
+The CLI `api-key list` command calls `list_user_keys()` iterating over
+all pages to produce the complete table output.
 
 ### `list_all_keys()`
 
@@ -305,11 +315,13 @@ Used by the admin list endpoint.
    - `status`: apply the derived status conditions from
      `api-key-management.md` (Derived Status)
 2. Apply sorting. When `sort_by=last_used_at`, use deterministic NULL
-   ordering per `api-key-management.md` (`last_used_at` NULL Ordering)
+   ordering per `api-key-management.md` (`last_used_at` NULL Ordering).
+   Deterministic tiebreaker per `docs/api-spec.md` (Deterministic
+   Pagination Ordering)
 3. Apply pagination (offset/limit)
 4. Return paginated results with total count
 
-**Returns**: paginated result (list of `ApiKey` records + total count)
+**Returns**: `PaginatedResult[ApiKey]` (list of records + total count)
 
 ### `get_key()`
 
@@ -360,14 +372,22 @@ services perform database operations.
 1. Execute `UPDATE api_key SET last_used_at = :used_at WHERE id = :key_id
    AND (last_used_at IS NULL OR last_used_at < :used_at)`. The
    conditional prevents concurrent instances from regressing the
-   timestamp
+   timestamp and handles the first-use case (key never used before)
 2. No explicit row lock is required — the conditional UPDATE is a single
    atomic SQL statement. However, the implicit row write lock may block
    behind a concurrent `FOR UPDATE` holder (e.g., `revoke_key()` or
    `revoke_all_user_keys()`). To keep this write best-effort on the
-   authentication critical path, the session SHOULD use a short
-   `lock_timeout` (e.g., 1 second). A timeout is treated identically
-   to a commit failure: log WARNING, proceed, debounce cache not updated
+   authentication critical path, the session MUST use a short
+   `lock_timeout` (1 second). A timeout is treated identically to any
+   other database error (see below)
+
+**Error handling**: the function does NOT catch exceptions internally.
+All `SQLAlchemyError` subclasses (including lock timeout, connection
+errors, and constraint violations) propagate to the caller. The caller
+(authentication boundary) is responsible for catching, logging WARNING,
+and proceeding without updating the debounce cache. This keeps the
+service function simple and testable — error policy belongs to the
+caller that chose best-effort semantics.
 
 **Returns**: None
 
@@ -392,10 +412,13 @@ Concurrency behavior for all operations is defined in
 `docs/features/identity/api-key-management.md` (Concurrency and
 Locking). Summary:
 
-- **Create-name race**: the partial unique index serializes concurrent
-  creates with the same normalized name. `IntegrityError` is caught and
-  re-raised as `ApiKeyNameConflictError`. No `FOR UPDATE` on `ApiKey`
-  needed.
+- **Create-name race**: `create_key()` acquires `FOR UPDATE` on the
+  `User` row, serializing concurrent creates. The second caller re-reads
+  after the lock grant and raises `ApiKeyNameConflictError` at the
+  application-level uniqueness check. The partial unique index on
+  `(user_id, name) WHERE revoked_at IS NULL` serves as a database-level
+  backstop: `IntegrityError` is caught and re-raised as
+  `ApiKeyNameConflictError`.
 - **Create vs. deactivate**: `create_key()` acquires `FOR UPDATE` on the
   `User` row to serialize against concurrent `deactivate_user()` calls.
   This prevents a key from surviving deactivation.

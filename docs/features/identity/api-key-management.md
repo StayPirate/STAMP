@@ -168,8 +168,9 @@ It records when the key was last successfully used for authentication.
   affected. The debounce cache is updated only after a successful
   commit, so the next eligible request retries
 - **Monotonic**: the service uses a conditional UPDATE
-  (`last_used_at < :used_at`) to prevent concurrent instances from
-  regressing the timestamp
+  (`last_used_at IS NULL OR last_used_at < :used_at`) to prevent
+  concurrent instances from regressing the timestamp and to handle the
+  first-use case (key never used before)
 
 **Audit trail exclusion**:
 
@@ -233,9 +234,7 @@ the exact log format.
 Expired and revoked API keys are **retained permanently** — there is no
 cleanup task. At this scale (~hundreds of users), the table grows by at
 most a few thousand rows per year — negligible storage. Retained records
-serve as audit trail (who had access, when it was revoked). If volume
-becomes a concern in the future, an operational
-`DELETE WHERE revoked_at < now() - interval '2 years'` can be applied.
+serve as audit trail (who had access, when it was revoked).
 
 ## API Endpoints
 
@@ -287,6 +286,10 @@ secret):
 }
 ```
 
+`revoked_by` uses the same User Reference object shape as in the revoke
+response (`{id, username, full_name, active}`) when non-NULL. When NULL
+(system/CLI revocation), it is serialized as `null`.
+
 ### Create API Key
 
 ```
@@ -304,7 +307,7 @@ compromised API key from self-replicating by generating additional keys.
 
 The check is implemented as a shared dependency `require_session_auth`
 that depends on `get_current_user` (guaranteeing that
-`request.state.auth_method` has been set at step 6 of Credential
+`request.state.auth_method` has been set at step 7 of Credential
 resolution). `require_session_auth` is **fail-closed**: it proceeds only
 when `request.state.auth_method == "session"`. Any other value —
 including `"api_key"`, an absent attribute, or an unrecognized value —
@@ -448,6 +451,8 @@ Lists API keys across all users.
 
 **`last_used_at` NULL ordering**: when `sort_by=last_used_at`, NULL
 values are ordered per the `last_used_at` NULL Ordering rule above.
+Deterministic tiebreaker per `docs/api-spec.md` (Deterministic
+Pagination Ordering).
 
 **Response** (200): paginated array of API key objects with owner info:
 
@@ -722,6 +727,23 @@ audit event per key" guarantee as the individual revoke case.
 then `revoke_all_user_keys()` locks the `ApiKey` rows.
 `revoke_key()` locks only the `ApiKey` row (never the `User` row),
 so no deadlock cycle exists.
+
+### Create vs. revoke (name reuse)
+
+A user revokes a key and immediately creates a new key with the same
+name (standard credential rotation). These two operations do NOT
+serialize with each other: `create_key()` locks the `User` row while
+`revoke_key()` locks the `ApiKey` row. If the operations overlap:
+
+- If the revoke commits before create's uniqueness check: creation
+  succeeds (name slot is free)
+- If the revoke has not yet committed when create checks uniqueness:
+  creation raises `ApiKeyNameConflictError` (409) — a transient error
+
+**Client expectation**: credential rotation MUST sequence
+revoke-then-create (wait for the revoke response before issuing the
+create request). Parallelizing the two operations may produce a
+transient 409 that resolves on retry.
 
 ## Security Considerations
 

@@ -1103,19 +1103,42 @@ authoritative behavioral contract.
 **Self-service list pagination:**
 
 - Default pagination returns at most 20 keys with correct `meta.total`
+- `per_page=0` or `per_page=101` returns 422 `VALIDATION_ERROR`
 - `page` beyond total returns empty `data` with correct `meta.total`
 - Pagination tiebreaker produces stable ordering across pages
+- Admin list with `sort_by=last_used_at` on all-NULL keys: no row
+  duplication or omission across pages (tiebreaker verification)
 
 **`last_used_at` operational metadata:**
 
 - `update_last_used_at()` persists in an independent transaction — the
   update survives even if the request-scoped session is not committed
-- A failed `update_last_used_at()` commit does not affect the
-  authenticated request (best-effort)
+- A failed `update_last_used_at()` (lock timeout, connection error) does
+  not affect the authenticated request (best-effort)
 - The debounce cache is updated only after a successful commit
 - Concurrent `update_last_used_at()` calls from multiple instances do
   not regress the timestamp (conditional UPDATE with
-  `last_used_at < :used_at`)
+  `last_used_at IS NULL OR last_used_at < :used_at`)
+- First use of a key (never used, `last_used_at = NULL`): timestamp is
+  written successfully (NULL case in the conditional UPDATE)
+- `update_last_used_at()` executes only after the user active check —
+  a deactivated user's key does not update `last_used_at`
+
+**CLI list and revoke:**
+
+- `sentinel api-key list` output includes the key UUID column
+- `sentinel api-key list` for a user with >20 keys: all keys are
+  returned (service iterates all pages)
+- `sentinel api-key revoke` persists the revocation (commit verification
+  — the key is actually revoked in a subsequent query)
+- `sentinel api-key revoke` for an already-revoked key prints the
+  idempotent no-op message and exits 0
+
+**Credential rotation (create vs. revoke name reuse):**
+
+- Sequential revoke-then-create with the same name: creation succeeds
+- Parallel revoke + create with the same name: creation raises
+  `ApiKeyNameConflictError` if the revoke has not committed
 
 ### Model Constraints
 
