@@ -73,6 +73,10 @@ reserves its name; after revocation, the owner may reuse the name.
 value must be strictly later than the creation operation's current time;
 otherwise creation is rejected with `AUTH_API_KEY_INVALID_EXPIRY`.
 
+The request accepts a full ISO 8601 datetime. A value without an explicit
+offset is interpreted as UTC; a value with an offset is converted to UTC. A
+date-only value is not accepted and returns the global `422 VALIDATION_ERROR`.
+
 There is no minimum duration and no maximum expiration. A key may expire
 seconds after creation or have no expiration.
 
@@ -140,8 +144,9 @@ The warning is operational and does not replace the creation audit event.
 
 All list endpoints follow the pagination, validation, response-envelope, and
 deterministic secondary-ordering contracts in `docs/api-spec.md`. The
-`status` filter accepts one value; invalid values return
-`422 VALIDATION_ERROR`. Both list endpoints support:
+`status` filter accepts one value. Invalid values are silently ignored and,
+because the filter has only one value, produce an empty result per
+`api-spec.md` (Enum Filter Validation). Both list endpoints support:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -155,8 +160,9 @@ When `sort_by=last_used_at`, keys with `last_used_at = NULL` sort last in
 both directions. Non-NULL values follow `sort_order`. The primary-key
 tiebreaker required by `api-spec.md` makes pagination deterministic.
 
-All non-creation responses omit the plaintext key and hash. The common API
-key object is:
+All non-creation responses omit the plaintext key and hash. `revoked_by` is
+either NULL for a CLI or automated revocation or the standard User Reference
+Object from `api-spec.md` for the acting user. The common API key object is:
 
 ```json
 {
@@ -183,7 +189,8 @@ GET /api/v1/api-keys
 Returns only keys whose `user_id` equals the authenticated user's ID. The
 owner is implicit and no owner filter is accepted. The endpoint delegates the
 query to `api_key_service.list_user_keys()`; the handler performs no database
-query.
+query. The handler captures one UTC `now` snapshot, passes it to the service,
+and uses that same value to serialize every returned `status`.
 
 **Response (200):** the standard paginated envelope containing common API
 key objects.
@@ -198,7 +205,10 @@ POST /api/v1/api-keys
 
 This endpoint additionally requires JWT session authentication. API-key
 authentication returns `403 AUTH_SESSION_REQUIRED` with detail
-`"API key creation requires session authentication."`.
+`"API key creation requires session authentication."`. A session-only
+authentication dependency owned by the authentication boundary enforces this
+before handler execution; the handler does not re-parse the token or duplicate
+the `stl_ak_` recognition rule.
 
 **Request body:**
 
@@ -225,12 +235,16 @@ system creation, or administrator creation path.
     "key": "stl_ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "status": "active",
     "created_at": "2026-08-01T10:00:00Z",
-    "expires_at": "2026-12-01T10:00:00Z"
+    "last_used_at": null,
+    "expires_at": "2026-12-01T10:00:00Z",
+    "revoked_at": null,
+    "revoked_by": null
   }
 }
 ```
 
-The `key` field appears only in this response.
+The creation response contains the common API key object plus `key`. The
+`key` field appears only in this response.
 
 **Error responses:**
 
@@ -251,10 +265,11 @@ POST /api/v1/api-keys/{key_id}/revoke
 **`Access: Authenticated`**
 
 Calls `api_key_service.revoke_key()` with
-`owner_user_id=current_user.id`. A missing key and a key owned by another
-user both return `404 AUTH_API_KEY_NOT_FOUND`; the response must not reveal
-whether another user's key exists. The handler performs no preliminary key
-lookup or ownership query.
+`owner_user_id=current_user.id` and `acting_user_id=current_user.id`. A
+missing key and a key owned by another user both return
+`404 AUTH_API_KEY_NOT_FOUND`; the response must not reveal whether another
+user's key exists. The handler performs no preliminary key lookup or
+ownership query.
 
 The operation is idempotent. An already-revoked key returns 200 with its
 unchanged representation and creates no new audit event.
@@ -280,11 +295,13 @@ Supports the common list parameters plus:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `owner` | string | -- | Owner UUID or username; unknown owner yields an empty result |
+| `owner` | string | -- | Owner UUID or case-sensitive exact username per `api-spec.md`; unknown owner yields an empty result |
 
-The endpoint delegates to `api_key_service.list_all_keys()`. Every item adds
-`user_id` and `username` to the common API key object. The endpoint returns
-the standard paginated envelope.
+The endpoint captures one UTC `now` snapshot, passes it to
+`api_key_service.list_all_keys()`, and uses that same value to serialize every
+returned `status`. Every item adds `owner`, the standard User Reference Object
+from `api-spec.md`, to the common API key object. The endpoint returns the
+standard paginated envelope.
 
 ### Revoke API Key
 
@@ -302,8 +319,8 @@ An administrator may revoke the API key used for the current request.
 Authentication has already completed, so this request succeeds; subsequent
 requests using that key fail authentication.
 
-**Response (200):** `data` contains the common API key object plus
-`user_id` and `username`, with `status="revoked"`.
+**Response (200):** `data` contains the common API key object plus `owner`,
+the standard User Reference Object, with `status="revoked"`.
 
 **Error responses:**
 
@@ -339,7 +356,7 @@ the command reports retained keys regardless of owner lifecycle state.
 `NAME`, `STATUS`, `CREATED AT`, `LAST USED AT`, and `EXPIRES AT`. UUIDs are
 included so the operator can pass a selected value to `api-key revoke`.
 Timestamps use the CLI UTC format. A user with no keys produces the header and
-no data rows.
+no data rows. NULL `LAST USED AT` and `EXPIRES AT` values display as `—`.
 
 **Errors and exit codes:**
 
@@ -368,9 +385,10 @@ Calls `api_key_service.revoke_key()` without an owner restriction and with
 (system action). The command does not accept or infer a username; `key_id`
 uniquely identifies the target.
 
-**Output:** on first revocation, print
-`Revoked API key '<key_id>'.` to stdout. If already revoked, print
-`API key '<key_id>' is already revoked.` to stdout. Both outcomes exit 0.
+**Output:** print `API key '<key_id>' is revoked.` to stdout whether this
+invocation performed the mutation or found the key already revoked. This
+single idempotent confirmation does not require a preliminary read. Both
+outcomes exit 0.
 
 **Errors and exit codes:**
 

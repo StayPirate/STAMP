@@ -1018,7 +1018,9 @@ commands are affected, tests MUST cover:
 - trim/lowercase normalization, every allowed character class, empty and
   over-128 rejection, invalid characters, and normalized-name uniqueness
 - expiration strictly in the future, equality with the operation's `now`
-  rejected, no maximum expiration, and NULL accepted
+  rejected, no maximum expiration, NULL accepted, offset-bearing values
+  normalized to UTC, offset-free datetimes interpreted as UTC, and date-only
+  request values rejected
 - exclusive status precedence (`revoked` over `expired` over `active`) and
   the `expires_at == now` boundary
 
@@ -1028,8 +1030,13 @@ commands are affected, tests MUST cover:
   user's key
 - pagination, status filtering, both sort directions, stable ID tiebreaking,
   and `last_used_at` NULL-last ordering for self-service and admin lists
+- invalid status filters produce an empty result, and filtering and serialized
+  statuses use one shared UTC snapshot per request
+- administrator owner filtering follows case-sensitive UUID-or-username
+  resolution; owner and non-NULL revoker fields use complete User Reference
+  Objects
 - full secret returned only by creation and absent from every list/revoke
-  response
+  response; creation returns every common-object field plus the secret
 - JWT-session-only creation, authenticated self-service access, and
   `manage_users` enforcement for administrator endpoints
 
@@ -1040,11 +1047,17 @@ commands are affected, tests MUST cover:
 - same normalized-name concurrent creation produces exactly one key and one
   `api_key_created` event; every loser receives the documented conflict
 - repeated and concurrent single/bulk revocation produces one mutation and
-  one `api_key_revoked` event per key
+  one `api_key_revoked` event per key; self-service events identify the owner
+  as actor
 - creation concurrent with user deactivation cannot commit a key for an
   inactive user
 - `last_used_at` debounce and conditional update never move the value
-  backward and create no identity audit event
+  backward and create no identity audit event; successful writes commit before
+  advancing the debounce timestamp, while failed writes roll back, leave the
+  debounce state unchanged, and do not reject an otherwise valid credential
+- authentication resolves credentials through `get_key_by_hash()` rather than
+  a direct model query, and the deactivation preview obtains its non-revoked
+  count through `count_non_revoked_keys()`
 
 **Logging and CLI:**
 
@@ -1052,9 +1065,10 @@ commands are affected, tests MUST cover:
   active-defense exception and never contains prefix, secret, hash, key name,
   username, or email; suppression behavior is tested without HTTP throttling
 - active-key anomaly WARNING contains only safe structured fields
-- `api-key list --username` includes key UUID and consistent derived status;
-  `api-key revoke --key-id` needs no username and handles missing, first, and
-  repeated revocation with the documented output and exit codes
+- `api-key list --username` includes key UUID, consistent derived status, and
+  `—` for NULL last-use/expiration cells; `api-key revoke --key-id` needs no
+  username and uses the same success message for first and repeated revocation
+  with the documented exit codes
 
 ### Model Constraints
 

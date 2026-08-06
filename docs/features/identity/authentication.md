@@ -474,10 +474,11 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 
 1. Compute `SHA-256(presented_key)` and encode the result as a lowercase
    hex digest.
-2. Look up the `ApiKey` record by matching `key_hash` to the computed
-   digest. If no record is found, emit the rate-limited WARNING described
-   below and fail. The log MUST NOT include the key prefix, key name,
-   presented key, computed hash, username, or other credential material.
+2. Call `api_key_service.get_key_by_hash()` with the computed digest. If no
+   record is found, emit the rate-limited WARNING described below and fail.
+   The authentication boundary performs no direct `ApiKey` query. The log
+   MUST NOT include the key prefix, key name, presented key, computed hash,
+   username, or other credential material.
 
    **PII exception**: the source IP is included in this log message as a
    documented exception to the PII discipline in
@@ -521,13 +522,16 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
    `key_id → last_write_timestamp`. If less than 60 seconds have elapsed
    since the last DB write for this key on this instance, the update is
    skipped. With N API server instances, the worst case is N writes per
-   minute per key — acceptable for an internal tool. This is operational
-   authentication metadata and creates no `IdentityAuditEvent`; see
-   `docs/features/identity/identity-audit-log.md`.
+   minute per key — acceptable for an internal tool. The authentication
+   boundary owns a transaction dedicated to this best-effort operational
+   write: commit before recording the debounce timestamp; on failure, roll
+   back, leave the debounce timestamp unchanged, and continue authentication
+   with the otherwise valid credential. This metadata creates no
+   `IdentityAuditEvent`; see `docs/features/identity/identity-audit-log.md`.
 6. On success, return the `user_id` from the `ApiKey` record.
 
-API keys do **not** use sessions. They are validated directly against the
-`ApiKey` table on every request.
+API keys do **not** use sessions. They are validated through
+`api_key_service` against the `ApiKey` table on every request.
 
 ## API Key Management Boundary
 

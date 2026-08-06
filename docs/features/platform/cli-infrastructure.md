@@ -127,8 +127,8 @@ per-command path selection.
   (`manage-user create`, `update`, `deactivate`, `set-password`,
   `unlock`, and `api-key revoke`), the wrapped function calls the
   service function, per the async pattern already declared in
-  `user-service.md` ("Async pattern") and `api-key-service.md` ("Async
-  pattern").
+  `user-service.md` ("Async pattern") and `api-key-service.md` ("Module
+  Location and Invocation").
 - For commands with pre-mutation reads or interactive prompts (e.g.,
   `manage-user deactivate` reads impact counts, prompts for
   confirmation, then deactivates), all of these steps run inside the
@@ -227,10 +227,9 @@ module for mutation (`manage-user create`, `manage-user update`,
 `manage-user deactivate`, `manage-user set-password`, `manage-user
 unlock`, `api-key revoke`). This documents the pattern each command
 already follows in its owning spec (`user-management.md`,
-`authentication.md`, `fetcher-operations.md`) — this section does not
+`api-key-management.md`, `fetcher-operations.md`) — this section does not
 change any existing command's behavior, it only defines the shared
-  mechanism underlying all of them. The API key command behavior is owned by
-  `api-key-management.md`. This inventory is illustrative, not
+mechanism underlying all of them. This inventory is illustrative, not
 an exhaustive registry that must be updated per new command (the
 authoritative, current list lives in `docs/cli-reference.md`).
 

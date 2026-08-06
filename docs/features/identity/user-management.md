@@ -271,8 +271,8 @@ sentinel manage-user deactivate \
 4. If the user is already inactive, prints:
    `"User '{username}' is already inactive."` and exits with code 0
 5. Queries the impact of deactivation:
-   - Count of non-revoked API keys that will be revoked (including expired
-     keys)
+   - Count of non-revoked API keys from
+     `api_key_service.count_non_revoked_keys()` (including expired keys)
    - Count of active sessions that will be invalidated
    - Count of active tickets assigned to the user that will be unassigned
    - Whether this user is the last active user with the Admin role
@@ -844,7 +844,10 @@ proceeding with deactivation.
    action returns 200 creates an asymmetry that forces clients to
    special-case the preview error path for a condition that the action
    itself treats as a no-op.
-5. Query and return the impact summary
+5. Query and return the impact summary. Obtain `api_keys_count` through
+   `api_key_service.count_non_revoked_keys()`; the endpoint performs no direct
+   `ApiKey` query. The count includes expired keys because deactivation
+   revokes every row whose `revoked_at` is NULL.
 
 **Response** (HTTP 200):
 

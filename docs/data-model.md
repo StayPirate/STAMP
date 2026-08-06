@@ -1675,16 +1675,19 @@ a value requires an Alembic migration.
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
-  `SubmissionRequestTrack`, `RoleMapping`,
+  `SubmissionRequestTrack`, `RoleMapping`, `ApiKey`,
   and `CVEAffectedVersion`
-  only have `created_at` because they are immutable write-once records or are
-  replaced rather than updated in place; `TicketAccessGrant` uses
+  only have `created_at`; most are immutable write-once records or are
+  replaced rather than updated in place. `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for
   write-once records) and has no `updated_at` —
   `ProductRepository` and `CVEAffectedVersion` records are
   replaced via delete-and-reinsert during sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
   group membership changes;
+  `ApiKey` uses `last_used_at` and `revoked_at` as the authoritative
+  timestamps for its only in-place changes, so a generic `updated_at` would
+  be redundant;
   `SystemSetting` and `FetcherConfig` have only `updated_at` (auto-created
   at startup; creation time is not tracked);
   `CodestreamPackageChecksum` uses `last_seen_at` instead of standard

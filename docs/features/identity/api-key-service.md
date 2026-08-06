@@ -62,6 +62,10 @@ propagate database exceptions and the service exceptions documented below.
 
 ## Result Types
 
+Every `ApiKey` returned for API serialization includes the nullable revoker
+`User` record needed to render `revoked_by` as the standard User Reference
+Object in `api-spec.md`. A NULL `revoked_by` foreign key has no revoker record.
+
 `ApiKeyPage` contains:
 
 | Field | Type | Meaning |
@@ -71,7 +75,8 @@ propagate database exceptions and the service exceptions documented below.
 | `page` | `int` | Requested page |
 | `per_page` | `int` | Requested page size |
 
-`ApiKeyWithOwner` contains an `ApiKey` plus the owner's `username`.
+`ApiKeyWithOwner` contains an `ApiKey` plus the owner `User` record needed to
+render the standard `owner` User Reference Object.
 `ApiKeyWithOwnerPage` has the same pagination fields as `ApiKeyPage`, with
 `items: list[ApiKeyWithOwner]`.
 
@@ -153,7 +158,7 @@ async def revoke_key(
     key_id: UUID,
     acting_user_id: UUID | None,
     owner_user_id: UUID | None = None,
-) -> ApiKey
+) -> ApiKeyWithOwner
 ```
 
 **Guard:** if no key matches `key_id` and the optional owner restriction,
@@ -172,7 +177,9 @@ indistinguishable from a missing key.
 5. Create one `api_key_revoked` event: actor = `acting_user_id`, target = key
    owner, `old_value` = normalized key name, and
    `detail = {"key_id": "<uuid>"}`.
-6. Flush the mutation and audit event, then return the key.
+6. Flush the mutation and audit event, then return the key with its owner and
+   nullable revoker records loaded for API serialization. The same enriched
+   result is returned for the idempotent no-op path.
 
 **Re-invocation and concurrency:** idempotent. The row lock serializes
 single, administrator, CLI, and bulk revocation of the same key. Exactly the
@@ -224,21 +231,21 @@ checking `revoked_at`.
 **Exceptions:** `UserNotFoundError` and underlying database or audit-service
 exceptions.
 
-### `get_key()`
+### `get_key_by_hash()`
 
 ```python
-async def get_key(
+async def get_key_by_hash(
     session: AsyncSession,
-    key_id: UUID,
-    owner_user_id: UUID | None = None,
-) -> ApiKey
+    key_hash: str,
+) -> ApiKey | None
 ```
 
-Returns the matching key without locking or mutation. If the key does not
-exist or fails the optional owner restriction, raises
-`ApiKeyNotFoundError`. It creates no audit event. This function is for
-read-only consumers; mutations must use `revoke_key()` so the read, lock,
-mutation, and event remain one operation.
+Returns the key whose stored digest exactly matches `key_hash`, or `None` when
+no key matches. This read is used only by the authentication boundary after it
+computes the digest of a presented credential. It does not lock, mutate, or
+create an audit event. Database exceptions propagate. Lifecycle validation
+remains in `authentication.md`; callers must not use this read as a substitute
+for `revoke_key()`.
 
 ### `list_user_keys()`
 
@@ -276,11 +283,27 @@ async def list_all_keys(
 ) -> ApiKeyWithOwnerPage
 ```
 
-Returns matching keys across all owners with owner usernames. `owner` accepts
-a user UUID or exact normalized username under the shared User Identifier
+Returns matching keys across all owners with owner records. `owner` accepts
+a user UUID or case-sensitive exact username under the shared User Identifier
 Resolution contract. An unknown owner returns an empty page with `total=0`;
 it is not an error. Other filtering, sorting, NULL placement, and pagination
 match `list_user_keys()`. No row lock or audit event is created.
+
+### `count_non_revoked_keys()`
+
+```python
+async def count_non_revoked_keys(
+    session: AsyncSession,
+    user_id: UUID,
+) -> int
+```
+
+Returns the number of keys owned by `user_id` whose `revoked_at` is NULL,
+including expired keys. The caller has already resolved the user; an unknown
+UUID therefore returns zero rather than raising `UserNotFoundError`. The user
+deactivation API and CLI previews in `user-management.md` are the consumers.
+This read does not lock, mutate, or create an audit event. Database exceptions
+propagate.
 
 ### `list_user_keys_for_cli()`
 
@@ -323,6 +346,12 @@ propagate.
 
 **Re-invocation:** conditionally idempotent; the same or older `used_at`
 produces no additional write.
+
+The authentication boundary owns a transaction dedicated to this operational
+touch. It commits after a successful update and records a debounce success
+only after that commit. On failure it rolls back, does not advance the
+in-memory debounce timestamp, and continues authentication with the otherwise
+valid credential; `last_used_at` is best-effort metadata.
 
 ## Service Exceptions
 
