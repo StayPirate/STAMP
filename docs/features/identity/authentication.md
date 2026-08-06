@@ -3,20 +3,18 @@
 ## Purpose
 
 Define the authentication framework for Sentinel: how users prove their
-identity, how the system verifies that identity on every request, and how
-programmatic clients (bots, AI agents, CI scripts) obtain durable
-credentials without interactive login flows.
+identity and how the system verifies that identity on every request.
 
 Sentinel supports two authentication providers — SSO via `id.suse.com`
 (see `docs/features/identity/sso-authentication.md`) and local credentials (see
 `docs/features/identity/local-authentication.md`). Both providers produce the
 same artifact: a signed JWT that the client presents on subsequent
-requests. Additionally, any authenticated user can create **API keys**
-for non-interactive access.
+requests. Programmatic clients may instead present API keys managed under
+`docs/features/identity/api-key-management.md`.
 
 This specification defines the shared infrastructure consumed by both
-providers: token format, session management, API key lifecycle,
-middleware behavior, and UI surfaces.
+providers: token format, session management, credential validation,
+middleware behavior, and session UI surfaces.
 
 ## Architecture
 
@@ -476,9 +474,11 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 
 1. Compute `SHA-256(presented_key)` and encode the result as a lowercase
    hex digest.
-2. Look up the `ApiKey` record by matching `key_hash` to the computed
-   digest. If no record is found, log a WARNING with the key prefix
-   (first 12 characters) and the source IP, and fail.
+2. Call `api_key_service.get_key_by_hash()` with the computed digest. If no
+   record is found, emit the rate-limited WARNING described below and fail.
+   The authentication boundary performs no direct `ApiKey` query. The log
+   MUST NOT include the key prefix, key name, presented key, computed hash,
+   username, or other credential material.
 
    **PII exception**: the source IP is included in this log message as a
    documented exception to the PII discipline in
@@ -493,16 +493,16 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
    ALWAYS returned regardless of rate limiting — only the log emission
    is suppressed. Details:
 
-   - **Granularity**: per source IP (independent of the key prefix
-     used). An attacker trying 1000 different keys from the same IP
-     generates a single WARNING per period.
+   - **Granularity**: per source IP. An attacker trying 1000 different
+     keys from the same IP generates a single WARNING per period.
    - **Rate**: at most 1 WARNING every 60 seconds per source IP per
      server instance.
-   - **Aggregated log format**: when the rate limiter unblocks an
-     emission after the suppression period, the WARNING includes a
-     suppression counter:
-     `"API key validation failed from {ip} (prefix: {prefix}). {N} additional failures suppressed in the last 60s."`
-     If N = 0 (first failure, no suppression), the suffix is omitted.
+   - **Aggregated log record**: `event="api_key_validation_failed"`,
+     `source_ip=<full source IP>`, and `suppressed_count=<integer>`.
+     `suppressed_count` is zero for an unsuppressed first failure and the
+     number of additional failures suppressed in the previous 60 seconds
+     for the next emitted record. No value derived from the presented
+     credential is emitted.
    - **Storage**: per-instance in-memory dictionary (no Redis). Same
      philosophy as the `last_used_at` debounce — no coordination
      between instances is needed.
@@ -514,160 +514,31 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
      per minute per IP (one per instance) — acceptable for an internal
      tool.
 3. Verify `revoked_at` is `NULL`.
-4. If `expires_at` is set, verify it has not passed.
-5. Update `last_used_at` to the current timestamp (debounced: update at
+4. If `expires_at` is set, reject when `expires_at <= now`.
+5. Update `last_used_at` to the current timestamp through
+   `api_key_service.update_last_used_at()` (debounced: update at
    most once per minute **per server instance** to reduce write
    pressure). The debounce uses a per-instance in-memory cache of
    `key_id → last_write_timestamp`. If less than 60 seconds have elapsed
    since the last DB write for this key on this instance, the update is
    skipped. With N API server instances, the worst case is N writes per
-   minute per key — acceptable for an internal tool.
+   minute per key — acceptable for an internal tool. The authentication
+   boundary owns a transaction dedicated to this best-effort operational
+   write: commit before recording the debounce timestamp; on failure, roll
+   back, leave the debounce timestamp unchanged, and continue authentication
+   with the otherwise valid credential. This metadata creates no
+   `IdentityAuditEvent`; see `docs/features/identity/identity-audit-log.md`.
 6. On success, return the `user_id` from the `ApiKey` record.
 
-API keys do **not** use sessions. They are validated directly against the
-`ApiKey` table on every request.
+API keys do **not** use sessions. They are validated through
+`api_key_service` against the `ApiKey` table on every request.
 
-## API Keys
+## API Key Management Boundary
 
-API keys provide durable, non-interactive credentials for programmatic
-access to the Sentinel API. They are suitable for bots, AI agents, CI
-pipelines, and any client that cannot perform an interactive login flow.
-
-### Data model: `ApiKey`
-
-| Column        | Type         | Nullable | Description                              |
-|---------------|--------------|----------|------------------------------------------|
-| `id`          | UUID         | No       | Primary key                              |
-| `user_id`     | UUID (FK)    | No       | References `User.id` (owner)             |
-| `key_hash`    | string(64)   | No       | SHA-256 hex digest of the full key       |
-| `prefix`      | string(12)   | No       | First 12 chars of the key (for display)  |
-| `name`        | string(128)  | No       | Human-readable label (e.g. "CI prod")    |
-| `created_at`  | timestamptz  | No       | When the key was created                 |
-| `last_used_at`| timestamptz  | Yes      | Last time the key was used (debounced)   |
-| `expires_at`  | timestamptz  | Yes      | Optional expiration (NULL = never)       |
-| `revoked_at`  | timestamptz  | Yes      | When the key was revoked (NULL = active) |
-| `revoked_by`  | UUID (FK)    | Yes      | Who revoked it (NULL = system/CLI)       |
-
-### Key format
-
-API keys follow the format:
-
-```
-stl_ak_<32 random alphanumeric characters>
-```
-
-Example: `stl_ak_<32 random alphanumeric characters>`
-
-The `stl_ak_` prefix allows the middleware to distinguish API keys from
-JWTs without attempting to decode.
-
-### Key visibility
-
-The full key value is returned **exactly once** — in the response to the
-creation request. After that, only the `prefix` (first 12 characters,
-e.g. `stl_ak_7f3a9`) is stored and displayed. The server stores only
-the hash. There is no way to recover the full key after creation.
-
-### Self-service management
-
-Every authenticated user can manage their own API keys:
-
-- **Create**: generate a new key with a name and optional expiration
-- **List**: view all own keys (prefix, name, created_at, last_used_at,
-  expires_at, revoked_at)
-- **Revoke**: mark a key as revoked (`revoked_at = now()`,
-  `revoked_by = self`)
-
-### Admin management
-
-Users with the `manage_users` capability can view and revoke API keys
-belonging to other users from a dedicated page in the administration
-panel. They **cannot** create keys on behalf of other users — key
-creation is always a self-service action by the key owner.
-
-When an admin revokes another user's key, `revoked_by` is set to the
-admin's user ID.
-
-### CLI commands
-
-#### `sentinel api-key list`
-
-```
-sentinel api-key list --username <username>
-```
-
-Lists all API keys (active, revoked, and expired) for the given user.
-Output includes: prefix, name, created_at, last_used_at, expires_at,
-status (active/revoked/expired).
-
-**Output**: table with fixed-width columns on stdout.
-
-**Exit codes**:
-
-| Code | Condition |
-|------|-----------|
-| 0 | Success (including empty result when user has no keys) |
-| 1 | User error: `Error: User '<username>' not found.` (stderr) |
-| 2 | System error: database unreachable |
-
-**Idempotency**: Idempotent (read-only query).
-
-#### `sentinel api-key revoke`
-
-```
-sentinel api-key revoke --username <username> --key-id <uuid>
-```
-
-Revokes the specified key. Delegates to
-`api_key_service.revoke_key(session, key_id, acting_user_id=None)`. See
-`docs/features/identity/api-key-service.md`.
-
-`acting_user_id` is `None` (CLI/system action), so `revoked_by` is set
-to `NULL` (displayed as "System" in the UI).
-
-**Output**: confirmation message on stdout (e.g., `Revoked API key
-'<prefix>...' for user '<username>'.`). Errors on stderr with `Error:`
-prefix.
-
-**Exit codes**:
-
-| Code | Condition |
-|------|-----------|
-| 0 | Success (including already-revoked key = idempotent no-op) |
-| 1 | User error: `Error: User '<username>' not found.` (stderr), or `Error: API key '<key_id>' not found.` (stderr) |
-| 2 | System error: database unreachable |
-
-**Idempotency**: Idempotent (no-op if already revoked — handled by the
-service's idempotency guarantee).
-
-### Automatic revocation
-
-When a user is deactivated (via `user_service.deactivate_user()`), all
-their active API keys are revoked with `revoked_by = NULL`. This is part
-of the deactivation ordering defined in the Session Management section.
-
-Revocation during deactivation is permanent. When the user is later
-reactivated, API keys are NOT restored — the plaintext secret is not
-stored and cannot be recovered. The user must create new keys after
-reactivation.
-
-### Active key anomaly detection
-
-There is no hard limit on the number of API keys a user can create.
-A WARNING log is emitted when a user exceeds **20** active (non-revoked,
-non-expired) keys, as an anomaly indicator. Active key count is evaluated
-at query time: `WHERE revoked_at IS NULL AND (expires_at IS NULL OR
-expires_at > now())`. This provides detection without blocking legitimate
-automation use cases.
-
-### Expired and revoked key retention
-
-Expired and revoked API keys are **retained permanently** — there is no
-cleanup task. At this scale (~hundreds of users), the table grows by at
-most a few thousand rows per year — negligible
-storage. Retained records serve as audit trail (who had access, when it was
-revoked). If volume becomes a concern in the future, an operational
-`DELETE WHERE revoked_at < now() - interval '2 years'` can be applied.
+API key lifecycle, status, retention, REST endpoints, CLI commands, and
+consumer use cases are defined in
+`docs/features/identity/api-key-management.md`. This specification owns
+only use of an API key as an authentication credential.
 
 ## API Endpoints
 
@@ -736,296 +607,6 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
    `Set-Cookie: sentinel_session=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
 6. Return HTTP 204
 
-### List My API Keys
-
-Lists all API keys for the current user.
-
-**`Access: Authenticated`**
-
-**Pagination**: not paginated. A user's API keys are naturally bounded
-(expected <20 per user). The full list is always returned.
-
-**Sorting**: not supported (small bounded dataset per user; results
-returned in creation order, newest first).
-
-**Response** (200): array of API key objects (without the full secret):
-
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "prefix": "stl_ak_7f3a9",
-      "name": "CI production",
-      "created_at": "ISO8601",
-      "last_used_at": "ISO8601 | null",
-      "expires_at": "ISO8601 | null",
-      "revoked_at": "ISO8601 | null",
-      "revoked_by": "uuid | null"
-    }
-  ]
-}
-```
-
-### Create API Key
-
-Creates a new API key for the current user.
-
-**Authentication**: required (JWT session only). API-key-authenticated
-requests receive HTTP 403 (see Authentication restriction below).
-
-**Request body**:
-
-```json
-{
-  "name": "string (required, 1-128 chars)",
-  "expires_at": "ISO8601 | null (optional)"
-}
-```
-
-**Name validation**:
-
-- Leading and trailing whitespace is trimmed before any other validation
-- The value is normalized to lowercase
-- Allowed character set (after normalization): `[a-z0-9._-]`
-- Length: 1–128 characters (measured after trim and normalization)
-- A value that is empty after trim is rejected (standard Pydantic 422
-  validation error)
-- The uniqueness constraint (`AUTH_API_KEY_NAME_CONFLICT`) is evaluated on
-  the normalized value
-
-**Authentication restriction**: API-key-authenticated requests receive
-HTTP 403 with code `AUTH_SESSION_REQUIRED` and message: `"API key
-creation requires session authentication."` — this prevents a
-compromised API key from self-replicating by generating additional keys.
-This check is performed in the endpoint handler before delegation.
-
-**Behavior**:
-
-1. Verify the request is authenticated via JWT session (not API key).
-   If not, return HTTP 403 with code `AUTH_SESSION_REQUIRED`
-2. Delegate to `api_key_service.create_key(session, user_id=current_user.id,
-   name=name, expires_at=expires_at, acting_user_id=current_user.id)`.
-   See `docs/features/identity/api-key-service.md`
-3. Return HTTP 201 with the created key (including the plaintext secret)
-
-The service performs all validation (label format, label uniqueness,
-expiry) and raises typed exceptions that the handler maps to HTTP
-responses. See `docs/features/identity/api-key-service.md`
-(Exception-to-HTTP mapping).
-
-**Response** (201):
-
-```json
-{
-  "data": {
-    "id": "uuid",
-    "prefix": "stl_ak_7f3a9",
-    "name": "CI production",
-    "key": "stl_ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "created_at": "ISO8601",
-    "expires_at": "ISO8601 | null"
-  }
-}
-```
-
-The `key` field contains the full secret and is returned **only** in
-this response. It is never returned again by any other endpoint.
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 403 | `AUTH_SESSION_REQUIRED` | Request authenticated via API key instead of session |
-| 409 | `AUTH_API_KEY_NAME_CONFLICT` | Non-revoked key with the same name exists |
-| 422 | `AUTH_API_KEY_NAME_INVALID` | Key name contains invalid characters or exceeds length limits |
-| 400 | `AUTH_API_KEY_INVALID_EXPIRY` | `expires_at` is in the past |
-
-### Revoke My API Key
-
-Revokes an API key belonging to the current user. The key record is
-preserved in the database (not deleted) and remains visible in list
-endpoints with `revoked_at` populated.
-
-**`Access: Authenticated`**
-
-**Behavior**:
-
-1. Look up the key by `key_id` — if not found or belongs to a different
-   user, return HTTP 404 with code `AUTH_API_KEY_NOT_FOUND`. The
-   ownership check (`key.user_id == current_user.id`) is performed in
-   the endpoint handler before delegation
-2. Delegate to `api_key_service.revoke_key(session, key_id,
-   acting_user_id=current_user.id)`. The service handles idempotency
-   (already-revoked keys are returned unchanged). See
-   `docs/features/identity/api-key-service.md`
-3. Return HTTP 200
-
-**Response** (200):
-
-```json
-{
-  "data": {
-    "id": "uuid",
-    "prefix": "stl_ak_7f3a9",
-    "name": "CI production",
-    "created_at": "ISO8601",
-    "last_used_at": "ISO8601 | null",
-    "expires_at": "ISO8601 | null",
-    "revoked_at": "ISO8601",
-    "revoked_by": "uuid"
-  }
-}
-```
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found or belongs to a different user |
-
-### List All API Keys (Admin)
-
-Lists API keys across all users.
-
-**`Capability: manage_users`**
-
-**Query parameters**:
-
-| Parameter  | Type   | Description                         |
-|------------|--------|-------------------------------------|
-| `owner`    | string | Filter by key owner; accepts UUID or username. Returns empty result set if user not found. (optional) |
-| `status`   | string | `active`, `revoked`, or `expired` — single value only (optional) |
-| `page`     | int    | Page number (default 1)             |
-| `per_page` | int    | Items per page (default 20, max 100)  |
-| `sort_by`  | string | Field to sort by: `created_at`, `last_used_at` (default: `created_at`) |
-| `sort_order`| string | `asc` or `desc` (default: `desc`)  |
-
-**Response** (200): paginated array of API key objects with user info:
-
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "prefix": "stl_ak_7f3a9",
-      "name": "CI production",
-      "user_id": "uuid",
-      "username": "string",
-      "created_at": "ISO8601",
-      "last_used_at": "ISO8601 | null",
-      "expires_at": "ISO8601 | null",
-      "revoked_at": "ISO8601 | null",
-      "revoked_by": "uuid | null"
-    }
-  ],
-  "meta": {
-    "total": 42,
-    "page": 1,
-    "per_page": 20
-  }
-}
-```
-
-### Revoke API Key (Admin)
-
-Revokes any user's API key. The key record is preserved in the database
-(not deleted) and remains visible in list endpoints with `revoked_at`
-populated.
-
-**`Capability: manage_users`**
-
-**Behavior**:
-
-1. Delegate to `api_key_service.revoke_key(session, key_id,
-   acting_user_id=current_user.id)`. The service handles idempotency
-   (already-revoked keys are returned unchanged) and raises
-   `ApiKeyNotFoundError` if the key does not exist. See
-   `docs/features/identity/api-key-service.md`
-2. No ownership check — admins can revoke any key
-3. Return HTTP 200
-
-**Self-revocation**: an admin may revoke the API key authenticating the
-current request. This succeeds because authentication validation occurs
-before handler execution. The key is revoked and all subsequent requests
-using it are rejected.
-
-**Response** (200):
-
-```json
-{
-  "data": {
-    "id": "uuid",
-    "prefix": "stl_ak_7f3a9",
-    "name": "CI production",
-    "user_id": "uuid",
-    "username": "string",
-    "created_at": "ISO8601",
-    "last_used_at": "ISO8601 | null",
-    "expires_at": "ISO8601 | null",
-    "revoked_at": "ISO8601",
-    "revoked_by": "uuid"
-  }
-}
-```
-
-**Error responses**:
-
-| Status | Code | Condition |
-|--------|------|-----------|
-| 404 | `AUTH_API_KEY_NOT_FOUND` | Key not found |
-
-## Use Cases: Bots and AI Agents
-
-Sentinel supports two patterns for programmatic access. The key
-difference is **attribution**: whose name appears in ticket events and
-audit logs.
-
-### Pattern 1: Bot (acts as an existing user)
-
-An existing user (SSO or local) creates an API key from their personal
-page and configures a bot with that key. All operations performed by the
-bot are attributed to the user who owns the key.
-
-**Setup**:
-
-1. User logs in to Sentinel (SSO or local credentials)
-2. User navigates to their API Keys page
-3. User creates a key (e.g. name: "my-automation-bot")
-4. User copies the key and configures the bot
-
-**Audit trail**: operations appear as performed by the user.
-
-### Pattern 2: AI Agent (acts as a dedicated identity)
-
-An admin creates a local user account dedicated to the AI agent. The
-operator logs in as that user and creates an API key. Operations are
-attributed to the agent's own identity.
-
-**Setup**:
-
-1. Admin creates a local user: `sentinel manage-user create --username
-   security-scanner --role restricted_analyst` (or `--role
-   vulnerability_analyst` if confidential ticket access is needed)
-2. Operator logs in to Sentinel as `security-scanner` (using the
-   password set at creation)
-3. Operator creates an API key from the personal API Keys page
-4. Operator copies the key and configures the AI agent
-
-**Audit trail**: operations appear as performed by `security-scanner`.
-
-### Choosing between the two patterns
-
-| Consideration       | Bot (Pattern 1)            | AI Agent (Pattern 2)         |
-|---------------------|----------------------------|------------------------------|
-| Attribution         | User's name                | Agent's own name             |
-| Accountability      | User is responsible        | Agent is independently tracked |
-| Permissions         | Inherits user's roles      | Has its own roles            |
-| Key management      | User manages their own key | Operator manages agent's key |
-| Recommended for     | Personal automations       | Shared/organizational tools  |
-
-## Open Points
-
 ## Security Considerations
 
 - **JWT_SECRET_KEY** must be a cryptographically random string of at
@@ -1043,8 +624,8 @@ attributed to the agent's own identity.
   requests/second with bcrypt (cost 12, ~300ms/op), the server would
   need 30 CPU-seconds per second solely for key validation, creating a
   denial-of-service vector.
-- **API key secrets** are hashed before storage. The plaintext is never
-  stored and cannot be recovered.
+- **API key lifecycle security** (secret visibility, expiration, and
+  revocation) is defined in `api-key-management.md`.
 - **Session liveness check** ensures that logout and deactivation take
   effect within the cache TTL window (60 seconds maximum).
 - **No single logout (SLO)**: logging out of `id.suse.com` does not
@@ -1078,14 +659,6 @@ attributed to the agent's own identity.
 - **API key last_used_at debouncing**: updating `last_used_at` on every
   request would create write amplification. Updates are debounced to at
   most once per minute per key.
-- **No mandatory API key expiration**: `expires_at` is optional — API keys
-  can live indefinitely without rotation. For an internal tool, credential
-  hygiene is the user's responsibility. Mitigation mechanisms exist: users
-  can revoke keys at any time, and admin deactivation revokes all keys.
-- **No minimum API key duration**: the only validation on `expires_at` is
-  that it must be in the future. Keys with very short durations (seconds or
-  minutes) are valid use cases for testing. If a key expires before the
-  client uses it, the user simply creates a new one.
 - **No client fingerprint binding on session cookies**: the session cookie
   is not bound to any client fingerprint (IP address, User-Agent, or TLS
   channel binding). A stolen cookie can be replayed from any network
@@ -1117,8 +690,10 @@ attributed to the agent's own identity.
 ## Cross-references
 
 - `docs/api-spec.md` — API conventions, global responses, scoped responses
+- `docs/features/identity/api-key-management.md` — API key lifecycle,
+  endpoints, CLI commands, status, and retention
 - `docs/features/identity/api-key-service.md` — centralized API key
-  lifecycle service (create, revoke, bulk-revoke)
+  persistence service, including the `last_used_at` operational touch
 - `docs/features/identity/local-authentication.md` — local login endpoint and
   password management
 - `docs/features/identity/sso-authentication.md` — SSO login flow with

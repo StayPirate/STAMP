@@ -905,8 +905,9 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 
 | Spec | Relationship |
 |---|---|
-| `docs/features/identity/api-key-service.md` | Centralized API key lifecycle service. `deactivate_user` calls `api_key_service.revoke_all_user_keys()` as step 1 of the deactivation side effects |
-| `docs/features/identity/authentication.md` | Defines API key model, session model, and `session_service`. `deactivate_user` calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
+| `docs/features/identity/api-key-service.md` | Centralized API key database service. `deactivate_user` calls `api_key_service.revoke_all_user_keys()` as step 1 of the deactivation side effects |
+| `docs/features/identity/api-key-management.md` | API key lifecycle and retention contract |
+| `docs/features/identity/authentication.md` | Defines the session model and `session_service`. `deactivate_user` calls `session_service.invalidate_user_sessions()`. `reset_password` calls the same. |
 | `docs/features/identity/identity-provisioning.md` | External sync process calls `create_user`, `update_user`, `sync_role_mapping`, `deactivate_user`, `reactivate_user`. Role mapping CRUD endpoints call `sync_role_mapping` and `delete_role_mapping_roles` |
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |

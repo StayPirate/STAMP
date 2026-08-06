@@ -59,7 +59,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | `role_mapping_created` | Admin creates group-to-role mapping | Admin | `NULL` | `NULL` | `"{group_name} -> {role}"` | `{"group_name": "...", "role": "...", "affected_users": N}` |
 | `role_mapping_deleted` | Admin deletes group-to-role mapping | Admin | `NULL` | `"{group_name} -> {role}"` | `NULL` | `{"group_name": "...", "role": "...", "affected_users": N}` |
 | `username_changed` | External sync detects username change at provider for existing user (matched via external_id) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
-| `api_key_created` | User or admin creates API key | Acting user | Key owner | `NULL` | Key name/label | `{"key_id": "uuid"}` |
+| `api_key_created` | User creates own API key | Key owner | Key owner | `NULL` | Normalized key name | `{"key_id": "uuid"}` |
 | `api_key_revoked` | User, admin, or system revokes API key | Acting user or `NULL` (system) | Key owner | Key name/label | `NULL` | `{"key_id": "uuid", "reason": "user_deactivated"}` (reason only for bulk revocation during deactivation) |
 | `email_changed` | Email address updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old email | New email | `NULL` |
 | `full_name_changed` | Full name updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old full name | New full name | `NULL` |
@@ -242,11 +242,21 @@ lifecycle, roles, API keys, role mappings) MUST create an
 `IdentityAuditEvent` via `IdentityAuditLog.log_event()` in the same
 database transaction as the mutation.
 
+**Operational metadata exclusions**: `User.last_login_at`,
+`ApiKey.last_used_at`, and `User.synced_at` are high-frequency operational
+metadata, not identity lifecycle mutations. Their owning authentication or
+provisioning boundaries may update them without an `IdentityAuditEvent`.
+This is a narrow exception: changing any API key lifecycle field (`name`,
+`expires_at`, `revoked_at`, or `revoked_by`) remains an audited mutation and
+must go through `api_key_service`. In particular,
+`api_key_service.update_last_used_at()` is the only unaudited API key write.
+
 **API key audit events**: the `api_key_service` is the centralized
 location for all API key mutations. Audit events are created inside the
 service functions, not in the calling endpoints:
 
-- `create_key()` → creates 1 `api_key_created` event
+- `create_key()` → creates 1 `api_key_created` event; key creation is
+  self-service, so actor and target are the owner
 - `revoke_key()` → creates 1 `api_key_revoked` event
 - `revoke_all_user_keys()` → creates N `api_key_revoked` events (one per
   revoked key). Each event includes `{"reason": "user_deactivated"}` in
@@ -302,5 +312,7 @@ Tests for any identity-mutating service MUST verify:
 - `docs/features/identity/api-key-service.md` — centralized API key
   lifecycle service; produces `api_key_created` and `api_key_revoked`
   events
+- `docs/features/identity/api-key-management.md` — API key lifecycle and
+  management surfaces
 - `docs/features/identity/rbac.md` — Endpoint Permission Map (add new
   endpoint)

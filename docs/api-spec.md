@@ -29,7 +29,9 @@ All endpoints require authentication unless explicitly marked as public.
 Authentication uses JWT tokens in HttpOnly cookies (browser sessions) or
 API keys (programmatic access). See `docs/features/identity/authentication.md`,
 `docs/features/identity/sso-authentication.md`, and
-`docs/features/identity/local-authentication.md` for full details.
+`docs/features/identity/local-authentication.md` for credential validation,
+and `docs/features/identity/api-key-management.md` for API key lifecycle and
+management.
 
 ### Authorization
 

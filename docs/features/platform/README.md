@@ -35,7 +35,7 @@ testing-strategy.md             Testing methodology, fixtures, coverage policy
 - `cli-infrastructure.md` defines the shared mechanism backing every CLI
   command (entry point, session management, error handling, signal
   handling); individual command groups
-  (`user-management.md`, `authentication.md`, `fetcher-operations.md`)
+  (`user-management.md`, `api-key-management.md`, `fetcher-operations.md`)
   consume it. It implements the contract declared in `docs/conventions.md`
   (CLI Conventions) and consumes the CLI bootstrap requirement declared in
   `logging.md` (Scope of this pipeline).

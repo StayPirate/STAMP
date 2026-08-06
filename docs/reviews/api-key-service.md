@@ -94,7 +94,7 @@
 
 ### AKS-SEC-005 — API key creation restricted to JWT sessions — good anti-replication control (Low)
 
-**Status**: RESOLVED — by design in authentication.md (AUTH_SESSION_REQUIRED check) (2026-05-17)
+**Status**: RESOLVED — by design in api-key-management.md (AUTH_SESSION_REQUIRED check) (2026-05-17)
 
 ### AKS-SEC-006 — Key generation uses CSPRNG with sufficient entropy (Low)
 
@@ -102,7 +102,7 @@
 
 ### AKS-SEC-007 — Plaintext key exposed only once at creation — good key visibility model (Low)
 
-**Status**: RESOLVED — by design in authentication.md (Key Visibility) (2026-05-17)
+**Status**: RESOLVED — by design in api-key-management.md (Key Format and Visibility) (2026-05-17)
 
 ### AKS-SEC-009 — Audit events created for all key lifecycle operations (Low)
 
@@ -118,4 +118,4 @@
 
 ### AKS-API-001 — Spec does not define API endpoints — no API convention violations applicable (Low)
 
-**Status**: RESOLVED — spec is a service-layer specification; API endpoint conventions are enforced on the owning spec (authentication.md) (2026-05-17)
+**Status**: RESOLVED — spec is a service-layer specification; API endpoint conventions are enforced on the owning spec (api-key-management.md) (2026-05-17)

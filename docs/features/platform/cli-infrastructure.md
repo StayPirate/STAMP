@@ -15,7 +15,7 @@ code table, success/error message format, multi-step `✓`/`✗`/`—`
 reporting, idempotency declarations), and naming conventions remain owned
 by `docs/conventions.md`. This specification owns the shared *mechanism*
 that implements that contract, so that individual command specs
-(`user-management.md`, `authentication.md`, `fetcher-operations.md`) do
+(`user-management.md`, `api-key-management.md`, `fetcher-operations.md`) do
 not each need to re-derive it.
 
 **This specification does not define individual commands.** Each command's
@@ -40,7 +40,7 @@ explicit per-command opt-in.
 | `docs/features/platform/logging.md` (Scope of this pipeline) | Defines the minimal structlog-to-stderr configuration this spec's bootstrap sequence applies at root group initialization. |
 | `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → CLI Commands, Sync Entry-Point Tests) | Defines the mandatory CLI test scenarios and the synchronous test function requirement; this spec defines the harness those tests run against. |
 | `docs/features/identity/user-management.md` | Consumer: `manage-user` command group delegates to async services via the pattern defined here. |
-| `docs/features/identity/authentication.md` | Consumer: `api-key` command group delegates to async services via the pattern defined here. |
+| `docs/features/identity/api-key-management.md` | Consumer: owns the `api-key` command group behavior and delegates to async services via the pattern defined here. |
 | `docs/features/platform/fetcher-operations.md` | Consumer: `fetcher` command group uses the `asyncio.run()` session mechanism defined here for its read-only queries. |
 | `docs/features/identity/user-service.md`, `docs/features/identity/api-key-service.md` | Define the async service contracts invoked from within the `asyncio.run()` mechanism defined here. |
 | `docs/features/platform/system-settings.md` | Defines the system settings mechanism consumed by the Configuration Guard decorator. |
@@ -121,13 +121,14 @@ per-command path selection.
   into a single `asyncio.run(...)` call wrapping the **entire command
   workflow** — not just a service invocation. For read-only commands
   (`fetcher list`, `fetcher config`, `manage-user list`, `manage-user
-  show`, `api-key list`), the wrapped function performs the read(s)
-  directly. For commands that delegate to an async service module
+  show`, `api-key list`), the wrapped function delegates database reads
+  to the architecture-approved query or service boundary. For commands
+  that delegate to an async service module
   (`manage-user create`, `update`, `deactivate`, `set-password`,
   `unlock`, and `api-key revoke`), the wrapped function calls the
   service function, per the async pattern already declared in
-  `user-service.md` ("Async pattern") and `api-key-service.md` ("Async
-  pattern").
+  `user-service.md` ("Async pattern") and `api-key-service.md` ("Module
+  Location and Invocation").
 - For commands with pre-mutation reads or interactive prompts (e.g.,
   `manage-user deactivate` reads impact counts, prompts for
   confirmation, then deactivates), all of these steps run inside the
@@ -207,14 +208,11 @@ per-command path selection.
   asyncio.run(fetcher_list(async_session_factory))
   ```
 
-- Session and transaction lifecycle (commit on success, rollback on
-  exception) for mutation commands are the responsibility of the async
-  service function being called, per the transaction conventions
-  already defined in each service spec — this spec does not alter or
-  restate those contracts. Read-only commands require no explicit
-  commit (no writes occur — per `fetcher-operations.md` (CLI Commands),
-  the `fetcher` CLI group is read-only by design; all mutations are done
-  exclusively through the API).
+- Each mutating async CLI workflow owns one database transaction. It opens
+  the transaction, invokes services that flush but never commit, commits
+  exactly once after the complete workflow succeeds, and rolls back on any
+  exception. This permits a command to compose multiple service operations
+  atomically. Read-only commands require no explicit commit.
 - Per the sync-to-async bridging convention (`docs/conventions.md`,
   SQLAlchemy Conventions), exactly one `asyncio.run()` call occurs per
   command invocation, wrapping the extracted `async def` flow function.
@@ -229,7 +227,7 @@ module for mutation (`manage-user create`, `manage-user update`,
 `manage-user deactivate`, `manage-user set-password`, `manage-user
 unlock`, `api-key revoke`). This documents the pattern each command
 already follows in its owning spec (`user-management.md`,
-`authentication.md`, `fetcher-operations.md`) — this section does not
+`api-key-management.md`, `fetcher-operations.md`) — this section does not
 change any existing command's behavior, it only defines the shared
 mechanism underlying all of them. This inventory is illustrative, not
 an exhaustive registry that must be updated per new command (the
@@ -319,8 +317,8 @@ database session context manager already guarantees. No command in the
 current catalog holds a lock or performs a multi-step operation where
 partial interruption would leave inconsistent state beyond what a single
 transaction rollback already resolves (read-only commands perform no
-writes; mutation commands delegate transaction atomicity entirely to the
-called service function).
+writes; mutating async workflows own one transaction and delegate the
+individual mutations to services).
 
 **Q6 (exceptions)**: `KeyboardInterrupt` and the SIGTERM-derived exit are
 both terminal — they do not propagate beyond the root group.

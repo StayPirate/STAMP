@@ -1008,6 +1008,68 @@ scenarios are required:
 - Lockout events do NOT produce `IdentityAuditEvent` records (lockout
   is transient Redis-only state, not a persistent identity mutation)
 
+### API Key Management
+
+When API key persistence, services, authentication, API endpoints, or CLI
+commands are affected, tests MUST cover:
+
+**Name, expiration, and status:**
+
+- trim/lowercase normalization, every allowed character class, empty and
+  over-128 rejection, invalid characters, and normalized-name uniqueness
+- expiration strictly in the future, equality with the operation's `now`
+  rejected, no maximum expiration, NULL accepted, offset-bearing values
+  normalized to UTC, offset-free datetimes interpreted as UTC, and date-only
+  request values rejected
+- exclusive status precedence (`revoked` over `expired` over `active`) and
+  the `expires_at == now` boundary
+
+**Queries and API:**
+
+- self-service owner scoping and 404 concealment when revoking another
+  user's key
+- pagination, status filtering, both sort directions, stable ID tiebreaking,
+  and `last_used_at` NULL-last ordering for self-service and admin lists
+- invalid status filters produce an empty result, and filtering and serialized
+  statuses use one shared UTC snapshot per request
+- administrator owner filtering follows case-sensitive UUID-or-username
+  resolution; owner and non-NULL revoker fields use complete User Reference
+  Objects
+- full secret returned only by creation and absent from every list/revoke
+  response; creation returns every common-object field plus the secret
+- JWT-session-only creation, authenticated self-service access, and
+  `manage_users` enforcement for administrator endpoints
+
+**Transactions, audit, and concurrency:**
+
+- create, revoke, and bulk revoke flush without committing; caller rollback
+  removes both lifecycle mutation and audit event
+- same normalized-name concurrent creation produces exactly one key and one
+  `api_key_created` event; every loser receives the documented conflict
+- repeated and concurrent single/bulk revocation produces one mutation and
+  one `api_key_revoked` event per key; self-service events identify the owner
+  as actor
+- creation concurrent with user deactivation cannot commit a key for an
+  inactive user
+- `last_used_at` debounce and conditional update never move the value
+  backward and create no identity audit event; successful writes commit before
+  advancing the debounce timestamp, while failed writes roll back, leave the
+  debounce state unchanged, and do not reject an otherwise valid credential
+- authentication resolves credentials through `get_key_by_hash()` rather than
+  a direct model query, and the deactivation preview obtains its non-revoked
+  count through `count_non_revoked_keys()`
+
+**Logging and CLI:**
+
+- validation-failure WARNING contains source IP only under the documented
+  active-defense exception and never contains prefix, secret, hash, key name,
+  username, or email; suppression behavior is tested without HTTP throttling
+- active-key anomaly WARNING contains only safe structured fields
+- `api-key list --username` includes key UUID, consistent derived status, and
+  `—` for NULL last-use/expiration cells; `api-key revoke --key-id` needs no
+  username and uses the same success message for first and repeated revocation
+  with the documented exit codes
+
 ### Model Constraints
 
 New models MUST be tested for:

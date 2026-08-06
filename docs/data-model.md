@@ -1300,7 +1300,8 @@ retention policy.
 API keys for programmatic access. Every user (SSO or local) can create
 API keys for non-interactive authentication (bots, AI agents, CI
 pipelines). The full key value is shown only once at creation; only the
-hash is stored. See `docs/features/identity/authentication.md` (API Keys).
+hash is stored. See
+`docs/features/identity/api-key-management.md` (API Key Contract).
 
 | Column        | Type        | Constraints               | Description                                |
 |---------------|-------------|---------------------------|--------------------------------------------|
@@ -1308,18 +1309,21 @@ hash is stored. See `docs/features/identity/authentication.md` (API Keys).
 | user_id       | UUID        | FK(user.id), NOT NULL     | User who owns this key                     |
 | key_hash      | VARCHAR(64) | NOT NULL, UNIQUE          | SHA-256 hex digest of the full key         |
 | prefix        | VARCHAR(12) | NOT NULL                  | First 12 chars of the key (e.g. `stl_ak_7f3a9`) for display |
-| name          | VARCHAR(128)| NOT NULL                  | Human-readable label (e.g. "CI production") |
+| name          | VARCHAR(128)| NOT NULL                  | Normalized label: trimmed, lowercase, 1-128 characters, `[a-z0-9._-]` only. See `api-key-management.md` (API Key Name Rule) |
 | created_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT         | When the key was created                   |
-| last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
+| last_used_at  | TIMESTAMPTZ   | nullable                  | Operational authentication metadata: last use observed by a debounced update, at most once per minute per API server instance; excluded from identity lifecycle audit events |
 | expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
-| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means active |
+| revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means not revoked; status may still be expired. See `api-key-management.md` (Derived Status) |
 | revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
 
 **Indexes**:
 
-- (user_id, revoked_at) — for efficient listing of active keys per user.
+- (user_id, revoked_at) — supports owner-scoped lifecycle queries and bulk
+  revocation.
 - UNIQUE (user_id, name) WHERE revoked_at IS NULL — prevents duplicate
-  names among non-revoked keys for the same user.
+  normalized names among non-revoked keys for the same user. Because stored
+  names are normalized before insertion, the index is authoritative for
+  normalized-name races without a functional expression.
 
 #### IdentityAuditEvent
 
@@ -1355,7 +1359,7 @@ change.
 | role_mapping_created | Group-to-role mapping created by admin |
 | role_mapping_deleted | Group-to-role mapping deleted by admin |
 | username_changed | Username changed by external sync (username change at provider) |
-| api_key_created | API key created by user or admin |
+| api_key_created | API key created by its owner through self-service |
 | api_key_revoked | API key revoked by user, admin, or system |
 | email_changed | Email address updated (admin or external sync) |
 | full_name_changed | Full name updated (admin or external sync) |
@@ -1671,16 +1675,19 @@ a value requires an Alembic migration.
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `UserRole`, `ProductRepository`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
-  `SubmissionRequestTrack`, `RoleMapping`,
+  `SubmissionRequestTrack`, `RoleMapping`, `ApiKey`,
   and `CVEAffectedVersion`
-  only have `created_at` because they are immutable write-once records or are
-  replaced rather than updated in place; `TicketAccessGrant` uses
+  only have `created_at`; most are immutable write-once records or are
+  replaced rather than updated in place. `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for
   write-once records) and has no `updated_at` —
   `ProductRepository` and `CVEAffectedVersion` records are
   replaced via delete-and-reinsert during sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
   group membership changes;
+  `ApiKey` uses `last_used_at` and `revoked_at` as the authoritative
+  timestamps for its only in-place changes, so a generic `updated_at` would
+  be redundant;
   `SystemSetting` and `FetcherConfig` have only `updated_at` (auto-created
   at startup; creation time is not tracked);
   `CodestreamPackageChecksum` uses `last_seen_at` instead of standard

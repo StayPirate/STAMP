@@ -16,7 +16,7 @@ Index of all feature specification domains.
 
 ### Identity
 
-- [authentication.md](identity/authentication.md) — Session/JWT/API-key framework
+- [authentication.md](identity/authentication.md) — Session/JWT framework and credential validation
 - [sso-authentication.md](identity/sso-authentication.md) — OIDC SSO login flow (deferred)
 - [local-authentication.md](identity/local-authentication.md) — Username/password login, lockout
 - [identity-provisioning.md](identity/identity-provisioning.md) — External identity provisioning, role mapping (deferred)
@@ -24,7 +24,8 @@ Index of all feature specification domains.
 - [user-management.md](identity/user-management.md) — Admin CLI and API for user operations
 - [rbac.md](identity/rbac.md) — Role definitions and endpoint permission map
 - [identity-audit-log.md](identity/identity-audit-log.md) — Identity audit trail (IdentityAuditEvent)
-- [api-key-service.md](identity/api-key-service.md) — API key lifecycle management
+- [api-key-management.md](identity/api-key-management.md) — API key lifecycle, REST API, and CLI
+- [api-key-service.md](identity/api-key-service.md) — API key mutation and query service
 
 ### Integrations
 
