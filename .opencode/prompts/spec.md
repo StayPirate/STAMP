@@ -102,9 +102,11 @@ guardrails:
 - **New or updated feature specs** → invoke `@docs-reviewer`
 - **Ticket or identity operations** → invoke the applicable integrity reviewer
 
-Apply the Reviewer Proportionality Filter in `AGENTS.md` Guardrail 26 to every
-finding. Never resolve a finding that adds structural complexity without first
-presenting it to the user and receiving a decision.
+Apply the Finding Evaluation Procedure in `AGENTS.md` Guardrail 26 to every
+finding received from reviewers. Never implement a finding without
+independently verifying it as a real problem. Never resolve a finding that
+adds structural complexity without first presenting it to the user and
+receiving a decision.
 
 ### Unconditional — before every pull request
 
