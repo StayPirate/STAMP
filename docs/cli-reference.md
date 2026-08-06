@@ -193,7 +193,8 @@ Full specification:
 
 ### `sentinel api-key list`
 
-Lists all API keys (active, revoked, and expired) for a user.
+Lists all API keys (active, revoked, and expired) for a user. Output
+includes the key UUID (for use with `sentinel api-key revoke --key-id`).
 
 ```
 sentinel api-key list --username <username>

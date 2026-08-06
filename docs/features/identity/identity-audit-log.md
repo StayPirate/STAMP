@@ -59,7 +59,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 | `role_mapping_created` | Admin creates group-to-role mapping | Admin | `NULL` | `NULL` | `"{group_name} -> {role}"` | `{"group_name": "...", "role": "...", "affected_users": N}` |
 | `role_mapping_deleted` | Admin deletes group-to-role mapping | Admin | `NULL` | `"{group_name} -> {role}"` | `NULL` | `{"group_name": "...", "role": "...", "affected_users": N}` |
 | `username_changed` | External sync detects username change at provider for existing user (matched via external_id) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
-| `api_key_created` | User or admin creates API key | Acting user | Key owner | `NULL` | Key name/label | `{"key_id": "uuid"}` |
+| `api_key_created` | User creates API key (self-service only) | Key owner | Key owner | `NULL` | Key name/label | `{"key_id": "uuid"}` |
 | `api_key_revoked` | User, admin, or system revokes API key | Acting user or `NULL` (system) | Key owner | Key name/label | `NULL` | `{"key_id": "uuid", "reason": "user_deactivated"}` (reason only for bulk revocation during deactivation) |
 | `email_changed` | Email address updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old email | New email | `NULL` |
 | `full_name_changed` | Full name updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old full name | New full name | `NULL` |
@@ -265,8 +265,9 @@ metadata** and are explicitly excluded from `IdentityAuditEvent`
 coverage:
 
 - **`ApiKey.last_used_at`**: debounced update (at most once per minute
-  per key per instance) performed within the authentication middleware
-  boundary. Routine key usage would generate unmanageable audit event
+  per key per instance) performed by
+  `api_key_service.update_last_used_at()`, called from the
+  authentication middleware boundary. Routine key usage would generate unmanageable audit event
   volume without meaningful security value. See
   `docs/features/identity/api-key-management.md` (Operational Metadata:
   `last_used_at`).

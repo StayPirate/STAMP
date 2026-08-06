@@ -1038,7 +1038,7 @@ authoritative behavioral contract.
 
 - Ascending sort: keys with NULL `last_used_at` appear last (NULLS LAST)
 - Descending sort: keys with NULL `last_used_at` appear last (NULLS
-  LAST) — matches `api-spec.md` semantic sort field convention
+  LAST)
 
 **Permission and ownership concealment:**
 
@@ -1081,6 +1081,41 @@ authoritative behavioral contract.
 - Concurrent `revoke_key` calls for the same active key: exactly one
   produces an `IdentityAuditEvent`; the second observes `revoked_at`
   set and returns early (serialized via FOR UPDATE on ApiKey row)
+
+**Bulk revoke vs. individual revoke:**
+
+- Concurrent `revoke_key` and `revoke_all_user_keys` for the same key:
+  exactly one mutation and one `IdentityAuditEvent` per key — the bulk
+  operation skips rows already revoked by the individual call
+  (serialized via FOR UPDATE on ApiKey rows)
+
+**Self-service-only creation:**
+
+- `POST /api/v1/api-keys` with session authentication succeeds; audit
+  event has `user_id == target_user_id` (actor and target are the same)
+- `POST /api/v1/api-keys` with API key authentication returns 403
+  `AUTH_SESSION_REQUIRED`
+- `require_session_auth` with absent or unrecognized `auth_method`
+  returns 403 `AUTH_SESSION_REQUIRED` (fail-closed)
+- `create_key()` on a user deactivated concurrently raises
+  `InactiveUserError` (409 `USER_INACTIVE`)
+
+**Self-service list pagination:**
+
+- Default pagination returns at most 20 keys with correct `meta.total`
+- `page` beyond total returns empty `data` with correct `meta.total`
+- Pagination tiebreaker produces stable ordering across pages
+
+**`last_used_at` operational metadata:**
+
+- `update_last_used_at()` persists in an independent transaction — the
+  update survives even if the request-scoped session is not committed
+- A failed `update_last_used_at()` commit does not affect the
+  authenticated request (best-effort)
+- The debounce cache is updated only after a successful commit
+- Concurrent `update_last_used_at()` calls from multiple instances do
+  not regress the timestamp (conditional UPDATE with
+  `last_used_at < :used_at`)
 
 ### Model Constraints
 

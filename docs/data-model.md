@@ -1313,7 +1313,7 @@ hash is stored. See `docs/features/identity/api-key-management.md`.
 | last_used_at  | TIMESTAMPTZ   | nullable                  | Last time the key was used (debounced, updated at most once per minute) |
 | expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
 | revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means active |
-| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
+| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke, admin revoke, or admin-triggered deactivation |
 
 **Indexes**:
 
@@ -1356,7 +1356,7 @@ change.
 | role_mapping_created | Group-to-role mapping created by admin |
 | role_mapping_deleted | Group-to-role mapping deleted by admin |
 | username_changed | Username changed by external sync (username change at provider) |
-| api_key_created | API key created by user or admin |
+| api_key_created | API key created by its owner (self-service only) |
 | api_key_revoked | API key revoked by user, admin, or system |
 | email_changed | Email address updated (admin or external sync) |
 | full_name_changed | Full name updated (admin or external sync) |
@@ -1675,7 +1675,11 @@ a value requires an Alembic migration.
   `SubmissionRequestTrack`, `RoleMapping`,
   `ApiKey`, and `CVEAffectedVersion`
   only have `created_at` because they are immutable write-once records or are
-  replaced rather than updated in place; `TicketAccessGrant` uses
+  replaced rather than updated in place (`ApiKey` is an exception: its
+  only mutations are `last_used_at` (debounced, self-timestamped) and
+  `revoked_at`/`revoked_by` (self-timestamped on revocation) — a
+  general-purpose `updated_at` would add no information beyond these
+  dedicated columns); `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for
   write-once records) and has no `updated_at` —
   `ProductRepository` and `CVEAffectedVersion` records are

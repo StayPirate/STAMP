@@ -582,6 +582,11 @@ Deactivates a user account and triggers all associated side effects.
 **Side effects — Database phase** (executed atomically in a single
 database transaction, in this specific order):
 
+0. Acquire `SELECT ... FOR UPDATE` on the `User` row as the
+   transaction's first database operation. This serializes against
+   concurrent `create_key()` calls (see
+   `api-key-management.md`, Create vs. deactivate race) and concurrent
+   `deactivate_user()` calls (see Concurrency Considerations below)
 1. Revoke all API keys belonging to this user via
    `api_key_service.revoke_all_user_keys(session, user_id,
    acting_user_id=acting_user_id)`. Keys are not deleted — preserves

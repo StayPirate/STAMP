@@ -42,11 +42,21 @@ service via `asyncio.run()`.
 
 ### Acting user convention
 
-All operations accept an `acting_user_id: UUID | None` parameter:
+Revocation operations (`revoke_key`, `revoke_all_user_keys`) accept an
+`acting_user_id: UUID | None` parameter:
 
 - `UUID` — action performed by an authenticated user (self-service or
   admin). Stored as `revoked_by` on revocation, used for audit events.
-- `None` — system action (CLI). `revoked_by` is set to `NULL`.
+- `None` — system action (CLI, deactivation triggered by external sync).
+  `revoked_by` is set to `NULL`.
+
+`create_key()` takes no `acting_user_id` parameter — key creation is
+exclusively self-service, so the actor is always the key owner by
+construction. The audit event records `user_id = target_user_id =
+user_id`. See `api-key-management.md` (Admin Management).
+
+`update_last_used_at()` takes no `acting_user_id` — it is operational
+metadata excluded from the audit trail.
 
 Note: `deactivate_user()` passes its own `acting_user_id` through (the
 admin who triggered deactivation, or `None` for external sync), so
@@ -73,10 +83,13 @@ Creates a new API key for a user.
 | Parameter        | Type               | Required | Description                              |
 |------------------|--------------------|----------|------------------------------------------|
 | `session`        | `AsyncSession`     | Yes      | Database session (caller's transaction)  |
-| `user_id`        | `UUID`             | Yes      | Owner of the new key                     |
+| `user_id`        | `UUID`             | Yes      | Owner of the new key (= acting user)     |
 | `name`           | `str`              | Yes      | Human-readable label (1-128 characters)  |
 | `expires_at`     | `datetime \| None` | No       | Optional expiration (NULL = never)       |
-| `acting_user_id` | `UUID \| None`     | No       | Who is performing the action             |
+
+Key creation is exclusively self-service: the caller is always the key
+owner. The audit event records `user_id = user_id` and
+`target_user_id = user_id` (actor and target are the same person).
 
 **Preconditions**:
 
@@ -106,7 +119,7 @@ Creates a new API key for a user.
 1. Validate preconditions and input (user existence, active status,
    name trimming and format, name uniqueness, expiry)
 2. Generate a cryptographically random key: `stl_ak_` + 32 random
-   alphanumeric characters (using a CSPRNG)
+   characters from `[A-Za-z0-9]` (62 symbols, using a CSPRNG)
 3. Compute `SHA-256(full_key)` as a lowercase hex digest
 4. Create the `ApiKey` record:
    - `user_id` = provided user_id
@@ -127,7 +140,7 @@ Creates a new API key for a user.
    count exceeds 20, emit a WARNING log with the `user_id` (UUID):
    `"API key anomaly: user has {count} active keys (threshold: 20)"`
 6. Create `IdentityAuditEvent` with `event_type = api_key_created` via
-   `IdentityAuditLog.log_event()` — `user_id` = acting user,
+   `IdentityAuditLog.log_event()` — `user_id` = key owner,
    `target_user_id` = key owner, `new_value` = key name,
    `detail` = `{"key_id": "uuid"}`
 7. Return the created `ApiKey` record and the plaintext secret wrapped
@@ -173,9 +186,14 @@ Idempotent No-ops).
    `IdentityAuditLog.log_event()` — `user_id` = acting user (or NULL),
    `target_user_id` = key owner, `old_value` = key name,
    `detail` = `{"key_id": "uuid"}`
-6. Return the revoked `ApiKey` record
+6. Return `(ApiKey, bool)` — the key record and a flag indicating
+   whether this call performed the effective revocation (`True`) or
+   the key was already revoked (`False`, idempotent no-op). Callers
+   that need to distinguish the two outcomes (e.g., the CLI's
+   different output messages) use the flag; callers that do not (e.g.,
+   the API endpoint, which returns 200 in both cases) ignore it
 
-**Returns**: `ApiKey` record
+**Returns**: `tuple[ApiKey, bool]` — record and `revoked_this_call` flag
 
 **Note**: ownership validation (does the key belong to the calling user?)
 is NOT performed by the service. Each caller handles authorization at its
@@ -212,16 +230,22 @@ Used as a side effect of user deactivation.
 **Behavior**:
 
 1. Validate that the user exists. If not found, raise `UserNotFoundError`
-2. Query all non-revoked API keys for the user (`WHERE revoked_at IS
-   NULL`)
-3. For each key, set `revoked_at = now()` and `revoked_by =
-   acting_user_id`
-4. For each revoked key, create `IdentityAuditEvent` with
-   `event_type = api_key_revoked` via `IdentityAuditLog.log_event()` —
-   `user_id` = acting user (or NULL for system), `target_user_id` = key
-   owner, `old_value` = key name,
+2. Query all non-revoked API keys for the user with `SELECT ... FOR
+   UPDATE` (`WHERE revoked_at IS NULL`). The lock serializes against
+   concurrent `revoke_key()` calls on individual keys (see
+   `api-key-management.md`, Bulk revoke vs. individual revoke)
+3. For each locked key whose `revoked_at` is still `NULL` (re-check
+   after lock acquisition — a concurrent `revoke_key()` may have
+   committed between the query snapshot and the lock grant), set
+   `revoked_at = now()` and `revoked_by = acting_user_id`. Keys whose
+   `revoked_at` is non-NULL after the lock are skipped — no mutation,
+   no audit event
+4. For each effectively revoked key (transitioned in step 3), create
+   `IdentityAuditEvent` with `event_type = api_key_revoked` via
+   `IdentityAuditLog.log_event()` — `user_id` = acting user (or NULL
+   for system), `target_user_id` = key owner, `old_value` = key name,
    `detail` = `{"key_id": "uuid", "reason": "user_deactivated"}`
-5. Return the count of revoked keys
+5. Return the count of keys effectively revoked
 
 **Returns**: `int` — number of keys revoked (0 if no non-revoked keys
 existed)
@@ -231,8 +255,8 @@ keys returns 0 without error.
 
 ### `list_user_keys()`
 
-Lists all API keys belonging to a user. Used by the self-service list
-endpoint and by the CLI `api-key list` command.
+Lists API keys belonging to a user with pagination. Used by the
+self-service list endpoint and by the CLI `api-key list` command.
 
 **Parameters**:
 
@@ -240,14 +264,22 @@ endpoint and by the CLI `api-key list` command.
 |-----------|------|----------|-------------|
 | `session` | `AsyncSession` | Yes | Database session (caller's transaction) |
 | `user_id` | `UUID` | Yes | Owner whose keys to list |
+| `page` | `int` | No | Page number (default 1) |
+| `per_page` | `int` | No | Items per page (default 20, max 100) |
 
 **Behavior**:
 
-1. Query all `ApiKey` records where `user_id` matches
-2. Return results ordered by `created_at` descending (newest first)
+1. Query all `ApiKey` records where `user_id` matches (all statuses:
+   active, revoked, expired)
+2. Order by `created_at` descending (newest first), with deterministic
+   tiebreaker per `docs/api-spec.md` (Deterministic Pagination Ordering)
+3. Apply pagination (offset/limit)
+4. Return paginated results with total count
 
-**Returns**: list of `ApiKey` records (all statuses: active, revoked,
-expired)
+**Returns**: paginated result (list of `ApiKey` records + total count)
+
+The CLI `api-key list` command iterates over all pages to produce the
+complete table output.
 
 ### `list_all_keys()`
 
@@ -308,6 +340,52 @@ This function is used by:
   to enforce ownership without leaking existence
 - Admin endpoints: passes `owner_user_id=None` to skip ownership check
 
+### `update_last_used_at()`
+
+Persists the debounced `last_used_at` timestamp for an API key after
+successful authentication. This is the only service function that
+writes `last_used_at` — satisfying the architecture rule that only
+services perform database operations.
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session` | `AsyncSession` | Yes | Short-lived session owned by the caller (not the request transaction) |
+| `key_id` | `UUID` | Yes | ID of the authenticated key |
+| `used_at` | `datetime` | Yes | Timestamp to record |
+
+**Behavior**:
+
+1. Execute `UPDATE api_key SET last_used_at = :used_at WHERE id = :key_id
+   AND (last_used_at IS NULL OR last_used_at < :used_at)`. The
+   conditional prevents concurrent instances from regressing the
+   timestamp
+2. No explicit row lock is required — the conditional UPDATE is a single
+   atomic SQL statement. However, the implicit row write lock may block
+   behind a concurrent `FOR UPDATE` holder (e.g., `revoke_key()` or
+   `revoke_all_user_keys()`). To keep this write best-effort on the
+   authentication critical path, the session SHOULD use a short
+   `lock_timeout` (e.g., 1 second). A timeout is treated identically
+   to a commit failure: log WARNING, proceed, debounce cache not updated
+
+**Returns**: None
+
+**Audit trail**: none — `last_used_at` is classified as operational
+metadata excluded from `IdentityAuditEvent` coverage (see
+`identity-audit-log.md`, Operational Metadata Exclusions).
+
+**Transaction ownership exception**: unlike all other operations in this
+module, `update_last_used_at()` is called with a **short-lived session
+owned by the authentication boundary**, not the request-scoped
+transaction. The caller opens a brief transaction, calls this function,
+commits, and discards the session. This ensures the write persists
+independently of the request outcome (read-only endpoints do not
+commit the request-scoped session). If the commit fails, the caller
+logs a WARNING and proceeds — the debounce cache is not updated, so the
+next eligible request retries. See `api-key-management.md` (Operational
+Metadata: `last_used_at`) for the full debounce contract.
+
 ## Concurrency
 
 Concurrency behavior for all operations is defined in
@@ -325,6 +403,10 @@ Locking). Summary:
   `ApiKey` row. Concurrent revocations serialize: exactly one performs
   the effective mutation and creates one audit event; subsequent callers
   observe `revoked_at IS NOT NULL` and return early (no-op, no event).
+- **Bulk revoke vs. individual revoke**: `revoke_all_user_keys()`
+  acquires `FOR UPDATE` on all non-revoked `ApiKey` rows. After lock
+  acquisition, rows already revoked by a concurrent `revoke_key()` are
+  skipped — no duplicate mutation, no duplicate audit event.
 
 ## Service Exceptions
 

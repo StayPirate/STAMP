@@ -43,7 +43,7 @@ defined in `docs/features/identity/api-key-service.md`.
 API keys follow the format:
 
 ```
-stl_ak_<32 random alphanumeric characters>
+stl_ak_<32 random characters from [A-Za-z0-9]>
 ```
 
 The `stl_ak_` prefix allows the authentication middleware to distinguish
@@ -124,10 +124,10 @@ regardless of sort direction:
 | Ascending | NULLS LAST | Never-used keys appear after all used keys |
 | Descending | NULLS LAST | Never-used keys appear after all used keys |
 
-This matches the `api-spec.md` convention for semantic sort fields
-(NULL sorts last regardless of direction) and ensures that `desc` sort
-returns the most-recently-used keys first — the natural query for
-credential hygiene auditing.
+This ensures that `desc` sort returns the most-recently-used keys
+first — the natural query for credential hygiene auditing — while
+`asc` sort surfaces the oldest-used keys first without interleaving
+never-used keys.
 
 ## Expiration Constraints
 
@@ -149,14 +149,27 @@ It records when the key was last successfully used for authentication.
 
 **Update mechanism**:
 
-- Updated within the authentication middleware (API key validation
-  sub-flow in `docs/features/identity/authentication.md`), not by the
-  API key service
+- The authentication middleware determines when a write is needed
+  (debounce decision), then delegates the actual database write to
+  `api_key_service.update_last_used_at()` — satisfying the architecture
+  rule that only services perform database operations
 - **Debounced**: at most once per minute per key per server instance, to
   reduce write pressure. The debounce uses a per-instance in-memory
   cache of `key_id → last_write_timestamp`
 - With N API server instances, worst case is N writes per minute per key
   — acceptable for an internal tool
+- **Independent transaction**: the write executes in a short-lived
+  session owned by the authentication boundary, not the request-scoped
+  transaction. This ensures the timestamp persists regardless of the
+  request outcome (read-only endpoints do not commit the request-scoped
+  session)
+- **Best-effort**: if the commit fails (database error), the middleware
+  logs a WARNING and proceeds — the authenticated request is not
+  affected. The debounce cache is updated only after a successful
+  commit, so the next eligible request retries
+- **Monotonic**: the service uses a conditional UPDATE
+  (`last_used_at < :used_at`) to prevent concurrent instances from
+  regressing the timestamp
 
 **Audit trail exclusion**:
 
@@ -173,7 +186,7 @@ It records when the key was last successfully used for authentication.
 Every authenticated user can manage their own API keys:
 
 - **Create**: generate a new key with a name and optional expiration
-- **List**: view all own keys (prefix, name, created_at, last_used_at,
+- **List**: view all own keys (id, prefix, name, created_at, last_used_at,
   expires_at, status)
 - **Revoke**: mark a key as revoked (`revoked_at = now()`,
   `revoked_by = self`)
@@ -245,6 +258,8 @@ Lists all API keys for the current user.
 
 **Sorting**: fixed at `created_at` descending (newest first).
 Client-controlled `sort_by`/`sort_order` are not supported.
+Deterministic tiebreaker per `docs/api-spec.md` (Deterministic
+Pagination Ordering).
 
 **Response** (200): paginated array of API key objects (without the full
 secret):
@@ -286,10 +301,17 @@ Creates a new API key for the current user.
 HTTP 403 with code `AUTH_SESSION_REQUIRED` and message: `"API key
 creation requires session authentication."` — this prevents a
 compromised API key from self-replicating by generating additional keys.
-The check uses `request.state.auth_method` (surfaced by
-`get_current_user` — see `docs/features/identity/authentication.md`,
-Credential resolution, step 6) and is implemented as a shared dependency
-`require_session_auth` rather than per-handler logic.
+
+The check is implemented as a shared dependency `require_session_auth`
+that depends on `get_current_user` (guaranteeing that
+`request.state.auth_method` has been set at step 6 of Credential
+resolution). `require_session_auth` is **fail-closed**: it proceeds only
+when `request.state.auth_method == "session"`. Any other value —
+including `"api_key"`, an absent attribute, or an unrecognized value —
+yields HTTP 403 with code `AUTH_SESSION_REQUIRED`. The dependency
+returns the authenticated `User` (the same instance returned by
+`get_current_user`), so the endpoint handler uses it as the sole
+authentication dependency.
 
 **Request body**:
 
@@ -308,7 +330,7 @@ Credential resolution, step 6) and is implemented as a shared dependency
    using `require_session_auth`. If not, return HTTP 403 with code
    `AUTH_SESSION_REQUIRED`
 2. Delegate to `api_key_service.create_key(session, user_id=current_user.id,
-   name=name, expires_at=expires_at, acting_user_id=current_user.id)`.
+   name=name, expires_at=expires_at)`.
    See `docs/features/identity/api-key-service.md`
 3. Return HTTP 201 with the created key (including the plaintext secret)
 
@@ -341,6 +363,7 @@ this response. It is never returned again by any other endpoint.
 |--------|------|-----------|
 | 403 | `AUTH_SESSION_REQUIRED` | Request authenticated via API key instead of session |
 | 409 | `AUTH_API_KEY_NAME_CONFLICT` | Non-revoked key with the same normalized name exists |
+| 409 | `USER_INACTIVE` | Owner was deactivated concurrently with key creation |
 | 422 | `AUTH_API_KEY_NAME_INVALID` | Key name contains invalid characters or exceeds length limits |
 | 400 | `AUTH_API_KEY_INVALID_EXPIRY` | `expires_at` is in the past |
 
@@ -528,8 +551,9 @@ sentinel api-key list --username <username>
 ```
 
 Lists all API keys (active, revoked, and expired) for the given user.
-Output includes: prefix, name, created_at, last_used_at, expires_at,
-status (derived per Derived Status above).
+Output includes: id, prefix, name, created_at, last_used_at, expires_at,
+status (derived per Derived Status above). The `id` column provides the
+UUID required by `sentinel api-key revoke --key-id`.
 
 **Output**: table with fixed-width columns on stdout.
 
@@ -631,17 +655,17 @@ attributed to the agent's own identity.
 ### Create-name race
 
 Two concurrent `create_key()` calls with the same normalized name for
-the same user: the partial unique index `UNIQUE (user_id, name) WHERE
-revoked_at IS NULL` serializes the race at the database level.
+the same user: since both acquire `SELECT ... FOR UPDATE` on the same
+`User` row as their first operation (see Create vs. deactivate race),
+they serialize at the database level. The second caller re-reads after
+the lock grant, sees the committed key, and raises
+`ApiKeyNameConflictError` at the application-level uniqueness check.
 
-- The first transaction to commit succeeds
-- The second transaction receives an `IntegrityError` from the database,
-  which the service catches and re-raises as `ApiKeyNameConflictError`
-- No `SELECT ... FOR UPDATE` on the `ApiKey` table is needed — the
-  unique index provides sufficient protection against the name race
-
-This ensures concurrent create attempts produce the same typed error as
-sequential application-level validation.
+The partial unique index `UNIQUE (user_id, name) WHERE revoked_at IS
+NULL` serves as a database-level backstop: if a future code path inserts
+without holding the `User` lock, the index produces an `IntegrityError`
+that the service catches and re-raises as `ApiKeyNameConflictError` —
+the same typed error as the application-level validation.
 
 ### Create vs. deactivate race
 
@@ -676,13 +700,38 @@ This ensures that concurrent revocations produce exactly one effective
 mutation and exactly one audit event, consistent with the pessimistic
 locking pattern in `docs/conventions.md` (Transaction and Locking).
 
+### Bulk revoke vs. individual revoke
+
+Concurrent `revoke_all_user_keys()` (via `deactivate_user()`) and
+`revoke_key()` (via self-service, admin, or CLI) for the same key:
+`revoke_all_user_keys()` acquires `SELECT ... FOR UPDATE` on all
+non-revoked `ApiKey` rows for the user. After lock acquisition, each
+row is re-checked:
+
+- If `revoked_at` is still `NULL`: the bulk operation sets `revoked_at`
+  and creates one `api_key_revoked` audit event
+- If `revoked_at` is non-NULL (set by a concurrent `revoke_key()` that
+  committed while the bulk operation was waiting for the lock): the row
+  is skipped — no mutation, no duplicate audit event
+
+This ensures the same "exactly one effective mutation and exactly one
+audit event per key" guarantee as the individual revoke case.
+
+**Lock ordering**: `deactivate_user()` acquires `FOR UPDATE` on the
+`User` row first (see `user-service.md`, Concurrent deactivation),
+then `revoke_all_user_keys()` locks the `ApiKey` rows.
+`revoke_key()` locks only the `ApiKey` row (never the `User` row),
+so no deadlock cycle exists.
+
 ## Security Considerations
 
 - **API key hashing uses plain SHA-256**, not a slow hash like bcrypt
   and not a keyed HMAC. API keys have ~190 bits of entropy (32
-  alphanumeric characters generated server-side by a CSPRNG) and are
-  not vulnerable to offline brute-force — the search space is
-  computationally infeasible regardless of hash speed. A plain hash
+  characters from `[A-Za-z0-9]` = 62 symbols, generated server-side by
+  a CSPRNG); the stored `prefix` exposes the first 5 random characters
+  (~30 bits), leaving ~161 bits of residual entropy — still
+  computationally infeasible to brute-force regardless of hash speed.
+  A plain hash
   avoids the operational burden of a server-side secret: there is no
   key to rotate and no risk of permanently invalidating all API keys
   through a configuration change. Using a slow hash for high-entropy
