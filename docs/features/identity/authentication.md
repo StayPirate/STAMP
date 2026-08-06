@@ -530,7 +530,7 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
      per minute per IP (one per instance) — acceptable for an internal
      tool.
 3. Verify `revoked_at` is `NULL`.
-4. If `expires_at` is set, verify it has not passed.
+4. If `expires_at` is set, reject if `expires_at <= now()`.
 5. On success, return the `user_id` from the `ApiKey` record.
 
 API keys do **not** use sessions. They are validated directly against the

@@ -535,7 +535,9 @@ errors (500).
 ## Cross-references
 
 - `docs/features/identity/authentication.md` — shared authentication framework
-  (JWT format, session model, API keys, middleware)
+  (JWT format, session model, middleware)
+- `docs/features/identity/api-key-management.md` — API key lifecycle and
+  endpoints
 - `docs/features/identity/local-authentication.md` — local login (alternative
   provider)
 - `docs/features/identity/identity-provisioning.md` — External provisioning

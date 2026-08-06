@@ -192,11 +192,12 @@ per-command path selection.
   async def revoke_flow(session_factory, key_id):
       async with session_factory() as db:
           key, was_revoked = await api_key_service.revoke_key(db, key_id, ...)
+          prefix, name = key.prefix, key.name
           await db.commit()
       if was_revoked:
-          print(f"Revoked API key '{key.prefix}...' ({key.name}).")
+          print(f"Revoked API key '{prefix}...' ({name}).")
       else:
-          print(f"API key '{key.prefix}...' ({key.name}) is already revoked.")
+          print(f"API key '{prefix}...' ({name}) is already revoked.")
 
   asyncio.run(revoke_flow(async_session_factory, key_id))
   ```

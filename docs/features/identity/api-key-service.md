@@ -12,8 +12,9 @@ This ensures that:
 - The architecture rule "only services perform database operations" is
   satisfied uniformly (see `docs/architecture.md`, Backend Layer
   Architecture)
-- Ownership checks occur at the service boundary without leaking key
-  existence to unauthorized callers
+- Ownership checks are available at the service boundary via
+  `get_key(owner_user_id=…)`, which conceals key existence from
+  non-owners
 - Mutation operations (create, revoke) produce audit events atomically
 - Read operations apply consistent status derivation and ownership
   filtering
@@ -73,8 +74,8 @@ with it. This is the same pattern used by `session_service`.
 
 **Caller commit responsibility**: each caller owns the commit decision:
 
-- **API endpoint handlers**: the framework commits on successful response
-  (standard FastAPI/SQLAlchemy middleware pattern)
+- **API endpoint handlers**: commit explicitly after the service call
+  returns successfully
 - **CLI commands**: the wrapped async flow function commits explicitly
   after the service call returns successfully (see
   `cli-infrastructure.md`, Database Session Management)
@@ -236,6 +237,10 @@ Used as a side effect of user deactivation.
 **Preconditions**:
 
 - User must exist. If not found, raise `UserNotFoundError`
+- Callers MUST hold `SELECT ... FOR UPDATE` on the `User` row before
+  invoking this function to prevent a concurrent `create_key()` from
+  inserting a key after the bulk query snapshot.
+  `deactivate_user()` satisfies this at step 0
 
 **Behavior**:
 
