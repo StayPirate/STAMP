@@ -7,6 +7,8 @@ description: >
   docs/features/ that introduces new rules or patterns. Read-only: does not
   modify files.
 mode: subagent
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:

@@ -6,6 +6,8 @@ description: >
   or modifying fetchers in backend/app/tasks/ or backend/app/services/.
   Read-only: does not modify files.
 mode: subagent
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:

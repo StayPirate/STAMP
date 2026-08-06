@@ -5,6 +5,8 @@ description: >
   models, Alembic migrations, or docs/data-model.md. Read-only: does not
   modify files.
 mode: subagent
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:
