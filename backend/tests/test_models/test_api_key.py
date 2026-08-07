@@ -272,6 +272,30 @@ class TestApiKeyNoCascadeOnUserDeletion:
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
+    async def test_deleting_revoking_user_raises(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """`revoked_by` is a second, independent no-cascade FK: deleting
+        the admin who revoked a key must never delete or alter the key
+        record. Covered separately from the owner FK because the two are
+        configured differently (`revoking_user` is unidirectional, with
+        no back-populated collection on `User`).
+        """
+        owner = await user_factory()
+        admin = await user_factory()
+        await api_key_factory(
+            user_id=owner.id,
+            revoked_at=datetime.now(UTC),
+            revoked_by=admin.id,
+        )
+
+        await db_session.delete(admin)
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
+
 
 @pytest.mark.integration
 class TestApiKeyRelationships:
@@ -383,3 +407,30 @@ class TestApiKeySchemaIndexes:
         assert index["column_names"] == ["user_id", "name"]
         assert index["unique"] is True
         assert "revoked_at" in index["dialect_options"]["postgresql_where"]
+
+
+@pytest.mark.integration
+class TestApiKeyFactoryFixture:
+    """Sanity checks for the shared api_key_factory fixture, mirroring
+    TestUserFactoryFixture in test_user.py."""
+
+    async def test_multiple_calls_do_not_collide(
+        self,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """The counter-derived defaults must not collide: `key_hash` is
+        globally UNIQUE and `name` participates in the partial unique
+        index, so a broken counter would surface as an opaque
+        IntegrityError in unrelated tests rather than here."""
+        first = await api_key_factory()
+        second = await api_key_factory()
+
+        assert first.key_hash != second.key_hash
+        assert first.name != second.name
+
+    async def test_overrides_take_precedence(
+        self,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(name="specific-name")
+        assert key.name == "specific-name"

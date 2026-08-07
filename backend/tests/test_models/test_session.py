@@ -157,20 +157,35 @@ class TestSessionTimezoneAwareTimestamps:
 
 @pytest.mark.integration
 class TestSessionUpdatedAtBehavior:
-    async def test_updated_at_changes_on_update(
+    async def test_updated_at_advances_on_update(
         self,
         db_session: AsyncSession,
         session_factory: Callable[..., Awaitable[Session]],
     ) -> None:
+        """`onupdate=func.now()` refreshes `updated_at` on mutation.
+
+        The comparison deliberately backdates `updated_at` explicitly
+        before mutating: PostgreSQL's `now()` is the *transaction* start
+        timestamp, and the `db_session` fixture runs each test inside a
+        single transaction. Comparing a pre-mutation `now()` against a
+        post-mutation `now()` would therefore compare two identical
+        values and pass even if `onupdate` were removed entirely. An
+        explicit assignment takes precedence over `onupdate`, so
+        backdating gives the subsequent mutation something to move away
+        from.
+        """
         session = await session_factory()
+        backdated = datetime.now(UTC) - timedelta(days=7)
+        session.updated_at = backdated
+        await db_session.flush()
         await db_session.refresh(session)
-        first_updated_at = session.updated_at
+        assert session.updated_at == backdated
 
         session.is_active = False
         await db_session.flush()
         await db_session.refresh(session)
 
-        assert session.updated_at >= first_updated_at
+        assert session.updated_at > backdated
 
 
 @pytest.mark.integration
