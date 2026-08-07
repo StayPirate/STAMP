@@ -87,6 +87,121 @@ class TestJwtExpiryValidation:
 
 
 @pytest.mark.unit
+class TestSessionMaxLifetimeValidation:
+    """SESSION_MAX_LIFETIME_DAYS startup validation
+    (docs/features/identity/authentication.md, Configuration bounds).
+    """
+
+    def test_zero_lifetime_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SESSION_MAX_LIFETIME_DAYS", "0")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_negative_lifetime_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SESSION_MAX_LIFETIME_DAYS", "-1")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_excessive_lifetime_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SESSION_MAX_LIFETIME_DAYS", "366")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert ">365 days" in caplog.text
+
+    def test_365_does_not_warn(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SESSION_MAX_LIFETIME_DAYS", "365")
+        with caplog.at_level(logging.WARNING):
+            Settings(_env_file=None)
+        assert ">365 days" not in caplog.text
+
+    def test_lifetime_1_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SESSION_MAX_LIFETIME_DAYS", "1")
+        s = Settings(_env_file=None)
+        assert s.session_max_lifetime_days == 1
+
+    def test_default_is_30(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("SESSION_MAX_LIFETIME_DAYS", raising=False)
+        s = Settings(_env_file=None)
+        assert s.session_max_lifetime_days == 30
+
+
+@pytest.mark.unit
+class TestLoginMaxAttemptsValidation:
+    """LOGIN_MAX_ATTEMPTS startup validation
+    (docs/features/identity/local-authentication.md, Configuration bounds).
+    """
+
+    def test_zero_attempts_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "0")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_negative_attempts_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "-1")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_attempts_1_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOGIN_MAX_ATTEMPTS", "1")
+        s = Settings(_env_file=None)
+        assert s.login_max_attempts == 1
+
+    def test_default_is_5(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("LOGIN_MAX_ATTEMPTS", raising=False)
+        s = Settings(_env_file=None)
+        assert s.login_max_attempts == 5
+
+
+@pytest.mark.unit
+class TestLoginLockoutMinutesValidation:
+    """LOGIN_LOCKOUT_MINUTES startup validation
+    (docs/features/identity/local-authentication.md, Configuration bounds).
+    """
+
+    def test_zero_minutes_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOGIN_LOCKOUT_MINUTES", "0")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_negative_minutes_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOGIN_LOCKOUT_MINUTES", "-1")
+        with pytest.raises(ValidationError, match="must be >= 1"):
+            Settings(_env_file=None)
+
+    def test_minutes_1_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("LOGIN_LOCKOUT_MINUTES", "1")
+        s = Settings(_env_file=None)
+        assert s.login_lockout_minutes == 1
+
+    def test_default_is_10(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("LOGIN_LOCKOUT_MINUTES", raising=False)
+        s = Settings(_env_file=None)
+        assert s.login_lockout_minutes == 10
+
+
+@pytest.mark.unit
 class TestLogLevelValidation:
     """LOG_LEVEL startup validation (docs/features/platform/logging.md)."""
 

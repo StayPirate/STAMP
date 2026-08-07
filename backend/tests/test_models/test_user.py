@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -237,7 +237,21 @@ class TestUserManagerRelationship:
 
 @pytest.mark.integration
 class TestUserUpdatedAtBehavior:
-    async def test_updated_at_changes_on_update(self, db_session: AsyncSession) -> None:
+    async def test_updated_at_advances_on_update(
+        self, db_session: AsyncSession
+    ) -> None:
+        """`onupdate=func.now()` refreshes `updated_at` on mutation.
+
+        The comparison deliberately backdates `updated_at` explicitly
+        before mutating: PostgreSQL's `now()` is the *transaction* start
+        timestamp, and the `db_session` fixture runs each test inside a
+        single transaction. Comparing a pre-mutation `now()` against a
+        post-mutation `now()` would therefore compare two identical
+        values and pass even if `onupdate` were removed entirely. An
+        explicit assignment takes precedence over `onupdate`, so
+        backdating gives the subsequent mutation something to move away
+        from.
+        """
         user = User(
             username="nupdater",
             email="nupdater@example.com",
@@ -245,14 +259,18 @@ class TestUserUpdatedAtBehavior:
         )
         db_session.add(user)
         await db_session.flush()
+
+        backdated = datetime.now(UTC) - timedelta(days=7)
+        user.updated_at = backdated
+        await db_session.flush()
         await db_session.refresh(user)
-        first_updated_at = user.updated_at
+        assert user.updated_at == backdated
 
         user.full_name = "New Name"
         await db_session.flush()
         await db_session.refresh(user)
 
-        assert user.updated_at >= first_updated_at
+        assert user.updated_at > backdated
 
 
 @pytest.mark.integration

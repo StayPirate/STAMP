@@ -9,6 +9,7 @@ import atexit
 import itertools
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -41,7 +42,7 @@ from app.main import app
 # tables — including ones only referenced via TYPE_CHECKING forward
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
-from app.models import User
+from app.models import ApiKey, Session, User
 from tests.support.audit_models import SampleAuditEvent
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
@@ -340,6 +341,84 @@ def sample_audit_event_factory(
         defaults: dict[str, Any] = {"event_type": "sample_event"}
         defaults.update(overrides)
         instance = SampleAuditEvent(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def session_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+) -> Callable[..., Awaitable[Session]]:
+    """Factory fixture for `Session` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `user_id`: a freshly created user, when not overridden.
+    - `expires_at`: `now() + Settings().session_max_lifetime_days`, mirroring
+      the production calculation at login time (see
+      `docs/features/identity/authentication.md`, Session Management).
+      This is a test-time default only — the model itself never computes
+      `expires_at`; login-time calculation is out of scope for this
+      persistence-only piece (P2-01).
+    """
+
+    async def _create(**overrides: Any) -> Session:
+        if "user_id" not in overrides:
+            overrides["user_id"] = (await user_factory()).id
+        defaults: dict[str, Any] = {
+            "expires_at": datetime.now(UTC) + timedelta(days=30),
+        }
+        defaults.update(overrides)
+        instance = Session(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def api_key_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+) -> Callable[..., Awaitable[ApiKey]]:
+    """Factory fixture for `ApiKey` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `user_id`: a freshly created user, when not overridden.
+    - `key_hash`: a per-fixture-counter-derived 64-character hex string
+      (fictional — never a real SHA-256 digest), unique within the test.
+    - `prefix`: a fictional key prefix (`stl_ak_` + 5 hex chars).
+    - `name`: derived from the same counter, unique per call — satisfies
+      `uq_api_key_user_id_name_active` for the common case (distinct
+      names per call).
+    """
+
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> ApiKey:
+        if "user_id" not in overrides:
+            overrides["user_id"] = (await user_factory()).id
+        n = next(counter)
+        # Fictional 64-char hex digest — never a real SHA-256 hash
+        # (see AGENTS.md Guardrail 23).
+        fake_hash = f"{n:064x}"
+        defaults: dict[str, Any] = {
+            "key_hash": fake_hash,
+            "prefix": f"stl_ak_{n:05x}"[:12],
+            "name": f"test-key-{n}",
+        }
+        defaults.update(overrides)
+        instance = ApiKey(**defaults)
         db_session.add(instance)
         await db_session.flush()
         return instance

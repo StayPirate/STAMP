@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Security
     jwt_secret_key: SecretStr
     jwt_expiry_hours: int = 72
+    session_max_lifetime_days: int = 30
+    login_max_attempts: int = 5
+    login_lockout_minutes: int = 10
 
     # TLS / Networking
     suse_ca_cert_path: str = "certs/SUSE_Trust_Root.crt"
@@ -132,6 +135,31 @@ class Settings(BaseSettings):
                 "if a token is compromised.",
                 self.jwt_expiry_hours,
             )
+        if self.session_max_lifetime_days < 1:
+            msg = (
+                "Invalid SESSION_MAX_LIFETIME_DAYS: must be >= 1 "
+                f"(got: {self.session_max_lifetime_days})"
+            )
+            raise ValueError(msg)
+        if self.session_max_lifetime_days > 365:
+            logger.warning(
+                "SESSION_MAX_LIFETIME_DAYS is set to %d (>365 days). "
+                "Long-lived sessions increase exposure if a session is "
+                "compromised.",
+                self.session_max_lifetime_days,
+            )
+        if self.login_max_attempts < 1:
+            msg = (
+                "Invalid LOGIN_MAX_ATTEMPTS: must be >= 1 "
+                f"(got: {self.login_max_attempts})"
+            )
+            raise ValueError(msg)
+        if self.login_lockout_minutes < 1:
+            msg = (
+                "Invalid LOGIN_LOCKOUT_MINUTES: must be >= 1 "
+                f"(got: {self.login_lockout_minutes})"
+            )
+            raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

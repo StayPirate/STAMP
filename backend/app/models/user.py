@@ -20,6 +20,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.api_key import ApiKey
+    from app.models.session import Session
     from app.models.user_role import UserRole
 
 
@@ -83,4 +85,14 @@ class User(Base):
         back_populates="user",
         foreign_keys="UserRole.user_id",
         cascade="all, delete-orphan",
+    )
+    # Deliberately no cascade: user deletion is not supported
+    # (docs/features/identity/user-service.md, User Deletion). A
+    # hypothetical `delete(user)` must fail loudly with an
+    # IntegrityError instead of silently destroying session or API key
+    # records. See issue #149 for aligning `roles` to this same
+    # behavior.
+    sessions: Mapped[list[Session]] = relationship("Session", back_populates="user")
+    api_keys: Mapped[list[ApiKey]] = relationship(
+        "ApiKey", back_populates="user", foreign_keys="ApiKey.user_id"
     )
