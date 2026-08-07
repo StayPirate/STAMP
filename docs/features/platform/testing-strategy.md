@@ -223,6 +223,52 @@ The test MUST perform explicit `DELETE` cleanup before the factory
 teardown runs. Session and connection closure is still handled by the
 fixture.
 
+### `server_default=func.now()` and `onupdate=func.now()` Testing
+
+PostgreSQL's `now()` function returns
+`transaction_timestamp()` — the time at which the **current
+transaction** began — not the wall-clock time at each statement.
+Because `db_session` wraps each test in a single transaction (see
+Per-Test Isolation above), every `server_default=func.now()` and
+`onupdate=func.now()` evaluation within one test returns the
+**identical** value.
+
+This has a concrete consequence: a naïve `updated_at` test that
+reads the column before a mutation, performs the mutation, and
+asserts `updated_at >= original` is **tautological** — it passes
+even if `onupdate` is removed from the model, because both
+evaluations of `now()` produce the same timestamp.
+
+The correct pattern **backdates** the column explicitly before the
+mutation. An explicit Python-side assignment takes precedence over
+`onupdate`, so the column is set to a known past value. The
+subsequent mutation triggers `onupdate=func.now()`, which overwrites
+the backdated value with the (fixed) transaction timestamp. The
+assertion then compares two genuinely different values:
+
+```python
+async def test_updated_at_advances_on_update(self, db_session, factory):
+    row = await factory()
+
+    # Backdate: explicit assignment overrides onupdate
+    backdated = datetime.now(UTC) - timedelta(days=7)
+    row.updated_at = backdated
+    await db_session.flush()
+    await db_session.refresh(row)
+    assert row.updated_at == backdated
+
+    # Mutate: onupdate=func.now() fires, replacing the backdated value
+    row.some_field = new_value
+    await db_session.flush()
+    await db_session.refresh(row)
+
+    assert row.updated_at > backdated
+```
+
+Every model test that verifies `onupdate` behavior MUST use this
+backdating pattern instead of comparing two `now()` evaluations
+within the same test transaction.
+
 ---
 
 ## Redis Strategy
