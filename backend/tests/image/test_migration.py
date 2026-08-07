@@ -1,4 +1,4 @@
-"""Image smoke assertions for the identity root migration (P1-04).
+"""Image smoke assertions for the identity schema migrations (P1-04, P2-01).
 
 Verifies container-observable outcomes of the one-shot `migrate` service
 in docker-compose.smoke.yml, which runs `alembic upgrade head` as the
@@ -51,14 +51,43 @@ async def main() -> None:
             user_role_checks = {
                 c["name"] for c in insp.get_check_constraints("user_role")
             }
-            return tables, user_checks, user_role_checks
+            session_indexes = {
+                idx["name"]: idx for idx in insp.get_indexes("session")
+            }
+            api_key_indexes = {
+                idx["name"]: idx for idx in insp.get_indexes("api_key")
+            }
+            return (
+                tables,
+                user_checks,
+                user_role_checks,
+                session_indexes,
+                api_key_indexes,
+            )
 
-        tables, user_checks, user_role_checks = await conn.run_sync(_inspect)
+        (
+            tables,
+            user_checks,
+            user_role_checks,
+            session_indexes,
+            api_key_indexes,
+        ) = await conn.run_sync(_inspect)
 
     assert "user" in tables, f"'user' table missing: {tables}"
     assert "user_role" in tables, f"'user_role' table missing: {tables}"
+    assert "session" in tables, f"'session' table missing: {tables}"
+    assert "api_key" in tables, f"'api_key' table missing: {tables}"
     assert "chk_user_auth_exclusive" in user_checks, user_checks
     assert "chk_user_role_role_valid" in user_role_checks, user_role_checks
+    assert "ix_session_user_id_is_active" in session_indexes, session_indexes
+    assert "ix_api_key_user_id_revoked_at" in api_key_indexes, api_key_indexes
+    assert "uq_api_key_user_id_name_active" in api_key_indexes, api_key_indexes
+    partial_index = api_key_indexes["uq_api_key_user_id_name_active"]
+    assert partial_index["unique"] is True, partial_index
+    assert (
+        "revoked_at"
+        in partial_index["dialect_options"]["postgresql_where"]
+    ), partial_index
     print("SCHEMA-OK")
     await engine.dispose()
 
@@ -95,11 +124,12 @@ def test_no_alembic_drift(
 
 
 @pytest.mark.image
-def test_user_and_user_role_tables_and_constraints_exist(
+def test_identity_schema_tables_and_constraints_exist(
     compose_exec: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """`user`/`user_role` tables and their named CHECK constraints exist
-    in the migrated database.
+    """`user`/`user_role`/`session`/`api_key` tables, their named CHECK
+    constraints, and the `session`/`api_key` indexes (including the
+    partial unique predicate) exist in the migrated database.
     """
     result = compose_exec("api", "python", "-c", _SCHEMA_CHECK_SCRIPT)
     assert result.returncode == 0, (
