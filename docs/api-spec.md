@@ -586,7 +586,8 @@ Unlike the ticket router, no endpoints need to be excluded from this
 check.
 
 **Location**: `backend/app/core/dependencies.py` (alongside
-`require_accessible_ticket` and `resolve_user_identifier`).
+`require_accessible_ticket`). User loading remains in the owning service layer
+per User Identifier Resolution below.
 
 **Note**: the `GET /api/v1/cves` list endpoint lives on the parent
 `/api/v1/cves/` router, NOT on the `/api/v1/cves/{cve_id}/` sub-router.
@@ -724,10 +725,11 @@ The special filter value `none` (used in query parameters like `assignee`)
 is not subject to user resolution — it is handled as a literal keyword
 before resolution is attempted.
 
-Implementation note: a reusable FastAPI dependency
-(`resolve_user_identifier`) handles the detection and lookup. See
-`docs/conventions.md` (FastAPI Conventions) for the reference
-implementation pattern.
+Implementation note: the owning domain service performs detection and lookup;
+identity consumers use `user_service.resolve_user_identifier()`. API
+dependencies may parse or pass through the path value but do not execute the
+ORM query. See `docs/conventions.md` (FastAPI Conventions) and
+`docs/features/identity/user-service.md`.
 
 ### CVE Identifier Resolution
 

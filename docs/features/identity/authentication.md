@@ -229,6 +229,11 @@ Each method separates database mutations (transactional) from Redis
 cache cleanup (post-commit, best-effort) per `docs/conventions.md`
 (Transaction Hygiene Rules).
 
+Every database method accepts a caller-supplied `AsyncSession`, flushes when
+required, and never commits or rolls back. The API transaction dependency or
+complete CLI/task workflow owns transaction completion. Redis-only
+`purge_session_cache()` has no database transaction.
+
 #### `invalidate_session(db, session_id) -> UUID`
 
 Invalidates a single session (used by the logout endpoint).
@@ -324,7 +329,8 @@ database-phase operations execute atomically in this order:
 
 1. Revoke all API keys for the user via
    `api_key_service.revoke_all_user_keys(session, user_id,
-   acting_user_id=None)`. See
+   acting_user_id=acting_user_id)`. Authenticated API deactivation preserves
+   the admin actor; CLI and external-sync workflows pass NULL. See
    `docs/features/identity/api-key-service.md`
 2. Invalidate all active sessions via
    `session_service.invalidate_user_sessions()` (DB only — cache purge
@@ -387,6 +393,12 @@ nullable) that is updated to `now()` every time a session is created
 (both SSO and local login). This provides a queryable answer to "when
 did user X last log in?" without depending on session row retention or
 log searches.
+
+`last_login_at` is operational authentication metadata, not a lifecycle audit
+field. Session creation and the matching `last_login_at` update use the same
+caller-owned database transaction and commit together; failure rolls both
+back. Neither write creates an `IdentityAuditEvent`. Any Redis cleanup or cache
+population remains outside that transaction.
 
 ### Frontend session behavior
 

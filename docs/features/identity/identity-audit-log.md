@@ -21,7 +21,7 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 |---|---|---|---|
 | id | UUID | Inherited from AuditEventMixin | Internal identifier |
 | event_type | VARCHAR(50) | NOT NULL | See IdentityAuditEventType |
-| user_id | UUID | Inherited from AuditEventMixin | Admin/user who performed the action. NULL for system actions (external sync) |
+| user_id | UUID | Inherited from AuditEventMixin | Authenticated Sentinel user who performed the action. NULL when no authenticated Sentinel actor exists, including CLI, task/system, and external-sync workflows |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events (which affect configuration, not a specific user) |
 | old_value | TEXT | nullable | Previous state (human-readable) |
 | new_value | TEXT | nullable | New state (human-readable) |
@@ -40,29 +40,48 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 - `detail` JSONB is used for structured data that does not fit the
   old_value/new_value pattern (e.g., role mapping metadata, affected
   user counts)
-- `old_value` and `new_value` must not exceed 512 characters. This limit
+- `old_value` and `new_value` must not exceed 512 Unicode code points. This limit
   is derived from the constraints of the source columns: username max 64
   characters, email max 255 characters, role names and status strings are
-  shorter still. The service layer must silently truncate any value
-  exceeding this limit before writing the audit event
+  shorter still. After validating the original field combination, the service
+  preserves exactly the first 512 code points of an over-limit value, without
+  normalization or an ellipsis. `None` remains `None`
+
+### Actor Contract
+
+Actor nullability records whether the operation was authenticated as a
+Sentinel user; it does not attempt to identify an operating-system user behind
+a CLI invocation.
+
+| Invocation source | `user_id` |
+|---|---|
+| Authenticated API operation | Authenticated user's UUID; API handlers MUST NOT pass NULL |
+| Self-service API key creation | Key owner's UUID |
+| CLI workflow | NULL |
+| Celery task or other system automation | NULL |
+| External provisioning synchronization | NULL |
+
+When actor NULL could describe either a manual CLI workflow or external
+synchronization, event-specific `detail.source` identifies external sync.
+Manual CLI lifecycle events leave that source detail absent.
 
 ### IdentityAuditEventType Enum
 
 | Value | Trigger | `user_id` | `target_user_id` | `old_value` | `new_value` | `detail` |
 |---|---|---|---|---|---|---|
-| `user_created` | User account created (manual or external sync) | Creating admin for manual, `NULL` for external sync | Created user | `NULL` | Username | `NULL` |
-| `user_deactivated` | Admin or external sync deactivation | Admin for manual, `NULL` for external sync | Deactivated user | `active` | `inactive` | Reason (e.g., `{"reason": "external_sync_missing"}` or `{"reason": "admin_action"}`) |
-| `user_reactivated` | Admin reactivation | Admin | Reactivated user | `inactive` | `active` | `NULL` |
-| `password_reset` | Admin resets another user's password | Admin | Target user | `NULL` | `NULL` | `NULL` |
-| `role_added` | Admin or external sync adds role | Admin for manual, `NULL` for external sync | Target user | `NULL` | Role name (e.g., `admin`) | For external sync: `{"source": "external_sync", "mapping": "SecurityTeam"}` |
-| `role_removed` | Admin or external sync removes role | Admin for manual, `NULL` for external sync | Target user | Role name (e.g., `admin`) | `NULL` | For external sync: `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `user_created` | User account created (authenticated API, CLI, or external sync) | Per Actor Contract | Created user | `NULL` | Username | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
+| `user_deactivated` | Authenticated API, CLI, or external sync deactivation | Per Actor Contract | Deactivated user | `active` | `inactive` | Reason; external sync also identifies its source |
+| `user_reactivated` | Authenticated API, CLI, or external sync reactivation | Per Actor Contract | Reactivated user | `inactive` | `active` | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
+| `password_reset` | Authenticated administrator or CLI resets a local user's password | Per Actor Contract | Target user | `NULL` | `NULL` | `NULL` |
+| `role_added` | Direct or group-derived role assignment | Per Actor Contract | Target user | `NULL` | Role name (e.g., `admin`) | For a group-derived role: `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `role_removed` | Direct or group-derived role removal | Per Actor Contract | Target user | Role name (e.g., `admin`) | `NULL` | For a group-derived role: `{"source": "external_sync", "mapping": "SecurityTeam"}` |
 | `role_mapping_created` | Admin creates group-to-role mapping | Admin | `NULL` | `NULL` | `"{group_name} -> {role}"` | `{"group_name": "...", "role": "...", "affected_users": N}` |
 | `role_mapping_deleted` | Admin deletes group-to-role mapping | Admin | `NULL` | `"{group_name} -> {role}"` | `NULL` | `{"group_name": "...", "role": "...", "affected_users": N}` |
-| `username_changed` | External sync detects username change at provider for existing user (matched via external_id) | `NULL` (system) | Renamed user | Old username | New username | `NULL` |
+| `username_changed` | Username updated by an authorized lifecycle caller | Per Actor Contract | Renamed user | Old username | New username | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
 | `api_key_created` | User creates own API key | Key owner | Key owner | `NULL` | Normalized key name | `{"key_id": "uuid"}` |
 | `api_key_revoked` | User, admin, or system revokes API key | Acting user or `NULL` (system) | Key owner | Key name/label | `NULL` | `{"key_id": "uuid", "reason": "user_deactivated"}` (reason only for bulk revocation during deactivation) |
-| `email_changed` | Email address updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old email | New email | `NULL` |
-| `full_name_changed` | Full name updated (admin or external sync) | Admin for manual, `NULL` for external sync | Target user | Old full name | New full name | `NULL` |
+| `email_changed` | Email address updated (authenticated API, CLI, or external sync) | Per Actor Contract | Target user | Old email | New email | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
+| `full_name_changed` | Full name updated (authenticated API, CLI, or external sync) | Per Actor Contract | Target user | Old full name (or `NULL`) | New full name (or `NULL`) | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
 | `manager_changed` | Direct manager updated (external sync) | `NULL` (system) | Target user | Old manager username (or `NULL`) | New manager username (or `NULL`) | `NULL` |
 
 ### detail JSONB Schema Contract
@@ -74,31 +93,108 @@ Event types not listed here MUST set `detail` to `NULL`.
 
 | Event Type | Required Keys | Optional Keys | Example |
 |---|---|---|---|
-| `user_deactivated` | `reason` (string) | — | `{"reason": "external_sync_missing"}` |
-| `role_added` | — | `source` (string), `mapping` (string) | `{"source": "external_sync", "mapping": "SecurityTeam"}` |
-| `role_removed` | — | `source` (string), `mapping` (string) | `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `user_created` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
+| `user_deactivated` | `reason` (string) | `source` (literal `"external_sync"`) | `{"reason": "external_sync_missing", "source": "external_sync"}` |
+| `user_reactivated` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
+| `role_added` | — | `source` (literal `"external_sync"`), `mapping` (string) | `{"source": "external_sync", "mapping": "SecurityTeam"}` |
+| `role_removed` | — | `source` (literal `"external_sync"`), `mapping` (string) | `{"source": "external_sync", "mapping": "SecurityTeam"}` |
 | `role_mapping_created` | `group_name` (string), `role` (string), `affected_users` (int) | — | `{"group_name": "SecurityTeam", "role": "admin", "affected_users": 5}` |
 | `role_mapping_deleted` | `group_name` (string), `role` (string), `affected_users` (int) | — | `{"group_name": "SecurityTeam", "role": "admin", "affected_users": 3}` |
 | `api_key_created` | `key_id` (UUID string) | — | `{"key_id": "550e8400-e29b-41d4-a716-446655440000"}` |
 | `api_key_revoked` | `key_id` (UUID string) | `reason` (string) | `{"key_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "user_deactivated"}` |
+| `email_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
+| `full_name_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
+| `username_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
 
 **Notes**:
 
-- `role_added` and `role_removed`: `detail` is `NULL` for manual admin
-  actions. The optional keys (`source`, `mapping`) are present only when
-  the role change originates from external sync. When `detail` is non-NULL,
-  both `source` and `mapping` MUST be present together
+- `role_added` and `role_removed`: `detail` is `NULL` for a direct manual role
+  assignment by API or CLI. Group-derived assignments always include both
+  keys, whether the mapping is applied by external synchronization or by an
+  authenticated role-mapping create/delete operation. `source` equals
+  `"external_sync"` to identify the external origin of the role, while
+  `mapping` identifies the external group/role mapping that caused it
+  As a validation rule, `source` and `mapping` are required together: either
+  both are present or `detail` is `NULL`
+- `user_created`: manual API and CLI creation uses `detail = NULL`; external
+  synchronization requires `{"source": "external_sync"}`
+- `user_deactivated`, `user_reactivated`, `email_changed`,
+  `full_name_changed`, and `username_changed`: an external-sync mutation requires
+  `source = "external_sync"`; authenticated API and manual CLI mutations omit
+  the key. `user_deactivated.reason` remains required for every source
 - `api_key_revoked`: the `reason` key is present only for bulk
   revocations triggered by user deactivation. For individual manual
   revocations, `detail` contains only `key_id`
-- Maximum payload size: 4 KB. The service layer MUST reject any
-  `detail` value exceeding this limit
+- The top-level `detail` value MUST be a JSON object. `affected_users` is a
+  non-negative integer (a boolean is not an integer for this contract), and
+  every `key_id` is a canonical UUID string
 - The service layer MUST validate that `detail` contains only keys
   defined in this contract for the given event type — undocumented keys
   are rejected
 - When a new `IdentityAuditEventType` is added that uses the `detail`
   column, this table MUST be extended with the corresponding schema
   definition before the implementation proceeds
+
+### `IdentityAuditLog.log_event()`
+
+```python
+class IdentityAuditLog(BaseAuditLog):
+    name = "identity"
+    description = "User lifecycle, roles, API keys, and role mappings"
+    model_class = IdentityAuditEvent
+
+    @classmethod
+    async def log_event(
+        cls,
+        session: AsyncSession,
+        *,
+        event_type: IdentityAuditEventType,
+        user_id: UUID | None,
+        target_user_id: UUID | None,
+        old_value: str | None = None,
+        new_value: str | None = None,
+        detail: Mapping[str, str | int] | None = None,
+    ) -> None:
+        ...
+```
+
+The method accepts only an `IdentityAuditEventType` member and the exact typed
+fields above. It validates the event-specific required/NULL field combination
+from the IdentityAuditEventType table and the `detail` schema. It enforces
+event types that are intrinsically system-only (`manager_changed`) and
+intrinsically administrator-only
+(`role_mapping_created` and `role_mapping_deleted`). For events whose actor is
+listed as "Per Actor Contract", invocation-source attribution is a caller
+obligation because `log_event()` receives no invocation-source parameter. A
+contract violation — including a raw/unknown event type, missing or
+unexpected field, wrong detail value type, unknown key, invalid UUID string,
+oversized payload, or JSON encoding failure — raises `ValueError`. Database and
+flush exceptions propagate unchanged. Callers MUST NOT catch an audit failure
+and continue the business mutation.
+
+Validation and persistence occur in this deterministic order:
+
+1. Validate `event_type`, actor/target requirements, and the original
+   `old_value`/`new_value`/`detail` combination. Unknown detail keys and schema
+   mismatches fail here, before truncation or size measurement.
+2. Truncate non-NULL `old_value` and `new_value` to their first 512 Unicode
+   code points, with no Unicode normalization and no ellipsis.
+3. If `detail` is non-NULL, serialize it solely for size measurement as compact
+   deterministic JSON with `ensure_ascii=False`, sorted keys, separators `,`
+   and `:` without spaces, and no non-finite numbers. Encode the complete JSON
+   representation as UTF-8, including braces, keys, quotes, and escaping.
+4. Accept a serialized size of at most 4096 bytes. More than 4096 bytes raises
+   `ValueError`; no event is inserted.
+5. Create exactly one `IdentityAuditEvent` and flush it before returning.
+
+An empty `detail` mapping is invalid. Callers represent the absence of
+structured context with `detail = NULL`.
+
+The method returns `None` and never commits or rolls back. Each successful
+invocation creates a new event and is not idempotent; callers invoke it only
+for an effective mutation. It uses the mutation's caller-owned transaction, so
+an audit validation or insert failure rolls back the mutation and event
+together.
 
 ## API
 
@@ -296,6 +392,14 @@ Tests for any identity-mutating service MUST verify:
 3. `user_id` and `target_user_id` are correctly populated
 4. `old_value`, `new_value`, and `detail` are correctly populated
 5. The event is created in the same transaction (rollback = no event)
+
+Tests for `IdentityAuditLog.log_event()` itself MUST cover every documented
+validation rejection, truncation at 512 Unicode code points, and acceptance at
+4096 UTF-8 bytes with rejection above that boundary.
+
+Self-service endpoint tests MUST verify all three actor-anonymization branches,
+that `actor` is always a string rather than a User object, and that events with
+`target_user_id IS NULL` are excluded.
 
 ## Cross-references
 

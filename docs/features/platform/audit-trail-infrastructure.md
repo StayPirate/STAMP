@@ -125,7 +125,7 @@ class BaseAuditLog:
         - actor is a string: JOIN User, WHERE username = <actor>
 
         The `actor` parameter follows the User Identifier Resolution
-        convention defined in `docs/conventions.md`: if the value is a
+        convention defined in `docs/api-spec.md`: if the value is a
         valid UUID, lookup is by `user.id`; otherwise, lookup is by
         `user.username` (exact match). If the provided username or UUID
         does not match any user in the system, the method returns an
@@ -173,10 +173,10 @@ class FetcherAuditLog(BaseAuditLog):
     model_class = FetcherAuditEvent
 ```
 
-`SettingAuditLog` overrides `log_event()` with the typed domain signature and
-validation defined in `docs/features/platform/system-settings.md`
-(`SettingAuditLog Service`). It inherits the flush-before-return, no-commit,
-exception propagation, and caller-owned transaction guarantees below.
+`SettingAuditLog` and `IdentityAuditLog` override `log_event()` with the typed
+domain signatures and validation defined in their owning specifications. They
+inherit the flush-before-return, no-commit, exception propagation, and
+caller-owned transaction guarantees below.
 
 **Note**: these subclasses define only service-layer attributes (name,
 description, model reference, retention). Database columns (`id`,
@@ -260,8 +260,8 @@ caller's transaction governs durability.
 - `user_id` is inherited from `AuditEventMixin` and is nullable at the
   database level in all audit event models
 - `user_id` is set when the action was initiated by a human user
-- `user_id` is `NULL` when the action was initiated by the system (e.g.,
-  background task, external sync, automated detection)
+- `user_id` is `NULL` when no authenticated Sentinel user is attributable to
+  the workflow (e.g., CLI, background task, external sync, automated detection)
 - Subclasses that only record human-initiated actions (e.g.,
   `SettingAuditLog`, `FetcherAuditLog`) MUST override `log_event()` to
   validate that `user_id` is provided, raising `ValueError` if it is

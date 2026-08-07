@@ -338,37 +338,14 @@ exemption removal there so it is not forgotten.
 - Use appropriate HTTP status codes and response models
 - **User identifier resolution**: all parameters that identify a user accept
   either a UUID or a username (see `docs/api-spec.md`, "User Identifier
-  Resolution"). Use the shared `resolve_user_identifier` dependency:
-
-  ```python
-  from uuid import UUID
-  from sqlalchemy import select
-  from sqlalchemy.ext.asyncio import AsyncSession
-
-  from app.core.exceptions import UserNotFoundError
-
-  async def resolve_user_identifier(
-      identifier: str, db: AsyncSession
-  ) -> User:
-      """Resolve a user by UUID or username.
-
-      If the identifier is a valid UUID, lookup is by primary key.
-      Otherwise, lookup is by the username field (exact match).
-      Raises UserNotFoundError if no user is found.
-      """
-      try:
-          user_uuid = UUID(identifier)
-          user = await db.get(User, user_uuid)
-      except ValueError:
-          user = await db.scalar(
-              select(User).where(User.username == identifier)
-          )
-      if not user:
-          raise UserNotFoundError(identifier)
-      return user
-  ```
-
-  Location: `backend/app/core/dependencies.py` (or equivalent shared module)
+  Resolution"). The owning domain service resolves the value: parse a valid
+  UUID as the primary key; otherwise perform an exact stored-username lookup;
+  raise `UserNotFoundError` when no row matches. API dependencies may parse or
+  pass through the path value, but MUST NOT execute the ORM query themselves.
+  A pure shared parser may live in Core; a resolver that loads `User` belongs
+  to the service layer because Core has no application imports. Identity
+  consumers use `user_service.resolve_user_identifier()` as specified in
+  `docs/features/identity/user-service.md`.
 
 - **Capability-based authorization**: use `require_capability()` as the
   standard authorization dependency for capability-protected endpoints.
@@ -570,6 +547,42 @@ conventions, atomicity rules, and the Audit Trail Index.
 
 ### Transaction and Locking
 
+#### Caller-Owned Service Transactions
+
+Composable service functions that accept an `AsyncSession` supplied by their
+caller participate in the caller's transaction. They MUST flush when required
+to expose generated identifiers, returned state, audit records, or constraint
+violations before returning, but MUST NOT commit or roll back. Exceptions
+propagate to the caller without preserving a partial service result.
+
+The workflow entry point owns completion of that transaction:
+
+- an API database-transaction dependency commits exactly once after the
+  handler and all delegated services succeed, and rolls back exactly once when
+  an exception escapes;
+- a mutating CLI async workflow follows the transaction contract in
+  `docs/features/platform/cli-infrastructure.md`; and
+- a Celery task or other synchronous process entry point wraps one complete
+  async workflow, which commits once on success and rolls back once on
+  failure.
+
+This contract permits one workflow to compose multiple services and their
+audit events atomically. A service MUST NOT commit an intermediate mutation or
+roll back work that belongs to its caller. A component that explicitly owns
+its sessions as an orchestration boundary rather than accepting a
+caller-supplied session (for example `BaseFetcher.run()`) keeps the transaction
+contract defined by its owning specification; this rule does not convert such
+orchestrators into caller-owned services.
+
+External effects remain outside the PostgreSQL transaction. A service may
+return the data needed for a post-commit effect, but the workflow owner invokes
+that effect only after its database commit succeeds and the row lock is
+released, following Transaction Hygiene Rules below. For API workflows, the
+transaction boundary preserves or registers the returned effect data until the
+dependency has committed, then runs the effect. The internal callback or
+framework mechanism used to bridge handler return and dependency completion is
+an implementation choice; executing the effect before commit is not.
+
 When a service module centralizes all mutations on an entity (e.g.,
 `ticket_mutations` for tickets), concurrent transactions can produce
 lost updates or stale audit trail values. To prevent this, apply
@@ -577,9 +590,9 @@ pessimistic locking at the module boundary.
 
 #### Pessimistic Locking Pattern
 
-Every public function in a centralized mutation module MUST acquire a
-row-level lock on the root entity as the first database operation in
-the transaction:
+Every public function in a centralized mutation module that performs a
+state-dependent mutation of an existing root entity MUST acquire a row-level
+lock on that root as its first database operation in the transaction:
 
 ```python
 ticket = await db.execute(
@@ -590,6 +603,21 @@ ticket = await db.execute(
 This serializes all concurrent mutations on the same entity at the
 database level. The lock is released automatically when the transaction
 commits or rolls back.
+
+The rule is proportional to the mutation:
+
+- creation has no existing root row to lock; database uniqueness constraints
+  and conflict translation are authoritative for concurrent creates;
+- read-only functions acquire no mutation lock;
+- an operational metadata touch implemented as one conditional atomic UPDATE
+  (for example monotonic `last_used_at`) needs no separate row lock when its
+  owning specification proves the race outcome; and
+- validation or expensive input-only computation that does not query the
+  database may occur before the first database operation and lock.
+
+These cases are not permission to split a read-modify-write mutation around a
+lock. Once a function begins reading persisted state that determines a root
+mutation or its audit values, it must acquire the root lock first.
 
 #### Transaction Hygiene Rules
 
