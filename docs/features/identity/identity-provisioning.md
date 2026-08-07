@@ -205,8 +205,9 @@ independently — creating or deleting one does not affect the other.
    `target_user_id = NULL`,
    `new_value` = `"{group_name} -> {role}"`,
    `detail` = `{"group_name": "...", "role": "...", "affected_users": N}`
-5. Commit and return. `affected_users_count` = `added_count` (only
-   newly created UserRole records, not pre-existing ones)
+5. Return `affected_users_count = added_count` (only newly created UserRole
+   records, not pre-existing ones). The API transaction dependency commits
+   once after the handler and all delegated services succeed.
 
 ### Delete Role Mapping
 
@@ -319,7 +320,7 @@ Provider.
 When external provisioning is activated, the bootstrap sequence is:
 
 1. Create local admin via CLI:
-   `sentinel manage-user create --username bootstrap-admin --email bootstrap@localhost --role admin`
+   `sentinel manage-user create --username bootstrap-admin --email bootstrap@example.com --role admin`
 2. Configure external provisioning endpoint (SCIM Service Provider
    settings, bearer token)
 3. Trigger initial full sync (or wait for hourly cycle) — external

@@ -24,7 +24,7 @@ its feature spec, per the classification rule in
 `docs/conventions.md` (CLI Command Behaviors are documented via the CLI
 Output Contract, not the Q1-Q6 completeness framework).
 
-**Out of scope for this phase**: structured/machine-readable (`--json`)
+**Out of scope**: structured/machine-readable (`--json`)
 output. No currently specified command defines such a flag. If a future
 command requires it, the shared serialization envelope will be defined
 here at that time — specifying it now would be speculative. See
@@ -51,9 +51,9 @@ explicit per-command opt-in.
 | Property | Value |
 |---|---|
 | Console script | `sentinel`, registered via `[project.scripts]` in `backend/pyproject.toml` (`sentinel = "app.cli:main"`) |
-| Module invocation | `python -m sentinel ...`, backed by `backend/app/cli/__main__.py` delegating to the same `main()` entry point |
-| Code location | `backend/app/cli/` (new top-level package under `backend/app/`) |
-| Group assembly | `backend/app/cli/__init__.py` defines the root Click group (`main`) and registers each command group (`manage-user`, `fetcher`, `api-key`, and any future group) as a sub-group via `main.add_command(...)` |
+| Module invocation | `python -m app.cli ...`, backed by `backend/app/cli/__main__.py` delegating to the same `main()` entry point |
+| Code location | `backend/app/cli/` (subpackage under `backend/app/`) |
+| Group assembly | `backend/app/cli/__init__.py` defines a root Click group (`cli`) and registers each command group (`manage-user`, `fetcher`, `api-key`, and any future group) via `cli.add_command(...)`; the exported `main()` wrapper performs eager-option handling, fail-fast bootstrap, signal setup, and invokes `cli.main(standalone_mode=False)` |
 
 Each command group (`manage-user`, `fetcher`, `api-key`) is implemented as
 its own Click `Group` in a dedicated module under `backend/app/cli/`
@@ -61,7 +61,10 @@ its own Click `Group` in a dedicated module under `backend/app/cli/`
 root group at import time. This mirrors the fetcher registry's
 import-time discovery pattern (`fetcher-infrastructure.md`, Registry)
 without requiring dynamic discovery — the CLI's command surface is small
-and enumerated explicitly.
+and enumerated explicitly. Those modules define only lightweight Click
+metadata at import time; imports of `app.config`, `app.database`, and service
+modules that transitively instantiate settings are deferred until after eager
+`--help`/`--version` handling and the fail-fast settings boundary.
 
 **Q1 (inputs)**: N/A — this section describes packaging, not a function.
 
@@ -70,17 +73,24 @@ and enumerated explicitly.
 The root group (`sentinel`) performs the following steps, in order, before
 dispatching to the invoked subcommand:
 
-1. Parse global options: `--version` (prints the value from
+1. Parse `--version` (prints the value from
    `importlib.metadata.version("sentinel")` and exits 0, per the existing
-   pattern in `backend/app/main.py`) and `--help` (Click's default
-   behavior).
-2. Load `Settings` (`backend/app/config.py`). If `Settings` initialization
-   raises (invalid configuration), the process fails fast: a plain-text
-   `Error: ...` message is printed to stderr and the process exits with
-   code 2 (system error), consistent with the fail-fast precedents in
-   `docs/conventions.md` (Runtime Version) and `logging.md` (Startup
-   Validation).
-3. Apply the minimal structlog-to-stderr configuration required by
+   pattern in `backend/app/main.py`) and help at every command level. Version
+   and help are eager: `sentinel --help`, `sentinel <group> --help`, and
+   `sentinel <group> <command> --help` exit 0 without loading application
+   settings, opening database or Redis connections, or importing modules that
+   instantiate settings.
+2. Load the `Settings` singleton from `backend/app/config.py` inside the entry
+   point's fail-fast boundary. `app.cli` package import and command registration
+   MUST remain lightweight enough to preserve step 1 even though
+   `app.config` instantiates `Settings` at module import. If that import or
+   initialization raises (invalid configuration), the boundary prints a
+   plain-text `Error: ...` message to stderr and exits with code 2 (system
+   error), without a traceback. This is consistent with the fail-fast
+   precedents in `docs/conventions.md` (Runtime Version) and `logging.md`
+   (Startup Validation).
+3. Install the `SIGINT` and `SIGTERM` handlers defined in Signal Handling.
+4. Apply the minimal structlog-to-stderr configuration required by
    `docs/features/platform/logging.md` (§"Scope of this pipeline"): route
    structlog output through stdlib `logging` to stderr, plain-text format,
    level `WARNING` or above. This ensures DEBUG/INFO messages from shared
@@ -88,7 +98,7 @@ dispatching to the invoked subcommand:
    remains reserved exclusively for the CLI Output Contract. No
    correlation IDs (`request_id`, `celery_task_id`, `fetcher_run_id`) are
    bound in this context.
-4. Dispatch to the invoked subcommand.
+5. Dispatch to the invoked subcommand.
 
 **Q1 (inputs)**: global CLI arguments (`--version`, `--help`, and the
 subcommand path) — standard Click argument parsing, no custom semantics
@@ -98,7 +108,7 @@ beyond what is described above.
 executes (exit 2). No other root-level guard exists — per-command guards
 (e.g., configuration guards, see below) are evaluated by each subcommand.
 
-**Q3 (behavior)**: as enumerated in the four steps above; no other root
+**Q3 (behavior)**: as enumerated in the five steps above; no other root
 group behavior exists.
 
 **Q6 (exceptions)**: `Settings` validation exceptions are caught at this
@@ -116,10 +126,12 @@ declares only `asyncpg`, no `psycopg`/`psycopg2`). Every CLI command,
 whether read-only or mutating, follows the same mechanism — there is no
 per-command path selection.
 
-- The command constructs an `AsyncSession` via the existing
-  `async_session_factory` (`backend/app/database.py`) and passes it
-  into a single `asyncio.run(...)` call wrapping the **entire command
-  workflow** — not just a service invocation. For read-only commands
+- The synchronous command boundary passes the existing
+  `async_session_factory` (`backend/app/database.py`) into a single
+  `asyncio.run(...)` call wrapping the **entire command workflow** — not
+  just a service invocation. The async workflow creates and closes each
+  `AsyncSession`; the synchronous boundary never creates a live session
+  before entering `asyncio.run()`. For read-only commands
   (`fetcher list`, `fetcher config`, `manage-user list`, `manage-user
   show`, `api-key list`), the wrapped function delegates database reads
   to the architecture-approved query or service boundary. For commands
@@ -137,6 +149,12 @@ per-command path selection.
   function is acceptable for one-shot CLI processes — the event loop has
   no other work scheduled while waiting for operator input, unlike in a
   server context where blocking would stall concurrent requests, e.g.:
+
+  An interactive prompt MUST NOT run while a database session is open.
+  Pre-prompt reads complete and their session closes before terminal input;
+  after confirmation, the mutation opens a new session. This prevents an
+  unanswered prompt from leaving a connection idle in transaction. The
+  staleness contract below governs the state change between those sessions.
 
   ```python
   async def deactivate_flow(session_factory, username):
@@ -196,8 +214,12 @@ per-command path selection.
   ```python
   async def revoke_flow(session_factory, key_id):
       async with session_factory() as db:
-          await api_key_service.revoke_key(db, key_id, ...)
-          await db.commit()
+          try:
+              await api_key_service.revoke_key(db, key_id, ...)
+              await db.commit()
+          except BaseException:
+              await db.rollback()
+              raise
 
   asyncio.run(revoke_flow(async_session_factory, key_id))
   ```
@@ -205,38 +227,39 @@ per-command path selection.
   Read-only example:
 
   ```python
-  async def fetcher_list(session_factory):
+  async def manage_user_list(session_factory, filters):
       async with session_factory() as db:
-          fetchers = (await db.execute(select(FetcherConfig))).scalars().all()
-      print_table(fetchers)
+          page = await user_service.list_users(db, **filters)
+      print_table(page.items)
 
-  asyncio.run(fetcher_list(async_session_factory))
+  asyncio.run(manage_user_list(async_session_factory, filters))
   ```
 
-- Each mutating async CLI workflow owns one database transaction. It opens
-  the transaction, invokes services that flush but never commit, commits
-  exactly once after the complete workflow succeeds, and rolls back on any
-  exception. This permits a command to compose multiple service operations
-  atomically. Read-only commands require no explicit commit.
+- Each async CLI workflow that performs a PostgreSQL mutation owns one
+  database transaction. It opens the transaction, invokes services that flush
+  but never commit, commits exactly once after the complete database workflow
+  succeeds, and rolls back on any exception or interruption before commit.
+  This permits a command to compose multiple service operations atomically.
+  Read-only workflows and workflows such as `manage-user unlock` that read
+  PostgreSQL but mutate only ephemeral Redis state issue no empty database
+  commit; session closure ends any read transaction without persisting state.
 - Per the sync-to-async bridging convention (`docs/conventions.md`,
   SQLAlchemy Conventions), exactly one `asyncio.run()` call occurs per
   command invocation, wrapping the extracted `async def` flow function.
+- A delegated service or workflow that uses application-owned Redis obtains
+  its async client or client factory inside that same `asyncio.run()` boundary
+  and closes the client before the boundary returns. No live async Redis client
+  is retained across command invocations or created at module import. The
+  consumer-owned factory, accessor, or equivalent replaceable boundary is an
+  implementation choice; existing service signatures do not gain a Redis
+  parameter solely for CLI use.
 - Connection failure (database unreachable) propagates as an exception
   from the wrapped async call; see "Error Handling & Exit Code Mapping"
   below.
 
-As of this writing, of the 11 currently specified commands, 5 are
-read-only (`fetcher list`, `fetcher config`, `manage-user list`,
-`manage-user show`, `api-key list`) and 6 delegate to an async service
-module for mutation (`manage-user create`, `manage-user update`,
-`manage-user deactivate`, `manage-user set-password`, `manage-user
-unlock`, `api-key revoke`). This documents the pattern each command
-already follows in its owning spec (`user-management.md`,
-`api-key-management.md`, `fetcher-operations.md`) — this section does not
-change any existing command's behavior, it only defines the shared
-mechanism underlying all of them. This inventory is illustrative, not
-an exhaustive registry that must be updated per new command (the
-authoritative, current list lives in `docs/cli-reference.md`).
+The transaction classification of each command follows its owning feature
+specification. `docs/cli-reference.md` is the command catalog; this shared
+infrastructure specification does not duplicate that inventory.
 
 **Q4 (audit events)**: N/A — this section describes session acquisition
 only. Whether a given command's operation creates audit events is
@@ -255,8 +278,8 @@ mechanism itself.
 Every CLI command is wrapped by a single, unified exception mapper that
 maps exceptions to the exit codes defined in `docs/conventions.md` (CLI
 Output Contract, Exit Codes table). This mapper is implemented once, as
-a top-level `try/except` in the root Click group's `main()` override
-(the shared entry point wrapper in `backend/app/cli/`), so individual
+a top-level `try/except` in the exported `main()` entry-point wrapper around
+the root Click group invocation, so individual
 command specs do not need to restate this mapping.
 
 The root group invokes Click with `standalone_mode=False`. In this
@@ -282,8 +305,8 @@ untouched, never reaching this mapper.
 | `click.Abort` (raised by Click when an interactive prompt, e.g. `click.confirm()` or a hidden password prompt, receives EOF/Ctrl+D — and, in non-standalone mode, also the exception type Click internally converts `KeyboardInterrupt` into during prompt handling) | 0 | The mapper prints `Aborted.` to stdout and exits 0. This is the same code path whether `Abort` originates from an explicit prompt decline (in which case the command's own code, per Database Session Management, has already printed its own cancellation message before returning/re-raising, so the mapper's `Aborted.` fallback is not what the operator sees) or from EOF bypassing the command's own code entirely (in which case the mapper's `Aborted.` is the only message printed). Treated as an operator-initiated cancellation, not an error, consistent with the Exit Codes table. TTY detection (Interactive Input Helpers) is expected to reject non-interactive invocations before a prompt is reached in the first place. |
 | A `ServiceError` subclass (or any shared exception per `docs/conventions.md`, Service Exception Conventions) raised by a delegated service call | 1 | The exception's message is formatted as `Error: {message}` and printed to stderr. The specific message text is determined by the command's own spec (see each command spec's "Behavior" section for the exact error strings), not by this mechanism. |
 | A validation failure raised directly by the CLI command's own input parsing (e.g., invalid username format, password length) — i.e., a guard documented in the command's own spec, not a service exception | 1 | Same formatting as above; message text owned by the command spec. |
-| SQLAlchemy `OperationalError`/`DBAPIError` (or another connection-related `SQLAlchemyError` subset, e.g. database unreachable), or `RedisError` (per `docs/conventions.md`, Redis Error Handling) surfacing from a command that touches Redis | 2 | Printed to stderr as `Error: {message}`. This is the exit code the "Automated Verification" mandatory test scenario in `docs/conventions.md` (CLI Conventions) requires to be simulatable. This category is intentionally narrow: generic `OSError`/`ConnectionError` are NOT caught here. Broken-pipe scenarios are already handled by Click's own EPIPE handling before the mapper is reached (see above); other unrelated `OSError` subclasses (`FileNotFoundError`, `PermissionError`, etc.) fall through to the catch-all row below, which prints an accurate generic message rather than a misleading "database unreachable" one. |
-| Any other unhandled exception | 2 | Printed to stderr as `Error: {message}`. Reserved as the catch-all "system error" path per the Exit Codes table in `docs/conventions.md`. |
+| SQLAlchemy `OperationalError`/`DBAPIError` (or another connection-related `SQLAlchemyError` subset, e.g. database unreachable), or `RedisError` (per `docs/conventions.md`, Redis Error Handling) surfacing from a command that touches Redis | 2 | Printed to stderr as `Error: {message}`. This is the exit code that `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → CLI Commands) requires the harness to simulate. This category is intentionally narrow: generic `OSError`/`ConnectionError` are NOT caught here. Broken-pipe scenarios are already handled by Click's own EPIPE handling before the mapper is reached (see above); other unrelated `OSError` subclasses (`FileNotFoundError`, `PermissionError`, etc.) fall through to the catch-all row below, which prints an accurate generic message rather than a misleading "database unreachable" one. |
+| Any other unhandled exception | 2 | Log the exception at ERROR with exception context under `logging.md`'s secrets/PII discipline, then print `Error: {message}` to stderr. If `str(exception)` is empty, use the exception class name as `{message}`. Reserved as the catch-all "system error" path per the Exit Codes table in `docs/conventions.md`. |
 | `KeyboardInterrupt` (operator sends SIGINT, e.g., Ctrl+C) | 130 | Not caught by this mapper (it is a `BaseException` subclass, and — for the direct SIGINT case — is intercepted at the OS signal level before it can even be raised as a Python exception). See Signal Handling below. |
 | `SIGTERM` received while a command is running | 143 | Not caught by this mapper (`BaseException` subclass). See Signal Handling below. |
 
@@ -360,8 +383,8 @@ open a second `asyncio.run()` call. If the settings read itself fails
 exit-2 "connection failure" path defined in Error Handling & Exit Code
 Mapping — the guard introduces no separate error-handling path.
 
-**No currently specified command uses this mechanism** (none of the 11
-commands declares a configuration guard). This section exists so that a
+**No currently specified command uses this mechanism.** This section exists so
+that a
 future command needing one has a defined shape to follow, per the MAY
 clause already present in `docs/conventions.md`. This is not new
 scope — it documents the mechanism for an already-declared but
@@ -421,21 +444,23 @@ Scenarios → CLI Commands) and are not restated here.
   `CliRunner.invoke()` is itself synchronous; the commands under test
   internally call `asyncio.run()`, which would raise `RuntimeError` if
   invoked from within an already-running event loop.
-- **Database fixture**: the async session factory is passed into the
-  command under test (not injected via an async fixture in the test
-  function itself, since the test function is synchronous). The
-  factory points at the same test database used by the rest of the
-  suite (`docs/features/platform/testing-strategy.md`, Database
-  Strategy) — no separate CLI-only database is provisioned, for both
-  read-only and mutation commands.
-- **Exit code and channel assertions**: the "Automated Verification"
-  scenarios required by `docs/conventions.md` (CLI Conventions) are
-  implemented against this harness: exit 0 on success/idempotent no-op,
-  exit 1 on simulated user errors, exit 2 on simulated system errors
-  (achieved by monkeypatching the session factory to raise a connection
-  error), stderr/stdout channel separation, and multi-step
-  `✓`/`✗`/`—` output for commands with fail-fast multi-step behavior.
-- **Signal handling**: not mechanically tested via `CliRunner` (which
-  does not simulate OS signals); verified by manual/integration testing
-  when the CLI is implemented. This is a documented testing limitation,
-  not a gap in this specification.
+- **Database fixture**: the async session factory is passed into the command
+  under test, not a live `AsyncSession`. It targets the same test PostgreSQL
+  server as the rest of the suite, but MUST NOT reuse an asyncpg connection
+  acquired on pytest-asyncio's event loop. The harness satisfies this by using
+  a CLI-test engine with `NullPool`, or an equivalent factory whose engine and
+  connections are created, used, and disposed on the command's event loop.
+  Mutation-command tests perform explicit cleanup because their successful
+  commit cannot be undone by the ordinary per-test rollback fixture. See
+  `docs/features/platform/testing-strategy.md` (Sync Entry-Point Tests).
+- **Redis fixture**: the synchronous harness injects the designated worker
+  database URL or a replaceable client factory, never a live async Redis
+  client. The workflow creates, uses, and closes its client on the event loop
+  established by its production `asyncio.run()` boundary. Setup and cleanup
+  use independently owned clients and never share client objects across event
+  loops.
+- **Scenario ownership**: exit-code, channel, async-boundary, transaction,
+  signal, prompt, and image-smoke scenarios are defined only in
+  `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → CLI
+  Commands). They execute through this harness and the production mechanisms
+  specified above.

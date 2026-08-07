@@ -865,7 +865,9 @@ fetcher, defaults to `yes`.
 provides the list of registered fetcher names; `FetcherConfig` rows
 whose `fetcher_name` is not in the registry provide deregistered
 fetchers. The database provides `FetcherRun` and
-`FetcherConfig` data for both.
+`FetcherConfig` data for both. This command's async workflow may execute these
+specified reads directly under the narrowly scoped read-only CLI exception in
+`docs/architecture.md`; it performs no mutation or lifecycle business logic.
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any
 time.
@@ -944,7 +946,8 @@ Differences from the registered fetcher output:
 **Data source**: queries `FetcherConfig` from the database. For
 registered fetchers, also reads the `Settings` model from the
 fetcher registry. For deregistered fetchers, only DB-stored data is
-available.
+available. This command uses the same read-only CLI exception defined for
+`fetcher list` above.
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run at any
 time.

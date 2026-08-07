@@ -332,6 +332,12 @@ publication all completed; see Progress Log).
 **Outcome**: local users can authenticate, bootstrap an administrator, use API
 keys, and access the ticket-independent identity management surface.
 
+The Phase 2 documentation gates referenced below are: `SG-03` (#105, session,
+lockout, and identity logging), `SG-04` (#106, API key contracts), `SG-05`
+(#108, user lifecycle and identity audit), `SG-06` (#109, CLI invocation and
+transactions), `SG-07` (#107, system settings bootstrap and reads), and
+`SG-08` (#101, Redis I/O ordering and rollback claims).
+
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
 | `P2-01` | Session and API key persistence | Phase 1, SG-03, SG-04 | `identity/authentication.md`, `identity/api-key-management.md` |
@@ -341,12 +347,12 @@ keys, and access the ticket-independent identity management surface.
 | `P2-05` | API key lifecycle service and audit | `P2-01`, `P2-02` | `identity/api-key-service.md` |
 | `P2-06` | Unified authentication and capability dependencies | `P2-05`, `P2-03` | `identity/rbac.md`, `identity/authentication.md` |
 | `P2-07` | Self-service and admin API key endpoints | `P2-06` | `identity/api-key-management.md`, `identity/api-key-service.md` |
-| `P2-08` | User read functions plus `create_user`, `update_user`, and `reactivate_user` | `P2-02`, `P2-04` | `identity/user-service.md` |
+| `P2-08` | User read functions plus `create_user`, `update_user`, and `reactivate_user`; add `email-validator` | `P2-02`, `P2-04` | `identity/user-service.md` |
 | `P2-09` | `reset_password` and `unlock_user` services | `P2-03`, `P2-08` | `identity/user-service.md` |
 | `P2-10` | User read, profile, and identity audit APIs | `P2-06`, `P2-08` | `identity/user-management.md`, `identity/identity-audit-log.md` |
 | `P2-11` | Ticket-independent admin user APIs | `P2-09`, `P2-10` | `identity/user-management.md`, `identity/rbac.md` |
-| `P2-12` | CLI infrastructure and user bootstrap commands | SG-06, `P2-08` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
-| `P2-13` | Remaining local identity CLI commands | `P2-05`, `P2-09`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md`, `identity/api-key-management.md` |
+| `P2-12` | CLI infrastructure; `manage-user create`, `list`, and `show` | SG-06, `P2-08` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
+| `P2-13` | `manage-user set-password` and `unlock`; `api-key list` and `revoke` | `P2-05`, `P2-09`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md`, `identity/api-key-management.md` |
 | `P2-14` | System settings persistence and bootstrap | SG-07 | `platform/system-settings.md` |
 | `P2-15` | System settings read and audit APIs | `P2-14`, `P2-06` | `platform/system-settings.md` |
 
@@ -363,6 +369,23 @@ unassignment/audit side effect, their API endpoints, and their CLI surfaces are
 deferred in their entirety to Phase 4. The composite `manage-user update`
 command is likewise deferred because it includes role changes; Phase 2 does
 not expose a reduced option set or partially implement its workflow.
+
+The Phase 2 CLI inventory is exactly these seven commands:
+
+- `sentinel manage-user create`
+- `sentinel manage-user list`
+- `sentinel manage-user show`
+- `sentinel manage-user set-password`
+- `sentinel manage-user unlock`
+- `sentinel api-key list`
+- `sentinel api-key revoke`
+
+`P2-08` adds the direct `email-validator` dependency because the lifecycle
+service is its first consumer. `P2-12` adds the direct Click dependency,
+registers `[project.scripts]` exactly as `sentinel = "app.cli:main"`, and adds
+`backend/app/cli/__main__.py` for `python -m app.cli`. Dependency lock and
+packaging metadata are updated with those implementation pieces; SG-06 itself
+changes documentation only.
 
 SG-05 resolves the former Phase 4 documentation gate for the identity
 role-removal audit contradiction. The remaining Phase 4 pieces therefore own
@@ -397,7 +420,7 @@ metrics, and be operated through generic API/CLI surfaces.
 | `P3-03` | CPE package mapping loader, pure resolution, startup validation, and fixtures | `P1-02` | `packages/cpe-package-mapping.md` |
 | `P3-04` | Generic task wrapper, config bootstrap, redbeat reconciliation, worker/Beat image smoke | `P3-02`, `P3-03`, `P1-06` | `platform/fetcher-infrastructure.md` |
 | `P3-05` | Generic fetcher API operations | `P3-04`, `P2-05` | `platform/fetcher-operations.md` |
-| `P3-06` | Fetcher diagnostic CLI | `P3-04`, `P2-12` | `platform/fetcher-operations.md` |
+| `P3-06` | Fetcher diagnostic CLI: `fetcher list` and `fetcher config` | `P3-04`, `P2-12` | `platform/fetcher-operations.md` |
 | `P3-07` | Test-only no-op fetcher end-to-end validation | `P3-04`, `P3-05` | `platform/testing-strategy.md` |
 
 `P3-05` excludes the IBS RabbitMQ consumer status endpoint; that endpoint is
@@ -437,8 +460,8 @@ automatic ingestion.
 | `P4-22` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-21`, `P3-02` | `platform/cve-fetcher-infrastructure.md` |
 | `P4-23` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-19`, `P4-22` | ticket and CVE API specs |
 | `P4-24` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
-| `P4-25` | Complete `update_roles`, role commands, and role-management APIs | `P4-24` | identity service/management specs |
-| `P4-26` | Complete `deactivate_user`, impact query, commands, and APIs | `P4-24` | identity service/management specs |
+| `P4-25` | Complete `update_roles`, `manage-user update`, and role-management APIs | `P4-24` | identity service/management specs |
+| `P4-26` | Complete `deactivate_user`, impact query, `manage-user deactivate`, and APIs | `P4-24` | identity service/management specs |
 | `P4-27` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
 The candidate pieces above are intentionally more granular than the old

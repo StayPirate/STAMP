@@ -44,8 +44,9 @@ effects — in exactly one `asyncio.run()` call.
 Every function that accepts an `AsyncSession` follows
 `docs/conventions.md` (Caller-Owned Service Transactions): it flushes when
 required and never commits or rolls back. The API transaction dependency or
-complete CLI/task workflow commits exactly once after all delegated services
-succeed and rolls back when an exception escapes.
+complete CLI/task workflow commits exactly once after all delegated database
+mutations succeed and rolls back when an exception escapes. A read-only or
+Redis-only workflow such as `unlock_user()` performs no empty database commit.
 
 Functions that invalidate sessions return the identifiers and other values
 needed for Redis cleanup. The workflow owner performs that cleanup only after
@@ -217,8 +218,9 @@ no other active user holds Admin. Unknown users raise `UserNotFoundError`.
 This read is a point-in-time preview, creates no audit event, and acquires no
 mutation lock; deactivation re-evaluates actual state when it runs. API-key
 counting remains owned by `api_key_service.count_non_revoked_keys()`.
-This ticket-dependent read is deferred with deactivation to Phase 4; the Phase
-2 query slice contains only identifier resolution, list, and detail reads.
+This ticket-dependent read belongs only to the deactivation workflow; the
+general user query boundary contains identifier resolution, list, and detail
+reads.
 
 ### Mutation Result Types
 
@@ -960,8 +962,8 @@ with no error. This is a no-op, not a failure.
   Redis-only state, not a persistent identity mutation. Application
   logging (INFO level) provides sufficient operational visibility.
 - No session invalidation (unlocking does not indicate compromise).
-- The `reset_password()` operation continues to clear the lockout
-  counter as a post-commit side effect (step 9), but `unlock_user()`
+- The password reset workflow continues to clear the lockout counter as a
+  post-commit side effect (step 9), but `unlock_user()`
   provides an independent path that does not force a password change.
 - `acting_user_id` is accepted for lifecycle-call signature uniformity and has
   no persisted effect because unlock creates no audit event.
@@ -974,13 +976,14 @@ All database operations follow the caller-owned contract in
 `docs/conventions.md`. Service functions flush when required and never commit
 or roll back. The API dependency or complete CLI/task workflow commits once
 after every database mutation and audit event succeeds; an exception rolls the
-whole workflow back. This ensures that a user is never left in a partially
-mutated state.
+whole workflow back. Read-only and Redis-only workflows do not issue an empty
+commit. This ensures that a user is never left in a partially mutated state.
 
-Redis operations (session cache purge, login lockout counter deletion) are NOT
-part of the PostgreSQL transaction boundary. The workflow owner executes them
-post-commit using values returned by the service, and they are best-effort: if
-the process crashes between commit
+Redis operations returned by database-mutating functions such as
+`deactivate_user()` and `reset_password()` (session cache purge and login
+lockout counter deletion) are NOT part of the PostgreSQL transaction boundary.
+The workflow owner executes them post-commit using values returned by the
+service, and they are best-effort: if the process crashes between commit
 and Redis cleanup, or if Redis is unreachable, the affected cache
 entries expire naturally via TTL. The database is always the
 authoritative source — Redis is a performance optimization, not a
@@ -1065,8 +1068,8 @@ Ticket assignment locks the Ticket root while deactivation and VA-role loss
 lock the User root before scanning assigned tickets. An assignment that
 validated the user before deactivation and commits only after the unassignment
 scan may therefore leave an inactive or non-VA user assigned to an active
-ticket. This bounded residual race is accepted until the Phase 4 ticket and
-identity locking contracts are reconciled together; changing either lock order
+ticket. This bounded residual race is accepted until the ticket and identity
+locking contracts are reconciled together; changing either lock order
 in isolation could introduce a User↔Ticket deadlock. Operators repair the state
 through ordinary ticket reassignment. No periodic reconciliation mechanism is
 introduced solely for this race.

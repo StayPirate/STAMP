@@ -556,7 +556,7 @@ here with the required authorization level and a link to the owning spec.
 9. Admin bootstrap:
    - **Local-only phase** (current): create a local admin via
      `sentinel manage-user create --username bootstrap-admin
-     --email bootstrap@localhost --role admin`. This is the only
+     --email bootstrap@example.com --role admin`. This is the only
      bootstrap mechanism available when external provisioning is
      not active.
    - **With external provisioning** (future): after the initial
