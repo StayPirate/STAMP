@@ -281,6 +281,14 @@ purge), the cache entries self-heal via TTL expiry. The database is
 always the authoritative source for session validity — Redis is a
 performance optimization.
 
+**Database-phase callers**:
+
+| Caller | Context |
+|--------|---------|
+| Logout endpoint (`POST /api/v1/auth/logout`) | Calls `invalidate_session()` for the current session |
+| `user_service.deactivate_user()` | Calls `invalidate_user_sessions()` as part of deactivation side effects |
+| `user_service.reset_password()` | Calls `invalidate_user_sessions()` after updating `password_hash` |
+
 #### `purge_session_cache(session_ids: list[UUID]) -> None`
 
 Executes the post-commit cache purge for previously invalidated
@@ -296,14 +304,6 @@ handling so that callers do not restate them.
 This function has no database dependency; it operates exclusively on
 Redis. It is safe to call multiple times with the same input
 (idempotent — deleting a non-existent key is a no-op).
-
-**Callers**:
-
-| Caller | Context |
-|--------|---------|
-| Logout endpoint (`POST /api/v1/auth/logout`) | Calls `invalidate_session()` for the current session |
-| `user_service.deactivate_user()` | Calls `invalidate_user_sessions()` as part of deactivation side effects |
-| `user_service.reset_password()` | Calls `invalidate_user_sessions()` after updating `password_hash` |
 
 ### Concurrent sessions
 
