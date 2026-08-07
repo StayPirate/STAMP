@@ -195,9 +195,9 @@ DEBUG=true
 With SSO disabled (no SSO env vars), create a local admin user via CLI:
 
 ```bash
-cd backend && uv run python -m sentinel manage-user create \
+cd backend && uv run python -m app.cli manage-user create \
   --username admin \
-  --email admin@localhost \
+  --email admin@example.com \
   --role admin
 ```
 
@@ -834,7 +834,7 @@ for the full command catalog.
 **Execution model.** In staging and production, CLI commands are
 executed **exclusively via container shell access** — there is no
 supported host-level execution path in these environments. (Running the
-CLI directly on the host via `uv run python -m sentinel ...` is a
+CLI directly on the host via `uv run python -m app.cli ...` is a
 local-development-only pattern — see [Local Development](#local-development)
 above. It relies on a local `uv`-managed virtual environment that does
 not exist in staging/production containers.)
@@ -842,14 +842,15 @@ not exist in staging/production containers.)
 **Environment dependencies.** Run CLI commands in an environment where
 both PostgreSQL and Redis are reachable — the same dependencies already
 required by the API and worker processes. Most commands only need
-PostgreSQL; `sentinel manage-user unlock` and `sentinel manage-user
-set-password` also clear login lockout state stored in Redis and therefore
-require Redis connectivity for that effect to be immediate. This is
-operational guidance about environment provisioning, not a new runtime hard
-dependency. Feature-specific fallback behavior remains defined in
+PostgreSQL. `sentinel manage-user unlock` and `sentinel manage-user
+set-password` also clear login lockout state stored in Redis, while
+`sentinel manage-user deactivate` purges session-liveness cache entries;
+Redis connectivity is therefore required for those effects to be immediate.
+This is operational guidance about environment provisioning, not a new runtime
+hard dependency. Feature-specific fallback behavior remains defined in
 `docs/features/identity/local-authentication.md` and
 `docs/features/identity/authentication.md`; the Redis cleanup behavior of the
-two commands named above is defined in
+three commands named above is defined in
 `docs/features/identity/user-service.md`.
 
 **Docker / Podman Compose pattern.** The recommended pattern generalizes

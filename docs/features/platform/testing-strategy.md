@@ -667,6 +667,15 @@ these tests provide the async session factory itself (for the code
 under test to wrap in its own `asyncio.run()` call), not a live
 `AsyncSession` via an async fixture.
 
+The factory MUST NOT reuse an asyncpg connection acquired on pytest-asyncio's
+event loop. Synchronous CLI tests use a CLI-test engine with `NullPool`, or an
+equivalent factory whose engine and connections are created, used, and
+disposed on the event loop established by the production `asyncio.run()`
+boundary. The factory targets the shared test PostgreSQL server; it does not
+require a second server. A successful mutating command commits durable rows,
+so its test performs explicit cleanup on its own event loop rather than
+depending on the ordinary per-test rollback fixture.
+
 When such an entry point uses application-owned Redis, synchronous test
 fixtures obtain the designated worker-database URL from the provisioning
 layer and install the consumer's replaceable boundary without passing a live
@@ -674,7 +683,9 @@ async Redis client into the test. The workflow under test creates or obtains
 its own async client inside the event loop established by its single
 `asyncio.run()` call. Redis arrangement and assertions happen outside that
 invocation through the test harness; no client object is shared across event
-loops.
+loops. Setup and cleanup clients are created, used, and closed on the loop that
+owns them. Cleanup uses `FLUSHDB` only on the designated worker database and
+never `FLUSHALL`.
 
 ---
 
@@ -1055,9 +1066,10 @@ or identity audit validation are affected, tests MUST cover:
   workflow
 - `deactivate_user` rollback leaves no partial User, API-key, Session, ticket,
   TicketAuditEvent, or IdentityAuditEvent mutation when any composed step fails
-- API, CLI, and task workflows commit exactly once after all database services
-  succeed; a failure in a later composed service leaves no earlier mutation or
-  audit event
+- API, CLI, and task workflows with PostgreSQL mutations commit exactly once
+  after all database services succeed; a failure in a later composed service
+  leaves no earlier mutation or audit event. Read-only and Redis-only workflows
+  issue no empty commit
 - authenticated API events contain the authenticated actor; CLI/manual system
   creation, initial roles, updates, reactivation, and password reset use NULL;
   external initial roles contain both `source` and `mapping`
@@ -1172,14 +1184,39 @@ New models MUST be tested for:
 
 ### CLI Commands
 
-CLI commands MUST be tested per the automated verification contract
-in `docs/conventions.md` (CLI Conventions, Automated Verification):
+CLI commands MUST be tested against the Output Contract in
+`docs/conventions.md` and the production mechanisms in
+`docs/features/platform/cli-infrastructure.md`:
 
 - Exit code 0 on success and idempotent no-ops
 - Exit code 1 on user errors
 - Exit code 2 on system errors
 - Error messages on stderr, success messages on stdout
-- Multi-step commands produce `✓`/`✗`/`—` prefixed lines
+- Commands permitted to expose partial success produce `✓`/`✗`/`—` prefixed
+  lines
+- Each invocation crosses the production sync boundary through exactly one
+  `asyncio.run()` call
+- A successful PostgreSQL mutation commits exactly once; a service or later
+  workflow failure rolls back and commits zero times. Read-only and Redis-only
+  workflows issue no empty commit
+- `SIGINT` and `SIGTERM` subprocess tests wait for an observable readiness
+  point proving that the CLI signal handlers are installed, then assert exit
+  codes 130 and 143. A focused transaction test injects interruption after
+  flush and before commit and verifies rollback with no partial mutation or
+  audit event
+- TTY commands verify hidden input, non-TTY rejection, and prompt behavior
+  without exposing password material
+- `--help` at the root, group, and command levels and root `--version` exit 0
+  without loading application settings or opening database/Redis connections
+
+When the installed CLI first becomes container-visible, image smoke coverage
+asserts `sentinel --help`, `sentinel --version`, `python -m app.cli --help`,
+parity of the two entry points, and discovery of every command introduced by
+that implementation piece. Later CLI pieces extend command discovery and add
+representative non-destructive paths. Interactive mutation verification may be
+recorded manually when a pseudo-terminal would add disproportionate harness
+complexity; entry-point and command discovery remain automated under the Image
+Smoke Growth Rule.
 
 ---
 

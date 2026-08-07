@@ -2,7 +2,7 @@
 
 Sentinel provides a command-line interface via the `sentinel` entry
 point, registered as a console script in `pyproject.toml`. Host-level
-execution (e.g., `uv run python -m sentinel ...`) applies only to local
+execution (e.g., `uv run python -m app.cli ...`) applies only to local
 development; in deployed environments (staging/production), commands are
 executed via container shell access. See
 [CLI Operational Access](deployment.md#cli-operational-access) in
@@ -67,8 +67,8 @@ Password is collected interactively (hidden prompt, requires TTY).
 
 Updates an existing user account. Identity fields (`--email`,
 `--full-name`) are only permitted on local users. Role changes and
-reactivation are separate steps executed sequentially with fail-fast
-semantics.
+reactivation are composed atomically in one caller-owned transaction.
+Failure rolls back every change and audit event from the invocation.
 
 ```
 sentinel manage-user update \

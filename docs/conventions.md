@@ -945,6 +945,9 @@ handling, signal handling) backing the contract defined in this section.
 - **Username normalization**: all CLI commands that accept a username
   argument MUST normalize it (trim whitespace, lowercase) before lookup.
   See Username Format (above) for the full format specification
+- **Thin command boundary**: follow `docs/architecture.md` (Backend Layer
+  Architecture) for service delegation and the narrowly scoped read-only query
+  exception
 
 ### Database Access
 
@@ -1064,20 +1067,10 @@ Each command specification MUST explicitly declare its idempotency:
 
 #### Automated Verification
 
-When CLI commands are implemented, a parametrized test suite MUST verify
-the output contract mechanically. At minimum, the test suite should
-cover:
-
-- Exit code 0 on success and idempotent no-ops
-- Exit code 1 on known user errors (bad input, unknown resource)
-- Exit code 2 on simulated system errors (unreachable database/Redis)
-- Error messages written to stderr (not stdout)
-- Success messages written to stdout (not stderr)
-- Multi-step commands produce `✓`/`✗`/`—` prefixed lines on partial
-  failure
-
-This is preferred over a manual review agent because the rules are
-deterministic and mechanically verifiable.
+When CLI commands are implemented, the mandatory mechanical scenarios are
+defined in `docs/features/platform/testing-strategy.md` (Mandatory Test
+Scenarios → CLI Commands). That suite verifies this Output Contract; scenarios
+are not duplicated here.
 
 ## Shell Scripting
 

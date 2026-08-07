@@ -38,8 +38,14 @@ guidelines.
 
 These commands require direct shell access to the host or container. They are
 the bootstrap and recovery path when no administrator account is available.
-Ordinary creation after bootstrap uses the authenticated administrator API;
-there are no unauthenticated HTTP endpoints for user management.
+An operator may create a new local administrator with `manage-user create
+--role admin` or promote an existing user with `manage-user update --add-role
+admin`. `manage-user create` remains available regardless of the current
+administrator count, has no special zero-administrator branch, and never
+modifies an existing account. Both commands delegate lifecycle and role
+behavior to `user_service`; neither bypasses validation, audit, or transaction
+rules. Ordinary creation after bootstrap uses the authenticated administrator
+API; there are no unauthenticated HTTP endpoints for user management.
 
 ### `sentinel manage-user create`
 
@@ -520,9 +526,11 @@ stderr.
 ## Access Level Requirements
 
 User listing and user detail are accessible to all authenticated and
-unauthenticated users (read-only). Administration operations (create, edit,
-deactivate, reactivate, reset password, unlock, role management) require
-the `manage_users` capability.
+unauthenticated users (read-only). Administrator API operations (create, edit,
+deactivate, reactivate, reset password, unlock, role management) require the
+`manage_users` capability. CLI commands are authorized by direct shell or
+container access and pass `acting_user_id = None`; they do not evaluate an HTTP
+caller capability.
 
 ### Public API endpoints
 
@@ -1083,8 +1091,10 @@ handling is required.
    admin. This is intentional and non-problematic: the platform
    continues to function normally without active admin users (all
    non-admin features remain operational). In these rare cases, a
-   system administrator with shell access can restore admin access via:
-   `sentinel manage-user update --username <user> --add-role admin`.
+   system administrator with shell access can restore admin access by either
+   creating a new local administrator with `sentinel manage-user create
+   --username <new-user> --email <email> --role admin` or promoting an existing
+   user with `sentinel manage-user update --username <user> --add-role admin`.
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
