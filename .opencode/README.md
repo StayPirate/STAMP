@@ -74,21 +74,24 @@ declared in `.opencode/prompts/code.md` and `.opencode/prompts/spec.md`.
 
 Subagents have no `model` pinned by default: they inherit the model of the
 primary agent that invoked them (`spec` or `code`, see Primary Agents above).
-Subagents whose task involves deep analytical reasoning — finding subtle
-security flaws, evaluating architectural complexity, discovering unspecified
-scenarios, or reconciling nuanced cross-document/cross-diff detail — are
-pinned to a more capable model with extended thinking enabled, since GitHub
-Copilot prices all Claude Opus versions identically per token regardless of
-version. All other reviewer subagents are pinned to a mid-tier model with a
-high reasoning-effort preset, so their analytical depth is consistent
-regardless of the invoking primary agent, at lower cost/latency than the
-Opus 5 tier. No subagent currently relies on the inherited-model default;
-any future subagent added without a `model` field falls back to it.
+Subagents whose task relies most heavily on adversarial or creative reasoning
+over a single artifact, or on synthesizing subtle detail across multiple
+long documents — finding non-obvious security flaws, discovering unspecified
+scenarios within a spec, or reconciling nuanced cross-document
+inconsistencies — are pinned to a more capable model with extended thinking
+enabled, since GitHub Copilot prices all Claude Opus versions identically per
+token regardless of version. All other reviewer subagents, including those
+performing structured or checklist-like verification (architectural judgment
+against stated criteria, diff-vs-issue conformance), are pinned to a mid-tier
+model with a high reasoning-effort preset, so their analytical depth is
+consistent regardless of the invoking primary agent, at lower cost/latency
+than the Opus 5 tier. No subagent currently relies on the inherited-model
+default; any future subagent added without a `model` field falls back to it.
 
 | Tier | Model | Agents |
 |------|-------|--------|
-| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` | `@security-reviewer`, `@design-reviewer`, `@spec-gap-analyzer`, `@spec-conformance-reviewer`, `@spec-coherence-reviewer` |
-| 2 (pinned) | `github-copilot/claude-sonnet-5`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
+| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` | `@security-reviewer`, `@spec-gap-analyzer`, `@spec-coherence-reviewer` |
+| 2 (pinned) | `github-copilot/claude-sonnet-5`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@design-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@spec-conformance-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
 | 3 (inherited, no current members) | Invoking primary agent's model | — |
 
 Tier 1 and Tier 2 agents use the top-level `variant` frontmatter field, not a

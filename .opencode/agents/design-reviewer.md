@@ -6,8 +6,8 @@ description: >
   Use this agent after creating or substantially modifying a feature spec.
   Read-only: does not modify files.
 mode: subagent
-model: github-copilot/claude-opus-5
-variant: high
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:

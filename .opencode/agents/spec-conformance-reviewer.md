@@ -7,8 +7,8 @@ description: >
   opening or updating a pull request, or on demand with an explicit pull
   request reference. Read-only: does not modify files.
 mode: subagent
-model: github-copilot/claude-opus-5
-variant: high
+model: github-copilot/claude-sonnet-5
+variant: xhigh
 permission:
   edit: deny
   bash:
