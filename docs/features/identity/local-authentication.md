@@ -85,8 +85,9 @@ session, and returns a JWT.
     Lockout transition logging) — `user_id` is available from step 5
     when the username resolved to an existing user.
 11. On success: delete the failed attempt counter (best-effort — Redis
-    failure does not fail the login), create a `Session` record, update
-    `user.last_login_at = now()`, issue a JWT (see
+    failure does not fail the login). In one caller-owned database transaction,
+    create a `Session` record and update `user.last_login_at = now()`; commit
+    both once, or roll back both on failure. Then issue a JWT (see
     `docs/features/identity/authentication.md` for token format and claims),
     return the token. A failed counter delete may leave a residual
     counter that locks the account until TTL expiry; admin unlock and
@@ -396,12 +397,18 @@ session behavior.
   effective than complexity requirements. The 16-character minimum
   provides adequate entropy.
 - **Session invalidation on password change**: prevents continued access
-  with old credentials after a password reset. All sessions are
+  through sessions authenticated with old credentials after a password reset.
+  All sessions are
   invalidated, including the caller's own session — no exception for
   admin self-password-reset. The admin receives the success response,
   then the next API call returns 401. The frontend handles this via its
   standard session expiration behavior (see
   `docs/features/identity/authentication.md` § Frontend session behavior).
+- **Password reset does not revoke API keys**: API keys are independent
+  credentials and remain valid until revoked or expired. Response to suspected
+  credential compromise therefore requires both a password reset and
+  administrator revocation of the user's API keys, or user deactivation (which
+  revokes them automatically).
 - **Redis-based lockout**: survives application restarts, shared across
   all API server instances.
 - **Fail-open rate limiting (accepted risk)**: when Redis is unreachable,

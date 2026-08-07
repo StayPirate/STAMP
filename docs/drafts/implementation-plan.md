@@ -196,7 +196,7 @@ Examples:
 - System-setting mutation and recalculation endpoints require Ticket/CVSS
   services. `P2-14` implements persistence/startup foundations, `P2-15`
   implements the two read APIs, and mutation/recalculation behavior completes
-  only in `P4-28`.
+  only in `P4-27`.
 - `BaseCVEFetcher` requires CVE/Ticket models and CVE services. Only generic
   `BaseFetcher` infrastructure belongs in Phase 3.
 - The IBS consumer status endpoint in `fetcher-operations.md` remains deferred
@@ -341,23 +341,33 @@ keys, and access the ticket-independent identity management surface.
 | `P2-05` | API key lifecycle service and audit | `P2-01`, `P2-02` | `identity/api-key-service.md` |
 | `P2-06` | Unified authentication and capability dependencies | `P2-05`, `P2-03` | `identity/rbac.md`, `identity/authentication.md` |
 | `P2-07` | Self-service and admin API key endpoints | `P2-06` | `identity/api-key-management.md`, `identity/api-key-service.md` |
-| `P2-08` | Ticket-independent user lifecycle services | `P2-02`, `P2-04` | `identity/user-service.md` |
-| `P2-09` | Password reset and account unlock services | `P2-08` | `identity/user-service.md` |
-| `P2-10` | User read, profile, and identity audit APIs | `P2-06` | `identity/user-management.md` |
+| `P2-08` | User read functions plus `create_user`, `update_user`, and `reactivate_user` | `P2-02`, `P2-04` | `identity/user-service.md` |
+| `P2-09` | `reset_password` and `unlock_user` services | `P2-03`, `P2-08` | `identity/user-service.md` |
+| `P2-10` | User read, profile, and identity audit APIs | `P2-06`, `P2-08` | `identity/user-management.md`, `identity/identity-audit-log.md` |
 | `P2-11` | Ticket-independent admin user APIs | `P2-09`, `P2-10` | `identity/user-management.md`, `identity/rbac.md` |
 | `P2-12` | CLI infrastructure and user bootstrap commands | SG-06, `P2-08` | `platform/cli-infrastructure.md`, `identity/user-management.md` |
-| `P2-13` | Remaining local identity CLI commands | `P2-05`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md`, `identity/api-key-management.md` |
+| `P2-13` | Remaining local identity CLI commands | `P2-05`, `P2-09`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md`, `identity/api-key-management.md` |
 | `P2-14` | System settings persistence and bootstrap | SG-07 | `platform/system-settings.md` |
 | `P2-15` | System settings read and audit APIs | `P2-14`, `P2-06` | `platform/system-settings.md` |
 
-`P2-08` includes only functions whose complete specified side effects are
-available (for example user creation, field update, and reactivation).
-Password reset and unlock are split into `P2-09`. Ticket-coupled role
-removal and deactivation are not weakened; they complete in Phase 4. The
-composite `manage-user update` command, role-management endpoint, and
-deactivation command/endpoint are deferred in their entirety rather than
-exposed with a partial option set. `P2-11` must list its exact endpoint
-inventory in its tracking issue before becoming Ready.
+The Phase 2 lifecycle mutation inventory is exactly `create_user`,
+`update_user`, `reactivate_user`, `reset_password`, and `unlock_user`.
+`P2-08` owns the first three plus the user query functions; `P2-09` owns the
+last two. `P2-11` owns exactly the ticket-independent administrator endpoints
+for create, update, reactivate, reset password, and unlock. It does not own role
+management through `update_roles` or the `POST .../roles` endpoint, nor
+deactivation. Initial roles supplied to `create_user` remain in scope.
+
+`update_roles`, `deactivate_user`, deactivation impact, every ticket
+unassignment/audit side effect, their API endpoints, and their CLI surfaces are
+deferred in their entirety to Phase 4. The composite `manage-user update`
+command is likewise deferred because it includes role changes; Phase 2 does
+not expose a reduced option set or partially implement its workflow.
+
+SG-05 resolves the former Phase 4 documentation gate for the identity
+role-removal audit contradiction. The remaining Phase 4 pieces therefore own
+implementation of the now-reconciled complete contracts, not another
+documentation decision.
 
 The image suite adds a CLI bootstrap assertion in the piece that introduces
 the runnable `sentinel` command.
@@ -373,7 +383,7 @@ lifespan/image tests. It does not introduce settings API routes.
 and their permission, validation, API, audit-read, OpenAPI, and image tests. It
 does not mutate settings or create audit events. The PATCH endpoint,
 recalculation endpoint, Redis/Celery coordination, mutation transaction and
-audit insertion, and recalculation task remain exclusively in `P4-28`.
+  audit insertion, and recalculation task remain exclusively in `P4-27`.
 
 ## Phase 3 — Generic Fetcher Platform
 
@@ -426,11 +436,10 @@ automatic ingestion.
 | `P4-21` | Complete CVE ingestion transaction | `P4-02`, `P4-05`, `P4-09`, `P4-12`, `P4-18`, `P4-20` | `tickets/cve-service.md` |
 | `P4-22` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-21`, `P3-02` | `platform/cve-fetcher-infrastructure.md` |
 | `P4-23` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-19`, `P4-22` | ticket and CVE API specs |
-| `P4-24` | Resolve identity role-removal audit contradiction | Phase 3 | Documentation PR for `user-service.md` / `user-management.md` |
-| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
-| `P4-26` | Ticket-coupled role-removal service, commands, and APIs | `P4-24`, `P4-25` | identity service/management specs |
-| `P4-27` | User deactivation/impact service, commands, and APIs | `P4-25` | identity service/management specs |
-| `P4-28` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
+| `P4-24` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
+| `P4-25` | Complete `update_roles`, role commands, and role-management APIs | `P4-24` | identity service/management specs |
+| `P4-26` | Complete `deactivate_user`, impact query, commands, and APIs | `P4-24` | identity service/management specs |
+| `P4-27` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
 The candidate pieces above are intentionally more granular than the old
 service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate
@@ -470,7 +479,7 @@ ingestion, and remaining non-WIP administrative surfaces are completed.
 |---|---|---|---|
 | `P6-01` | Real-ingestion CVE → Ticket → package-tree E2E verification | Phase 5 | ingestion and package specs |
 | `P6-02` | Fetcher-to-CVE source failure drill-down E2E verification | Phase 5, `P3-05` | fetcher operations and CVE service specs |
-| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-26`, `P4-27` | identity and ticket specs |
+| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-25`, `P4-26` | identity and ticket specs |
 | `P6-04` | Cross-surface image smoke assertions not naturally owned by one introducing piece | `P6-01` through `P6-03` | `platform/testing-strategy.md` |
 | `P6-05` | Operational release checkpoint and manual acceptance | `P6-04` | deployment and testing docs |
 

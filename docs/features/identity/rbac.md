@@ -32,7 +32,7 @@ Endpoints are protected by a single capability via the
 
 | Capability | Operations Covered |
 |---|---|
-| `manage_users` | Update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
+| `manage_users` | Create local users, update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, trigger CVSS recalculation, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
@@ -151,6 +151,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Set ticket confidentiality | `manage_confidentiality` |
 | Manage access grants on confidential tickets | `manage_confidentiality` |
 | Force track to FIXED status | `admin_ticket_ops` |
+| Create local user | `manage_users` |
 | Update user fields | `manage_users` |
 | Manage user roles | `manage_users` |
 | Reset user password | `manage_users` |
@@ -477,6 +478,7 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | `manage_users` | [api-key-management](api-key-management.md#list-all-api-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [api-key-management](api-key-management.md#revoke-api-key) |
+| POST | `/api/v1/admin/users` | `manage_users` | [user-management](user-management.md#create-user-admin) |
 | PATCH | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#update-user-admin) |
 | POST | `/api/v1/admin/users/{user}/roles` | `manage_users` | [user-management](user-management.md#set-user-roles) |
 | POST | `/api/v1/admin/users/{user}/password` | `manage_users` | [user-management](user-management.md#reset-user-password) |
@@ -502,9 +504,10 @@ here with the required authorization level and a link to the owning spec.
 - Capability names (e.g., `create_ticket`, `manage_users`) = requires the
   specified capability; see Predefined Roles for which roles include each
   capability
-- User creation: External users are created by the external sync process (see
-  [identity-provisioning](identity-provisioning.md)); local users are created by admins
-  via CLI (see [user-management](user-management.md#cli-commands))
+- User creation: external users are created by the external sync process (see
+  [identity-provisioning](identity-provisioning.md)); local users are created
+  through the authenticated administrator API or the bootstrap/recovery CLI
+  (see [user-management](user-management.md#create-user-admin))
 
 † Field-level capability — the endpoint has a base access level, but
   this specific request body field requires an additional capability.

@@ -1177,7 +1177,8 @@ Product records. Synced from SMELT alongside products.
 Platform users with role-based access. Users are populated from an
 external identity provider (see
 `docs/features/identity/identity-provisioning.md`) or created locally via
-CLI. Users can hold zero, one, or multiple roles via the UserRole
+the authenticated administrator API or bootstrap/recovery CLI. Users can hold
+zero, one, or multiple roles via the UserRole
 junction table. Authenticated users with no roles have an effective scope
 of `non_confidential` and no capabilities; unlike unauthenticated users,
 they can access specific confidential tickets via `TicketAccessGrant` or
@@ -1193,8 +1194,8 @@ bugowner matching.
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
 | external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
-| synced_at        | TIMESTAMPTZ   | nullable                 | When this record was last synced from the external provider |
-| last_login_at    | TIMESTAMPTZ   | nullable                 | When the user last logged in (updated on every session creation). NULL if never logged in |
+| synced_at        | TIMESTAMPTZ   | nullable                 | Operational provisioning metadata: when this record was last synced from the external provider; excluded from identity lifecycle audit events |
+| last_login_at    | TIMESTAMPTZ   | nullable                 | Operational authentication metadata: when the user last logged in (updated on every session creation); excluded from identity lifecycle audit events. NULL if never logged in |
 | created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp        |
 | updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record update timestamp          |
 
@@ -1335,11 +1336,11 @@ Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`.
 |---|---|---|---|
 | id | UUID | Inherited from AuditEventMixin | Internal identifier |
 | event_type | VARCHAR(50) | NOT NULL | See IdentityAuditEventType enum below |
-| user_id | UUID | Inherited from AuditEventMixin | Admin/user who performed the action. NULL for system actions (external sync) |
+| user_id | UUID | Inherited from AuditEventMixin | Authenticated Sentinel actor. NULL for CLI, task/system, and external-sync workflows |
 | target_user_id | UUID | FK(user.id), nullable | The user affected by the action. NULL for role mapping events |
 | old_value | TEXT | nullable | Previous state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
 | new_value | TEXT | nullable | New state (human-readable). Length constraints defined by the event type contract — see `docs/features/identity/identity-audit-log.md` |
-| detail | JSONB | nullable | Additional structured context |
+| detail | JSONB | nullable | Additional structured context; event-specific schemas and size rules are defined in `docs/features/identity/identity-audit-log.md` |
 | created_at | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred |
 
 #### IdentityAuditEventType Enum
@@ -1352,17 +1353,17 @@ change.
 |---|---|
 | user_created | User account created (manual or external sync) |
 | user_deactivated | User account deactivated (admin or external sync) |
-| user_reactivated | User account reactivated by admin |
-| password_reset | Admin reset another user's password |
+| user_reactivated | User account reactivated by authenticated API, CLI, or external sync |
+| password_reset | Local user password reset by authenticated administrator or CLI |
 | role_added | Role assigned to user (admin or external sync) |
 | role_removed | Role removed from user (admin or external sync) |
 | role_mapping_created | Group-to-role mapping created by admin |
 | role_mapping_deleted | Group-to-role mapping deleted by admin |
-| username_changed | Username changed by external sync (username change at provider) |
+| username_changed | Username updated by an authorized lifecycle caller |
 | api_key_created | API key created by its owner through self-service |
 | api_key_revoked | API key revoked by user, admin, or system |
-| email_changed | Email address updated (admin or external sync) |
-| full_name_changed | Full name updated (admin or external sync) |
+| email_changed | Email address updated by authenticated API, CLI, or external sync |
+| full_name_changed | Full name updated by authenticated API, CLI, or external sync |
 | manager_changed | Direct manager updated by external sync |
 
 See `docs/features/identity/identity-audit-log.md` for the full event

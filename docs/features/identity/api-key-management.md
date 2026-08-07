@@ -110,8 +110,10 @@ keys by username and revoke a key by its globally unique UUID.
 
 Revocation sets `revoked_at` and `revoked_by`; it never deletes the row.
 Self-service and administrator revocations record the acting user's UUID.
-CLI and user-deactivation revocations use `revoked_by = NULL` as system
-actions. Repeating or concurrently executing a revocation is an idempotent
+CLI and external-sync revocations use `revoked_by = NULL`. Deactivation
+propagates its actor: authenticated API deactivation records the administrator,
+while CLI and external-sync deactivation use NULL. Repeating or concurrently
+executing a revocation is an idempotent
 no-op after the first successful mutation and creates no additional audit
 event.
 

@@ -211,7 +211,7 @@ not import from upper layers.
 | Layer | Location | Responsibility | May depend on |
 |---|---|---|---|
 | **API** | `app/api/v1/` | Thin endpoint handlers: validate input, call services, return responses. No business logic. | Service, Schema, Model (for DI type annotations), Core |
-| **CLI** | `app/cli/` | Thin command handlers: parse arguments, call services, format output. No business logic. | Service, Model (direct queries limited to read-only; writes go through Service), Core |
+| **CLI** | `app/cli/` | Thin command handlers: parse arguments, call services, format output. No business logic. | Service, Model (only where an owning specification explicitly permits a trivial read-only query), Core |
 | **Service** | `app/services/` | All business logic. Accept typed parameters, perform database operations, return typed results. | Model, Core |
 | **Model** | `app/models/` | SQLAlchemy ORM models: tables, columns, relationships, constraints. | Core (for enums only) |
 | **Schema** | `app/schemas/` | Pydantic models for request/response validation and serialization. | Model (for `from_attributes`), Core |
@@ -223,11 +223,22 @@ not import from upper layers.
 - API handlers must not contain business logic — they validate, delegate
   to a service, and format the response
 - CLI commands must not contain business logic — they parse arguments,
-  delegate to a service (or perform direct read-only queries), and
-  format the output
+  delegate to a service and format the output. A direct read-only query is
+  permitted only when the owning specification explicitly authorizes it; an
+  existing service query boundary is preferred
 - Task definitions must not contain business logic — they are thin
   wrappers that call service-layer functions
 - Service modules are the only layer that performs database operations
+- Application reads needed by API consumers have an explicit service owner;
+  API route handlers do not execute ORM queries directly unless an owning
+  specification explicitly authorizes a trivial legacy read. New or modified
+  API reads use a service boundary. This does not require a separate query
+  module when an existing domain service is the natural owner
+- Composable services that receive a caller-supplied `AsyncSession` flush but
+  do not commit or roll back. The API transaction dependency, complete CLI
+  workflow, or complete task workflow owns one commit on success or one
+  rollback on failure, as defined in `docs/conventions.md` (Caller-Owned
+  Service Transactions)
 - The Core layer has no application-level imports; it is a leaf
   dependency
 

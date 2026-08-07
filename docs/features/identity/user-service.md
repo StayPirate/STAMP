@@ -13,11 +13,11 @@ implement side effects (ticket unassignment, API key revocation,
 TicketAuditEvent creation) and business rules (self-removal guard,
 self-deactivation guard), leading to inconsistency and bugs.
 
-Read-only operations (listing users, retrieving user details) are not
-centralized in this service because they carry no business logic, side
-effects, or audit trail requirements. They are implemented directly in
-API endpoint handlers and CLI commands (see
-`docs/features/identity/user-management.md`).
+This module also owns user lookups and list/detail queries needed by API
+consumers. Keeping these reads at the existing user-domain service boundary
+preserves thin API handlers without introducing a separate query abstraction.
+Read functions do not create audit events. A CLI command may reuse these
+functions; no entry point may mutate `User` or `UserRole` directly.
 
 ## Architecture
 
@@ -28,15 +28,29 @@ API endpoint handlers and CLI commands (see
 ### Async pattern
 
 The service is implemented as async functions. The API (FastAPI) is the
-primary consumer and calls the service directly with `await`. Entry
-points that operate in a synchronous context (CLI commands, Celery tasks)
-call the service via `asyncio.run()`.
+primary consumer and calls the service directly with `await`. A synchronous
+CLI or Celery entry point wraps its complete async workflow — session
+acquisition, service composition, transaction completion, and post-commit
+effects — in exactly one `asyncio.run()` call.
 
-| Entry point         | Invocation pattern                                      |
-|---------------------|---------------------------------------------------------|
-| API endpoint        | `await user_service.create_user(session, ...)`          |
-| Celery task (sync)  | `asyncio.run(user_service.deactivate_user(session, ...))` |
-| CLI command         | `asyncio.run(user_service.create_user(session, ...))`   |
+| Entry point | Invocation pattern |
+|---|---|
+| API endpoint | Await services inside the API transaction dependency |
+| Celery task (sync) | `asyncio.run(complete_task_workflow(...))` |
+| CLI command | `asyncio.run(complete_cli_workflow(...))` |
+
+### Transaction Ownership
+
+Every function that accepts an `AsyncSession` follows
+`docs/conventions.md` (Caller-Owned Service Transactions): it flushes when
+required and never commits or rolls back. The API transaction dependency or
+complete CLI/task workflow commits exactly once after all delegated services
+succeed and rolls back when an exception escapes.
+
+Functions that invalidate sessions return the identifiers and other values
+needed for Redis cleanup. The workflow owner performs that cleanup only after
+its database commit succeeds. Audit records use the same session and therefore
+commit or roll back atomically with the lifecycle mutation.
 
 ### Acting user convention
 
@@ -120,16 +134,20 @@ association and historical audit trail.
 
 ## Inactive User Management Principle
 
-### Excluded fields
+### Operational metadata exclusions
 
-The `last_login_at` field is exempt from `user_service` centralization.
-It is a login-path auditing timestamp managed directly by the
-authentication layer (local login endpoint and SSO callback handler).
-It has no business rules, no side effects, and no guards — routing it
-through the service would add indirection with no value. See
-`docs/features/identity/local-authentication.md` and
-`docs/features/identity/sso-authentication.md` for where this field is
-updated.
+Three high-frequency operational fields are narrow exceptions to lifecycle
+mutation ownership and identity audit events:
+
+| Field | Exclusive write boundary |
+|---|---|
+| `User.last_login_at` | Authentication session-creation workflow |
+| `ApiKey.last_used_at` | `api_key_service.update_last_used_at()` |
+| `User.synced_at` | External provisioning synchronization workflow through `update_user()` |
+
+These boundaries may update only the named metadata field without a lifecycle
+audit event. They do not authorize direct modification of any other user or
+API-key field. See `identity-audit-log.md` (Operational Metadata Exclusions).
 
 ### Deactivation and management
 
@@ -153,6 +171,68 @@ addressed as a separate feature with its own specification covering data
 anonymization, orphan handling, and audit trail preservation.
 
 ## Operations
+
+Every database function below accepts `session: AsyncSession` as its first
+parameter even where the parameter tables focus on domain inputs.
+
+Unless a function states otherwise, read functions propagate database errors
+and create no audit events. Mutating functions propagate the service
+exceptions below plus database/flush errors, participate in the caller-owned
+transaction, and create no effect on a rejected invocation. An idempotent
+no-op creates no audit event.
+
+### Read Operations
+
+#### `resolve_user_identifier(session, identifier)`
+
+Accepts `session: AsyncSession` and `identifier: str`. If `identifier` parses
+as a UUID, look up `User.id`; otherwise look up the exact stored username.
+Return the matching User row without loading response-specific relationships.
+Raise `UserNotFoundError` when no row matches. Profile-shaped functions load
+their own relationships explicitly. The function is read-only and
+deterministic for a fixed database snapshot.
+
+#### `list_users(session, filters, pagination, sorting)`
+
+Accepts the typed filters, pagination values, and sorting selection defined by
+`user-management.md` (List Users). Return `UserPage(items: list[User], total:
+int)` with deterministic secondary ordering by `User.id`. The function applies
+every documented filter and loads the role and manager data required by the
+response; API handlers perform no ORM query or filtering themselves.
+
+#### `get_user(session, identifier)`
+
+Resolves the UUID or username through `resolve_user_identifier()` and returns
+the complete profile data defined by `user-management.md` (Get User), including
+roles and manager. Unknown users raise `UserNotFoundError`.
+
+#### `get_deactivation_impact(session, user_id)`
+
+Accepts `session: AsyncSession` and `user_id: UUID`. Return
+`DeactivationImpact(sessions_count: int, tickets_count: int,
+is_last_active_admin: bool)` using one database snapshot. Counts include active
+sessions and active-status tickets currently assigned to the user. The admin
+flag is true only when the target is active, holds an effective Admin role, and
+no other active user holds Admin. Unknown users raise `UserNotFoundError`.
+This read is a point-in-time preview, creates no audit event, and acquires no
+mutation lock; deactivation re-evaluates actual state when it runs. API-key
+counting remains owned by `api_key_service.count_non_revoked_keys()`.
+This ticket-dependent read is deferred with deactivation to Phase 4; the Phase
+2 query slice contains only identifier resolution, list, and detail reads.
+
+### Mutation Result Types
+
+- `DeactivationResult` contains the updated `user` and
+  `invalidated_session_ids: list[UUID]` required for the post-commit cache
+  purge.
+- `PasswordResetResult` contains the updated `user`,
+  `invalidated_session_ids: list[UUID]`, and normalized `username` required for
+  post-commit session-cache and lockout-counter cleanup.
+
+When `create_user()`, `update_user()`, `update_roles()`, `reactivate_user()`,
+or `deactivate_user()` returns a User for API profile serialization, the
+returned object has roles and manager loaded. Callers do not execute follow-up
+ORM queries to construct the Get User response shape.
 
 ### Password handling
 
@@ -267,11 +347,14 @@ Creates a new User record with optional initial roles.
 1. Normalize `username` (trim whitespace, lowercase) and validate format
    per `docs/conventions.md` (Username Format). If invalid, raise
    `UsernameFormatError`
-2. Validate password/`external_id` mutual exclusivity: if
+2. Normalize `email` by trimming leading and trailing whitespace and converting
+   it to lowercase. All uniqueness checks and persisted values use this
+   normalized email
+3. Validate password/`external_id` mutual exclusivity: if
    `external_id` is provided and `password` is also provided, raise
    `ExternalUserPasswordError`. If `external_id` is NULL and `password` is not
    provided, raise `PasswordValidationError`
-3. Validate uniqueness of `username` and `email` across all users
+4. Validate uniqueness of `username` and normalized `email` across all users
    (including inactive). If `external_id` is provided, also validate
    its uniqueness — if already associated with another user, raise
    `UserConflictError`. If violated, raise `UserConflictError`
@@ -283,15 +366,15 @@ Creates a new User record with optional initial roles.
    use the `email-validator` library to ensure consistent acceptance
    rules across entry points.
 
-4. If `password` is provided, validate length per the password policy in
+5. If `password` is provided, validate length per the password policy in
    `docs/features/identity/local-authentication.md` § Password Validation
    (16–128 characters). If invalid, raise `PasswordValidationError`
-5. If `password` is provided, hash it with bcrypt (see
+6. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
-6. Create User record with provided fields,
+7. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
    `synced_at = now()` if `external_id` is set
-7. For each role in `roles`, create UserRole with specified `group_name`
+8. For each role in `roles`, create UserRole with specified `group_name`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `group_name`), deduplicate silently — only
    one UserRole record is created per unique `(role, group_name)` pair.
@@ -299,15 +382,31 @@ Creates a new User record with optional initial roles.
    For each UserRole created, also create an `IdentityAuditEvent` with
    `event_type = role_added` via `IdentityAuditLog.log_event()` —
    `user_id` = `acting_user_id`, `target_user_id` = created user,
-   `new_value` = role name. This ensures initial role assignments are
-   audited identically to later role changes via `update_roles()`.
-8. Return the created User
+   `new_value` = role name. For `_manual` roles, `detail = NULL`. For an
+   externally-derived role, `detail = {"source": "external_sync",
+   "mapping": group_name}`; both keys are required. This preserves the
+   external source and role-mapping decision for every initial assignment.
+9. Create `user_created` via `IdentityAuditLog.log_event()`. A local API or
+   CLI creation uses `detail = NULL`; external synchronization uses
+   `detail = {"source": "external_sync"}`
+10. Flush the user, roles, and all audit events, then return the created User
+
+**Concurrency**: no root row exists to lock. Pre-checks provide useful errors,
+but the database UNIQUE constraints on normalized username, normalized email,
+and external ID are authoritative. If concurrent creations race, one may
+succeed; each loser translates the constraint violation to `UserConflictError`.
+The loser's caller rolls back, so it persists no user, role, or audit event.
+
+**Re-invocation**: not idempotent. Repeating a successful creation with the
+same normalized username or email raises `UserConflictError` and creates no
+additional records.
 
 **TicketAuditEvent**: none (user creation does not affect tickets)
 
-**IdentityAuditEvent**: `user_created` — `user_id` = creating admin,
+**IdentityAuditEvent**: `user_created` — `user_id` = acting API user or NULL
+for CLI/external synchronization,
 `target_user_id` = created user, `new_value` = username. Additionally,
-one `role_added` event per initial role assigned (see step 7). All events
+   one `role_added` event per initial role assigned (see step 8). All events
 created via `IdentityAuditLog.log_event()` in the same transaction.
 
 ### `update_user()`
@@ -323,14 +422,16 @@ their own business rules.
 | `user_id`        | `UUID`                      | Yes      | User to update                       |
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
 | `username`       | `str \| None`               | No       | New username (updated by external sync when username changes at provider) |
-| `email`          | `str \| None`               | No       | New email (uniqueness validated)     |
-| `full_name`      | `str \| None`               | No       | New display name                     |
-| `manager_id`     | `UUID \| None`              | No       | New manager (FK to user.id)          |
-| `synced_at` | `datetime \| None`          | No       | Sync timestamp                       |
+| `email`          | `str \| _Missing`             | No       | New non-null email (normalized; uniqueness validated) |
+| `full_name`      | `str \| None \| _Missing`     | No       | New display name; NULL clears it     |
+| `manager_id`     | `UUID \| None \| _Missing`    | No       | New manager (FK to user.id); NULL clears it |
+| `synced_at`      | `datetime \| None \| _Missing` | No       | Operational sync timestamp           |
 
 **Behavior**:
 
-1. Look up user by ID. If not found, raise `UserNotFoundError`
+1. Acquire a `FOR UPDATE` lock on the User row by ID. If not found, raise
+   `UserNotFoundError`. The locked row is the authoritative source for guards,
+   old audit values, and no-op detection
 2. If `user.external_id IS NOT NULL` and `acting_user_id` is not None:
    raise `ExternalUserFieldReadOnlyError`. Identity fields of external users are
    managed exclusively by external sync (see External User Data Ownership
@@ -347,16 +448,21 @@ their own business rules.
    uniqueness in the database (excluding the current user, including
    inactive users). If violated, raise `UserConflictError`. For external
    users, this step is reached only by the sync process (human callers
-   are already blocked at step 2).
-5. If `email` is provided, validate uniqueness. If violated, raise
-   `UserConflictError`
+   are already blocked at step 2). External synchronization adds
+   `detail = {"source": "external_sync"}` to `username_changed`; a future
+   authenticated/manual caller uses `detail = NULL`
+5. If `email` is provided, reject `None`; normalize it by trimming whitespace
+   and converting it to lowercase, then validate uniqueness using the
+   normalized value, excluding the current user and including inactive users.
+   If violated, raise `UserConflictError`
 6. Apply provided field updates. Optional parameters use a `_MISSING`
    sentinel as default to distinguish three states:
    - `_MISSING` (default): field is not modified
-   - `None`: field is explicitly cleared to NULL in the database
+    - `None`: a nullable field is explicitly cleared to NULL in the database
    - Any other value: field is updated to the new value
 
-    This is necessary because nullable fields (`full_name`,
+    `email` is non-nullable and therefore does not permit this state. This is
+    necessary because nullable fields (`full_name`,
     `manager_id`) may need to be explicitly cleared — e.g.,
    when external sync discovers that a provider attribute has been removed. The
    pattern follows Python's standard sentinel convention
@@ -367,8 +473,22 @@ their own business rules.
 7. For each changed field, create an `IdentityAuditEvent` via
    `IdentityAuditLog.log_event()`: `username_changed`, `email_changed`,
    `full_name_changed`, or `manager_changed` with `old_value` and
-   `new_value`. One event per changed field, all in the same transaction.
+   `new_value`. For an external user updated by synchronization, email and full
+   name events include `detail = {"source": "external_sync"}`; manual local
+   updates use `detail = NULL`. One event per changed field, all in the same
+   transaction.
 8. Return updated User
+
+**Concurrency**: mutations for one user serialize on its row lock. A second
+caller evaluates guards and old/new audit values only after the first caller
+commits or rolls back. Locks are not acquired on unrelated users. Normalized
+email UNIQUE constraints remain authoritative for concurrent updates of two
+different users; a loser receives `UserConflictError` and rolls back its
+mutation and audit events.
+
+**Re-invocation**: conditionally idempotent. Fields whose normalized requested
+value already equals stored state are no-ops and create no audit event; only
+effective field changes are persisted and audited.
 
 **TicketAuditEvent**: none
 
@@ -408,6 +528,10 @@ Adds or removes roles for a user.
 3. **Idempotency**: adding a role already present for the same
    (user_id, role, group_name) combination is a no-op. Removing a role
    not present is a no-op
+
+A concurrent duplicate addition that reaches the UNIQUE constraint is treated
+as the same idempotent no-op rather than an operation failure. No duplicate
+role or audit event is created.
 
 **Behavior**:
 
@@ -489,18 +613,25 @@ has no callers.
    `to_remove` is non-empty, call
    `_unassign_tickets_on_va_role_loss(db, user_id,
    "vulnerability_analyst role removed (external sync)")` for each user in
-   `to_remove`
+   `to_remove`, processed in ascending User UUID order. A consistent order
+   avoids deadlocks between concurrent bulk role operations
 7. For each user in `to_add`, create `IdentityAuditEvent` with
-   `event_type = role_added`, `user_id = NULL` (system), `detail`
-   including `{"source": "external_sync", "mapping": "..."}`. For each user
-   in `to_remove`, `event_type = role_removed` with same detail. All
-   events via `IdentityAuditLog.log_event()`.
+   `event_type = role_added`; for each user in `to_remove`, create
+   `role_removed`. Each event uses `user_id = acting_user_id`, identifies the
+   affected user, and stores the role in `new_value` (add) or `old_value`
+   (remove). Because these roles derive from an external mapping, every event
+   includes `detail = {"source": "external_sync", "mapping": group_name}`
+   whether the mapping was applied by external synchronization or an
+   authenticated administrator. All events use
+   `IdentityAuditLog.log_event()`.
 8. Return `(added_count, removed_count)`
 
 **Idempotency**: calling this function twice with the same
 `current_member_user_ids` produces the same result — the second call
 finds nothing to add or remove. The UNIQUE constraint on
 `(user_id, role, group_name)` prevents duplicate records.
+Concurrent duplicate additions have the same no-op outcome and create no
+duplicate audit event.
 
 **TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
 it causes any user to lose the role entirely (no remaining `UserRole`
@@ -508,8 +639,8 @@ records from any origin), one `assignment` event per unassigned active
 ticket per affected user. See `_unassign_tickets_on_va_role_loss()`.
 Otherwise, none.
 
-**IdentityAuditEvent**: `role_added` / `role_removed` per effective
-change, with `user_id = NULL` (external sync, system action). See
+**IdentityAuditEvent**: `role_added` / `role_removed` per effective change,
+with `user_id = acting_user_id` and mapping detail. See
 `docs/features/identity/identity-audit-log.md`.
 
 ### `delete_role_mapping_roles()`
@@ -541,10 +672,14 @@ Used when a role mapping is deleted via
 3. Delete all matching `UserRole` records
 4. VA role loss check: if `role` is `vulnerability_analyst`, call
    `_unassign_tickets_on_va_role_loss(db, user_id,
-   "vulnerability_analyst role removed (role mapping deleted)")` for
-   each user in `affected_user_ids`
+   "vulnerability_analyst role removed (role mapping deleted)")` for each user
+   in `affected_user_ids`, processed in ascending User UUID order. A consistent
+   order avoids deadlocks between concurrent bulk role operations
 5. For each removed `UserRole`, create `IdentityAuditEvent` with
-   `event_type = role_removed` via `IdentityAuditLog.log_event()`
+   `event_type = role_removed`, `user_id = acting_user_id`,
+   `target_user_id` = affected user, `old_value` = role name, and
+   `detail = {"source": "external_sync", "mapping": group_name}` via
+   `IdentityAuditLog.log_event()`
 6. Return `affected_users_count`
 
 **TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
@@ -579,12 +714,21 @@ Deactivates a user account and triggers all associated side effects.
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
+As the first database operation, acquire a `FOR UPDATE` lock on the target User
+row. If no row exists, raise `UserNotFoundError`. First check whether the user
+is already inactive; if so, return
+`DeactivationResult(user, [])` without any mutation or audit event.
+Only an active user is then evaluated against the external-status and
+self-deactivation guards, in that order.
+
 **Side effects — Database phase** (executed atomically in a single
 database transaction, in this specific order):
 
 1. Revoke all API keys belonging to this user via
    `api_key_service.revoke_all_user_keys(session, user_id,
-   acting_user_id=None)`. Keys are not deleted — preserves audit trail.
+   acting_user_id=acting_user_id)`. Keys are not deleted — preserves audit
+   trail and attributes every revocation to the same API actor, or NULL for
+   CLI/external-sync workflows.
    See `docs/features/identity/api-key-service.md`.
 2. Invalidate all active sessions for this user (DB only) via
    `session_service.invalidate_user_sessions(db, user_id)`. This sets
@@ -601,8 +745,17 @@ database transaction, in this specific order):
    not changed (see Architectural Invariant in `tickets.md`). See
    Private Helpers for the full contract.
 
-**Side effects — Post-commit phase** (best-effort, after transaction
-commits and FOR UPDATE lock is released):
+After the database steps, create `user_deactivated`, flush every mutation and
+audit record, and return. The event uses `user_id = acting_user_id`,
+`target_user_id = user_id`, `old_value = "active"`, and
+`new_value = "inactive"`. Its `detail` always contains the supplied `reason`;
+external synchronization also includes `source = "external_sync"`
+before returning
+`DeactivationResult(user, invalidated_session_ids)`. The service does not
+commit.
+
+**Workflow-owned post-commit phase** (best-effort, after the caller commits and
+the FOR UPDATE lock is released):
 
 5. Purge session cache via
    `session_service.purge_session_cache(invalidated_session_ids)`. If
@@ -611,6 +764,9 @@ commits and FOR UPDATE lock is released):
    authoritative source for session validity; auth middleware verifies
    against the database on cache miss. See
    `docs/features/identity/authentication.md` (Session invalidation).
+
+The API, CLI, external synchronization, or task workflow invokes step 5 from
+the returned result. `deactivate_user()` itself performs no Redis I/O.
 
 **Ordering rationale**: API keys and sessions are revoked BEFORE the
 user is marked as inactive (steps 1-2 before step 3). Under the
@@ -624,9 +780,9 @@ independently. The Redis cache purge (step 5) is post-commit per
 back by a transaction failure and must not extend the FOR UPDATE lock
 hold time.
 
-**IdentityAuditEvent**: `user_deactivated` — `user_id` = admin (or
-`NULL` for external sync), `target_user_id` = deactivated user, `detail`
-includes reason. API key revocations produce individual
+**IdentityAuditEvent**: `user_deactivated` — `user_id` follows the Actor
+Contract, `target_user_id` = deactivated user, and `detail` includes reason and
+external source when applicable. API key revocations produce individual
 `api_key_revoked` events via `api_key_service`. See
 `docs/features/identity/identity-audit-log.md`.
 
@@ -655,10 +811,26 @@ Reactivates a previously deactivated user account.
 
 **Behavior**:
 
-1. Set `User.active = true`
-2. Create `IdentityAuditEvent` with `event_type = user_reactivated`
-   via `IdentityAuditLog.log_event()`
-3. Return updated User
+1. Acquire a `FOR UPDATE` lock on the User row by ID. If it does not exist,
+   raise `UserNotFoundError`
+2. Evaluate the preconditions against the locked row. An already-active user
+   returns unchanged and creates no audit event. Only an inactive user is then
+   evaluated against the external-status guard
+3. Set `User.active = true`
+4. Create `IdentityAuditEvent` with `event_type = user_reactivated`
+   via `IdentityAuditLog.log_event()`. External synchronization uses
+   `detail = {"source": "external_sync"}`; authenticated API and manual CLI
+   calls use `detail = NULL`
+5. Flush and return the updated User
+
+**Concurrency**: concurrent calls serialize on the User row. The first caller
+that observes an inactive user creates the mutation and event; later callers
+observe the committed active state and return as no-ops. Reactivation also
+serializes with password reset, field updates, role operations that lock the
+same root, and deactivation.
+
+**Re-invocation**: idempotent. Once active, another call returns the unchanged
+user and creates no audit event.
 
 **Explicitly NOT restored**:
 
@@ -696,38 +868,61 @@ Resets the password for a local user and invalidates all active sessions.
 1. Validate password length (16–128 characters). If invalid, raise
    `PasswordValidationError`
 2. Hash the password with bcrypt (see
-   `docs/features/identity/local-authentication.md` for hashing parameters)
-3. Update `User.password_hash` with the new hash
-4. Invalidate all active sessions (DB only) via
+   `docs/features/identity/local-authentication.md` for hashing parameters).
+   Validation and hashing use only the input and occur before acquiring a row
+   lock
+3. As the first database operation, acquire a `FOR UPDATE` lock on the target
+   User. If missing, raise `UserNotFoundError`; if external, raise
+   `ExternalUserPasswordError`
+4. Update `User.password_hash` with the new hash
+5. Invalidate all active sessions (DB only) via
    `session_service.invalidate_user_sessions(db, user_id)` — returns
    `invalidated_session_ids`. This forces re-login with the new
    password.
-5. Create `IdentityAuditEvent` with `event_type = password_reset` via
+6. Create `IdentityAuditEvent` with `event_type = password_reset` via
    `IdentityAuditLog.log_event()` — `user_id` = `acting_user_id`
-   (admin), `target_user_id` = target user. Created in the same
+   (authenticated API user or NULL for CLI/system), `target_user_id` = target
+   user. Created in the same
    transaction as the password hash update.
-6. Return updated User
+7. Flush and return `PasswordResetResult(user, invalidated_session_ids,
+   username)`. `username` is the stored normalized username needed for
+   post-commit lockout cleanup
 
-**Post-commit phase** (best-effort, after transaction commits):
+**Workflow-owned post-commit phase** (best-effort, after the caller commits):
 
-7. Purge session cache via
+8. Purge session cache via
    `session_service.purge_session_cache(invalidated_session_ids)`. If
    Redis is unreachable, log WARNING and proceed — entries expire
    naturally within the cache TTL (60 seconds).
-8. Clear the login lockout counter: delete the Redis key
+9. Clear the login lockout counter: delete the Redis key
    `login_attempts:{username}` if it exists. If Redis is unreachable,
    log WARNING and proceed — the counter will expire naturally via TTL.
    This ensures that a locked-out user regains access immediately after
-   a password reset (or within the TTL window if Redis is unavailable).
+    a password reset (or within the TTL window if Redis is unavailable).
+
+`reset_password()` performs only the database phase and returns the data for
+steps 8-9; it does not commit or execute Redis I/O. The API, CLI, or task
+workflow owns the commit and invokes both post-commit effects.
+
+**Concurrency**: resets for one user serialize on the User row. Each successful
+caller writes the hash computed for that invocation and creates one audit
+event; the last committed reset determines the accepted password. Concurrent
+deactivation cannot interleave its database mutations with a reset because it
+uses the same root lock. No bcrypt work or Redis I/O occurs while the lock is
+held.
+
+**Re-invocation**: not idempotent. Each successful invocation hashes and stores
+the supplied password anew, invalidates sessions present at that invocation,
+and creates one `password_reset` event.
 
 **TicketAuditEvent**: none (password reset does not affect tickets)
 
-**IdentityAuditEvent**: `password_reset` — `user_id` = acting admin,
-`target_user_id` = target user. See
+**IdentityAuditEvent**: `password_reset` — `user_id` = authenticated API actor
+or NULL for CLI/system, `target_user_id` = target user. See
 `docs/features/identity/identity-audit-log.md` for the event type
 contract.
 
-### `unlock_user(user_id, acting_user_id)`
+### `unlock_user(session, user_id, acting_user_id)`
 
 Clears the login lockout counter for a user, restoring their ability to
 attempt local authentication.
@@ -736,6 +931,7 @@ attempt local authentication.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `session` | `AsyncSession` | Caller-supplied session used for the user lookup |
 | `user_id` | `UUID` | Target user to unlock |
 | `acting_user_id` | `UUID \| None` | Who is performing the action (admin or system) |
 
@@ -765,20 +961,26 @@ with no error. This is a no-op, not a failure.
   logging (INFO level) provides sufficient operational visibility.
 - No session invalidation (unlocking does not indicate compromise).
 - The `reset_password()` operation continues to clear the lockout
-  counter as a post-commit side effect (step 8), but `unlock_user()`
+  counter as a post-commit side effect (step 9), but `unlock_user()`
   provides an independent path that does not force a password change.
+- `acting_user_id` is accepted for lifecycle-call signature uniformity and has
+  no persisted effect because unlock creates no audit event.
+- The user lookup is read-only and acquires no row lock. Redis executes only
+  after that query; there is no database mutation or commit to coordinate.
 
 ## Transactionality
 
-All operations that produce side effects (particularly `deactivate_user`)
-MUST execute their database mutations within a single transaction. If any
-database step fails, all database mutations are rolled back atomically.
-This ensures that a user is never left in a partially-deactivated state
-(e.g., marked inactive but tickets not unassigned).
+All database operations follow the caller-owned contract in
+`docs/conventions.md`. Service functions flush when required and never commit
+or roll back. The API dependency or complete CLI/task workflow commits once
+after every database mutation and audit event succeeds; an exception rolls the
+whole workflow back. This ensures that a user is never left in a partially
+mutated state.
 
-Redis operations (session cache purge, login lockout counter deletion)
-are NOT part of the PostgreSQL transaction boundary. They execute
-post-commit and are best-effort: if the process crashes between commit
+Redis operations (session cache purge, login lockout counter deletion) are NOT
+part of the PostgreSQL transaction boundary. The workflow owner executes them
+post-commit using values returned by the service, and they are best-effort: if
+the process crashes between commit
 and Redis cleanup, or if Redis is unreachable, the affected cache
 entries expire naturally via TTL. The database is always the
 authoritative source — Redis is a performance optimization, not a
@@ -793,13 +995,6 @@ Rules) ensures that:
 3. Redis failures or latency cannot extend lock hold time or block
    concurrent mutations on the same entity
 
-**Commit ownership**: operations with post-commit phases
-(`deactivate_user`, `reset_password`) own their transaction boundary —
-they commit on success, roll back on failure, and execute the
-post-commit phase themselves. Callers (API handlers, CLI commands, Celery
-tasks) do not manage the commit; they delegate entirely to the service
-function.
-
 Operations that conditionally produce side effects (`update_roles`,
 `sync_role_mapping`, `delete_role_mapping_roles`) MUST also execute within
 a single database transaction when removing the `vulnerability_analyst`
@@ -807,9 +1002,9 @@ role, ensuring atomicity between role removal, ticket unassignment, and
 TicketAuditEvent creation. When no VA role is being removed, these
 operations perform a single logical write and atomicity is less critical.
 
-Operations without side effects (`create_user`, `update_user`,
-`reactivate_user`) are also transactional but the atomicity requirement is
-less critical since they perform a single logical write.
+`create_user`, `update_user`, and `reactivate_user` use the same contract:
+their identity audit events are mandatory side effects and therefore must be
+atomic with their lifecycle writes.
 
 ## Concurrency Considerations
 
@@ -863,6 +1058,18 @@ The `FOR UPDATE` lock on the User row in both operations serializes
 them. The first to commit performs the unassignment; the second finds no
 assigned tickets (or finds the user already inactive) and is a no-op. No
 duplicate TicketAuditEvents are created.
+
+### Assignment concurrent with deactivation or role loss
+
+Ticket assignment locks the Ticket root while deactivation and VA-role loss
+lock the User root before scanning assigned tickets. An assignment that
+validated the user before deactivation and commits only after the unassignment
+scan may therefore leave an inactive or non-VA user assigned to an active
+ticket. This bounded residual race is accepted until the Phase 4 ticket and
+identity locking contracts are reconciled together; changing either lock order
+in isolation could introduce a User↔Ticket deadlock. Operators repair the state
+through ordinary ticket reassignment. No periodic reconciliation mechanism is
+introduced solely for this race.
 
 ### Redis operations and lock scope
 

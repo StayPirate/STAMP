@@ -36,8 +36,10 @@ All commands are subcommands of the `sentinel manage-user` group. See
 `docs/conventions.md` (CLI Conventions) for general CLI design
 guidelines.
 
-These commands require direct shell access to the host or container.
-There are no unauthenticated HTTP endpoints for user management.
+These commands require direct shell access to the host or container. They are
+the bootstrap and recovery path when no administrator account is available.
+Ordinary creation after bootstrap uses the authenticated administrator API;
+there are no unauthenticated HTTP endpoints for user management.
 
 ### `sentinel manage-user create`
 
@@ -82,7 +84,9 @@ interactive terminal (password input).` and exits with code 1.
    at runtime
 3. Validates email format — if the provided email is not syntactically
    valid, exits with error:
-   `"Error: Invalid email format '{value}'."`
+    `"Error: Invalid email format '{value}'."`
+   The CLI trims and lowercases the email before validation and passes the
+   normalized value to the service
 4. Validates password per the policy in
    `docs/features/identity/local-authentication.md` § Password Validation
    (16–128 characters). If too short, exits with error:
@@ -201,39 +205,18 @@ sentinel manage-user update \
     `"No changes applied to user '{username}'."` and exits with code 0.
     Otherwise prints:
     `"Updated user '{username}': {list of actual changes}."`
-    Role changes are reported as the net difference (before → after):
-    `✓ Roles updated: added 'admin'; removed 'vulnerability_analyst'`.
+    Role changes are reported in the summary as the net difference
+    (before → after), for example `roles: added 'admin'; removed
+    'vulnerability_analyst'`.
     If conflicting `--add-role` and `--remove-role` cancel out (no net
     change), no role line appears in the output (no-op, idempotent)
 
-**Error handling (fail-fast)**: steps 8–10 are executed sequentially. If
-any step fails, the command exits immediately (exit code 1) WITHOUT
-attempting subsequent steps. The error message MUST clearly report:
-
-- Which operations completed successfully (prefix `✓`)
-- Which operation failed and why (prefix `✗`)
-- Which operations were not attempted due to the failure (prefix `—`)
-
-Example output on partial failure:
-
-```
-✓ Email updated to new@example.com
-✗ Role update failed: role 'nonexistent' does not exist
-— Reactivation not attempted (aborted due to previous error)
-```
-
-Example output when the service rejects a role change (externally-derived
-protection):
-
-```
-✓ Email updated to new@example.com
-✗ Role update failed: cannot remove role 'vulnerability_analyst' (derived from external group membership)
-— Reactivation not attempted (aborted due to previous error)
-```
-
-This ensures the admin knows exactly what state the account is in after
-a partial failure and can re-run the command with corrected arguments for
-the remaining operations.
+**Error handling (atomic fail-fast)**: steps 8–10 execute in one
+caller-owned database transaction. Each service flushes but does not commit.
+If any step fails, the workflow stops, rolls back every preceding mutation and
+audit event, and reports the failed operation to stderr; no partial-success
+step report is printed. After all steps succeed, the workflow commits exactly
+once and prints the summary in step 11.
 
 **Idempotency**: Idempotent. If all requested operations result in no-ops
 (state already reached), the command prints an informational message and
@@ -242,8 +225,8 @@ exits with code 0.
 **Exit codes**: 0 on success (including no-op), 1 on validation or
 operational error, 2 on system error (database unreachable).
 
-**Output channels**: structured step report (`✓`/`✗`/`—`) and success
-messages to stdout. All `"Error: ..."` messages to stderr.
+**Output channels**: success summary to stdout. All `"Error: ..."` messages to
+stderr.
 
 ### `sentinel manage-user deactivate`
 
@@ -273,9 +256,8 @@ sentinel manage-user deactivate \
 5. Queries the impact of deactivation:
    - Count of non-revoked API keys from
      `api_key_service.count_non_revoked_keys()` (including expired keys)
-   - Count of active sessions that will be invalidated
-   - Count of active tickets assigned to the user that will be unassigned
-   - Whether this user is the last active user with the Admin role
+   - Count of active sessions, active assigned tickets, and whether this is the
+     last active Admin from `user_service.get_deactivation_impact()`
 6. Displays the impact summary:
    ```
    About to deactivate user '{username}':
@@ -298,7 +280,10 @@ sentinel manage-user deactivate \
 8. Delegates to `user_service.deactivate_user()` with
    `acting_user_id = None` and
    `reason = "deactivated via CLI (manage-user deactivate)"`
-9. Prints: `"Deactivated user '{username}'."`
+9. After the workflow commits, purges session cache using the returned
+   `DeactivationResult.invalidated_session_ids`. Redis failure is best-effort
+   and does not turn a committed deactivation into a command failure
+10. Prints: `"Deactivated user '{username}'."`
 
 This command does not permanently remove the user record from the
 database. The User record is preserved to maintain referential integrity
@@ -348,7 +333,12 @@ This command operates on both active and inactive local users. Setting a
 password on an inactive user prepares credentials for reactivation — the
 user will not be able to log in until reactivated.
 
-It invalidates all active sessions after changing the password.
+The command delegates to `user_service.reset_password()` with
+`acting_user_id = None` inside the command's single async workflow. After the
+workflow commits, it executes the session-cache purge and login lockout-counter
+clear from the returned `PasswordResetResult`. Redis failure follows the
+best-effort behavior in `user-service.md` and does not turn a committed password
+reset into a command failure.
 
 On success, prints to stdout:
 `"Password updated for user '{username}'. All active sessions invalidated."`
@@ -382,7 +372,8 @@ sentinel manage-user unlock \
 **Behavior**:
 
 1. Normalize the username (trim whitespace, lowercase)
-2. Look up the user by normalized username in the database — if not
+2. Resolve the user through `user_service.get_user()` using the normalized
+   username — if not
    found, exit with error:
    `"Error: User '{username}' not found."` (exit code 1)
 3. If the user is inactive, print a warning to stderr:
@@ -394,11 +385,11 @@ sentinel manage-user unlock \
    `"Warning: User '{username}' is an external user. Local login lockout
    does not apply to SSO authentication."` — then continue (do not
    abort)
-5. Delegate to `asyncio.run(user_service.unlock_user(user_id,
-   acting_user_id=None))` — the service handles Redis key deletion,
-   logging, and idempotency (see
-   `docs/features/identity/user-service.md`). `acting_user_id = None`
-   because CLI is a system action.
+5. Delegate to `user_service.unlock_user(session, user.id,
+   acting_user_id=None)` inside the command's single async workflow — the
+   service handles Redis key deletion, logging, and idempotency (see
+   `docs/features/identity/user-service.md`). `acting_user_id = None` because
+   CLI is a system action.
 6. Print: `"Unlocked user '{username}'."`
 
 The command is idempotent: if the counter does not exist (user was not
@@ -446,10 +437,12 @@ provided, all users are shown regardless of status.
 2. If `--type` is provided, validate that the value is `local` or
    `external`. If invalid, exit with error:
    `"Error: Invalid type '{value}'. Valid types are: local, external."`
-3. Query all users matching the provided filters. When multiple
+3. Delegate the read to `user_service.list_users()`. When multiple
    `--role` values are provided, return users with at least one of the
    specified roles (OR semantics per `docs/conventions.md`, Repeatable
    filter semantics)
+   The command iterates pages until `UserPage.total` is reached; it never
+   silently truncates the operator-visible result
 4. Sort results alphabetically by username
 5. Print a table to stdout with columns:
 
@@ -492,7 +485,8 @@ sentinel manage-user show \
 **Behavior**:
 
 1. Normalize the username (trim whitespace, lowercase)
-2. Look up the user by normalized username — if not found, exit with
+2. Delegate the lookup to `user_service.get_user()` using the normalized
+   username — if not found, exit with
    error: `"Error: User '{username}' not found."` (exit code 1)
 3. Print detailed user information to stdout:
 
@@ -526,7 +520,7 @@ stderr.
 ## Access Level Requirements
 
 User listing and user detail are accessible to all authenticated and
-unauthenticated users (read-only). Administration operations (edit,
+unauthenticated users (read-only). Administration operations (create, edit,
 deactivate, reactivate, reset password, unlock, role management) require
 the `manage_users` capability.
 
@@ -537,7 +531,15 @@ authentication.
 
 #### List Users
 
+```
+GET /api/v1/users
+```
+
+**`Access: Public`**
+
 User search and autocomplete. Returns a paginated list of users.
+The route delegates filtering, sorting, pagination, and relationship loading to
+`user_service.list_users()` and performs no ORM query directly.
 
 Query parameters:
 - `search` (string, optional): searches across `username`, `email`, and
@@ -556,14 +558,24 @@ Query parameters:
   `sort_order`). Valid `sort_by` fields: `username` (default),
   `full_name`, `email`, `created_at`
 
+Default `sort_order` is `asc`, producing alphabetical username ordering.
+
 Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as
 `GET /api/v1/users/{user}` (see below).
 
 #### Get User
 
+```
+GET /api/v1/users/{user}
+```
+
+**`Access: Public`**
+
 Returns full user profile. Response uses the standard single-resource
 envelope:
+The route delegates UUID-or-username resolution and relationship loading to
+`user_service.get_user()` and performs no ORM query directly.
 
 ```json
 {
@@ -619,7 +631,79 @@ business rules and service-layer contracts that these endpoints invoke.
 All endpoints below require the `manage_users` capability unless
 otherwise stated.
 
+For every endpoint with a `{user}` path parameter, the route resolves the
+identifier through `user_service.resolve_user_identifier()` and passes the
+resolved UUID to the owning service. `UserNotFoundError` maps to 404
+`USER_NOT_FOUND`. Route handlers execute no ORM lookup directly.
+
+#### Create User (Admin)
+
+```
+POST /api/v1/admin/users
+```
+
+Creates an ordinary local user through the authenticated administrator
+surface. The CLI create command remains available for bootstrap and recovery
+when no administrator can authenticate.
+
+**`Capability: manage_users`**
+
+**Request body**:
+
+```json
+{
+  "username": "jdoe",
+  "email": "john.doe@example.com",
+  "full_name": "John Doe",
+  "password": "a-fictional-password-value",
+  "roles": ["admin"]
+}
+```
+
+| Field | Type | Required | Null | Semantics |
+|---|---|---|---|---|
+| `username` | string | Yes | No | Trimmed, lowercased, and validated per Username Format |
+| `email` | string | Yes | No | Trimmed and lowercased before format and uniqueness validation |
+| `full_name` | string | No | Yes | Optional display name; omitted or NULL stores NULL |
+| `password` | string | Yes | No | 16-128 characters; never logged or returned |
+| `roles` | array of Role values | No | No | Initial manual roles; defaults to `[]`, and duplicates are rejected by request validation |
+
+Missing required fields, explicit NULL for `username`, `email`, `password`, or
+`roles`, malformed username/email, unknown role values, duplicate role values,
+and wrong field types return the global HTTP 422 `VALIDATION_ERROR` response.
+Password policy failure is domain validation and returns the error below.
+
+**Behavior**:
+
+1. Validate and normalize the request as specified above.
+2. Delegate to `user_service.create_user()` with `active = true`,
+   `external_id = None`, `manager_id = None`, each role represented as
+   `(role, "_manual")`, and `acting_user_id` set to the authenticated user's
+   UUID.
+3. Within the caller-owned API transaction, persist the User, every initial
+   UserRole, `user_created`, and one `role_added` event per role. The service
+   flushes and the API transaction dependency commits once only after all
+   records succeed. Any error rolls the entire set back.
+4. Return HTTP 201 with the complete user profile in the standard data
+   envelope. The response never contains `password` or `password_hash`.
+
+**Response** (201 Created): the same user profile schema defined by Get User,
+including the initial roles, wrapped in `{"data": {...}}`.
+
+**Error responses**:
+
+| Status | Code | Condition |
+|---|---|---|
+| 409 | `USER_ALREADY_EXISTS` | Normalized username or email is already used, including a concurrent uniqueness race |
+| 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password is outside the 16-128 character policy |
+
 #### Update User (Admin)
+
+```
+PATCH /api/v1/admin/users/{user}
+```
+
+**`Capability: manage_users`**
 
 Update a user's profile fields. Only local users (`external_id IS NULL`)
 can be modified — external users have their identity fields managed by
@@ -643,24 +727,42 @@ in `docs/features/identity/user-service.md`).
    code `USER_NOT_FOUND`
 2. If no fields are provided in the body, return HTTP 422 with code
    `VALIDATION_ERROR`: `"At least one field must be provided."`
-3. If `email` is provided, validate format — if invalid, return HTTP 422
-   with code `VALIDATION_ERROR`: `"Invalid email format."`
-4. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
+3. Malformed `email` returns the global HTTP 422 `VALIDATION_ERROR` response
+   through request-schema validation. Explicit `email: null` also returns that
+   response. Otherwise trim and lowercase the email before format and
+   uniqueness validation
+4. `full_name: null` is valid and explicitly clears the stored display name;
+   omission leaves it unchanged
+5. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
    with code `USER_EXTERNAL_FIELD_READONLY`:
    `"Cannot modify identity fields for external users. These fields are managed by the external identity provider."`
-5. Delegate to `user_service.update_user()` with
+6. Delegate to `user_service.update_user()` with
    `acting_user_id = authenticated_admin.id`
-6. If the service raises `UserConflictError` (duplicate email), return
+7. If the service raises `UserConflictError` (duplicate email), return
    HTTP 409 with code `USER_ALREADY_EXISTS`:
    `"A user with this email already exists."`
-7. Return HTTP 200 with the updated user profile in the standard
+8. Return HTTP 200 with the updated user profile in the standard
    `{"data": ...}` envelope
+
+**Error responses**:
+
+| Status | Code | Condition |
+|---|---|---|
+| 404 | `USER_NOT_FOUND` | User identifier does not resolve |
+| 409 | `USER_EXTERNAL_FIELD_READONLY` | Authenticated administrator attempts to modify an external user's identity fields |
+| 409 | `USER_ALREADY_EXISTS` | Normalized email is already used |
 
 **Response**: user profile in `{"data": {...}}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full
 response schema).
 
 #### Set User Roles
+
+```
+POST /api/v1/admin/users/{user}/roles
+```
+
+**`Capability: manage_users`**
 
 Add or remove manual roles for a user.
 
@@ -711,6 +813,12 @@ response schema).
 
 #### Reset User Password
 
+```
+POST /api/v1/admin/users/{user}/password
+```
+
+**`Capability: manage_users`**
+
 Reset the password for a local user. This endpoint operates on both
 active and inactive local users (see Inactive User Management Principle
 in `docs/features/identity/user-service.md`). Setting a password on an
@@ -732,7 +840,9 @@ inactive user prepares credentials for reactivation.
    acting_user_id=authenticated_admin.id)` — this handles external user
    check, validation, hashing, session invalidation, and audit event
    creation (see `docs/features/identity/user-service.md`)
-3. Return HTTP 200
+3. After the API workflow commits, execute the session-cache purge and login
+   lockout-counter clear from the returned `PasswordResetResult`
+4. Return HTTP 200
 
 **Error responses**:
 
@@ -754,6 +864,12 @@ inactive user prepares credentials for reactivation.
 
 #### Deactivate User
 
+```
+POST /api/v1/admin/users/{user}/deactivate
+```
+
+**`Capability: manage_users`**
+
 Deactivate a user account. Triggers significant side effects (API key
 revocation, session invalidation, ticket unassignment).
 
@@ -763,12 +879,12 @@ revocation, session invalidation, ticket unassignment).
 
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
-2. If the user is already inactive, return HTTP 200 with the unchanged
-   user profile (idempotent no-op)
-3. Delegate to `user_service.deactivate_user()` with
+2. Delegate to `user_service.deactivate_user()` with
    `acting_user_id = authenticated_admin.id` and
    `reason = "deactivated by admin via API"`
-4. Return HTTP 200 with the updated user profile in the standard
+3. After the API workflow commits, purge session cache using the
+   `DeactivationResult.invalidated_session_ids` returned by the service
+4. Return HTTP 200 with the updated or unchanged user profile in the standard
    `{"data": ...}` envelope
 
 **Constraints**:
@@ -789,6 +905,12 @@ response schema).
 
 #### Reactivate User
 
+```
+POST /api/v1/admin/users/{user}/reactivate
+```
+
+**`Capability: manage_users`**
+
 Reactivate a previously deactivated user account.
 
 **Request body**: none (empty body or omitted).
@@ -797,11 +919,9 @@ Reactivate a previously deactivated user account.
 
 1. Look up the user by `user_id` — if not found, return HTTP 404 with
    code `USER_NOT_FOUND`
-2. If the user is already active, return HTTP 200 with the unchanged
-   user profile (idempotent no-op)
-3. Delegate to `user_service.reactivate_user()` with
+2. Delegate to `user_service.reactivate_user()` with
    `acting_user_id = authenticated_admin.id`
-4. Return HTTP 200 with the updated user profile in the standard
+3. Return HTTP 200 with the updated or unchanged user profile in the standard
    `{"data": ...}` envelope
 
 **Constraints**:
@@ -814,6 +934,12 @@ Reactivate a previously deactivated user account.
 response schema).
 
 #### Get Deactivation Impact
+
+```
+GET /api/v1/admin/users/{user}/deactivation-impact
+```
+
+**`Capability: manage_users`**
 
 Returns a preview of the side effects that would occur if the user were
 deactivated. Used by the frontend to display a confirmation dialog before
@@ -831,23 +957,28 @@ proceeding with deactivation.
    consistent — if you cannot deactivate yourself, you cannot preview
    the impact either. This prevents a confusing UX where the preview
    succeeds but the subsequent action is rejected.
-3. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
+3. If the user is already inactive, return HTTP 200 with a no-impact response:
+   all counts set to zero and `already_inactive` set to `true`
+4. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
    with code `USER_EXTERNAL_STATUS_READONLY`:
    `"Cannot deactivate external users."`
    Rationale: same consistency principle as self-deactivation — if the
    deactivation endpoint rejects external users, the preview should too.
-4. If the user is already inactive, return HTTP 200 with a no-impact
-   response: all counts set to zero and `already_inactive` set to `true`.
-   Rationale: the actual `POST .../deactivate` endpoint is idempotent and
+   This check applies only to active external users
+5. For an inactive user, the no-impact response mirrors the actual
+   `POST .../deactivate` endpoint, which is idempotent and
    returns HTTP 200 for already-inactive users. The preview must not be
    stricter than the action it previews — returning 409 here while the
    action returns 200 creates an asymmetry that forces clients to
    special-case the preview error path for a condition that the action
    itself treats as a no-op.
-5. Query and return the impact summary. Obtain `api_keys_count` through
+6. Query and return the impact summary. Obtain `api_keys_count` through
    `api_key_service.count_non_revoked_keys()`; the endpoint performs no direct
-   `ApiKey` query. The count includes expired keys because deactivation
-   revokes every row whose `revoked_at` is NULL.
+   `ApiKey` query. Obtain `sessions_count`, `tickets_count`, and the
+   last-active-admin flag through `user_service.get_deactivation_impact()`;
+   neither the endpoint nor the CLI performs direct Session, Ticket, or
+   UserRole queries. The API key count includes expired keys because
+   deactivation revokes every row whose `revoked_at` is NULL.
 
 **Response** (HTTP 200):
 
@@ -855,6 +986,7 @@ proceeding with deactivation.
 {
   "data": {
     "already_inactive": false,
+    "is_last_active_admin": false,
     "api_keys_count": 3,
     "sessions_count": 2,
     "tickets_count": 5
@@ -868,6 +1000,7 @@ When the user is already inactive, the response contains zeroed counts:
 {
   "data": {
     "already_inactive": true,
+    "is_last_active_admin": false,
     "api_keys_count": 0,
     "sessions_count": 0,
     "tickets_count": 0
@@ -878,6 +1011,7 @@ When the user is already inactive, the response contains zeroed counts:
 | Field                  | Type          | Description                                      |
 |------------------------|---------------|--------------------------------------------------|
 | `already_inactive`     | `bool`        | `true` if the user is already inactive (no-op deactivation) |
+| `is_last_active_admin` | `bool`        | `true` if the active target is the only active user with an effective Admin role |
 | `api_keys_count`       | `int`         | Non-revoked API keys that will be revoked, including expired keys |
 | `sessions_count`       | `int`         | Active sessions that will be invalidated         |
 | `tickets_count`        | `int`         | Active tickets assigned to this user that will be unassigned |
@@ -891,9 +1025,13 @@ user (tickets, API keys, sessions). The deactivation proceeds regardless
 and affects all resources at execution time, not only those shown in the
 preview.
 
-**Authorization**: requires `admin` role.
-
 #### Unlock User
+
+```
+POST /api/v1/admin/users/{user}/unlock
+```
+
+**`Capability: manage_users`**
 
 Clear the login lockout counter for a user.
 
@@ -959,15 +1097,16 @@ handling is required.
 
 ## Security Considerations
 
-- **CLI access requires shell access**: the `manage-user` commands
-  require direct access to the host or container. There are no
-  unauthenticated HTTP endpoints for user management
+- **CLI access requires shell access**: the `manage-user` commands require
+  direct access to the host or container and provide bootstrap/recovery. The
+  ordinary create endpoint is authenticated and capability-protected; there
+  are no unauthenticated user-management mutations
 - **Passwords are never CLI arguments**: the `create` and `set-password`
   commands collect passwords via hidden interactive prompts. This
   prevents exposure in process listings (`ps aux`) and shell history
   files. A TTY is required — these commands cannot be scripted
-- **Admin UI is authenticated and role-protected**: only users with the
-  `admin` role can access the user management pages
+- **Admin UI is authenticated and capability-protected**: only callers with
+  `manage_users` can use administrator user-management operations
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)

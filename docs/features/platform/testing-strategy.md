@@ -1042,6 +1042,62 @@ scenarios are required:
 - Lockout events do NOT produce `IdentityAuditEvent` records (lockout
   is transient Redis-only state, not a persistent identity mutation)
 
+### User Lifecycle and Management
+
+When user lifecycle services, administrator endpoints, bootstrap/recovery CLI,
+or identity audit validation are affected, tests MUST cover:
+
+**Transactions and audit:**
+
+- `create_user`, `update_user`, `reactivate_user`, and `reset_password` flush
+  without committing or rolling back; caller rollback removes every lifecycle
+  write, UserRole, Session invalidation, and IdentityAuditEvent from that
+  workflow
+- `deactivate_user` rollback leaves no partial User, API-key, Session, ticket,
+  TicketAuditEvent, or IdentityAuditEvent mutation when any composed step fails
+- API, CLI, and task workflows commit exactly once after all database services
+  succeed; a failure in a later composed service leaves no earlier mutation or
+  audit event
+- authenticated API events contain the authenticated actor; CLI/manual system
+  creation, initial roles, updates, reactivation, and password reset use NULL;
+  external initial roles contain both `source` and `mapping`
+- `last_login_at`, `last_used_at`, and `synced_at` updates create no lifecycle
+  audit event and only their documented owners may write them
+
+**Validation and audit boundaries:**
+
+- create/update email is trimmed and lowercased before uniqueness evaluation;
+  create/update explicit email NULL is rejected, while update
+  `full_name = null` clears the value
+- username, email, password, role, missing-field, explicit-NULL, duplicate-role,
+  and password 15/16/128/129 boundaries produce the documented outcomes
+- audit old/new values accept exactly 512 Unicode code points and truncate
+  longer ASCII and multibyte values to the first 512 code points without an
+  ellipsis
+- deterministic detail serialization accepts exactly 4096 UTF-8 bytes and
+  rejects 4097; tests include ASCII and multibyte content, unknown keys, wrong
+  value types, missing paired source/mapping keys, and non-object payloads
+- any audit validation or flush failure rolls back the owning lifecycle
+  mutation
+
+**Concurrency and endpoint behavior:**
+
+- concurrent creation for the same normalized username or email produces one
+  user and one complete set of audit events; every loser receives the
+  documented conflict and persists no dependent records
+- concurrent update serializes old/new audit values; concurrent reactivation
+  produces one mutation/event; password reset serializes with another reset
+  and with deactivation, and performs no bcrypt or Redis work while locked
+- concurrent removal of the final vulnerability-analyst role sources proves
+  that `update_roles` serializes the remaining-role check and performs ticket
+  unassignment and audit exactly once
+- `POST /api/v1/admin/users` returns 201 with no secret fields, enforces
+  `manage_users`, covers unauthenticated 401, unauthorized 403, duplicate 409,
+  validation/policy 422, initial roles, and atomic audit persistence
+- every API accepting a user identifier exercises both UUID and username, and
+  route handlers delegate user reads to `user_service` rather than executing
+  ORM queries directly
+
 ### API Key Management
 
 When API key persistence, services, authentication, API endpoints, or CLI

@@ -184,10 +184,13 @@ group "SecurityTeam" can be mapped to both `admin` and
 `vulnerability_analyst` simultaneously. Each mapping operates
 independently — creating or deleting one does not affect the other.
 
-**Processing** (all steps within a **single database transaction**):
-1. Query the external provider for members of the specified group. If
+1. Before opening a database transaction, query the external provider for
+   members of the specified group. If
    the provider is unreachable, return 503 /
    `PROVISIONING_UNAVAILABLE` — no records are created
+
+**Processing** (steps 2-5 within a **single database transaction**):
+
 2. Create the `RoleMapping` record
 3. Call `user_service.sync_role_mapping(role, group_name,
    member_user_ids, acting_user_id=acting_admin.id)` where
@@ -287,7 +290,8 @@ process.
 ## Provisioning Mechanism (Placeholder)
 
 No provisioning mechanism is active in the current phase. Users are
-created exclusively as local users via CLI.
+created as local users through the authenticated administrator API or the
+bootstrap/recovery CLI.
 
 **Candidate mechanism**: SCIM 2.0 push from SUSEID (Authentik) with
 hourly full reconciliation sync. The application would expose

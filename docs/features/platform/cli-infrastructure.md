@@ -141,13 +141,17 @@ per-command path selection.
   ```python
   async def deactivate_flow(session_factory, username):
       async with session_factory() as db:
-          user = await lookup_user(db, username)      # pre-mutation reads
-          impact = await count_deactivation_impact(db, user)
+          user = await user_service.get_user(db, username)
+          impact = await user_service.get_deactivation_impact(db, user.id)
       if not click.confirm("Proceed?"):                # blocking prompt
           print("Aborted.")                            # printed to stdout
           return                                        # exit 0, no mutation
       async with session_factory() as db:
-          await user_service.deactivate_user(db, user.id, ...)  # mutation
+          result = await user_service.deactivate_user(db, user.id, ...)
+          await db.commit()
+      await session_service.purge_session_cache(
+          result.invalidated_session_ids
+      )
 
   asyncio.run(deactivate_flow(async_session_factory, username))
   ```
@@ -193,6 +197,7 @@ per-command path selection.
   async def revoke_flow(session_factory, key_id):
       async with session_factory() as db:
           await api_key_service.revoke_key(db, key_id, ...)
+          await db.commit()
 
   asyncio.run(revoke_flow(async_session_factory, key_id))
   ```
