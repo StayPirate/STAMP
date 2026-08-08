@@ -1,4 +1,4 @@
-"""Image smoke assertions for the identity schema migrations (P1-04, P2-01).
+"""Image smoke assertions for the identity schema migrations (P1-04, P2-01, P2-02).
 
 Verifies container-observable outcomes of the one-shot `migrate` service
 in docker-compose.smoke.yml, which runs `alembic upgrade head` as the
@@ -60,6 +60,10 @@ async def main() -> None:
             api_key_checks = {
                 c["name"] for c in insp.get_check_constraints("api_key")
             }
+            identity_audit_event_indexes = {
+                idx["name"]: idx
+                for idx in insp.get_indexes("identity_audit_event")
+            }
             return (
                 tables,
                 user_checks,
@@ -67,6 +71,7 @@ async def main() -> None:
                 session_indexes,
                 api_key_indexes,
                 api_key_checks,
+                identity_audit_event_indexes,
             )
 
         (
@@ -76,12 +81,16 @@ async def main() -> None:
             session_indexes,
             api_key_indexes,
             api_key_checks,
+            identity_audit_event_indexes,
         ) = await conn.run_sync(_inspect)
 
     assert "user" in tables, f"'user' table missing: {tables}"
     assert "user_role" in tables, f"'user_role' table missing: {tables}"
     assert "session" in tables, f"'session' table missing: {tables}"
     assert "api_key" in tables, f"'api_key' table missing: {tables}"
+    assert "identity_audit_event" in tables, (
+        f"'identity_audit_event' table missing: {tables}"
+    )
     assert "chk_user_auth_exclusive" in user_checks, user_checks
     assert "chk_user_role_role_valid" in user_role_checks, user_role_checks
     assert "ix_session_user_id_is_active" in session_indexes, session_indexes
@@ -94,6 +103,15 @@ async def main() -> None:
         in partial_index["dialect_options"]["postgresql_where"]
     ), partial_index
     assert "chk_api_key_hash_is_sha256_hex" in api_key_checks, api_key_checks
+    assert (
+        "ix_identity_audit_event_created_at" in identity_audit_event_indexes
+    ), identity_audit_event_indexes
+    assert (
+        "ix_identity_audit_event_user_id" in identity_audit_event_indexes
+    ), identity_audit_event_indexes
+    assert (
+        "ix_identity_audit_event_target_user_id" in identity_audit_event_indexes
+    ), identity_audit_event_indexes
     print("SCHEMA-OK")
     await engine.dispose()
 

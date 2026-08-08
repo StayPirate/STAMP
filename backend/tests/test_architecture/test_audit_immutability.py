@@ -134,15 +134,15 @@ class TestNoForbiddenMutationsInServiceLayer:
     """Scans every real module under `app/services/` for the forbidden
     patterns, against the currently-registered audit event models.
 
-    No production audit trail model exists yet (see
-    `docs/drafts/implementation-plan.md`, P1-05) — today, the only
-    registered `AuditEventMixin` subclass is the test-only
-    `SampleAuditEvent` (`tests/support/audit_models.py`), which no
-    `app/services/` module references. The test therefore currently
-    passes because none of `app/services/` mentions that name — not
-    because `model_names` is empty — and starts protecting each real
-    domain audit trail automatically as its model is defined, with no
-    update to this test file needed.
+    `IdentityAuditEvent` (`app/models/identity_audit_event.py`) is the
+    first production `AuditEventMixin` subclass; the test-only
+    `SampleAuditEvent` (`tests/support/audit_models.py`) remains
+    registered alongside it. Neither name appears in any
+    `app/services/` module today, so this test currently passes because
+    no service performs a bulk `update()`/`delete()` against an audit
+    table — not because `model_names` is empty — and starts protecting
+    each further domain audit trail automatically as its model is
+    defined, with no update to this test file needed.
     """
 
     def test_no_service_module_bulk_updates_or_deletes_an_audit_table(self) -> None:
