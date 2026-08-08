@@ -1324,6 +1324,17 @@ hash is stored. See
 | revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means not revoked; status may still be expired. See `api-key-management.md` (Derived Status) |
 | revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
 
+**Check constraint**: `chk_api_key_hash_is_sha256_hex` —
+`key_hash ~ '^[0-9a-f]{64}$'` — restricts `key_hash` to a 64-character
+lowercase hexadecimal string (the shape of a SHA-256 digest). Defense in
+depth for a column whose entire purpose is confidentiality: it makes a
+plaintext key (`stl_ak_` plus 32 characters, 39 characters total) or an
+uppercase digest structurally unrepresentable, turning a hypothetical
+plaintext-storage bug into an immediate write failure instead of a silent
+one. See `docs/features/identity/api-key-management.md` (Key Format and
+Visibility) and `docs/features/identity/api-key-service.md` (key
+generation and hashing).
+
 **Indexes**:
 
 - (user_id, revoked_at) — supports owner-scoped lifecycle queries and bulk
