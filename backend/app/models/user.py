@@ -75,23 +75,29 @@ class User(Base):
         back_populates="direct_reports",
         foreign_keys=[manager_id],
     )
+    # passive_deletes="all": `manager_id` is nullable, so without this
+    # flag SQLAlchemy would null out each direct report's `manager_id`
+    # before deleting the manager, letting a hypothetical `delete(user)`
+    # succeed silently. User deletion is not supported
+    # (docs/features/identity/user-service.md, User Deletion); this
+    # leaves the database's own FK constraint on `manager_id` as the
+    # only guard, so it must fail loudly with an IntegrityError instead.
     direct_reports: Mapped[list[User]] = relationship(
         "User",
         back_populates="manager",
         foreign_keys=[manager_id],
+        passive_deletes="all",
     )
+    # Deliberately no cascade on roles, sessions, or api_keys: user
+    # deletion is not supported (docs/features/identity/user-service.md,
+    # User Deletion). A hypothetical `delete(user)` must fail loudly with
+    # an IntegrityError instead of silently destroying role, session, or
+    # API key records.
     roles: Mapped[list[UserRole]] = relationship(
         "UserRole",
         back_populates="user",
         foreign_keys="UserRole.user_id",
-        cascade="all, delete-orphan",
     )
-    # Deliberately no cascade: user deletion is not supported
-    # (docs/features/identity/user-service.md, User Deletion). A
-    # hypothetical `delete(user)` must fail loudly with an
-    # IntegrityError instead of silently destroying session or API key
-    # records. See issue #149 for aligning `roles` to this same
-    # behavior.
     sessions: Mapped[list[Session]] = relationship("Session", back_populates="user")
     api_keys: Mapped[list[ApiKey]] = relationship(
         "ApiKey", back_populates="user", foreign_keys="ApiKey.user_id"

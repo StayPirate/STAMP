@@ -236,6 +236,28 @@ class TestUserManagerRelationship:
 
 
 @pytest.mark.integration
+class TestUserNoCascadeOnManagerDeletion:
+    """`User.direct_reports` deliberately has no cascade: user deletion is
+    not supported (docs/features/identity/user-service.md, User
+    Deletion). `manager_id` is nullable, so without
+    `passive_deletes="all"` the ORM would null out each direct report's
+    `manager_id` before deleting the manager, letting a hypothetical
+    `delete(user)` succeed silently instead of failing loudly with an
+    IntegrityError.
+    """
+
+    async def test_deleting_manager_with_reports_raises(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        manager = await user_factory()
+        await user_factory(manager_id=manager.id)
+
+        await db_session.delete(manager)
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
+
+
+@pytest.mark.integration
 class TestUserUpdatedAtBehavior:
     async def test_updated_at_advances_on_update(
         self, db_session: AsyncSession

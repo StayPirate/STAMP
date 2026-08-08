@@ -1206,6 +1206,13 @@ local users must have a password. See
 `docs/features/identity/user-management.md` (Business Rule 5) and
 `docs/features/identity/local-authentication.md`.
 
+*Note: `manager_id` has no `ON DELETE` action, so it defaults to
+`NO ACTION` — deleting a user who is still referenced as another user's
+manager is rejected at the database level. This is intentional: users
+are never physically deleted from the database (see "User References in
+Responses" in `docs/api-spec.md`), so no application code relies on this
+being reachable; it exists purely as a defense-in-depth guard.*
+
 #### UserRole
 
 Junction table linking users to roles. A user may have zero, one, or
