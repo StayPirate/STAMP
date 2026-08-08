@@ -226,7 +226,6 @@ class TestHappyPathAllEventTypes:
         assert event.detail == kwargs.get("detail")
 
 
-@pytest.mark.unit
 class TestEventTypeValidation:
     async def test_raw_string_event_type_rejected(
         self,
