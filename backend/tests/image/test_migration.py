@@ -57,12 +57,16 @@ async def main() -> None:
             api_key_indexes = {
                 idx["name"]: idx for idx in insp.get_indexes("api_key")
             }
+            api_key_checks = {
+                c["name"] for c in insp.get_check_constraints("api_key")
+            }
             return (
                 tables,
                 user_checks,
                 user_role_checks,
                 session_indexes,
                 api_key_indexes,
+                api_key_checks,
             )
 
         (
@@ -71,6 +75,7 @@ async def main() -> None:
             user_role_checks,
             session_indexes,
             api_key_indexes,
+            api_key_checks,
         ) = await conn.run_sync(_inspect)
 
     assert "user" in tables, f"'user' table missing: {tables}"
@@ -88,6 +93,7 @@ async def main() -> None:
         "revoked_at"
         in partial_index["dialect_options"]["postgresql_where"]
     ), partial_index
+    assert "chk_api_key_hash_is_sha256_hex" in api_key_checks, api_key_checks
     print("SCHEMA-OK")
     await engine.dispose()
 
