@@ -77,3 +77,30 @@ class HealthCheckStatus(StrEnum):
     OK = "ok"
     TIMEOUT = "timeout"
     UNREACHABLE = "unreachable"
+
+
+class IdentityAuditEventType(StrEnum):
+    """Classifies the action recorded in an `IdentityAuditEvent`.
+
+    Category B — classification (Python Enum only, no CHECK constraint;
+    adding a value requires only a code change). See
+    `docs/features/identity/identity-audit-log.md` (IdentityAuditEventType
+    Enum) for the full event type contract: trigger, actor/target
+    semantics, and `old_value`/`new_value`/`detail` field values per
+    event type.
+    """
+
+    USER_CREATED = "user_created"
+    USER_DEACTIVATED = "user_deactivated"
+    USER_REACTIVATED = "user_reactivated"
+    PASSWORD_RESET = "password_reset"
+    ROLE_ADDED = "role_added"
+    ROLE_REMOVED = "role_removed"
+    ROLE_MAPPING_CREATED = "role_mapping_created"
+    ROLE_MAPPING_DELETED = "role_mapping_deleted"
+    USERNAME_CHANGED = "username_changed"
+    API_KEY_CREATED = "api_key_created"
+    API_KEY_REVOKED = "api_key_revoked"
+    EMAIL_CHANGED = "email_changed"
+    FULL_NAME_CHANGED = "full_name_changed"
+    MANAGER_CHANGED = "manager_changed"

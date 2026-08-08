@@ -42,7 +42,7 @@ from app.main import app
 # tables — including ones only referenced via TYPE_CHECKING forward
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
-from app.models import ApiKey, Session, User
+from app.models import ApiKey, IdentityAuditEvent, Session, User
 from tests.support.audit_models import SampleAuditEvent
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
@@ -419,6 +419,41 @@ def api_key_factory(
         }
         defaults.update(overrides)
         instance = ApiKey(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def identity_audit_event_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+) -> Callable[..., Awaitable[IdentityAuditEvent]]:
+    """Factory fixture for `IdentityAuditEvent` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Bypasses `IdentityAuditLog.log_event()` validation on purpose —
+    model-layer tests (`tests/test_models/test_identity_audit_event.py`)
+    exercise the raw persistence contract (columns, constraints,
+    indexes) independently of the service-layer validation rules,
+    which are covered by `tests/test_services/test_identity_audit_log.py`.
+
+    Defaults:
+    - `event_type`: `"user_created"` (a fictional, valid string value;
+      not validated against `IdentityAuditEventType` at this layer).
+    - `target_user_id`: a freshly created user, when not overridden.
+    """
+
+    async def _create(**overrides: Any) -> IdentityAuditEvent:
+        if "target_user_id" not in overrides:
+            overrides["target_user_id"] = (await user_factory()).id
+        defaults: dict[str, Any] = {"event_type": "user_created"}
+        defaults.update(overrides)
+        instance = IdentityAuditEvent(**defaults)
         db_session.add(instance)
         await db_session.flush()
         return instance

@@ -4,9 +4,10 @@
 `docs/features/platform/audit-trail-infrastructure.md`) — it only
 supplies columns to concrete audit trail models. This module provides a
 minimal concrete model so tests can exercise the mixin's columns and
-`BaseAuditLog`'s behavior without depending on any production audit
-trail (none exist yet in this phase of the implementation plan; see
-`docs/drafts/implementation-plan.md`, P1-05).
+`BaseAuditLog`'s generic behavior independently of any specific
+production audit trail (e.g., `IdentityAuditEvent`,
+`backend/app/models/identity_audit_event.py`), which additionally
+enforce their own domain-specific validation rules.
 
 Not a fixture — see `docs/features/platform/testing-strategy.md`
 (Directory Structure) for the distinction between `conftest.py`

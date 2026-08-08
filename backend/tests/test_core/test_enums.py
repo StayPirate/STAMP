@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.enums import Capability, HealthCheckStatus, Role, Scope
+from app.core.enums import (
+    Capability,
+    HealthCheckStatus,
+    IdentityAuditEventType,
+    Role,
+    Scope,
+)
 
 
 @pytest.mark.unit
@@ -71,3 +77,30 @@ class TestHealthCheckStatusEnum:
             "timeout",
             "unreachable",
         }
+
+
+@pytest.mark.unit
+class TestIdentityAuditEventTypeEnum:
+    """IdentityAuditEventType must have exactly the 14 members defined
+    in identity-audit-log.md (IdentityAuditEventType Enum)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in IdentityAuditEventType} == {
+            "user_created",
+            "user_deactivated",
+            "user_reactivated",
+            "password_reset",
+            "role_added",
+            "role_removed",
+            "role_mapping_created",
+            "role_mapping_deleted",
+            "username_changed",
+            "api_key_created",
+            "api_key_revoked",
+            "email_changed",
+            "full_name_changed",
+            "manager_changed",
+        }
+
+    def test_count(self) -> None:
+        assert len(list(IdentityAuditEventType)) == 14
