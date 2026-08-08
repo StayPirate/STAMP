@@ -148,6 +148,89 @@ class TestApiKeyUniqueKeyHash:
 
 
 @pytest.mark.integration
+class TestApiKeyHashFormatConstraint:
+    """chk_api_key_hash_is_sha256_hex: key_hash ~ '^[0-9a-f]{64}$'
+    (docs/data-model.md, ApiKey, Check constraint).
+    """
+
+    async def test_valid_sha256_hex_digest_accepted(
+        self,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(key_hash="a" * 64)
+        assert key.key_hash == "a" * 64
+
+    async def test_plaintext_shaped_value_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory()
+        plaintext_shaped = "stl_ak_" + "a" * 32
+        db_session.add(
+            ApiKey(
+                user_id=user.id,
+                key_hash=plaintext_shaped,
+                prefix="stl_ak_aaaaa",
+                name="plaintext-shaped-key",
+            )
+        )
+        with pytest.raises(IntegrityError, match="chk_api_key_hash_is_sha256_hex"):
+            await db_session.flush()
+
+    async def test_uppercase_hex_digest_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory()
+        db_session.add(
+            ApiKey(
+                user_id=user.id,
+                key_hash="A" * 64,
+                prefix="stl_ak_aaaaa",
+                name="uppercase-digest-key",
+            )
+        )
+        with pytest.raises(IntegrityError, match="chk_api_key_hash_is_sha256_hex"):
+            await db_session.flush()
+
+    async def test_wrong_length_value_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory()
+        db_session.add(
+            ApiKey(
+                user_id=user.id,
+                key_hash="a" * 63,
+                prefix="stl_ak_aaaaa",
+                name="wrong-length-key",
+            )
+        )
+        with pytest.raises(IntegrityError, match="chk_api_key_hash_is_sha256_hex"):
+            await db_session.flush()
+
+    async def test_non_hex_characters_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory()
+        db_session.add(
+            ApiKey(
+                user_id=user.id,
+                key_hash="g" * 64,
+                prefix="stl_ak_aaaaa",
+                name="non-hex-key",
+            )
+        )
+        with pytest.raises(IntegrityError, match="chk_api_key_hash_is_sha256_hex"):
+            await db_session.flush()
+
+
+@pytest.mark.integration
 class TestApiKeyPartialUniqueNameIndex:
     """UNIQUE (user_id, name) WHERE revoked_at IS NULL
     (docs/data-model.md, ApiKey, Indexes).

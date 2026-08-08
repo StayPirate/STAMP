@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,6 +37,14 @@ class ApiKey(Base):
 
     __tablename__ = "api_key"
     __table_args__ = (
+        # Restricts key_hash to a 64-character lowercase hexadecimal string
+        # (the shape of a SHA-256 digest). Defense in depth: makes a
+        # plaintext key or an uppercase digest structurally unrepresentable.
+        # See docs/data-model.md (ApiKey, Check constraint).
+        CheckConstraint(
+            "key_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_api_key_hash_is_sha256_hex",
+        ),
         Index("ix_api_key_user_id_revoked_at", "user_id", "revoked_at"),
         Index(
             "uq_api_key_user_id_name_active",
