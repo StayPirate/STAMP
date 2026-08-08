@@ -93,7 +93,7 @@ class IdentityAuditEventType(StrEnum):
     USER_CREATED = "user_created"
     USER_DEACTIVATED = "user_deactivated"
     USER_REACTIVATED = "user_reactivated"
-    PASSWORD_RESET = "password_reset"
+    PASSWORD_RESET = "password_reset"  # classification value # nosec B105
     ROLE_ADDED = "role_added"
     ROLE_REMOVED = "role_removed"
     ROLE_MAPPING_CREATED = "role_mapping_created"
