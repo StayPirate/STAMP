@@ -191,26 +191,45 @@ class TestUserRoleRelationships:
         assert role.assigning_user is not None
         assert role.assigning_user.id == admin.id
 
-    async def test_deleting_user_cascades_to_roles(
+
+@pytest.mark.integration
+class TestUserRoleNoCascadeOnUserDeletion:
+    """`User.roles` deliberately has no cascade: user deletion is not
+    supported (docs/features/identity/user-service.md, User Deletion).
+    A hypothetical `delete(user)` must fail loudly instead of silently
+    destroying role grant records.
+    """
+
+    async def test_deleting_user_with_roles_raises(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
-        """User.roles uses cascade="all, delete-orphan": deleting a User
-        via the ORM removes its UserRole rows (see user_role.py comment).
-        This is a hypothetical path in production (users are deactivated,
-        not deleted, per docs/data-model.md) but is a deliberate,
-        documented cascade choice worth pinning down with a test.
-        """
         user = await user_factory()
         db_session.add(UserRole(user_id=user.id, role=Role.ADMIN.value))
         await db_session.flush()
-        await db_session.refresh(user, attribute_names=["roles"])
-        role_id = user.roles[0].id
 
         await db_session.delete(user)
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
+
+    async def test_deleting_assigning_user_raises(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """`assigned_by` is a second, independent no-cascade FK: deleting
+        the admin who assigned a role must never delete or alter the role
+        grant. Covered separately from the owner FK because the two are
+        configured differently (`assigning_user` is unidirectional, with
+        no back-populated collection on `User`).
+        """
+        target = await user_factory()
+        admin = await user_factory()
+        db_session.add(
+            UserRole(user_id=target.id, role=Role.ADMIN.value, assigned_by=admin.id)
+        )
         await db_session.flush()
 
-        remaining = await db_session.get(UserRole, role_id)
-        assert remaining is None
+        await db_session.delete(admin)
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
 
 
 @pytest.mark.integration

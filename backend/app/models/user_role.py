@@ -66,11 +66,10 @@ class UserRole(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    # Composition: a UserRole record has no meaning without its owning
-    # User. Deleting a User (hypothetical — users are deactivated, not
-    # deleted, per docs/data-model.md) cascades to its role grants.
-    # This relationship's cascade is owned by User.roles; this side is a
-    # plain many-to-one with no independent cascade behavior.
+    # Deliberately no cascade: user deletion is not supported
+    # (docs/features/identity/user-service.md, User Deletion). A
+    # hypothetical `delete(user)` must fail loudly with an IntegrityError
+    # instead of silently destroying role grant records.
     user: Mapped[User] = relationship(
         "User",
         back_populates="roles",
