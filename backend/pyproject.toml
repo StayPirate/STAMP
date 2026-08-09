@@ -115,6 +115,17 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["app"]
 branch = true
+# "greenlet": SQLAlchemy's async engine (and every async ORM/Core call,
+# not just run_sync()) bridges to the underlying sync driver via
+# greenlet internally. "thread": FastAPI/anyio run synchronous
+# dependencies and endpoint functions in a real OS thread pool
+# (anyio.to_thread), and app/services/local_auth_service.py offloads
+# bcrypt work via asyncio.to_thread(). Without both entries, coverage.py
+# loses track of statements executed after control passes through a
+# greenlet switch or into a spawned thread, silently under-reporting
+# coverage (see docs/features/platform/testing-strategy.md, Coverage
+# Configuration).
+concurrency = ["greenlet", "thread"]
 omit = [
     "*/tests/*",
     "*/alembic/*",
