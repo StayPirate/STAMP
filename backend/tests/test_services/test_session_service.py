@@ -468,6 +468,12 @@ class TestIsSessionActive:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        # Restore only `_new_redis_client` explicitly (not `monkeypatch.undo()`,
+        # which would also revert the `redis_client` fixture's override of
+        # `get_session_redis_url` back to the application-configured default —
+        # see docs/features/platform/testing-strategy.md, Redis Strategy).
+        original_new_redis_client = session_service._new_redis_client
+
         session = await session_factory()
         monkeypatch.setattr(
             session_service, "_new_redis_client", lambda: _FailingRedisClient()
@@ -476,7 +482,9 @@ class TestIsSessionActive:
             await is_session_active(db_session, session.id)
         assert _service_log_text(caplog).count("session_redis_unavailable") == 1
 
-        monkeypatch.undo()
+        monkeypatch.setattr(
+            session_service, "_new_redis_client", original_new_redis_client
+        )
         await is_session_active(db_session, session.id)
 
         monkeypatch.setattr(
