@@ -34,6 +34,8 @@ class ErrorCode(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
     AUTH_NOT_AUTHENTICATED = "AUTH_NOT_AUTHENTICATED"
     AUTH_LOGOUT_NOT_APPLICABLE = "AUTH_LOGOUT_NOT_APPLICABLE"
+    AUTH_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS"
+    AUTH_ACCOUNT_LOCKED = "AUTH_ACCOUNT_LOCKED"
 
 
 class AppError(Exception):
@@ -42,11 +44,21 @@ class AppError(Exception):
     Raised by API-layer code to signal a domain error with a specific
     HTTP status code and `ErrorCode`. Translated to a `JSONResponse` by
     the `AppError` exception handler registered in `app.main` — API
-    handlers never build the JSON envelope by hand.
+    handlers never build the JSON envelope by hand. `headers`, when
+    given, are attached to the response verbatim — used by
+    `AUTH_ACCOUNT_LOCKED` to carry the `Retry-After` header (see
+    `docs/features/identity/local-authentication.md`, Login Endpoint).
     """
 
-    def __init__(self, status_code: int, code: ErrorCode, detail: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: ErrorCode,
+        detail: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self.code = code
         self.detail = detail
+        self.headers = headers
         super().__init__(detail)

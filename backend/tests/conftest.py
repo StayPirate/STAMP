@@ -35,6 +35,7 @@ os.environ.setdefault(
 )
 
 from app.api.health import get_readiness_redis_urls
+from app.core.passwords import hash_password
 from app.database import Base, get_db
 from app.main import app
 
@@ -43,7 +44,7 @@ from app.main import app
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
 from app.models import ApiKey, IdentityAuditEvent, Session, User
-from app.services import session_service
+from app.services import local_auth_service, session_service
 from tests.support.audit_models import SampleAuditEvent
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
@@ -310,12 +311,13 @@ async def redis_client(
     Fixture Catalog) for the full contract. Before yielding: flushes the
     dedicated database (never `FLUSHALL` — other workers use other
     databases) and overrides every application-owned Redis boundary —
-    `get_readiness_redis_urls` (readiness checks) and
+    `get_readiness_redis_urls` (readiness checks),
     `session_service.get_session_redis_url` (session liveness cache,
-    invalidation purge) — so they observe this same instance during the
-    test. Teardown restores both overrides, flushes again, and closes
-    the client.  Cleanup/provisioning failures fail the test rather
-    than skip.
+    invalidation purge), and `local_auth_service.get_lockout_redis_url`
+    (login lockout counter) — so they observe this same instance during
+    the test. Teardown restores every override, flushes again, and
+    closes the client. Cleanup/provisioning failures fail the test
+    rather than skip.
     """
     client = redis_asyncio.Redis.from_url(_redis_test_url, decode_responses=True)
     await client.flushdb()
@@ -323,6 +325,9 @@ async def redis_client(
     app.dependency_overrides[get_readiness_redis_urls] = lambda: [_redis_test_url]
     monkeypatch.setattr(
         session_service, "get_session_redis_url", lambda: _redis_test_url
+    )
+    monkeypatch.setattr(
+        local_auth_service, "get_lockout_redis_url", lambda: _redis_test_url
     )
     try:
         yield client
@@ -367,6 +372,54 @@ def user_factory(
         db_session.add(instance)
         await db_session.flush()
         return instance
+
+    return _create
+
+
+# A fixed, valid password satisfying the 16-128 char policy, paired with
+# its real bcrypt hash below. `hash_password()` runs once at collection
+# time (not per-test) so tests that need an actual, verifiable login
+# don't each pay bcrypt's ~cost-12 latency. Fictional value — never a
+# real credential (see AGENTS.md Guardrail 23).
+_KNOWN_PASSWORD = "correct horse battery staple 1"
+_KNOWN_PASSWORD_HASH = hash_password(_KNOWN_PASSWORD)
+
+
+@pytest.fixture
+def local_user_factory(
+    db_session: AsyncSession,
+) -> Callable[..., Awaitable[tuple[User, str]]]:
+    """Factory fixture for a local `User` with a real, verifiable password.
+
+    Unlike `user_factory`'s `_FICTIONAL_PASSWORD_HASH` (a bcrypt-*shaped*
+    but unverifiable placeholder), this factory sets a real
+    `hash_password()` output for a fixed, reused plaintext and returns
+    `(user, plaintext_password)`. Use this fixture for tests that
+    exercise an actual login (`authenticate_local_user()`, `POST
+    /api/v1/auth/login`) rather than tests that only need a persisted
+    `User` row.
+
+    Defaults:
+    - `username` / `email`: derived from a per-fixture counter, unique
+      within the test.
+    - `password_hash`: `_KNOWN_PASSWORD_HASH`, overridable to test a
+      malformed stored hash.
+    - `active`: `True`; `external_id`: unset (local user).
+    """
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> tuple[User, str]:
+        n = next(counter)
+        defaults: dict[str, Any] = {
+            "username": f"localuser{n}",
+            "email": f"localuser{n}@example.com",
+            "password_hash": _KNOWN_PASSWORD_HASH,
+        }
+        defaults.update(overrides)
+        instance = User(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance, _KNOWN_PASSWORD
 
     return _create
 

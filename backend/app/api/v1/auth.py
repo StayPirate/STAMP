@@ -1,7 +1,8 @@
 """Authentication endpoints.
 
-See `docs/features/identity/authentication.md` (Logout) for the
-authoritative endpoint contract this module implements.
+See `docs/features/identity/authentication.md` (Logout) and
+`docs/features/identity/local-authentication.md` (Login Endpoint) for
+the authoritative endpoint contracts this module implements.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -16,7 +18,14 @@ from app.core.credentials import API_KEY_PREFIX, extract_credential
 from app.core.errors import AppError, ErrorCode
 from app.core.jwt import InvalidTokenError, decode_for_logout
 from app.database import get_db, register_post_commit_callback
+from app.schemas.auth import LoginData, LoginRequest, LoginResponse
 from app.schemas.errors import ErrorResponse
+from app.services.local_auth_service import (
+    LoginInvalidCredentials,
+    LoginLocked,
+    authenticate_local_user,
+    clear_login_attempts,
+)
 from app.services.session_service import invalidate_session, purge_session_cache
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
@@ -47,10 +56,105 @@ def _unauthenticated_error() -> AppError:
     )
 
 
+def _invalid_credentials_error() -> AppError:
+    """Create a fresh generic invalid-credentials failure.
+
+    Identical status/code/detail for every login failure cause (unknown
+    username, wrong password, inactive user, external user, no password
+    set) — see `docs/features/identity/local-authentication.md`
+    (Security Considerations). A fresh instance per call for the same
+    reason as `_unauthenticated_error()`.
+    """
+    return AppError(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        code=ErrorCode.AUTH_INVALID_CREDENTIALS,
+        detail="Invalid username or password.",
+    )
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    """Set the session cookie on a successful login — see
+    `docs/features/identity/authentication.md` (Frontend session
+    behavior, Token refresh)."""
+    response.set_cookie(
+        key=_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/api",
+    )
+
+
 def _clear_session_cookie(response: Response) -> None:
     """Set the exact cookie-clearing `Set-Cookie` header — see
     `_CLEAR_COOKIE_HEADER`."""
     response.headers.append("set-cookie", _CLEAR_COOKIE_HEADER)
+
+
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    summary="Log in with a local username and password",
+    description=(
+        "Authenticates a local user, creates a session, and returns a "
+        "JWT. Public endpoint. Returns a generic 401 for every credential "
+        "failure (unknown username, wrong password, inactive user, "
+        "external user, or no password set) to prevent username "
+        "enumeration."
+    ),
+    responses={
+        401: {
+            "model": ErrorResponse,
+            "description": "Invalid username or password.",
+        },
+        429: {
+            "model": ErrorResponse,
+            "description": (
+                "Account temporarily locked due to too many failed attempts."
+            ),
+            "headers": {
+                "Retry-After": {
+                    "description": "Seconds remaining until the lockout expires.",
+                    "schema": {"type": "integer"},
+                }
+            },
+        },
+    },
+)
+async def login(
+    body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]
+) -> Response:
+    """Login — see `docs/features/identity/local-authentication.md`
+    (Login Endpoint)."""
+    result = await authenticate_local_user(db, body.username, body.password)
+
+    if isinstance(result, LoginLocked):
+        raise AppError(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code=ErrorCode.AUTH_ACCOUNT_LOCKED,
+            detail="Account temporarily locked. Try again later.",
+            headers={"Retry-After": str(result.retry_after_seconds)},
+        )
+    if isinstance(result, LoginInvalidCredentials):
+        raise _invalid_credentials_error()
+
+    register_post_commit_callback(
+        db, lambda: clear_login_attempts(result.normalized_username)
+    )
+    created = result.created_session
+    body_model = LoginResponse(
+        data=LoginData(
+            access_token=created.token,
+            expires_at=created.token_expires_at,
+        )
+    )
+    response = JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=body_model.model_dump(mode="json"),
+    )
+    _set_session_cookie(response, created.token)
+    return response
 
 
 @router.post(
