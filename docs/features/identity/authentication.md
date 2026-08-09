@@ -86,6 +86,29 @@ is not set.
 | `session_deadline` | int    | Maximum session lifetime (Unix epoch). Set at login per `SESSION_MAX_LIFETIME_DAYS`, never refreshed |
 | `iss`              | string | `"sentinel"` (constant)                       |
 
+Issued Sentinel JWTs contain exactly these six claims and no others. The
+identifier claims are canonical UUID strings. The three time claims are
+integer Unix timestamps; JSON booleans are not accepted as integers. All six
+claims are required when decoding a Sentinel JWT.
+
+### JWT validation contract
+
+Normal JWT validation verifies all of the following with no clock-skew leeway:
+
+1. The token is signed with `HS256` and its signature is valid under
+   `JWT_SECRET_KEY`. No other algorithm is accepted.
+2. The payload contains exactly the six claims listed above, with the listed
+   types; `sub` and `session_id` parse as UUIDs; and `iss` is `"sentinel"`.
+3. `iat <= now < exp <= session_deadline`. Equality with `exp` or
+   `session_deadline` is expired: validation rejects when `exp <= now` or
+   `session_deadline <= now`.
+
+`now` is one UTC timestamp snapshot converted to an integer Unix timestamp
+for all checks in one validation. Validation never recalculates
+`session_deadline` from the current `SESSION_MAX_LIFETIME_DAYS` setting.
+Malformed input or failure of any check produces one generic authentication
+failure; callers do not receive the failed condition.
+
 ### Token lifecycle
 
 - A token is issued at login with:
@@ -117,16 +140,16 @@ that transparently extends the token lifetime for active users:
 1. After successful JWT validation and session liveness check, compute:
    `token_age = now - iat`
    `refresh_threshold = JWT_EXPIRY_HOURS * 3600 * 0.5`
-2. If `session_deadline < now`: do not refresh. The session has exceeded
-   its maximum lifetime — the current token remains valid until its `exp`
-   but no new token is issued. (In practice, step 4 of JWT validation
-   catches this, but the explicit guard here prevents issuing a token
-   with `exp` in the past if reached via edge cases like clock skew.)
-3. If `token_age >= refresh_threshold`:
+2. If `session_deadline <= now`: do not refresh. The session has exceeded
+   its maximum lifetime and normal validation rejects it. The explicit guard
+   also prevents a restricted or independently tested refresh call from
+   issuing a token with no remaining lifetime.
+3. If `token_age >= refresh_threshold` and `session_deadline > now`:
    a. Verify `now + JWT_EXPIRY_HOURS * 3600` does not exceed
       `session_deadline`. If it does, set the new `exp` to
       `session_deadline` instead (final token before forced re-login)
-   b. Generate a new JWT with the same `sub`, `session_id`, and
+   b. If the capped expiration is not later than `now`, do not refresh.
+      Otherwise, generate a new JWT with the same `sub`, `session_id`, and
       `session_deadline`, but new `iat = now` and new `exp`
    c. Set the new JWT in the response `Set-Cookie` header (same cookie
       attributes: `HttpOnly`, `SameSite=Strict`, `Secure`, `Path=/api`)
@@ -143,9 +166,6 @@ client-side logic or dedicated refresh endpoint is required.
 - If the `Set-Cookie` header cannot be set for any reason, the old JWT
   remains valid — the user experiences no error and the refresh is
   retried on the next eligible request
-- If the database query for loading current roles fails during refresh,
-  the refresh is silently skipped: the old JWT remains valid and a
-  WARNING is logged. The next request will re-attempt the refresh
 - No database write is required for token refresh (the Session record is
   not modified)
 - When multiple requests arrive simultaneously after the refresh
@@ -174,7 +194,57 @@ deactivation, without waiting for JWT expiry.
 | `expires_at`       | timestamptz  | No       | Immutable maximum lifetime, calculated at login as `now() + SESSION_MAX_LIFETIME_DAYS * 86400`. Maps to the JWT `session_deadline` claim. |
 | `is_active`        | boolean      | No       | `false` after logout or revocation  |
 
+### Session creation
+
+The shared operation is:
+
+```python
+create_session(
+    db: AsyncSession,
+    user: User,
+    reason: SessionCreationReason,
+) -> CreatedSession
+```
+
+`SessionCreationReason` has exactly two values: `local_login` and
+`sso_login`. `CreatedSession` contains the persisted `Session`, its signed JWT
+string, and `token_expires_at`, the UTC datetime represented by the JWT `exp`
+claim. This is distinct from `Session.expires_at`, which represents the later
+immutable session deadline. The operation uses one UTC `login_at` snapshot for
+`User.last_login_at`, the JWT `iat`, and calculation of both
+`Session.expires_at` and the JWT `session_deadline`. It behaves as follows:
+
+1. Create a distinct active `Session` for `user.id` without reading,
+   invalidating, or otherwise changing any existing session.
+2. Set `Session.expires_at = login_at + SESSION_MAX_LIFETIME_DAYS` and
+   `user.last_login_at = login_at`.
+3. Flush both writes, then issue a JWT whose `sub`, `session_id`,
+   `session_deadline`, and timing claims match the flushed session and the
+   same `login_at` snapshot.
+4. Emit `session_created` at INFO with `user_id` and `reason`. The JWT and
+   session ID are never logged.
+5. Return the created session, token, and token expiration.
+
+The caller supplies and owns the transaction. The operation flushes but never
+commits or rolls back. It catches no database or token-encoding exception;
+any such exception propagates so the caller rolls back both the new session
+and `last_login_at`. Re-invocation intentionally creates another independent
+session and token. The operation performs no user-eligibility validation;
+provider workflows establish that the user may log in before calling it.
+Session creation produces no `IdentityAuditEvent`.
+
 ### Session liveness check
+
+The shared read operation is:
+
+```python
+is_session_active(db: AsyncSession, session_id: UUID) -> bool
+```
+
+It returns `true` only for the positive cache or database outcomes below and
+returns `false` for an inactive or absent row. It catches `RedisError` only to
+apply the specified PostgreSQL fallback; database exceptions propagate to the
+caller. It performs no database writes and never commits or rolls back.
 
 On every authenticated request, the middleware checks:
 
@@ -203,11 +273,18 @@ cached. The lookup semantics are:
 - **Cache miss** (key does not exist): query the database for the `Session`
   record and check `is_active`:
   - If `is_active = true`: write `"1"` to Redis with key
-    `session_liveness:{session_id}` and TTL 60 seconds, then proceed.
+    `session_liveness:{session_id}` and TTL 60 seconds, then proceed. If this
+    positive-cache write raises `RedisError`, still return `true` from the
+    authoritative database result and apply the outage-episode warning rule
+    below.
   - If `is_active = false`: do NOT write to cache, reject the request
     (HTTP 401).
   - If no `Session` row exists (deleted by `cleanup_sessions`): do NOT
     write to cache, reject the request (HTTP 401).
+- **Unexpected value** (the key exists with any value other than `"1"`):
+  never authorize from that value. Treat it as a cache miss and apply the
+  same database verification and positive-cache rules above. No additional
+  cache state or value is defined.
 
 This ensures that only positive (active) state is ever cached, a cache miss
 always triggers a database verification, and a revoked session never pollutes
@@ -221,10 +298,20 @@ request). The Redis connection failure is logged as a WARNING on first
 occurrence (not per-request, to avoid log flooding). Normal caching
 resumes automatically when Redis becomes available again.
 
+The warning suppression state is per server process and shared by session
+liveness reads, positive-cache writes, and invalidation purges. The first
+`RedisError` in a continuous failure episode emits
+`session_redis_unavailable` at WARNING without a user ID, session ID, cache
+key, JWT, username, email address, or secret. Further Redis errors are
+suppressed until any session-cache Redis operation succeeds; that success
+ends the episode and makes a later failure eligible to emit a new warning.
+Concurrent first failures in one process still produce at most one warning.
+
 ### Session invalidation
 
 Session invalidation is handled by `session_service`
-(`backend/app/services/session_service.py`), which provides two methods.
+(`backend/app/services/session_service.py`), which provides the database and
+Redis operations documented in this section.
 Each method separates database mutations (transactional) from Redis
 cache cleanup (post-commit, best-effort) per `docs/conventions.md`
 (Transaction Hygiene Rules).
@@ -240,20 +327,21 @@ Invalidates a single session (used by the logout endpoint).
 
 **Database phase** (executes within the caller's transaction):
 
-1. Set `Session.is_active = false` and `Session.updated_at = now()` for
-   the given `session_id`. If no row exists for the `session_id`
-   (already deleted by `cleanup_sessions`), this is a no-op — no
-   exception is raised.
+1. Set `Session.is_active = false` and `Session.updated_at = now()` only
+   when the row for the given `session_id` is currently active. If no row
+   exists (already deleted by `cleanup_sessions`) or the row is already
+   inactive, this is a no-op — no exception is raised and `updated_at` is
+   unchanged. An actual invalidation emits `session_invalidated` at INFO
+   with the row's `user_id` and `reason = "logout"`.
 2. Return the `session_id` (for post-commit cache purge)
 
 **Post-commit phase** (best-effort, caller executes after commit via
 `purge_session_cache([session_id])`):
 
 3. Delete the Redis cache entry `session_liveness:{session_id}`
-4. If Redis is unreachable, log WARNING and proceed — the entry expires
-   naturally within the cache TTL (60 seconds)
+4. Apply the `purge_session_cache()` Redis-error contract below.
 
-#### `invalidate_user_sessions(db, user_id) -> list[UUID]`
+#### `invalidate_user_sessions(db, user_id, reason) -> list[UUID]`
 
 Invalidates all active sessions for a user (used by deactivation and
 password reset).
@@ -263,16 +351,18 @@ password reset).
 1. `UPDATE session SET is_active = false, updated_at = now() WHERE
    user_id = :user_id AND is_active = true` — collect the list of
    invalidated `session_id`s
-2. Return the list of invalidated `session_id`s (for post-commit cache
+2. `reason` is required and is either `deactivation` or `password_reset`.
+   Emit `sessions_invalidated` at INFO with `user_id`, the number of changed
+   rows, and `reason`. An empty result is logged with count zero.
+3. Return the list of invalidated `session_id`s (for post-commit cache
    purge)
 
 **Post-commit phase** (best-effort, caller executes after commit via
 `purge_session_cache(session_ids)`):
 
-3. For each invalidated session, delete the Redis cache entry
+4. For each invalidated session, delete the Redis cache entry
    `session_liveness:{session_id}`
-4. If Redis is unreachable, log WARNING and proceed — entries expire
-   naturally within the cache TTL (60 seconds)
+5. Apply the `purge_session_cache()` Redis-error contract below.
 
 **Caller contract**: the caller is responsible for executing the
 post-commit phase after its transaction commits. If the post-commit
@@ -298,12 +388,15 @@ handling so that callers do not restate them.
 
 1. For each `session_id` in the list, delete
    `session_liveness:{session_id}`
-2. If Redis is unreachable (`RedisError`), log WARNING and proceed —
-   entries expire naturally within the cache TTL (60 seconds)
+2. If a delete raises `RedisError`, apply the shared outage-episode warning
+   rule in Session liveness check and continue attempting every remaining
+   `session_id`. After all IDs have been attempted, return normally. Cache
+   entries not deleted expire naturally within 60 seconds.
 
 This function has no database dependency; it operates exclusively on
 Redis. It is safe to call multiple times with the same input
-(idempotent — deleting a non-existent key is a no-op).
+(idempotent — deleting a non-existent key is a no-op). An empty input performs
+no Redis operation.
 
 ### Concurrent sessions
 
@@ -359,6 +452,25 @@ of these conditions:
 
 No session history is retained — invalidated and expired sessions are
 deleted without trace.
+
+The asynchronous cleanup operation is
+`cleanup_sessions(db: AsyncSession, now: datetime) -> int`. It deletes both
+predicates relative to the supplied UTC `now` snapshot in one caller-owned
+database transaction, flushes, and returns the total number of deleted rows
+without committing or rolling back. Database exceptions propagate.
+Re-invocation is idempotent:
+rows already deleted are absent and no additional state changes. The Celery
+workflow logs `session_cleanup_started` at INFO before the transaction and
+`session_cleanup_completed` at INFO after commit with `deleted_count`; neither
+event contains user or session identifiers. Cleanup creates no
+`IdentityAuditEvent`.
+
+The Celery task is registered with the task name `cleanup_sessions`. Its thin
+synchronous wrapper calls `asyncio.run()` exactly once to execute one named
+async workflow. That workflow opens one async session, calls
+`cleanup_sessions(db, now)` with one UTC snapshot, commits once on success,
+and rolls back once when an exception escapes; failures propagate to Celery.
+The independently testable database operation never calls `asyncio.run()`.
 
 This is a maintenance task, not a `BaseFetcher` subclass (it does not
 fetch data from external sources). It is registered as a static
@@ -440,9 +552,12 @@ into all endpoints that require authentication.
 ### Credential resolution
 
 1. Check the `Authorization` header:
-   - If present with scheme `Bearer`: extract the token value. If the
-     extracted value is empty or whitespace-only, treat as header absent
-     and proceed to step 2. Otherwise, go to step 3.
+   - Match the authentication scheme case-insensitively. If it is `Bearer`,
+     extract the token value. If the extracted value is empty or
+     whitespace-only, treat as header absent and proceed to step 2.
+     Otherwise, go to step 3.
+   - If the value uses any other scheme or has no parseable scheme, treat it
+     as header absent and proceed to step 2.
 2. If the `Authorization` header is absent, check for the session cookie
    (`sentinel_session`):
    - If the cookie is present: extract its value as the token and go to
@@ -471,16 +586,15 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
 
 ### JWT validation
 
-1. Decode the token using `JWT_SECRET_KEY` with the `HS256` algorithm.
-2. Verify `exp` has not passed.
-3. Verify `iss` equals `"sentinel"`.
-4. Verify `session_deadline` has not passed.
-5. Look up the session by `session_id` claim.
-6. Verify the session passes the liveness check: the `Session` row must
+1. Apply the complete JWT validation contract above (signature, exact
+   algorithm and claims, issuer, claim types, UUIDs, temporal ordering, and
+   expiration boundaries).
+2. Look up the session by `session_id` claim.
+3. Verify the session passes the liveness check: the `Session` row must
    exist **and** have `is_active = true`. A missing row or
    `is_active = false` rejects the request (HTTP 401). Use Redis cache
    when available (see Session liveness check).
-7. On success, return the `user_id` from the `sub` claim.
+4. On success, return the `user_id` from the `sub` claim.
 
 ### API key validation
 
@@ -558,6 +672,10 @@ only use of an API key as an authentication credential.
 
 Returns the currently authenticated user's profile.
 
+```text
+GET /api/v1/users/me
+```
+
 **`Access: Authenticated`**
 
 **Response** (200):
@@ -579,6 +697,12 @@ Returns the currently authenticated user's profile.
 
 Invalidates the current session.
 
+```text
+POST /api/v1/auth/logout
+```
+
+**`Access: Authenticated`**
+
 Global responses per `api-spec.md` do not apply (custom authentication handling — see below).
 
 **Authentication**: this endpoint does NOT use the standard
@@ -587,6 +711,13 @@ already-invalidated session). Instead, it uses a lightweight dependency
 that only verifies the JWT signature and extracts claims — it does not
 check session liveness. This makes the endpoint fully idempotent:
 calling it multiple times (e.g., retry or double-click) always succeeds.
+
+The lightweight dependency uses the same credential-source precedence as
+`get_current_user`: a non-empty `Authorization: Bearer` value takes precedence
+over the `sentinel_session` cookie; an absent or whitespace-only bearer value
+falls back to the cookie. It does not fall back to a valid cookie after a
+non-empty bearer credential fails. A selected credential beginning with
+`stl_ak_` produces the API-key-specific 400 response below.
 
 If the token is not a valid JWT (invalid signature, malformed), return
 HTTP 401 with code `AUTH_NOT_AUTHENTICATED` and body
@@ -601,11 +732,14 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
 
 **Behavior**:
 
-1. Verify the JWT signature (reject if signature is invalid or token is
-   malformed). The `exp` claim is NOT checked — a token with a valid
-   signature but past expiration is accepted. This allows users to
-   explicitly log out even after their token has expired (e.g., returning
-   to a stale tab after 73+ hours). The security impact is negligible:
+1. Decode the JWT using the normal contract for `HS256`, signature, exact
+   claim set, issuer, claim types, temporal ordering, and UUID parsing. The
+   restricted logout path intentionally does not compare either `exp` or
+   `session_deadline` with `now`; a correctly signed token remains usable for
+   logout after either boundary. It still requires
+   `iat <= exp <= session_deadline`. This allows users to explicitly log out
+   even after their token has expired (e.g., returning to a stale tab after
+   73+ hours). The security impact is negligible:
    the token is bound to a specific `session_id`, so an attacker with a
    stolen expired token can only invalidate that one session (a single
    forced re-login)

@@ -84,14 +84,16 @@ session, and returns a JWT.
     locked), emit the lockout transition event (see Rate Limiting,
     Lockout transition logging) — `user_id` is available from step 5
     when the username resolved to an existing user.
-11. On success: delete the failed attempt counter (best-effort — Redis
-    failure does not fail the login). In one caller-owned database transaction,
-    create a `Session` record and update `user.last_login_at = now()`; commit
-    both once, or roll back both on failure. Then issue a JWT (see
-    `docs/features/identity/authentication.md` for token format and claims),
-    return the token. A failed counter delete may leave a residual
-    counter that locks the account until TTL expiry; admin unlock and
-    natural TTL expiry are the recovery paths.
+11. On success, in one caller-owned database transaction, call
+    `session_service.create_session(db, user, reason=local_login)`, then commit
+    the new session and `user.last_login_at` once or roll both back on failure.
+    After commit, delete the failed-attempt counter as a best-effort
+    post-commit effect; Redis failure does not fail the completed login.
+    Return the JWT and its `token_expires_at` from the service result as
+    `access_token` and `expires_at` (see
+    `docs/features/identity/authentication.md`, Session creation). A failed
+    counter delete may leave a residual counter that locks the account until
+    TTL expiry; admin unlock and natural TTL expiry are the recovery paths.
 
 **Success response** (200):
 

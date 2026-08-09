@@ -41,9 +41,17 @@
 
 **Status**: RESOLVED — Changed session cleanup threshold from hardcoded `30 days` to `SESSION_MAX_LIFETIME_DAYS + 1 day` in `docs/features/identity/authentication.md`. (2026-05-07)
 
+**Superseded**: Sessions now persist an immutable `Session.expires_at` set at
+login, and cleanup uses `expires_at < now()` without a one-day buffer. Current
+configuration changes affect only subsequently created sessions. (2026-08-09)
+
 ### AUTH-GAP-14 — Existing sessions not invalidated when SESSION_MAX_LIFETIME_DAYS is reduced (Low)
 
 **Status**: RESOLVED — Added step 4 in JWT validation (`docs/features/identity/authentication.md`) that verifies `iat + current SESSION_MAX_LIFETIME_DAYS * 86400 >= now`, ensuring config reductions take immediate effect on existing tokens. (2026-05-07)
+
+**Superseded**: JWT validation now uses the signed immutable
+`session_deadline`; it never recalculates an existing deadline from the
+current setting. (2026-08-09)
 
 ### AUTH-GAP-15 — Empty Bearer token value handling unspecified (Low)
 
@@ -80,6 +88,10 @@
 ### AUTH-GAP-06 — Token refresh failure when role DB query fails (Low)
 
 **Status**: RESOLVED — If the role-loading DB query fails during token refresh, the refresh is silently skipped: the old JWT remains valid and a WARNING log is emitted. Token refresh is a transparent side-effect that must never block the user's actual request. (2026-05-05)
+
+**Superseded**: JWTs no longer contain role claims, and refresh preserves only
+the existing JWT identity and deadline claims. No role-loading query occurs
+during refresh. (2026-08-09)
 
 ### AUTH-GAP-34 — Session cleanup task schedule and configuration not fully specified (Low)
 
@@ -180,6 +192,10 @@
 ### AUTH-DES-06 — Session cleanup has no grace period for in-flight requests (Low)
 
 **Status**: RESOLVED — Added 1-hour grace period to the session cleanup clause in `docs/features/identity/authentication.md` — invalidated sessions are now deleted only after `updated_at < now() - 1 hour`. (2026-05-06)
+
+**Superseded**: Inactive sessions are immediately eligible for cleanup. A
+request encountering a missing session receives the correct HTTP 401 outcome,
+so no grace period is required. (2026-08-09)
 
 ### AUTH-DES-07 — Per-instance debounce behavior misleading under horizontal scaling (Low)
 
