@@ -104,3 +104,30 @@ class IdentityAuditEventType(StrEnum):
     EMAIL_CHANGED = "email_changed"
     FULL_NAME_CHANGED = "full_name_changed"
     MANAGER_CHANGED = "manager_changed"
+
+
+class SessionCreationReason(StrEnum):
+    """The login provider that created a `Session`.
+
+    Category B — classification (Python Enum only; never stored in the
+    database — used only for the `session_created` operational log
+    event). See `docs/features/identity/authentication.md` (Session
+    creation).
+    """
+
+    LOCAL_LOGIN = "local_login"
+    SSO_LOGIN = "sso_login"
+
+
+class SessionInvalidationReason(StrEnum):
+    """The trigger for a bulk session invalidation
+    (`session_service.invalidate_user_sessions()`).
+
+    Category B — classification (Python Enum only; never stored in the
+    database — used only for the `sessions_invalidated` operational log
+    event). See `docs/features/identity/authentication.md` (Session
+    invalidation).
+    """
+
+    DEACTIVATION = "deactivation"
+    PASSWORD_RESET = "password_reset"  # nosec B105 -- classification value, not a credential

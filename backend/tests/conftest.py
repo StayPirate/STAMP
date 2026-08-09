@@ -43,6 +43,7 @@ from app.main import app
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
 from app.models import ApiKey, IdentityAuditEvent, Session, User
+from app.services import session_service
 from tests.support.audit_models import SampleAuditEvent
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
@@ -238,6 +239,46 @@ async def db_session(_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
 
 
 @pytest.fixture
+async def db_session_factory(
+    _engine: AsyncEngine,
+) -> AsyncGenerator[Callable[[], Awaitable[AsyncSession]]]:
+    """Provide a factory of independent DB sessions, for concurrency
+    and locking tests only.
+
+    See docs/features/platform/testing-strategy.md (Database Strategy
+    — Concurrency Testing, Fixture Catalog) for the full contract.
+    Unlike `db_session` (a single session sharing one connection and
+    savepoint-nested transaction, rolled back at teardown), each
+    session this factory creates has its own connection and its own
+    real transaction — required to observe genuine lock contention
+    (`SELECT ... FOR UPDATE` or a conditional `UPDATE`) between two
+    "concurrent" sessions within one test. `session.commit()` on a
+    factory-created session is a real commit, visible to other
+    sessions — tests that commit through this factory must clean up
+    explicitly (see the fixture's own docstring reference above).
+    Teardown closes every session and connection this factory created,
+    which rolls back any transaction still open.
+    """
+    sessions: list[AsyncSession] = []
+    connections: list[Any] = []
+
+    async def _create() -> AsyncSession:
+        conn = await _engine.connect()
+        session = AsyncSession(bind=conn, expire_on_commit=False)
+        connections.append(conn)
+        sessions.append(session)
+        return session
+
+    try:
+        yield _create
+    finally:
+        for session in sessions:
+            await session.close()
+        for conn in connections:
+            await conn.close()
+
+
+@pytest.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     """Provide an async HTTP test client with DB session override.
 
@@ -260,6 +301,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
 @pytest_asyncio.fixture
 async def redis_client(
     _redis_test_url: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[redis_asyncio.Redis]:
     """Provide an async Redis client bound to this test's dedicated
     logical database.
@@ -267,16 +309,21 @@ async def redis_client(
     See docs/features/platform/testing-strategy.md (Redis Strategy,
     Fixture Catalog) for the full contract. Before yielding: flushes the
     dedicated database (never `FLUSHALL` — other workers use other
-    databases) and overrides `get_readiness_redis_urls` — currently the
-    only application-owned Redis dependency — so readiness checks
-    exercised during the test observe this same instance. Teardown
-    restores the override, flushes again, and closes the client.
-    Cleanup/provisioning failures fail the test rather than skip.
+    databases) and overrides every application-owned Redis boundary —
+    `get_readiness_redis_urls` (readiness checks) and
+    `session_service.get_session_redis_url` (session liveness cache,
+    invalidation purge) — so they observe this same instance during the
+    test. Teardown restores both overrides, flushes again, and closes
+    the client.  Cleanup/provisioning failures fail the test rather
+    than skip.
     """
     client = redis_asyncio.Redis.from_url(_redis_test_url, decode_responses=True)
     await client.flushdb()
 
     app.dependency_overrides[get_readiness_redis_urls] = lambda: [_redis_test_url]
+    monkeypatch.setattr(
+        session_service, "get_session_redis_url", lambda: _redis_test_url
+    )
     try:
         yield client
     finally:

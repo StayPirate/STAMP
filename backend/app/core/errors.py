@@ -1,0 +1,52 @@
+"""Standard API error envelope: error codes and the `AppError` exception.
+
+See `docs/api-spec.md` (Response Format, Error Code Categories) for the
+authoritative error response contract this module implements: every
+error response body is `{"code": "...", "detail": "..."}` (plus an
+optional `errors` array for `VALIDATION_ERROR`). `ErrorCode` is the
+"Python enum in the backend (`app/core/errors.py`)" the spec refers to
+as the canonical registry of valid codes — new codes are added
+incrementally as the corresponding feature is implemented, not
+pre-declared for unimplemented features.
+
+`AppError` is the exception API-layer code raises to produce this
+envelope; it is translated to a JSON response by the global exception
+handler registered in `app.main`. `RequestValidationError` (422) and
+unhandled exceptions (500) are handled by their own dedicated handlers
+there — see `docs/conventions.md` (Transaction and Locking) and
+`docs/api-spec.md` (Global Responses) for the endpoints/handlers that
+produce each of those two responses.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    """Stable, machine-readable API error code identifiers.
+
+    See `docs/api-spec.md` (Error Code Categories) for the full prefix
+    taxonomy. Removing or renaming a value is a breaking API change.
+    """
+
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    AUTH_NOT_AUTHENTICATED = "AUTH_NOT_AUTHENTICATED"
+    AUTH_LOGOUT_NOT_APPLICABLE = "AUTH_LOGOUT_NOT_APPLICABLE"
+
+
+class AppError(Exception):
+    """Carries the standard `{"code": ..., "detail": ...}` error envelope.
+
+    Raised by API-layer code to signal a domain error with a specific
+    HTTP status code and `ErrorCode`. Translated to a `JSONResponse` by
+    the `AppError` exception handler registered in `app.main` — API
+    handlers never build the JSON envelope by hand.
+    """
+
+    def __init__(self, status_code: int, code: ErrorCode, detail: str) -> None:
+        self.status_code = status_code
+        self.code = code
+        self.detail = detail
+        super().__init__(detail)
