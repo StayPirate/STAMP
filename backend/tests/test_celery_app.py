@@ -5,8 +5,9 @@ Redbeat Configuration, Startup Validation) and
 docs/features/platform/logging.md (Correlation IDs, Integration with
 Third-Party Loggers) for the specifications exercised here.
 
-Scope note: this module intentionally does not register any fetcher
-task, registry, or Beat schedule (deferred to Phase 3) — see issue #27.
+Scope note: this module registers the static non-fetcher
+`cleanup_sessions` schedule. Fetcher task, registry, and dynamic schedule
+registration remain deferred to Phase 3 — see issue #27.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from celery.signals import setup_logging, task_postrun, task_prerun
 
 from app.celery_app import (
     _CORRELATION_KEYS,
+    celery_app,
     create_celery_app,
     validate_celery_config,
 )
@@ -142,6 +144,19 @@ class TestCreateCeleryAppDefaults:
         app = create_celery_app(_settings())
         assert app.conf.redbeat_lock_key == "redbeat::lock"
         assert app.conf.redbeat_lock_timeout == 300
+
+    def test_cleanup_sessions_static_schedule_is_sunday_at_0300_utc(self) -> None:
+        app = create_celery_app(_settings())
+        entry = app.conf.beat_schedule["cleanup_sessions"]
+
+        assert entry["task"] == "cleanup_sessions"
+        schedule = entry["schedule"]
+        assert schedule.minute == {0}
+        assert schedule.hour == {3}
+        assert schedule.day_of_week == {0}
+
+    def test_cleanup_sessions_task_is_registered_on_singleton(self) -> None:
+        assert "cleanup_sessions" in celery_app.tasks
 
 
 @pytest.mark.unit

@@ -21,9 +21,14 @@ Also wires:
   `task_prerun`/`task_postrun` signals (see
   `docs/features/platform/logging.md`, Correlation IDs).
 
-Scope: this module intentionally does NOT define any Celery task,
-fetcher registry, Beat schedule, or reconciliation logic — all deferred
-to Phase 3 (see issue #27, P1-06).
+Also registers the static, code-authoritative `beat_schedule` entry for
+the `cleanup_sessions` non-fetcher periodic task — see
+`docs/features/platform/fetcher-infrastructure.md` (Non-Fetcher
+Periodic Tasks). This is a fixed maintenance-task schedule declared
+directly in code, distinct from the fetcher framework's
+PostgreSQL-backed, admin-configurable schedules (still deferred to
+Phase 3, see issue #27, P1-06). No `FETCHER_REGISTRY`, `FetcherConfig`,
+or `FetcherRun` machinery is introduced here.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from typing import Any
 
 import structlog
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import setup_logging, task_postrun, task_prerun
 
 from app.config import Settings, settings
@@ -46,6 +52,21 @@ _REDBEAT_LOCK_KEY = "redbeat::lock"
 # derivation — see docs/features/platform/fetcher-infrastructure.md
 # (Redbeat Configuration, Derived values).
 _REDBEAT_LOCK_TIMEOUT = _BEAT_MAX_LOOP_INTERVAL * 5
+
+# Static Beat schedule for non-fetcher periodic tasks (see
+# docs/features/platform/fetcher-infrastructure.md, Non-Fetcher
+# Periodic Tasks). Referenced by task name (string) rather than a task
+# object so this dict can be set at construction time for *every*
+# Celery app instance `create_celery_app()` builds (including in unit
+# tests) without importing `app.tasks.session_cleanup` here — which
+# would create a circular import (that module imports the `celery_app`
+# singleton constructed at the bottom of this file).
+_BEAT_SCHEDULE: dict[str, dict[str, Any]] = {
+    "cleanup_sessions": {
+        "task": "cleanup_sessions",
+        "schedule": crontab(day_of_week="sun", hour=3, minute=0),
+    },
+}
 
 # Correlation ContextVar names cleared unconditionally at task_prerun —
 # see docs/features/platform/logging.md (Reset requirement).
@@ -89,8 +110,10 @@ def validate_celery_config(app: Celery) -> None:
 def create_celery_app(app_settings: Settings) -> Celery:
     """Build and validate the Sentinel Celery application.
 
-    No fetcher task, registry, or Beat schedule is registered here —
-    deferred to Phase 3 (`run_fetcher`, `FETCHER_REGISTRY` discovery).
+    Registers the static `beat_schedule` entry for the non-fetcher
+    `cleanup_sessions` periodic task (see `_BEAT_SCHEDULE` above). No
+    fetcher task, registry, or fetcher Beat schedule is registered here
+    — deferred to Phase 3 (`run_fetcher`, `FETCHER_REGISTRY` discovery).
     """
     app = Celery("sentinel")
     app.conf.update(
@@ -111,6 +134,7 @@ def create_celery_app(app_settings: Settings) -> Celery:
         beat_max_loop_interval=_BEAT_MAX_LOOP_INTERVAL,
         redbeat_lock_key=_REDBEAT_LOCK_KEY,
         redbeat_lock_timeout=_REDBEAT_LOCK_TIMEOUT,
+        beat_schedule=_BEAT_SCHEDULE,
     )
     validate_celery_config(app)
     return app
@@ -174,3 +198,11 @@ task_postrun.connect(
 
 
 celery_app = create_celery_app(settings)
+
+# Import task modules so they register (via `@celery_app.task(...)`)
+# against the singleton constructed above. Must come after
+# construction — `app.tasks.session_cleanup` imports `celery_app` from
+# this module, which would otherwise be a circular import (this
+# module's `beat_schedule` entry above references the task by name only,
+# precisely to avoid needing this import any earlier).
+from app.tasks import session_cleanup  # noqa: E402,F401
