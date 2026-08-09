@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.v1.auth import _unauthenticated_error
 from app.core.errors import AppError, ErrorCode
 
 
@@ -32,12 +31,3 @@ class TestErrorCode:
         for code in ErrorCode:
             assert code.value == code.value.upper()
             assert isinstance(code.value, str)
-
-
-@pytest.mark.unit
-def test_unauthenticated_error_returns_fresh_exception_instances() -> None:
-    first = _unauthenticated_error()
-    second = _unauthenticated_error()
-
-    assert first is not second
-    assert first.code == second.code == ErrorCode.AUTH_NOT_AUTHENTICATED

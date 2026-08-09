@@ -2,10 +2,10 @@
 
 See `docs/data-model.md` (Session) and
 `docs/features/identity/authentication.md` (Session Management) for the
-full specification. This model intentionally implements only the
-persistence root: session creation at login, sliding-session refresh,
-and deactivation on logout are out of scope for this piece (see
-`docs/drafts/implementation-plan.md`, P2-01).
+full specification. Session creation at login, sliding-session
+refresh, and deactivation on logout are implemented in
+`app/services/session_service.py` and `app/core/jwt.py` — this module
+implements only the persistence root (the `Session` table itself).
 """
 
 from __future__ import annotations

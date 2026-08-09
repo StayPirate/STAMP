@@ -100,6 +100,18 @@ def _build_app(order: list[str]) -> FastAPI:
         register_post_commit_callback(db, _second)
         return {"ok": True}
 
+    @app.get("/with-failing-then-ok-callback")
+    async def with_failing_then_ok_callback_endpoint(db: _Db) -> dict[str, bool]:
+        async def _failing() -> None:
+            raise RuntimeError("callback boom")
+
+        async def _second() -> None:
+            order.append("second")
+
+        register_post_commit_callback(db, _failing)
+        register_post_commit_callback(db, _second)
+        return {"ok": True}
+
     @app.get("/failing-with-callback")
     async def failing_with_callback_endpoint(db: _Db) -> dict[str, bool]:
         async def _callback() -> None:
@@ -196,6 +208,22 @@ class TestPostCommitCallbacks:
         with caplog.at_level("ERROR"):
             response = await fake_client.get("/with-failing-callback")
         assert response.status_code == 200
+        assert "post_commit_callback_failed" in caplog.text
+
+    async def test_failing_callback_does_not_block_next_callback(
+        self,
+        fake_client: AsyncClient,
+        order: list[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """One failing callback must not prevent subsequent registered
+        callbacks from running — see `register_post_commit_callback()`
+        docstring: "each independently caught and logged so one failing
+        best-effort side effect never blocks the others."""
+        with caplog.at_level("ERROR"):
+            response = await fake_client.get("/with-failing-then-ok-callback")
+        assert response.status_code == 200
+        assert order == ["commit", "second"]
         assert "post_commit_callback_failed" in caplog.text
 
     async def test_exception_path_still_rolls_back(

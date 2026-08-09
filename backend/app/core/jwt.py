@@ -29,11 +29,15 @@ REQUIRED_CLAIMS: frozenset[str] = frozenset(
 )
 
 # PyJWT decode options: signature/algorithm verification stays enabled
-# (the only check PyJWT itself performs here); every claim shape and
-# temporal check below is applied manually so equality boundaries and
-# "no clock-skew leeway" are under this module's exclusive control —
-# see authentication.md (JWT validation contract).
+# (the only check PyJWT itself performs here) — `verify_signature` is
+# listed explicitly alongside the other flags so this table remains the
+# single, unambiguous source of truth for every verification toggle;
+# every claim shape and temporal check below is applied manually so
+# equality boundaries and "no clock-skew leeway" are under this
+# module's exclusive control — see authentication.md (JWT validation
+# contract).
 _DECODE_OPTIONS: Options = {
+    "verify_signature": True,
     "require": [],
     "verify_exp": False,
     "verify_iat": False,

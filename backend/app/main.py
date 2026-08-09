@@ -55,13 +55,23 @@ async def _validation_error_handler(
 ) -> JSONResponse:
     """Render Pydantic/FastAPI request validation failures as the
     standard `422 VALIDATION_ERROR` envelope — see `docs/api-spec.md`
-    (Response Format, Global Responses)."""
+    (Response Format, Global Responses).
+
+    Only `loc`, `msg`, and `type` are projected from each Pydantic
+    error dict. Pydantic v2's `errors()` also includes an `input` key
+    with the raw offending value (and sometimes `ctx`), which is not
+    part of the documented `errors` element schema and could echo
+    sensitive request data (e.g. a password field) back to the client.
+    """
     return JSONResponse(
         status_code=422,
         content={
             "code": ErrorCode.VALIDATION_ERROR.value,
             "detail": "Request validation failed",
-            "errors": jsonable_encoder(exc.errors()),
+            "errors": [
+                {"loc": e["loc"], "msg": e["msg"], "type": e["type"]}
+                for e in jsonable_encoder(exc.errors())
+            ],
         },
     )
 

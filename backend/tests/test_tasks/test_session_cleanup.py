@@ -41,7 +41,7 @@ class TestRunCleanupSessions:
         session.rollback.assert_not_awaited()
         assert "session_cleanup_started" in caplog.text
         assert "session_cleanup_completed" in caplog.text
-        assert "deleted_count" in caplog.text
+        assert "'deleted_count': 3" in caplog.text
 
     async def test_failure_rolls_back_once_and_propagates(
         self, monkeypatch: pytest.MonkeyPatch
