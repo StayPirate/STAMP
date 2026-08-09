@@ -734,7 +734,8 @@ database transaction, in this specific order):
    CLI/external-sync workflows.
    See `docs/features/identity/api-key-service.md`.
 2. Invalidate all active sessions for this user (DB only) via
-   `session_service.invalidate_user_sessions(db, user_id)`. This sets
+   `session_service.invalidate_user_sessions(db, user_id,
+   reason="deactivation")`. This sets
    `Session.is_active = false` in the database and returns the list of
    invalidated `session_id`s (used by the post-commit phase). See
    `docs/features/identity/authentication.md` (Session invalidation) for the
@@ -761,9 +762,8 @@ commit.
 the FOR UPDATE lock is released):
 
 5. Purge session cache via
-   `session_service.purge_session_cache(invalidated_session_ids)`. If
-   Redis is unreachable, log WARNING and proceed — entries expire
-   naturally within the cache TTL (60 seconds). The database is the
+   `session_service.purge_session_cache(invalidated_session_ids)`. The helper
+   owns the Redis-error and warning-suppression contract. The database is the
    authoritative source for session validity; auth middleware verifies
    against the database on cache miss. See
    `docs/features/identity/authentication.md` (Session invalidation).
@@ -879,7 +879,8 @@ Resets the password for a local user and invalidates all active sessions.
    `ExternalUserPasswordError`
 4. Update `User.password_hash` with the new hash
 5. Invalidate all active sessions (DB only) via
-   `session_service.invalidate_user_sessions(db, user_id)` — returns
+   `session_service.invalidate_user_sessions(db, user_id,
+   reason="password_reset")` — returns
    `invalidated_session_ids`. This forces re-login with the new
    password.
 6. Create `IdentityAuditEvent` with `event_type = password_reset` via
@@ -894,9 +895,8 @@ Resets the password for a local user and invalidates all active sessions.
 **Workflow-owned post-commit phase** (best-effort, after the caller commits):
 
 8. Purge session cache via
-   `session_service.purge_session_cache(invalidated_session_ids)`. If
-   Redis is unreachable, log WARNING and proceed — entries expire
-   naturally within the cache TTL (60 seconds).
+   `session_service.purge_session_cache(invalidated_session_ids)`. The helper
+   owns the Redis-error and warning-suppression contract.
 9. Clear the login lockout counter: delete the Redis key
    `login_attempts:{username}` if it exists. If Redis is unreachable,
    log WARNING and proceed — the counter will expire naturally via TTL.

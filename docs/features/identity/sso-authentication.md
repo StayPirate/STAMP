@@ -280,11 +280,12 @@ callback URL with an authorization `code` and `state` parameter.
 8. If user is inactive (`active = false`), return HTTP 401 with code
    `AUTH_SSO_USER_INACTIVE`:
    `"Your account has been deactivated. Contact your administrator."`
-9. Create a `Session` record (see
-    `docs/features/identity/authentication.md`, Session Management)
-10. Update `user.last_login_at = now()`
-11. Issue a JWT with the session and user claims
-12. Return the token
+9. In one caller-owned database transaction, call
+   `session_service.create_session(db, user, reason=sso_login)`, then commit
+   the new session and `user.last_login_at` once or roll both back on failure
+   (see `docs/features/identity/authentication.md`, Session creation)
+10. Return the JWT and its `token_expires_at` from the service result as
+    `access_token` and `expires_at`
 
 **Success response** (200):
 

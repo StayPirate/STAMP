@@ -1048,6 +1048,23 @@ scenarios are required:
 
 **Session and configuration:**
 
+- JWT issuance contains exactly `sub`, `session_id`, `iat`, `exp`,
+  `session_deadline`, and `iss`; identifiers are UUID strings and time claims
+  are integers (not JSON booleans)
+- Normal JWT validation covers immediately before, exactly at, and immediately
+  after `exp` and `session_deadline`, with no wall-clock sleeps and no leeway;
+  it also rejects a future `iat`, invalid temporal ordering, missing or extra
+  claims, wrong claim types, invalid UUIDs, wrong issuer, invalid signature,
+  and algorithm substitution
+- Logout decoding applies the same signature, algorithm, exact-claim, issuer,
+  type, UUID, and temporal-ordering validation but accepts a token when its
+  signed `exp` or `session_deadline` is at or before the controlled `now`
+- Session creation uses one controlled login timestamp for `last_login_at`,
+  the persisted deadline, and JWT timing claims; creates a new active row on
+  every invocation; preserves existing sessions; flushes without commit or
+  rollback; rolls back the session and `last_login_at` together on failure;
+  and returns `token_expires_at` equal to the JWT `exp`, not the later
+  `Session.expires_at`
 - Changing `SESSION_MAX_LIFETIME_DAYS` does not invalidate existing
   sessions or alter their persisted `Session.expires_at`
 - A session's `Session.expires_at` (mapped to the JWT `session_deadline`
@@ -1056,6 +1073,41 @@ scenarios are required:
   the persisted deadline is unchanged
 - Session cleanup deletes sessions whose persisted `Session.expires_at`
   has passed, not sessions derived from the current configuration value
+- Cleanup immediately deletes inactive rows and deletes active or inactive
+  rows only when `Session.expires_at < now`; tests cover equality on the
+  deadline, confirm there is no one-hour grace or one-day buffer, and verify
+  idempotent re-invocation and the returned deletion count
+- Refresh tests cover immediately before, exactly at, and immediately after
+  the 50% threshold; preservation of immutable claims; expiration capping;
+  no refresh when the deadline cannot support a positive-lifetime token; and
+  absence of database writes
+
+**Session liveness and invalidation:**
+
+- A Redis value of `"1"` avoids a session query; a missing key or any other
+  value performs PostgreSQL verification; only an active row writes the
+  positive value with exactly 60 seconds TTL
+- An inactive or absent row never authorizes and never creates a positive
+  cache entry. A failed post-commit purge may leave an existing positive entry
+  effective only for its documented TTL window
+- Deterministic `RedisError` substitution verifies PostgreSQL fallback for
+  liveness reads, successful authorization after a failed positive-cache
+  write, and best-effort continuation across all remaining IDs during a
+  post-commit purge
+- One process emits at most one PII-free WARNING per continuous Redis failure
+  episode, concurrent first failures do not duplicate it, and any successful
+  session-cache operation resets warning eligibility
+- Single invalidation changes and advances `updated_at` only for an active
+  row; missing and already-inactive rows are no-ops. Bulk invalidation changes
+  only active rows and returns exactly their UUIDs. Both database operations
+  flush without commit, rollback, or Redis I/O; cache purge occurs only after
+  caller commit
+- Logout tests cover bearer precedence, whitespace-only bearer cookie
+  fallback, case-insensitive Bearer scheme matching, non-Bearer or
+  scheme-less header cookie fallback, no fallback after an invalid non-empty
+  bearer value, API-key rejection, current and temporally expired JWTs,
+  missing and repeated sessions, exact empty 204 behavior, and the
+  cookie-clearing header
 
 **Lockout concurrency:**
 
