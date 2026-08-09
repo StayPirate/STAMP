@@ -7,17 +7,14 @@ the authoritative endpoint contracts this module implements.
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.credentials import API_KEY_PREFIX, extract_credential
 from app.core.errors import AppError, ErrorCode
 from app.core.jwt import InvalidTokenError, decode_for_logout
-from app.database import get_db, register_post_commit_callback
+from app.database import DatabaseSession, register_post_commit_callback
 from app.schemas.auth import LoginData, LoginRequest, LoginResponse
 from app.schemas.errors import ErrorResponse
 from app.services.local_auth_service import (
@@ -122,9 +119,7 @@ def _clear_session_cookie(response: Response) -> None:
         },
     },
 )
-async def login(
-    body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]
-) -> Response:
+async def login(body: LoginRequest, db: DatabaseSession) -> Response:
     """Login — see `docs/features/identity/local-authentication.md`
     (Login Endpoint)."""
     result = await authenticate_local_user(db, body.username, body.password)
@@ -174,9 +169,7 @@ async def login(
         },
     },
 )
-async def logout(
-    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
-) -> Response:
+async def logout(request: Request, db: DatabaseSession) -> Response:
     """Logout — see `docs/features/identity/authentication.md` (Logout)."""
     credential = extract_credential(
         request.headers.get("authorization"), request.cookies.get(_COOKIE_NAME)
