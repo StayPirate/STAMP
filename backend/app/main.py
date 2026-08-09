@@ -34,7 +34,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 app.add_middleware(RequestIDMiddleware)
 
@@ -42,10 +42,13 @@ app.add_middleware(RequestIDMiddleware)
 @app.exception_handler(AppError)
 async def _app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     """Render `AppError` as the standard `{"code": ..., "detail": ...}`
-    envelope — see `docs/api-spec.md` (Response Format)."""
+    envelope — see `docs/api-spec.md` (Response Format). Propagates
+    `exc.headers` (e.g. `Retry-After` for `AUTH_ACCOUNT_LOCKED`) onto
+    the response verbatim."""
     return JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.code.value, "detail": exc.detail},
+        headers=exc.headers,
     )
 
 

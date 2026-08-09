@@ -24,6 +24,21 @@ class TestAppError:
         assert isinstance(error, Exception)
         assert str(error) == "nope"
 
+    def test_headers_default_to_none(self) -> None:
+        error = AppError(
+            status_code=401, code=ErrorCode.AUTH_INVALID_CREDENTIALS, detail="nope"
+        )
+        assert error.headers is None
+
+    def test_carries_optional_headers(self) -> None:
+        error = AppError(
+            status_code=429,
+            code=ErrorCode.AUTH_ACCOUNT_LOCKED,
+            detail="locked",
+            headers={"Retry-After": "60"},
+        )
+        assert error.headers == {"Retry-After": "60"}
+
 
 @pytest.mark.unit
 class TestErrorCode:

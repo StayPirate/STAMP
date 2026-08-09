@@ -1,7 +1,9 @@
-"""End-to-end tests for ``POST /api/v1/auth/logout``."""
+"""End-to-end tests for ``POST /api/v1/auth/login`` and
+``POST /api/v1/auth/logout``."""
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
@@ -15,16 +17,17 @@ from app.api.v1.auth import _unauthenticated_error
 from app.config import settings
 from app.core.enums import SessionCreationReason
 from app.core.errors import ErrorCode
-from app.core.jwt import ALGORITHM, ISSUER
+from app.core.jwt import ALGORITHM, ISSUER, decode_and_validate
 from app.database import get_db
 from app.main import app
 from app.models.session import Session
 from app.models.user import User
+from app.services.local_auth_service import guard_and_increment
 from app.services.session_service import create_session
 
 
 @pytest.fixture
-async def logout_client(
+async def auth_client(
     db_session: AsyncSession,
     redis_client: redis_asyncio.Redis,
 ) -> AsyncGenerator[AsyncClient]:
@@ -32,7 +35,19 @@ async def logout_client(
 
     The shared client fixture intentionally keeps one rollback-owned test
     transaction and therefore does not execute ``get_db`` post-yield logic.
-    Logout specifically needs that lifecycle to verify its cache purge.
+    Login (post-commit lockout counter clear) and logout (post-commit
+    session cache purge) both need that lifecycle to verify their
+    respective best-effort side effects.
+
+    Caveat for multi-request tests: a request that fails (raises
+    ``AppError`` or any other exception) triggers this override's
+    ``rollback()``, which rolls back ``db_session``'s *current*
+    savepoint — undoing any fixture data flushed earlier in the same
+    test if it was never checkpointed by an intervening commit. Tests
+    that chain a failing request after creating fixture data should set
+    up Redis-only preconditions directly (e.g. via
+    ``guard_and_increment()``) rather than relying on an HTTP round trip
+    that is expected to fail.
     """
 
     async def _override_get_db() -> AsyncGenerator[AsyncSession]:
@@ -87,20 +102,20 @@ def _expired_token(session: Session) -> str:
 class TestLogout:
     async def test_cookie_without_authorization_header_logs_out(
         self,
-        logout_client: AsyncClient,
+        auth_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         _session, token = await _created_session(db_session, user_factory)
-        logout_client.cookies.set("sentinel_session", token)
+        auth_client.cookies.set("sentinel_session", token)
 
-        response = await logout_client.post("/api/v1/auth/logout")
+        response = await auth_client.post("/api/v1/auth/logout")
 
         assert response.status_code == 204
 
     async def test_valid_bearer_invalidates_session_purges_cache_and_clears_cookie(
         self,
-        logout_client: AsyncClient,
+        auth_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         redis_client: redis_asyncio.Redis,
@@ -109,7 +124,7 @@ class TestLogout:
         key = f"session_liveness:{session.id}"
         await redis_client.set(key, "1", ex=60)
 
-        response = await logout_client.post(
+        response = await auth_client.post(
             "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
         )
 
@@ -124,21 +139,21 @@ class TestLogout:
 
     async def test_repeated_logout_and_missing_session_are_idempotent(
         self,
-        logout_client: AsyncClient,
+        auth_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         session, token = await _created_session(db_session, user_factory)
 
-        first = await logout_client.post(
+        first = await auth_client.post(
             "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
         )
-        second = await logout_client.post(
+        second = await auth_client.post(
             "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
         )
         await db_session.delete(session)
         await db_session.flush()
-        missing = await logout_client.post(
+        missing = await auth_client.post(
             "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
         )
 
@@ -146,13 +161,13 @@ class TestLogout:
 
     async def test_temporally_expired_signed_token_is_accepted(
         self,
-        logout_client: AsyncClient,
+        auth_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         session, _ = await _created_session(db_session, user_factory)
 
-        response = await logout_client.post(
+        response = await auth_client.post(
             "/api/v1/auth/logout",
             headers={"Authorization": f"Bearer {_expired_token(session)}"},
         )
@@ -168,9 +183,9 @@ class TestLogout:
         ],
     )
     async def test_missing_or_invalid_jwt_returns_generic_401(
-        self, logout_client: AsyncClient, headers: dict[str, str]
+        self, auth_client: AsyncClient, headers: dict[str, str]
     ) -> None:
-        response = await logout_client.post("/api/v1/auth/logout", headers=headers)
+        response = await auth_client.post("/api/v1/auth/logout", headers=headers)
 
         assert response.status_code == 401
         assert response.json() == {
@@ -179,9 +194,9 @@ class TestLogout:
         }
 
     async def test_api_key_returns_logout_not_applicable(
-        self, logout_client: AsyncClient
+        self, auth_client: AsyncClient
     ) -> None:
-        response = await logout_client.post(
+        response = await auth_client.post(
             "/api/v1/auth/logout",
             headers={"Authorization": "Bearer stl_ak_fictional-key"},
         )
@@ -198,15 +213,15 @@ class TestLogout:
     )
     async def test_empty_or_non_bearer_header_falls_back_to_cookie(
         self,
-        logout_client: AsyncClient,
+        auth_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         authorization: str,
     ) -> None:
         _session, token = await _created_session(db_session, user_factory)
-        logout_client.cookies.set("sentinel_session", token)
+        auth_client.cookies.set("sentinel_session", token)
 
-        response = await logout_client.post(
+        response = await auth_client.post(
             "/api/v1/auth/logout",
             headers={"Authorization": authorization},
         )
@@ -215,19 +230,277 @@ class TestLogout:
 
     async def test_bearer_is_case_insensitive_and_takes_precedence_over_cookie(
         self,
-        logout_client: AsyncClient,
+        auth_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         _session, cookie_token = await _created_session(db_session, user_factory)
-        logout_client.cookies.set("sentinel_session", cookie_token)
+        auth_client.cookies.set("sentinel_session", cookie_token)
 
-        response = await logout_client.post(
+        response = await auth_client.post(
             "/api/v1/auth/logout",
             headers={"Authorization": "bEaReR malformed-token"},
         )
 
         assert response.status_code == 401
+
+
+@pytest.mark.e2e
+class TestLogin:
+    async def test_valid_credentials_returns_200_with_token_and_cookie(
+        self,
+        auth_client: AsyncClient,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        user, password = await local_user_factory()
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": password},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["data"]["token_type"] == "bearer"
+        assert isinstance(body["data"]["access_token"], str)
+        assert body["data"]["access_token"]
+        assert body["data"]["expires_at"].endswith("Z")
+        assert response.headers["set-cookie"].startswith(
+            f"sentinel_session={body['data']['access_token']}; "
+        )
+        cookie_header = response.headers["set-cookie"]
+        assert "HttpOnly" in cookie_header
+        assert "Secure" in cookie_header
+        assert "samesite=strict" in cookie_header.lower()
+        assert "Path=/api" in cookie_header
+
+    async def test_jwt_claims_match_created_session(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        user, password = await local_user_factory()
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": password},
+        )
+
+        token = response.json()["data"]["access_token"]
+        claims = decode_and_validate(
+            token,
+            secret_key=settings.jwt_secret_key.get_secret_value(),
+            now=datetime.now(UTC),
+        )
+        assert claims.user_id == user.id
+
+    async def test_username_is_trimmed_and_lowercased(
+        self,
+        auth_client: AsyncClient,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        _user, password = await local_user_factory(username="bob")
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": "  Bob  ", "password": password},
+        )
+
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("username", ["nosuchuser", None])
+    async def test_wrong_password_and_unknown_user_return_identical_401(
+        self,
+        auth_client: AsyncClient,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+        username: str | None,
+    ) -> None:
+        user, _password = await local_user_factory()
+        target_username = username or user.username
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": target_username, "password": "wrong-password-value"},
+        )
+
+        assert response.status_code == 401
+        assert response.json() == {
+            "code": "AUTH_INVALID_CREDENTIALS",
+            "detail": "Invalid username or password.",
+        }
+
+    async def test_inactive_user_returns_generic_401(
+        self,
+        auth_client: AsyncClient,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        user, password = await local_user_factory(active=False)
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": password},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_INVALID_CREDENTIALS"
+
+    async def test_external_user_returns_generic_401(
+        self,
+        auth_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(external_id=uuid.uuid4(), password_hash=None)
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": "whatever-password-value"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_INVALID_CREDENTIALS"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"password": "whatever-password-value"},
+            {"username": "someone"},
+            {"username": None, "password": "whatever-password-value"},
+            {},
+        ],
+    )
+    async def test_missing_or_invalid_fields_return_422(
+        self, auth_client: AsyncClient, payload: dict[str, str | None]
+    ) -> None:
+        response = await auth_client.post("/api/v1/auth/login", json=payload)
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_password_field_not_leaked_in_validation_error(
+        self, auth_client: AsyncClient
+    ) -> None:
+        """A non-string `password` fails Pydantic validation on the
+        `password` field itself — unlike a missing/None `username`
+        (which fails on a different field and never puts the password
+        value at risk), this exercises the actual leak `main.py`'s
+        `_validation_error_handler` guards against by stripping
+        Pydantic's `input`/`ctx` keys from the error response."""
+        response = await auth_client.post(
+            "/api/v1/auth/login", json={"username": "someone", "password": 123456789}
+        )
+
+        assert response.status_code == 422
+        assert "123456789" not in response.text
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"username": "validuser", "password": "x" * 129},
+            {"username": "x" * 65, "password": "whatever-password-value"},
+            {"username": "   ", "password": "whatever-password-value"},
+        ],
+        ids=["overlong_password", "overlong_username", "whitespace_only_username"],
+    )
+    async def test_oversized_or_empty_input_returns_401_not_422(
+        self, auth_client: AsyncClient, payload: dict[str, str]
+    ) -> None:
+        """`schemas/auth.py` deliberately carries no length constraints
+        so that these guards in `local_auth_service.authenticate_local_user()`
+        produce the documented generic 401 rather than a schema-level 422
+        — see `docs/features/identity/local-authentication.md` (Login,
+        Behavior, steps 1-3)."""
+        response = await auth_client.post("/api/v1/auth/login", json=payload)
+
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_INVALID_CREDENTIALS"
+
+    async def test_lockout_returns_429_with_retry_after(
+        self,
+        auth_client: AsyncClient,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings, "login_max_attempts", 1)
+        user, _password = await local_user_factory()
+
+        first = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": "wrong-password-value"},
+        )
+        second = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": "wrong-password-value"},
+        )
+
+        assert first.status_code == 401
+        assert second.status_code == 429
+        assert second.json() == {
+            "code": "AUTH_ACCOUNT_LOCKED",
+            "detail": "Account temporarily locked. Try again later.",
+        }
+        assert int(second.headers["retry-after"]) >= 1
+
+    async def test_login_then_logout_invalidates_that_session(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        user, password = await local_user_factory()
+
+        login_response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": password},
+        )
+        token = login_response.json()["data"]["access_token"]
+
+        logout_response = await auth_client.post(
+            "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert logout_response.status_code == 204
+        claims = decode_and_validate(
+            token,
+            secret_key=settings.jwt_secret_key.get_secret_value(),
+            now=datetime.now(UTC),
+        )
+        session = await db_session.get(Session, claims.session_id)
+        assert session is not None
+        assert session.is_active is False
+
+    async def test_successful_login_clears_lockout_counter_after_commit(
+        self,
+        auth_client: AsyncClient,
+        redis_client: redis_asyncio.Redis,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        user, password = await local_user_factory()
+        # Simulate a prior failed attempt via the pure Redis lockout gate
+        # directly, rather than a failing HTTP round trip: a failed
+        # login raises `AppError`, which rolls back `db_session` to its
+        # current savepoint — undoing the `local_user_factory` insert
+        # above, since both share the same uncommitted savepoint (see
+        # `auth_client`'s docstring). `guard_and_increment()` has no
+        # database dependency, so it sets up the identical Redis
+        # precondition without that hazard.
+        await guard_and_increment(user.username)
+        assert await redis_client.get(f"login_attempts:{user.username}") == "1"
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": password},
+        )
+
+        assert response.status_code == 200
+        assert await redis_client.get(f"login_attempts:{user.username}") is None
+
+    async def test_login_route_is_public_and_documents_error_responses(self) -> None:
+        openapi = app.openapi()
+        login_op = openapi["paths"]["/api/v1/auth/login"]["post"]
+        assert "security" not in login_op
+        assert set(login_op["responses"]) >= {"200", "401", "422", "429"}
+        assert openapi["components"]["schemas"]["LoginResponse"]["properties"]["data"]
 
 
 @pytest.mark.unit
