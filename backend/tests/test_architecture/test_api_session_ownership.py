@@ -20,9 +20,12 @@ AST — it does not attempt full type inference to confirm a `.commit()`
 receiver is actually a database session, since no legitimate use of
 either pattern exists in the API layer today (see `AGENTS.md`,
 Guardrail 26 — Reviewer Proportionality). `app/api/health.py` is the one
-documented exception: the readiness probe (`GET /ready`) owns an
-independent session lifecycle outside the caller-owned API transaction
-by design — see `docs/features/platform/health-endpoints.md`.
+exception: the readiness probe (`GET /ready`) never uses the `get_db`
+yield-dependency at all — it opens a read-only, no-commit session
+directly via `get_readiness_session_factory()` for its `SELECT 1`
+check, so the `scope="function"` rule (which governs transaction
+completion ordering for `get_db`) does not apply to it in the first
+place.
 """
 
 from __future__ import annotations
@@ -34,13 +37,13 @@ import pytest
 
 APP_API_ROOT = Path(__file__).resolve().parents[2] / "app" / "api"
 
-# `app/api/health.py` is the documented exception: the readiness probe
-# owns its own session lifecycle (`get_readiness_session_factory()`),
-# independent of the caller-owned API transaction — see
-# `docs/features/platform/health-endpoints.md`. Matched by path relative
-# to `APP_API_ROOT` (not by basename alone), so a differently-located
-# future module that happens to share the name `health.py` is not
-# accidentally exempted.
+# `app/api/health.py` is the one exception: the readiness probe never
+# uses the `get_db` yield-dependency — it opens its own read-only,
+# no-commit session directly via `get_readiness_session_factory()`, so
+# the `scope="function"` transaction-completion rule does not apply to
+# it. Matched by path relative to `APP_API_ROOT` (not by basename
+# alone), so a differently-located future module that happens to share
+# the name `health.py` is not accidentally exempted.
 _EXEMPT_RELATIVE_PATHS = {Path("health.py")}
 
 _FORBIDDEN_NAMES = {"async_session_factory"}
