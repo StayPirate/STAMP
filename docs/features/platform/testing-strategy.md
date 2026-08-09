@@ -538,6 +538,24 @@ Coverage is measured by `pytest-cov` with the following settings (in
   metric with the project's convention of testing every guard condition
   (see Mandatory Test Scenarios below). The coverage threshold applies to
   the combined line+branch metric.
+- Concurrency: `concurrency = ["greenlet", "thread"]`. Two distinct
+  execution contexts otherwise escape `coverage.py`'s tracer:
+  - `greenlet`: Sentinel's async-only database layer (see
+    `docs/architecture.md`, Async-only database layer) uses
+    SQLAlchemy's async engine, which relies on `greenlet` internally to
+    bridge every async ORM/Core call to the underlying sync driver.
+  - `thread`: FastAPI/`anyio` run synchronous dependencies and endpoint
+    functions in a real OS thread pool, and
+    `local_auth_service.authenticate_local_user()` offloads bcrypt
+    verification into a worker thread via `asyncio.to_thread()`.
+
+  Without both entries, coverage silently loses track of statements
+  executed after control passes through a greenlet switch or into a
+  spawned thread, under-reporting coverage for ordinary endpoint and
+  service code — not just edge cases. Per-file reports are the most
+  visible symptom: a small file can show as low as 85% coverage while
+  every line is demonstrably exercised by passing tests, because the
+  project-wide aggregate is large enough to mask the gap.
 
 ---
 
