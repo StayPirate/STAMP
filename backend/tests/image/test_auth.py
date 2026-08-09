@@ -1,11 +1,14 @@
 """Black-box image smoke assertions for the login and logout endpoints.
 
-The login cleanup script below tolerates a known read-after-write gap
-between a real ASGI server (uvicorn) sending the HTTP response and the
-request's `get_db()` dependency completing its post-yield commit — see
-issue #161 for the root-cause investigation. In-process e2e tests
-(`ASGITransport`) cannot observe this gap, which is why it surfaced
-only here.
+Both scripts below verify — over a real ASGI server (uvicorn) and a
+real HTTP client (`urllib`), the only combination that can observe this
+— that the login/logout endpoints' database transaction commits before
+the HTTP response is transmitted to the client. This is the guarantee
+`scope="function"` provides for the `DatabaseSession` dependency (see
+`docs/conventions.md`, API Transaction Dependency Scope): each script
+queries the mutated row on a separate database connection *immediately*
+after receiving the response, with no polling or wait, and asserts it
+is already visible/updated.
 """
 
 from __future__ import annotations
@@ -47,28 +50,21 @@ async def arrange():
         return user.id
 
 
-async def _wait_for_session_visible(user_id, timeout=2.0, interval=0.05):
-    # Bridges a known read-after-write gap tracked in issue #161: a real
-    # ASGI server (uvicorn) can send the HTTP response before the
-    # request's `get_db()` dependency finishes its post-yield commit,
-    # so a session created by `happy_path()`'s login may not be visible
-    # yet on this cleanup script's own, separate connection. This is a
-    # cleanup-only tolerance (bounded polling), not a fix for the
-    # underlying ordering issue.
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        async with async_session_factory() as db:
-            result = await db.execute(
-                select(Session).where(Session.user_id == user_id)
-            )
-            if result.scalars().first() is not None:
-                return
-        await asyncio.sleep(interval)
+async def assert_session_immediately_visible(user_id):
+    # No wait, no retry: the login response has already been received
+    # by `happy_path()` at this point, so `scope="function"` guarantees
+    # the session row is already committed and visible on this separate
+    # connection.
+    async with async_session_factory() as db:
+        result = await db.execute(select(Session).where(Session.user_id == user_id))
+        assert result.scalars().first() is not None, (
+            "Session row not visible immediately after the login response "
+            "— the transaction dependency did not commit before the "
+            "response was transmitted."
+        )
 
 
 async def cleanup(user_id):
-    await _wait_for_session_visible(user_id)
     async with async_session_factory() as db:
         await db.execute(delete(Session).where(Session.user_id == user_id))
         user = await db.get(User, user_id)
@@ -140,6 +136,8 @@ async def main():
     user_id = await arrange()
     try:
         await asyncio.to_thread(happy_path)
+        await assert_session_immediately_visible(user_id)
+        print("login-session-immediately-visible-ok")
         await asyncio.to_thread(generic_401)
         await asyncio.to_thread(lockout)
     finally:
@@ -173,7 +171,22 @@ async def arrange():
         await db.flush()
         created = await create_session(db, user, SessionCreationReason.LOCAL_LOGIN)
         await db.commit()
-        return user.id, created.token
+        return user.id, created.session.id, created.token
+
+
+async def assert_session_immediately_inactive(session_id):
+    # No wait, no retry: `request_logout()` has already received the
+    # 204 response at this point, so `scope="function"` guarantees the
+    # session row is already committed inactive and visible as such on
+    # this separate connection.
+    async with async_session_factory() as db:
+        session = await db.get(Session, session_id)
+        assert session is not None
+        assert session.is_active is False, (
+            "Session still active immediately after the logout response "
+            "— the transaction dependency did not commit before the "
+            "response was transmitted."
+        )
 
 
 async def cleanup(user_id):
@@ -201,10 +214,12 @@ def request_logout(token):
 
 
 async def main():
-    user_id, token = await arrange()
+    user_id, session_id, token = await arrange()
     try:
         await asyncio.to_thread(request_logout, token)
         print("logout-ok")
+        await assert_session_immediately_inactive(session_id)
+        print("logout-session-immediately-inactive-ok")
     finally:
         await cleanup(user_id)
 
@@ -223,6 +238,7 @@ def test_login_happy_path_generic_401_and_lockout_are_observable_in_built_image(
         f"login smoke check failed (stdout={result.stdout!r}, stderr={result.stderr!r})"
     )
     assert "login-happy-path-ok" in result.stdout
+    assert "login-session-immediately-visible-ok" in result.stdout
     assert "login-generic-401-ok" in result.stdout
     assert "login-lockout-ok" in result.stdout
 
@@ -238,3 +254,4 @@ def test_logout_route_is_observable_in_built_image(
         f"stderr={result.stderr!r})"
     )
     assert "logout-ok" in result.stdout
+    assert "logout-session-immediately-inactive-ok" in result.stdout

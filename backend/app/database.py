@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import Annotated
 
 import structlog
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -70,6 +72,9 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
     every callback registered via `register_post_commit_callback()`,
     each independently caught and logged so one failing best-effort
     side effect never blocks the others.
+
+    Not used directly as a route dependency — see `DatabaseSession`
+    below, which pins the required `scope="function"`.
     """
     async with async_session_factory() as session:
         try:
@@ -84,3 +89,24 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
                     await callback()
                 except Exception:
                     logger.error("post_commit_callback_failed", exc_info=True)
+
+
+# Canonical route dependency for the API transaction session — see
+# `docs/conventions.md` (API Transaction Dependency Scope). `get_db()` is
+# a `yield`-based dependency; without an explicit `scope`, FastAPI
+# defaults a `yield` dependency to `scope="request"`, whose post-yield
+# code (commit/rollback/post-commit callbacks above) runs *after* the
+# HTTP response has already been transmitted to the client — breaking
+# the "commits before the caller can observe success" guarantee in
+# `docs/conventions.md` (Caller-Owned Service Transactions). Declaring
+# `scope="function"` here runs that same post-yield code before the
+# response is sent, so a commit failure surfaces as a real error
+# response instead of an already-decided success one.
+#
+# Every route (and every dependency nested under a route, e.g.
+# authentication) that needs the caller-owned transaction session MUST
+# use this alias instead of declaring `Depends(get_db)` inline — see
+# `backend/tests/test_api_conventions.py`
+# (`TestTransactionDependencyScope`) for the structural test that
+# enforces this.
+DatabaseSession = Annotated[AsyncSession, Depends(get_db, scope="function")]

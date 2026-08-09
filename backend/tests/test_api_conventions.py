@@ -36,8 +36,10 @@ from typing import Any
 
 import pytest
 from fastapi import routing as fastapi_routing
+from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 
+from app.database import get_db
 from app.main import app
 
 # Endpoints intentionally outside the `/api/v1/` prefix — public,
@@ -71,11 +73,15 @@ class _RouteInfo:
     object, used for attributes that are intrinsic to the route
     definition itself and unaffected by inclusion context
     (`response_model`, `status_code`, `summary`, `description`).
+    `dependant` is the *effective* dependency graph — it includes any
+    dependency added at `include_router()` time, unlike `route.dependant`
+    which reflects only the route's own declaration.
     """
 
     path: str
     methods: frozenset[str]
     route: APIRoute
+    dependant: Dependant
 
 
 def _api_routes() -> list[_RouteInfo]:
@@ -87,6 +93,7 @@ def _api_routes() -> list[_RouteInfo]:
                     path=context.path,
                     methods=frozenset(context.methods or ()),
                     route=context.original_route,
+                    dependant=context.dependant,
                 )
             )
     return infos
@@ -254,4 +261,66 @@ class TestResponseEnvelopeFormat:
                     "a top-level 'data' property (required by the "
                     "standard response envelope)"
                 )
+        assert not violations, "\n".join(violations)
+
+
+def _iter_dependants(dependant: Dependant) -> list[Dependant]:
+    """Every `Dependant` node in `dependant`'s tree, including itself.
+
+    Walks nested dependencies (e.g. an authentication dependency that
+    itself depends on the database session) so a `get_db` occurrence
+    hidden behind another dependency is not missed.
+    """
+    nodes = [dependant]
+    for sub_dependant in dependant.dependencies:
+        nodes.extend(_iter_dependants(sub_dependant))
+    return nodes
+
+
+@pytest.mark.unit
+class TestTransactionDependencyScope:
+    """Every route dependency graph that uses the API transaction
+    session (`get_db`) declares it with `scope="function"`, at any
+    depth (including a `get_db` occurrence nested under another
+    dependency, e.g. authentication).
+
+    See `docs/conventions.md` (API Transaction Dependency Scope):
+    FastAPI defaults an unscoped `yield` dependency to
+    `scope="request"`, whose post-yield code (commit, rollback,
+    post-commit callbacks in `get_db()`) runs *after* the response has
+    already been transmitted to the client — breaking the "commits
+    before the caller can observe success" guarantee (Caller-Owned
+    Service Transactions). `scope="function"` runs that same post-yield
+    code before the response is sent, so a commit failure surfaces as a
+    real error response instead of an already-decided success one. The
+    shared `DatabaseSession` alias (`app/database.py`) pins this scope
+    — this test guards against a future endpoint bypassing it via a raw
+    `Depends(get_db)`.
+
+    `use_cache` is also checked: a `get_db` occurrence declared with
+    `use_cache=False` would open a second, independent session and
+    transaction for the same request even if correctly function-scoped,
+    splitting the caller-owned transaction the same guarantee requires
+    to be singular.
+    """
+
+    def test_every_get_db_dependency_is_function_scoped_and_cached(self) -> None:
+        violations: list[str] = []
+        for info in _api_routes():
+            for node in _iter_dependants(info.dependant):
+                if node.call is not get_db:
+                    continue
+                if node.scope != "function":
+                    violations.append(
+                        f"Route '{info.path}' uses 'get_db' with scope "
+                        f"'{node.scope}' (must be 'function' — use the "
+                        "'DatabaseSession' alias from 'app.database' "
+                        "instead of 'Depends(get_db)')"
+                    )
+                if not node.use_cache:
+                    violations.append(
+                        f"Route '{info.path}' uses 'get_db' with "
+                        "use_cache=False, which opens a second, "
+                        "independent transaction for the same request"
+                    )
         assert not violations, "\n".join(violations)

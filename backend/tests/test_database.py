@@ -18,11 +18,24 @@ after the request's transaction commits — see docs/conventions.md
 (Transaction Hygiene Rules). A minimal standalone FastAPI app with a
 fake session (rather than a real database) isolates the ordering
 behavior under test from any real I/O.
+
+Also covers the `scope="function"` requirement itself
+(docs/conventions.md, API Transaction Dependency Scope): the tests
+above and `httpx.ASGITransport` both wait for the entire ASGI
+application coroutine to finish (including a `yield` dependency's
+post-yield teardown) before handing control back to the test, so they
+cannot observe whether a real ASGI server would have already
+transmitted the response to the client at that point — which is
+exactly the ordering issue-#161 identified. `TestFunctionScopeOrdering`
+below drives the app via the raw ASGI protocol with a custom `send`
+callable instead, recording the exact interleaving of `get_db()`'s
+commit and the `http.response.start`/`http.response.body` messages —
+the same signal a real ASGI server (uvicorn) would act on.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, MutableMapping
 from typing import Annotated, Any
 
 import pytest
@@ -232,3 +245,188 @@ class TestPostCommitCallbacks:
         response = await fake_client.get("/ok", params={"fail": "true"})
         assert response.status_code == 500
         assert order == ["rollback"]
+
+
+class _FailingCommitFakeSession(_FakeSession):
+    """A fake session whose `commit()` always raises — simulates a
+    database commit failure (e.g. a constraint violation surfacing only
+    at commit time, or a connection loss) after the handler has already
+    produced a success value."""
+
+    async def commit(self) -> None:
+        self._order.append("commit_attempted")
+        raise RuntimeError("commit boom")
+
+
+# Module-level (not function-local): FastAPI resolves parameter
+# annotations via `typing.get_type_hints()` against the endpoint
+# function's `__globals__`. With `from __future__ import annotations`
+# active in this module, a type alias defined *inside*
+# `_build_scope_comparison_app()` would not be a resolvable global,
+# causing FastAPI to silently fail to inject `get_db` at all (observed
+# as an unrelated 422 response) rather than the intended dependency.
+_DbRequestScoped = Annotated[Any, Depends(get_db)]
+_DbFunctionScoped = Annotated[Any, Depends(get_db, scope="function")]
+
+
+def _build_scope_comparison_app(order: list[str]) -> FastAPI:
+    """A minimal app exposing the same `get_db` dependency declared
+    with each of the two possible scopes, so a single raw-ASGI drive
+    can compare their observable ordering directly."""
+    app = FastAPI()
+
+    @app.get("/request-scope")
+    async def request_scope_endpoint(db: _DbRequestScoped) -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.get("/function-scope")
+    async def function_scope_endpoint(db: _DbFunctionScoped) -> dict[str, bool]:
+        return {"ok": True}
+
+    return app
+
+
+async def _drive_raw_asgi(app: FastAPI, path: str, order: list[str]) -> None:
+    """Send one GET request to `app` via the raw ASGI protocol.
+
+    Unlike `httpx.ASGITransport` (used by `fake_client` above), which
+    awaits the entire ASGI application coroutine — including a `yield`
+    dependency's post-yield teardown — before constructing its
+    `Response`, this drives the protocol with a bare `send` callable
+    that records each ASGI message the instant the application emits
+    it. This is the same signal a real ASGI server (uvicorn) acts on:
+    it may write `http.response.start`/`http.response.body` to the
+    socket as soon as they are sent, independent of whether the
+    application coroutine has finished its post-response teardown.
+    Any exception that escapes the application (e.g. re-raised by
+    Starlette's error-handling wrapper after already having sent an
+    error response) is recorded rather than propagated, so the test can
+    assert on the full observable sequence.
+    """
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        status = message.get("status")
+        suffix = f":{status}" if status is not None else ""
+        order.append(f"asgi:{message['type']}{suffix}")
+
+    scope: dict[str, Any] = {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "raw_path": path.encode(),
+        "headers": [],
+        "query_string": b"",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "scheme": "http",
+        "client": ("testclient", 123),
+        "server": ("testserver", 80),
+        "root_path": "",
+    }
+    try:
+        await app(scope, receive, send)
+    except Exception as exc:
+        order.append(f"exception:{type(exc).__name__}")
+
+
+@pytest.mark.unit
+class TestFunctionScopeOrdering:
+    """The exact regression proven for issue #161: whether `get_db()`'s
+    commit (and its failure) completes before or after the response is
+    transmitted, as a real ASGI server would observe it — see
+    `docs/conventions.md` (API Transaction Dependency Scope).
+    """
+
+    async def test_function_scope_commits_before_response_is_sent(
+        self, order: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = _FakeSession(order)
+        monkeypatch.setattr(
+            database, "async_session_factory", lambda: _FakeSessionCM(session)
+        )
+        app = _build_scope_comparison_app(order)
+
+        await _drive_raw_asgi(app, "/function-scope", order)
+
+        assert order == [
+            "commit",
+            "asgi:http.response.start:200",
+            "asgi:http.response.body",
+        ]
+
+    async def test_request_scope_sends_response_before_commit(
+        self, order: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Characterizes the exact bug fixed for issue #161: FastAPI's
+        default `scope="request"` for an unscoped `yield` dependency
+        sends the response *before* running `get_db()`'s post-yield
+        commit. This is why every route dependency that supplies the
+        API transaction session must declare `scope="function"`
+        explicitly (the `DatabaseSession` alias) instead of relying on
+        this default — see `backend/tests/test_api_conventions.py`
+        (`TestTransactionDependencyScope`), which enforces that no
+        registered production route does.
+        """
+        session = _FakeSession(order)
+        monkeypatch.setattr(
+            database, "async_session_factory", lambda: _FakeSessionCM(session)
+        )
+        app = _build_scope_comparison_app(order)
+
+        await _drive_raw_asgi(app, "/request-scope", order)
+
+        assert order == [
+            "asgi:http.response.start:200",
+            "asgi:http.response.body",
+            "commit",
+        ]
+
+    async def test_function_scope_commit_failure_surfaces_as_error_response(
+        self, order: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A commit failure must become a real error response, not an
+        already-decided success one — see docs/conventions.md
+        (Caller-Owned Service Transactions): the dependency "rolls back
+        exactly once when an exception escapes ... before the response
+        is transmitted to the client."""
+        session = _FailingCommitFakeSession(order)
+        monkeypatch.setattr(
+            database, "async_session_factory", lambda: _FakeSessionCM(session)
+        )
+        app = _build_scope_comparison_app(order)
+
+        await _drive_raw_asgi(app, "/function-scope", order)
+
+        assert order[0] == "commit_attempted"
+        assert "rollback" in order
+        response_start = next(
+            e for e in order if e.startswith("asgi:http.response.start")
+        )
+        assert response_start == "asgi:http.response.start:500"
+
+    async def test_request_scope_commit_failure_still_sends_success_response(
+        self, order: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Characterizes the dangerous case that motivated issue #161:
+        under the default `scope="request"`, a commit failure occurs
+        *after* the success response has already been transmitted — the
+        client observes 200 even though the transaction was rolled
+        back. This is precisely what `scope="function"` prevents (see
+        the sibling test above)."""
+        session = _FailingCommitFakeSession(order)
+        monkeypatch.setattr(
+            database, "async_session_factory", lambda: _FakeSessionCM(session)
+        )
+        app = _build_scope_comparison_app(order)
+
+        await _drive_raw_asgi(app, "/request-scope", order)
+
+        response_start = next(
+            e for e in order if e.startswith("asgi:http.response.start")
+        )
+        assert response_start == "asgi:http.response.start:200"
+        assert order.index(response_start) < order.index("commit_attempted")
+        assert "rollback" in order
