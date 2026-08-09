@@ -390,12 +390,6 @@ non-existent username) rely on `request_id` alone. The combination of
 provides sufficient context for operational investigation without
 requiring personal identifiers in the log stream.
 
-This is a documentation-level rule for this phase (spec-first project,
-no implementation yet). The future implementation task is expected to
-additionally consider a redaction processor in the structlog pipeline,
-but the design of that processor is an implementation detail deferred
-out of this specification.
-
 **Third-party logger gap.** The rule above governs only the
 application's own log statements. It does not, by itself, prevent
 third-party loggers captured by the stdlib bridge — notably
