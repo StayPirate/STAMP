@@ -559,7 +559,9 @@ The workflow entry point owns completion of that transaction:
 
 - an API database-transaction dependency commits exactly once after the
   handler and all delegated services succeed, and rolls back exactly once when
-  an exception escapes;
+  an exception escapes — in both cases, before the response is transmitted to
+  the client (see API Transaction Dependency Scope below for the FastAPI
+  mechanism that guarantees this ordering);
 - a mutating CLI async workflow follows the transaction contract in
   `docs/features/platform/cli-infrastructure.md`; and
 - a Celery task or other synchronous process entry point wraps one complete
@@ -582,6 +584,38 @@ transaction boundary preserves or registers the returned effect data until the
 dependency has committed, then runs the effect. The internal callback or
 framework mechanism used to bridge handler return and dependency completion is
 an implementation choice; executing the effect before commit is not.
+
+#### API Transaction Dependency Scope
+
+The API database-transaction dependency (`get_db()` in `app/database.py`) is
+a `yield`-based FastAPI dependency: the code after `yield` — the commit,
+rollback, and post-commit callbacks that complete the transaction — is its
+exit phase. FastAPI determines *when* that exit phase runs relative to the
+HTTP response through the dependency's `scope`:
+
+- `scope="request"` — FastAPI's default when a `yield` dependency does not
+  specify a scope: the exit phase runs after the response has already been
+  transmitted to the client. This does NOT satisfy the ordering guarantee
+  above — a client can observe a success response before the commit (or a
+  commit failure) has been resolved.
+- `scope="function"`: the exit phase runs after the path operation function
+  returns but before the response is transmitted. A commit failure at this
+  point still surfaces as an error response instead of the already-decided
+  success response, and every registered post-commit callback completes
+  before the client receives the response.
+
+Every endpoint dependency that supplies the API transaction session MUST
+declare `scope="function"` explicitly — the framework default is unsafe for
+this contract. Route handlers use the shared `DatabaseSession` type alias
+(`app/database.py`) rather than declaring `Depends(get_db)` inline, so every
+endpoint receives the correct scope without repeating it. A route that needs
+a database session and does not use this alias is a bug, not an accepted
+variation.
+
+This requirement is specific to `yield`-based dependencies whose exit phase
+performs transaction-completion work. It does not apply to plain
+(non-`yield`) dependencies, which have no exit phase to order against the
+response.
 
 When a service module centralizes all mutations on an entity (e.g.,
 `ticket_mutations` for tickets), concurrent transactions can produce
