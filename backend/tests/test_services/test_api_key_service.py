@@ -120,6 +120,43 @@ async def _cancel_pending_task(task: asyncio.Task[Any] | None) -> None:
         await task
 
 
+async def _concurrency_teardown(
+    task: asyncio.Task[Any] | None,
+    session_a: AsyncSession,
+    session_b: AsyncSession,
+    cleanup_session: AsyncSession,
+    user_id: uuid.UUID | None,
+) -> None:
+    """Robust teardown for concurrency tests using `db_session_factory`.
+
+    Guarantees that each step is attempted even if a previous one fails:
+    cancel the pending task, roll back both sessions (releasing locks),
+    then DELETE committed test data.  Errors are not suppressed — the
+    first failure propagates after every step has been attempted.
+    """
+    first_error: Exception | None = None
+    for coro in (
+        _cancel_pending_task(task),
+        session_a.rollback(),
+        session_b.rollback(),
+    ):
+        try:
+            await coro
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+
+    if user_id is not None:
+        try:
+            await _cleanup_committed_user(cleanup_session, user_id)
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+
+    if first_error is not None:
+        raise first_error
+
+
 class _FakeConstraintError(Exception):
     """A minimal double for asyncpg's `UniqueViolationError`, exposing
     only the `constraint_name` attribute `_is_name_conflict()` reads."""
@@ -525,9 +562,25 @@ class TestCreateKey:
         but `_has_conflicting_name()` (monkeypatched) misses it — so the
         insert genuinely violates the partial unique index, and the
         SAVEPOINT correctly translates that real `IntegrityError` to
-        `ApiKeyNameConflictError`."""
+        `ApiKeyNameConflictError`.
+
+        Also verifies that unrelated caller work pending in the same
+        session survives the translated error — the SAVEPOINT must roll
+        back only its own INSERT, preserving everything flushed before
+        it (api-key-service.md, Transaction Ownership contract)."""
         owner = await user_factory()
         await api_key_factory(user_id=owner.id, name="ci-key")
+
+        # Unrelated pending work: an extra user added before the
+        # conflict — must survive the SAVEPOINT rollback.
+        bystander = User(
+            username="savepoint-bystander",
+            email="savepoint-bystander@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        db_session.add(bystander)
+        await db_session.flush()
+        bystander_id = bystander.id
 
         async def _no_conflict(*args: object, **kwargs: object) -> bool:
             return False
@@ -536,6 +589,14 @@ class TestCreateKey:
 
         with pytest.raises(ApiKeyNameConflictError):
             await create_key(db_session, owner.id, "ci-key", None)
+
+        # The session must still be usable and the bystander visible.
+        # Force a real SQL round-trip (not an identity-map hit) so a
+        # regression that poisons the outer transaction instead of just
+        # the SAVEPOINT would fail with PendingRollbackError here.
+        result = await db_session.execute(select(User).where(User.id == bystander_id))
+        recovered = result.scalar_one()
+        assert recovered.username == "savepoint-bystander"
 
     async def test_two_concurrent_creates_same_owner_and_name_serialize_via_owner_lock(
         self,
@@ -579,11 +640,9 @@ class TestCreateKey:
             assert [key.id for key in keys.scalars().all()] == [result_a.api_key.id]
             assert len(await _audit_events_for(session_a, user_id)) == 1
         finally:
-            await _cancel_pending_task(task_b)
-            await session_a.rollback()
-            await session_b.rollback()
-            if user_id is not None:
-                await _cleanup_committed_user(session_a, user_id)
+            await _concurrency_teardown(
+                task_b, session_a, session_b, session_a, user_id
+            )
 
     async def test_create_waits_for_deactivation_and_observes_inactive_owner(
         self,
@@ -635,11 +694,13 @@ class TestCreateKey:
             assert keys.scalars().all() == []
             assert await _audit_events_for(deactivation_session, user_id) == []
         finally:
-            await _cancel_pending_task(create_task)
-            await create_session.rollback()
-            await deactivation_session.rollback()
-            if user_id is not None:
-                await _cleanup_committed_user(deactivation_session, user_id)
+            await _concurrency_teardown(
+                create_task,
+                create_session,
+                deactivation_session,
+                deactivation_session,
+                user_id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +742,12 @@ class TestRevokeKey:
         assert result.api_key.revoked_at is not None
         assert result.api_key.revoked_by == owner.id
         assert result.owner.id == owner.id
+
+        # Self-service events must identify the owner as actor
+        # (testing-strategy.md, Transactions, audit, and concurrency).
+        events = await _audit_events_for(db_session, owner.id)
+        assert len(events) == 1
+        assert events[0].user_id == owner.id
 
     async def test_admin_revoke_has_no_owner_restriction(
         self,
@@ -842,11 +909,9 @@ class TestRevokeKey:
 
             assert len(await _audit_events_for(session_a, user_id)) == 1
         finally:
-            await _cancel_pending_task(task_b)
-            await session_a.rollback()
-            await session_b.rollback()
-            if user_id is not None:
-                await _cleanup_committed_user(session_a, user_id)
+            await _concurrency_teardown(
+                task_b, session_a, session_b, session_a, user_id
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1016,11 +1081,9 @@ class TestRevokeAllUserKeys:
 
             assert len(await _audit_events_for(session_a, user_id)) == 1
         finally:
-            await _cancel_pending_task(task_b)
-            await session_a.rollback()
-            await session_b.rollback()
-            if user_id is not None:
-                await _cleanup_committed_user(session_a, user_id)
+            await _concurrency_teardown(
+                task_b, session_a, session_b, session_a, user_id
+            )
 
 
 # ---------------------------------------------------------------------------
