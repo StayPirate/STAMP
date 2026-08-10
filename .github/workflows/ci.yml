@@ -64,7 +64,7 @@ jobs:
           path: backend/.mypy_cache
           key: mypy-${{ hashFiles('backend/uv.lock') }}
           restore-keys: mypy-
-      - run: uv run mypy app tests
+      - run: uv run mypy app tests alembic
 
   backend-test:
     name: Backend Tests
