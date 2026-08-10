@@ -10,7 +10,7 @@ echo "  ruff format..."
 (cd backend && uv run --locked ruff format --check .)
 
 echo "  mypy..."
-(cd backend && uv run --locked mypy app tests)
+(cd backend && uv run --locked mypy app tests alembic)
 
 echo "  unit tests..."
 # Exit code 5 = "no tests collected" (no @pytest.mark.unit tests yet).
