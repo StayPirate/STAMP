@@ -34,7 +34,9 @@ os.environ.setdefault(
     "JWT_SECRET_KEY", "test-secret-key-not-for-production-min-32-chars"
 )
 
+from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.health import get_readiness_redis_urls
+from app.core.enums import Role, SessionCreationReason
 from app.core.passwords import hash_password
 from app.database import Base, get_db
 from app.main import app
@@ -43,8 +45,9 @@ from app.main import app
 # tables — including ones only referenced via TYPE_CHECKING forward
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
-from app.models import ApiKey, IdentityAuditEvent, Session, User
+from app.models import ApiKey, IdentityAuditEvent, Session, User, UserRole
 from app.services import local_auth_service, session_service
+from app.services.session_service import create_session
 from tests.support.audit_models import SampleAuditEvent
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
@@ -376,6 +379,35 @@ def user_factory(
     return _create
 
 
+@pytest.fixture
+def user_role_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+) -> Callable[..., Awaitable[UserRole]]:
+    """Factory fixture for `UserRole` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `user_id`: a freshly created user, when not overridden.
+    - `role`: `Role.VULNERABILITY_ANALYST` value, overridable.
+    - `group_name`: `"_manual"` (model server default), overridable.
+    """
+
+    async def _create(**overrides: Any) -> UserRole:
+        if "user_id" not in overrides:
+            overrides["user_id"] = (await user_factory()).id
+        defaults: dict[str, Any] = {"role": Role.VULNERABILITY_ANALYST.value}
+        defaults.update(overrides)
+        instance = UserRole(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
 # A fixed, valid password satisfying the 16-128 char policy, paired with
 # its real bcrypt hash below. `hash_password()` runs once at collection
 # time (not per-test) so tests that need an actual, verifiable login
@@ -559,3 +591,55 @@ def identity_audit_event_factory(
         return instance
 
     return _create
+
+
+@pytest_asyncio.fixture
+async def _authenticated_user_and_client(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+    redis_client: redis_asyncio.Redis,
+) -> tuple[User, AsyncClient]:
+    """Shared setup for `authenticated_client` and `admin_client`.
+
+    Creates a fresh user and a valid JWT session, then attaches the
+    session cookie to the shared `client` fixture. Depending on
+    `redis_client` composes the worker-isolated Redis database
+    automatically — see docs/features/platform/testing-strategy.md
+    (Fixture Catalog): "authenticated_client and admin_client compose
+    this Redis isolation automatically; tests using either client MUST
+    NOT need to request redis_client separately."
+    """
+    user = await user_factory()
+    created = await create_session(db_session, user, SessionCreationReason.LOCAL_LOGIN)
+    client.cookies.set(SESSION_COOKIE_NAME, created.token)
+    return user, client
+
+
+@pytest.fixture
+def authenticated_client(
+    _authenticated_user_and_client: tuple[User, AsyncClient],
+) -> AsyncClient:
+    """An `AsyncClient` authenticated via a valid JWT session, for a user
+    with **no roles** — pure authentication without any capability.
+
+    See docs/features/platform/testing-strategy.md (Fixture Catalog).
+    Tests that need specific capabilities must either use `admin_client`
+    or assign roles explicitly via `user_role_factory`.
+    """
+    return _authenticated_user_and_client[1]
+
+
+@pytest_asyncio.fixture
+async def admin_client(
+    _authenticated_user_and_client: tuple[User, AsyncClient],
+    user_role_factory: Callable[..., Awaitable[UserRole]],
+) -> AsyncClient:
+    """An `authenticated_client` whose user additionally holds only the
+    `admin` role.
+
+    See docs/features/platform/testing-strategy.md (Fixture Catalog).
+    """
+    user, client = _authenticated_user_and_client
+    await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+    return client

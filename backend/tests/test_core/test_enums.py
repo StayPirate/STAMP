@@ -10,6 +10,7 @@ import pytest
 
 from app.core.enums import (
     Capability,
+    CredentialKind,
     HealthCheckStatus,
     IdentityAuditEventType,
     Role,
@@ -104,3 +105,16 @@ class TestIdentityAuditEventTypeEnum:
 
     def test_count(self) -> None:
         assert len(list(IdentityAuditEventType)) == 14
+
+
+@pytest.mark.unit
+class TestCredentialKindEnum:
+    """CredentialKind must have exactly the two members defined in
+    authentication.md (`CredentialKind`)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in CredentialKind} == {"jwt", "api_key"}
+
+    def test_values(self) -> None:
+        assert CredentialKind.JWT.value == "jwt"
+        assert CredentialKind.API_KEY.value == "api_key"

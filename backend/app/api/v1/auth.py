@@ -10,6 +10,15 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from app.api.dependencies import (
+    SESSION_COOKIE_NAME as _COOKIE_NAME,
+)
+from app.api.dependencies import (
+    set_session_cookie as _set_session_cookie,
+)
+from app.api.dependencies import (
+    unauthenticated_error as _unauthenticated_error,
+)
 from app.config import settings
 from app.core.credentials import API_KEY_PREFIX, extract_credential
 from app.core.errors import AppError, ErrorCode
@@ -27,8 +36,6 @@ from app.services.session_service import invalidate_session, purge_session_cache
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
-_COOKIE_NAME = "sentinel_session"
-
 # The exact cookie-clearing header text from authentication.md (Logout,
 # step 5). Built manually rather than via `Response.set_cookie()`:
 # Python's stdlib `http.cookies` unconditionally double-quotes an empty
@@ -37,20 +44,6 @@ _COOKIE_NAME = "sentinel_session"
 _CLEAR_COOKIE_HEADER = (
     f"{_COOKIE_NAME}=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict"
 )
-
-
-def _unauthenticated_error() -> AppError:
-    """Create a fresh generic authentication failure.
-
-    Exception instances retain traceback state when raised. Returning a
-    fresh instance prevents failed requests from accumulating traceback
-    frames and request-local credential data on a module-level singleton.
-    """
-    return AppError(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        code=ErrorCode.AUTH_NOT_AUTHENTICATED,
-        detail="Authentication required",
-    )
 
 
 def _invalid_credentials_error() -> AppError:
@@ -66,20 +59,6 @@ def _invalid_credentials_error() -> AppError:
         status_code=status.HTTP_401_UNAUTHORIZED,
         code=ErrorCode.AUTH_INVALID_CREDENTIALS,
         detail="Invalid username or password.",
-    )
-
-
-def _set_session_cookie(response: Response, token: str) -> None:
-    """Set the session cookie on a successful login — see
-    `docs/features/identity/authentication.md` (Frontend session
-    behavior, Token refresh)."""
-    response.set_cookie(
-        key=_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="strict",
-        path="/api",
     )
 
 

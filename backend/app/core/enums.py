@@ -171,3 +171,15 @@ class SortOrder(StrEnum):
 
     ASC = "asc"
     DESC = "desc"
+
+
+class CredentialKind(StrEnum):
+    """How a request was authenticated.
+
+    Category B — classification (Python Enum only; never stored in the
+    database — carried only in the in-memory `AuthenticatedPrincipal`).
+    See `docs/features/identity/authentication.md` (`CredentialKind`).
+    """
+
+    JWT = "jwt"
+    API_KEY = "api_key"

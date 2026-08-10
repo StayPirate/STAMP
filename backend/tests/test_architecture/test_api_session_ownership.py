@@ -14,18 +14,30 @@ that dependency entirely: opening an independent session directly via
 `.commit()`/`.rollback()` — both would escape FastAPI's dependency
 injection graph and are therefore invisible to a route-dependant walk.
 
-Scope: this test detects direct references to `async_session_factory`
-and direct `.commit()`/`.rollback()` calls in `app/api/` source text via
-AST — it does not attempt full type inference to confirm a `.commit()`
+Scope: this test detects direct references to `async_session_factory` and
+direct `.commit()`/`.rollback()` calls in `app/api/` source text via AST
+— it does not attempt full type inference to confirm a `.commit()`
 receiver is actually a database session, since no legitimate use of
 either pattern exists in the API layer today (see `AGENTS.md`,
-Guardrail 26 — Reviewer Proportionality). `app/api/health.py` is the one
-exception: the readiness probe (`GET /ready`) never uses the `get_db`
-yield-dependency at all — it opens a read-only, no-commit session
-directly via `get_readiness_session_factory()` for its `SELECT 1`
-check, so the `scope="function"` rule (which governs transaction
-completion ordering for `get_db`) does not apply to it in the first
-place.
+Guardrail 26 — Reviewer Proportionality). Two modules are exempt, each
+for a documented, specification-mandated reason:
+
+- `app/api/health.py`: the readiness probe (`GET /ready`) never uses the
+  `get_db` yield-dependency at all — it opens a read-only, no-commit
+  session directly via `get_readiness_session_factory()` for its
+  `SELECT 1` check, so the `scope="function"` rule (which governs
+  transaction completion ordering for `get_db`) does not apply to it in
+  the first place.
+- `app/api/dependencies.py`: the API key `last_used_at` debounce touch
+  (`LastUsedDebouncer.touch()`) is an orchestration boundary per
+  `docs/conventions.md` (Transaction and Locking, Caller-Owned Service
+  Transactions: "a component that explicitly owns its sessions ...
+  keeps the transaction contract defined by its owning specification").
+  `docs/features/identity/authentication.md` (API key validation, step
+  5) requires this best-effort operational write to commit or roll back
+  in its own dedicated transaction, independently of the request's main
+  `DatabaseSession` transaction (which may still be open and must not be
+  affected by this write's outcome).
 """
 
 from __future__ import annotations
@@ -41,10 +53,13 @@ APP_API_ROOT = Path(__file__).resolve().parents[2] / "app" / "api"
 # uses the `get_db` yield-dependency — it opens its own read-only,
 # no-commit session directly via `get_readiness_session_factory()`, so
 # the `scope="function"` transaction-completion rule does not apply to
-# it. Matched by path relative to `APP_API_ROOT` (not by basename
-# alone), so a differently-located future module that happens to share
-# the name `health.py` is not accidentally exempted.
-_EXEMPT_RELATIVE_PATHS = {Path("health.py")}
+# it. `app/api/dependencies.py` is the second exception: its debounced
+# API key `last_used_at` touch owns a dedicated transaction per
+# `authentication.md` (see module docstring above for the full
+# rationale). Matched by path relative to `APP_API_ROOT` (not by
+# basename alone), so a differently-located future module that happens
+# to share either name is not accidentally exempted.
+_EXEMPT_RELATIVE_PATHS = {Path("health.py"), Path("dependencies.py")}
 
 _FORBIDDEN_NAMES = {"async_session_factory"}
 _FORBIDDEN_METHODS = {"commit", "rollback"}
@@ -129,8 +144,9 @@ class TestFindForbiddenSessionUsageDetector:
 
 @pytest.mark.unit
 class TestNoDirectSessionUsageInApiLayer:
-    """Scans every real module under `app/api/` (except the documented
-    `health.py` exception) for the forbidden patterns.
+    """Scans every real module under `app/api/` (except the two
+    documented exemptions in `_EXEMPT_RELATIVE_PATHS`) for the
+    forbidden patterns.
     """
 
     def test_no_api_module_bypasses_the_database_session_dependency(self) -> None:

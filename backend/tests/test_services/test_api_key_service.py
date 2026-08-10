@@ -50,6 +50,7 @@ from app.services.api_key_service import (
     list_user_keys_for_cli,
     revoke_all_user_keys,
     revoke_key,
+    update_last_used_at,
 )
 from app.services.identity_audit_log import IdentityAuditLog
 
@@ -1845,3 +1846,130 @@ class TestListUserKeysForCli:
             db_session, "clisnapshotuser", now=fixed_now
         )
         assert result.evaluated_at == fixed_now
+
+
+# ---------------------------------------------------------------------------
+# update_last_used_at()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUpdateLastUsedAt:
+    async def test_sets_last_used_at_when_null(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+        now = datetime.now(UTC)
+
+        changed = await update_last_used_at(db_session, key.id, now)
+
+        assert changed is True
+        await db_session.refresh(key)
+        assert key.last_used_at == now
+
+    async def test_advances_when_used_at_is_later(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        earlier = datetime.now(UTC) - timedelta(minutes=5)
+        key = await api_key_factory(last_used_at=earlier)
+        later = datetime.now(UTC)
+
+        changed = await update_last_used_at(db_session, key.id, later)
+
+        assert changed is True
+        await db_session.refresh(key)
+        assert key.last_used_at == later
+
+    async def test_does_not_move_backward(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        current = datetime.now(UTC)
+        key = await api_key_factory(last_used_at=current)
+        earlier = current - timedelta(minutes=5)
+
+        changed = await update_last_used_at(db_session, key.id, earlier)
+
+        assert changed is False
+        await db_session.refresh(key)
+        assert key.last_used_at == current
+
+    async def test_equal_timestamp_does_not_change(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        current = datetime.now(UTC)
+        key = await api_key_factory(last_used_at=current)
+
+        changed = await update_last_used_at(db_session, key.id, current)
+
+        assert changed is False
+
+    async def test_missing_key_returns_false(self, db_session: AsyncSession) -> None:
+        changed = await update_last_used_at(db_session, uuid.uuid4(), datetime.now(UTC))
+
+        assert changed is False
+
+    async def test_creates_no_identity_audit_event(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+
+        await update_last_used_at(db_session, key.id, datetime.now(UTC))
+
+        events = await _audit_events_for(db_session, key.user_id)
+        assert events == []
+
+    async def test_does_not_touch_lifecycle_fields(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+
+        await update_last_used_at(db_session, key.id, datetime.now(UTC))
+
+        await db_session.refresh(key)
+        assert key.revoked_at is None
+        assert key.revoked_by is None
+
+    async def test_flushes_without_commit(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+
+        await update_last_used_at(db_session, key.id, datetime.now(UTC))
+
+        commit_spy.assert_not_called()
+
+    async def test_rollback_removes_last_used_at_update(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+        key_id = key.id
+        # Commit to establish a savepoint checkpoint so that the key
+        # survives the subsequent rollback (the db_session fixture uses
+        # join_transaction_mode="create_savepoint").
+        await db_session.commit()
+
+        await update_last_used_at(db_session, key_id, datetime.now(UTC))
+        await db_session.rollback()
+
+        refreshed = await db_session.get(ApiKey, key_id)
+        assert refreshed is not None
+        assert refreshed.last_used_at is None
