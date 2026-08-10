@@ -47,7 +47,7 @@ class TestErrorCode:
             assert code.value == code.value.upper()
             assert isinstance(code.value, str)
 
-    def test_new_p2_06_codes_are_registered(self) -> None:
+    def test_authorization_error_codes_are_registered(self) -> None:
         """See docs/features/identity/rbac.md (`require_capability()`
         Dependency) and authentication.md (Session-Only Authentication
         Dependency, API Endpoints)."""

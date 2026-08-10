@@ -32,6 +32,20 @@ from app.models.user import User
 from app.models.user_role import UserRole
 
 
+async def get_user_by_id(session: AsyncSession, user_id: UUID) -> User | None:
+    """Return the `User` row for `user_id`, or ``None`` if no row exists.
+
+    A trivial single-row PK lookup used by the authentication boundary
+    (`get_current_user`) to load the already-resolved `user_id` from a
+    validated JWT or API key, keeping all ORM queries in the Service
+    layer per `docs/architecture.md` (Backend Layer Architecture).
+
+    Q6: propagates any underlying database exception.  Never raises
+    `UserNotFoundError` — the caller decides how to react to ``None``.
+    """
+    return await session.get(User, user_id)
+
+
 async def resolve_user_identifier(session: AsyncSession, identifier: str) -> User:
     """Resolve a UUID-or-username identifier to its `User` row.
 

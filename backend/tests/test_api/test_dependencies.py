@@ -15,6 +15,7 @@ production `app`'s route table.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import secrets
@@ -50,7 +51,7 @@ from app.database import get_db
 from app.models.api_key import ApiKey
 from app.models.session import Session
 from app.models.user import User
-from app.services import api_key_service
+from app.services import api_key_service, user_service
 from app.services.session_service import create_session
 
 # ---------------------------------------------------------------------------
@@ -473,6 +474,42 @@ class TestLastUsedDebouncer:
         assert call_count == 1
 
 
+@pytest.mark.integration
+class TestLastUsedDebouncerIntegration:
+    async def test_touch_persists_last_used_at_through_real_session(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Exercise the full path: ``get_last_used_session_factory()`` →
+        real session → ``update_last_used_at()`` → commit, verifying
+        that the dedicated transaction actually persists the write.
+
+        Uses the savepoint-nested ``db_session`` as the backing session
+        so the outer transaction rollback at teardown cleans up the
+        write — no leaked state.
+        """
+        key = await api_key_factory(last_used_at=None)
+
+        @contextlib.asynccontextmanager
+        async def _session_cm() -> AsyncGenerator[AsyncSession]:
+            yield db_session
+
+        monkeypatch.setattr(
+            dependencies,
+            "get_last_used_session_factory",
+            lambda: _session_cm,
+        )
+        debouncer = LastUsedDebouncer()
+        now = datetime.now(UTC)
+
+        await debouncer.touch(key.id, now)
+
+        await db_session.refresh(key)
+        assert key.last_used_at == now
+
+
 # ---------------------------------------------------------------------------
 # get_current_user — JWT path (e2e)
 # ---------------------------------------------------------------------------
@@ -860,6 +897,36 @@ class TestGetCurrentUserApiKey:
         )
 
         assert response.status_code == 401
+
+    async def test_missing_user_returns_generic_401(
+        self,
+        dep_client: AsyncClient,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Defensive guard: if the ApiKey.user_id references no User row
+        (e.g. FK violation, data inconsistency), return the generic 401
+        — matching the JWT path's test_missing_user_returns_generic_401.
+        """
+        user = await user_factory()
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=user.id, key_hash=digest)
+        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", AsyncMock())
+        monkeypatch.setattr(
+            user_service, "get_user_by_id", AsyncMock(return_value=None)
+        )
+
+        response = await dep_client.get(
+            "/whoami", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 401
+        assert response.json() == {
+            "code": "AUTH_NOT_AUTHENTICATED",
+            "detail": "Authentication required",
+        }
 
 
 # ---------------------------------------------------------------------------

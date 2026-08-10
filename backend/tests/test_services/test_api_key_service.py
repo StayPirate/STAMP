@@ -1940,3 +1940,36 @@ class TestUpdateLastUsedAt:
         await db_session.refresh(key)
         assert key.revoked_at is None
         assert key.revoked_by is None
+
+    async def test_flushes_without_commit(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+
+        await update_last_used_at(db_session, key.id, datetime.now(UTC))
+
+        commit_spy.assert_not_called()
+
+    async def test_rollback_removes_last_used_at_update(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(last_used_at=None)
+        key_id = key.id
+        # Commit to establish a savepoint checkpoint so that the key
+        # survives the subsequent rollback (the db_session fixture uses
+        # join_transaction_mode="create_savepoint").
+        await db_session.commit()
+
+        await update_last_used_at(db_session, key_id, datetime.now(UTC))
+        await db_session.rollback()
+
+        refreshed = await db_session.get(ApiKey, key_id)
+        assert refreshed is not None
+        assert refreshed.last_used_at is None

@@ -327,7 +327,7 @@ async def _authenticate_jwt(
     if not await is_session_active(db, claims.session_id):
         raise unauthenticated_error()
 
-    user = await db.get(User, claims.user_id)
+    user = await user_service.get_user_by_id(db, claims.user_id)
     if user is None or not user.active:
         raise unauthenticated_error()
 
@@ -374,7 +374,7 @@ async def _authenticate_api_key(
 
     await _last_used_debouncer.touch(api_key.id, now)
 
-    user = await db.get(User, api_key.user_id)
+    user = await user_service.get_user_by_id(db, api_key.user_id)
     if user is None or not user.active:
         raise unauthenticated_error()
     return user

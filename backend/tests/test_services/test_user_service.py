@@ -18,7 +18,31 @@ from app.core.enums import Role
 from app.core.exceptions import UserNotFoundError
 from app.models.user import User
 from app.models.user_role import UserRole
-from app.services.user_service import get_user_roles, resolve_user_identifier
+from app.services.user_service import (
+    get_user_by_id,
+    get_user_roles,
+    resolve_user_identifier,
+)
+
+
+@pytest.mark.integration
+class TestGetUserById:
+    async def test_returns_user_when_exists(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory()
+
+        result = await get_user_by_id(db_session, user.id)
+
+        assert result is not None
+        assert result.id == user.id
+
+    async def test_returns_none_when_not_exists(self, db_session: AsyncSession) -> None:
+        result = await get_user_by_id(db_session, uuid.uuid4())
+
+        assert result is None
 
 
 @pytest.mark.integration
