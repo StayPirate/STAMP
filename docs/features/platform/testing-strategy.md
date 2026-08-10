@@ -384,6 +384,11 @@ Once authentication session liveness uses Redis, `authenticated_client` and
 client MUST NOT need to request `redis_client` separately merely to prevent
 access to application-configured Redis.
 
+`authenticated_client` creates a user with **no roles** — it represents
+pure authentication without any capability. Tests that need specific
+capabilities must either use `admin_client` or assign roles explicitly.
+`admin_client` creates a user with only the **`admin`** role.
+
 The `real_session_factory` fixture returns a real `async_sessionmaker`
 bound to the shared, session-scoped `_engine` fixture — mirroring the
 production shape in `app/database.py`. It is used by tests that need a
@@ -1286,9 +1291,10 @@ commands are affected, tests MUST cover:
 
 **Logging and CLI:**
 
-- validation-failure WARNING contains source IP only under the documented
-  active-defense exception and never contains prefix, secret, hash, key name,
-  username, or email; suppression behavior is tested without HTTP throttling
+- validation-failure WARNING contains the ASGI peer address
+  (`request.client.host`) only under the documented active-defense PII
+  exception and never contains prefix, secret, hash, key name, username,
+  or email; suppression behavior is tested without HTTP throttling
 - active-key anomaly WARNING contains only safe structured fields
 - `api-key list --username` includes key UUID, consistent derived status, and
   `—` for NULL last-use/expiration cells; `api-key revoke --key-id` needs no

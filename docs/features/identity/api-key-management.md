@@ -207,10 +207,11 @@ POST /api/v1/api-keys
 
 This endpoint additionally requires JWT session authentication. API-key
 authentication returns `403 AUTH_SESSION_REQUIRED` with detail
-`"API key creation requires session authentication."`. A session-only
-authentication dependency owned by the authentication boundary enforces this
-before handler execution; the handler does not re-parse the token or duplicate
-the `stl_ak_` recognition rule.
+`"API key creation requires session authentication."`. The
+`require_session_authentication()` dependency (defined in
+`docs/features/identity/authentication.md`) enforces this before handler
+execution; the handler does not re-parse the token or duplicate the
+`stl_ak_` recognition rule.
 
 **Request body:**
 
