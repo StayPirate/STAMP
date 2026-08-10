@@ -665,12 +665,16 @@ class TestCreateKey:
 
             # Keep the active User instance cached in create_session, then
             # change the persisted state while deactivation_session holds the
-            # owner lock. create_key() must refresh the cached instance after
-            # acquiring that lock rather than trusting stale identity-map data.
+            # owner lock (FOR NO KEY UPDATE, matching the mode
+            # deactivate_user() will use — see api-key-service.md).
+            # create_key() must refresh the cached instance after acquiring
+            # that lock rather than trusting stale identity-map data.
             assert user.active is True
             locked_user = (
                 await deactivation_session.execute(
-                    select(User).where(User.id == user_id).with_for_update()
+                    select(User)
+                    .where(User.id == user_id)
+                    .with_for_update(key_share=True)
                 )
             ).scalar_one()
             locked_user.active = False
@@ -1031,59 +1035,110 @@ class TestRevokeAllUserKeys:
         assert refreshed2.revoked_at is None
         assert await _audit_events_for(db_session, owner_id) == []
 
-    async def test_bulk_and_single_revoke_race_produce_one_event_for_shared_key(
+    async def test_single_and_bulk_lock_inversion_completes_with_one_revocation(
         self,
         db_session_factory: Callable[[], Awaitable[AsyncSession]],
     ) -> None:
-        session_a = await db_session_factory()
-        session_b = await db_session_factory()
+        """Regression test for #171: single revocation holds ApiKey FOR
+        UPDATE, bulk revocation holds User FOR NO KEY UPDATE and waits
+        for ApiKey.  Single then flushes FK-backed revoked_by/audit
+        mutations that need FOR KEY SHARE on User.  With FOR UPDATE on
+        User this produced SQLSTATE 40P01 (deadlock).  With FOR NO KEY
+        UPDATE the FK validation is compatible and both complete.
+        """
+        single_session = await db_session_factory()
+        bulk_session = await db_session_factory()
+        verify_session = await db_session_factory()
         user_id: uuid.UUID | None = None
-        task_b: asyncio.Task[Any] | None = None
+        bulk_task: asyncio.Task[Any] | None = None
 
         try:
+            # -- baseline: one user, one non-revoked key --
             user = User(
-                username="conc-bulk-owner",
-                email="conc-bulk-owner@example.com",
+                username="conc-inversion-owner",
+                email="conc-inversion-owner@example.com",
                 password_hash=_FICTIONAL_PASSWORD_HASH,
             )
-            session_a.add(user)
-            await session_a.flush()
+            single_session.add(user)
+            await single_session.flush()
             key = ApiKey(
                 user_id=user.id,
                 key_hash="e" * 64,
                 prefix="stl_ak_concb",
                 name="shared-key",
             )
-            session_a.add(key)
-            await session_a.flush()
-            await session_a.commit()
+            single_session.add(key)
+            await single_session.flush()
+            await single_session.commit()
             user_id = user.id
             key_id = key.id
 
-            # session_a's bulk revoke fully completes (mutated + event
-            # flushed) without commit — its FOR UPDATE locks on the user
-            # and key rows remain held.
-            count_a = await revoke_all_user_keys(
-                session_a, user_id, acting_user_id=None
+            # Step 1: single_session pre-locks the ApiKey row (same lock
+            # revoke_key() acquires as its first DB operation).
+            await single_session.execute(
+                select(ApiKey).where(ApiKey.id == key_id).with_for_update()
             )
-            assert count_a == 1
 
-            task_b = asyncio.create_task(
-                revoke_key(session_b, key_id, acting_user_id=None)
+            # Step 2: launch bulk revocation; it will acquire the user
+            # FOR NO KEY UPDATE lock, then block waiting for the ApiKey
+            # FOR UPDATE lock held by single_session.
+            bulk_task = asyncio.create_task(
+                revoke_all_user_keys(bulk_session, user_id, acting_user_id=None)
             )
+
+            # Give the bulk task enough time to acquire the user lock
+            # and begin waiting for the key lock.
             with pytest.raises(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+                await asyncio.wait_for(asyncio.shield(bulk_task), timeout=0.5)
 
-            await session_a.commit()
-            result_b = await asyncio.wait_for(task_b, timeout=5)
-            await session_b.commit()
-            assert result_b.api_key.revoked_at is not None
-
-            assert len(await _audit_events_for(session_a, user_id)) == 1
-        finally:
-            await _concurrency_teardown(
-                task_b, session_a, session_b, session_a, user_id
+            # Step 3: while bulk holds the user lock and waits for the
+            # key, execute the single revocation in full.  This flushes
+            # revoked_by (FK → user) and an IdentityAuditEvent
+            # (target_user_id FK → user), both requiring FOR KEY SHARE
+            # on User.  With the old FOR UPDATE on User this would
+            # deadlock; with FOR NO KEY UPDATE it succeeds.
+            await revoke_key(
+                single_session,
+                key_id,
+                acting_user_id=user_id,
+                owner_user_id=user_id,
             )
+
+            # Step 4: commit single_session to release the key lock.
+            await single_session.commit()
+
+            # Step 5: bulk_task should now complete — the key is already
+            # revoked so it finds no eligible rows and returns 0.
+            bulk_count = await asyncio.wait_for(bulk_task, timeout=5)
+            assert bulk_count == 0
+            await bulk_session.commit()
+
+            # -- assertions on committed state --
+            key_row = (
+                await verify_session.execute(select(ApiKey).where(ApiKey.id == key_id))
+            ).scalar_one()
+            assert key_row.revoked_at is not None
+            assert key_row.revoked_by == user_id
+
+            events = await _audit_events_for(verify_session, user_id)
+            assert len(events) == 1
+            event = events[0]
+            assert event.event_type == "api_key_revoked"
+            assert event.user_id == user_id
+            assert event.target_user_id == user_id
+            assert event.old_value == "shared-key"
+            assert event.detail is not None
+            assert event.detail["key_id"] == str(key_id)
+            # No "reason" key — this was a single revocation, not a
+            # bulk deactivation revocation.
+            assert "reason" not in event.detail
+        finally:
+            await _cancel_pending_task(bulk_task)
+            for sess in (single_session, bulk_session):
+                with contextlib.suppress(Exception):
+                    await sess.rollback()
+            if user_id is not None:
+                await _cleanup_committed_user(verify_session, user_id)
 
 
 # ---------------------------------------------------------------------------

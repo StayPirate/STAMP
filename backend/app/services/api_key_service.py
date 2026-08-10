@@ -369,10 +369,14 @@ async def create_key(
     sequential pre-check here and, when concurrently lost, via the
     partial unique index below).
 
-    Q3: locks the owner `User` row with `SELECT ... FOR UPDATE` as the
-    first database operation and validates existence/active status
-    under that lock — this serializes creation with user deactivation,
-    so a key cannot commit for an inactive user. Normalizes `name`,
+    Q3: locks the owner `User` row with `SELECT ... FOR NO KEY UPDATE`
+    as the first database operation and validates existence/active
+    status under that lock — this serializes creation with user
+    deactivation and bulk revocation, so a key cannot commit for an
+    inactive user. `FOR NO KEY UPDATE` is sufficient because these
+    operations never modify `User.id`; it remains compatible with the
+    `FOR KEY SHARE` locks PostgreSQL acquires when validating foreign
+    keys that reference `User.id`. Normalizes `name`,
     validates `expires_at`, and pre-checks the normalized name. Then
     generates `stl_ak_` plus 32 CSPRNG alphanumeric characters, computes
     its lowercase hexadecimal SHA-256 digest, and inserts the row with
@@ -407,7 +411,7 @@ async def create_key(
     owner_result = await session.execute(
         select(User)
         .where(User.id == user_id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     owner = owner_result.scalar_one_or_none()
@@ -557,13 +561,14 @@ async def revoke_all_user_keys(
 
     Q2: missing user raises `UserNotFoundError`.
 
-    Q3: locks the `User` row with `FOR UPDATE` as the first database
-    operation (`user_service.deactivate_user()` already holds the same
-    lock in the same transaction, so reacquisition is immediate).
-    Selects every key with `revoked_at IS NULL` for that user, in
-    deterministic `id` order, with `FOR UPDATE` — this ordering avoids
-    deadlocks between concurrent bulk operations and serializes each
-    row with `revoke_key()`. Sets one shared `revoked_at` snapshot and
+    Q3: locks the `User` row with `FOR NO KEY UPDATE` as the first
+    database operation (`user_service.deactivate_user()` already holds
+    a conflicting lock in the same transaction, so reacquisition is
+    immediate). Selects every key with `revoked_at IS NULL` for that
+    user, in deterministic `id` order, with `FOR UPDATE` — the user
+    lock serializes concurrent bulk operations and the deterministic
+    key ordering serializes each row with `revoke_key()`. Sets one
+    shared `revoked_at` snapshot and
     `revoked_by = acting_user_id` on every selected key, flushes, then
     creates one `api_key_revoked` event per key (actor, target, and old
     value as in `revoke_key()`, plus
@@ -581,7 +586,7 @@ async def revoke_all_user_keys(
     audit-service exception.
     """
     owner_result = await session.execute(
-        select(User).where(User.id == user_id).with_for_update()
+        select(User).where(User.id == user_id).with_for_update(key_share=True)
     )
     if owner_result.scalar_one_or_none() is None:
         raise UserNotFoundError()
