@@ -22,9 +22,9 @@ in that call.
 
 Out of scope for this module (see `docs/features/identity/api-key-service.md`,
 Purpose): API endpoints, request/response schemas, endpoint
-authorization, API-key authentication validation, and the
-`update_last_used_at()` operational touch (added alongside the
-authentication boundary that consumes it).
+authorization, and API-key authentication validation — these remain
+owned by `docs/features/identity/authentication.md`, which is the sole
+caller of `update_last_used_at()` below.
 """
 
 from __future__ import annotations
@@ -35,11 +35,12 @@ import secrets
 import string
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import structlog
-from sqlalchemy import ColumnElement, and_, func, nullslast, or_, select
+from sqlalchemy import ColumnElement, and_, func, nullslast, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -803,3 +804,46 @@ async def list_user_keys_for_cli(
     items = list((await session.execute(data_query)).scalars().all())
 
     return ApiKeyCliList(items=items, evaluated_at=resolved_now)
+
+
+async def update_last_used_at(
+    session: AsyncSession,
+    key_id: UUID,
+    used_at: datetime,
+) -> bool:
+    """Advance `ApiKey.last_used_at` for `key_id`, never moving it backward.
+
+    Q1: `key_id` identifies the key; `used_at` is the authentication
+    boundary's UTC snapshot for this successful validation. The
+    authentication boundary calls this function at most once per
+    minute per key per server instance (see `authentication.md`, API
+    key validation step 5) — this function performs no debouncing
+    itself.
+
+    Q3: updates the matching row only when its current `last_used_at`
+    is `NULL` or strictly earlier than `used_at`; flushes and returns
+    `True` when changed. A missing row or a `used_at` that would not
+    advance the stored value returns `False` and issues no write. Does
+    not lock the row, does not touch any lifecycle field, and creates
+    no `IdentityAuditEvent` — this is operational authentication
+    metadata, not a lifecycle mutation (see `api-key-management.md`,
+    Security and Audit Guarantees).
+
+    Q5: conditionally idempotent — the same or an older `used_at`
+    produces no additional write.
+
+    Q6: propagates any underlying database exception.
+    """
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            update(ApiKey)
+            .where(
+                ApiKey.id == key_id,
+                or_(ApiKey.last_used_at.is_(None), ApiKey.last_used_at < used_at),
+            )
+            .values(last_used_at=used_at)
+        ),
+    )
+    await session.flush()
+    return result.rowcount > 0

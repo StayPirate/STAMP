@@ -13,7 +13,7 @@ import redis.asyncio as redis_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.auth import _unauthenticated_error
+from app.api.dependencies import unauthenticated_error
 from app.config import settings
 from app.core.enums import SessionCreationReason
 from app.core.errors import ErrorCode
@@ -505,11 +505,12 @@ class TestLogin:
 
 @pytest.mark.unit
 def test_unauthenticated_error_returns_fresh_exception_instances() -> None:
-    """`_unauthenticated_error()` must return a new `AppError` instance
+    """`unauthenticated_error()` must return a new `AppError` instance
     on every call — a shared singleton exception would accumulate a
-    stale traceback across requests. See `app/api/v1/auth.py`."""
-    first = _unauthenticated_error()
-    second = _unauthenticated_error()
+    stale traceback across requests. See `app/api/dependencies.py`,
+    reused by `app/api/v1/auth.py`'s logout endpoint."""
+    first = unauthenticated_error()
+    second = unauthenticated_error()
 
     assert first is not second
     assert first.code == second.code == ErrorCode.AUTH_NOT_AUTHENTICATED
