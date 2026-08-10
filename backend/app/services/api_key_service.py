@@ -405,7 +405,10 @@ async def create_key(
     now = datetime.now(UTC)
 
     owner_result = await session.execute(
-        select(User).where(User.id == user_id).with_for_update()
+        select(User)
+        .where(User.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     owner = owner_result.scalar_one_or_none()
     if owner is None:
@@ -510,7 +513,12 @@ async def revoke_key(
     if owner_user_id is not None:
         filters.append(ApiKey.user_id == owner_user_id)
 
-    result = await session.execute(select(ApiKey).where(*filters).with_for_update())
+    result = await session.execute(
+        select(ApiKey)
+        .where(*filters)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     api_key = result.scalar_one_or_none()
     if api_key is None:
         raise ApiKeyNotFoundError()

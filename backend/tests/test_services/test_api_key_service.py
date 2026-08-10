@@ -16,11 +16,13 @@ docs/features/identity/api-key-service.md, Purpose).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -103,6 +105,19 @@ async def _cleanup_committed_user(session: AsyncSession, user_id: uuid.UUID) -> 
     )
     await session.execute(delete(User).where(User.id == user_id))
     await session.commit()
+
+
+async def _cancel_pending_task(task: asyncio.Task[Any] | None) -> None:
+    """Cancel and consume a task that did not finish before test cleanup."""
+    if task is None:
+        return
+    if task.done():
+        if not task.cancelled():
+            task.exception()
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 class _FakeConstraintError(Exception):
@@ -528,38 +543,103 @@ class TestCreateKey:
     ) -> None:
         session_a = await db_session_factory()
         session_b = await db_session_factory()
+        user_id: uuid.UUID | None = None
+        task_b: asyncio.Task[Any] | None = None
 
-        user = User(
-            username="conc-api-key-owner",
-            email="conc-api-key-owner@example.com",
-            password_hash=_FICTIONAL_PASSWORD_HASH,
-        )
-        session_a.add(user)
-        await session_a.commit()
-        user_id = user.id
+        try:
+            user = User(
+                username="conc-api-key-owner",
+                email="conc-api-key-owner@example.com",
+                password_hash=_FICTIONAL_PASSWORD_HASH,
+            )
+            session_a.add(user)
+            await session_a.commit()
+            user_id = user.id
 
-        # session_a's create_key() call fully completes (flushed, not
-        # committed) — its initial owner FOR UPDATE lock remains held by
-        # the still-open transaction.
-        result_a = await create_key(session_a, user_id, "shared-name", None)
+            # session_a's create_key() call fully completes (flushed, not
+            # committed) — its initial owner FOR UPDATE lock remains held by
+            # the still-open transaction.
+            result_a = await create_key(session_a, user_id, "shared-name", None)
 
-        task_b = asyncio.create_task(
-            create_key(session_b, user_id, "shared-name", None)
-        )
-        with pytest.raises(TimeoutError):
-            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+            task_b = asyncio.create_task(
+                create_key(session_b, user_id, "shared-name", None)
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
 
-        await session_a.commit()
+            await session_a.commit()
 
-        with pytest.raises(ApiKeyNameConflictError):
-            await asyncio.wait_for(task_b, timeout=5)
-        await session_b.rollback()  # release session_b's own owner-row lock
+            with pytest.raises(ApiKeyNameConflictError):
+                await asyncio.wait_for(task_b, timeout=5)
+            await session_b.rollback()  # release session_b's own owner-row lock
 
-        keys = await session_a.execute(select(ApiKey).where(ApiKey.user_id == user_id))
-        assert [key.id for key in keys.scalars().all()] == [result_a.api_key.id]
-        assert len(await _audit_events_for(session_a, user_id)) == 1
+            keys = await session_a.execute(
+                select(ApiKey).where(ApiKey.user_id == user_id)
+            )
+            assert [key.id for key in keys.scalars().all()] == [result_a.api_key.id]
+            assert len(await _audit_events_for(session_a, user_id)) == 1
+        finally:
+            await _cancel_pending_task(task_b)
+            await session_a.rollback()
+            await session_b.rollback()
+            if user_id is not None:
+                await _cleanup_committed_user(session_a, user_id)
 
-        await _cleanup_committed_user(session_a, user_id)
+    async def test_create_waits_for_deactivation_and_observes_inactive_owner(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        create_session = await db_session_factory()
+        deactivation_session = await db_session_factory()
+        user_id: uuid.UUID | None = None
+        create_task: asyncio.Task[Any] | None = None
+
+        try:
+            user = User(
+                username="conc-deactivate-owner",
+                email="conc-deactivate-owner@example.com",
+                password_hash=_FICTIONAL_PASSWORD_HASH,
+            )
+            create_session.add(user)
+            await create_session.commit()
+            user_id = user.id
+
+            # Keep the active User instance cached in create_session, then
+            # change the persisted state while deactivation_session holds the
+            # owner lock. create_key() must refresh the cached instance after
+            # acquiring that lock rather than trusting stale identity-map data.
+            assert user.active is True
+            locked_user = (
+                await deactivation_session.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+            ).scalar_one()
+            locked_user.active = False
+            await deactivation_session.flush()
+
+            create_task = asyncio.create_task(
+                create_key(create_session, user_id, "blocked-key", None)
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(create_task), timeout=0.3)
+
+            await deactivation_session.commit()
+
+            with pytest.raises(InactiveUserError):
+                await asyncio.wait_for(create_task, timeout=5)
+            await create_session.rollback()
+
+            keys = await deactivation_session.execute(
+                select(ApiKey).where(ApiKey.user_id == user_id)
+            )
+            assert keys.scalars().all() == []
+            assert await _audit_events_for(deactivation_session, user_id) == []
+        finally:
+            await _cancel_pending_task(create_task)
+            await create_session.rollback()
+            await deactivation_session.rollback()
+            if user_id is not None:
+                await _cleanup_committed_user(deactivation_session, user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -714,42 +794,59 @@ class TestRevokeKey:
     ) -> None:
         session_a = await db_session_factory()
         session_b = await db_session_factory()
+        user_id: uuid.UUID | None = None
+        task_b: asyncio.Task[Any] | None = None
 
-        user = User(
-            username="conc-revoke-owner",
-            email="conc-revoke-owner@example.com",
-            password_hash=_FICTIONAL_PASSWORD_HASH,
-        )
-        session_a.add(user)
-        await session_a.flush()
-        key = ApiKey(
-            user_id=user.id,
-            key_hash="f" * 64,
-            prefix="stl_ak_concr",
-            name="conc-key",
-        )
-        session_a.add(key)
-        await session_a.flush()
-        await session_a.commit()
-        user_id = user.id
-        key_id = key.id
+        try:
+            user = User(
+                username="conc-revoke-owner",
+                email="conc-revoke-owner@example.com",
+                password_hash=_FICTIONAL_PASSWORD_HASH,
+            )
+            session_a.add(user)
+            await session_a.flush()
+            key = ApiKey(
+                user_id=user.id,
+                key_hash="f" * 64,
+                prefix="stl_ak_concr",
+                name="conc-key",
+            )
+            session_a.add(key)
+            await session_a.flush()
+            await session_a.commit()
+            user_id = user.id
+            key_id = key.id
 
-        # session_a's revoke_key() call fully completes (mutated,
-        # flushed, audit event created) without committing — its row
-        # lock on the key remains held.
-        await revoke_key(session_a, key_id, acting_user_id=None)
+            # Cache the original unrevoked row in session_b before the winning
+            # transaction mutates it. The locking read in revoke_key() must
+            # refresh this instance after waiting for session_a's commit.
+            cached_key = await session_b.get(ApiKey, key_id)
+            assert cached_key is not None
+            assert cached_key.revoked_at is None
 
-        task_b = asyncio.create_task(revoke_key(session_b, key_id, acting_user_id=None))
-        with pytest.raises(TimeoutError):
-            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+            # session_a's revoke_key() call fully completes (mutated,
+            # flushed, audit event created) without committing — its row
+            # lock on the key remains held.
+            await revoke_key(session_a, key_id, acting_user_id=None)
 
-        await session_a.commit()
-        result_b = await asyncio.wait_for(task_b, timeout=5)
-        assert result_b.api_key.revoked_at is not None
+            task_b = asyncio.create_task(
+                revoke_key(session_b, key_id, acting_user_id=None)
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
 
-        assert len(await _audit_events_for(session_a, user_id)) == 1
+            await session_a.commit()
+            result_b = await asyncio.wait_for(task_b, timeout=5)
+            await session_b.commit()
+            assert result_b.api_key.revoked_at is not None
 
-        await _cleanup_committed_user(session_a, user_id)
+            assert len(await _audit_events_for(session_a, user_id)) == 1
+        finally:
+            await _cancel_pending_task(task_b)
+            await session_a.rollback()
+            await session_b.rollback()
+            if user_id is not None:
+                await _cleanup_committed_user(session_a, user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -875,43 +972,55 @@ class TestRevokeAllUserKeys:
     ) -> None:
         session_a = await db_session_factory()
         session_b = await db_session_factory()
+        user_id: uuid.UUID | None = None
+        task_b: asyncio.Task[Any] | None = None
 
-        user = User(
-            username="conc-bulk-owner",
-            email="conc-bulk-owner@example.com",
-            password_hash=_FICTIONAL_PASSWORD_HASH,
-        )
-        session_a.add(user)
-        await session_a.flush()
-        key = ApiKey(
-            user_id=user.id,
-            key_hash="e" * 64,
-            prefix="stl_ak_concb",
-            name="shared-key",
-        )
-        session_a.add(key)
-        await session_a.flush()
-        await session_a.commit()
-        user_id = user.id
-        key_id = key.id
+        try:
+            user = User(
+                username="conc-bulk-owner",
+                email="conc-bulk-owner@example.com",
+                password_hash=_FICTIONAL_PASSWORD_HASH,
+            )
+            session_a.add(user)
+            await session_a.flush()
+            key = ApiKey(
+                user_id=user.id,
+                key_hash="e" * 64,
+                prefix="stl_ak_concb",
+                name="shared-key",
+            )
+            session_a.add(key)
+            await session_a.flush()
+            await session_a.commit()
+            user_id = user.id
+            key_id = key.id
 
-        # session_a's bulk revoke fully completes (mutated + event
-        # flushed) without commit — its FOR UPDATE locks on the user
-        # and key rows remain held.
-        count_a = await revoke_all_user_keys(session_a, user_id, acting_user_id=None)
-        assert count_a == 1
+            # session_a's bulk revoke fully completes (mutated + event
+            # flushed) without commit — its FOR UPDATE locks on the user
+            # and key rows remain held.
+            count_a = await revoke_all_user_keys(
+                session_a, user_id, acting_user_id=None
+            )
+            assert count_a == 1
 
-        task_b = asyncio.create_task(revoke_key(session_b, key_id, acting_user_id=None))
-        with pytest.raises(TimeoutError):
-            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+            task_b = asyncio.create_task(
+                revoke_key(session_b, key_id, acting_user_id=None)
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
 
-        await session_a.commit()
-        result_b = await asyncio.wait_for(task_b, timeout=5)
-        assert result_b.api_key.revoked_at is not None
+            await session_a.commit()
+            result_b = await asyncio.wait_for(task_b, timeout=5)
+            await session_b.commit()
+            assert result_b.api_key.revoked_at is not None
 
-        assert len(await _audit_events_for(session_a, user_id)) == 1
-
-        await _cleanup_committed_user(session_a, user_id)
+            assert len(await _audit_events_for(session_a, user_id)) == 1
+        finally:
+            await _cancel_pending_task(task_b)
+            await session_a.rollback()
+            await session_b.rollback()
+            if user_id is not None:
+                await _cleanup_committed_user(session_a, user_id)
 
 
 # ---------------------------------------------------------------------------
