@@ -857,7 +857,8 @@ through the following required gates:
 1. **Python lint and format** — all application and test code MUST pass
    the configured linter and formatter without findings.
 2. **Static type checking** — strict-mode type checking MUST pass over
-   both application code (`app/`) and tests (`tests/`).
+   application code (`app/`), tests (`tests/`), and Alembic migration
+   scripts (`alembic/`).
 3. **Full test suite with coverage threshold** — the complete test suite
    MUST pass with a minimum line-coverage percentage enforced as a
    blocking gate.

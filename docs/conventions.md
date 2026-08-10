@@ -284,10 +284,10 @@ Type hints are enforced, not just written. Static type checking in strict
 mode is a mandatory CI gate, equivalent in authority to linting — a pull
 request with type errors cannot merge.
 
-**Scope**: both application code (`app/`) and tests (`tests/`) are checked.
-Excluding tests from static type checking would allow type errors to
-accumulate silently in the test suite, which is exempt from this rule only
-where explicitly noted below.
+**Scope**: application code (`app/`), tests (`tests/`), and Alembic
+migration scripts (`alembic/`) are checked. Excluding tests from static
+type checking would allow type errors to accumulate silently in the test
+suite, which is exempt from this rule only where explicitly noted below.
 
 **Async-await verification**: type checking flags a coroutine that is
 never awaited or otherwise consumed. This catches a real class of bug in
