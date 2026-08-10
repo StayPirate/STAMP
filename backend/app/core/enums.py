@@ -131,3 +131,43 @@ class SessionInvalidationReason(StrEnum):
 
     DEACTIVATION = "deactivation"
     PASSWORD_RESET = "password_reset"  # nosec B105 -- classification value, not a credential
+
+
+class ApiKeyStatus(StrEnum):
+    """Derived, non-persisted lifecycle status of an `ApiKey`.
+
+    Category B — classification (Python Enum only; never stored in the
+    database — status is computed at read time from `revoked_at` and
+    `expires_at`). See `docs/features/identity/api-key-management.md`
+    (Derived Status) for the exclusive precedence rule:
+    `revoked` > `expired` > `active`.
+    """
+
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class ApiKeySortField(StrEnum):
+    """Sortable fields for API key list queries.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). See `docs/features/identity/api-key-management.md` (API)
+    for the supported fields and `docs/features/identity/api-key-service.md`
+    (`list_user_keys()`, `list_all_keys()`) for their use.
+    """
+
+    CREATED_AT = "created_at"
+    LAST_USED_AT = "last_used_at"
+
+
+class SortOrder(StrEnum):
+    """Sort direction shared by every sortable list query.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). See `docs/api-spec.md` (Sorting) for the shared pagination
+    and sorting contract.
+    """
+
+    ASC = "asc"
+    DESC = "desc"

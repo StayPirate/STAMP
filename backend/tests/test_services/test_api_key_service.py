@@ -1,0 +1,1392 @@
+"""Tests for the API key lifecycle, query, and audit service
+(backend/app/services/api_key_service.py).
+
+See docs/features/identity/api-key-service.md and
+docs/features/identity/api-key-management.md for the contract under
+test, and docs/features/platform/testing-strategy.md (API Key
+Management) for the mandatory scenarios exercised here.
+
+Request/schema-layer concerns (offset/date-only expiry parsing,
+status-filter validation, session-only creation enforcement, and CLI
+output formatting) belong to the later API/CLI pieces that build on
+this service and are out of scope here (see
+docs/features/identity/api-key-service.md, Purpose).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import secrets
+import uuid
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy import delete, or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.enums import ApiKeySortField, ApiKeyStatus, SortOrder
+from app.core.exceptions import InactiveUserError, UserNotFoundError
+from app.models.api_key import ApiKey
+from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.user import User
+from app.services import api_key_service
+from app.services.api_key_service import (
+    ApiKeyInvalidExpiryError,
+    ApiKeyNameConflictError,
+    ApiKeyNameValidationError,
+    ApiKeyNotFoundError,
+    count_non_revoked_keys,
+    create_key,
+    derive_api_key_status,
+    get_key_by_hash,
+    list_all_keys,
+    list_user_keys,
+    list_user_keys_for_cli,
+    revoke_all_user_keys,
+    revoke_key,
+)
+from app.services.identity_audit_log import IdentityAuditLog
+
+# Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
+_FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
+
+
+def _service_log_text(caplog: pytest.LogCaptureFixture) -> str:
+    """Join only the log records emitted by `app.services.api_key_service`.
+
+    Scoping to this module's own records avoids a false PII-leak
+    failure from unrelated propagated SQLAlchemy engine echo records
+    (see the identical helper in test_session_service.py).
+    """
+    return "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.services.api_key_service"
+    )
+
+
+async def _audit_events_for(
+    db_session: AsyncSession, target_user_id: uuid.UUID
+) -> list[IdentityAuditEvent]:
+    rows = await db_session.execute(
+        select(IdentityAuditEvent).where(
+            IdentityAuditEvent.target_user_id == target_user_id
+        )
+    )
+    return list(rows.scalars().all())
+
+
+async def _cleanup_committed_user(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Explicit cleanup for a `User` committed through `db_session_factory`
+    in a concurrency test — not covered by the fixture's rollback-on-
+    teardown (see docs/features/platform/testing-strategy.md, Database
+    Strategy — Concurrency Testing). Deletes in FK-safe order: audit
+    events (both actor and target references), then API keys (both
+    owner and revoker references), then the user itself.
+    """
+    await session.execute(
+        delete(IdentityAuditEvent).where(
+            or_(
+                IdentityAuditEvent.target_user_id == user_id,
+                IdentityAuditEvent.user_id == user_id,
+            )
+        )
+    )
+    await session.execute(
+        delete(ApiKey).where(
+            or_(ApiKey.user_id == user_id, ApiKey.revoked_by == user_id)
+        )
+    )
+    await session.execute(delete(User).where(User.id == user_id))
+    await session.commit()
+
+
+class _FakeConstraintError(Exception):
+    """A minimal double for asyncpg's `UniqueViolationError`, exposing
+    only the `constraint_name` attribute `_is_name_conflict()` reads."""
+
+    def __init__(self, constraint_name: str | None) -> None:
+        super().__init__("simulated database error")
+        self.constraint_name = constraint_name
+
+
+# ---------------------------------------------------------------------------
+# derive_api_key_status()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestDeriveApiKeyStatus:
+    def test_revoked_takes_precedence_over_expired(self) -> None:
+        now = datetime.now(UTC)
+        key = ApiKey(
+            revoked_at=now - timedelta(days=1),
+            expires_at=now - timedelta(days=2),
+        )
+        assert derive_api_key_status(key, now) is ApiKeyStatus.REVOKED
+
+    def test_expired_when_expires_at_before_now(self) -> None:
+        now = datetime.now(UTC)
+        key = ApiKey(expires_at=now - timedelta(seconds=1))
+        assert derive_api_key_status(key, now) is ApiKeyStatus.EXPIRED
+
+    def test_expired_at_exact_boundary(self) -> None:
+        now = datetime.now(UTC)
+        key = ApiKey(expires_at=now)
+        assert derive_api_key_status(key, now) is ApiKeyStatus.EXPIRED
+
+    def test_active_when_expires_at_is_none(self) -> None:
+        now = datetime.now(UTC)
+        key = ApiKey(expires_at=None)
+        assert derive_api_key_status(key, now) is ApiKeyStatus.ACTIVE
+
+    def test_active_when_expires_at_in_future(self) -> None:
+        now = datetime.now(UTC)
+        key = ApiKey(expires_at=now + timedelta(days=1))
+        assert derive_api_key_status(key, now) is ApiKeyStatus.ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# _normalize_name() (API Key Name Rule)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestNormalizeName:
+    def test_trims_and_lowercases(self) -> None:
+        assert api_key_service._normalize_name("  CI.Production  ") == "ci.production"
+
+    def test_minimum_length_one_accepted(self) -> None:
+        assert api_key_service._normalize_name("a") == "a"
+
+    def test_maximum_length_128_accepted(self) -> None:
+        name = "a" * 128
+        assert api_key_service._normalize_name(name) == name
+
+    def test_empty_after_trim_rejected(self) -> None:
+        with pytest.raises(ApiKeyNameValidationError):
+            api_key_service._normalize_name("   ")
+
+    def test_over_128_characters_rejected(self) -> None:
+        with pytest.raises(ApiKeyNameValidationError):
+            api_key_service._normalize_name("a" * 129)
+
+    @pytest.mark.parametrize("invalid_char", ["@", "/", "!", " ", "\t", "#"])
+    def test_rejects_characters_outside_allowed_set(self, invalid_char: str) -> None:
+        with pytest.raises(ApiKeyNameValidationError):
+            api_key_service._normalize_name(f"ci{invalid_char}prod")
+
+    def test_allows_digits_dot_underscore_hyphen(self) -> None:
+        assert api_key_service._normalize_name("ci-prod_01.v2") == "ci-prod_01.v2"
+
+
+# ---------------------------------------------------------------------------
+# _generate_plaintext_key() / _hash_key()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGeneratePlaintextKey:
+    def test_format_and_length(self) -> None:
+        key = api_key_service._generate_plaintext_key()
+        assert key.startswith("stl_ak_")
+        assert len(key) == len("stl_ak_") + 32
+
+    def test_suffix_is_alphanumeric(self) -> None:
+        key = api_key_service._generate_plaintext_key()
+        suffix = key.removeprefix("stl_ak_")
+        assert suffix.isalnum()
+
+    def test_uses_csprng_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        def _fake_choice(alphabet: str) -> str:
+            calls.append(alphabet)
+            return "a"
+
+        monkeypatch.setattr(secrets, "choice", _fake_choice)
+        key = api_key_service._generate_plaintext_key()
+        assert key == "stl_ak_" + "a" * 32
+        assert len(calls) == 32
+
+
+@pytest.mark.unit
+class TestHashKey:
+    def test_matches_hashlib_sha256_hexdigest(self) -> None:
+        plaintext = "stl_ak_" + "b" * 32
+        assert (
+            api_key_service._hash_key(plaintext)
+            == hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+        )
+
+    def test_is_lowercase_hex_of_correct_length(self) -> None:
+        digest = api_key_service._hash_key("stl_ak_" + "c" * 32)
+        assert digest == digest.lower()
+        assert len(digest) == 64
+        int(digest, 16)  # raises ValueError if not valid hex
+
+
+# ---------------------------------------------------------------------------
+# _is_name_conflict()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestIsNameConflict:
+    def test_matching_constraint_name_is_a_conflict(self) -> None:
+        exc = IntegrityError(
+            "stmt", {}, _FakeConstraintError("uq_api_key_user_id_name_active")
+        )
+        assert api_key_service._is_name_conflict(exc) is True
+
+    def test_matching_constraint_name_on_cause_is_a_conflict(self) -> None:
+        """Mirrors the real SQLAlchemy+asyncpg shape: the dialect wraps
+        the raw driver error (which carries `constraint_name`) via
+        `raise ... from error`, so it is reachable at `exc.orig.__cause__`
+        rather than directly on `exc.orig`."""
+        wrapper = Exception("wrapped dbapi error")
+        wrapper.__cause__ = _FakeConstraintError("uq_api_key_user_id_name_active")
+        exc = IntegrityError("stmt", {}, wrapper)
+        assert api_key_service._is_name_conflict(exc) is True
+
+    def test_different_constraint_name_is_not_a_conflict(self) -> None:
+        exc = IntegrityError(
+            "stmt", {}, _FakeConstraintError("chk_api_key_hash_is_sha256_hex")
+        )
+        assert api_key_service._is_name_conflict(exc) is False
+
+    def test_orig_without_constraint_name_attribute_is_not_a_conflict(self) -> None:
+        exc = IntegrityError("stmt", {}, Exception("no constraint_name attribute"))
+        assert api_key_service._is_name_conflict(exc) is False
+
+
+# ---------------------------------------------------------------------------
+# create_key()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestCreateKey:
+    async def test_creates_key_with_normalized_name_and_correct_fields(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        result = await create_key(db_session, owner.id, "  CI.Production  ", None)
+
+        assert result.api_key.user_id == owner.id
+        assert result.api_key.name == "ci.production"
+        assert result.api_key.expires_at is None
+        assert result.api_key.revoked_at is None
+        assert result.plaintext_key.startswith("stl_ak_")
+        assert result.api_key.prefix == result.plaintext_key[:12]
+        assert (
+            result.api_key.key_hash
+            == hashlib.sha256(result.plaintext_key.encode("utf-8")).hexdigest()
+        )
+
+    async def test_plaintext_is_never_persisted(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        result = await create_key(db_session, owner.id, "ci-key", None)
+        row = await db_session.get(ApiKey, result.api_key.id)
+        assert row is not None
+        assert row.key_hash != result.plaintext_key
+
+    async def test_missing_owner_raises_user_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await create_key(db_session, uuid.uuid4(), "ci-key", None)
+
+    async def test_inactive_owner_raises_inactive_user_error(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory(active=False)
+        with pytest.raises(InactiveUserError):
+            await create_key(db_session, owner.id, "ci-key", None)
+
+    async def test_invalid_name_raises_name_validation_error(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        with pytest.raises(ApiKeyNameValidationError):
+            await create_key(db_session, owner.id, "   ", None)
+
+    async def test_expiry_in_the_past_rejected(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        with pytest.raises(ApiKeyInvalidExpiryError):
+            await create_key(
+                db_session,
+                owner.id,
+                "ci-key",
+                datetime.now(UTC) - timedelta(seconds=1),
+            )
+
+    async def test_expiry_exactly_equal_to_now_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Boundary: `expires_at == now` must be rejected (<=, not <)."""
+        owner = await user_factory()
+        fixed_now = datetime(2030, 6, 15, 12, 0, 0, tzinfo=UTC)
+        monkeypatch.setattr(
+            "app.services.api_key_service.datetime",
+            type("FakeDatetime", (), {"now": staticmethod(lambda tz: fixed_now)}),
+        )
+        with pytest.raises(ApiKeyInvalidExpiryError):
+            await create_key(db_session, owner.id, "ci-key", fixed_now)
+
+    async def test_expiry_in_future_is_accepted(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        future = datetime.now(UTC) + timedelta(days=30)
+        result = await create_key(db_session, owner.id, "ci-key", future)
+        assert result.api_key.expires_at == future
+
+    async def test_no_maximum_expiration(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        far_future = datetime.now(UTC) + timedelta(days=365 * 50)
+        result = await create_key(db_session, owner.id, "ci-key", far_future)
+        assert result.api_key.expires_at == far_future
+
+    async def test_existing_active_key_with_same_normalized_name_raises_conflict(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        await api_key_factory(user_id=owner.id, name="ci-key")
+        with pytest.raises(ApiKeyNameConflictError):
+            await create_key(db_session, owner.id, "CI-KEY", None)
+
+    async def test_revoked_key_does_not_block_name_reuse(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        await api_key_factory(
+            user_id=owner.id, name="ci-key", revoked_at=datetime.now(UTC)
+        )
+        result = await create_key(db_session, owner.id, "ci-key", None)
+        assert result.api_key.name == "ci-key"
+
+    async def test_creates_exactly_one_api_key_created_event(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        result = await create_key(db_session, owner.id, "ci-key", None)
+
+        events = await _audit_events_for(db_session, owner.id)
+        assert len(events) == 1
+        event = events[0]
+        assert event.event_type == "api_key_created"
+        assert event.user_id == owner.id
+        assert event.target_user_id == owner.id
+        assert event.old_value is None
+        assert event.new_value == "ci-key"
+        assert event.detail == {"key_id": str(result.api_key.id)}
+
+    async def test_no_warning_at_threshold(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        owner = await user_factory()
+        with caplog.at_level("WARNING"):
+            for i in range(20):
+                await create_key(db_session, owner.id, f"key-{i}", None)
+        assert "api_key_active_count_exceeded" not in _service_log_text(caplog)
+
+    async def test_warning_above_threshold_has_safe_fields_only(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        owner = await user_factory()
+        for i in range(20):
+            await create_key(db_session, owner.id, f"key-{i}", None)
+        with caplog.at_level("WARNING"):
+            await create_key(db_session, owner.id, "key-21", None)
+
+        text = _service_log_text(caplog)
+        assert "api_key_active_count_exceeded" in text
+        assert str(owner.id) in text
+        assert "21" in text
+        assert "threshold" in text
+        assert "key-21" not in text
+
+    async def test_flushes_without_commit(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        owner = await user_factory()
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+        await create_key(db_session, owner.id, "ci-key", None)
+        commit_spy.assert_not_called()
+
+    async def test_rollback_removes_key_and_audit_event_together(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        result = await create_key(db_session, owner.id, "ci-key", None)
+        key_id = result.api_key.id
+
+        await db_session.rollback()
+
+        assert await db_session.get(ApiKey, key_id) is None
+        assert await _audit_events_for(db_session, owner.id) == []
+
+    async def test_audit_failure_rolls_back_the_pending_key_too(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        owner = await user_factory()
+        owner_id = owner.id
+        # Commit to establish a savepoint checkpoint so that the owner
+        # survives the rollback (test verifies key absence, not user absence).
+        await db_session.commit()
+
+        async def _boom(*args: object, **kwargs: object) -> None:
+            raise ValueError("simulated audit failure")
+
+        monkeypatch.setattr(IdentityAuditLog, "log_event", _boom)
+
+        with pytest.raises(ValueError, match="simulated audit failure"):
+            await create_key(db_session, owner_id, "ci-key", None)
+
+        await db_session.rollback()
+        rows = await db_session.execute(
+            select(ApiKey).where(ApiKey.user_id == owner_id)
+        )
+        assert rows.scalars().all() == []
+
+    async def test_unrelated_integrity_error_propagates_unchanged(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A CHECK-constraint violation (SHA-256 hash format), unrelated
+        to the name-uniqueness index, must propagate unchanged rather
+        than being mistranslated to `ApiKeyNameConflictError`."""
+        owner = await user_factory()
+        monkeypatch.setattr(
+            api_key_service, "_hash_key", lambda plaintext_key: "not-a-valid-hash"
+        )
+        with pytest.raises(IntegrityError):
+            await create_key(db_session, owner.id, "ci-key", None)
+
+    async def test_precheck_miss_still_translates_via_savepoint(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Simulates the race the sequential pre-check is documented not
+        to guarantee against: a conflicting active key already exists,
+        but `_has_conflicting_name()` (monkeypatched) misses it — so the
+        insert genuinely violates the partial unique index, and the
+        SAVEPOINT correctly translates that real `IntegrityError` to
+        `ApiKeyNameConflictError`."""
+        owner = await user_factory()
+        await api_key_factory(user_id=owner.id, name="ci-key")
+
+        async def _no_conflict(*args: object, **kwargs: object) -> bool:
+            return False
+
+        monkeypatch.setattr(api_key_service, "_has_conflicting_name", _no_conflict)
+
+        with pytest.raises(ApiKeyNameConflictError):
+            await create_key(db_session, owner.id, "ci-key", None)
+
+    async def test_two_concurrent_creates_same_owner_and_name_serialize_via_owner_lock(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+
+        user = User(
+            username="conc-api-key-owner",
+            email="conc-api-key-owner@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        session_a.add(user)
+        await session_a.commit()
+        user_id = user.id
+
+        # session_a's create_key() call fully completes (flushed, not
+        # committed) — its initial owner FOR UPDATE lock remains held by
+        # the still-open transaction.
+        result_a = await create_key(session_a, user_id, "shared-name", None)
+
+        task_b = asyncio.create_task(
+            create_key(session_b, user_id, "shared-name", None)
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        await session_a.commit()
+
+        with pytest.raises(ApiKeyNameConflictError):
+            await asyncio.wait_for(task_b, timeout=5)
+        await session_b.rollback()  # release session_b's own owner-row lock
+
+        keys = await session_a.execute(select(ApiKey).where(ApiKey.user_id == user_id))
+        assert [key.id for key in keys.scalars().all()] == [result_a.api_key.id]
+        assert len(await _audit_events_for(session_a, user_id)) == 1
+
+        await _cleanup_committed_user(session_a, user_id)
+
+
+# ---------------------------------------------------------------------------
+# revoke_key()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestRevokeKey:
+    async def test_missing_key_raises_not_found(self, db_session: AsyncSession) -> None:
+        with pytest.raises(ApiKeyNotFoundError):
+            await revoke_key(db_session, uuid.uuid4(), acting_user_id=None)
+
+    async def test_owner_mismatch_raises_not_found(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        other = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+        with pytest.raises(ApiKeyNotFoundError):
+            await revoke_key(
+                db_session, key.id, acting_user_id=other.id, owner_user_id=other.id
+            )
+
+    async def test_self_service_revoke_sets_fields_and_returns_owner(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+        result = await revoke_key(
+            db_session, key.id, acting_user_id=owner.id, owner_user_id=owner.id
+        )
+        assert result.api_key.revoked_at is not None
+        assert result.api_key.revoked_by == owner.id
+        assert result.owner.id == owner.id
+
+    async def test_admin_revoke_has_no_owner_restriction(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        admin = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+        result = await revoke_key(db_session, key.id, acting_user_id=admin.id)
+        assert result.api_key.revoked_by == admin.id
+        assert result.owner.id == owner.id
+
+    async def test_system_revoke_sets_null_revoked_by(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+        result = await revoke_key(db_session, key.id, acting_user_id=None)
+        assert result.api_key.revoked_by is None
+
+        # Audit event must record NULL actor for system-initiated revocation
+        events = await _audit_events_for(db_session, owner.id)
+        assert len(events) == 1
+        assert events[0].user_id is None
+
+    async def test_creates_exactly_one_audit_event(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        admin = await user_factory()
+        key = await api_key_factory(user_id=owner.id, name="ci-prod")
+        await revoke_key(db_session, key.id, acting_user_id=admin.id)
+
+        events = await _audit_events_for(db_session, owner.id)
+        assert len(events) == 1
+        event = events[0]
+        assert event.event_type == "api_key_revoked"
+        assert event.user_id == admin.id
+        assert event.target_user_id == owner.id
+        assert event.old_value == "ci-prod"
+        assert event.new_value is None
+        assert event.detail == {"key_id": str(key.id)}
+
+    async def test_idempotent_second_call_leaves_original_revoker_unchanged(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        admin = await user_factory()
+        other_admin = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+
+        first = await revoke_key(db_session, key.id, acting_user_id=admin.id)
+        second = await revoke_key(db_session, key.id, acting_user_id=other_admin.id)
+
+        assert second.api_key.revoked_by == admin.id
+        assert second.api_key.revoked_at == first.api_key.revoked_at
+        assert len(await _audit_events_for(db_session, owner.id)) == 1
+
+    async def test_flushes_without_commit(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        owner = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+        await revoke_key(db_session, key.id, acting_user_id=owner.id)
+        commit_spy.assert_not_called()
+
+    async def test_rollback_restores_unrevoked_state_and_removes_audit_event(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        key = await api_key_factory(user_id=owner.id)
+        owner_id = owner.id
+        key_id = key.id
+        # Commit to establish a savepoint checkpoint so that the user
+        # and key survive the subsequent rollback (the db_session fixture
+        # uses join_transaction_mode="create_savepoint").
+        await db_session.commit()
+
+        await revoke_key(db_session, key_id, acting_user_id=owner_id)
+
+        await db_session.rollback()
+
+        refreshed = await db_session.get(ApiKey, key_id)
+        assert refreshed is not None
+        assert refreshed.revoked_at is None
+        assert await _audit_events_for(db_session, owner_id) == []
+
+    async def test_concurrent_revocation_produces_one_mutation_and_one_event(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+
+        user = User(
+            username="conc-revoke-owner",
+            email="conc-revoke-owner@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        session_a.add(user)
+        await session_a.flush()
+        key = ApiKey(
+            user_id=user.id,
+            key_hash="f" * 64,
+            prefix="stl_ak_concr",
+            name="conc-key",
+        )
+        session_a.add(key)
+        await session_a.flush()
+        await session_a.commit()
+        user_id = user.id
+        key_id = key.id
+
+        # session_a's revoke_key() call fully completes (mutated,
+        # flushed, audit event created) without committing — its row
+        # lock on the key remains held.
+        await revoke_key(session_a, key_id, acting_user_id=None)
+
+        task_b = asyncio.create_task(revoke_key(session_b, key_id, acting_user_id=None))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        await session_a.commit()
+        result_b = await asyncio.wait_for(task_b, timeout=5)
+        assert result_b.api_key.revoked_at is not None
+
+        assert len(await _audit_events_for(session_a, user_id)) == 1
+
+        await _cleanup_committed_user(session_a, user_id)
+
+
+# ---------------------------------------------------------------------------
+# revoke_all_user_keys()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestRevokeAllUserKeys:
+    async def test_missing_user_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await revoke_all_user_keys(db_session, uuid.uuid4(), acting_user_id=None)
+
+    async def test_revokes_non_revoked_keys_including_expired(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        active_key = await api_key_factory(user_id=owner.id, name="active-key")
+        expired_key = await api_key_factory(
+            user_id=owner.id,
+            name="expired-key",
+            expires_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        already_revoked = await api_key_factory(
+            user_id=owner.id, name="already-revoked", revoked_at=datetime.now(UTC)
+        )
+
+        count = await revoke_all_user_keys(db_session, owner.id, acting_user_id=None)
+
+        assert count == 2
+        await db_session.refresh(active_key)
+        await db_session.refresh(expired_key)
+        await db_session.refresh(already_revoked)
+        assert active_key.revoked_at is not None
+        assert expired_key.revoked_at is not None
+        # Already-revoked key untouched: revoked_by stays whatever the
+        # factory default left it (NULL), not overwritten.
+        assert already_revoked.revoked_by is None
+
+    async def test_no_eligible_keys_returns_zero_and_no_event(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        owner = await user_factory()
+        count = await revoke_all_user_keys(db_session, owner.id, acting_user_id=None)
+        assert count == 0
+        assert await _audit_events_for(db_session, owner.id) == []
+
+    async def test_creates_one_event_per_revoked_key_with_reason(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        admin = await user_factory()
+        key1 = await api_key_factory(user_id=owner.id, name="key-1")
+        key2 = await api_key_factory(user_id=owner.id, name="key-2")
+
+        await revoke_all_user_keys(db_session, owner.id, acting_user_id=admin.id)
+
+        events = await _audit_events_for(db_session, owner.id)
+        assert len(events) == 2
+        events_by_key = {e.detail["key_id"]: e for e in events if e.detail}
+        for key in (key1, key2):
+            event = events_by_key[str(key.id)]
+            assert event.event_type == "api_key_revoked"
+            assert event.user_id == admin.id
+            assert event.target_user_id == owner.id
+            assert event.old_value == key.name
+            assert event.new_value is None
+            assert event.detail is not None
+            assert event.detail["reason"] == "user_deactivated"
+
+    async def test_flushes_without_commit(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        owner = await user_factory()
+        await api_key_factory(user_id=owner.id)
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+        await revoke_all_user_keys(db_session, owner.id, acting_user_id=None)
+        commit_spy.assert_not_called()
+
+    async def test_rollback_restores_all_keys_and_removes_all_events(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        key1 = await api_key_factory(user_id=owner.id, name="key-1")
+        key2 = await api_key_factory(user_id=owner.id, name="key-2")
+        owner_id = owner.id
+        key1_id = key1.id
+        key2_id = key2.id
+        # Commit to establish a savepoint checkpoint so that the user
+        # and keys survive the subsequent rollback.
+        await db_session.commit()
+
+        await revoke_all_user_keys(db_session, owner_id, acting_user_id=None)
+        await db_session.rollback()
+
+        refreshed1 = await db_session.get(ApiKey, key1_id)
+        refreshed2 = await db_session.get(ApiKey, key2_id)
+        assert refreshed1 is not None
+        assert refreshed1.revoked_at is None
+        assert refreshed2 is not None
+        assert refreshed2.revoked_at is None
+        assert await _audit_events_for(db_session, owner_id) == []
+
+    async def test_bulk_and_single_revoke_race_produce_one_event_for_shared_key(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+
+        user = User(
+            username="conc-bulk-owner",
+            email="conc-bulk-owner@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        session_a.add(user)
+        await session_a.flush()
+        key = ApiKey(
+            user_id=user.id,
+            key_hash="e" * 64,
+            prefix="stl_ak_concb",
+            name="shared-key",
+        )
+        session_a.add(key)
+        await session_a.flush()
+        await session_a.commit()
+        user_id = user.id
+        key_id = key.id
+
+        # session_a's bulk revoke fully completes (mutated + event
+        # flushed) without commit — its FOR UPDATE locks on the user
+        # and key rows remain held.
+        count_a = await revoke_all_user_keys(session_a, user_id, acting_user_id=None)
+        assert count_a == 1
+
+        task_b = asyncio.create_task(revoke_key(session_b, key_id, acting_user_id=None))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        await session_a.commit()
+        result_b = await asyncio.wait_for(task_b, timeout=5)
+        assert result_b.api_key.revoked_at is not None
+
+        assert len(await _audit_events_for(session_a, user_id)) == 1
+
+        await _cleanup_committed_user(session_a, user_id)
+
+
+# ---------------------------------------------------------------------------
+# get_key_by_hash()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestGetKeyByHash:
+    async def test_returns_matching_key(
+        self,
+        db_session: AsyncSession,
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        key = await api_key_factory(key_hash="a" * 64)
+        found = await get_key_by_hash(db_session, "a" * 64)
+        assert found is not None
+        assert found.id == key.id
+
+    async def test_returns_none_when_not_found(self, db_session: AsyncSession) -> None:
+        assert await get_key_by_hash(db_session, "b" * 64) is None
+
+
+# ---------------------------------------------------------------------------
+# list_user_keys()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestListUserKeys:
+    async def test_missing_user_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await list_user_keys(
+                db_session,
+                uuid.uuid4(),
+                status=None,
+                page=1,
+                per_page=20,
+                sort_by=ApiKeySortField.CREATED_AT,
+                sort_order=SortOrder.DESC,
+            )
+
+    async def test_only_returns_owners_own_keys(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        other = await user_factory()
+        mine = await api_key_factory(user_id=owner.id)
+        await api_key_factory(user_id=other.id)
+
+        page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert [item.id for item in page.items] == [mine.id]
+        assert page.total == 1
+
+    async def test_status_filter_active_expired_revoked(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        now = datetime.now(UTC)
+        active = await api_key_factory(user_id=owner.id, name="active")
+        expired = await api_key_factory(
+            user_id=owner.id, name="expired", expires_at=now - timedelta(days=1)
+        )
+        revoked = await api_key_factory(
+            user_id=owner.id, name="revoked", revoked_at=now
+        )
+        # A revoked-and-expired key must classify as revoked, never expired.
+        revoked_and_expired = await api_key_factory(
+            user_id=owner.id,
+            name="revoked-expired",
+            expires_at=now - timedelta(days=1),
+            revoked_at=now,
+        )
+
+        async def _ids(status: ApiKeyStatus) -> set[uuid.UUID]:
+            page = await list_user_keys(
+                db_session,
+                owner.id,
+                status=status,
+                page=1,
+                per_page=20,
+                sort_by=ApiKeySortField.CREATED_AT,
+                sort_order=SortOrder.DESC,
+                now=now,
+            )
+            return {item.id for item in page.items}
+
+        assert await _ids(ApiKeyStatus.ACTIVE) == {active.id}
+        assert await _ids(ApiKeyStatus.EXPIRED) == {expired.id}
+        assert await _ids(ApiKeyStatus.REVOKED) == {revoked.id, revoked_and_expired.id}
+
+    async def test_status_filter_boundary_expires_at_equals_now_is_expired(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """Boundary: a key with `expires_at == now` is EXPIRED, not ACTIVE."""
+        owner = await user_factory()
+        fixed_now = datetime(2030, 6, 15, 12, 0, 0, tzinfo=UTC)
+        boundary_key = await api_key_factory(
+            user_id=owner.id, name="boundary", expires_at=fixed_now
+        )
+
+        expired_page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=ApiKeyStatus.EXPIRED,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+            now=fixed_now,
+        )
+        active_page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=ApiKeyStatus.ACTIVE,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+            now=fixed_now,
+        )
+        assert boundary_key.id in {item.id for item in expired_page.items}
+        assert boundary_key.id not in {item.id for item in active_page.items}
+
+    async def test_sorting_created_at_both_directions_with_id_tiebreak(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        same_time = datetime.now(UTC)
+        key1 = await api_key_factory(user_id=owner.id, name="k1", created_at=same_time)
+        key2 = await api_key_factory(user_id=owner.id, name="k2", created_at=same_time)
+        expected_asc = sorted([key1.id, key2.id])
+        expected_desc = list(reversed(expected_asc))
+
+        asc_page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.ASC,
+        )
+        desc_page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+
+        assert [item.id for item in asc_page.items] == expected_asc
+        assert [item.id for item in desc_page.items] == expected_desc
+
+    async def test_last_used_at_nulls_sort_last_both_directions(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        now = datetime.now(UTC)
+        used_earlier = await api_key_factory(
+            user_id=owner.id, name="used-earlier", last_used_at=now - timedelta(days=2)
+        )
+        used_later = await api_key_factory(
+            user_id=owner.id, name="used-later", last_used_at=now - timedelta(days=1)
+        )
+        never_used = await api_key_factory(user_id=owner.id, name="never-used")
+
+        asc_page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.LAST_USED_AT,
+            sort_order=SortOrder.ASC,
+        )
+        desc_page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.LAST_USED_AT,
+            sort_order=SortOrder.DESC,
+        )
+
+        assert [item.id for item in asc_page.items] == [
+            used_earlier.id,
+            used_later.id,
+            never_used.id,
+        ]
+        assert [item.id for item in desc_page.items] == [
+            used_later.id,
+            used_earlier.id,
+            never_used.id,
+        ]
+
+    async def test_out_of_range_page_returns_empty_items_with_correct_total(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        await api_key_factory(user_id=owner.id)
+
+        page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=5,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert page.items == []
+        assert page.total == 1
+
+    async def test_uses_supplied_now_snapshot_for_status_filtering(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        fixed_now = datetime.now(UTC)
+        key = await api_key_factory(
+            user_id=owner.id, expires_at=fixed_now + timedelta(days=1)
+        )
+        page = await list_user_keys(
+            db_session,
+            owner.id,
+            status=ApiKeyStatus.ACTIVE,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+            now=fixed_now,
+        )
+        assert [item.id for item in page.items] == [key.id]
+
+
+# ---------------------------------------------------------------------------
+# list_all_keys()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestListAllKeys:
+    async def test_no_owner_filter_returns_all_owners_keys_with_owner_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner1 = await user_factory()
+        owner2 = await user_factory()
+        key1 = await api_key_factory(user_id=owner1.id)
+        key2 = await api_key_factory(user_id=owner2.id)
+
+        page = await list_all_keys(
+            db_session,
+            owner=None,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert {item.api_key.id for item in page.items} == {key1.id, key2.id}
+        for item in page.items:
+            assert item.owner.id == item.api_key.user_id
+
+    async def test_owner_filter_by_uuid(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner1 = await user_factory()
+        owner2 = await user_factory()
+        key1 = await api_key_factory(user_id=owner1.id)
+        await api_key_factory(user_id=owner2.id)
+
+        page = await list_all_keys(
+            db_session,
+            owner=str(owner1.id),
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert [item.api_key.id for item in page.items] == [key1.id]
+
+    async def test_owner_filter_by_exact_case_sensitive_username(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory(username="preciseowner")
+        key = await api_key_factory(user_id=owner.id)
+
+        matching_page = await list_all_keys(
+            db_session,
+            owner="preciseowner",
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert [item.api_key.id for item in matching_page.items] == [key.id]
+
+        mismatched_case_page = await list_all_keys(
+            db_session,
+            owner="PreciseOwner",
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert mismatched_case_page.items == []
+        assert mismatched_case_page.total == 0
+
+    async def test_unknown_owner_returns_empty_page_not_an_error(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_all_keys(
+            db_session,
+            owner="no-such-user",
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert page.items == []
+        assert page.total == 0
+
+    async def test_status_filter_applies_across_owners(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner1 = await user_factory()
+        owner2 = await user_factory()
+        active = await api_key_factory(user_id=owner1.id, name="active")
+        await api_key_factory(
+            user_id=owner2.id, name="revoked", revoked_at=datetime.now(UTC)
+        )
+
+        page = await list_all_keys(
+            db_session,
+            owner=None,
+            status=ApiKeyStatus.ACTIVE,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert [item.api_key.id for item in page.items] == [active.id]
+
+
+# ---------------------------------------------------------------------------
+# count_non_revoked_keys()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestCountNonRevokedKeys:
+    async def test_unknown_user_returns_zero(self, db_session: AsyncSession) -> None:
+        assert await count_non_revoked_keys(db_session, uuid.uuid4()) == 0
+
+    async def test_includes_expired_excludes_revoked(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory()
+        await api_key_factory(user_id=owner.id, name="active")
+        await api_key_factory(
+            user_id=owner.id,
+            name="expired",
+            expires_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        await api_key_factory(
+            user_id=owner.id, name="revoked", revoked_at=datetime.now(UTC)
+        )
+
+        assert await count_non_revoked_keys(db_session, owner.id) == 2
+
+
+# ---------------------------------------------------------------------------
+# list_user_keys_for_cli()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestListUserKeysForCli:
+    async def test_unknown_username_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await list_user_keys_for_cli(db_session, "no-such-user")
+
+    async def test_normalizes_username_before_lookup(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory(username="clitestuser")
+        key = await api_key_factory(user_id=owner.id)
+
+        result = await list_user_keys_for_cli(db_session, "  CLITestUser  ")
+        assert [item.id for item in result.items] == [key.id]
+
+    async def test_orders_by_created_at_desc_then_id_desc(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory(username="cliorderuser")
+        same_time = datetime.now(UTC)
+        key1 = await api_key_factory(user_id=owner.id, name="k1", created_at=same_time)
+        key2 = await api_key_factory(user_id=owner.id, name="k2", created_at=same_time)
+        expected = sorted([key1.id, key2.id], reverse=True)
+
+        result = await list_user_keys_for_cli(db_session, "cliorderuser")
+        assert [item.id for item in result.items] == expected
+
+    async def test_evaluated_at_is_a_single_snapshot(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        owner = await user_factory(username="clisnapshotuser")
+        await api_key_factory(user_id=owner.id)
+        fixed_now = datetime.now(UTC)
+
+        result = await list_user_keys_for_cli(
+            db_session, "clisnapshotuser", now=fixed_now
+        )
+        assert result.evaluated_at == fixed_now
