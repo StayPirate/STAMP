@@ -1341,8 +1341,9 @@ generation and hashing).
   revocation.
 - UNIQUE (user_id, name) WHERE revoked_at IS NULL — prevents duplicate
   normalized names among non-revoked keys for the same user. Because stored
-  names are normalized before insertion, the index is authoritative for
-  normalized-name races without a functional expression.
+  names are normalized before insertion, no functional expression is required.
+  The index is the authoritative database-level integrity backstop,
+  independent of service-level pre-checks or serialization.
 
 #### IdentityAuditEvent
 

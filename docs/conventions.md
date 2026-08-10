@@ -655,14 +655,15 @@ mutation or its audit values, it must acquire the root lock first.
 
 #### Transaction Hygiene Rules
 
-The transaction that holds a `FOR UPDATE` lock MUST be kept as short
-as possible. Two categories of work are forbidden inside it:
+The transaction that holds a pessimistic row lock (`FOR UPDATE`,
+`FOR NO KEY UPDATE`, or another explicit row-level lock mode) MUST be kept
+as short as possible. Two categories of work are forbidden inside it:
 
 1. **No network I/O**: any operation that crosses a network boundary
    — HTTP requests to external services (IBS, SMELT, NVD, AIMAAS),
    Redis commands, Celery task enqueuing (which transits the Redis
    broker), or any other socket I/O — MUST NOT execute while a
-   `FOR UPDATE` lock is held.
+   pessimistic row lock is held.
 
    Rationale: network I/O cannot be rolled back by a PostgreSQL
    transaction rollback. A `DEL` sent to Redis, a task published to
@@ -712,7 +713,7 @@ as possible. Two categories of work are forbidden inside it:
    writes.
 
 **I/O-then-Lock corollary**: in modules that contain both orchestration
-functions (with external I/O) and mutation functions (with `FOR UPDATE`
+functions (with external I/O) and mutation functions (with pessimistic row
 locks), the two concerns MUST be separated into distinct functions —
 orchestration functions MUST NOT acquire locks. See
 `docs/features/packages/package-service.md` (Module Invariant) for the

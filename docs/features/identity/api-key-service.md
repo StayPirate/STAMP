@@ -115,11 +115,14 @@ separate transient string. The plaintext is never assigned to a model field.
 
 **Behavior:**
 
-1. Lock the owner `User` row with `SELECT ... FOR UPDATE` as the first
-   database operation. Validate existence and active status under that lock.
-   This serializes creation with user deactivation: whichever operation
-   acquires the user lock second observes the first operation's committed
-   state. A key cannot commit for an inactive user.
+1. Lock the owner `User` row with `SELECT ... FOR NO KEY UPDATE` as the
+   first database operation. Validate existence and active status under that
+   lock. This serializes creation with user deactivation and bulk revocation:
+   whichever operation acquires the user lock second observes the first
+   operation's committed state. A key cannot commit for an inactive user.
+   `FOR NO KEY UPDATE` is sufficient because these operations never modify
+   `User.id`; it remains compatible with the `FOR KEY SHARE` locks PostgreSQL
+   acquires when validating foreign keys that reference `User.id`.
 2. Trim and lowercase `name`, then validate length and `[a-z0-9._-]` format
    exactly as specified by the API Key Name Rule.
 3. Validate `expires_at` against the operation's UTC `now` snapshot. There is
@@ -130,10 +133,13 @@ separate transient string. The plaintext is never assigned to a model field.
    characters, compute its lowercase hexadecimal SHA-256 digest, and create
    the row with the normalized name, first 12 characters as `prefix`, and
    the requested expiration.
-6. Flush the insert. The partial unique index is the concurrency authority:
-   if concurrent requests for the same owner and normalized name both pass
-   step 4, exactly one can insert; every loser raises
-   `ApiKeyNameConflictError`.
+6. Flush the insert. The partial unique index is the authoritative
+   database-level integrity backstop: it protects the invariant against
+   direct SQL, future code paths that bypass the owner lock, or a missed
+   pre-check. Under the owner lock, the pre-check in step 4 provides the
+   normal conflict result for conforming service calls — two conforming
+   `create_key()` invocations cannot concurrently reach the insert. Any
+   violation is translated to `ApiKeyNameConflictError`.
 7. Count keys for this owner whose derived status is `active`, using the same
    `now` snapshot. If the count exceeds 20, emit the safe anomaly WARNING
    defined in `api-key-management.md`.
@@ -144,8 +150,9 @@ separate transient string. The plaintext is never assigned to a model field.
 
 **Re-invocation:** not idempotent in general: a different available name
 creates another key. Re-invocation while the same normalized name remains
-non-revoked raises `ApiKeyNameConflictError`. Concurrent same-name calls have
-the same outcome: one creation and one audit event total.
+non-revoked raises `ApiKeyNameConflictError`. Concurrent same-name calls
+serialize on the owner lock; the loser observes the winner's committed insert
+and raises `ApiKeyNameConflictError`.
 
 **Exceptions:** service exceptions listed below and underlying database or
 audit-service exceptions not translated above.
@@ -208,14 +215,14 @@ its scope.
 
 **Behavior:**
 
-1. Select the user with `FOR UPDATE` as this function's first database
-   operation. `user_service.deactivate_user()` already holds the same lock in
-   the same transaction, so reacquisition is immediate. A missing user raises
-   `UserNotFoundError`.
+1. Select the user with `FOR NO KEY UPDATE` as this function's first
+   database operation. `user_service.deactivate_user()` already holds a
+   conflicting lock in the same transaction, so reacquisition is immediate.
+   A missing user raises `UserNotFoundError`.
 2. Select all keys for the user with `revoked_at IS NULL` using
-   `FOR UPDATE`, in deterministic `id` order. Locking in one order avoids
-   deadlocks between concurrent bulk operations and serializes each row with
-   `revoke_key()`.
+   `FOR UPDATE`, in deterministic `id` order. The user lock already
+   serializes concurrent bulk operations for the same owner; the
+   deterministic key ordering serializes each row with `revoke_key()`.
 3. For each selected key, set one shared `revoked_at` snapshot and
    `revoked_by = acting_user_id`.
 4. For each selected key, create one `api_key_revoked` event with actor,
@@ -226,7 +233,10 @@ its scope.
 **Re-invocation and concurrency:** idempotent. No matching rows returns zero
 and creates no event. Concurrent single or bulk revocations still produce one
 mutation and event per key because all paths lock the same key row before
-checking `revoked_at`.
+checking `revoked_at`. Concurrent single and bulk revocations complete without
+deadlock: the user lock uses `FOR NO KEY UPDATE`, which is compatible with the
+`FOR KEY SHARE` locks PostgreSQL acquires when `revoke_key()` flushes
+foreign-key-backed mutations and audit events.
 
 **Exceptions:** `UserNotFoundError` and underlying database or audit-service
 exceptions.

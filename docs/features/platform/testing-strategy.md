@@ -194,7 +194,7 @@ The standard `db_session` fixture provides a single connection with a
 wrapping transaction that is rolled back after each test. Within a
 single transaction, `SELECT ... FOR UPDATE` is a no-op — the lock is
 already held by the same transaction, so it never blocks. This means
-the per-test rollback pattern **cannot** verify that `FOR UPDATE` locks
+the per-test rollback pattern **cannot** verify that pessimistic row locks
 serialize concurrent mutations correctly (see `docs/conventions.md`,
 Transaction and Locking).
 
@@ -204,13 +204,15 @@ independent connections and transactions. The canonical two-session
 pattern is:
 
 1. Create **session A** and **session B** from `db_session_factory`.
-2. In **A**: insert test data, flush, then acquire the `FOR UPDATE`
-   lock on the target row.
-3. Launch **B** as an `asyncio.Task` that attempts `SELECT ... FOR
-   UPDATE` on the same row.
-4. Verify that **B** blocks by using `asyncio.wait_for(task_B,
-   timeout=0.5)` and catching `asyncio.TimeoutError`. A timeout
-   confirms that B is blocked on the lock held by A.
+2. In **A**: insert test data, flush, then acquire the documented
+   pessimistic row lock on the target row.
+3. Launch **B** as an `asyncio.Task` that attempts the conflicting lock
+   on the same row.
+4. Verify that **B** blocks by using
+   `asyncio.wait_for(asyncio.shield(task_B), timeout=0.5)` and catching
+   `asyncio.TimeoutError`. `asyncio.shield()` prevents `wait_for` from
+   cancelling the task on timeout. A timeout confirms that B is blocked
+   on the lock held by A.
 5. Release the lock in **A** (rollback or commit).
 6. Await **B**'s completion — it should now acquire the lock
    successfully.
@@ -1269,6 +1271,9 @@ commands are affected, tests MUST cover:
 - repeated and concurrent single/bulk revocation produces one mutation and
   one `api_key_revoked` event per key; self-service events identify the owner
   as actor
+- concurrent single and bulk revocation with opposite lock acquisition order
+  (single holds key lock, bulk holds user lock) completes without SQLSTATE
+  `40P01` deadlock and produces one effective revocation and one audit event
 - creation concurrent with user deactivation cannot commit a key for an
   inactive user
 - `last_used_at` debounce and conditional update never move the value
@@ -1370,7 +1375,7 @@ comprehensive test coverage:
    verifies the exception.
 
 7. **Test edge cases**: empty collections, boundary values, concurrent
-   access (if the function under test acquires `FOR UPDATE`, a
+   access (if the function under test acquires a pessimistic row lock, a
    concurrency test using `db_session_factory` and the two-session
    pattern in Database Strategy — Concurrency Testing is mandatory),
    re-invocation behavior.
