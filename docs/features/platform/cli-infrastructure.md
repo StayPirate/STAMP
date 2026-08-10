@@ -197,7 +197,7 @@ per-command path selection.
   service function (`user_service.deactivate_user()`) independently
   re-validates all preconditions (active state, self-deactivation
   guard, etc.) inside its own transaction using pessimistic locking
-  (`SELECT ... FOR UPDATE`), per `user-service.md` (Concurrency
+  (`SELECT ... FOR NO KEY UPDATE`), per `user-service.md` (Concurrency
   Considerations) and the general pattern in `docs/conventions.md`
   (Transaction and Locking). As a consequence, staleness between the
   pre-mutation reads (first session) and the actual mutation (second

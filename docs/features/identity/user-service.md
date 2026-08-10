@@ -717,12 +717,15 @@ Deactivates a user account and triggers all associated side effects.
 - **Self-deactivation guard**: if `acting_user_id` is not None AND
   `acting_user_id == user_id`, reject with `SelfDeactivationError`
 
-As the first database operation, acquire a `FOR UPDATE` lock on the target User
-row. If no row exists, raise `UserNotFoundError`. First check whether the user
-is already inactive; if so, return
+As the first database operation, acquire a `FOR NO KEY UPDATE` lock on the
+target User row. If no row exists, raise `UserNotFoundError`. First check
+whether the user is already inactive; if so, return
 `DeactivationResult(user, [])` without any mutation or audit event.
 Only an active user is then evaluated against the external-status and
-self-deactivation guards, in that order.
+self-deactivation guards, in that order. `FOR NO KEY UPDATE` serializes
+deactivation with API key creation and bulk revocation while remaining
+compatible with the `FOR KEY SHARE` locks those operations trigger during
+foreign-key validation (see `api-key-service.md`).
 
 **Side effects — Database phase** (executed atomically in a single
 database transaction, in this specific order):
@@ -759,7 +762,7 @@ before returning
 commit.
 
 **Workflow-owned post-commit phase** (best-effort, after the caller commits and
-the FOR UPDATE lock is released):
+the pessimistic row lock is released):
 
 5. Purge session cache via
    `session_service.purge_session_cache(invalidated_session_ids)`. The helper
@@ -780,7 +783,7 @@ process crashes before the post-commit phase, the admin can verify that
 the user is already inactive and re-invoke the cache purge
 independently. The Redis cache purge (step 5) is post-commit per
 `docs/conventions.md` (Transaction Hygiene Rules) — it cannot be rolled
-back by a transaction failure and must not extend the FOR UPDATE lock
+back by a transaction failure and must not extend the pessimistic row lock
 hold time.
 
 **IdentityAuditEvent**: `user_deactivated` — `user_id` follows the Actor
@@ -994,7 +997,7 @@ This two-phase pattern (see `docs/conventions.md`, Transaction Hygiene
 Rules) ensures that:
 
 1. A user is never left in a partially-deactivated database state
-2. The `FOR UPDATE` lock is held for the minimum necessary duration
+2. The pessimistic row lock is held for the minimum necessary duration
    (database operations only)
 3. Redis failures or latency cannot extend lock hold time or block
    concurrent mutations on the same entity
@@ -1016,7 +1019,7 @@ atomic with their lifecycle writes.
 
 If two entry points call `deactivate_user()` for the same user
 concurrently (e.g., external sync and admin API), the `active` precondition
-check and write MUST use row-level locking (`SELECT ... FOR UPDATE`) to
+check and write MUST use row-level locking (`SELECT ... FOR NO KEY UPDATE`) to
 prevent duplicate side effects. The first caller acquires the lock,
 performs the deactivation, and commits. The second caller acquires the
 lock, finds `active = false`, and returns as a no-op.
@@ -1058,9 +1061,10 @@ with no VA role but tickets still assigned.
 
 If `update_roles()` removes the VA role and `deactivate_user()` runs
 concurrently for the same user, both may attempt ticket unassignment.
-The `FOR UPDATE` lock on the User row in both operations serializes
-them. The first to commit performs the unassignment; the second finds no
-assigned tickets (or finds the user already inactive) and is a no-op. No
+Conflicting pessimistic row locks on the User row in both operations serialize
+them (`FOR UPDATE` in the role helper conflicts with `FOR NO KEY UPDATE` in
+deactivation). The first to commit performs the unassignment; the second finds
+no assigned tickets (or finds the user already inactive) and is a no-op. No
 duplicate TicketAuditEvents are created.
 
 ### Assignment concurrent with deactivation or role loss
@@ -1078,7 +1082,7 @@ introduced solely for this race.
 ### Redis operations and lock scope
 
 Redis cache cleanup (session liveness purge, login lockout counter
-deletion) executes after the transaction commits and the `FOR UPDATE`
+deletion) executes after the transaction commits and the pessimistic row
 lock is released. This ensures that Redis latency or unreachability
 cannot extend the lock hold time or block concurrent mutations. See
 `docs/conventions.md` (Transaction Hygiene Rules) for the general rule
