@@ -657,7 +657,10 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
    `Forwarded`). Per-real-client-IP rate limiting behind a reverse proxy
    is delegated to the proxy layer (see
    `docs/features/identity/local-authentication.md`, Security
-   Considerations).
+   Considerations). If `request.client` is `None` (e.g., connections
+   over a Unix domain socket), the limiter uses the sentinel string
+   `"unknown"` as the key and the log field value; all such requests
+   share a single rate-limit bucket.
 
    **Log rate limiting**: the WARNING emission is rate-limited to prevent
    log flooding from brute-force attacks. The HTTP 401 response is

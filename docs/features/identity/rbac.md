@@ -375,7 +375,7 @@ here with the required authorization level and a link to the owning spec.
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/api-keys` | Authenticated | [api-key-management](api-key-management.md#list-my-api-keys) |
-| POST | `/api/v1/api-keys` | Authenticated | [api-key-management](api-key-management.md#create-api-key) |
+| POST | `/api/v1/api-keys` | Authenticated (JWT session only) | [api-key-management](api-key-management.md#create-api-key) |
 | POST | `/api/v1/api-keys/{key_id}/revoke` | Authenticated | [api-key-management](api-key-management.md#revoke-my-api-key) |
 
 ### Tickets
