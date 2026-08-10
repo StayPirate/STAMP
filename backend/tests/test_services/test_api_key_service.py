@@ -53,6 +53,7 @@ from app.services.api_key_service import (
     update_last_used_at,
 )
 from app.services.identity_audit_log import IdentityAuditLog
+from tests.support.database import rollback_test_scope
 
 # Fictional bcrypt-shaped value — never a real hash (see AGENTS.md Guardrail 23)
 _FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
@@ -550,9 +551,6 @@ class TestCreateKey:
     ) -> None:
         owner = await user_factory()
         owner_id = owner.id
-        # Commit to establish a savepoint checkpoint so that the owner
-        # survives the rollback (test verifies key absence, not user absence).
-        await db_session.commit()
 
         async def _boom(*args: object, **kwargs: object) -> None:
             raise ValueError("simulated audit failure")
@@ -560,9 +558,9 @@ class TestCreateKey:
         monkeypatch.setattr(IdentityAuditLog, "log_event", _boom)
 
         with pytest.raises(ValueError, match="simulated audit failure"):
-            await create_key(db_session, owner_id, "ci-key", None)
+            async with rollback_test_scope(db_session):
+                await create_key(db_session, owner_id, "ci-key", None)
 
-        await db_session.rollback()
         rows = await db_session.execute(
             select(ApiKey).where(ApiKey.user_id == owner_id)
         )
@@ -879,16 +877,11 @@ class TestRevokeKey:
         key = await api_key_factory(user_id=owner.id)
         owner_id = owner.id
         key_id = key.id
-        # Commit to establish a savepoint checkpoint so that the user
-        # and key survive the subsequent rollback (the db_session fixture
-        # uses join_transaction_mode="create_savepoint").
-        await db_session.commit()
 
-        await revoke_key(db_session, key_id, acting_user_id=owner_id)
+        async with rollback_test_scope(db_session):
+            await revoke_key(db_session, key_id, acting_user_id=owner_id)
 
-        await db_session.rollback()
-
-        refreshed = await db_session.get(ApiKey, key_id)
+        refreshed = await db_session.get(ApiKey, key_id, populate_existing=True)
         assert refreshed is not None
         assert refreshed.revoked_at is None
         assert await _audit_events_for(db_session, owner_id) == []
@@ -1054,15 +1047,12 @@ class TestRevokeAllUserKeys:
         owner_id = owner.id
         key1_id = key1.id
         key2_id = key2.id
-        # Commit to establish a savepoint checkpoint so that the user
-        # and keys survive the subsequent rollback.
-        await db_session.commit()
 
-        await revoke_all_user_keys(db_session, owner_id, acting_user_id=None)
-        await db_session.rollback()
+        async with rollback_test_scope(db_session):
+            await revoke_all_user_keys(db_session, owner_id, acting_user_id=None)
 
-        refreshed1 = await db_session.get(ApiKey, key1_id)
-        refreshed2 = await db_session.get(ApiKey, key2_id)
+        refreshed1 = await db_session.get(ApiKey, key1_id, populate_existing=True)
+        refreshed2 = await db_session.get(ApiKey, key2_id, populate_existing=True)
         assert refreshed1 is not None
         assert refreshed1.revoked_at is None
         assert refreshed2 is not None
@@ -1085,7 +1075,6 @@ class TestRevokeAllUserKeys:
         owner_id = owner.id
         key1_id = key1.id
         key2_id = key2.id
-        await db_session.commit()
 
         call_count = 0
         _real_log_event = IdentityAuditLog.log_event
@@ -1100,12 +1089,11 @@ class TestRevokeAllUserKeys:
         monkeypatch.setattr(IdentityAuditLog, "log_event", _fail_on_second_call)
 
         with pytest.raises(ValueError, match="simulated audit failure"):
-            await revoke_all_user_keys(db_session, owner_id, acting_user_id=None)
+            async with rollback_test_scope(db_session):
+                await revoke_all_user_keys(db_session, owner_id, acting_user_id=None)
 
-        await db_session.rollback()
-
-        refreshed1 = await db_session.get(ApiKey, key1_id)
-        refreshed2 = await db_session.get(ApiKey, key2_id)
+        refreshed1 = await db_session.get(ApiKey, key1_id, populate_existing=True)
+        refreshed2 = await db_session.get(ApiKey, key2_id, populate_existing=True)
         assert refreshed1 is not None
         assert refreshed1.revoked_at is None
         assert refreshed2 is not None
@@ -1962,14 +1950,10 @@ class TestUpdateLastUsedAt:
     ) -> None:
         key = await api_key_factory(last_used_at=None)
         key_id = key.id
-        # Commit to establish a savepoint checkpoint so that the key
-        # survives the subsequent rollback (the db_session fixture uses
-        # join_transaction_mode="create_savepoint").
-        await db_session.commit()
 
-        await update_last_used_at(db_session, key_id, datetime.now(UTC))
-        await db_session.rollback()
+        async with rollback_test_scope(db_session):
+            await update_last_used_at(db_session, key_id, datetime.now(UTC))
 
-        refreshed = await db_session.get(ApiKey, key_id)
+        refreshed = await db_session.get(ApiKey, key_id, populate_existing=True)
         assert refreshed is not None
         assert refreshed.last_used_at is None
