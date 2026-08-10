@@ -543,6 +543,37 @@ session (the browser was sending the `sentinel_session` cookie):
 This applies regardless of the expiration cause (token expired, session
 deadline reached, session invalidated by admin).
 
+## Authenticated Principal
+
+The authentication layer returns a minimal value object that carries the
+resolved user and the kind of credential that authenticated the request.
+This allows downstream dependencies — `require_capability()`, the
+session-only guard, and future session-scoped checks — to distinguish the
+authentication mechanism without re-parsing the request.
+
+### `CredentialKind`
+
+An enumeration with exactly two values:
+
+| Value | Meaning |
+|-------|---------|
+| `jwt` | Request authenticated via a JWT session token |
+| `api_key` | Request authenticated via an API key |
+
+### `AuthenticatedPrincipal`
+
+An immutable value object with exactly two fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user` | `User` | The active user record loaded from the database |
+| `credential_kind` | `CredentialKind` | How the request was authenticated |
+
+The principal MUST NOT retain any raw credential material: no JWT, cookie
+value, API key plaintext, digest, prefix, or API key name. It is the
+single return type of `get_current_user` and the input to all
+authorization dependencies.
+
 ## Middleware: `get_current_user`
 
 The FastAPI dependency `get_current_user` extracts and validates
@@ -571,8 +602,16 @@ into all endpoints that require authentication.
    generic body (described below). Only the success path is described in
    the sub-flows.
 5. Load the `User` record by the `user_id` returned from the credential
-   sub-flow. If the user is inactive (`active = false`), return HTTP 401.
-6. Return the `User` model instance (the record loaded in step 5).
+   sub-flow. If the user does not exist or is inactive (`active = false`),
+   return HTTP 401.
+6. **JWT only — sliding refresh**: if the credential is a JWT, evaluate
+   the sliding refresh (see Token refresh above). The refresh occurs here
+   — after the user-active check — so that a refreshed cookie is never
+   emitted alongside a 401 for an inactive user. API-key requests skip
+   this step entirely.
+7. Return an `AuthenticatedPrincipal` with `user` set to the loaded
+   `User` record and `credential_kind` set to `CredentialKind.JWT` or
+   `CredentialKind.API_KEY` according to the sub-flow that succeeded.
 
 All HTTP 401 responses return a generic body `{"code":
 "AUTH_NOT_AUTHENTICATED", "detail": "Authentication required"}` regardless
@@ -613,18 +652,25 @@ stored in an `HttpOnly` cookie attached automatically by the browser).
    active defense purpose (brute-force detection and response), and
    `request_id` correlation alone is insufficient because the rate
    limiter aggregates hundreds of requests into a single log message.
+   The source IP is the ASGI peer address (`request.client.host`) — the
+   application does not trust forwarded headers (`X-Forwarded-For`,
+   `Forwarded`). Per-real-client-IP rate limiting behind a reverse proxy
+   is delegated to the proxy layer (see
+   `docs/features/identity/local-authentication.md`, Security
+   Considerations).
 
    **Log rate limiting**: the WARNING emission is rate-limited to prevent
    log flooding from brute-force attacks. The HTTP 401 response is
    ALWAYS returned regardless of rate limiting — only the log emission
    is suppressed. Details:
 
-   - **Granularity**: per source IP. An attacker trying 1000 different
-     keys from the same IP generates a single WARNING per period.
-   - **Rate**: at most 1 WARNING every 60 seconds per source IP per
-     server instance.
+   - **Granularity**: per ASGI peer address. An attacker trying 1000
+     different keys from the same peer generates a single WARNING per
+     period.
+   - **Rate**: at most 1 WARNING every 60 seconds per ASGI peer address
+     per server instance.
    - **Aggregated log record**: `event="api_key_validation_failed"`,
-     `source_ip=<full source IP>`, and `suppressed_count=<integer>`.
+     `source_ip=<ASGI peer address>`, and `suppressed_count=<integer>`.
      `suppressed_count` is zero for an unsuppressed first failure and the
      number of additional failures suppressed in the previous 60 seconds
      for the next emitted record. No value derived from the presented
@@ -665,6 +711,31 @@ API key lifecycle, status, retention, REST endpoints, CLI commands, and
 consumer use cases are defined in
 `docs/features/identity/api-key-management.md`. This specification owns
 only use of an API key as an authentication credential.
+
+## Session-Only Authentication Dependency
+
+The `require_session_authentication()` dependency is a thin guard that
+enforces JWT-session authentication for endpoints that must not be
+accessible via API key credentials (e.g., API key creation — see
+`docs/features/identity/api-key-management.md`).
+
+**Input**: the `AuthenticatedPrincipal` returned by `get_current_user`.
+
+**Behavior**:
+
+1. If `principal.credential_kind` is `CredentialKind.JWT`: return the
+   principal unchanged. The endpoint proceeds normally.
+2. If `principal.credential_kind` is `CredentialKind.API_KEY`: return
+   HTTP 403 with code `AUTH_SESSION_REQUIRED` and detail
+   `"API key creation requires session authentication."`.
+
+The dependency does not re-parse the request, duplicate the `stl_ak_`
+recognition rule, or perform any additional validation — it relies
+entirely on the credential kind already resolved by `get_current_user`.
+
+This dependency is owned by the authentication boundary and is the
+single mechanism for session-only enforcement. Endpoint handlers must
+not implement their own credential-kind checks.
 
 ## API Endpoints
 

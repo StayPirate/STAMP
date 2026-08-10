@@ -269,18 +269,21 @@ Capability-protected endpoints use the `require_capability()` dependency:
 @router.post("/tickets")
 async def create_ticket(
     ...,
-    _: User = Depends(require_capability(Capability.CREATE_TICKET)),
+    principal: AuthenticatedPrincipal = Depends(
+        require_capability(Capability.CREATE_TICKET)
+    ),
 ):
 ```
 
 The dependency:
 
-1. Extracts the current user from the session/token
-2. Loads the user's roles
+1. Obtains the `AuthenticatedPrincipal` from `get_current_user`
+2. Loads the user's current roles from the `UserRole` table
 3. Checks if any of the user's roles includes the required capability
    (using the static role definition map)
-4. If yes, allows the request; if no, returns 403 with error code
-   `AUTH_INSUFFICIENT_PERMISSION` and detail `"Insufficient permissions"`
+4. If yes, returns the `AuthenticatedPrincipal`; if no, returns 403 with
+   error code `AUTH_INSUFFICIENT_PERMISSION` and detail
+   `"Insufficient permissions"`
 
 The 403 response MUST NOT disclose which capability was required. The
 generic message prevents information leakage about the internal
@@ -294,15 +297,21 @@ mechanism that bypasses the standard middleware MUST replicate the
 active-user check before the request reaches capability-protected
 endpoints.
 
+The return type is `AuthenticatedPrincipal` (defined in
+`docs/features/identity/authentication.md`), preserving both the active
+user and the credential kind for downstream dependencies that need to
+distinguish JWT from API key authentication (e.g., the session-only
+guard).
+
 ### Authorization Chain Evaluation Order
 
 For ticket endpoints that are capability-protected and operate on a
 specific ticket, the authorization chain evaluates in this order:
 
-1. **Authentication** (`get_current_user`) — extract the current user
-   from the session/token. Returns 401 if not authenticated.
-2. **Capability** (`require_capability`) — check the user has the
-   required capability. Returns 403 `AUTH_INSUFFICIENT_PERMISSION` if
+1. **Authentication** (`get_current_user`) — resolve the authenticated
+   principal. Returns 401 if not authenticated.
+2. **Capability** (`require_capability`) — check the principal's user has
+   the required capability. Returns 403 `AUTH_INSUFFICIENT_PERMISSION` if
    not. This check is user-level (does not depend on the specific
    ticket), so it does not leak information about ticket existence.
 3. **Ticket accessibility** (`require_accessible_ticket`) — check that

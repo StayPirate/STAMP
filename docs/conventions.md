@@ -355,10 +355,15 @@ exemption removal there so it is not forgotten.
   @router.post("/tickets")
   async def create_ticket(
       ...,
-      _: User = Depends(require_capability(Capability.CREATE_TICKET)),
+      principal: AuthenticatedPrincipal = Depends(
+          require_capability(Capability.CREATE_TICKET)
+      ),
   ):
   ```
 
+  The dependency returns an `AuthenticatedPrincipal` carrying both the
+  active `User` and the `CredentialKind` (`jwt` or `api_key`) — see
+  `docs/features/identity/authentication.md` (Authenticated Principal).
   Scope filtering (confidential ticket visibility) is handled by shared
   query utilities (`confidential_ticket_filter()`,
   `require_accessible_ticket`), not per-endpoint logic. See
