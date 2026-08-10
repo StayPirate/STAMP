@@ -596,6 +596,7 @@ async def revoke_all_user_keys(
         .where(ApiKey.user_id == user_id, ApiKey.revoked_at.is_(None))
         .order_by(ApiKey.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     keys = list(keys_result.scalars().all())
     if not keys:

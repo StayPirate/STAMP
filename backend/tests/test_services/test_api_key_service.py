@@ -437,6 +437,39 @@ class TestCreateKey:
         result = await create_key(db_session, owner.id, "ci-key", None)
         assert result.api_key.name == "ci-key"
 
+    async def test_expired_non_revoked_key_still_blocks_name_reuse(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """An expired but non-revoked key still reserves its name
+        (api-key-management.md). The partial unique index condition is
+        `revoked_at IS NULL`, so expiry alone does not free the slot."""
+        owner = await user_factory()
+        await api_key_factory(
+            user_id=owner.id,
+            name="ci-key",
+            expires_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        with pytest.raises(ApiKeyNameConflictError):
+            await create_key(db_session, owner.id, "ci-key", None)
+
+    async def test_same_normalized_name_different_owners_both_succeed(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """The partial unique index is `(user_id, name)`, not global.
+        Two different owners must be able to use the same name."""
+        owner_a = await user_factory()
+        owner_b = await user_factory()
+        result_a = await create_key(db_session, owner_a.id, "shared-name", None)
+        result_b = await create_key(db_session, owner_b.id, "shared-name", None)
+        assert result_a.api_key.name == "shared-name"
+        assert result_b.api_key.name == "shared-name"
+        assert result_a.api_key.id != result_b.api_key.id
+
     async def test_creates_exactly_one_api_key_created_event(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
@@ -1035,6 +1068,49 @@ class TestRevokeAllUserKeys:
         assert refreshed2.revoked_at is None
         assert await _audit_events_for(db_session, owner_id) == []
 
+    async def test_audit_failure_during_bulk_revoke_rolls_back_all_mutations(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failure in the audit loop on the second key must not leave
+        the first key revoked — caller rollback must undo all mutations
+        and all partial audit events created before the failure."""
+        owner = await user_factory()
+        key1 = await api_key_factory(user_id=owner.id, name="key-1")
+        key2 = await api_key_factory(user_id=owner.id, name="key-2")
+        owner_id = owner.id
+        key1_id = key1.id
+        key2_id = key2.id
+        await db_session.commit()
+
+        call_count = 0
+        _real_log_event = IdentityAuditLog.log_event
+
+        async def _fail_on_second_call(*args: object, **kwargs: object) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise ValueError("simulated audit failure on second key")
+            await _real_log_event(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(IdentityAuditLog, "log_event", _fail_on_second_call)
+
+        with pytest.raises(ValueError, match="simulated audit failure"):
+            await revoke_all_user_keys(db_session, owner_id, acting_user_id=None)
+
+        await db_session.rollback()
+
+        refreshed1 = await db_session.get(ApiKey, key1_id)
+        refreshed2 = await db_session.get(ApiKey, key2_id)
+        assert refreshed1 is not None
+        assert refreshed1.revoked_at is None
+        assert refreshed2 is not None
+        assert refreshed2.revoked_at is None
+        assert await _audit_events_for(db_session, owner_id) == []
+
     async def test_single_and_bulk_lock_inversion_completes_with_one_revocation(
         self,
         db_session_factory: Callable[[], Awaitable[AsyncSession]],
@@ -1407,6 +1483,48 @@ class TestListUserKeys:
         )
         assert [item.id for item in page.items] == [key.id]
 
+    async def test_multi_page_pagination_splits_results_correctly(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """Real multi-page pagination: 3 keys, per_page=2 — page 1 gets
+        2 keys, page 2 gets 1 key, with correct total on both."""
+        owner = await user_factory()
+        k1 = await api_key_factory(user_id=owner.id, name="k1")
+        k2 = await api_key_factory(user_id=owner.id, name="k2")
+        k3 = await api_key_factory(user_id=owner.id, name="k3")
+
+        page1 = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=1,
+            per_page=2,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.ASC,
+        )
+        page2 = await list_user_keys(
+            db_session,
+            owner.id,
+            status=None,
+            page=2,
+            per_page=2,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.ASC,
+        )
+
+        assert len(page1.items) == 2
+        assert page1.total == 3
+        assert len(page2.items) == 1
+        assert page2.total == 3
+        # No overlap between pages
+        page1_ids = {item.id for item in page1.items}
+        page2_ids = {item.id for item in page2.items}
+        assert page1_ids & page2_ids == set()
+        assert page1_ids | page2_ids == {k1.id, k2.id, k3.id}
+
 
 # ---------------------------------------------------------------------------
 # list_all_keys()
@@ -1508,6 +1626,25 @@ class TestListAllKeys:
         assert page.items == []
         assert page.total == 0
 
+    async def test_unknown_owner_uuid_returns_empty_page(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A syntactically valid UUID that matches no user must return an
+        empty page — this is a structurally distinct code path from the
+        username-miss case above (`_resolve_owner_id` uses the UUID
+        directly as a filter rather than looking up the user first)."""
+        page = await list_all_keys(
+            db_session,
+            owner=str(uuid.uuid4()),
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.DESC,
+        )
+        assert page.items == []
+        assert page.total == 0
+
     async def test_status_filter_applies_across_owners(
         self,
         db_session: AsyncSession,
@@ -1531,6 +1668,97 @@ class TestListAllKeys:
             sort_order=SortOrder.DESC,
         )
         assert [item.api_key.id for item in page.items] == [active.id]
+
+    async def test_sorting_and_id_tiebreak_across_owners(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """Verifies that `list_all_keys()` applies sorting identically to
+        `list_user_keys()` — this is re-implemented, not delegated."""
+        owner = await user_factory()
+        same_time = datetime.now(UTC)
+        key1 = await api_key_factory(user_id=owner.id, name="k1", created_at=same_time)
+        key2 = await api_key_factory(user_id=owner.id, name="k2", created_at=same_time)
+        expected_asc = sorted([key1.id, key2.id])
+
+        asc_page = await list_all_keys(
+            db_session,
+            owner=None,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.ASC,
+        )
+        assert [item.api_key.id for item in asc_page.items] == expected_asc
+
+    async def test_last_used_at_nulls_sort_last_across_owners(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """Verifies NULL-last ordering for `last_used_at` in admin list."""
+        owner = await user_factory()
+        now = datetime.now(UTC)
+        used = await api_key_factory(
+            user_id=owner.id, name="used", last_used_at=now - timedelta(days=1)
+        )
+        never_used = await api_key_factory(user_id=owner.id, name="never-used")
+
+        asc_page = await list_all_keys(
+            db_session,
+            owner=None,
+            status=None,
+            page=1,
+            per_page=20,
+            sort_by=ApiKeySortField.LAST_USED_AT,
+            sort_order=SortOrder.ASC,
+        )
+        ids = [item.api_key.id for item in asc_page.items]
+        assert ids == [used.id, never_used.id]
+
+    async def test_multi_page_pagination(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """Admin list pagination: 3 keys, per_page=2."""
+        owner = await user_factory()
+        k1 = await api_key_factory(user_id=owner.id, name="k1")
+        k2 = await api_key_factory(user_id=owner.id, name="k2")
+        k3 = await api_key_factory(user_id=owner.id, name="k3")
+
+        page1 = await list_all_keys(
+            db_session,
+            owner=None,
+            status=None,
+            page=1,
+            per_page=2,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.ASC,
+        )
+        page2 = await list_all_keys(
+            db_session,
+            owner=None,
+            status=None,
+            page=2,
+            per_page=2,
+            sort_by=ApiKeySortField.CREATED_AT,
+            sort_order=SortOrder.ASC,
+        )
+
+        assert len(page1.items) == 2
+        assert page1.total == 3
+        assert len(page2.items) == 1
+        assert page2.total == 3
+        all_ids = {item.api_key.id for item in page1.items} | {
+            item.api_key.id for item in page2.items
+        }
+        assert all_ids == {k1.id, k2.id, k3.id}
 
 
 # ---------------------------------------------------------------------------

@@ -762,7 +762,7 @@ before returning
 commit.
 
 **Workflow-owned post-commit phase** (best-effort, after the caller commits and
-the FOR UPDATE lock is released):
+the pessimistic row lock is released):
 
 5. Purge session cache via
    `session_service.purge_session_cache(invalidated_session_ids)`. The helper
@@ -783,7 +783,7 @@ process crashes before the post-commit phase, the admin can verify that
 the user is already inactive and re-invoke the cache purge
 independently. The Redis cache purge (step 5) is post-commit per
 `docs/conventions.md` (Transaction Hygiene Rules) — it cannot be rolled
-back by a transaction failure and must not extend the FOR UPDATE lock
+back by a transaction failure and must not extend the pessimistic row lock
 hold time.
 
 **IdentityAuditEvent**: `user_deactivated` — `user_id` follows the Actor
