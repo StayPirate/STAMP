@@ -173,12 +173,75 @@ Pattern (in `conftest.py`):
    `create_all`. The global `asyncio_default_fixture_loop_scope` and
    `asyncio_default_test_loop_scope` settings in `pyproject.toml` ensure
    all fixtures and tests share this session-scoped event loop.
-2. A function-scoped `db_session` fixture begins a transaction, creates
-   a savepoint, yields the session, then rolls back to the savepoint and
-   closes the transaction.
+2. A function-scoped `db_session` fixture begins an external transaction and
+   binds a session with `join_transaction_mode="create_savepoint"`. The
+   session creates savepoints lazily as database work begins. Teardown closes
+   the session and rolls back the external transaction, reverting every change
+   made during the test, including changes released from earlier savepoints.
 3. The `client` fixture overrides `get_db` to use the same
    `db_session`, so HTTP requests in e2e tests share the test
    transaction.
+
+#### Rollback Within a Test
+
+Most tests rely only on fixture teardown for isolation and do not call
+`db_session.rollback()` themselves. A test that explicitly verifies caller
+rollback must first decide whether its setup data is part of the operation
+being rolled back.
+
+**Discard the setup and operation together.** When the test verifies that all
+work in the session disappears, create the setup and perform the operation in
+the current savepoint, then call `rollback()` directly. The setup rows are
+expected to disappear too:
+
+```python
+user = await user_factory()
+result = await create_resource(db_session, user.id)
+
+await db_session.rollback()
+
+assert await db_session.get(Resource, result.id) is None
+```
+
+**Preserve a setup baseline.** When the test needs setup rows to survive so it
+can verify that only a later mutation was undone, use
+`rollback_test_scope()` from `tests.support.database`. The helper commits the
+session's current savepoint on entry, establishing the setup as a baseline
+inside the still-uncommitted external test transaction. The next database
+operation lazily creates a new savepoint, and the helper rolls that savepoint
+back on exit, including when the scoped operation raises:
+
+```python
+resource = await resource_factory(field=None)
+resource_id = resource.id
+
+async with rollback_test_scope(db_session):
+    await update_resource(db_session, resource_id, field="changed")
+
+refreshed = await db_session.get(
+    Resource,
+    resource_id,
+    populate_existing=True,
+)
+assert refreshed is not None
+assert refreshed.field is None
+```
+
+The code inside `rollback_test_scope()` MUST follow the caller-owned service
+transaction contract and must not call `commit()`. A commit inside the scope
+would release the mutation savepoint, leaving no current mutation transaction
+for the helper to roll back.
+
+Capture primary keys before entering the scope. `Session.rollback()` expires
+persistent ORM state regardless of `expire_on_commit=False`, and rows inserted
+after the active savepoint began no longer exist after rollback. In async code,
+accessing an expired attribute can also attempt an implicit load outside an
+awaitable context. For post-rollback ORM assertions, query by the captured
+primary key and pass `populate_existing=True`; `Session.get()` may otherwise
+return the existing identity-map instance without unconditionally repopulating
+it from the database. `refresh()` is valid only when the instance's row existed
+at the preserved baseline, but the explicit primary-key query makes the test's
+database-reload intent clearer.
 
 ### Alembic Drift Check
 
@@ -675,7 +738,10 @@ backend/tests/
 ├── test_api_conventions.py     # Structural API convention tests
 ├── test_docs_links.py          # Structural documentation link tests
 ├── support/                    # Test-only helpers with no app/ counterpart
-│   └── audit_models.py         # Concrete AuditEventMixin subclass for mixin/base-class tests
+│   ├── audit_models.py         # Concrete AuditEventMixin subclass for mixin/base-class tests
+│   └── database.py             # Shared database transaction test helpers
+├── test_support/               # Tests for importable test support helpers
+│   └── test_database.py
 ├── test_architecture/          # Structural model and layer tests
 │   ├── test_model_conventions.py   # Invariants over Base.metadata
 │   └── test_layer_dependencies.py  # Layer dependency direction (AST)
@@ -690,12 +756,12 @@ backend/tests/
     └── test_<task>.py          # One file per task module
 ```
 
-`tests/support/` holds test-only production-shaped artifacts that have
-no corresponding `app/` module — for example, a minimal concrete
-SQLAlchemy model needed to exercise an abstract mixin
-(`AuditEventMixin`) that has no table of its own. It is distinct from
-`conftest.py`: fixtures live in `conftest.py`, while importable classes
-shared across multiple test modules live in `support/`.
+`tests/support/` holds importable test-only artifacts that have no
+corresponding `app/` module — for example, a minimal concrete SQLAlchemy model
+needed to exercise an abstract mixin (`AuditEventMixin`) that has no table of
+its own, or a transaction helper shared across service tests. It is distinct
+from `conftest.py`: fixtures live in `conftest.py`, while importable classes and
+functions shared across multiple test modules live in `support/`.
 
 ### Naming Convention
 
