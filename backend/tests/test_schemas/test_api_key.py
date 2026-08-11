@@ -44,6 +44,16 @@ class TestApiKeyListQuery:
         with pytest.raises(ValidationError):
             ApiKeyListQuery(page=0)
 
+    def test_page_at_int32_max_is_accepted(self) -> None:
+        assert ApiKeyListQuery(page=2_147_483_647).page == 2_147_483_647
+
+    def test_page_above_int32_max_is_rejected(self) -> None:
+        """A `page` value large enough to overflow the database
+        driver's `OFFSET` parameter must be rejected as a standard 422
+        at the schema boundary, not reach the database as a 500."""
+        with pytest.raises(ValidationError):
+            ApiKeyListQuery(page=2_147_483_648)
+
     def test_per_page_below_one_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             ApiKeyListQuery(per_page=0)
@@ -154,6 +164,24 @@ class TestApiKeyCreateRequest:
         parsing would otherwise silently accept."""
         with pytest.raises(ValidationError):
             ApiKeyCreateRequest(name="ci.production", expires_at=1893484800)
+
+    def test_max_datetime_with_negative_offset_overflow_is_rejected(self) -> None:
+        """A value whose UTC conversion would cross `datetime.max`
+        raises `OverflowError` from `astimezone()`, not `ValueError` —
+        this must still surface as the standard 422
+        VALIDATION_ERROR, not an unhandled 500."""
+        with pytest.raises(ValidationError):
+            ApiKeyCreateRequest(
+                name="ci.production", expires_at="9999-12-31T23:59:59-12:00"
+            )
+
+    def test_min_datetime_with_positive_offset_underflow_is_rejected(self) -> None:
+        """Symmetric underflow case: a value whose UTC conversion
+        would cross `datetime.min`."""
+        with pytest.raises(ValidationError):
+            ApiKeyCreateRequest(
+                name="ci.production", expires_at="0001-01-01T00:00:00+12:00"
+            )
 
     def test_name_is_not_constrained_at_the_schema_level(self) -> None:
         """docs/features/identity/api-key-management.md (API Key Name

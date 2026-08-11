@@ -45,7 +45,10 @@ class ApiKeyCreateRequest(BaseModel):
         *date* (no time component) is rejected, per the documented
         "date-only value is not accepted" rule. A naive datetime
         (no offset) is interpreted as UTC; an offset-bearing datetime
-        is converted to UTC. Any other malformed value raises
+        is converted to UTC — including the edge case where the UTC
+        conversion would cross `datetime.min`/`datetime.max`, which
+        `astimezone()` signals with `OverflowError` rather than
+        `ValueError`. Any other malformed or out-of-range value raises
         `ValueError`, which Pydantic renders as the standard `422
         VALIDATION_ERROR`.
         """
@@ -65,7 +68,12 @@ class ApiKeyCreateRequest(BaseModel):
             raise ValueError("expires_at must be a valid ISO 8601 datetime.") from exc
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(UTC)
+        try:
+            return parsed.astimezone(UTC)
+        except OverflowError as exc:
+            raise ValueError(
+                "expires_at is out of the representable datetime range."
+            ) from exc
 
 
 class ApiKeyListQuery(BaseModel):
@@ -77,10 +85,19 @@ class ApiKeyListQuery(BaseModel):
     result (`docs/api-spec.md`, Enum Filter Validation) rather than the
     schema-validation `422` a typed enum field would raise. The route
     handler parses it against `ApiKeyStatus` itself.
+
+    `page` is bounded at PostgreSQL's `integer` maximum
+    (2,147,483,647): a value beyond that would overflow the computed
+    `OFFSET` parameter (`(page - 1) * per_page`) at the database
+    driver level, producing a 500 instead of the documented `422
+    VALIDATION_ERROR` for an out-of-range value. This is well beyond
+    any page count a real dataset could ever reach — it does not
+    narrow the "page beyond the last page returns an empty result"
+    contract (`docs/api-spec.md`, Pagination) for any practical value.
     """
 
     status: str | None = None
-    page: int = Field(default=1, ge=1)
+    page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
     sort_by: ApiKeySortField = ApiKeySortField.CREATED_AT
     sort_order: SortOrder = SortOrder.DESC

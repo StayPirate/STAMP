@@ -71,7 +71,10 @@ def _api_key_list_query(
         str | None,
         Query(alias="status", description="One of 'active', 'expired', or 'revoked'."),
     ] = None,
-    page: Annotated[int, Query(ge=1, description="Page number.")] = 1,
+    page: Annotated[
+        int,
+        Query(ge=1, le=2_147_483_647, description="Page number."),
+    ] = 1,
     per_page: Annotated[
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
     ] = 20,
