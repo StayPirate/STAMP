@@ -3,12 +3,12 @@
 See `docs/features/identity/user-service.md` for the authoritative contract
 this module implements. `create_user()`, `update_user()`, and
 `reactivate_user()` are the ticket-independent core of the centralized user
-lifecycle service (P2-08); `update_roles()`, `deactivate_user()`,
-`reset_password()`, `unlock_user()`, and the bulk role-mapping operations
-remain out of scope for this piece and are added when their owning work item
-is implemented. `resolve_user_identifier()` and `get_user_roles()` predate
-this piece (P2-06) and back the shared authentication/authorization
-dependencies.
+lifecycle service (P2-08). `reset_password()` and `unlock_user()` (P2-09)
+provide password reset and lockout-counter clearing. `update_roles()`,
+`deactivate_user()`, and the bulk role-mapping operations remain out of
+scope and are added when their owning work item is implemented.
+`resolve_user_identifier()` and `get_user_roles()` predate this piece
+(P2-06) and back the shared authentication/authorization dependencies.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
 Completeness): every mutating function in this module participates in the
@@ -24,23 +24,29 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final, Literal
 from uuid import UUID
 
+import structlog
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.enums import IdentityAuditEventType, Role
+from app.core.enums import IdentityAuditEventType, Role, SessionInvalidationReason
 from app.core.exceptions import ServiceError, UserNotFoundError
 from app.core.passwords import PasswordValidationError, hash_password, validate_password
 from app.core.permissions import role_to_wire
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.identity_audit_log import IdentityAuditLog
+from app.services.local_auth_service import clear_login_attempts
+from app.services.session_service import invalidate_user_sessions
+
+logger = structlog.get_logger(__name__)
 
 # Username Format (docs/conventions.md): 1-64 characters, starts with a
 # letter, lowercase letters/numbers/dots/hyphens/underscores only.
@@ -160,6 +166,21 @@ class _MissingType:
 
 
 _MISSING: Final = _MissingType()
+
+
+@dataclass(frozen=True)
+class PasswordResetResult:
+    """Data returned by `reset_password()` for the caller's post-commit phase.
+
+    See `docs/features/identity/user-service.md` (Mutation Result Types).
+    `username` is the stored normalized username needed for the post-commit
+    lockout-counter cleanup (`clear_login_attempts()`); `invalidated_session_ids`
+    is passed to `session_service.purge_session_cache()`.
+    """
+
+    user: User
+    invalidated_session_ids: list[UUID]
+    username: str
 
 
 async def get_user_by_id(session: AsyncSession, user_id: UUID) -> User | None:
@@ -794,3 +815,138 @@ async def reactivate_user(
     )
 
     return await _load_user_profile(session, user.id)
+
+
+async def reset_password(
+    session: AsyncSession,
+    user_id: UUID,
+    new_password: str,
+    *,
+    acting_user_id: UUID | None,
+) -> PasswordResetResult:
+    """Reset the password of a local `User` and invalidate its active sessions.
+
+    Q1: `user_id` identifies the target; `new_password` is the new plain-text
+    password (validated and hashed internally, never persisted or logged as
+    plaintext); `acting_user_id` is the audit actor (`None` for CLI/system
+    callers).
+
+    Q2 (guards, in this order): password length outside 16-128 characters
+    raises `PasswordValidationError` — evaluated before any database
+    operation, using only the input. A missing `user_id` raises
+    `UserNotFoundError`; an external target (`external_id IS NOT NULL`)
+    raises `ExternalUserPasswordError`: "Cannot set password for external
+    user. External users authenticate via SSO." Both are evaluated after
+    validation and hashing, as the first database operation.
+
+    Q3: validates and hashes `new_password` (bcrypt, off the event loop via
+    `asyncio.to_thread()`) before acquiring any lock. Then acquires
+    `SELECT ... FOR UPDATE` on the target `User` as the first database
+    operation, evaluates the guards above, replaces `User.password_hash`
+    with the new hash, invalidates all active sessions via
+    `session_service.invalidate_user_sessions()` (DB only), creates one
+    `password_reset` `IdentityAuditEvent` (`old_value`, `new_value`, and
+    `detail` all `None`), flushes, and returns
+    `PasswordResetResult(user, invalidated_session_ids, username)`. This
+    function performs only the database phase — it does not commit or
+    execute Redis I/O. The caller invokes
+    `session_service.purge_session_cache()` and
+    `local_auth_service.clear_login_attempts()` after its own commit
+    succeeds (`docs/conventions.md`, Transaction Hygiene Rules).
+
+    Q4: creates exactly one `password_reset` event per successful
+    invocation, with `user_id = acting_user_id` and
+    `target_user_id = user_id`.
+
+    Q5: not idempotent. Each successful invocation hashes and stores the
+    supplied password anew, invalidates the sessions active at that
+    invocation, and creates one new audit event.
+
+    Q6: propagates `PasswordValidationError`, `UserNotFoundError`,
+    `ExternalUserPasswordError`, and any underlying database or
+    audit-service exception.
+    """
+    validate_password(new_password)
+    new_password_hash = await asyncio.to_thread(hash_password, new_password)
+
+    result = await session.execute(
+        select(User)
+        .where(User.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise UserNotFoundError()
+    if user.external_id is not None:
+        raise ExternalUserPasswordError()
+
+    user.password_hash = new_password_hash
+
+    invalidated_session_ids = await invalidate_user_sessions(
+        session, user.id, SessionInvalidationReason.PASSWORD_RESET
+    )
+
+    await IdentityAuditLog.log_event(
+        session,
+        event_type=IdentityAuditEventType.PASSWORD_RESET,
+        user_id=acting_user_id,
+        target_user_id=user.id,
+        old_value=None,
+        new_value=None,
+        detail=None,
+    )
+
+    await session.flush()
+
+    return PasswordResetResult(
+        user=user,
+        invalidated_session_ids=invalidated_session_ids,
+        username=user.username,
+    )
+
+
+async def unlock_user(
+    session: AsyncSession,
+    user_id: UUID,
+    *,
+    acting_user_id: UUID | None,
+) -> None:
+    """Clear the login lockout counter for a user.
+
+    Q1: `user_id` identifies the target. `acting_user_id` is accepted for
+    lifecycle-call signature uniformity and has no persisted effect —
+    unlock creates no audit event.
+
+    Q2: a missing `user_id` raises `UserNotFoundError`. No other guard
+    applies — active, inactive, local, and external users are all eligible.
+
+    Q3: loads the user by `user_id` (read-only, no row lock). Deletes the
+    Redis key `login_attempts:{username}` (where `username` is the user's
+    current stored username) via
+    `local_auth_service.clear_login_attempts()`, which catches every
+    `RedisError` and logs a PII-free WARNING — the counter then expires
+    naturally via TTL. Logs `user_unlocked` at INFO with `user_id` (no
+    username or other personal identifier, per
+    `docs/features/platform/logging.md`). Performs no database mutation,
+    flush, commit, rollback, session invalidation, or audit event.
+
+    Q4: None. Lockout is transient Redis-only state, not a persistent
+    identity mutation (see
+    `docs/features/identity/user-service.md`, `unlock_user()`).
+
+    Q5: idempotent. If the user is not currently locked out (Redis key
+    absent or counter zero), the operation completes successfully as a
+    no-op.
+
+    Q6: propagates `UserNotFoundError` and any underlying database
+    exception from the user lookup. Every `RedisError` from the lockout
+    deletion is caught internally and never propagates.
+    """
+    user = await get_user_by_id(session, user_id)
+    if user is None:
+        raise UserNotFoundError()
+
+    await clear_login_attempts(user.username)
+
+    logger.info("user_unlocked", user_id=str(user.id))
