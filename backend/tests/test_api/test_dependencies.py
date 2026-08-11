@@ -818,6 +818,7 @@ class TestGetCurrentUserApiKey:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         token = "stl_ak_" + "0" * 32
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
 
         with caplog.at_level(logging.WARNING, logger="app.api.dependencies"):
             response = await dep_client.get(
@@ -831,7 +832,43 @@ class TestGetCurrentUserApiKey:
         }
         text = _dependency_log_text(caplog)
         assert "api_key_validation_failed" in text
+
+        # Complete secrets/PII exclusion contract (authentication.md, API
+        # key validation, step 2): the log MUST NOT include the presented
+        # key, its SHA-256 digest, the key prefix alone, a key name, a
+        # username, or an email — nothing beyond the documented safe
+        # fields (`event`, `source_ip`, `suppressed_count`).
         assert token not in text
+        assert digest not in text
+        assert "stl_ak_" not in text
+        assert "key_name" not in text
+        assert "username" not in text
+        assert "email" not in text
+
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "app.api.dependencies"
+            and isinstance(record.msg, dict)
+            and record.msg.get("event") == "api_key_validation_failed"
+        ]
+        assert len(records) == 1
+        event_dict = records[0].msg
+        # This exact field set reflects `_build_test_app()` (no
+        # `CorrelationIdMiddleware`, hence no `request_id`), not a claim
+        # that production emits nothing beyond these fields — the
+        # negative assertions above (absence of token/digest/prefix)
+        # are what the secrets/PII contract actually requires and hold
+        # regardless of which non-sensitive fields the pipeline adds.
+        assert set(event_dict) == {
+            "event",
+            "source_ip",
+            "suppressed_count",
+            "logger",
+            "level",
+            "timestamp",
+            "app",
+        }
 
     async def test_revoked_key_returns_generic_401_without_warning(
         self,
