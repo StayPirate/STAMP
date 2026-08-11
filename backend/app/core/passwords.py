@@ -3,10 +3,11 @@
 See `docs/features/identity/local-authentication.md` (Password
 Management, Hashing configuration) for the authoritative contract this
 module implements. Pure Core-layer module: no database or Redis
-access, no application imports. All functions are synchronous and
-CPU-bound (bcrypt) — callers on the async request path MUST offload
-them via `asyncio.to_thread()` rather than awaiting them inline, so a
-~cost-12 bcrypt operation never blocks the event loop.
+access, no application imports other than `app.core.exceptions` (also
+Core) for the shared `ServiceError` root. All functions are
+synchronous and CPU-bound (bcrypt) — callers on the async request path
+MUST offload them via `asyncio.to_thread()` rather than awaiting them
+inline, so a ~cost-12 bcrypt operation never blocks the event loop.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
 Completeness): every function in this module is a Category B (pure)
@@ -22,6 +23,8 @@ import base64
 import hashlib
 
 import bcrypt
+
+from app.core.exceptions import ServiceError
 
 MIN_PASSWORD_LENGTH = 16
 MAX_PASSWORD_LENGTH = 128
@@ -41,16 +44,20 @@ _DUMMY_PASSWORD_PREHASH = base64.b64encode(
 _DUMMY_HASH = bcrypt.hashpw(_DUMMY_PASSWORD_PREHASH, bcrypt.gensalt(rounds=BCRYPT_COST))
 
 
-class PasswordValidationError(Exception):
+class PasswordValidationError(ServiceError):
     """A candidate password fails the length policy.
 
     Raised by `validate_password()` when the password is shorter than
     `MIN_PASSWORD_LENGTH` or longer than `MAX_PASSWORD_LENGTH`
     characters. See `docs/features/identity/local-authentication.md`
-    (Password validation). Callers that need the `422
-    USER_PASSWORD_POLICY_VIOLATION` mapping apply it themselves (see
-    `docs/features/identity/user-service.md`) — this module raises no
-    API-facing exception.
+    (Password validation). Shared exception per `docs/conventions.md`
+    (Service Exception Conventions, Shared exceptions): inherits
+    directly from `ServiceError`, not from any individual module's
+    base class, because it is defined in Core and raised by any
+    service that validates a candidate password. Callers that need the
+    `422 USER_PASSWORD_POLICY_VIOLATION` mapping apply it themselves
+    (see `docs/features/identity/user-service.md`) — this module does
+    not perform HTTP-status mapping itself.
     """
 
 

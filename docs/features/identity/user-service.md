@@ -351,33 +351,49 @@ Creates a new User record with optional initial roles.
    per `docs/conventions.md` (Username Format). If invalid, raise
    `UsernameFormatError`
 2. Normalize `email` by trimming leading and trailing whitespace and converting
-   it to lowercase. All uniqueness checks and persisted values use this
-   normalized email
+   the entire string — local part and domain alike — to lowercase (see
+   `docs/data-model.md`, `User.email`: stored as lowercase). Validate the
+   format of this fully-lowercased value with the `email-validator` library
+   (`validate_email(value, check_deliverability=False)` — the deliverability
+   check is disabled so validation never performs a DNS lookup or other
+   network I/O). If the format is invalid, raise `EmailFormatError` before
+   any other step executes. All uniqueness checks and persisted values use
+   this fully-lowercased value — not `email-validator`'s own `.normalized`
+   result, which lowercases only the domain and preserves local-part case
+   per RFC convention; `email-validator` is used here for format validation
+   only
+
+   **Defense in depth, not a single guarantee**: API request schemas and CLI
+   commands also validate email format at the boundary, using the same
+   `email-validator` library, as an earlier and better-UX check (see
+   `docs/features/identity/user-management.md`). That boundary check does
+   not replace the guarantee above: `create_user()` is also the entry point
+   for external provisioning, which has no Pydantic or Click boundary in
+   front of it — the service itself is the only validation point every
+   caller is guaranteed to cross.
+
 3. Validate password/`external_id` mutual exclusivity: if
    `external_id` is provided and `password` is also provided, raise
    `ExternalUserPasswordError`. If `external_id` is NULL and `password` is not
    provided, raise `PasswordValidationError`
-4. Validate uniqueness of `username` and normalized `email` across all users
+4. If `external_id` is NULL and `manager_id` is provided (not `None`), raise
+   `ExternalUserFieldReadOnlyError`. `manager_id` is external-provider-specific
+   and has no source of truth for local users (see External User Data
+   Ownership above); this mirrors the same guard `update_user()` applies to
+   an existing local user
+5. Validate uniqueness of `username` and normalized `email` across all users
    (including inactive). If `external_id` is provided, also validate
    its uniqueness — if already associated with another user, raise
    `UserConflictError`. If violated, raise `UserConflictError`
-
-   **Note on email format**: the service validates email *uniqueness* but
-   not *format*. Format validation (RFC 5321/5322 compliance, including
-   `+` tag addressing) is the responsibility of the caller — Pydantic
-   schemas for the API, Click validation for the CLI. All callers MUST
-   use the `email-validator` library to ensure consistent acceptance
-   rules across entry points.
-
-5. If `password` is provided, validate length per the password policy in
+6. If `password` is provided, validate length per the password policy in
    `docs/features/identity/local-authentication.md` § Password Validation
    (16–128 characters). If invalid, raise `PasswordValidationError`
-6. If `password` is provided, hash it with bcrypt (see
+7. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
-7. Create User record with provided fields,
+8. Create User record with provided fields,
    `password_hash` set to the hash (or NULL if no password), and
    `synced_at = now()` if `external_id` is set
-8. For each role in `roles`, create UserRole with specified `group_name`
+9. For each role in `roles`, create UserRole with specified `group_name`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `group_name`), deduplicate silently — only
    one UserRole record is created per unique `(role, group_name)` pair.
@@ -389,10 +405,10 @@ Creates a new User record with optional initial roles.
    externally-derived role, `detail = {"source": "external_sync",
    "mapping": group_name}`; both keys are required. This preserves the
    external source and role-mapping decision for every initial assignment.
-9. Create `user_created` via `IdentityAuditLog.log_event()`. A local API or
-   CLI creation uses `detail = NULL`; external synchronization uses
-   `detail = {"source": "external_sync"}`
-10. Flush the user, roles, and all audit events, then return the created User
+10. Create `user_created` via `IdentityAuditLog.log_event()`. A local API or
+    CLI creation uses `detail = NULL`; external synchronization uses
+    `detail = {"source": "external_sync"}`
+11. Flush the user, roles, and all audit events, then return the created User
 
 **Concurrency**: no root row exists to lock. Pre-checks provide useful errors,
 but the database UNIQUE constraints on normalized username, normalized email,
@@ -454,10 +470,13 @@ their own business rules.
    are already blocked at step 2). External synchronization adds
    `detail = {"source": "external_sync"}` to `username_changed`; a future
    authenticated/manual caller uses `detail = NULL`
-5. If `email` is provided, reject `None`; normalize it by trimming whitespace
-   and converting it to lowercase, then validate uniqueness using the
-   normalized value, excluding the current user and including inactive users.
-   If violated, raise `UserConflictError`
+5. If `email` is provided, reject `None`; normalize it the same way as
+   `create_user()` (trim whitespace, lowercase the entire string, validate
+   format with `email-validator` — `check_deliverability=False` — raising
+   `EmailFormatError` on invalid format, and using the fully-lowercased
+   value rather than `email-validator`'s own `.normalized` result). Then
+   validate uniqueness using the normalized value, excluding the current
+   user and including inactive users. If violated, raise `UserConflictError`
 6. Apply provided field updates. Optional parameters use a `_MISSING`
    sentinel as default to distinguish three states:
    - `_MISSING` (default): field is not modified
@@ -1098,23 +1117,46 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | Exception | HTTP | Code | Raised when |
 |-----------|------|------|-------------|
 | `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | User identifier does not resolve to any user |
-| `UserConflictError` | 409 | `USER_ALREADY_EXISTS` | Username or email already in use |
+| `UserConflictError` | 409 | `USER_ALREADY_EXISTS` | Username, email, or external ID already in use |
 | `SelfRoleRemovalError` | 409 | `USER_SELF_ROLE_REMOVAL` | Admin attempting to remove their own admin role |
 | `SelfDeactivationError` | 409 | `USER_SELF_DEACTIVATION` | Admin attempting to deactivate themselves |
 | `ExternalUserStatusReadOnlyError` | 409 | `USER_EXTERNAL_STATUS_READONLY` | Cannot manually activate/deactivate an external user |
 | `ExternalDerivedRoleError` | 409 | `USER_EXTERNAL_ROLE_PROTECTED` | Cannot manually modify externally-derived roles |
 | `ExternalUserFieldReadOnlyError` | 409 | `USER_EXTERNAL_FIELD_READONLY` | Cannot modify synced fields on an external user |
 | `ExternalUserPasswordError` | 409 | `USER_EXTERNAL_PASSWORD_FORBIDDEN` | Cannot set password for an external user |
-| `PasswordValidationError` | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements |
+| `PasswordValidationError` † | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements |
 
 † Shared exception — inherits from `ServiceError`, not from
-`UserServiceError`. Handlers must catch it explicitly.
+`UserServiceError`. Handlers must catch it explicitly. `PasswordValidationError`
+is defined in `app/core/passwords.py` (Core layer, imported by
+`user_service` and any other module that validates a candidate password) —
+see `docs/conventions.md` (Service Exception Conventions, Shared
+exceptions).
+
+`UserConflictError` carries a `conflict_field` attribute
+(`"username"`, `"email"`, or `"external_id"`) identifying which uniqueness
+constraint was violated. The attribute never carries the conflicting value
+itself — only the field name — so a caller can produce a more specific
+message (e.g., distinguishing a duplicate username from a duplicate email in
+`create_user()`, per `docs/features/identity/user-management.md`) without
+re-deriving which constraint fired and without exposing the submitted
+value, which would otherwise enable username or email enumeration through
+the response.
 
 ### System-internal exceptions
 
 | Exception | Raised when | Handling |
 |-----------|-------------|----------|
 | `UsernameFormatError` | Username does not match format rules | CLI: stderr message + exit 1; External sync: logged as warning, user skipped |
+| `EmailFormatError` | Email does not pass `email-validator` format validation | CLI: stderr message + exit 1; External sync: logged as warning, user skipped |
+
+These are not listed in the API-facing table above because the API request
+schemas for `create_user()`/`update_user()` callers (Pydantic) already reject
+a malformed username or email with the global 422 `VALIDATION_ERROR`
+response before the service is reached — see
+`docs/features/identity/user-management.md`. `UsernameFormatError` and
+`EmailFormatError` are reachable in practice only through CLI and external
+synchronization, which have no such boundary in front of the service.
 
 ## Relationship to Other Specifications
 
