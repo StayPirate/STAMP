@@ -16,7 +16,6 @@ exercises the real PostgreSQL/Redis test fixtures.
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 import pytest
@@ -387,25 +386,35 @@ class TestCheckReadinessOrchestration:
     async def test_checks_run_concurrently_not_sequentially(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Two ~0.3s checks must complete in ~0.3s total (concurrent
-        via asyncio.gather), not ~0.6s (sequential)."""
-        delay = 0.3
+        """Deterministic proof of concurrency: both fake checks
+        rendezvous at a shared `asyncio.Barrier` before either returns.
+        A sequential implementation would start the second check only
+        after the first had already returned past the barrier — but the
+        first is blocked waiting for the second party, so a sequential
+        `check_readiness()` would deadlock here and the bounding
+        `asyncio.wait_for` below would raise `TimeoutError`. This
+        replaces a prior wall-clock comparison (elapsed time against a
+        fixed multiple of an artificial delay), which is inherently
+        susceptible to CI scheduling jitter in either direction."""
+        barrier = asyncio.Barrier(2)
 
-        async def _slow_postgresql(
+        async def _rendezvous_postgresql(
             _session_factory: async_sessionmaker[AsyncSession],
         ) -> HealthCheckStatus:
-            await asyncio.sleep(delay)
+            await barrier.wait()
             return HealthCheckStatus.OK
 
-        async def _slow_redis(_url: str) -> HealthCheckStatus:
-            await asyncio.sleep(delay)
+        async def _rendezvous_redis(_url: str) -> HealthCheckStatus:
+            await barrier.wait()
             return HealthCheckStatus.OK
 
-        monkeypatch.setattr(health_service, "_check_postgresql", _slow_postgresql)
-        monkeypatch.setattr(health_service, "_check_redis", _slow_redis)
+        monkeypatch.setattr(health_service, "_check_postgresql", _rendezvous_postgresql)
+        monkeypatch.setattr(health_service, "_check_redis", _rendezvous_redis)
 
-        start = time.monotonic()
-        await check_readiness(object(), ["redis://host:6379/0"])  # type: ignore[arg-type]
-        elapsed = time.monotonic() - start
+        result = await asyncio.wait_for(
+            check_readiness(object(), ["redis://host:6379/0"]),  # type: ignore[arg-type]
+            timeout=2.0,
+        )
 
-        assert elapsed < delay * 1.5
+        assert result.postgresql == HealthCheckStatus.OK
+        assert result.redis == HealthCheckStatus.OK

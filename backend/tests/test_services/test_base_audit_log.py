@@ -97,6 +97,15 @@ class TestRegistryAutoRegistration:
                 description = "Missing name"
                 model_class = SampleAuditEvent
 
+    def test_missing_description_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="description"):
+
+            class UndescribedAuditLog(BaseAuditLog):
+                name = "undescribed"
+                model_class = SampleAuditEvent
+
+        assert "undescribed" not in base_audit_log.AUDIT_LOG_REGISTRY
+
 
 @pytest.mark.integration
 class TestLogEventCreation:

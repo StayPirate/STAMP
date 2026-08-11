@@ -652,6 +652,9 @@ class TestCreateUser:
         )
         assert role_event.detail is None
         assert role_event.new_value == role_to_wire(Role.ADMIN)
+        assert role_event.old_value is None
+        assert role_event.target_user_id == user.id
+        assert role_event.user_id is None
 
     async def test_role_added_detail_includes_source_and_mapping_for_external_role(
         self, db_session: AsyncSession
@@ -673,6 +676,33 @@ class TestCreateUser:
             "source": "external_sync",
             "mapping": "SecurityTeam",
         }
+        assert role_event.old_value is None
+        assert role_event.target_user_id == user.id
+        assert role_event.user_id is None
+
+    async def test_role_added_actor_is_the_authenticated_acting_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """The `role_added` event's actor (`user_id`) is the admin who
+        created the user, not just the `user_created` event's actor --
+        both events must carry the same acting-user attribution."""
+        admin = await user_factory()
+
+        user = await create_user(
+            db_session,
+            username="role-added-actor",
+            email="role-added-actor@example.com",
+            password=_VALID_PASSWORD,
+            roles=[(Role.ADMIN, "_manual")],
+            acting_user_id=admin.id,
+        )
+
+        events = await _audit_events_for(db_session, user.id)
+        role_event = next(
+            e for e in events if e.event_type == IdentityAuditEventType.ROLE_ADDED.value
+        )
+        assert role_event.user_id == admin.id
+        assert role_event.target_user_id == user.id
 
     async def test_user_created_detail_is_none_for_local_creation(
         self, db_session: AsyncSession
@@ -1113,6 +1143,56 @@ class TestUpdateUser:
         )
 
         assert updated.email == "new.email@example.com"
+
+    async def test_updates_email_and_creates_audit_event(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(email="old@example.com")
+
+        updated = await update_user(
+            db_session, target.id, acting_user_id=None, email="new@example.com"
+        )
+
+        assert updated.email == "new@example.com"
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == IdentityAuditEventType.EMAIL_CHANGED.value
+        assert events[0].old_value == "old@example.com"
+        assert events[0].new_value == "new@example.com"
+        assert events[0].target_user_id == target.id
+        assert events[0].user_id is None
+        assert events[0].detail is None
+
+    async def test_email_changed_actor_is_the_authenticated_acting_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(email="old@example.com")
+        admin = await user_factory()
+
+        await update_user(
+            db_session,
+            target.id,
+            acting_user_id=admin.id,
+            email="new@example.com",
+        )
+
+        events = await _audit_events_for(db_session, target.id)
+        assert events[0].user_id == admin.id
+        assert events[0].target_user_id == target.id
+
+    async def test_email_changed_detail_includes_source_for_external_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(
+            external_id=uuid.uuid4(), email="ext-old@example.com"
+        )
+
+        await update_user(
+            db_session, target.id, acting_user_id=None, email="ext-new@example.com"
+        )
+
+        events = await _audit_events_for(db_session, target.id)
+        assert events[0].detail == {"source": "external_sync"}
 
     async def test_email_no_op_when_normalized_value_already_stored(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
@@ -1626,6 +1706,10 @@ class TestReactivateUser:
         assert updated.active is True
         events = await _audit_events_for(db_session, target.id)
         assert events[0].detail == {"source": "external_sync"}
+        assert events[0].old_value == "inactive"
+        assert events[0].new_value == "active"
+        assert events[0].user_id is None
+        assert events[0].target_user_id == target.id
 
     async def test_human_caller_reactivating_inactive_external_user_raises(
         self,

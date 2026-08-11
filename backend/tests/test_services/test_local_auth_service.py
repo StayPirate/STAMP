@@ -122,41 +122,76 @@ class TestGuardAndIncrement:
     async def test_blocked_attempt_does_not_renew_ttl(
         self, redis_client: redis_asyncio.Redis, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Deterministic proof of no-renewal: after the admitted attempt
+        sets a long TTL, the key's TTL is artificially collapsed to a
+        short, known value. If the blocked attempt's Lua branch ever
+        called `EXPIRE` (renewal), the TTL would jump back up to the
+        full lockout duration — a two-orders-of-magnitude difference
+        that no test-execution jitter could produce. This replaces a
+        previous wall-clock-based comparison (`asyncio.sleep` +
+        `ttl_after_block <= ttl_after_admit`), which could pass even if
+        renewal occurred, as long as the sleep was long enough relative
+        to the real TTL decay."""
         monkeypatch.setattr(settings, "login_max_attempts", 1)
-        monkeypatch.setattr(settings, "login_lockout_minutes", 5 / 60)
+        monkeypatch.setattr(settings, "login_lockout_minutes", 5)
         username = "blockedttl"
         key = f"login_attempts:{username}"
-        await guard_and_increment(username)
+        full_lockout_ms = 5 * 60 * 1000
+
+        admitted = await guard_and_increment(username)
+        assert isinstance(admitted, LockoutAdmitted)
         ttl_after_admit = await redis_client.pttl(key)
-        # A negative PTTL (no expiry, or key absent) would make the
-        # `<=` comparison below pass vacuously if EXPIRE were ever
-        # dropped from the Lua script — assert the admitted attempt
-        # actually carries a real, positive expiry.
-        assert ttl_after_admit > 0
-        await asyncio.sleep(1.0)
+        assert ttl_after_admit > full_lockout_ms / 2
+
+        # Artificially collapse the TTL to a short, known value — any
+        # renewal by the next (blocked) call would be unmistakable.
+        short_ttl_seconds = 2
+        await redis_client.expire(key, short_ttl_seconds)
+
         decision = await guard_and_increment(username)
         assert isinstance(decision, LockoutBlocked)
+
         ttl_after_block = await redis_client.pttl(key)
-        assert ttl_after_block <= ttl_after_admit
+        assert ttl_after_block > 0
+        # If the blocked branch had renewed the TTL, it would jump back
+        # up to roughly `full_lockout_ms`. Asserting it stays far below
+        # that (bounded instead by the short, artificial TTL) proves no
+        # renewal happened, without depending on wall-clock timing.
+        assert ttl_after_block <= short_ttl_seconds * 1000
 
     async def test_ttl_renewed_on_each_admitted_attempt(
         self, redis_client: redis_asyncio.Redis, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Deterministic proof of renewal, the mirror image of
+        `test_blocked_attempt_does_not_renew_ttl`: after the first
+        admitted attempt sets a long TTL, the key's TTL is artificially
+        collapsed to a short, known value. If the next admitted
+        attempt's Lua branch renews the TTL (calls `EXPIRE`), it jumps
+        back up close to the full lockout duration — a two-orders-of-
+        magnitude difference that requires no wall-clock sleep to
+        observe."""
         monkeypatch.setattr(settings, "login_max_attempts", 10)
-        monkeypatch.setattr(settings, "login_lockout_minutes", 5 / 60)
+        monkeypatch.setattr(settings, "login_lockout_minutes", 5)
         username = "ttlrenewed"
         key = f"login_attempts:{username}"
-        await guard_and_increment(username)
+        full_lockout_ms = 5 * 60 * 1000
+
+        first = await guard_and_increment(username)
+        assert isinstance(first, LockoutAdmitted)
         first_ttl_ms = await redis_client.pttl(key)
-        assert first_ttl_ms > 0
-        await asyncio.sleep(1.2)
-        await guard_and_increment(username)
+        assert first_ttl_ms > full_lockout_ms / 2
+
+        short_ttl_seconds = 2
+        await redis_client.expire(key, short_ttl_seconds)
+        assert await redis_client.pttl(key) <= short_ttl_seconds * 1000
+
+        second = await guard_and_increment(username)
+        assert isinstance(second, LockoutAdmitted)
         second_ttl_ms = await redis_client.pttl(key)
-        assert second_ttl_ms > 0
-        # If the TTL had NOT been renewed, second_ttl_ms would be roughly
-        # first_ttl_ms - 1200ms. A renewed TTL stays close to the full
-        # duration regardless of the 1.2s real-time gap.
-        assert second_ttl_ms >= first_ttl_ms - 300
+        # If the TTL had not been renewed, it would still be close to
+        # the short, artificial value set above. A renewed TTL jumps
+        # back up near the full lockout duration.
+        assert second_ttl_ms > full_lockout_ms / 2
 
     async def test_concurrent_requests_admit_exactly_max_attempts(
         self, redis_client: redis_asyncio.Redis, monkeypatch: pytest.MonkeyPatch
@@ -400,6 +435,44 @@ class TestAuthenticateLocalUser:
         assert isinstance(locked, LoginLocked)
         assert locked.retry_after_seconds >= 1
 
+    async def test_blocked_attempt_performs_no_db_query_or_bcrypt(
+        self,
+        db_session: AsyncSession,
+        redis_client: redis_asyncio.Redis,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Once the lockout gate reports `LockoutBlocked` (step 4,
+        "Blocked" in local-authentication.md), the function returns
+        immediately: no database lookup, no real `verify_password()`,
+        and no dummy `verify_dummy_password()` — proving the guard
+        short-circuits before any of the subsequent work."""
+        monkeypatch.setattr(settings, "login_max_attempts", 1)
+        user, password = await local_user_factory()
+
+        # Exhaust the single admitted attempt first (real DB lookup and
+        # real bcrypt verification legitimately happen here).
+        first = await authenticate_local_user(
+            db_session, user.username, "wrong-password-value"
+        )
+        assert isinstance(first, LoginInvalidCredentials)
+
+        # The next attempt must be blocked before touching the database
+        # or either verification path.
+        with (
+            patch.object(db_session, "execute") as mock_execute,
+            patch("app.services.local_auth_service.verify_password") as mock_verify,
+            patch(
+                "app.services.local_auth_service.verify_dummy_password"
+            ) as mock_dummy,
+        ):
+            blocked = await authenticate_local_user(db_session, user.username, password)
+
+        assert isinstance(blocked, LoginLocked)
+        mock_execute.assert_not_called()
+        mock_verify.assert_not_called()
+        mock_dummy.assert_not_called()
+
     async def test_lockout_transition_log_emitted_once_with_user_id(
         self,
         db_session: AsyncSession,
@@ -439,18 +512,31 @@ class TestAuthenticateLocalUser:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """The prior version of this test looped over `caplog.records`
+        with a conditional `assert` inside the loop body, and matched on
+        `record.getMessage() == "login_lockout_triggered"` — but
+        structlog renders the full event dict (event name, level,
+        timestamp, bound fields) into the record's message, so that
+        equality check never matched and the assertion never actually
+        ran (vacuous pass). This version matches by substring — the same
+        approach already used by the "known user" sibling test — proves
+        exactly one `login_lockout_triggered` record was emitted, and
+        checks the `user_id` key's absence directly on that record's
+        rendered message."""
         monkeypatch.setattr(settings, "login_max_attempts", 1)
         with caplog.at_level("INFO"):
             result = await authenticate_local_user(
                 db_session, "nosuchuser", "wrong-password-value"
             )
         assert isinstance(result, LoginInvalidCredentials)
-        for record in caplog.records:
-            if (
-                record.name == "app.services.local_auth_service"
-                and record.getMessage() == "login_lockout_triggered"
-            ):
-                assert not hasattr(record, "user_id")
+        matching_records = [
+            record
+            for record in caplog.records
+            if record.name == "app.services.local_auth_service"
+            and "login_lockout_triggered" in record.getMessage()
+        ]
+        assert len(matching_records) == 1
+        assert "user_id" not in matching_records[0].getMessage()
 
     async def test_lockout_log_not_emitted_on_successful_login_at_threshold(
         self,
