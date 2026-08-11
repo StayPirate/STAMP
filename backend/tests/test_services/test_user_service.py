@@ -2,7 +2,8 @@
 (backend/app/services/user_service.py).
 
 See docs/features/identity/user-service.md (`create_user()`,
-`update_user()`, `reactivate_user()`, `resolve_user_identifier()`) and
+`update_user()`, `reactivate_user()`, `reset_password()`,
+`unlock_user()`, `resolve_user_identifier()`) and
 docs/features/identity/rbac.md (`require_capability()` Dependency) for the
 contract under test, and docs/features/platform/testing-strategy.md (User
 Lifecycle and Management) for the mandatory scenarios exercised here.
@@ -1849,7 +1850,44 @@ class TestResetPassword:
         to_thread_spy.assert_awaited_once()
         assert verify_password(_VALID_PASSWORD, _hash(result.user))
 
-    async def test_reactivates_no_activation_side_effect_for_active_local_user(
+    async def test_hashing_completes_before_row_lock_is_acquired(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Proves the documented Transaction Hygiene guarantee: bcrypt work
+        completes before the `FOR UPDATE` lock is acquired. A refactor that
+        moved hashing to after the lock would violate this ordering and
+        would be caught by this test."""
+        target = await user_factory()
+        call_order: list[str] = []
+
+        original_to_thread = asyncio.to_thread
+
+        async def _recording_to_thread(func: Any, *args: Any) -> Any:
+            result = await original_to_thread(func, *args)
+            call_order.append("hash")
+            return result
+
+        original_execute = db_session.execute
+
+        async def _recording_execute(*args: Any, **kwargs: Any) -> Any:
+            # Only record the first execute (the FOR UPDATE query)
+            if not any(entry == "db_execute" for entry in call_order):
+                call_order.append("db_execute")
+            return await original_execute(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", _recording_to_thread)
+        monkeypatch.setattr(db_session, "execute", _recording_execute)
+
+        await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert call_order.index("hash") < call_order.index("db_execute")
+
+    async def test_active_status_unchanged_by_password_reset(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
@@ -2364,10 +2402,15 @@ class TestUnlockUser:
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         redis_client: redis_asyncio.Redis,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         target = await user_factory(external_id=uuid.uuid4())
 
-        await unlock_user(db_session, target.id, acting_user_id=None)
+        with caplog.at_level("INFO"):
+            await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert "user_unlocked" in _service_log_text(caplog)
+        assert await _audit_events_for(db_session, target.id) == []
 
     async def test_redis_error_is_caught_and_logged_as_warning(
         self,
