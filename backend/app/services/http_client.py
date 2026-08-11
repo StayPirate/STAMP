@@ -142,9 +142,11 @@ def is_retryable_condition(exc: Exception) -> bool:
 def _parse_retry_after(value: str) -> float | None:
     """Parse a `Retry-After` header value into a wait time in seconds.
 
-    Accepts an integer (seconds) or an HTTP-date (RFC 7231). A negative
-    integer is treated as absent. For HTTP-dates, a date that has already
-    elapsed (delta <= 0) is treated as absent — this guards against
+    Accepts an integer (seconds) or an HTTP-date (RFC 7231). Per RFC 7231
+    Section 7.1.3, the delay-seconds form is `1*DIGIT` — decimal/fractional
+    values (e.g. "30.5") are not a valid delay-seconds and are treated as
+    absent, same as a negative integer. For HTTP-dates, a date that has
+    already elapsed (delta <= 0) is treated as absent — this guards against
     zero-delay retries caused by server clock skew or stale dates. An
     unparseable string is treated as absent. All "absent" outcomes fall
     through to the generic status-code rule per the transport-level retry
@@ -152,12 +154,8 @@ def _parse_retry_after(value: str) -> float | None:
     """
     stripped = value.strip()
 
-    try:
-        seconds = float(stripped)
-    except ValueError:
-        pass
-    else:
-        return seconds if seconds >= 0 else None
+    if stripped.isascii() and stripped.isdigit():
+        return float(int(stripped))
 
     try:
         parsed = email.utils.parsedate_to_datetime(stripped)

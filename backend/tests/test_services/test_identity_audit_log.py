@@ -28,7 +28,12 @@ from app.services.identity_audit_log import (
     _measure_and_check_detail_size,
 )
 
-pytestmark = pytest.mark.integration
+# No module-level `pytestmark` here: pytest marks accumulate rather than
+# override, so a blanket module marker combined with a class-level
+# `@pytest.mark.unit` (below) would tag the same test with both `unit`
+# and `integration` — pulling structural-only tests into the integration
+# tier as well. Every class below carries its own explicit marker
+# instead.
 
 
 @pytest.mark.unit
@@ -192,6 +197,7 @@ def _happy_path_cases() -> list[_HappyPathCase]:
     _happy_path_cases(),
     ids=[case[0].value for case in _happy_path_cases()],
 )
+@pytest.mark.integration
 class TestHappyPathAllEventTypes:
     async def test_creates_exactly_one_event_with_correct_fields(
         self,
@@ -226,6 +232,7 @@ class TestHappyPathAllEventTypes:
         assert event.detail == kwargs.get("detail")
 
 
+@pytest.mark.integration
 class TestEventTypeValidation:
     async def test_raw_string_event_type_rejected(
         self,
@@ -245,150 +252,11 @@ class TestEventTypeValidation:
 
 @pytest.mark.integration
 class TestFieldPresenceValidation:
-    async def test_user_created_missing_target_user_id_rejected(
-        self, db_session: AsyncSession
-    ) -> None:
-        with pytest.raises(ValueError, match="target_user_id"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.USER_CREATED,
-                user_id=None,
-                target_user_id=None,
-                new_value="jdoe",
-            )
-
-    async def test_user_created_missing_new_value_rejected(
-        self,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        target = await user_factory()
-        with pytest.raises(ValueError, match="new_value"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.USER_CREATED,
-                user_id=None,
-                target_user_id=target.id,
-            )
-
-    async def test_user_created_old_value_present_rejected(
-        self,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        target = await user_factory()
-        with pytest.raises(ValueError, match="old_value"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.USER_CREATED,
-                user_id=None,
-                target_user_id=target.id,
-                old_value="unexpected",
-                new_value="jdoe",
-            )
-
-    async def test_password_reset_old_value_present_rejected(
-        self,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        target = await user_factory()
-        with pytest.raises(ValueError, match="old_value"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.PASSWORD_RESET,
-                user_id=None,
-                target_user_id=target.id,
-                old_value="unexpected",
-            )
-
-    async def test_password_reset_new_value_present_rejected(
-        self,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        target = await user_factory()
-        with pytest.raises(ValueError, match="new_value"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.PASSWORD_RESET,
-                user_id=None,
-                target_user_id=target.id,
-                new_value="unexpected",
-            )
-
-    async def test_role_mapping_created_missing_actor_rejected(
-        self, db_session: AsyncSession
-    ) -> None:
-        """role_mapping_created is intrinsically administrator-only:
-        user_id (the actor) is required."""
-        with pytest.raises(ValueError, match="user_id"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.ROLE_MAPPING_CREATED,
-                user_id=None,
-                target_user_id=None,
-                new_value="SecurityTeam -> admin",
-                detail={
-                    "group_name": "SecurityTeam",
-                    "role": "admin",
-                    "affected_users": 5,
-                },
-            )
-
-    async def test_role_mapping_created_target_user_id_present_rejected(
-        self,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        admin = await user_factory()
-        target = await user_factory()
-        with pytest.raises(ValueError, match="target_user_id"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.ROLE_MAPPING_CREATED,
-                user_id=admin.id,
-                target_user_id=target.id,
-                new_value="SecurityTeam -> admin",
-                detail={
-                    "group_name": "SecurityTeam",
-                    "role": "admin",
-                    "affected_users": 5,
-                },
-            )
-
-    async def test_role_mapping_deleted_missing_actor_rejected(
-        self, db_session: AsyncSession
-    ) -> None:
-        with pytest.raises(ValueError, match="user_id"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.ROLE_MAPPING_DELETED,
-                user_id=None,
-                target_user_id=None,
-                old_value="SecurityTeam -> admin",
-                detail={
-                    "group_name": "SecurityTeam",
-                    "role": "admin",
-                    "affected_users": 3,
-                },
-            )
-
-    async def test_api_key_created_missing_actor_rejected(
-        self,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        target = await user_factory()
-        with pytest.raises(ValueError, match="user_id"):
-            await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.API_KEY_CREATED,
-                user_id=None,
-                target_user_id=target.id,
-                new_value="ci-pipeline",
-                detail={"key_id": str(uuid.uuid4())},
-            )
+    """Asymmetric/notable field-presence cases not otherwise obvious from
+    the exhaustive `TestFieldRuleRejectionMatrix` below. The full
+    required/forbidden matrix for every event type is covered there —
+    this class holds only the success-path and cross-field cases that
+    the matrix (single-field mutation) cannot express."""
 
     async def test_api_key_created_actor_and_target_may_differ(
         self,
@@ -422,56 +290,217 @@ class TestFieldPresenceValidation:
         assert row.user_id == actor.id
         assert row.target_user_id == target.id
 
-    async def test_manager_changed_actor_present_rejected(
+
+# Every required/forbidden field entry from the IdentityAuditEventType
+# field contract in `docs/features/identity/identity-audit-log.md`.
+# Deliberately independent of `app.services.identity_audit_log._FIELD_RULES`
+# — it is transcribed from the specification, not imported from the
+# implementation, so this matrix catches a rule that drifts from the
+# documented contract instead of merely re-asserting the code against
+# itself. `optional` fields are omitted: they never trigger a rejection.
+_FIELD_RULE_REJECTIONS: dict[IdentityAuditEventType, dict[str, str]] = {
+    IdentityAuditEventType.USER_CREATED: {
+        "target_user_id": "required",
+        "old_value": "forbidden",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.USER_DEACTIVATED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.USER_REACTIVATED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.PASSWORD_RESET: {
+        "target_user_id": "required",
+        "old_value": "forbidden",
+        "new_value": "forbidden",
+    },
+    IdentityAuditEventType.ROLE_ADDED: {
+        "target_user_id": "required",
+        "old_value": "forbidden",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.ROLE_REMOVED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "forbidden",
+    },
+    # role_mapping_created/deleted are intrinsically administrator-only
+    # events: user_id (the actor) is required — there is no system-sync
+    # equivalent that could omit it.
+    IdentityAuditEventType.ROLE_MAPPING_CREATED: {
+        "user_id": "required",
+        "target_user_id": "forbidden",
+        "old_value": "forbidden",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.ROLE_MAPPING_DELETED: {
+        "user_id": "required",
+        "target_user_id": "forbidden",
+        "old_value": "required",
+        "new_value": "forbidden",
+    },
+    IdentityAuditEventType.USERNAME_CHANGED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.API_KEY_CREATED: {
+        "user_id": "required",
+        "target_user_id": "required",
+        "old_value": "forbidden",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.API_KEY_REVOKED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "forbidden",
+    },
+    IdentityAuditEventType.EMAIL_CHANGED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "required",
+    },
+    IdentityAuditEventType.FULL_NAME_CHANGED: {
+        "target_user_id": "required",
+    },
+    # manager_changed is intrinsically system-only: user_id (the actor)
+    # must be NULL — manager assignment is always derived from external
+    # sync, never a human action.
+    IdentityAuditEventType.MANAGER_CHANGED: {
+        "user_id": "forbidden",
+        "target_user_id": "required",
+    },
+}
+
+_HAPPY_PATH_BY_TYPE: dict[
+    IdentityAuditEventType, Callable[[User, User], dict[str, Any]]
+] = dict(_happy_path_cases())
+
+
+def _rejection_matrix_cases() -> list[tuple[IdentityAuditEventType, str, str]]:
+    """One case per (event_type, field_name, rule) combination in
+    `_FIELD_RULE_REJECTIONS` — every required/forbidden field the
+    contract defines across all 14 event types."""
+    return [
+        (event_type, field_name, rule)
+        for event_type, fields in _FIELD_RULE_REJECTIONS.items()
+        for field_name, rule in fields.items()
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("event_type", "field_name", "rule"),
+    _rejection_matrix_cases(),
+    ids=[f"{case[0].value}-{case[1]}-{case[2]}" for case in _rejection_matrix_cases()],
+)
+class TestFieldRuleRejectionMatrix:
+    """Exhaustive required/forbidden coverage: every entry of
+    `_FIELD_RULE_REJECTIONS` is exercised by starting from a valid,
+    happy-path invocation for the event type (all other fields and
+    `detail`, if any, remain valid) and mutating only the field under
+    test — isolating the rejection to that single field. Every
+    rejection must also leave zero persisted events."""
+
+    async def test_violating_the_rule_is_rejected_and_persists_nothing(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
+        event_type: IdentityAuditEventType,
+        field_name: str,
+        rule: str,
     ) -> None:
-        """manager_changed is intrinsically system-only: user_id (the
-        actor) must be NULL."""
         actor = await user_factory()
         target = await user_factory()
-        with pytest.raises(ValueError, match="user_id"):
+        kwargs = dict(_HAPPY_PATH_BY_TYPE[event_type](actor, target))
+
+        if rule == "required":
+            kwargs[field_name] = None
+        else:  # forbidden
+            if field_name in ("user_id", "target_user_id"):
+                kwargs[field_name] = actor.id
+            else:
+                kwargs[field_name] = "unexpected"
+
+        with pytest.raises(ValueError, match=field_name):
             await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.MANAGER_CHANGED,
-                user_id=actor.id,
-                target_user_id=target.id,
+                db_session, event_type=event_type, **kwargs
             )
+
+        rows = (
+            (
+                await db_session.execute(
+                    select(IdentityAuditEvent).where(
+                        IdentityAuditEvent.event_type == event_type.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows == []
 
 
 @pytest.mark.integration
 class TestDetailValidation:
+    @pytest.mark.parametrize(
+        "event_type",
+        [IdentityAuditEventType.PASSWORD_RESET, IdentityAuditEventType.MANAGER_CHANGED],
+        ids=["password_reset", "manager_changed"],
+    )
     async def test_event_type_without_detail_support_rejects_non_null(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
+        event_type: IdentityAuditEventType,
     ) -> None:
+        """Both event types absent from `_DETAIL_SCHEMAS` — `detail`
+        must be NULL for either."""
+        actor = await user_factory()
         target = await user_factory()
+        kwargs = dict(_HAPPY_PATH_BY_TYPE[event_type](actor, target))
+        kwargs["detail"] = {"source": "external_sync"}
         with pytest.raises(ValueError, match="does not support a detail payload"):
             await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.PASSWORD_RESET,
-                user_id=None,
-                target_user_id=target.id,
-                detail={"source": "external_sync"},
+                db_session, event_type=event_type, **kwargs
             )
 
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            IdentityAuditEventType.USER_DEACTIVATED,
+            IdentityAuditEventType.ROLE_MAPPING_CREATED,
+            IdentityAuditEventType.ROLE_MAPPING_DELETED,
+            IdentityAuditEventType.API_KEY_CREATED,
+            IdentityAuditEventType.API_KEY_REVOKED,
+        ],
+        ids=[
+            "user_deactivated",
+            "role_mapping_created",
+            "role_mapping_deleted",
+            "api_key_created",
+            "api_key_revoked",
+        ],
+    )
     async def test_event_type_requiring_detail_rejects_null(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
+        event_type: IdentityAuditEventType,
     ) -> None:
+        """Every `require_present=True` event type rejects `detail=None`."""
+        actor = await user_factory()
         target = await user_factory()
+        kwargs = dict(_HAPPY_PATH_BY_TYPE[event_type](actor, target))
+        kwargs["detail"] = None
         with pytest.raises(ValueError, match="requires a detail payload"):
             await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.USER_DEACTIVATED,
-                user_id=None,
-                target_user_id=target.id,
-                old_value="active",
-                new_value="inactive",
-                detail=None,
+                db_session, event_type=event_type, **kwargs
             )
 
     async def test_non_mapping_detail_rejected(
@@ -554,60 +583,120 @@ class TestDetailValidation:
                 detail={"source": "manual"},
             )
 
-    async def test_role_added_mapping_without_source_rejected(
+    @pytest.mark.parametrize(
+        "event_type",
+        [IdentityAuditEventType.ROLE_ADDED, IdentityAuditEventType.ROLE_REMOVED],
+        ids=["role_added", "role_removed"],
+    )
+    async def test_mapping_without_source_rejected(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
+        event_type: IdentityAuditEventType,
     ) -> None:
+        """`role_added` and `role_removed` share the same paired
+        `source`/`mapping` schema; both must reject `mapping` alone."""
+        actor = await user_factory()
         target = await user_factory()
+        kwargs = dict(_HAPPY_PATH_BY_TYPE[event_type](actor, target))
+        kwargs["detail"] = {"mapping": "SecurityTeam"}
         with pytest.raises(ValueError, match="must be provided together"):
             await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.ROLE_ADDED,
-                user_id=None,
-                target_user_id=target.id,
-                new_value="admin",
-                detail={"mapping": "SecurityTeam"},
+                db_session, event_type=event_type, **kwargs
             )
 
-    async def test_role_added_source_without_mapping_rejected(
+    @pytest.mark.parametrize(
+        "event_type",
+        [IdentityAuditEventType.ROLE_ADDED, IdentityAuditEventType.ROLE_REMOVED],
+        ids=["role_added", "role_removed"],
+    )
+    async def test_source_without_mapping_rejected(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
+        event_type: IdentityAuditEventType,
     ) -> None:
+        actor = await user_factory()
         target = await user_factory()
+        kwargs = dict(_HAPPY_PATH_BY_TYPE[event_type](actor, target))
+        kwargs["detail"] = {"source": "external_sync"}
         with pytest.raises(ValueError, match="must be provided together"):
             await IdentityAuditLog.log_event(
-                db_session,
-                event_type=IdentityAuditEventType.ROLE_ADDED,
-                user_id=None,
-                target_user_id=target.id,
-                new_value="admin",
-                detail={"source": "external_sync"},
+                db_session, event_type=event_type, **kwargs
             )
 
-    async def test_role_added_source_and_mapping_together_accepted(
+    @pytest.mark.parametrize(
+        "event_type",
+        [IdentityAuditEventType.ROLE_ADDED, IdentityAuditEventType.ROLE_REMOVED],
+        ids=["role_added", "role_removed"],
+    )
+    async def test_source_and_mapping_together_accepted(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
+        event_type: IdentityAuditEventType,
     ) -> None:
+        actor = await user_factory()
         target = await user_factory()
-        await IdentityAuditLog.log_event(
-            db_session,
-            event_type=IdentityAuditEventType.ROLE_ADDED,
-            user_id=None,
-            target_user_id=target.id,
-            new_value="admin",
-            detail={"source": "external_sync", "mapping": "SecurityTeam"},
-        )
+        kwargs = dict(_HAPPY_PATH_BY_TYPE[event_type](actor, target))
+        kwargs["detail"] = {"source": "external_sync", "mapping": "SecurityTeam"}
+        await IdentityAuditLog.log_event(db_session, event_type=event_type, **kwargs)
         row = (
             await db_session.execute(
                 select(IdentityAuditEvent).where(
-                    IdentityAuditEvent.event_type == "role_added"
+                    IdentityAuditEvent.event_type == event_type.value
                 )
             )
         ).scalar_one()
         assert row.detail == {"source": "external_sync", "mapping": "SecurityTeam"}
+
+    async def test_reason_wrong_type_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory()
+        with pytest.raises(ValueError, match="reason"):
+            await IdentityAuditLog.log_event(
+                db_session,
+                event_type=IdentityAuditEventType.API_KEY_REVOKED,
+                user_id=None,
+                target_user_id=target.id,
+                old_value="ci-pipeline",
+                detail={"key_id": str(uuid.uuid4()), "reason": 12345},
+            )
+
+    async def test_group_name_wrong_type_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        admin = await user_factory()
+        with pytest.raises(ValueError, match="group_name"):
+            await IdentityAuditLog.log_event(
+                db_session,
+                event_type=IdentityAuditEventType.ROLE_MAPPING_CREATED,
+                user_id=admin.id,
+                target_user_id=None,
+                new_value="SecurityTeam -> admin",
+                detail={"group_name": 123, "role": "admin", "affected_users": 5},
+            )
+
+    async def test_role_key_wrong_type_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        admin = await user_factory()
+        with pytest.raises(ValueError, match=r"detail\.role"):
+            await IdentityAuditLog.log_event(
+                db_session,
+                event_type=IdentityAuditEventType.ROLE_MAPPING_CREATED,
+                user_id=admin.id,
+                target_user_id=None,
+                new_value="SecurityTeam -> admin",
+                detail={"group_name": "SecurityTeam", "role": 123, "affected_users": 5},
+            )
 
     async def test_affected_users_wrong_type_rejected(
         self,
@@ -814,6 +903,87 @@ class TestOldNewValueTruncation:
         ).scalar_one()
         assert row.new_value == "\U0001f600" * 512
         assert len(row.new_value) == 512
+
+    async def test_old_value_within_limit_is_not_truncated(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """Mirrors `test_value_within_limit_is_not_truncated` (which
+        covers `new_value`) for `old_value`, completing boundary
+        coverage at exactly 512 code points for both fields."""
+        target = await user_factory()
+        value = "b" * 512
+        await IdentityAuditLog.log_event(
+            db_session,
+            event_type=IdentityAuditEventType.USERNAME_CHANGED,
+            user_id=None,
+            target_user_id=target.id,
+            old_value=value,
+            new_value="jdoe2",
+        )
+        row = (
+            await db_session.execute(
+                select(IdentityAuditEvent).where(
+                    IdentityAuditEvent.event_type == "username_changed"
+                )
+            )
+        ).scalar_one()
+        assert row.old_value == value
+        assert len(row.old_value) == 512
+
+    async def test_old_value_over_limit_is_truncated_to_512_codepoints(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """`old_value` follows the same 512-code-point truncation as
+        `new_value` — exercised here via `username_changed`, whose
+        contract requires both `old_value` and `new_value`."""
+        target = await user_factory()
+        value = "b" * 600
+        await IdentityAuditLog.log_event(
+            db_session,
+            event_type=IdentityAuditEventType.USERNAME_CHANGED,
+            user_id=None,
+            target_user_id=target.id,
+            old_value=value,
+            new_value="jdoe2",
+        )
+        row = (
+            await db_session.execute(
+                select(IdentityAuditEvent).where(
+                    IdentityAuditEvent.event_type == "username_changed"
+                )
+            )
+        ).scalar_one()
+        assert row.old_value == "b" * 512
+        assert len(row.old_value) == 512
+
+    async def test_old_value_multibyte_astral_characters_truncated_by_codepoint(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory()
+        value = "\U0001f600" * 600  # 😀 repeated 600 times
+        await IdentityAuditLog.log_event(
+            db_session,
+            event_type=IdentityAuditEventType.USERNAME_CHANGED,
+            user_id=None,
+            target_user_id=target.id,
+            old_value=value,
+            new_value="jdoe2",
+        )
+        row = (
+            await db_session.execute(
+                select(IdentityAuditEvent).where(
+                    IdentityAuditEvent.event_type == "username_changed"
+                )
+            )
+        ).scalar_one()
+        assert row.old_value == "\U0001f600" * 512
+        assert len(row.old_value) == 512
 
     async def test_none_remains_none(
         self,

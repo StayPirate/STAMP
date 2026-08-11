@@ -9,6 +9,7 @@ scenarios exercised here.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Generator
@@ -19,7 +20,7 @@ from unittest.mock import AsyncMock
 import pytest
 import redis.asyncio as redis_asyncio
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -65,6 +66,28 @@ def _service_log_text(caplog: pytest.LogCaptureFixture) -> str:
         for record in caplog.records
         if record.name == "app.services.session_service"
     )
+
+
+def _session_service_event_fields(
+    caplog: pytest.LogCaptureFixture, event: str
+) -> list[dict[str, Any]]:
+    """Parse this module's structlog records matching `event` name into
+    plain dicts, so tests can assert exact structured fields (e.g.
+    `count` as an `int`, not a substring) instead of loose text
+    containment checks. The captured record's rendered message is a
+    Python dict literal (structlog's test-time renderer) — parsed
+    safely via `ast.literal_eval`, never `eval`."""
+    matches = []
+    for record in caplog.records:
+        if record.name != "app.services.session_service":
+            continue
+        try:
+            parsed = ast.literal_eval(record.getMessage())
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(parsed, dict) and parsed.get("event") == event:
+            matches.append(parsed)
+    return matches
 
 
 class _FailingRedisClient:
@@ -253,7 +276,12 @@ class TestCreateSession:
         `session.rollback()` expires all ORM attributes on `user`, so
         `user.id` must be captured beforehand — accessing an expired
         attribute after rollback would trigger a synchronous lazy
-        reload outside of an async-safe context."""
+        reload outside of an async-safe context.
+
+        The committed baseline `User` row is cleaned up in a `finally`
+        block so a failed assertion below cannot leave it behind for
+        later tests (see docs/features/platform/testing-strategy.md,
+        Test Independence)."""
         session = await db_session_factory()
         user = User(
             username="rollbacktest",
@@ -264,29 +292,34 @@ class TestCreateSession:
         await session.commit()
         user_id = user.id
 
-        def _boom(**kwargs: Any) -> None:
-            raise RuntimeError("token encoding failed")
+        try:
 
-        monkeypatch.setattr(session_service, "issue_token", _boom)
+            def _boom(**kwargs: Any) -> None:
+                raise RuntimeError("token encoding failed")
 
-        with pytest.raises(RuntimeError):
-            await create_session(session, user, SessionCreationReason.LOCAL_LOGIN)
+            monkeypatch.setattr(session_service, "issue_token", _boom)
 
-        await session.rollback()
+            with pytest.raises(RuntimeError):
+                await create_session(session, user, SessionCreationReason.LOCAL_LOGIN)
 
-        verify_session = await db_session_factory()
-        refreshed_user = await verify_session.get(User, user_id)
-        assert refreshed_user is not None
-        assert refreshed_user.last_login_at is None
-        rows = await verify_session.execute(
-            select(Session).where(Session.user_id == user_id)
-        )
-        assert rows.scalars().all() == []
+            await session.rollback()
 
-        # Explicit cleanup: the user row was committed above, so it is
-        # not covered by db_session_factory's rollback-on-teardown.
-        await verify_session.delete(refreshed_user)
-        await verify_session.commit()
+            verify_session = await db_session_factory()
+            refreshed_user = await verify_session.get(User, user_id)
+            assert refreshed_user is not None
+            assert refreshed_user.last_login_at is None
+            rows = await verify_session.execute(
+                select(Session).where(Session.user_id == user_id)
+            )
+            assert rows.scalars().all() == []
+        finally:
+            # Explicit cleanup: the user row was committed above, so it
+            # is not covered by db_session_factory's rollback-on-teardown.
+            # Runs even if an assertion above failed, so a failing run
+            # cannot contaminate later tests with a leftover committed row.
+            cleanup_session = await db_session_factory()
+            await cleanup_session.execute(delete(User).where(User.id == user_id))
+            await cleanup_session.commit()
 
     async def test_creates_no_identity_audit_event(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
@@ -759,6 +792,39 @@ class TestInvalidateUserSessions:
         assert already_inactive.is_active is False
         assert other_user_session.is_active is True
 
+    async def test_updated_at_advances_only_for_formerly_active_sessions(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+    ) -> None:
+        """Mirrors `TestInvalidateSession`'s single-row `updated_at`
+        coverage for the bulk path: the `UPDATE ... WHERE is_active =
+        true` in `invalidate_user_sessions()` must advance `updated_at`
+        only for rows it actually flips, leaving an already-inactive
+        row's `updated_at` untouched."""
+        user = await user_factory()
+        active = await session_factory(user_id=user.id)
+        already_inactive = await session_factory(user_id=user.id, is_active=False)
+        backdated = datetime.now(UTC) - timedelta(days=1)
+        active.updated_at = backdated
+        already_inactive.updated_at = backdated
+        await db_session.flush()
+        await db_session.refresh(active)
+        await db_session.refresh(already_inactive)
+        assert active.updated_at == backdated
+        assert already_inactive.updated_at == backdated
+
+        await invalidate_user_sessions(
+            db_session, user.id, SessionInvalidationReason.DEACTIVATION
+        )
+
+        await db_session.refresh(active)
+        await db_session.refresh(already_inactive)
+        assert active.is_active is False
+        assert active.updated_at > backdated
+        assert already_inactive.updated_at == backdated
+
     async def test_no_active_sessions_returns_empty_list_and_logs_zero(
         self,
         db_session: AsyncSession,
@@ -771,7 +837,11 @@ class TestInvalidateUserSessions:
                 db_session, user.id, SessionInvalidationReason.PASSWORD_RESET
             )
         assert result == []
-        assert "sessions_invalidated" in _service_log_text(caplog)
+        matches = _session_service_event_fields(caplog, "sessions_invalidated")
+        assert len(matches) == 1
+        assert matches[0]["user_id"] == str(user.id)
+        assert matches[0]["count"] == 0
+        assert matches[0]["reason"] == SessionInvalidationReason.PASSWORD_RESET.value
 
     async def test_logs_count_and_reason(
         self,
@@ -787,8 +857,11 @@ class TestInvalidateUserSessions:
             await invalidate_user_sessions(
                 db_session, user.id, SessionInvalidationReason.DEACTIVATION
             )
-        assert "sessions_invalidated" in _service_log_text(caplog)
-        assert "deactivation" in _service_log_text(caplog)
+        matches = _session_service_event_fields(caplog, "sessions_invalidated")
+        assert len(matches) == 1
+        assert matches[0]["user_id"] == str(user.id)
+        assert matches[0]["count"] == 2
+        assert matches[0]["reason"] == SessionInvalidationReason.DEACTIVATION.value
 
 
 # ---------------------------------------------------------------------------

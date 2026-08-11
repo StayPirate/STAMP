@@ -299,6 +299,14 @@ class TestParseRetryAfter:
     def test_negative_integer_treated_as_absent(self) -> None:
         assert hc._parse_retry_after("-5") is None
 
+    def test_decimal_value_treated_as_absent(self) -> None:
+        """RFC 7231 delay-seconds is `1*DIGIT` — fractional values are not
+        a valid delay-seconds and must not be silently rounded/accepted."""
+        assert hc._parse_retry_after("30.5") is None
+
+    def test_leading_decimal_point_treated_as_absent(self) -> None:
+        assert hc._parse_retry_after(".5") is None
+
     def test_malformed_string_treated_as_absent(self) -> None:
         assert hc._parse_retry_after("not-a-value") is None
 
@@ -422,6 +430,21 @@ class TestRetryOn5xx:
         assert inner.calls == 1
         assert mock_sleep.await_count == 0
 
+    async def test_discarded_response_is_closed_in_fixed_backoff_path(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        """A bare 5xx with no `Retry-After` header takes the fixed-backoff
+        path (not the guided path). The discarded response must still be
+        closed before the retry, same as the guided path."""
+        discarded = _response(500)
+        script = [discarded, _response(200)]
+        inner = _ScriptedTransport(script)
+        transport = hc._RetryTransport(inner, retry_non_idempotent=False)
+
+        await transport.handle_async_request(_request("GET"))
+
+        assert discarded.is_closed
+
 
 # ---------------------------------------------------------------------------
 # Transport-level retry — connection/timeout/proxy/protocol errors
@@ -446,6 +469,39 @@ class TestRetryOnConnectionErrors:
         assert response.status_code == 200
         assert inner.calls == 3
         assert mock_sleep.await_count == 2
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"])
+    async def test_connect_error_retried_for_every_idempotent_method(
+        self, mock_sleep: AsyncMock, method: str
+    ) -> None:
+        """The full idempotent-method matrix: GET, HEAD, OPTIONS, PUT, and
+        DELETE all retry on connection error without any opt-in, per the
+        Method Safety contract in `docs/features/platform/networking.md`."""
+        script = [httpx.ConnectError("boom"), _response(200)]
+        inner = _ScriptedTransport(script)
+        transport = hc._RetryTransport(inner, retry_non_idempotent=False)
+
+        response = await transport.handle_async_request(_request(method))
+
+        assert response.status_code == 200
+        assert inner.calls == 2
+        assert mock_sleep.await_count == 1
+
+    @pytest.mark.parametrize("method", ["POST", "PATCH"])
+    async def test_connect_error_not_retried_for_non_idempotent_method_by_default(
+        self, mock_sleep: AsyncMock, method: str
+    ) -> None:
+        """Neither POST nor PATCH retries on connection error without the
+        `retry_non_idempotent` opt-in — retrying risks duplicate writes."""
+        script = [httpx.ConnectError("boom")]
+        inner = _ScriptedTransport(script)
+        transport = hc._RetryTransport(inner, retry_non_idempotent=False)
+
+        with pytest.raises(httpx.ConnectError):
+            await transport.handle_async_request(_request(method))
+
+        assert inner.calls == 1
+        assert mock_sleep.await_count == 0
 
     async def test_connect_error_exhausts_after_four_attempts(
         self, mock_sleep: AsyncMock
