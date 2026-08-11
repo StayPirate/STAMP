@@ -13,6 +13,7 @@ from unittest.mock import patch
 import bcrypt
 import pytest
 
+from app.core.exceptions import ServiceError
 from app.core.passwords import (
     BCRYPT_COST,
     MAX_PASSWORD_LENGTH,
@@ -46,6 +47,14 @@ class TestValidatePassword:
     def test_empty_password_raises(self) -> None:
         with pytest.raises(PasswordValidationError):
             validate_password("")
+
+    def test_password_validation_error_is_a_shared_service_error(self) -> None:
+        """`PasswordValidationError` inherits directly from `ServiceError`
+        (docs/conventions.md, Service Exception Conventions — Shared
+        exceptions), since it is defined in Core and raised by any
+        service that validates a candidate password (e.g.
+        `user_service.create_user()`)."""
+        assert issubclass(PasswordValidationError, ServiceError)
 
 
 @pytest.mark.unit

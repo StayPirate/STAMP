@@ -1272,6 +1272,11 @@ or identity audit validation are affected, tests MUST cover:
 - create/update email is trimmed and lowercased before uniqueness evaluation;
   create/update explicit email NULL is rejected, while update
   `full_name = null` clears the value
+- `create_user`/`update_user` reject a malformed email with `EmailFormatError`
+  when called directly (bypassing any Pydantic/CLI boundary), proving the
+  service enforces email format itself rather than relying solely on the
+  API schema or CLI pre-validation; a duplicate username, email, or external
+  ID raises `UserConflictError` with the matching `conflict_field`
 - username, email, password, role, missing-field, explicit-NULL, duplicate-role,
   and password 15/16/128/129 boundaries produce the documented outcomes
 - audit old/new values accept exactly 512 Unicode code points and truncate
