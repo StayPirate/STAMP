@@ -197,6 +197,12 @@ class TestApiKeyCreateRequest:
 
 
 def _make_user_reference_kwargs(**overrides: object) -> dict[str, object]:
+    """Build kwargs for an embedded `UserReference` (e.g. `revoked_by`,
+    `owner`). `UserReference` itself is defined in `app/schemas/common.py`
+    and tested in `test_schemas/test_common.py` — this helper exists only
+    to construct instances embedded in the API-key-specific schemas
+    tested below.
+    """
     defaults: dict[str, object] = {
         "id": uuid4(),
         "username": "jdoe",
@@ -205,19 +211,6 @@ def _make_user_reference_kwargs(**overrides: object) -> dict[str, object]:
     }
     defaults.update(overrides)
     return defaults
-
-
-@pytest.mark.unit
-class TestUserReference:
-    def test_all_fields_populated(self) -> None:
-        ref = UserReference(**_make_user_reference_kwargs())
-        assert ref.username == "jdoe"
-        assert ref.full_name == "John Doe"
-        assert ref.active is True
-
-    def test_full_name_accepts_none(self) -> None:
-        ref = UserReference(**_make_user_reference_kwargs(full_name=None))
-        assert ref.full_name is None
 
 
 def _make_api_key_data_kwargs(**overrides: object) -> dict[str, object]:

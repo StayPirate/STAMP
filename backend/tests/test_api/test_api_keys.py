@@ -254,6 +254,20 @@ class TestListMyApiKeys:
         assert body["data"] == []
         assert body["meta"] == {"total": 0, "page": 1, "per_page": 10}
 
+    async def test_status_filter_over_length_limit_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """Exercises the app-wide `enforce_query_parameter_length_limit`
+        dependency (`app/core/query_limits.py`, registered in
+        `app/main.py`) through a real endpoint, not only through the
+        synthetic app in `test_core/test_query_limits.py` — guards
+        against the app-wide registration silently regressing."""
+        response = await authenticated_client.get(
+            "/api/v1/api-keys", params={"status": "a" * 501}
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
     async def test_page_beyond_last_page_returns_empty_data_with_correct_total(
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],
