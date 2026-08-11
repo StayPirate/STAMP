@@ -116,3 +116,49 @@ def test_drift_check_reports_dockerfile_mismatch_before_requires_python(
     assert result.returncode == 1
     assert "Dockerfile ARG PYTHON_VERSION=3.12 does not match" in result.stdout
     assert "requires-python" not in result.stdout
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "python_version",
+    [
+        "3.13.7",  # patch-level — violates minor-only granularity
+        "3",  # major only, no minor
+        "python3.13",  # non-numeric prefix
+        "3.13-slim",  # trailing non-numeric suffix
+        "",  # empty
+        " 3.13",  # leading whitespace
+    ],
+)
+def test_drift_check_fails_on_malformed_python_version(
+    tmp_path: Path, python_version: str
+) -> None:
+    # The format check runs before the Dockerfile/pyproject.toml
+    # comparisons, so a malformed .python-version is rejected even when
+    # the other two files happen to carry the exact same (invalid)
+    # string — matching values are not sufficient, the shared value
+    # itself must be minor-only (docs/conventions.md, Runtime Version ->
+    # Source of Truth: ".python-version file uses minor-version
+    # granularity").
+    result = _run_drift_check(
+        tmp_path,
+        python_version=python_version,
+        dockerfile_version=python_version,
+        requires_python=python_version,
+    )
+
+    assert result.returncode == 1
+    assert "is not a valid minor-only version" in result.stdout
+
+
+@pytest.mark.unit
+def test_drift_check_accepts_well_formed_minor_only_version(tmp_path: Path) -> None:
+    result = _run_drift_check(
+        tmp_path,
+        python_version="3.14",
+        dockerfile_version="3.14",
+        requires_python="3.14",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""

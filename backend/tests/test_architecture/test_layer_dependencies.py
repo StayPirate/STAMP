@@ -91,6 +91,24 @@ def _imported_app_modules(source: str, package: str) -> set[str]:
     their absolute form using `package` (the dotted path of the
     importing file's own package) before the `app.` prefix check, so a
     cross-layer relative import cannot silently bypass this test.
+
+    Two `ast.ImportFrom` shapes require distinct handling:
+
+    1. `from app.services import ticket_service` — the from-clause
+       target (`node.module`, or its relative-resolved equivalent) is
+       already the full layer path (`app.services`); it is added as-is.
+    2. `from app import services` (and its relative equivalents, e.g.
+       `from .. import services` from a file two packages deep) — the
+       from-clause target resolves only to the parent package (`app`),
+       with the actual layer name hidden in the imported alias
+       (`services`), not in the target. Every imported alias is
+       therefore also joined onto the resolved target
+       (`f"{target}.{alias.name}"`) and checked, so a layer import
+       disguised behind a parent-package import is still caught. This
+       is harmless to apply unconditionally: when the from-clause
+       target already fully names a layer (case 1), the alias-joined
+       candidate is simply a redundant, equally-valid deeper path
+       (`app.services.ticket_service`) that resolves to the same layer.
     """
     tree = ast.parse(source)
     modules: set[str] = set()
@@ -100,13 +118,19 @@ def _imported_app_modules(source: str, package: str) -> set[str]:
                 if alias.name.startswith("app."):
                     modules.add(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            module = (
+            target = (
                 _resolve_relative_import(package, node)
                 if node.level > 0
                 else node.module
             )
-            if module and module.startswith("app."):
-                modules.add(module)
+            if not target:
+                continue
+            if target.startswith("app."):
+                modules.add(target)
+            for alias in node.names:
+                candidate = f"{target}.{alias.name}"
+                if candidate.startswith("app."):
+                    modules.add(candidate)
     return modules
 
 
@@ -141,6 +165,75 @@ def _iter_layer_violations() -> list[str]:
                         f"'{imported_layer}' (imports '{module}')"
                     )
     return violations
+
+
+@pytest.mark.unit
+class TestImportedAppModulesDetector:
+    """Unit tests for the pure `_imported_app_modules()` parser, using
+    synthetic sources and packages — no dependency on real files under
+    `app/`. Covers the parent-package import form (`from app import
+    <layer>`) and its relative equivalents, which a plain `node.module`
+    prefix check would miss (see the function's docstring)."""
+
+    def test_detects_absolute_full_path_import(self) -> None:
+        source = "from app.services import ticket_service"
+        modules = _imported_app_modules(source, package="app.api")
+        assert "app.services" in modules
+
+    def test_detects_parent_package_import_of_a_layer(self) -> None:
+        # `from app import services` — the layer name is hidden in the
+        # imported alias, not in the from-clause target ("app").
+        source = "from app import services"
+        modules = _imported_app_modules(source, package="app.api")
+        assert "app.services" in modules
+
+    def test_detects_parent_package_import_of_multiple_layers(self) -> None:
+        source = "from app import services, models"
+        modules = _imported_app_modules(source, package="app.api")
+        assert "app.services" in modules
+        assert "app.models" in modules
+
+    def test_detects_relative_equivalent_two_dots_from_layer_root(self) -> None:
+        # A file directly under app/api/ (package "app.api") using
+        # `from .. import services` — two dots resolve to the "app"
+        # root package, same shape as `from app import services`.
+        source = "from .. import services"
+        modules = _imported_app_modules(source, package="app.api")
+        assert "app.services" in modules
+
+    def test_detects_relative_equivalent_three_dots_from_nested_package(
+        self,
+    ) -> None:
+        # A file two packages deep (e.g. app/api/v1/foo.py, package
+        # "app.api.v1") using `from ... import services` — three dots
+        # resolve to the "app" root package.
+        source = "from ... import services"
+        modules = _imported_app_modules(source, package="app.api.v1")
+        assert "app.services" in modules
+
+    def test_does_not_flag_intra_layer_relative_import(self) -> None:
+        # `from . import x` from within app/services/ resolves to the
+        # services package itself — same layer, not a cross-layer hop.
+        source = "from . import ticket_mutations"
+        modules = _imported_app_modules(source, package="app.services")
+        assert modules == {"app.services", "app.services.ticket_mutations"}
+
+    def test_parent_package_import_of_shared_infrastructure_is_not_a_layer(
+        self,
+    ) -> None:
+        # `from app import config` resolves to "app.config", which is
+        # not one of the seven layers — `_layer_of()` returns None for
+        # it (shared infrastructure, always allowed). The detector still
+        # reports the module; layer classification is a separate step.
+        source = "from app import config"
+        modules = _imported_app_modules(source, package="app.api")
+        assert "app.config" in modules
+        assert _layer_of("app.config") is None
+
+    def test_ignores_unrelated_third_party_import(self) -> None:
+        source = "from fastapi import APIRouter"
+        modules = _imported_app_modules(source, package="app.api")
+        assert modules == set()
 
 
 @pytest.mark.unit
