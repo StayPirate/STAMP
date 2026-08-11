@@ -146,6 +146,20 @@ class TestUserRoleUniqueConstraint:
         # No exception raised means both users' rows coexist.
         await db_session.flush()
 
+    async def test_different_role_same_user_and_group_allowed(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """Varying only `role` while `user_id` and `group_name` stay
+        identical must not collide — the constraint must not
+        accidentally reduce to just `(user_id, group_name)`."""
+        user = await user_factory()
+        db_session.add(UserRole(user_id=user.id, role=Role.ADMIN.value))
+        await db_session.flush()
+
+        db_session.add(UserRole(user_id=user.id, role=Role.VULNERABILITY_ANALYST.value))
+        # No exception raised means both role rows coexist.
+        await db_session.flush()
+
 
 @pytest.mark.integration
 class TestUserRoleForeignKeys:
