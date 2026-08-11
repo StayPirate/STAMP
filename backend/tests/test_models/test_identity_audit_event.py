@@ -45,12 +45,6 @@ class TestIdentityAuditEventCreation:
         assert event.new_value == "jdoe"
         assert event.detail is None
 
-    async def test_no_updated_at_column(self) -> None:
-        """IdentityAuditEvent has no `updated_at` column — audit event
-        tables are append-only (docs/features/platform/
-        audit-trail-infrastructure.md, AuditEventMixin)."""
-        assert not hasattr(IdentityAuditEvent, "updated_at")
-
     async def test_detail_jsonb_round_trip(
         self,
         db_session: AsyncSession,
@@ -79,13 +73,40 @@ class TestIdentityAuditEventCreation:
         assert event.user_id == admin.id
 
 
-@pytest.mark.integration
-class TestIdentityAuditEventInheritsMixin:
+@pytest.mark.unit
+class TestIdentityAuditEventMetadata:
+    """Structural assertions over SQLAlchemy metadata, independent of
+    any database round-trip."""
+
+    def test_no_updated_at_column(self) -> None:
+        """IdentityAuditEvent has no `updated_at` column — audit event
+        tables are append-only (docs/features/platform/
+        audit-trail-infrastructure.md, AuditEventMixin)."""
+        assert not hasattr(IdentityAuditEvent, "updated_at")
+
     def test_inherits_audit_event_mixin(self) -> None:
         assert issubclass(IdentityAuditEvent, AuditEventMixin)
 
     def test_registered_in_audit_event_mixin_subclasses(self) -> None:
         assert IdentityAuditEvent in AuditEventMixin.__subclasses__()
+
+    def test_user_id_foreign_key_uses_ondelete_restrict(self) -> None:
+        fks = [
+            fk
+            for fk in IdentityAuditEvent.__table__.foreign_keys
+            if fk.parent.name == "user_id"
+        ]
+        assert len(fks) == 1
+        assert fks[0].ondelete == "RESTRICT"
+
+    def test_target_user_id_foreign_key_uses_ondelete_restrict(self) -> None:
+        fks = [
+            fk
+            for fk in IdentityAuditEvent.__table__.foreign_keys
+            if fk.parent.name == "target_user_id"
+        ]
+        assert len(fks) == 1
+        assert fks[0].ondelete == "RESTRICT"
 
 
 @pytest.mark.integration
@@ -165,24 +186,6 @@ class TestIdentityAuditEventForeignKeys:
         )
         with pytest.raises(IntegrityError):
             await db_session.flush()
-
-    def test_user_id_foreign_key_uses_ondelete_restrict(self) -> None:
-        fks = [
-            fk
-            for fk in IdentityAuditEvent.__table__.foreign_keys
-            if fk.parent.name == "user_id"
-        ]
-        assert len(fks) == 1
-        assert fks[0].ondelete == "RESTRICT"
-
-    def test_target_user_id_foreign_key_uses_ondelete_restrict(self) -> None:
-        fks = [
-            fk
-            for fk in IdentityAuditEvent.__table__.foreign_keys
-            if fk.parent.name == "target_user_id"
-        ]
-        assert len(fks) == 1
-        assert fks[0].ondelete == "RESTRICT"
 
 
 @pytest.mark.integration

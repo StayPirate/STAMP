@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +51,30 @@ class TestSessionCreation:
     ) -> None:
         session = await session_factory(is_active=False)
         assert session.is_active is False
+
+
+@pytest.mark.integration
+class TestSessionExplicitNullRejection:
+    """`is_active` is `nullable=False` with a Python/server default of
+    `True`. Omitting the column on INSERT would never exercise the
+    database's own NOT NULL enforcement — the ORM/server default would
+    silently fill it in first. An explicit raw-SQL `UPDATE ... SET
+    is_active = NULL` bypasses both defaults and proves the column is
+    genuinely rejected as NULL at the database level
+    (docs/data-model.md, Session).
+    """
+
+    async def test_explicit_null_is_active_rejected(
+        self,
+        db_session: AsyncSession,
+        session_factory: Callable[..., Awaitable[Session]],
+    ) -> None:
+        session = await session_factory()
+        with pytest.raises(IntegrityError):
+            await db_session.execute(
+                text("UPDATE session SET is_active = NULL WHERE id = :id"),
+                {"id": session.id},
+            )
 
 
 @pytest.mark.integration
