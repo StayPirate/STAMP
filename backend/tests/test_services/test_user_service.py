@@ -654,6 +654,29 @@ class TestCreateUser:
         event = (await _audit_events_for(db_session, user.id))[0]
         assert event.detail == {"source": "external_sync"}
 
+    async def test_user_created_actor_is_the_authenticated_acting_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """A real, authenticated admin creates a local user: the resulting
+        `user_created` event's actor (`user_id`) must be the admin, not
+        `None` -- proving the actor is threaded through correctly for a
+        human-initiated creation, not just the system-caller (`None`) path
+        exercised by every other creation test in this class."""
+        admin = await user_factory()
+
+        user = await create_user(
+            db_session,
+            username="actor-created",
+            email="actor-created@example.com",
+            password=_VALID_PASSWORD,
+            acting_user_id=admin.id,
+        )
+
+        event = (await _audit_events_for(db_session, user.id))[0]
+        assert event.event_type == IdentityAuditEventType.USER_CREATED.value
+        assert event.user_id == admin.id
+        assert event.target_user_id == user.id
+
     async def test_returns_user_with_roles_and_manager_eagerly_loaded(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
@@ -977,6 +1000,26 @@ class TestUpdateUser:
         assert events[0].old_value == "old-name"
         assert events[0].new_value == "new-name"
 
+    async def test_username_changed_actor_is_the_authenticated_acting_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """A real, authenticated admin renames a local user: the resulting
+        `username_changed` event's actor (`user_id`) must be the admin, not
+        `None` -- proving the actor is threaded through correctly for a
+        human-initiated update, not just the system-caller (`None`) path
+        exercised by every other update test in this class."""
+        admin = await user_factory()
+        target = await user_factory(username="pre-actor-rename")
+
+        await update_user(
+            db_session, target.id, acting_user_id=admin.id, username="post-actor-rename"
+        )
+
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].user_id == admin.id
+        assert events[0].target_user_id == target.id
+
     async def test_username_is_normalized_before_comparison(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
@@ -1273,6 +1316,67 @@ class TestUpdateUser:
                 db_session, target.id, acting_user_id=None, manager_id=uuid.uuid4()
             )
 
+    async def test_precheck_miss_still_translates_conflict_keeps_transaction_usable(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression test for a SAVEPOINT-ordering bug: `update_user()`
+        used to assign `user.username`/`user.email` directly onto the ORM
+        object, one field at a time, each *before* the next field's own
+        uniqueness pre-check query. Since a pre-check query
+        (`_email_taken()`) triggers SQLAlchemy autoflush, a prior field's
+        pending mutation could be flushed *before* `begin_nested()`
+        established its SAVEPOINT protection -- leaving the whole parent
+        transaction aborted instead of just the nested one. This simulates
+        the race the sequential pre-check is documented not to guarantee
+        against (`_email_taken()` monkeypatched to miss a real conflict)
+        while changing BOTH `username` and `email` in the same call --
+        the exact combination that triggered the bug -- and verifies the
+        transaction remains usable for unrelated work after the translated
+        `UserConflictError`."""
+        await user_factory(email="update-precheck-miss@example.com")
+        target = await user_factory(username="update-precheck-target")
+        target_id = target.id
+
+        bystander = User(
+            username="update-precheck-bystander",
+            email="update-precheck-bystander@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        db_session.add(bystander)
+        await db_session.flush()
+        bystander_id = bystander.id
+
+        async def _no_conflict(*args: object, **kwargs: object) -> bool:
+            return False
+
+        monkeypatch.setattr(user_service, "_email_taken", _no_conflict)
+
+        with pytest.raises(UserConflictError) as exc_info:
+            await update_user(
+                db_session,
+                target_id,
+                acting_user_id=None,
+                username="update-precheck-new-name",
+                email="update-precheck-miss@example.com",
+            )
+        assert exc_info.value.conflict_field == "email"
+
+        # The transaction must still be usable: an unrelated read succeeds,
+        # proving the parent transaction was not left in PostgreSQL's
+        # aborted state by the failed flush.
+        result = await db_session.execute(select(User).where(User.id == bystander_id))
+        recovered = result.scalar_one()
+        assert recovered.username == "update-precheck-bystander"
+
+        # The whole staged mutation set rolled back together: the
+        # username change must not have been persisted either.
+        reloaded = await db_session.get(User, target_id)
+        assert reloaded is not None
+        assert reloaded.username == "update-precheck-target"
+
     async def test_two_concurrent_updates_same_user_serialize_via_row_lock(
         self,
         db_session_factory: Callable[[], Awaitable[AsyncSession]],
@@ -1446,6 +1550,25 @@ class TestReactivateUser:
         assert events[0].new_value == "active"
         assert events[0].detail is None
 
+    async def test_reactivated_actor_is_the_authenticated_acting_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """A real, authenticated admin reactivates a local user: the
+        resulting `user_reactivated` event's actor (`user_id`) must be the
+        admin, not `None` -- proving the actor is threaded through
+        correctly for a human-initiated reactivation, not just the
+        system-caller (`None`) path exercised by every other reactivation
+        test in this class."""
+        admin = await user_factory()
+        target = await user_factory(active=False)
+
+        await reactivate_user(db_session, target.id, acting_user_id=admin.id)
+
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].user_id == admin.id
+        assert events[0].target_user_id == target.id
+
     async def test_reactivates_inactive_external_user_via_system_caller(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
@@ -1511,6 +1634,29 @@ class TestReactivateUser:
 
         async with rollback_test_scope(db_session):
             await reactivate_user(db_session, target_id, acting_user_id=None)
+
+        reloaded = await db_session.get(User, target_id)
+        assert reloaded is not None
+        assert reloaded.active is False
+        assert await _audit_events_for(db_session, target_id) == []
+
+    async def test_audit_failure_rolls_back_the_pending_reactivation_too(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = await user_factory(active=False)
+        target_id = target.id
+
+        async def _boom(*args: object, **kwargs: object) -> None:
+            raise ValueError("simulated audit failure")
+
+        monkeypatch.setattr(IdentityAuditLog, "log_event", _boom)
+
+        with pytest.raises(ValueError, match="simulated audit failure"):
+            async with rollback_test_scope(db_session):
+                await reactivate_user(db_session, target_id, acting_user_id=None)
 
         reloaded = await db_session.get(User, target_id)
         assert reloaded is not None

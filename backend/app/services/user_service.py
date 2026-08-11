@@ -588,71 +588,109 @@ async def update_user(
         raise ExternalUserFieldReadOnlyError()
 
     sync_detail = {"source": "external_sync"} if is_external else None
-    changed_fields: list[
-        tuple[IdentityAuditEventType, str | None, str | None, dict[str, str] | None]
-    ] = []
 
+    # Phase 1 — normalize, validate format, and pre-check uniqueness for
+    # every field WITHOUT mutating `user` yet. `_username_taken()` and
+    # `_email_taken()` each run a `session.execute()`, which triggers
+    # SQLAlchemy autoflush; keeping `user` clean here ensures that call
+    # cannot flush an earlier field's pending mutation. Actual mutation
+    # is deferred to Phase 2, inside the SAVEPOINT below — `begin_nested()`
+    # itself flushes any *already* pending dirty state before the SAVEPOINT
+    # is established (see `SessionTransaction._take_snapshot()`), so any
+    # mutation applied before entering that block would be flushed
+    # unprotected by the SAVEPOINT, exactly like a mutation applied before
+    # Phase 1. Only mutations applied *inside* the block are covered.
+    pending_username: str | None = None
     if username is not None:
         normalized_username = _normalize_username(username)
         if normalized_username != user.username:
             if await _username_taken(session, normalized_username, user_id):
                 raise UserConflictError("username")
-            old_username = user.username
-            user.username = normalized_username
-            changed_fields.append(
-                (
-                    IdentityAuditEventType.USERNAME_CHANGED,
-                    old_username,
-                    normalized_username,
-                    sync_detail,
-                )
-            )
+            pending_username = normalized_username
 
+    pending_email: str | None = None
     if not isinstance(email, _MissingType):
         normalized_email = _normalize_and_validate_email(email)
         if normalized_email != user.email:
             if await _email_taken(session, normalized_email, user_id):
                 raise UserConflictError("email")
-            old_email = user.email
-            user.email = normalized_email
-            changed_fields.append(
-                (
-                    IdentityAuditEventType.EMAIL_CHANGED,
-                    old_email,
-                    normalized_email,
-                    sync_detail,
-                )
-            )
+            pending_email = normalized_email
 
+    pending_full_name: str | _MissingType | None = _MISSING
     if not isinstance(full_name, _MissingType) and full_name != user.full_name:
-        old_full_name = user.full_name
-        user.full_name = full_name
-        changed_fields.append(
-            (
-                IdentityAuditEventType.FULL_NAME_CHANGED,
-                old_full_name,
-                full_name,
-                sync_detail,
-            )
-        )
+        pending_full_name = full_name
 
+    pending_manager_id: UUID | _MissingType | None = _MISSING
+    if not isinstance(manager_id, _MissingType) and manager_id != user.manager_id:
+        pending_manager_id = manager_id
+
+    if (
+        pending_username is None
+        and pending_email is None
+        and isinstance(pending_full_name, _MissingType)
+        and isinstance(pending_manager_id, _MissingType)
+        and synced_at is _MISSING
+    ):
+        return await _load_user_profile(session, user.id)
+
+    # Phase 2 — apply every staged mutation and build the audit payload
+    # together, inside the SAVEPOINT-protected block, so a concurrent
+    # same-value winner's `IntegrityError` is translated to
+    # `UserConflictError` without leaving the caller's transaction aborted.
+    changed_fields: list[
+        tuple[IdentityAuditEventType, str | None, str | None, dict[str, str] | None]
+    ] = []
     manager_changed = False
     old_manager_id: UUID | None = None
     new_manager_id: UUID | None = None
-    if not isinstance(manager_id, _MissingType) and manager_id != user.manager_id:
-        old_manager_id = user.manager_id
-        new_manager_id = manager_id
-        user.manager_id = manager_id
-        manager_changed = True
-
-    if not isinstance(synced_at, _MissingType):
-        user.synced_at = synced_at
-
-    if not changed_fields and not manager_changed and synced_at is _MISSING:
-        return await _load_user_profile(session, user.id)
 
     try:
         async with session.begin_nested():
+            if pending_username is not None:
+                old_username = user.username
+                user.username = pending_username
+                changed_fields.append(
+                    (
+                        IdentityAuditEventType.USERNAME_CHANGED,
+                        old_username,
+                        pending_username,
+                        sync_detail,
+                    )
+                )
+
+            if pending_email is not None:
+                old_email = user.email
+                user.email = pending_email
+                changed_fields.append(
+                    (
+                        IdentityAuditEventType.EMAIL_CHANGED,
+                        old_email,
+                        pending_email,
+                        sync_detail,
+                    )
+                )
+
+            if not isinstance(pending_full_name, _MissingType):
+                old_full_name = user.full_name
+                user.full_name = pending_full_name
+                changed_fields.append(
+                    (
+                        IdentityAuditEventType.FULL_NAME_CHANGED,
+                        old_full_name,
+                        pending_full_name,
+                        sync_detail,
+                    )
+                )
+
+            if not isinstance(pending_manager_id, _MissingType):
+                old_manager_id = user.manager_id
+                new_manager_id = pending_manager_id
+                user.manager_id = pending_manager_id
+                manager_changed = True
+
+            if not isinstance(synced_at, _MissingType):
+                user.synced_at = synced_at
+
             await session.flush()
     except IntegrityError as exc:
         field = _conflict_field(exc)
