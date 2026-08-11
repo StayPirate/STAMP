@@ -5,18 +5,19 @@ from __future__ import annotations
 from importlib.metadata import version as get_version
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import health
-from app.api.v1 import auth
+from app.api.v1 import api_keys, auth
 from app.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware
+from app.core.query_limits import enforce_query_parameter_length_limit
 
 configure_logging(settings)
 logger = structlog.get_logger(__name__)
@@ -26,6 +27,12 @@ app = FastAPI(
     description="Security update management platform for SUSE/openSUSE distributions",
     version=get_version("sentinel"),
     debug=settings.debug,
+    # Applies the shared query-parameter length limit
+    # (docs/api-spec.md, Query Parameter Length Limit) to every current
+    # and future endpoint automatically — see
+    # docs/conventions.md (FastAPI Conventions, "Cross-cutting query
+    # parameter constraints").
+    dependencies=[Depends(enforce_query_parameter_length_limit)],
 )
 
 app.add_middleware(
@@ -98,3 +105,4 @@ async def _unhandled_exception_handler(
 
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(api_keys.router)
