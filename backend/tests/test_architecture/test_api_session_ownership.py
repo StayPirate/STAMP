@@ -19,17 +19,22 @@ direct `.commit()`/`.rollback()` calls in `app/api/` source text via AST
 — it does not attempt full type inference to confirm a `.commit()`
 receiver is actually a database session, since no legitimate use of
 either pattern exists in the API layer today (see `AGENTS.md`,
-Guardrail 26 — Reviewer Proportionality). Two modules are exempt, each
-for a documented, specification-mandated reason:
+Guardrail 26 — Reviewer Proportionality).
 
-- `app/api/health.py`: the readiness probe (`GET /ready`) never uses the
-  `get_db` yield-dependency at all — it opens a read-only, no-commit
-  session directly via `get_readiness_session_factory()` for its
-  `SELECT 1` check, so the `scope="function"` rule (which governs
-  transaction completion ordering for `get_db`) does not apply to it in
-  the first place.
-- `app/api/dependencies.py`: the API key `last_used_at` debounce touch
-  (`LastUsedDebouncer.touch()`) is an orchestration boundary per
+Two functions are exempt, each for a documented, specification-mandated
+reason — narrowed to the specific function or method authorized to own
+its own session, not the whole file (see `_AUTHORIZED_QUALNAMES` below).
+An unauthorized use added anywhere ELSE in these same two modules —
+including a different function — is still detected:
+
+- `app/api/health.py`, function `get_readiness_session_factory`: the
+  readiness probe (`GET /ready`) never uses the `get_db`
+  yield-dependency at all — it opens a read-only, no-commit session
+  directly via this factory for its `SELECT 1` check, so the
+  `scope="function"` rule (which governs transaction completion
+  ordering for `get_db`) does not apply to it in the first place.
+- `app/api/dependencies.py`, method `LastUsedDebouncer.touch`: the API
+  key `last_used_at` debounce touch is an orchestration boundary per
   `docs/conventions.md` (Transaction and Locking, Caller-Owned Service
   Transactions: "a component that explicitly owns its sessions ...
   keeps the transaction contract defined by its owning specification").
@@ -37,64 +42,153 @@ for a documented, specification-mandated reason:
   5) requires this best-effort operational write to commit or roll back
   in its own dedicated transaction, independently of the request's main
   `DatabaseSession` transaction (which may still be open and must not be
-  affected by this write's outcome).
+  affected by this write's outcome). Its companion factory function
+  `get_last_used_session_factory` is authorized for the same reason as
+  `get_readiness_session_factory` above.
+
+The module-level `import` of `async_session_factory` in each of these
+two files (needed for the authorized function to reference it at all)
+is allowed only in the two files that contain an authorized function —
+tracked separately from function-scoped usage, since an `import`
+statement is inherently outside any function body.
 """
 
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 APP_API_ROOT = Path(__file__).resolve().parents[2] / "app" / "api"
 
-# `app/api/health.py` is the one exception: the readiness probe never
-# uses the `get_db` yield-dependency — it opens its own read-only,
-# no-commit session directly via `get_readiness_session_factory()`, so
-# the `scope="function"` transaction-completion rule does not apply to
-# it. `app/api/dependencies.py` is the second exception: its debounced
-# API key `last_used_at` touch owns a dedicated transaction per
-# `authentication.md` (see module docstring above for the full
-# rationale). Matched by path relative to `APP_API_ROOT` (not by
-# basename alone), so a differently-located future module that happens
-# to share either name is not accidentally exempted.
-_EXEMPT_RELATIVE_PATHS = {Path("health.py"), Path("dependencies.py")}
+# Relative path (from APP_API_ROOT) -> set of qualified function/method
+# names authorized to use a forbidden pattern. A qualified name is
+# either a bare function name (`"get_readiness_session_factory"`) or
+# `"ClassName.method_name"` for a method. Usage anywhere else in these
+# files — a different function, a different class, or module level —
+# is still a violation.
+_AUTHORIZED_QUALNAMES: dict[Path, set[str]] = {
+    Path("health.py"): {"get_readiness_session_factory"},
+    Path("dependencies.py"): {
+        "get_last_used_session_factory",
+        "LastUsedDebouncer.touch",
+    },
+}
 
 _FORBIDDEN_NAMES = {"async_session_factory"}
 _FORBIDDEN_METHODS = {"commit", "rollback"}
 
 
-def find_forbidden_session_usage(source: str) -> list[str]:
+@dataclass(frozen=True)
+class Violation:
+    """One forbidden-pattern occurrence found by `find_forbidden_session_usage()`.
+
+    `qualname` is the enclosing function or method's qualified name
+    (`"ClassName.method_name"` for a method, a bare name for a
+    module-level function), or `None` when the occurrence is at module
+    level (outside any function) — which is exactly where an `import`
+    statement always lives, since `import` cannot appear inside an
+    expression.
+    """
+
+    line: int
+    message: str
+    qualname: str | None
+    is_import: bool
+
+    def __str__(self) -> str:
+        return f"line {self.line}: {self.message}"
+
+
+def _assign_parents(tree: ast.AST) -> None:
+    """Annotate every node in `tree` with a `.parent` attribute pointing
+    to its direct parent node, enabling upward traversal from a
+    violation node to its enclosing function. `ast` does not track
+    parent links natively; this is the standard single-pass way to add
+    them without a third-party dependency.
+    """
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node  # type: ignore[attr-defined]
+
+
+def _enclosing_qualname(node: ast.AST) -> str | None:
+    """The qualified name of the nearest enclosing function or method
+    containing `node`, or `None` if `node` sits at module level.
+
+    Requires `_assign_parents()` to have been run on the containing
+    tree first. A function directly nested in a `class` body yields
+    `"ClassName.method_name"`; any other function (module-level, or
+    nested in another function) yields its bare name.
+    """
+    current: ast.AST | None = getattr(node, "parent", None)
+    while current is not None:
+        if isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef):
+            enclosing = getattr(current, "parent", None)
+            if isinstance(enclosing, ast.ClassDef):
+                return f"{enclosing.name}.{current.name}"
+            return current.name
+        current = getattr(current, "parent", None)
+    return None
+
+
+def find_forbidden_session_usage(source: str) -> list[Violation]:
     """Every direct session-acquisition or transaction-completion call
     in `source` that bypasses the `DatabaseSession` dependency.
 
     Pure function: parses `source` as Python and inspects the AST only.
     Performs no I/O and imports no application code, so it is directly
-    unit-testable with synthetic source strings.
+    unit-testable with synthetic source strings. Each returned
+    `Violation` carries the enclosing function/method qualified name
+    (or `None` for module-level occurrences, e.g. `import` statements)
+    so callers can apply function-scoped exemptions.
     """
     tree = ast.parse(source)
-    violations: list[str] = []
+    _assign_parents(tree)
+    violations: list[Violation] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id in _FORBIDDEN_NAMES:
             violations.append(
-                f"line {node.lineno}: references '{node.id}' directly "
-                "(use the 'DatabaseSession' dependency instead of "
-                "opening an independent session)"
+                Violation(
+                    line=node.lineno,
+                    message=(
+                        f"references '{node.id}' directly (use the "
+                        "'DatabaseSession' dependency instead of opening "
+                        "an independent session)"
+                    ),
+                    qualname=_enclosing_qualname(node),
+                    is_import=False,
+                )
             )
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name in _FORBIDDEN_NAMES:
                     violations.append(
-                        f"line {node.lineno}: imports '{alias.name}' "
-                        "directly (use the 'DatabaseSession' dependency "
-                        "instead of opening an independent session)"
+                        Violation(
+                            line=node.lineno,
+                            message=(
+                                f"imports '{alias.name}' directly (use "
+                                "the 'DatabaseSession' dependency instead "
+                                "of opening an independent session)"
+                            ),
+                            qualname=_enclosing_qualname(node),
+                            is_import=True,
+                        )
                     )
         elif isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_NAMES:
             violations.append(
-                f"line {node.lineno}: references '{node.attr}' directly "
-                "via attribute access (use the 'DatabaseSession' "
-                "dependency instead of opening an independent session)"
+                Violation(
+                    line=node.lineno,
+                    message=(
+                        f"references '{node.attr}' directly via attribute "
+                        "access (use the 'DatabaseSession' dependency "
+                        "instead of opening an independent session)"
+                    ),
+                    qualname=_enclosing_qualname(node),
+                    is_import=False,
+                )
             )
         elif (
             isinstance(node, ast.Call)
@@ -102,11 +196,42 @@ def find_forbidden_session_usage(source: str) -> list[str]:
             and (node.func.attr in _FORBIDDEN_METHODS)
         ):
             violations.append(
-                f"line {node.lineno}: calls '.{node.func.attr}()' "
-                "directly (transaction completion is owned by the "
-                "'get_db' API dependency, not by route handlers)"
+                Violation(
+                    line=node.lineno,
+                    message=(
+                        f"calls '.{node.func.attr}()' directly (transaction "
+                        "completion is owned by the 'get_db' API dependency, "
+                        "not by route handlers)"
+                    ),
+                    qualname=_enclosing_qualname(node),
+                    is_import=False,
+                )
             )
     return violations
+
+
+def _unauthorized_violations(
+    violations: list[Violation], relative_path: Path
+) -> list[Violation]:
+    """Filter `violations` down to those NOT covered by an authorization
+    for `relative_path`.
+
+    A module-level `import` of a forbidden name is allowed in any file
+    that has at least one authorized function (the import is a
+    necessary precondition for that function to work) — but every
+    other occurrence (a `Name`/`Attribute` reference or a `.commit()`/
+    `.rollback()` call) is allowed only when it occurs inside one of
+    that file's specifically authorized functions/methods.
+    """
+    authorized_qualnames = _AUTHORIZED_QUALNAMES.get(relative_path, set())
+    unauthorized: list[Violation] = []
+    for violation in violations:
+        if violation.is_import and authorized_qualnames:
+            continue
+        if violation.qualname in authorized_qualnames:
+            continue
+        unauthorized.append(violation)
+    return unauthorized
 
 
 @pytest.mark.unit
@@ -141,20 +266,119 @@ class TestFindForbiddenSessionUsageDetector:
         source = "session = app.database.async_session_factory()"
         assert len(find_forbidden_session_usage(source)) == 1
 
+    def test_import_violation_has_no_enclosing_qualname(self) -> None:
+        source = "from app.database import async_session_factory"
+        violations = find_forbidden_session_usage(source)
+        assert violations[0].qualname is None
+        assert violations[0].is_import is True
+
+    def test_name_reference_inside_function_reports_function_qualname(self) -> None:
+        source = "def get_session_factory():\n    return async_session_factory"
+        violations = find_forbidden_session_usage(source)
+        assert violations[0].qualname == "get_session_factory"
+        assert violations[0].is_import is False
+
+    def test_call_inside_method_reports_class_dot_method_qualname(self) -> None:
+        source = (
+            "class Debouncer:\n"
+            "    async def touch(self, db):\n"
+            "        await db.commit()\n"
+        )
+        violations = find_forbidden_session_usage(source)
+        assert violations[0].qualname == "Debouncer.touch"
+
+    def test_name_reference_at_module_level_has_no_qualname(self) -> None:
+        source = "factory = async_session_factory"
+        violations = find_forbidden_session_usage(source)
+        assert violations[0].qualname is None
+
+
+@pytest.mark.unit
+class TestUnauthorizedViolationsFilter:
+    """Unit tests for the per-file, per-function authorization filter —
+    proving that an authorized function is exempt while everything
+    else in the SAME file is still caught, including a different
+    function newly added to it."""
+
+    def test_authorized_function_usage_is_filtered_out(self) -> None:
+        source = (
+            "def get_readiness_session_factory():\n    return async_session_factory\n"
+        )
+        violations = find_forbidden_session_usage(source)
+        remaining = _unauthorized_violations(violations, Path("health.py"))
+        assert remaining == []
+
+    def test_unauthorized_function_in_the_same_exempt_file_is_still_caught(
+        self,
+    ) -> None:
+        # A second, non-authorized function added to health.py bypassing
+        # the DatabaseSession dependency must still be flagged — the
+        # exemption is scoped to the one authorized function, not the
+        # whole file.
+        source = (
+            "def get_readiness_session_factory():\n"
+            "    return async_session_factory\n"
+            "\n"
+            "def some_new_endpoint_helper():\n"
+            "    session = async_session_factory()\n"
+            "    return session\n"
+        )
+        violations = find_forbidden_session_usage(source)
+        remaining = _unauthorized_violations(violations, Path("health.py"))
+        assert len(remaining) == 1
+        assert remaining[0].qualname == "some_new_endpoint_helper"
+
+    def test_authorized_method_usage_is_filtered_out(self) -> None:
+        source = (
+            "class LastUsedDebouncer:\n"
+            "    async def touch(self, db):\n"
+            "        await db.commit()\n"
+        )
+        violations = find_forbidden_session_usage(source)
+        remaining = _unauthorized_violations(violations, Path("dependencies.py"))
+        assert remaining == []
+
+    def test_unauthorized_method_in_the_same_exempt_file_is_still_caught(
+        self,
+    ) -> None:
+        source = (
+            "class LastUsedDebouncer:\n"
+            "    async def touch(self, db):\n"
+            "        await db.commit()\n"
+            "\n"
+            "    async def other(self, db):\n"
+            "        await db.rollback()\n"
+        )
+        violations = find_forbidden_session_usage(source)
+        remaining = _unauthorized_violations(violations, Path("dependencies.py"))
+        assert len(remaining) == 1
+        assert remaining[0].qualname == "LastUsedDebouncer.other"
+
+    def test_module_level_import_allowed_only_in_files_with_an_authorization(
+        self,
+    ) -> None:
+        source = "from app.database import async_session_factory"
+        violations = find_forbidden_session_usage(source)
+
+        assert _unauthorized_violations(violations, Path("health.py")) == []
+        assert (
+            len(_unauthorized_violations(violations, Path("some_other_module.py"))) == 1
+        )
+
 
 @pytest.mark.unit
 class TestNoDirectSessionUsageInApiLayer:
-    """Scans every real module under `app/api/` (except the two
-    documented exemptions in `_EXEMPT_RELATIVE_PATHS`) for the
-    forbidden patterns.
+    """Scans every real module under `app/api/` for the forbidden
+    patterns, applying the per-file, per-function authorizations in
+    `_AUTHORIZED_QUALNAMES`.
     """
 
     def test_no_api_module_bypasses_the_database_session_dependency(self) -> None:
         violations: list[str] = []
         for path in sorted(APP_API_ROOT.rglob("*.py")):
-            if path.relative_to(APP_API_ROOT) in _EXEMPT_RELATIVE_PATHS:
-                continue
+            relative_path = path.relative_to(APP_API_ROOT)
             source = path.read_text(encoding="utf-8")
-            for violation in find_forbidden_session_usage(source):
+            found = find_forbidden_session_usage(source)
+            for violation in _unauthorized_violations(found, relative_path):
                 violations.append(f"{path}: {violation}")
         assert not violations, "\n".join(violations)

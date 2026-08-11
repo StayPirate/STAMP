@@ -27,6 +27,10 @@ jobs:
       - name: Verify Dockerfile and pyproject.toml Python version match .python-version
         run: |
           EXPECTED=$(cat .python-version)
+          if ! [[ "$EXPECTED" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::.python-version=$EXPECTED is not a valid minor-only version (expected format X.Y, e.g. 3.13 — see docs/conventions.md, Runtime Version)"
+            exit 1
+          fi
           ACTUAL_DOCKERFILE=$(grep -oP '(?<=ARG PYTHON_VERSION=)\S+' Dockerfile)
           if [ "$EXPECTED" != "$ACTUAL_DOCKERFILE" ]; then
             echo "::error::Dockerfile ARG PYTHON_VERSION=$ACTUAL_DOCKERFILE does not match .python-version=$EXPECTED"

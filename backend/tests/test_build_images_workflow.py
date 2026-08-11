@@ -1,19 +1,26 @@
-"""Regression tests for the image push step in the build-images workflow.
+"""Regression tests for the build-images workflow's build/smoke/publish
+pipeline (`.github/workflows/build-images.yml`).
 
-Prior to this fix, a failed intermediate `docker push` inside the tag
-loop was masked: the step's exit code was that of the *last* loop
-iteration, so a transient failure on an earlier tag went undetected as
-long as the final iteration succeeded. See issue #69.
+Covers two related invariants:
 
-This test extracts the exact shell script from the "Push tested image
-(same digest)" step and executes it against a stub `docker` binary that
-can be made to fail on a specific tag, verifying the step now aborts
-immediately (fail-fast) instead of continuing past the failure.
+1. **Fail-fast push loop**: prior to a fix, a failed intermediate
+   `docker push` inside the tag loop was masked — the step's exit code
+   was that of the *last* loop iteration, so a transient failure on an
+   earlier tag went undetected as long as the final iteration
+   succeeded. See issue #69.
+2. **Single build, tested artifact published unchanged**: the image is
+   built exactly once (`push: false`, `load: true`), the blocking smoke
+   gate runs against that exact local artifact, and only if it passes
+   is the SAME local image re-tagged and pushed — never rebuilt. See
+   issue #185 (this hardens the structural proof that the published
+   digest is the tested one, rather than relying only on human review
+   of the workflow comments).
 """
 
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import textwrap
@@ -27,10 +34,14 @@ WORKFLOW_PATH = (
 
 STEP_NAME_MARKER = "name: Push tested image (same digest)"
 
+# Logs both `docker tag <source> <target>` and `docker push <target>`
+# invocations (space-separated, one call per line) so tests can assert
+# on the tag *source* image, not just which tags were pushed.
 DOCKER_STUB = """\
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "tag" ]]; then
+    echo "tag ${2:-} ${3:-}" >> "${DOCKER_STUB_LOG}"
     exit 0
 fi
 if [[ "${1:-}" == "push" ]]; then
@@ -100,6 +111,18 @@ def _run_push_loop(
     return result, log_file
 
 
+def _pushed_tags(log_file: Path) -> list[str]:
+    entries = log_file.read_text(encoding="utf-8").splitlines()
+    return [
+        entry.removeprefix("push ") for entry in entries if entry.startswith("push ")
+    ]
+
+
+def _tag_invocations(log_file: Path) -> list[str]:
+    entries = log_file.read_text(encoding="utf-8").splitlines()
+    return [entry.removeprefix("tag ") for entry in entries if entry.startswith("tag ")]
+
+
 @pytest.mark.unit
 def test_push_loop_aborts_on_first_failing_push(tmp_path: Path) -> None:
     tags = "ghcr.io/example/sentinel:fail\nghcr.io/example/sentinel:should-not-push"
@@ -107,8 +130,7 @@ def test_push_loop_aborts_on_first_failing_push(tmp_path: Path) -> None:
     result, log_file = _run_push_loop(tmp_path, image_tags=tags)
 
     assert result.returncode != 0
-    pushed = log_file.read_text(encoding="utf-8").splitlines()
-    assert pushed == ["push ghcr.io/example/sentinel:fail"]
+    assert _pushed_tags(log_file) == ["ghcr.io/example/sentinel:fail"]
 
 
 @pytest.mark.unit
@@ -122,11 +144,10 @@ def test_push_loop_pushes_all_tags_when_all_succeed(tmp_path: Path) -> None:
     result, log_file = _run_push_loop(tmp_path, image_tags=tags)
 
     assert result.returncode == 0
-    pushed = log_file.read_text(encoding="utf-8").splitlines()
-    assert pushed == [
-        "push ghcr.io/example/sentinel:master",
-        "push ghcr.io/example/sentinel:1.2.3",
-        "push ghcr.io/example/sentinel:1.2",
+    assert _pushed_tags(log_file) == [
+        "ghcr.io/example/sentinel:master",
+        "ghcr.io/example/sentinel:1.2.3",
+        "ghcr.io/example/sentinel:1.2",
     ]
 
 
@@ -137,8 +158,86 @@ def test_push_loop_skips_blank_tag_lines(tmp_path: Path) -> None:
     result, log_file = _run_push_loop(tmp_path, image_tags=tags)
 
     assert result.returncode == 0
-    pushed = log_file.read_text(encoding="utf-8").splitlines()
-    assert pushed == [
-        "push ghcr.io/example/sentinel:master",
-        "push ghcr.io/example/sentinel:1.2.3",
+    assert _pushed_tags(log_file) == [
+        "ghcr.io/example/sentinel:master",
+        "ghcr.io/example/sentinel:1.2.3",
     ]
+
+
+@pytest.mark.unit
+def test_every_pushed_tag_is_sourced_from_the_smoke_image(tmp_path: Path) -> None:
+    # Each `docker tag` call must re-tag the exact local artifact that
+    # was smoke-tested (env.SMOKE_IMAGE) — never a different or rebuilt
+    # image. This is what makes the published digest mechanically
+    # identical to the tested one.
+    tags = "ghcr.io/example/sentinel:master\nghcr.io/example/sentinel:1.2.3"
+
+    result, log_file = _run_push_loop(tmp_path, image_tags=tags)
+
+    assert result.returncode == 0
+    assert _tag_invocations(log_file) == [
+        "sentinel-backend:smoke ghcr.io/example/sentinel:master",
+        "sentinel-backend:smoke ghcr.io/example/sentinel:1.2.3",
+    ]
+
+
+_STEP_MARKER = re.compile(r"^ {6}- ")
+
+
+def _step_start_indices(lines: list[str]) -> list[int]:
+    """Indices of every top-level step marker line (`      - `) under
+    the job's `steps:` list. This workflow has a single job with a flat
+    step list at a fixed 6-space indent — matching the minimal,
+    dependency-free scanning approach already used by
+    `test_workflow_timeouts.py` rather than introducing a PyYAML parse.
+    """
+    return [index for index, line in enumerate(lines) if _STEP_MARKER.match(line)]
+
+
+def _step_block(lines: list[str], start_index: int, boundaries: list[int]) -> list[str]:
+    later_boundaries = [b for b in boundaries if b > start_index]
+    end_index = later_boundaries[0] if later_boundaries else len(lines)
+    return lines[start_index:end_index]
+
+
+@pytest.mark.unit
+def test_image_is_built_exactly_once_without_pushing() -> None:
+    lines = WORKFLOW_PATH.read_text(encoding="utf-8").splitlines()
+    boundaries = _step_start_indices(lines)
+
+    build_step_starts = [
+        start
+        for start in boundaries
+        if any(
+            "uses: docker/build-push-action" in line
+            for line in _step_block(lines, start, boundaries)
+        )
+    ]
+
+    assert len(build_step_starts) == 1, (
+        "Expected exactly one docker/build-push-action step; a second "
+        "build invocation would produce a different digest than the one "
+        "smoke-tested, breaking the 'published == tested' guarantee"
+    )
+
+    block_text = "\n".join(_step_block(lines, build_step_starts[0], boundaries))
+    assert "push: false" in block_text
+    assert "load: true" in block_text
+
+
+@pytest.mark.unit
+def test_smoke_test_step_precedes_push_step() -> None:
+    lines = WORKFLOW_PATH.read_text(encoding="utf-8").splitlines()
+    smoke_index = next(
+        index
+        for index, line in enumerate(lines)
+        if "name: Image smoke test (blocking gate)" in line
+    )
+    push_index = next(
+        index for index, line in enumerate(lines) if STEP_NAME_MARKER in line
+    )
+
+    assert smoke_index < push_index, (
+        "The blocking smoke gate must run before the publish step so a "
+        "failing smoke test prevents any push"
+    )

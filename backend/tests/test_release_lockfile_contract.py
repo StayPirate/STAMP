@@ -106,3 +106,28 @@ def test_uv_lock_version_matches_pyproject_toml() -> None:
         "the release-please extra-files updater actually ran on the "
         "latest release PR"
     )
+
+
+@pytest.mark.unit
+def test_release_manifest_version_matches_pyproject_toml() -> None:
+    """`.release-please-manifest.json["backend"]` is release-please's
+    record of the last version it released for the `backend` package
+    (`docs/conventions.md`, Versioning -> Version Source of Truth). It
+    must match `backend/pyproject.toml`'s `version` field — a drift
+    here means either the manifest was hand-edited without a matching
+    release, or a release PR merged without updating the manifest,
+    either of which would cause release-please to compute the next
+    version bump from a stale baseline.
+    """
+    pyproject = tomllib.loads((REPO_ROOT / "backend" / "pyproject.toml").read_text())
+    manifest = json.loads((REPO_ROOT / ".release-please-manifest.json").read_text())
+
+    pyproject_version = pyproject["project"]["version"]
+    manifest_version = manifest["backend"]
+
+    assert manifest_version == pyproject_version, (
+        f".release-please-manifest.json declares backend={manifest_version!r} "
+        f"but backend/pyproject.toml declares version={pyproject_version!r}; "
+        "these must match so release-please computes the next version "
+        "bump from the correct baseline"
+    )

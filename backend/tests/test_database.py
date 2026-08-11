@@ -286,6 +286,25 @@ def _build_scope_comparison_app(order: list[str]) -> FastAPI:
     return app
 
 
+def _build_function_scope_app_with_callback(order: list[str]) -> FastAPI:
+    """A minimal `scope="function"` app whose single endpoint registers
+    a post-commit callback — used to prove the callback never runs when
+    the commit itself fails (as opposed to `TestPostCommitCallbacks
+    .test_callback_not_invoked_when_handler_raises`, which covers the
+    handler raising *before* commit is even attempted)."""
+    app = FastAPI()
+
+    @app.get("/function-scope-with-callback")
+    async def endpoint(db: _DbFunctionScoped) -> dict[str, bool]:
+        async def _callback() -> None:
+            order.append("callback")
+
+        register_post_commit_callback(db, _callback)
+        return {"ok": True}
+
+    return app
+
+
 async def _drive_raw_asgi(app: FastAPI, path: str, order: list[str]) -> None:
     """Send one GET request to `app` via the raw ASGI protocol.
 
@@ -430,3 +449,39 @@ class TestFunctionScopeOrdering:
         assert response_start == "asgi:http.response.start:200"
         assert order.index(response_start) < order.index("commit_attempted")
         assert "rollback" in order
+
+
+@pytest.mark.unit
+class TestCommitFailureWithPostCommitCallback:
+    """Proves the interaction between a failed commit and a registered
+    post-commit callback: the callback must never execute when the
+    commit itself fails (distinct from
+    `TestPostCommitCallbacks.test_callback_not_invoked_when_handler_raises`,
+    which covers the handler raising *before* commit is even
+    attempted), and the rollback must complete before the error
+    response is transmitted — the real ASGI ordering `_drive_raw_asgi`
+    observes, not merely completion order within the test process.
+    """
+
+    async def test_callback_never_runs_after_a_failed_commit(
+        self, order: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = _FailingCommitFakeSession(order)
+        monkeypatch.setattr(
+            database, "async_session_factory", lambda: _FakeSessionCM(session)
+        )
+        app = _build_function_scope_app_with_callback(order)
+
+        await _drive_raw_asgi(app, "/function-scope-with-callback", order)
+
+        assert "callback" not in order
+        assert order[0] == "commit_attempted"
+        assert "rollback" in order
+
+        response_start = next(
+            e for e in order if e.startswith("asgi:http.response.start")
+        )
+        assert response_start == "asgi:http.response.start:500"
+        # Rollback (and the decision to skip the callback) completes
+        # strictly before the error response is transmitted.
+        assert order.index("rollback") < order.index(response_start)

@@ -7,7 +7,7 @@ import logging
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import Settings, _split_comma
 
 
 @pytest.mark.unit
@@ -500,3 +500,74 @@ class TestSecretFieldRedaction:
         s = Settings(_env_file=None)
         dumped = s.model_dump()
         assert dumped["database_url"] == db_url
+
+
+@pytest.mark.unit
+class TestCorsOriginsParsing:
+    """CORS_ORIGINS comma-separated parsing (`docs/conventions.md`,
+    Configuration Management -> List-type environment variables).
+
+    Exercises both the pure `_split_comma()` helper directly (fast,
+    exhaustive edge cases) and the full `Settings.cors_origins` field
+    end-to-end via the environment variable (the real application
+    contract)."""
+
+    def test_split_comma_single_value(self) -> None:
+        assert _split_comma("http://localhost:5173") == ["http://localhost:5173"]
+
+    def test_split_comma_multiple_values(self) -> None:
+        assert _split_comma("http://a.com,http://b.com") == [
+            "http://a.com",
+            "http://b.com",
+        ]
+
+    def test_split_comma_strips_whitespace_around_values(self) -> None:
+        assert _split_comma(" http://a.com , http://b.com ") == [
+            "http://a.com",
+            "http://b.com",
+        ]
+
+    def test_split_comma_drops_empty_elements(self) -> None:
+        assert _split_comma("http://a.com,,http://b.com") == [
+            "http://a.com",
+            "http://b.com",
+        ]
+
+    def test_split_comma_empty_string_yields_empty_list(self) -> None:
+        assert _split_comma("") == []
+
+    def test_split_comma_passes_through_already_typed_list(self) -> None:
+        already_typed = ["http://a.com", "http://b.com"]
+        assert _split_comma(already_typed) is already_typed
+
+    def test_settings_cors_origins_env_var_single_value(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173")
+        s = Settings(_env_file=None)
+        assert s.cors_origins == ["http://localhost:5173"]
+
+    def test_settings_cors_origins_env_var_multiple_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("CORS_ORIGINS", "http://a.com,http://b.com")
+        s = Settings(_env_file=None)
+        assert s.cors_origins == ["http://a.com", "http://b.com"]
+
+    def test_settings_cors_origins_env_var_empty_yields_empty_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("CORS_ORIGINS", "")
+        s = Settings(_env_file=None)
+        assert s.cors_origins == []
+
+    def test_settings_cors_origins_default_when_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("CORS_ORIGINS", raising=False)
+        s = Settings(_env_file=None)
+        assert s.cors_origins == ["http://localhost:5173"]
