@@ -270,6 +270,15 @@ class TestCreatedApiKeyData:
     def test_has_no_key_hash_field(self) -> None:
         assert "key_hash" not in CreatedApiKeyData.model_fields
 
+    def test_key_is_hidden_from_repr(self) -> None:
+        """`key: str = Field(repr=False)` must keep the plaintext key
+        out of `repr()` — the only place the plaintext key is ever
+        exposed is the serialized response body, never a debug/log
+        representation of the object."""
+        secret_key = "stl_ak_" + "s3cr3t-value"
+        data = CreatedApiKeyData(**_make_api_key_data_kwargs(), key=secret_key)
+        assert secret_key not in repr(data)
+
 
 @pytest.mark.unit
 class TestAdminApiKeyData:
@@ -299,6 +308,16 @@ class TestResponseEnvelopes:
             )
         )
         assert response.data.key == "stl_ak_" + "x" * 32
+
+    def test_created_api_key_response_hides_key_from_nested_repr(self) -> None:
+        """`repr=False` on `CreatedApiKeyData.key` must also protect the
+        plaintext key when the object is embedded inside the
+        `{"data": ...}` response envelope, not just in isolation."""
+        secret_key = "stl_ak_" + "s3cr3t-value"
+        response = CreatedApiKeyResponse(
+            data=CreatedApiKeyData(**_make_api_key_data_kwargs(), key=secret_key)
+        )
+        assert secret_key not in repr(response)
 
     def test_admin_api_key_response_wraps_the_owner_bearing_object(self) -> None:
         owner = UserReference(**_make_user_reference_kwargs())

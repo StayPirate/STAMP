@@ -37,7 +37,13 @@ class TestApiKeyCreation:
         assert key.revoked_at is None
         assert key.revoked_by is None
 
-    async def test_no_updated_at_column(self) -> None:
+
+@pytest.mark.unit
+class TestApiKeyMetadata:
+    """Structural assertions over SQLAlchemy metadata, independent of
+    any database round-trip."""
+
+    def test_no_updated_at_column(self) -> None:
         """ApiKey has no `updated_at` column (docs/data-model.md, ApiKey)."""
         assert not hasattr(ApiKey, "updated_at")
 

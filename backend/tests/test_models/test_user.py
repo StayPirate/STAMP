@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -178,6 +178,28 @@ class TestUserNotNullConstraints:
         db_session.add(User(username="imartin", password_hash=_FICTIONAL_PASSWORD_HASH))
         with pytest.raises(IntegrityError):
             await db_session.flush()
+
+
+@pytest.mark.integration
+class TestUserExplicitNullRejection:
+    """`active` is `nullable=False` with a Python/server default of
+    `True`. Omitting the column on INSERT would never exercise the
+    database's own NOT NULL enforcement — the ORM/server default would
+    silently fill it in first. An explicit raw-SQL `UPDATE ... SET
+    active = NULL` bypasses both defaults and proves the column is
+    genuinely rejected as NULL at the database level
+    (docs/data-model.md, User).
+    """
+
+    async def test_explicit_null_active_rejected(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        user = await user_factory()
+        with pytest.raises(IntegrityError):
+            await db_session.execute(
+                text('UPDATE "user" SET active = NULL WHERE id = :id'),
+                {"id": user.id},
+            )
 
 
 @pytest.mark.integration

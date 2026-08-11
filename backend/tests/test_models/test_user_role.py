@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -128,6 +129,37 @@ class TestUserRoleUniqueConstraint:
         # No exception raised means both origin rows coexist.
         await db_session.flush()
 
+    async def test_same_role_same_group_different_users_allowed(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """The unique constraint is scoped by all three of
+        `(user_id, role, group_name)` — it must not accidentally
+        reduce to just `(role, group_name)`. Two different users must
+        be able to hold the same role from the same origin
+        simultaneously."""
+        first_user = await user_factory()
+        second_user = await user_factory()
+        db_session.add(UserRole(user_id=first_user.id, role=Role.ADMIN.value))
+        await db_session.flush()
+
+        db_session.add(UserRole(user_id=second_user.id, role=Role.ADMIN.value))
+        # No exception raised means both users' rows coexist.
+        await db_session.flush()
+
+    async def test_different_role_same_user_and_group_allowed(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """Varying only `role` while `user_id` and `group_name` stay
+        identical must not collide — the constraint must not
+        accidentally reduce to just `(user_id, group_name)`."""
+        user = await user_factory()
+        db_session.add(UserRole(user_id=user.id, role=Role.ADMIN.value))
+        await db_session.flush()
+
+        db_session.add(UserRole(user_id=user.id, role=Role.VULNERABILITY_ANALYST.value))
+        # No exception raised means both role rows coexist.
+        await db_session.flush()
+
 
 @pytest.mark.integration
 class TestUserRoleForeignKeys:
@@ -163,6 +195,32 @@ class TestUserRoleNotNullConstraints:
         db_session.add(UserRole(role=Role.ADMIN.value))
         with pytest.raises(IntegrityError):
             await db_session.flush()
+
+
+@pytest.mark.integration
+class TestUserRoleExplicitNullRejection:
+    """`group_name` is `nullable=False` with a Python/server default of
+    `"_manual"`. Omitting the column on INSERT would never exercise the
+    database's own NOT NULL enforcement — the ORM/server default would
+    silently fill it in first. An explicit raw-SQL `UPDATE ... SET
+    group_name = NULL` bypasses both defaults and proves the column is
+    genuinely rejected as NULL at the database level
+    (docs/data-model.md, UserRole).
+    """
+
+    async def test_explicit_null_group_name_rejected(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        user = await user_factory()
+        role = UserRole(user_id=user.id, role=Role.ADMIN.value)
+        db_session.add(role)
+        await db_session.flush()
+
+        with pytest.raises(IntegrityError):
+            await db_session.execute(
+                text("UPDATE user_role SET group_name = NULL WHERE id = :id"),
+                {"id": role.id},
+            )
 
 
 @pytest.mark.integration
