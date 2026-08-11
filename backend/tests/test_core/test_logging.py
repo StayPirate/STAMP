@@ -108,7 +108,15 @@ class TestResetLoggingStateFixture:
     proving the two behaviors this fixture is responsible for beyond
     root logger handlers/level: restoring third-party logger handlers
     and the global structlog configuration, both of which
-    `configure_logging()` mutates on every call."""
+    `configure_logging()` mutates on every call.
+
+    NOTE: `_fixture_function` is pytest's internal attribute (verified
+    against the pinned `pytest==9.1.1`) exposing the raw generator
+    function behind `@pytest.fixture` — calling the decorated object
+    itself is no longer supported directly. A future pytest major
+    upgrade may relocate or remove this attribute, which would surface
+    as an `AttributeError` here rather than silently passing.
+    """
 
     def test_restores_third_party_logger_handlers(self) -> None:
         third_party_name = _THIRD_PARTY_LOGGERS[0]

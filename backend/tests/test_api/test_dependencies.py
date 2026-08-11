@@ -854,6 +854,12 @@ class TestGetCurrentUserApiKey:
         ]
         assert len(records) == 1
         event_dict = records[0].msg
+        # This exact field set reflects `_build_test_app()` (no
+        # `CorrelationIdMiddleware`, hence no `request_id`), not a claim
+        # that production emits nothing beyond these fields — the
+        # negative assertions above (absence of token/digest/prefix)
+        # are what the secrets/PII contract actually requires and hold
+        # regardless of which non-sensitive fields the pipeline adds.
         assert set(event_dict) == {
             "event",
             "source_ip",
