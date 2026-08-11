@@ -19,7 +19,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import redis.asyncio as redis_asyncio
 from email_validator import validate_email
+from redis.exceptions import RedisError
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,10 +36,12 @@ from app.core.passwords import (
 )
 from app.core.permissions import role_to_wire
 from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.session import Session
 from app.models.user import User
 from app.models.user_role import UserRole
-from app.services import user_service
+from app.services import local_auth_service, user_service
 from app.services.identity_audit_log import IdentityAuditLog
+from app.services.session_service import purge_session_cache
 from app.services.user_service import (
     EmailFormatError,
     ExternalUserFieldReadOnlyError,
@@ -49,7 +53,9 @@ from app.services.user_service import (
     get_user_by_id,
     get_user_roles,
     reactivate_user,
+    reset_password,
     resolve_user_identifier,
+    unlock_user,
     update_user,
 )
 from tests.support.database import rollback_test_scope
@@ -59,12 +65,52 @@ _FICTIONAL_PASSWORD_HASH = "$2b$12$" + "a" * 53
 _VALID_PASSWORD = "a-valid-password-16"
 
 
+class _FailingRedisClient:
+    """A Redis client double whose relevant methods always raise
+    `RedisError` — used to simulate a deterministic Redis outage for
+    `clear_login_attempts()` without touching the shared Redis test
+    infrastructure (mirrors the double in `test_local_auth_service.py`,
+    docs/features/platform/testing-strategy.md, Redis Strategy)."""
+
+    async def delete(self, key: str) -> None:
+        raise RedisError("simulated outage")
+
+    async def aclose(self) -> None:
+        return None
+
+
 def _service_log_text(caplog: pytest.LogCaptureFixture) -> str:
     """Join only the log records emitted by `app.services.user_service`."""
     return "\n".join(
         record.getMessage()
         for record in caplog.records
         if record.name == "app.services.user_service"
+    )
+
+
+def _hash(user: User) -> str:
+    """Narrow `User.password_hash` (`str | None`) to `str` for callers that
+    already know the row is a local user with a stored hash."""
+    assert user.password_hash is not None
+    return user.password_hash
+
+
+def _identity_related_log_text(caplog: pytest.LogCaptureFixture) -> str:
+    """Join log records emitted by every module composed into
+    `reset_password()`/`unlock_user()` — `user_service` itself plus the
+    delegated `session_service` (`sessions_invalidated`) and
+    `local_auth_service` (`login_lockout_clear_failed`) modules — so PII/
+    secret-safety assertions cover the whole composed log surface, not
+    just this module's own log records."""
+    relevant_loggers = {
+        "app.services.user_service",
+        "app.services.session_service",
+        "app.services.local_auth_service",
+    }
+    return "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name in relevant_loggers
     )
 
 
@@ -1710,6 +1756,764 @@ class TestReactivateUser:
             await _concurrency_teardown(
                 task_b, session_a, session_b, session_a, user_ids
             )
+
+
+# ---------------------------------------------------------------------------
+# reset_password()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestResetPassword:
+    async def test_missing_user_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await reset_password(
+                db_session, uuid.uuid4(), _VALID_PASSWORD, acting_user_id=None
+            )
+
+    async def test_external_user_raises_external_user_password_error(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory(external_id=uuid.uuid4())
+
+        with pytest.raises(ExternalUserPasswordError):
+            await reset_password(
+                db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+            )
+
+    @pytest.mark.parametrize(
+        "length", [MIN_PASSWORD_LENGTH - 1, MAX_PASSWORD_LENGTH + 1]
+    )
+    async def test_password_length_boundaries_rejected(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        length: int,
+    ) -> None:
+        target = await user_factory()
+
+        with pytest.raises(PasswordValidationError):
+            await reset_password(
+                db_session, target.id, "a" * length, acting_user_id=None
+            )
+
+    @pytest.mark.parametrize("length", [MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH])
+    async def test_password_length_boundaries_accepted(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        length: int,
+    ) -> None:
+        target = await user_factory()
+
+        result = await reset_password(
+            db_session, target.id, "a" * length, acting_user_id=None
+        )
+
+        assert verify_password("a" * length, _hash(result.user))
+
+    async def test_validation_and_hashing_occur_before_any_database_lookup(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """An invalid password raises `PasswordValidationError` even for a
+        `user_id` that does not exist — proving validation runs before the
+        database lookup, per `docs/features/identity/user-service.md`
+        (`reset_password()`, step 1-2 occur "before acquiring a row lock")."""
+        with pytest.raises(PasswordValidationError):
+            await reset_password(
+                db_session, uuid.uuid4(), "too-short", acting_user_id=None
+            )
+
+    async def test_hashing_delegates_to_hash_password_off_the_event_loop(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = await user_factory()
+        # `wraps=` preserves the real `asyncio.to_thread()` behavior (still
+        # runs `hash_password()` in a worker thread) while letting the spy
+        # record that the offloading call was actually made.
+        to_thread_spy = AsyncMock(wraps=asyncio.to_thread)
+        monkeypatch.setattr(asyncio, "to_thread", to_thread_spy)
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        to_thread_spy.assert_awaited_once()
+        assert verify_password(_VALID_PASSWORD, _hash(result.user))
+
+    async def test_reactivates_no_activation_side_effect_for_active_local_user(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory(active=True)
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert result.user.active is True
+
+    async def test_resets_password_for_inactive_local_user(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory(active=False)
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert result.user.active is False
+        assert verify_password(_VALID_PASSWORD, _hash(result.user))
+
+    async def test_stored_hash_verifies_new_password_and_rejects_old(
+        self,
+        db_session: AsyncSession,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        target, old_password = await local_user_factory()
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert verify_password(_VALID_PASSWORD, _hash(result.user))
+        assert not verify_password(old_password, _hash(result.user))
+
+    async def test_zero_active_sessions_returns_empty_list(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory()
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert result.invalidated_session_ids == []
+
+    async def test_one_active_session_is_invalidated_and_returned(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+    ) -> None:
+        target = await user_factory()
+        active_session = await session_factory(user_id=target.id, is_active=True)
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert result.invalidated_session_ids == [active_session.id]
+        await db_session.refresh(active_session)
+        assert active_session.is_active is False
+
+    async def test_multiple_sessions_only_active_ones_invalidated(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+    ) -> None:
+        target = await user_factory()
+        other_user = await user_factory()
+        active_1 = await session_factory(user_id=target.id, is_active=True)
+        active_2 = await session_factory(user_id=target.id, is_active=True)
+        already_inactive = await session_factory(user_id=target.id, is_active=False)
+        other_user_session = await session_factory(
+            user_id=other_user.id, is_active=True
+        )
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert set(result.invalidated_session_ids) == {active_1.id, active_2.id}
+        await db_session.refresh(already_inactive)
+        await db_session.refresh(other_user_session)
+        assert already_inactive.is_active is False
+        assert other_user_session.is_active is True
+
+    async def test_creates_exactly_one_password_reset_event_with_null_payload(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        admin = await user_factory()
+        target = await user_factory()
+
+        await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=admin.id
+        )
+
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == IdentityAuditEventType.PASSWORD_RESET.value
+        assert events[0].user_id == admin.id
+        assert events[0].target_user_id == target.id
+        assert events[0].old_value is None
+        assert events[0].new_value is None
+        assert events[0].detail is None
+
+    async def test_system_actor_is_preserved_as_null(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory()
+
+        await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        events = await _audit_events_for(db_session, target.id)
+        assert events[0].user_id is None
+
+    async def test_returns_normalized_username(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory(username="reset-target-user")
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert result.username == "reset-target-user"
+
+    async def test_flushes_without_commit(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = await user_factory()
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+
+        await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        commit_spy.assert_not_called()
+
+    async def test_rollback_restores_password_sessions_and_removes_audit_event(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+    ) -> None:
+        target = await user_factory()
+        target_id = target.id
+        original_hash = target.password_hash
+        active_session = await session_factory(user_id=target_id, is_active=True)
+        session_id = active_session.id
+
+        async with rollback_test_scope(db_session):
+            await reset_password(
+                db_session, target_id, _VALID_PASSWORD, acting_user_id=None
+            )
+
+        reloaded_user = await db_session.get(User, target_id)
+        assert reloaded_user is not None
+        assert reloaded_user.password_hash == original_hash
+        reloaded_session = await db_session.get(Session, session_id)
+        assert reloaded_session is not None
+        assert reloaded_session.is_active is True
+        assert await _audit_events_for(db_session, target_id) == []
+
+    async def test_audit_failure_rolls_back_password_and_session_changes(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = await user_factory()
+        target_id = target.id
+        original_hash = target.password_hash
+        active_session = await session_factory(user_id=target_id, is_active=True)
+        session_id = active_session.id
+
+        async def _boom(*args: object, **kwargs: object) -> None:
+            raise ValueError("simulated audit failure")
+
+        monkeypatch.setattr(IdentityAuditLog, "log_event", _boom)
+
+        with pytest.raises(ValueError, match="simulated audit failure"):
+            async with rollback_test_scope(db_session):
+                await reset_password(
+                    db_session, target_id, _VALID_PASSWORD, acting_user_id=None
+                )
+
+        reloaded_user = await db_session.get(User, target_id)
+        assert reloaded_user is not None
+        assert reloaded_user.password_hash == original_hash
+        reloaded_session = await db_session.get(Session, session_id)
+        assert reloaded_session is not None
+        assert reloaded_session.is_active is True
+
+    async def test_lockout_key_unaffected_by_service_call(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        """`reset_password()` performs only the database phase and issues
+        no Redis I/O at all — the lockout key is untouched regardless of
+        whether it existed before the call."""
+        target = await user_factory(username="reset-no-redis-io")
+        await redis_client.set("login_attempts:reset-no-redis-io", "3")
+
+        await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+
+        assert await redis_client.get("login_attempts:reset-no-redis-io") == "3"
+
+    async def test_post_commit_workflow_purges_cache_and_clears_lockout(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        """Simulates the caller-owned post-commit workflow: the service's
+        database phase commits, then the caller invokes
+        `purge_session_cache()` and `clear_login_attempts()` — mirroring
+        the sequence a future API/CLI/task workflow will perform."""
+        target = await user_factory(username="reset-post-commit-user")
+        active_session = await session_factory(user_id=target.id, is_active=True)
+        await redis_client.set(f"session_liveness:{active_session.id}", "1")
+        await redis_client.set("login_attempts:reset-post-commit-user", "2")
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+        await db_session.commit()
+
+        await purge_session_cache(result.invalidated_session_ids)
+        await local_auth_service.clear_login_attempts(result.username)
+
+        assert await redis_client.get(f"session_liveness:{active_session.id}") is None
+        assert await redis_client.get("login_attempts:reset-post-commit-user") is None
+
+    async def test_post_commit_redis_failure_leaves_committed_state_intact(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = await user_factory(username="reset-redis-failure-user")
+
+        result = await reset_password(
+            db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+        )
+        await db_session.commit()
+
+        monkeypatch.setattr(
+            local_auth_service, "_new_redis_client", lambda: _FailingRedisClient()
+        )
+
+        with caplog.at_level("WARNING"):
+            await local_auth_service.clear_login_attempts(result.username)
+
+        reloaded = await db_session.get(User, target.id)
+        assert reloaded is not None
+        assert verify_password(_VALID_PASSWORD, _hash(reloaded))
+        assert len(await _audit_events_for(db_session, target.id)) == 1
+
+    async def test_two_concurrent_resets_serialize_last_commit_wins(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        """Two resets for the same user serialize on the `User` row lock:
+        the second call's `FOR UPDATE` blocks until the first commits.
+        Each successful invocation hashes and stores its own password (the
+        hashing/validation phase — which is where bcrypt work would occur —
+        already completed for both calls before the lock was contended, per
+        the documented "validate/hash before lock" ordering) and creates
+        its own `password_reset` event; the last committed reset determines
+        the accepted password."""
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+        user_ids: list[uuid.UUID] = []
+        task_b: asyncio.Task[Any] | None = None
+
+        try:
+            user = User(
+                username="conc-reset-target",
+                email="conc-reset-target@example.com",
+                password_hash=_FICTIONAL_PASSWORD_HASH,
+            )
+            session_a.add(user)
+            await session_a.commit()
+            user_id = user.id
+            user_ids.append(user_id)
+
+            result_a = await reset_password(
+                session_a, user_id, "first-new-password-16", acting_user_id=None
+            )
+
+            task_b = asyncio.create_task(
+                reset_password(
+                    session_b,
+                    user_id,
+                    "second-new-password-16",
+                    acting_user_id=None,
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+            await session_a.commit()
+
+            result_b = await asyncio.wait_for(task_b, timeout=5)
+            await session_b.commit()
+
+            assert verify_password("first-new-password-16", _hash(result_a.user))
+            assert verify_password("second-new-password-16", _hash(result_b.user))
+
+            events = await _audit_events_for(session_a, user_id)
+            reset_events = [
+                e
+                for e in events
+                if e.event_type == IdentityAuditEventType.PASSWORD_RESET.value
+            ]
+            assert len(reset_events) == 2
+        finally:
+            await _concurrency_teardown(
+                task_b, session_a, session_b, session_a, user_ids
+            )
+
+    async def test_reset_serializes_with_concurrent_update_user_on_same_row(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+        user_ids: list[uuid.UUID] = []
+        task_b: asyncio.Task[Any] | None = None
+
+        try:
+            user = User(
+                username="conc-reset-serialize",
+                email="conc-reset-serialize@example.com",
+                password_hash=_FICTIONAL_PASSWORD_HASH,
+            )
+            session_a.add(user)
+            await session_a.commit()
+            user_id = user.id
+            user_ids.append(user_id)
+
+            await reset_password(
+                session_a, user_id, "first-password-value-16", acting_user_id=None
+            )
+
+            task_b = asyncio.create_task(
+                update_user(
+                    session_b,
+                    user_id,
+                    acting_user_id=None,
+                    full_name="Concurrent Update",
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+            await session_a.commit()
+
+            updated_b = await asyncio.wait_for(task_b, timeout=5)
+            await session_b.commit()
+
+            assert updated_b.full_name == "Concurrent Update"
+        finally:
+            await _concurrency_teardown(
+                task_b, session_a, session_b, session_a, user_ids
+            )
+
+    async def test_reset_logs_contain_no_password_or_hash(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = await user_factory(username="reset-log-safety-user")
+
+        with caplog.at_level("DEBUG"):
+            result = await reset_password(
+                db_session, target.id, _VALID_PASSWORD, acting_user_id=None
+            )
+
+        text = _identity_related_log_text(caplog)
+        assert _VALID_PASSWORD not in text
+        assert _hash(result.user) not in text
+        assert "reset-log-safety-user" not in text
+
+    async def test_reset_exception_messages_contain_no_password(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        with pytest.raises(PasswordValidationError) as exc_info:
+            await reset_password(
+                db_session, uuid.uuid4(), "too-short", acting_user_id=None
+            )
+        assert "too-short" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# unlock_user()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUnlockUser:
+    async def test_missing_user_raises_not_found(
+        self,
+        db_session: AsyncSession,
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await unlock_user(db_session, uuid.uuid4(), acting_user_id=None)
+
+    async def test_deletes_existing_lockout_key(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(username="unlock-existing-key")
+        await redis_client.set("login_attempts:unlock-existing-key", "5")
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert await redis_client.get("login_attempts:unlock-existing-key") is None
+
+    async def test_absent_key_is_a_no_op_success(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(username="unlock-absent-key")
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert await redis_client.get("login_attempts:unlock-absent-key") is None
+
+    async def test_zero_valued_key_is_deleted_successfully(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(username="unlock-zero-key")
+        await redis_client.set("login_attempts:unlock-zero-key", "0")
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert await redis_client.get("login_attempts:unlock-zero-key") is None
+
+    async def test_only_current_username_key_is_deleted(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(username="unlock-target-user")
+        await user_factory(username="unlock-bystander-user")
+        await redis_client.set("login_attempts:unlock-target-user", "3")
+        await redis_client.set("login_attempts:unlock-bystander-user", "4")
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert await redis_client.get("login_attempts:unlock-target-user") is None
+        assert await redis_client.get("login_attempts:unlock-bystander-user") == "4"
+
+    @pytest.mark.parametrize("active", [True, False])
+    async def test_works_for_active_and_inactive_local_users(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+        active: bool,
+    ) -> None:
+        target = await user_factory(active=active)
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        reloaded = await db_session.get(User, target.id)
+        assert reloaded is not None
+        assert reloaded.active is active
+
+    async def test_works_for_external_user(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(external_id=uuid.uuid4())
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+    async def test_redis_error_is_caught_and_logged_as_warning(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = await user_factory(username="unlock-redis-error-user")
+
+        monkeypatch.setattr(
+            local_auth_service, "_new_redis_client", lambda: _FailingRedisClient()
+        )
+
+        with caplog.at_level("WARNING"):
+            await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert "login_lockout_clear_failed" in _identity_related_log_text(caplog)
+
+    async def test_no_database_mutation_flush_or_commit(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = await user_factory()
+        commit_spy = AsyncMock(side_effect=AssertionError("must not commit"))
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        commit_spy.assert_not_called()
+
+    async def test_no_session_invalidation(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory()
+        active_session = await session_factory(user_id=target.id, is_active=True)
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        await db_session.refresh(active_session)
+        assert active_session.is_active is True
+
+    async def test_no_identity_audit_event_created(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(username="unlock-no-audit-user")
+        await redis_client.set("login_attempts:unlock-no-audit-user", "3")
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_repeated_unlock_is_idempotent(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        target = await user_factory(username="unlock-repeated-user")
+        await redis_client.set("login_attempts:unlock-repeated-user", "3")
+
+        await unlock_user(db_session, target.id, acting_user_id=None)
+        await unlock_user(db_session, target.id, acting_user_id=None)
+
+        assert await redis_client.get("login_attempts:unlock-repeated-user") is None
+
+    async def test_info_event_emitted_on_success(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = await user_factory()
+
+        with caplog.at_level("INFO"):
+            await unlock_user(db_session, target.id, acting_user_id=None)
+
+        text = _service_log_text(caplog)
+        assert "user_unlocked" in text
+
+    async def test_info_event_emitted_even_after_redis_error(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = await user_factory()
+
+        monkeypatch.setattr(
+            local_auth_service, "_new_redis_client", lambda: _FailingRedisClient()
+        )
+
+        with caplog.at_level("INFO"):
+            await unlock_user(db_session, target.id, acting_user_id=None)
+
+        text = _service_log_text(caplog)
+        assert "user_unlocked" in text
+
+    async def test_logs_contain_no_username_or_other_pii(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = await user_factory(
+            username="unlock-pii-safety-user",
+            email="unlock-pii-safety-user@example.com",
+            full_name="Unlock Pii Safety",
+        )
+
+        with caplog.at_level("DEBUG"):
+            await unlock_user(db_session, target.id, acting_user_id=None)
+
+        text = _identity_related_log_text(caplog)
+        assert "unlock-pii-safety-user" not in text
+        assert "Unlock Pii Safety" not in text
+
+    async def test_acting_user_id_has_no_effect_on_outcome(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        admin = await user_factory()
+        target = await user_factory(username="unlock-actor-agnostic-user")
+        await redis_client.set("login_attempts:unlock-actor-agnostic-user", "3")
+
+        await unlock_user(db_session, target.id, acting_user_id=admin.id)
+
+        assert (
+            await redis_client.get("login_attempts:unlock-actor-agnostic-user") is None
+        )
+        assert await _audit_events_for(db_session, target.id) == []
 
 
 # ---------------------------------------------------------------------------
