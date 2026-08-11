@@ -82,8 +82,11 @@ def _evaluate_condition(
     general GitHub Actions expression evaluator. The substituted values
     come exclusively from this test module's own parametrization (never
     from the workflow file's dynamic content), so building a Python
-    expression string and evaluating it is safe: there is no untrusted
-    input in the `eval`.
+    expression string and evaluating it is safe. The expression's
+    *structure* (operators, parentheses) does come from the workflow
+    file's text, so `__builtins__` is stripped from the eval globals as
+    a defense-in-depth measure — this expression never needs to call
+    any builtin.
     """
     expr = condition.strip()
     if expr.startswith("if:"):
@@ -96,7 +99,7 @@ def _evaluate_condition(
         "github.event.workflow_run.conclusion", repr(workflow_run_conclusion)
     )
     expr = expr.replace("&&", " and ").replace("||", " or ")
-    return bool(eval(expr))
+    return bool(eval(expr, {"__builtins__": {}}))
 
 
 @pytest.mark.unit
