@@ -54,3 +54,13 @@ class TestErrorCode:
         assert ErrorCode.AUTH_INSUFFICIENT_PERMISSION == "AUTH_INSUFFICIENT_PERMISSION"
         assert ErrorCode.AUTH_SESSION_REQUIRED == "AUTH_SESSION_REQUIRED"
         assert ErrorCode.USER_NOT_FOUND == "USER_NOT_FOUND"
+
+    def test_api_key_management_error_codes_are_registered(self) -> None:
+        """See docs/features/identity/api-key-service.md (Service
+        Exceptions) and docs/features/identity/api-key-management.md
+        (API, Error responses)."""
+        assert ErrorCode.AUTH_API_KEY_NOT_FOUND == "AUTH_API_KEY_NOT_FOUND"
+        assert ErrorCode.AUTH_API_KEY_NAME_CONFLICT == "AUTH_API_KEY_NAME_CONFLICT"
+        assert ErrorCode.AUTH_API_KEY_NAME_INVALID == "AUTH_API_KEY_NAME_INVALID"
+        assert ErrorCode.AUTH_API_KEY_INVALID_EXPIRY == "AUTH_API_KEY_INVALID_EXPIRY"
+        assert ErrorCode.USER_INACTIVE == "USER_INACTIVE"
